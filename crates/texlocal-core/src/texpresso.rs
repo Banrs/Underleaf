@@ -7,7 +7,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::ChildStdin;
 
-use crate::{paths, settings, tail, CoreError, BUILD_DIR};
+use crate::{lock, paths, settings, tail, CoreError, BUILD_DIR};
 
 const MAX_FILE: usize = 8 * 1024 * 1024;
 const MAX_FILES: usize = 256;
@@ -27,13 +27,6 @@ const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Set
 const REPLACED: &str =
     "Another window started TeXpresso for this project. Start TeXpresso again to preview here.";
 const TOO_MANY: &str = "Too many files for TeXpresso (limit 256 files / 64 MB).";
-
-/// The sessions and their states are plain data that no panic leaves
-/// half-written, so a poisoned lock is still usable; and `Session::drop`
-/// locks, where a panic would abort the host.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 #[derive(Debug, Deserialize)]
 pub struct FileBuffer {
@@ -578,7 +571,7 @@ fn validate_buffer(root: &Path, path: &str, text: &str) -> Result<PathBuf, CoreE
             "A file sent to TeXpresso has an invalid path or text.",
         ));
     }
-    let path = root.join(paths::physical_write_path(root, path)?);
+    let path = root.join(paths::write_paths(root, path)?.1);
     if path.is_dir() {
         return Err(CoreError::bad_request(
             "TeXpresso opens files, not folders.",

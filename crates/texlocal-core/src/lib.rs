@@ -39,6 +39,15 @@ pub fn default_data_dir() -> std::path::PathBuf {
         .unwrap_or_else(|| "TeXLocal".into())
 }
 
+/// The crate's mutexes guard bookkeeping that no panic leaves half-written,
+/// or nothing at all, so a poisoned one is still good: it must not fail
+/// every later edit, nor panic in a Drop or at quit, where that aborts the host.
+pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// The end of `text`, at most `max` bytes, from a character boundary.
 pub(crate) fn tail(text: &str, max: usize) -> &str {
     &text[text.ceil_char_boundary(text.len().saturating_sub(max))..]

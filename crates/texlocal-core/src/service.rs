@@ -1,10 +1,10 @@
 // Shared command surface: hosts forward here so path checks and edit
 // serialization have one implementation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,7 @@ use crate::paths::fold_case;
 use crate::projects::{self, Symbols};
 use crate::settings;
 use crate::synctex;
-use crate::{atomic, paths, CoreError};
+use crate::{atomic, lock, paths, CoreError};
 
 pub const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
 const SEARCH_LIMIT: usize = 100;
@@ -87,29 +87,16 @@ fn clash(base: &Path, rel: &str) -> Option<String> {
     }
 }
 
-/// The folders chosen for TeX and TeXpresso, and the PATH each runs with:
-/// TeXpresso's puts its folder ahead of TeX's.
-struct Tools {
-    tex_dir: Option<PathBuf>,
-    texpresso_dir: Option<PathBuf>,
-    tex_path: String,
-    texpresso_path: String,
-}
-
 pub struct Service {
     pub data_dir: PathBuf,
     pub compile: CompileManager,
     pub texpresso: crate::texpresso::Manager,
-    /// One lock per project, by its name as the volume compares names: a
-    /// project's edits, settings read/modify/write, renames and deletes run
-    /// one at a time, while other projects' go on.
+    /// One lock per project name, case-folded where the volume ignores case:
+    /// a project's edits, settings read/modify/write, renames and deletes run
+    /// one at a time, while other projects' go on. Unicode normalisation is
+    /// not folded: ids are the names list_projects read from the folder, so
+    /// every client spells a project as its folder is stored.
     edits: Mutex<HashMap<String, Arc<Mutex<()>>>>,
-}
-
-/// The guards protect no data, so a panic under one leaves nothing half-made:
-/// a poisoned lock is still good, and must not stop every later edit.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn upload_rel(dir: &str, name: &str) -> String {
@@ -152,12 +139,19 @@ impl Service {
         self.texpresso.live_pdf(root, &token).map(Some)
     }
 
-    /// The project's lock; locks no one holds are dropped on the way.
-    fn project_lock(&self, id: &str) -> Result<Arc<Mutex<()>>, CoreError> {
-        let mut locks = lock(&self.edits);
-        locks.retain(|_, held| Arc::strong_count(held) > 1);
-        let name = fold_case(paths::project_name(id)?);
-        Ok(Arc::clone(locks.entry(name).or_default()))
+    /// Run `work` holding the locks of the projects named `names`, taken in
+    /// one order so that two callers wanting the same two can't deadlock.
+    /// Locks no one holds are dropped on the way.
+    fn locked<T>(&self, names: &[&str], work: impl FnOnce() -> T) -> T {
+        let held: Vec<_> = {
+            let mut locks = lock(&self.edits);
+            locks.retain(|_, held| Arc::strong_count(held) > 1);
+            let keys: BTreeSet<_> = names.iter().map(|name| fold_case(name)).collect();
+            let mut held = |key| Arc::clone(locks.entry(key).or_default());
+            keys.into_iter().map(&mut held).collect()
+        };
+        let _guards: Vec<_> = held.iter().map(|project| lock(project)).collect();
+        work()
     }
 
     /// Run `use_project` holding the project's lock, finding the project
@@ -167,21 +161,30 @@ impl Service {
         id: &str,
         use_project: impl FnOnce(&Path) -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
-        let project = self.project_lock(id)?;
-        let _edit = lock(&project);
-        use_project(&self.project_root(id)?)
+        self.locked(&[paths::project_name(id)?], || {
+            use_project(&self.project_root(id)?)
+        })
+    }
+
+    /// Stop what runs in a project about to move or go: a build or live
+    /// preview would go on in the moved folder, and report back from the old
+    /// path.
+    fn stop_runs(&self, root: &Path) -> Result<(), CoreError> {
+        self.compile.stop(root);
+        self.texpresso.stop(root)
     }
 
     // ---------- status ----------
 
     /// Probe the current TeX choice, including installs made while the app is open.
     pub async fn status(&self) -> TexStatus {
-        let tools = self.tools();
+        let ((tex_path, texpresso_path), (tex_dir, texpresso_dir)) =
+            (self.tool_paths(), self.app_folders());
         let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
-        let mut found = compile::tex_available(&tools.tex_path).await;
-        found.texpresso = shown(crate::texpresso::discover(&tools.texpresso_path));
-        found.tex_dir = shown(tools.tex_dir);
-        found.texpresso_dir = shown(tools.texpresso_dir);
+        let mut found = compile::tex_available(&tex_path).await;
+        found.texpresso = shown(crate::texpresso::discover(&texpresso_path));
+        found.tex_dir = shown(tex_dir);
+        found.texpresso_dir = shown(texpresso_dir);
         found
     }
 
@@ -212,20 +215,15 @@ impl Service {
         (folder("texDir"), folder("texpressoDir"))
     }
 
-    /// The chosen folders and the PATH each tool runs with.
-    fn tools(&self) -> Tools {
+    /// The PATH for TeX's tools, and for TeXpresso's, with its chosen folder first.
+    fn tool_paths(&self) -> (String, String) {
         let (tex_dir, texpresso_dir) = self.app_folders();
-        let tex_path = compile::tex_path(tex_dir.as_deref());
-        let texpresso_path = match &texpresso_dir {
-            Some(dir) => format!("{}:{tex_path}", dir.to_string_lossy()),
-            None => tex_path.clone(),
+        let tex = compile::tex_path(tex_dir.as_deref());
+        let texpresso = match texpresso_dir {
+            Some(dir) => format!("{}:{tex}", dir.to_string_lossy()),
+            None => tex.clone(),
         };
-        Tools {
-            tex_dir,
-            texpresso_dir,
-            tex_path,
-            texpresso_path,
-        }
+        (tex, texpresso)
     }
 
     /// Writes one folder, keeping the other settings.
@@ -440,7 +438,7 @@ impl Service {
             "texpresso_status" => out(self.texpresso.status(
                 &root()?,
                 arg::<Option<String>>(args, "session")?.as_deref(),
-                &self.tools().texpresso_path,
+                &self.tool_paths().1,
             )?),
             "texpresso_pdf" => out(self.texpresso.pdf_state(&root()?, s("session")?)?),
             "texpresso_start" => out(self
@@ -450,7 +448,7 @@ impl Service {
                     &arg::<Option<Vec<crate::texpresso::FileBuffer>>>(args, "files")?
                         .unwrap_or_default(),
                     arg::<Option<String>>(args, "session")?.as_deref(),
-                    &self.tools().texpresso_path,
+                    &self.tool_paths().1,
                     // The Mac app shows the document in its PDF pane.
                     arg::<Option<bool>>(args, "pdf")?.unwrap_or(false),
                 )
@@ -468,7 +466,7 @@ impl Service {
                 };
                 out(self
                     .texpresso
-                    .stop_request(&root()?, token, &self.tools().texpresso_path)
+                    .stop_request(&root()?, token, &self.tool_paths().1)
                     .await?)
             }
             "texpresso_rescan" => out(self.texpresso.rescan(&root()?, s("session")?).await?),
@@ -487,16 +485,18 @@ impl Service {
                     .as_deref()
                     .unwrap_or("article"),
             )?),
-            // A build or live preview left running would go on in the moved
-            // folder, and report back from the old path.
-            "rename_project" => out(self.with_project(s("id")?, |root| {
-                self.texpresso.stop(root)?;
-                self.compile.stop(root);
-                projects::rename_project(&self.data_dir, s("id")?, s("name")?)
-            })?),
+            // The new name's lock too: of two renames to one name, the second
+            // waits and finds it taken.
+            "rename_project" => {
+                let (id, name) = (s("id")?, s("name")?);
+                let names = [paths::project_name(id)?, &paths::sanitize_name(name)?];
+                out(self.locked(&names, || {
+                    let stop = |root: &Path| self.stop_runs(root);
+                    projects::rename_project(&self.data_dir, id, name, stop)
+                })?)
+            }
             "delete_project" => out(self.with_project(s("id")?, |root| {
-                self.texpresso.stop(root)?;
-                self.compile.stop(root);
+                self.stop_runs(root)?;
                 projects::delete_project(&self.data_dir, s("id")?)
             })?),
             "get_settings" => out(settings::read_settings(&root()?)),
@@ -580,7 +580,7 @@ impl Service {
                     arg(args, "line")?,
                     arg(args, "column")?,
                     self.live_pdf(&root, args)?.as_deref(),
-                    &self.tools().tex_path,
+                    &self.tool_paths().0,
                 )
                 .await?)
             }
@@ -596,7 +596,7 @@ impl Service {
                     arg::<Option<String>>(args, "context")?.as_deref(),
                     arg(args, "contextOffset")?,
                     self.live_pdf(&root, args)?.as_deref(),
-                    &self.tools().tex_path,
+                    &self.tool_paths().0,
                 )
                 .await?)
             }
@@ -653,26 +653,55 @@ mod tests {
     #[test]
     fn an_edit_waits_for_its_own_project_only() {
         let (data, service) = service();
-        let held = service.project_lock("./P").unwrap();
-        let guard = lock(&held);
         std::thread::scope(|scope| {
-            // Another project's edit goes ahead.
-            service
-                .with_project("Q", |root| {
-                    projects::write_creating(&root.join("q.tex"), b"q")
-                })
-                .unwrap();
-            // This project's waits, however its id is spelled.
-            let edit = scope.spawn(|| {
-                service.with_project("P", |root| {
-                    projects::write_creating(&root.join("p.tex"), b"p")
-                })
+            let edit = service.locked(&["P"], || {
+                // Another project's edit goes ahead.
+                service
+                    .with_project("Q", |root| {
+                        projects::write_creating(&root.join("q.tex"), b"q")
+                    })
+                    .unwrap();
+                // This project's waits, however its id is spelled.
+                let edit = scope.spawn(|| {
+                    service.with_project("./P", |root| {
+                        projects::write_creating(&root.join("p.tex"), b"p")
+                    })
+                });
+                std::thread::sleep(Duration::from_millis(100));
+                assert!(!data.path().join("P/p.tex").exists());
+                edit
             });
-            std::thread::sleep(Duration::from_millis(100));
-            assert!(!data.path().join("P/p.tex").exists());
-            drop(guard);
             edit.join().unwrap().unwrap();
         });
         assert!(data.path().join("P/p.tex").is_file());
+    }
+
+    #[test]
+    fn of_two_renames_to_one_name_the_second_finds_it_taken() {
+        for _ in 0..50 {
+            let (data, service) = service();
+            let start = std::sync::Barrier::new(2);
+            let statuses: Vec<_> = std::thread::scope(|scope| {
+                let renames = ["P", "Q"].map(|id| {
+                    let (service, start) = (&service, &start);
+                    scope.spawn(move || {
+                        let runtime = tokio::runtime::Builder::new_current_thread()
+                            .build()
+                            .unwrap();
+                        let args = json!({ "id": id, "name": "R" });
+                        start.wait();
+                        runtime.block_on(service.call("rename_project", &args))
+                    })
+                });
+                renames
+                    .map(|rename| rename.join().unwrap().map_or_else(|e| e.status, |_| 200))
+                    .into()
+            });
+            let mut statuses = statuses;
+            statuses.sort();
+            assert_eq!(statuses, [200, 409]);
+            let left = fs::read_dir(data.path()).unwrap().count();
+            assert_eq!(left, 2, "one project renamed, one left as it was");
+        }
     }
 }

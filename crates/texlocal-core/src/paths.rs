@@ -172,13 +172,9 @@ pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     Ok(write_paths(root, rel)?.0)
 }
 
-/// Where a write to `rel` physically lands, through any link on its way,
-/// relative to the resolved root; checked as `safe_write_path` checks it.
-pub(crate) fn physical_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
-    Ok(write_paths(root, rel)?.1)
-}
-
-fn write_paths(root: &Path, rel: &str) -> Result<(PathBuf, PathBuf), CoreError> {
+/// `safe_write_path`, and where the write physically lands, through any link
+/// on its way, relative to the resolved root.
+pub(crate) fn write_paths(root: &Path, rel: &str) -> Result<(PathBuf, PathBuf), CoreError> {
     let segments = safe_segments(rel)?;
     if is_in_build_dir(&segments) {
         return Err(build_dir_err());

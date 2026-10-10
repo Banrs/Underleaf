@@ -118,10 +118,10 @@ fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
     let err = rename_entry(&root, "other.tex", "Main.tex").unwrap_err();
     assert_eq!(err.status, 409);
 
-    rename_project(data.path(), "case-test", "Case-Test").unwrap();
+    rename_project(data.path(), "case-test", "Case-Test", |_| Ok(())).unwrap();
     assert_eq!(names_in(data.path()), ["Case-Test"]);
     create_project(data.path(), "second", "blank").unwrap();
-    let err = rename_project(data.path(), "second", "Case-Test").unwrap_err();
+    let err = rename_project(data.path(), "second", "Case-Test", |_| panic!("moved")).unwrap_err();
     assert_eq!(err.status, 409);
 }
 

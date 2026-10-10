@@ -6,6 +6,7 @@
 
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,7 @@ use zip::ZipArchive;
 use crate::paths::{normalize_segments, rel_key, sanitize_name};
 use crate::projects::{self, ProjectInfo};
 use crate::service::{keep_both, too_large, Clash, Service, UploadSpec, UPLOAD_MAX_BYTES};
+use crate::settings::write_settings;
 use crate::{templates, CoreError, BUILD_DIR};
 
 /// What to do with incoming files that land on existing entries.
@@ -39,9 +41,20 @@ pub struct Imported {
 /// sizes can lie and a file can grow while it is read.
 #[derive(Debug, Clone, Copy)]
 struct Allowance {
-    files: usize,
-    entries: usize,
+    files: u64,
+    entries: u64,
     bytes: u64,
+}
+
+const TOO_MANY: &str = "There are too many files to import.";
+const TOO_BIG: &str = "The files to import are too large.";
+
+/// Take `n` from what is `left`, failing with `too_much` past it.
+fn spend(left: &mut u64, n: u64, too_much: &str) -> Result<(), CoreError> {
+    *left = left
+        .checked_sub(n)
+        .ok_or_else(|| CoreError::bad_request(too_much))?;
+    Ok(())
 }
 
 /// Far past any real project, so only a dropped home folder or a zip bomb
@@ -60,24 +73,10 @@ const TEX_FOLDER: Allowance = Allowance {
     bytes: UPLOAD_MAX_BYTES as u64,
 };
 
-fn too_many() -> CoreError {
-    CoreError::bad_request("There are too many files to import.")
-}
-
-fn too_big() -> CoreError {
-    CoreError::bad_request("The files to import are too large.")
-}
-
 impl Allowance {
-    fn entry(&mut self) -> Result<(), CoreError> {
-        self.entries = self.entries.checked_sub(1).ok_or_else(too_many)?;
-        Ok(())
-    }
-
     fn file(&mut self, size: u64) -> Result<(), CoreError> {
-        self.files = self.files.checked_sub(1).ok_or_else(too_many)?;
-        self.bytes = self.bytes.checked_sub(size).ok_or_else(too_big)?;
-        Ok(())
+        spend(&mut self.files, 1, TOO_MANY)?;
+        spend(&mut self.bytes, size, TOO_BIG)
     }
 
     /// Copy `source` to `sink`, taking the bytes actually read, and never
@@ -88,8 +87,7 @@ impl Allowance {
         if copied > UPLOAD_MAX_BYTES as u64 {
             return Err(too_large());
         }
-        self.bytes = self.bytes.checked_sub(copied).ok_or_else(too_big)?;
-        Ok(())
+        spend(&mut self.bytes, copied, TOO_BIG)
     }
 }
 
@@ -121,7 +119,7 @@ fn collect(
         files.push((spec, abs.to_path_buf()));
     } else if meta.is_dir() {
         for entry in fs::read_dir(abs)? {
-            allowance.entry()?;
+            spend(&mut allowance.entries, 1, TOO_MANY)?;
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if !hidden(&name) && !(rel.is_empty() && name.eq_ignore_ascii_case(BUILD_DIR)) {
@@ -206,9 +204,7 @@ fn zip_files(
     archive: &mut ZipArchive<File>,
     mut allowance: Allowance,
 ) -> Result<Vec<(UploadSpec, Source)>, CoreError> {
-    if archive.len() > allowance.entries {
-        return Err(too_many());
-    }
+    spend(&mut allowance.entries, archive.len() as u64, TOO_MANY)?;
     let mut files = Vec::new();
     for i in 0..archive.len() {
         // Its name and size only: nothing is decompressed yet.
@@ -317,43 +313,51 @@ fn import_project_within(
         !top.eq_ignore_ascii_case(BUILD_DIR)
     });
 
-    let (id, root) = projects::new_project_dir(&service.data_dir, &base)?;
-    let result = (|| {
-        let (specs, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
-        service.validate_uploads(&id, "", &specs)?;
-        for (spec, source) in specs.iter().zip(sources) {
-            // The folder is new and holds only what the import wrote, so there
-            // is no clash or file to replace, and a failed import removes it
-            // whole: each file is written in place, with no temporary file or
-            // sync of its own, and gets a new file's usual mode.
-            let abs = root.join(rel_key(&spec.path)?);
-            fs::create_dir_all(abs.parent().unwrap_or(&root))?;
-            let mut dest = BufWriter::new(File::create_new(abs)?);
-            match source {
-                Source::File(path) => allowance.copy(File::open(path)?, &mut dest)?,
-                Source::Zip(i) => {
-                    let entry = zip.as_mut().expect("a zip source").by_index(i)?;
-                    allowance.copy(entry, &mut dest)?;
-                }
+    // Made in a hidden folder beside the projects, which no listing or scan
+    // shows, then moved into place whole: a failure or panic, which drops
+    // the folder, leaves no project behind, and a crash a hidden folder only.
+    fs::create_dir_all(&service.data_dir)?;
+    let staging = tempfile::Builder::new()
+        .prefix(".texlocal-import-")
+        .permissions(fs::Permissions::from_mode(0o777))
+        .tempdir_in(&service.data_dir)?;
+    let (staged, staged_id) = (staging.path(), staging.path().file_name().unwrap());
+    let (specs, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
+    service.validate_uploads(&staged_id.to_string_lossy(), "", &specs)?;
+    for (spec, source) in specs.iter().zip(sources) {
+        // The folder holds only what the import wrote, so there is no clash
+        // or file to replace: each is written in place, with no temporary
+        // file or sync of its own, and gets a new file's usual mode.
+        let abs = staged.join(rel_key(&spec.path)?);
+        fs::create_dir_all(abs.parent().unwrap_or(staged))?;
+        let mut dest = BufWriter::new(File::create_new(abs)?);
+        match source {
+            Source::File(path) => allowance.copy(File::open(path)?, &mut dest)?,
+            Source::Zip(i) => {
+                let entry = zip.as_mut().expect("a zip source").by_index(i)?;
+                allowance.copy(entry, &mut dest)?;
             }
-            dest.flush()?;
         }
-        let main = if let Some(main) = tex {
-            main
-        } else if let Some(main) = projects::guess_main_file(&root)? {
-            main
-        } else {
-            let (file, content) = templates::files("blank")[0];
-            fs::write(root.join(file), content)?;
-            file.to_string()
-        };
-        projects::finish_project(id, &root, &json!({ "mainFile": main }))
-    })();
-    if result.is_err() {
-        // Only copies are lost: the folder is the one made above.
-        let _ = fs::remove_dir_all(&root);
+        dest.flush()?;
     }
-    result
+    let main = if let Some(main) = tex {
+        main
+    } else if let Some(main) = projects::guess_main_file(staged)? {
+        main
+    } else {
+        let (file, content) = templates::files("blank")[0];
+        fs::write(staged.join(file), content)?;
+        file.to_string()
+    };
+    let main_file = write_settings(staged, &json!({ "mainFile": main }))?.main_file;
+    // The name is held by an empty folder, which the project takes the
+    // place of in one rename.
+    let (id, root) = projects::new_project_dir(&service.data_dir, &base)?;
+    if let Err(err) = fs::rename(staged, &root) {
+        let _ = fs::remove_dir(&root);
+        return Err(err.into());
+    }
+    projects::finish_project(id, &root, main_file)
 }
 
 #[cfg(test)]
@@ -399,19 +403,43 @@ mod tests {
         ];
         zip_of(&many, &files);
         let err = import_project_within(&service, &many, SMALL).unwrap_err();
-        assert_eq!(err.message, too_many().message);
+        assert_eq!(err.message, TOO_MANY);
 
         let large = dir.path().join("large.zip");
         let text = "0123456789";
         zip_of(&large, &[("a.tex", text), ("b.tex", text), ("c.tex", text)]);
         let err = import_project_within(&service, &large, SMALL).unwrap_err();
-        assert_eq!(err.message, too_big().message);
+        assert_eq!(err.message, TOO_BIG);
         assert_eq!(projects(&service), 0);
 
         // Within the limits, it imports.
         zip_of(&large, &[("a.tex", text), ("b.tex", text)]);
         import_project_within(&service, &large, SMALL).unwrap();
         assert_eq!(projects(&service), 1);
+    }
+
+    #[test]
+    fn a_zip_that_understates_its_sizes_stops_at_the_bytes_read() {
+        let (dir, service) = library();
+        let src = dir.path().join("lying.zip");
+        let mut zip = zip::ZipWriter::new(File::create(&src).unwrap());
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("a.tex", stored).unwrap();
+        zip.write_all(&[b'x'; 40]).unwrap();
+        zip.finish().unwrap();
+        // Both its headers say the file is 1 byte: the uncompressed size is
+        // 22 bytes into a local header, 24 into a central one.
+        let mut bytes = fs::read(&src).unwrap();
+        for (signature, at) in [(b"PK\x03\x04", 22), (b"PK\x01\x02", 24)] {
+            let header = bytes.windows(4).position(|w| w == signature).unwrap();
+            bytes[header + at..header + at + 4].copy_from_slice(&1u32.to_le_bytes());
+        }
+        fs::write(&src, bytes).unwrap();
+        // As declared it fits the allowance; as read, it doesn't.
+        let err = import_project_within(&service, &src, SMALL).unwrap_err();
+        assert_eq!(err.message, TOO_BIG);
+        assert_eq!(projects(&service), 0);
     }
 
     #[test]
@@ -456,7 +484,7 @@ mod tests {
         // A file that says it is small, or a zip entry that lies, still
         // stops at the budget.
         let err = budget.copy(&[1u8; 6][..], &mut sink).unwrap_err();
-        assert_eq!(err.message, too_big().message);
+        assert_eq!(err.message, TOO_BIG);
         budget.copy(&[1u8; 5][..], &mut sink).unwrap();
         assert!(budget.copy(&[1u8; 1][..], &mut sink).is_err());
     }
@@ -478,6 +506,9 @@ mod tests {
         zip_of(&src, &files);
         let info = import_project_within(&service, &src, IMPORT).unwrap();
         let root = service.data_dir.join(&info.id);
+        // Made hidden, it has a new folder's usual mode all the same.
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&root), mode(&service.data_dir));
         let mut found = Vec::new();
         projects::visit_files(&root, &mut |_, rel| {
             found.push(rel.to_owned());
