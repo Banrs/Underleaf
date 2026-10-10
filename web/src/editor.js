@@ -182,8 +182,7 @@ export function mathAt(doc, pos) {
   return null;
 }
 
-// KaTeX and its stylesheet load with the first preview: most sessions never
-// show one, and the home screen never does.
+// KaTeX and its stylesheet load with the first preview.
 let katex = null;
 let katexLoading = null;
 function loadKatex() {
@@ -193,7 +192,6 @@ function loadKatex() {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
       link.href = '/dist/katex.min.css';
-      // A missing stylesheet still leaves KaTeX's markup readable.
       link.onload = link.onerror = resolve;
       document.head.append(link);
     }),

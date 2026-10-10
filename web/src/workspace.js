@@ -503,9 +503,8 @@ function closePdfFind() {
   refreshCommands();
 }
 
-// A new document invalidates the matches and their text positions, but not
-// the search: the bar stays open, with the reader's query and focus, and
-// searches the new document once it has loaded (refindPdf).
+// A new PDF invalidates the matches, not the search: the bar keeps its query
+// and focus, and refindPdf searches the new document once it has loaded.
 function invalidatePdfFind() {
   if (!ui?.findBar) return;
   clearTimeout(pdfFindTimer);
@@ -538,9 +537,8 @@ function setPdfFreshness(message = '') {
   ui.pdfFreshness.textContent = message;
 }
 
-// The build status for assistive technology (ui.buildStatus, a polite live
-// region). Automatic builds run at every pause in typing, so they speak only
-// when the outcome changes: a failure, or the first success after one.
+// The build status for assistive technology (ui.buildStatus). Automatic
+// builds speak only when they fail, or first succeed after a failure.
 let lastBuildOutcome = null;
 function announceBuild(message, outcome, auto) {
   if (!ui.buildStatus) return;
@@ -719,8 +717,7 @@ export function saveCurrent(options = {}) {
   });
 }
 
-// A keepalive request outlives the page (a closed tab, a discarded one), up
-// to the browser's 64 KiB for such requests in flight.
+// A keepalive request outlives the page, within the browser's 64 KiB.
 const KEEPALIVE_MAX = 60_000;
 
 async function doSave({ triggerCompile = true, keepalive = false } = {}) {
@@ -895,14 +892,7 @@ async function compile({ auto = false } = {}) {
   // Busy from the first moment, not only once the save has flushed: the
   // spinner is the only sign a compile (auto, menu, or engine switch) started.
   // Meanwhile the button stops it, so it leaves the command's enabled state.
-  if (btn) {
-    delete btn.dataset.command;
-    btn.disabled = false;
-    btn.classList.add('busy');
-    btn.setAttribute('aria-busy', 'true');
-    btn.title = 'Stop the build';
-    btn.replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Stop');
-  }
+  setCompileButton(btn, true);
   announceBuild('Compiling…', null, auto);
   refreshSidebarChrome();
 
@@ -922,9 +912,7 @@ async function compile({ auto = false } = {}) {
 
     if (result.pdf) {
       if (result.pdfChanged !== false || !viewer.doc || pdfMainFile !== mainFile) {
-        // A changed PDF invalidates matches and text positions; the search
-        // runs again on the new one. An unchanged build keeps the current
-        // document, scroll position, zoom and find state.
+        // An unchanged build keeps the document, scroll, zoom and find state.
         invalidatePdfFind();
         reloadingPdf = true;
         pdfMainFile = null;
@@ -968,14 +956,7 @@ async function compile({ auto = false } = {}) {
   } finally {
     if (!current()) return;
     state.compiling = false;
-    if (btn) {
-      btn.dataset.command = 'compile.run';
-      btn.disabled = !state.tex.available;
-      btn.classList.remove('busy');
-      btn.removeAttribute('aria-busy');
-      btn.title = tooltip('compile.run');
-      btn.replaceChildren('Compile');
-    }
+    setCompileButton(btn, false);
     refreshSidebarChrome();
     refreshCommands();
     if (saveFailed) pendingCompile = false;
@@ -984,6 +965,17 @@ async function compile({ auto = false } = {}) {
       compile({ auto: true });
     }
   }
+}
+
+// While busy the button is Stop, outside the command's enabled state.
+function setCompileButton(btn, busy) {
+  if (!btn) return;
+  if (busy) delete btn.dataset.command; else btn.dataset.command = 'compile.run';
+  btn.disabled = !busy && !state.tex.available;
+  btn.classList.toggle('busy', busy);
+  if (busy) btn.setAttribute('aria-busy', 'true'); else btn.removeAttribute('aria-busy');
+  btn.title = busy ? 'Stop the build' : tooltip('compile.run');
+  btn.replaceChildren(...(busy ? [el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Stop'] : ['Compile']));
 }
 
 // Stop this project's build (the core's stop_compile), and anything queued

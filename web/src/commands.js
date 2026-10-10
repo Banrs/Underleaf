@@ -195,16 +195,12 @@ export function tooltip(id) {
 // Browsers own page zoom, so a separate interface size would stack on it.
 const BROWSER_OWNS = new Set(['view.uiScaleUp', 'view.uiScaleDown']);
 
-// Text fields where a chord may be typing, not a command.
 const TEXT_FIELD = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
 
-// Whether a chord pressed at `target` goes to command `c`. A modal dialog
-// takes every chord (the page behind it is inert). An editing command
-// (`scope: 'editor'`, such as Bold) acts on the source, so a field of its own
-// (the sidebar search, a prompt, PDF find, the editor's find panel) keeps it.
-// A PDF zoom command (`scope: 'pdf'`) shares its chord with the browser's page
-// zoom, so it takes the chord only from inside the PDF pane; elsewhere the
-// browser zooms the page (docs/web.md).
+// Whether a chord pressed at `target` reaches command `c`: never past a modal
+// dialog; an editing command (`scope: 'editor'`) not from another text field;
+// a PDF zoom (`scope: 'pdf'`) only from the PDF pane, as elsewhere the chord
+// is the browser's page zoom (docs/web.md).
 export function chordApplies(c, target, doc = document) {
   if (doc.querySelector('dialog[open]')) return false;
   const at = typeof target?.closest === 'function' ? target : null;

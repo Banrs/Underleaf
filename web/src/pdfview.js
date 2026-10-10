@@ -11,8 +11,7 @@ import { el, bodyZoom } from './dom.js';
 import { pageText, matchRanges } from './pdftext.js';
 import { FindSession, MAX_FIND_MATCHES, indexMatchesBySpan } from './findsession.js';
 
-// pdf.js is most of the workspace's code, and only a loaded PDF needs it, so
-// it arrives with the first one rather than with the editor.
+// pdf.js arrives with the first PDF, not with the editor.
 let pdfjs = null;
 function loadPdfjs() {
   pdfjs ??= import('pdfjs-dist').then((lib) => {
@@ -31,9 +30,8 @@ const PINCH_MIN = 0.4;
 const PINCH_MAX = 2.5;
 // How long the pane's fitted dimension must hold still before a resize re-renders.
 const RESIZE_SETTLE_MS = 150;
-// The most pixels one page's canvas holds: iOS Safari's canvas area limit,
-// past which a canvas draws blank. A page zoomed further is stretched by CSS
-// (softer at extreme zoom) rather than allocating ~120 MB per page.
+// iOS Safari's canvas area limit, past which a canvas draws blank; CSS
+// stretches a page zoomed further.
 const MAX_CANVAS_PIXELS = 4096 * 4096;
 
 // A forward search's flash: a line's height when SyncTeX gives none, in PDF
@@ -147,8 +145,7 @@ export class PdfViewer {
     // superseding any pass in flight. The stable scrollbar gutter (styles.css)
     // keeps the pages from changing the scroller's width, so nothing loops.
     this.ro = new ResizeObserver(() => {
-      // Pages laid out while the pane was hidden have no geometry yet (see
-      // #renderPass): lay them out now, at any zoom, before anything reads it.
+      // A pass deferred while hidden (#renderPass) lays out once shown.
       if (this._deferred) {
         if (this.doc && !this.#hidden()) void this.render();
         return;
@@ -257,14 +254,12 @@ export class PdfViewer {
     return this.fitMode === 'height' ? this.scrollEl.clientHeight : this.scrollEl.clientWidth;
   }
 
-  // A hidden pane (display: none, or the log in its place) has no layout: its
-  // pages would measure as zero and fit a made-up size.
+  // Hidden (display: none, or the log in its place): nothing measures.
   #hidden() {
     return !this.scrollEl.clientWidth && !this.scrollEl.clientHeight;
   }
 
-  // Where the reader is, as fractions of the content: how far down, and the
-  // horizontal centre.
+  // The reading position as fractions of the content: down, and across.
   #viewRatios() {
     const el = this.scrollEl;
     return {
@@ -296,12 +291,10 @@ export class PdfViewer {
 
   async #renderPass(seq, pinchGeneration) {
     this.#metrics();   // refresh the cached padding; a fixed zoom never calls #fitScale
-    // A pass while the pane is hidden (a build finishing behind the editor in
-    // the compact layout, or with the PDF collapsed) swaps the new document's
-    // pages in but leaves them unmeasured: every offset would read zero, and a
-    // resize anchor taken from that lands on the last page. The pass is
-    // deferred, keeping the reading position the reader left, and the resize
-    // observer renders again once the pane shows.
+    // With the pane hidden (a build behind the compact editor, a collapsed
+    // PDF) the new pages go in unmeasured, as every offset would read zero:
+    // the pass is deferred, keeping the reading position, until the resize
+    // observer sees the pane again.
     const hidden = this.#hidden();
     const { ratio, centerRatioX } = this._deferred ?? (hidden ? this._view : null) ?? this.#viewRatios();
     const anchor = hidden || this._deferred ? null : this._anchor;
@@ -427,7 +420,6 @@ export class PdfViewer {
   // detached or hidden, and because the layout has to stay put for the page
   // geometry (and so the scroll position) to remain valid.
   async #paintNear(seq) {
-    // Unmeasured pages (a deferred pass) would all count as near.
     if (this._deferred) return;
     // Only the newest pass proceeds. Scrolling quickly starts a pass per stop,
     // and without this they all keep going, each awaiting pages the reader has
@@ -611,8 +603,7 @@ export class PdfViewer {
     if (p._paint) return p._paint;
 
     p._paint = (async () => {
-      // Allocate (or re-allocate after eviction) the pixel buffer just-in-time,
-      // no larger than MAX_CANVAS_PIXELS; the CSS size stays the page's.
+      // Allocate (or re-allocate after eviction) the pixel buffer just-in-time.
       const ratio = Math.min(dpr, Math.sqrt(MAX_CANVAS_PIXELS / (p.viewport.width * p.viewport.height)));
       p.canvas.width = Math.floor(p.viewport.width * ratio);
       p.canvas.height = Math.floor(p.viewport.height * ratio);
@@ -847,7 +838,7 @@ export class PdfViewer {
   zoomBy(factor) { return this.setScale(this.currentScale() * factor); }
 
   async setScale(scale) {
-    if (!this._deferred) this._anchor ??= this.#centerAnchor();
+    this._anchor ??= this.#centerAnchor();
     this.scale = clamp(scale, MIN_SCALE, MAX_SCALE);
     await this.render();
   }
@@ -905,7 +896,7 @@ export class PdfViewer {
   // coordinates, as #toContent; the scroll position is left alone throughout.
   #previewResize() {
     const first = this.pages[0];
-    if (!first || !this.pagesEl || this._deferred) return;
+    if (!first || !this.pagesEl) return;
     if (!this._resizePreview) {
       const anchor = this.#centerAnchor();
       if (!anchor) return;
@@ -982,7 +973,7 @@ export class PdfViewer {
 
   // loc: { page, h, v, width, height } in TeX points, origin top-left, v = baseline
   highlight(loc) {
-    // Shown a moment ago with pages laid out while hidden: lay them out first.
+    // Just shown after a deferred pass: lay out first.
     if (this._deferred) {
       if (this.#hidden()) return;
       const doc = this.doc;

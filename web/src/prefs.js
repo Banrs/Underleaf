@@ -23,48 +23,37 @@ const DEFS = {
   openDirs: { key: 'opendirs', def: [], type: 'json' },
 };
 
-// localStorage, read through a cache. Each preference is read once and then
-// kept here, so layout code that reads a score of them per resize frame never
-// touches storage; writes go through. With site data blocked, reading
-// `localStorage` itself throws: the app then runs on this map alone, and its
-// settings last until the page reloads.
+// The one store: each key is read from localStorage once, then served from
+// memory (layout reads a score per frame); writes go through. With site data
+// blocked, touching localStorage throws, and the memory alone serves the page.
 const cache = new Map();   // storage key → raw string, or null when unset
-let cachedFrom;            // the storage the cache mirrors
+let cachedFrom;            // the storage the cache mirrors (tests swap it)
 
 function storage() {
   let store = null;
   try { store = globalThis.localStorage ?? null; } catch { /* blocked */ }
-  // A different store (tests swap it) starts a fresh cache.
   if (store !== cachedFrom) { cache.clear(); cachedFrom = store; }
   return store;
 }
 
 function getRaw(key) {
   const store = storage();
-  if (cache.has(key)) return cache.get(key);
-  let raw = null;
-  try { raw = store?.getItem(key) ?? null; } catch { /* blocked */ }
-  cache.set(key, raw);
-  return raw;
+  if (!cache.has(key)) {
+    try { cache.set(key, store?.getItem(key) ?? null); } catch { cache.set(key, null); }
+  }
+  return cache.get(key);
 }
 
 function setRaw(key, raw) {
   const store = storage();
   cache.set(key, raw);
-  try {
-    if (raw === null) store?.removeItem(key);
-    else store?.setItem(key, raw);
-  } catch { /* blocked or full: the cache keeps it for this page */ }
+  try { if (raw === null) store?.removeItem(key); else store?.setItem(key, raw); } catch { /* memory keeps it */ }
 }
 
-// Another tab changing a preference changes it here too, as reading storage
-// on every access did.
-if (typeof addEventListener === 'function') {
-  addEventListener('storage', (e) => {
-    if (e.storageArea !== cachedFrom) return;
-    if (e.key === null) cache.clear(); else cache.delete(e.key);
-  });
-}
+// Another tab's change applies here too, as when every read went to storage.
+globalThis.addEventListener?.('storage', (e) => {
+  if (e.storageArea === cachedFrom) { if (e.key === null) cache.clear(); else cache.delete(e.key); }
+});
 
 function read(name) {
   const d = DEFS[name];
