@@ -398,7 +398,9 @@ function findAgain(delta) {
   else state.editor?.findPrevious();
 }
 
-// Their accelerators are the shared table's (shortcuts.json).
+// Their accelerators are the shared table's (shortcuts.json). `scope` limits
+// where a chord reaches them from (commands.js chordApplies); a menu item or
+// button runs them from anywhere.
 function commandDefs() {
   return [
     { id: 'project.new', title: 'New Project…', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
@@ -417,21 +419,21 @@ function commandDefs() {
     { id: 'edit.find', title: 'Find & Replace', nativeOnly: true, run: () => state.editor?.openSearch(), enabled: hasEditor },
     { id: 'edit.findNext', title: 'Find Next', nativeOnly: true, run: () => findAgain(1), enabled: hasFindTarget },
     { id: 'edit.findPrevious', title: 'Find Previous', nativeOnly: true, run: () => findAgain(-1), enabled: hasFindTarget },
-    { id: 'edit.bold', title: 'Bold', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
-    { id: 'edit.italic', title: 'Italic', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
-    { id: 'edit.math', title: 'Inline Math', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
+    { id: 'edit.bold', scope: 'editor', title: 'Bold', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
+    { id: 'edit.italic', scope: 'editor', title: 'Italic', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
+    { id: 'edit.math', scope: 'editor', title: 'Inline Math', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
     { id: 'edit.comment', title: 'Toggle Comment', nativeOnly: true, run: () => state.editor?.toggleComment(), enabled: hasEditor },
-    { id: 'edit.gotoLine', title: 'Go to Line…', run: gotoLineFlow, enabled: hasEditor },
+    { id: 'edit.gotoLine', scope: 'editor', title: 'Go to Line…', run: gotoLineFlow, enabled: hasEditor },
     { id: 'pdf.find', title: 'Find in PDF…', run: openPdfFind, enabled: hasPdf },
 
     // Titles flip like native View-menu items; no checkmark, matching macOS.
     { id: 'view.toggleSidebar', title: () => (ui.layout?.sidebarVisible() ? 'Hide Sidebar' : 'Show Sidebar'), run: toggleSidebar },
     { id: 'view.togglePdf', title: () => (ui.layout?.pdfVisible() ? 'Hide PDF' : 'Show PDF'), run: togglePdf, enabled: hasProject },
     { id: 'view.toggleLogs', title: 'Compile Log', run: toggleLogs, checked: () => state.logOpen, enabled: hasProject },
-    { id: 'view.zoomIn', title: 'Zoom In', run: () => state.pdf?.zoomBy(1.15), enabled: hasPdf },
-    { id: 'view.zoomOut', title: 'Zoom Out', run: () => state.pdf?.zoomBy(1 / 1.15), enabled: hasPdf },
-    { id: 'view.fitWidth', title: 'Fit Width', run: () => state.pdf?.fitWidth(), enabled: hasPdf },
-    { id: 'view.fitHeight', title: 'Fit Height', run: () => state.pdf?.fitHeight(), enabled: hasPdf },
+    { id: 'view.zoomIn', scope: 'pdf', title: 'Zoom In', run: () => state.pdf?.zoomBy(1.15), enabled: hasPdf },
+    { id: 'view.zoomOut', scope: 'pdf', title: 'Zoom Out', run: () => state.pdf?.zoomBy(1 / 1.15), enabled: hasPdf },
+    { id: 'view.fitWidth', scope: 'pdf', title: 'Fit Width', run: () => state.pdf?.fitWidth(), enabled: hasPdf },
+    { id: 'view.fitHeight', scope: 'pdf', title: 'Fit Height', run: () => state.pdf?.fitHeight(), enabled: hasPdf },
     { id: 'view.uiScaleUp', title: 'Increase Interface Size', run: () => stepUiScale(1) },
     { id: 'view.uiScaleDown', title: 'Decrease Interface Size', run: () => stepUiScale(-1) },
 

@@ -192,13 +192,31 @@ export function tooltip(id) {
 // Browsers own page zoom, so a separate interface size would stack on it.
 const BROWSER_OWNS = new Set(['view.uiScaleUp', 'view.uiScaleDown']);
 
+// Text fields where a chord may be typing, not a command.
+const TEXT_FIELD = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+
+// Whether a chord pressed at `target` goes to command `c`. A modal dialog
+// takes every chord (the page behind it is inert). An editing command
+// (`scope: 'editor'`, such as Bold) acts on the source, so a field of its own
+// (the sidebar search, a prompt, PDF find, the editor's find panel) keeps it.
+// A PDF zoom command (`scope: 'pdf'`) shares its chord with the browser's page
+// zoom, so it takes the chord only from inside the PDF pane; elsewhere the
+// browser zooms the page (docs/web.md).
+export function chordApplies(c, target, doc = document) {
+  if (doc.querySelector('dialog[open]')) return false;
+  const at = typeof target?.closest === 'function' ? target : null;
+  if (c.scope === 'editor' && at?.closest(TEXT_FIELD) && !at.closest('.cm-content')) return false;
+  if (c.scope === 'pdf' && !at?.closest('.pdf-pane')) return false;
+  return true;
+}
+
 // Capture ahead of the editor keymap. `nativeOnly` commands belong to that
 // keymap: catching Ctrl+Z here in a search field would undo the source editor.
 export function installMenuBridge() {
   addEventListener('keydown', (e) => {
     for (const [id, c] of registry) {
       const accel = !c.nativeOnly && !BROWSER_OWNS.has(id) && accelOf(id);
-      if (accel && matchesAccel(accel, e, isMac) && runCommand(id)) {
+      if (accel && matchesAccel(accel, e, isMac) && chordApplies(c, e.target) && runCommand(id)) {
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -227,6 +245,11 @@ function codesFor(key) {
 // Whether a keydown is exactly this accelerator: the key, and the modifiers
 // it names, no more. `mac` decides what CmdOrCtrl means.
 export function matchesAccel(accel, e, mac) {
+  // Off the Mac, AltGr reports itself as Ctrl+Alt: on German or Nordic layouts
+  // AltGr+0 types }, so Ctrl+Alt+0 would swallow it. A Ctrl+Alt chord that
+  // types a character other than a letter or digit is that typing.
+  if (!mac && e.ctrlKey && e.altKey
+      && (e.getModifierState?.('AltGraph') || (e.key?.length === 1 && !/^[a-z0-9]$/i.test(e.key)))) return false;
   const parts = accel.split('+');
   const key = parts.pop();
   const want = { meta: false, ctrl: false, alt: false, shift: false };
