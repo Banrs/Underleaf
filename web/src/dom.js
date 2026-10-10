@@ -4,6 +4,10 @@
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
+// The body's interface-scale `zoom`, which window pixels (pointer and anchor
+// rects, devicePixelRatio) leave out.
+export const bodyZoom = () => parseFloat(getComputedStyle(document.body).zoom) || 1;
+
 // Unique DOM ids for label/control wiring.
 let uid = 0;
 export const nextId = (prefix) => `${prefix}-${++uid}`;
@@ -151,7 +155,7 @@ let openMenu = null;
 // the body's interface zoom. Measure offset sizes so the pop-in transform
 // cannot shift the placement, and bound both menus and popovers before sizing.
 function placeMenu(menu, x, y) {
-  const zoom = parseFloat(getComputedStyle(document.body).zoom) || 1;
+  const zoom = bodyZoom();
   const width = Math.max(0, innerWidth - 16) / zoom;
   menu.style.minWidth = `${Math.min(160, width)}px`;
   menu.style.maxWidth = `${width}px`;

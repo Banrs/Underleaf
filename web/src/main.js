@@ -9,7 +9,6 @@ import { renderHome, destroyHome } from './home.js';
 // ---------- platform ----------
 
 const root = document.documentElement;
-root.classList.remove('mac');
 root.classList.add('browser');
 
 // A file dropped outside the drop zones must never navigate the page.

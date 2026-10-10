@@ -44,8 +44,7 @@ function remapPath(candidate, from, to) {
 
 // ---------- construction ----------
 
-// `titlebarTrailing` is the sidebar toggle, at the band's trailing end: the
-// Tauri Mac window's traffic lights take the leading end.
+// `titlebarTrailing` is the sidebar toggle, at the band's trailing end.
 export function buildSidebar(callbacks, titlebarTrailing) {
   const origin = { ...callbacks, projectId: state.projectId };
   host = origin;
@@ -106,7 +105,7 @@ export function buildSidebar(callbacks, titlebarTrailing) {
   nodes = { search, tree, results, outline, outlineSplit, outlineToggle, fileInput, engineLabel, engineSpinner, engineStatus };
 
   return el('aside', { class: 'sidebar pane', 'aria-label': 'Project navigator' },
-    el('div', { class: 'sidebar-titlebar', 'data-tauri-drag-region': 'deep' },
+    el('div', { class: 'sidebar-titlebar' },
       el('span', { class: 'spacer' }), titlebarTrailing),
     el('search', { class: 'sidebar-search' }, el('span', { class: 'search-icon' }, icon('search')), search),
     el('div', { class: 'section-header' },

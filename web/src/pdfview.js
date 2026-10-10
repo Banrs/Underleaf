@@ -7,7 +7,7 @@
 // otherwise deadlock pdf.js). Canvases paint first for responsiveness; the
 // transparent text layer is a second pass built from each page's text items.
 
-import { el } from './dom.js';
+import { el, bodyZoom } from './dom.js';
 import { pageText, matchRanges } from './pdftext.js';
 import { FindSession, MAX_FIND_MATCHES, indexMatchesBySpan } from './findsession.js';
 
@@ -44,9 +44,9 @@ const SYNC_FLASH = { lineHeight: 12, minimumWidth: 24, margin: 2 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-// devicePixelRatio leaves out the body's interface-scale `zoom`, so a canvas
-// sized from it alone renders soft.
-const uiZoom = () => parseFloat(getComputedStyle(document.body).zoom) || 1;
+// Device pixels per CSS pixel: devicePixelRatio leaves out the interface-scale
+// `zoom`, so a canvas sized from it alone renders soft.
+const pixelRatio = () => (window.devicePixelRatio || 1) * bodyZoom();
 
 // A text-layer span's natural width, measured on a canvas rather than read back
 // from the DOM: no layout per span, and it works while the pane is hidden (the
@@ -459,7 +459,7 @@ export class PdfViewer {
       p.textLayer.replaceChildren();
     }
 
-    const dpr = (window.devicePixelRatio || 1) * uiZoom();
+    const dpr = pixelRatio();
     for (const p of near) {
       if (seq !== this.seq || pass !== this._paintPass) return;
       // `_failed` stops a page that genuinely can't render from being retried on
@@ -950,7 +950,7 @@ export class PdfViewer {
     // scrolled to may not have one yet. Build it on demand rather than dropping to
     // the geometric fallback below, which usually lands on whitespace and 404s.
     if (!p.textLayer.childElementCount) {
-      if (!await this.#paintCanvas(p, (window.devicePixelRatio || 1) * uiZoom())) return null;
+      if (!await this.#paintCanvas(p, pixelRatio())) return null;
       if (seq !== this.seq || !this.pages.includes(p)) return null;
       if (!await this.#buildTextLayer(p, seq)) return null;
     }

@@ -197,8 +197,7 @@ function buildChrome(id) {
   const sidebarToggleFallback = iconButton('view.toggleSidebar', 'sidebar-left');
   sidebarToggleFallback.classList.add('sidebar-toggle-fallback');
 
-  // Tauri's drag region (docs/web.md); it skips interactive elements itself.
-  const titlebar = el('header', { class: 'titlebar', 'data-tauri-drag-region': 'deep' },
+  const titlebar = el('header', { class: 'titlebar' },
     sidebarToggleFallback,
     iconButton('project.close', 'chevron-left'),
     menuBar(menuUnder),
@@ -416,52 +415,51 @@ function findAgain(delta) {
 // button runs them from anywhere.
 function commandDefs() {
   return [
-    { id: 'project.new', title: 'New Project…', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
-    { id: 'project.close', title: 'Close Project', run: () => { location.hash = '#/'; }, enabled: hasProject },
-    { id: 'project.export', title: 'Export Project as ZIP…', run: () => Promise.resolve(api.exportProject(state.projectId)).catch((e) => toast(e.message, 'error')), enabled: hasProject },
-    { id: 'project.search', title: 'Find in Project', run: () => { ui.layout?.showSidebar(); focusSearch(); }, enabled: hasProject },
+    { id: 'project.new', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
+    { id: 'project.close', run: () => { location.hash = '#/'; }, enabled: hasProject },
+    { id: 'project.export', run: () => Promise.resolve(api.exportProject(state.projectId)).catch((e) => toast(e.message, 'error')), enabled: hasProject },
+    { id: 'project.search', run: () => { ui.layout?.showSidebar(); focusSearch(); }, enabled: hasProject },
 
-    { id: 'file.new', title: 'New File…', run: newFileFlow, enabled: hasProject },
-    { id: 'file.newFolder', title: 'New Folder…', run: newFolderFlow, enabled: hasProject },
-    { id: 'file.upload', title: 'Add Files…', run: uploadFlow, enabled: hasProject },
-    { id: 'file.save', title: 'Save', run: () => saveCurrent(), enabled: hasEditor },
-    { id: 'pdf.save', title: 'Save PDF As…', run: savePdf, enabled: hasPdf },
+    { id: 'file.new', run: newFileFlow, enabled: hasProject },
+    { id: 'file.newFolder', run: newFolderFlow, enabled: hasProject },
+    { id: 'file.upload', run: uploadFlow, enabled: hasProject },
+    { id: 'file.save', run: () => saveCurrent(), enabled: hasEditor },
+    { id: 'pdf.save', run: savePdf, enabled: hasPdf },
 
-    { id: 'edit.undo', title: 'Undo', nativeOnly: true, run: () => state.editor?.undo(), enabled: hasEditor },
-    { id: 'edit.redo', title: 'Redo', nativeOnly: true, run: () => state.editor?.redo(), enabled: hasEditor },
-    { id: 'edit.find', title: 'Find & Replace', nativeOnly: true, run: () => state.editor?.openSearch(), enabled: hasEditor },
-    { id: 'edit.findNext', title: 'Find Next', nativeOnly: true, run: () => findAgain(1), enabled: hasFindTarget },
-    { id: 'edit.findPrevious', title: 'Find Previous', nativeOnly: true, run: () => findAgain(-1), enabled: hasFindTarget },
-    { id: 'edit.bold', scope: 'editor', title: 'Bold', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
-    { id: 'edit.italic', scope: 'editor', title: 'Italic', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
-    { id: 'edit.math', scope: 'editor', title: 'Inline Math', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
-    { id: 'edit.comment', title: 'Toggle Comment', nativeOnly: true, run: () => state.editor?.toggleComment(), enabled: hasEditor },
-    { id: 'edit.gotoLine', scope: 'editor', title: 'Go to Line…', run: gotoLineFlow, enabled: hasEditor },
-    { id: 'pdf.find', title: 'Find in PDF…', run: openPdfFind, enabled: hasPdf },
+    { id: 'edit.undo', nativeOnly: true, run: () => state.editor?.undo(), enabled: hasEditor },
+    { id: 'edit.redo', nativeOnly: true, run: () => state.editor?.redo(), enabled: hasEditor },
+    { id: 'edit.find', nativeOnly: true, run: () => state.editor?.openSearch(), enabled: hasEditor },
+    { id: 'edit.findNext', nativeOnly: true, run: () => findAgain(1), enabled: hasFindTarget },
+    { id: 'edit.findPrevious', nativeOnly: true, run: () => findAgain(-1), enabled: hasFindTarget },
+    { id: 'edit.bold', scope: 'editor', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
+    { id: 'edit.italic', scope: 'editor', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
+    { id: 'edit.math', scope: 'editor', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
+    { id: 'edit.comment', nativeOnly: true, run: () => state.editor?.toggleComment(), enabled: hasEditor },
+    { id: 'edit.gotoLine', scope: 'editor', run: gotoLineFlow, enabled: hasEditor },
+    { id: 'pdf.find', run: openPdfFind, enabled: hasPdf },
 
     // Titles flip like native View-menu items; no checkmark, matching macOS.
     { id: 'view.toggleSidebar', title: () => (ui.layout?.sidebarVisible() ? 'Hide Sidebar' : 'Show Sidebar'), run: toggleSidebar },
     { id: 'view.togglePdf', title: () => (ui.layout?.pdfVisible() ? 'Hide PDF' : 'Show PDF'), run: togglePdf, enabled: hasProject },
-    { id: 'view.toggleLogs', title: 'Compile Log', run: toggleLogs, checked: () => state.logOpen, enabled: hasProject },
-    { id: 'view.zoomIn', scope: 'pdf', title: 'Zoom In', run: () => state.pdf?.zoomBy(1.15), enabled: hasPdf },
-    { id: 'view.zoomOut', scope: 'pdf', title: 'Zoom Out', run: () => state.pdf?.zoomBy(1 / 1.15), enabled: hasPdf },
-    { id: 'view.fitWidth', scope: 'pdf', title: 'Fit Width', run: () => state.pdf?.fitWidth(), enabled: hasPdf },
-    { id: 'view.fitHeight', scope: 'pdf', title: 'Fit Height', run: () => state.pdf?.fitHeight(), enabled: hasPdf },
-    { id: 'view.uiScaleUp', title: 'Increase Interface Size', run: () => stepUiScale(1) },
-    { id: 'view.uiScaleDown', title: 'Decrease Interface Size', run: () => stepUiScale(-1) },
+    { id: 'view.toggleLogs', run: toggleLogs, checked: () => state.logOpen, enabled: hasProject },
+    { id: 'view.zoomIn', scope: 'pdf', run: () => state.pdf?.zoomBy(1.15), enabled: hasPdf },
+    { id: 'view.zoomOut', scope: 'pdf', run: () => state.pdf?.zoomBy(1 / 1.15), enabled: hasPdf },
+    { id: 'view.fitWidth', scope: 'pdf', run: () => state.pdf?.fitWidth(), enabled: hasPdf },
+    { id: 'view.fitHeight', scope: 'pdf', run: () => state.pdf?.fitHeight(), enabled: hasPdf },
+    { id: 'view.uiScaleUp', run: () => stepUiScale(1) },
+    { id: 'view.uiScaleDown', run: () => stepUiScale(-1) },
 
-    { id: 'compile.run', title: 'Compile', run: () => compile(), enabled: () => state.tex.available && !state.compiling },
-    { id: 'compile.toggleAuto', title: 'Compile Automatically', run: () => { prefs.autoCompile = !prefs.autoCompile; refreshCommands(); }, checked: () => prefs.autoCompile },
+    { id: 'compile.run', run: () => compile(), enabled: () => state.tex.available && !state.compiling },
+    { id: 'compile.toggleAuto', run: () => { prefs.autoCompile = !prefs.autoCompile; refreshCommands(); }, checked: () => prefs.autoCompile },
     { id: 'compile.texpresso', title: () => texpresso?.state.enabled || texpresso?.state.running
       ? 'Stop TeXpresso (Experimental)' : 'Start TeXpresso (Experimental)',
       run: toggleTexPresso, enabled: () => hasProject() && texpresso?.state.phase !== 'stopping' },
-    { id: 'compile.texpressoRescan', title: 'Rescan TeXpresso Files',
-      run: () => restartTexPresso(captureTexPresso()),
+    { id: 'compile.texpressoRescan', run: () => restartTexPresso(captureTexPresso()),
       enabled: () => !!texpresso?.state.enabled && texpresso?.state.phase === 'idle' },
-    { id: 'sync.forward', title: 'Go to PDF Position', run: forwardSync, enabled: () => hasEditor() && hasPdf() },
-    { id: 'sync.inverse', title: 'Go to Source Position', run: inverseSync, enabled: hasPdf },
+    { id: 'sync.forward', run: forwardSync, enabled: () => hasEditor() && hasPdf() },
+    { id: 'sync.inverse', run: inverseSync, enabled: hasPdf },
 
-    { id: 'app.settings', title: 'Settings…', run: openProjectSettings },
+    { id: 'app.settings', run: openProjectSettings },
   ].map((d) => ({ accel: SHORTCUTS[d.id], ...d }));
 }
 

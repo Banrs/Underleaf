@@ -1,3 +1,5 @@
+import { bodyZoom } from './dom.js';
+
 // Pane dimensions are CSS pixels, including the desktop interface-scale zoom.
 export const workspaceMode = (width) => width < 720 ? 'compact' : width < 1024 ? 'overlay' : 'wide';
 export const clampPaneWidth = (value, min, max, fallback = min) =>
@@ -68,7 +70,6 @@ export function createWorkspaceLayout({ shell, sidebar, sidebarDivider, sidebarT
   let sideWidth = 256, pdfWidth = 280, dragging = null;
   const pdfToolbar = pdfPane.querySelector('.toolbar');
   const pdfToggle = shell.querySelector('[data-command="view.togglePdf"]') ?? sidebarToggle;
-  const zoom = () => Number.parseFloat(getComputedStyle(document.body).zoom) || 1;
   const sideBounds = () => [180, Math.max(180, Math.min(420, shell.clientWidth - (mode === 'wide' ? 562 : 32)))];
   const pdfBounds = () => [280, Math.max(280, workspace.clientWidth - 281)];
   const sideVisible = () => mode === 'wide' ? !prefs.sidebarCollapsed : overlayOpen;
@@ -85,11 +86,11 @@ export function createWorkspaceLayout({ shell, sidebar, sidebarDivider, sidebarT
   const setPdfWidth = (width) => { pdfWidth = width; pdfPane.style.width = `${width}px`; pdfPane.style.flex = 'none'; };
   const resizers = [
     paneResizer(sidebarDivider, sidebar, { bounds: sideBounds, value: () => sideWidth, resize: setSideWidth,
-      commit: (w) => { prefs.sidebarWidth = w; refresh(); }, zoom,
+      commit: (w) => { prefs.sidebarWidth = w; refresh(); }, zoom: bodyZoom,
       onStart: () => { dragging = 'sidebar'; pdf()?.beginLiveResize(); }, onMove: () => pdf()?.liveResize(),
       onEnd: () => { dragging = null; pdf()?.endLiveResize(); } }),
     paneResizer(paneHandle, pdfPane, { bounds: pdfBounds, value: () => pdfWidth, resize: setPdfWidth,
-      commit: (w) => { prefs.pdfWidth = w; }, direction: -1, zoom,
+      commit: (w) => { prefs.pdfWidth = w; }, direction: -1, zoom: bodyZoom,
       onStart: () => { dragging = 'pdf'; pdf()?.beginLiveResize(); }, onMove: () => pdf()?.liveResize(),
       onEnd: () => { dragging = null; pdf()?.endLiveResize(); } }),
   ];

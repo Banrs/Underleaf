@@ -49,8 +49,10 @@ const MENU = [
   },
 ];
 
-// Labels for menu items whose command no view has registered (they show disabled).
-const FALLBACK_TITLES = {
+// Every command's title, so a menu item shows it before a view registers the
+// command (disabled). A command declares `title` only when it is a function of
+// state ("Hide Sidebar" / "Show Sidebar").
+const TITLES = {
   'project.new': 'New Project…',
   'file.new': 'New File…',
   'file.newFolder': 'New Folder…',
@@ -86,6 +88,7 @@ const FALLBACK_TITLES = {
   'compile.texpressoRescan': 'Rescan TeXpresso Files',
   'sync.forward': 'Go to PDF Position',
   'sync.inverse': 'Go to Source Position',
+  'app.settings': 'Settings…',
 };
 
 let notifyHost = () => {};
@@ -107,7 +110,7 @@ export function getCommand(id) { return registry.get(id); }
 export function commandTitle(id) {
   const c = registry.get(id);
   if (!c) return '';
-  return typeof c.title === 'function' ? c.title() : c.title;
+  return typeof c.title === 'function' ? c.title() : c.title ?? TITLES[id] ?? id;
 }
 
 function commandEnabled(id) {
@@ -115,7 +118,7 @@ function commandEnabled(id) {
   return !!c && (!c.enabled || !!c.enabled());
 }
 
-const menuLabel = (id) => (registry.has(id) ? commandTitle(id) : (FALLBACK_TITLES[id] ?? id));
+const menuLabel = (id) => (registry.has(id) ? commandTitle(id) : (TITLES[id] ?? id));
 
 export function runCommand(id) {
   if (!commandEnabled(id)) return false;
