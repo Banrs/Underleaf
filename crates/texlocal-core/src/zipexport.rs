@@ -108,12 +108,33 @@ impl Export<'_> {
     }
 
     fn add_file(&mut self, rel: &str, path: &Path) -> Result<(), CoreError> {
-        self.writer.start_file(rel, dated(self.options, path))?;
+        let mut file = File::open(path)?;
+        let len = file.metadata()?.len();
+        let mut options = dated(self.options, path)
+            // Past 4 GiB (a video, a data set), sizes need ZIP64's fields.
+            .large_file(len >= u64::from(u32::MAX));
+        if compressed(rel) {
+            // Deflate would spend its time for nothing.
+            options = options.compression_method(CompressionMethod::Stored);
+        }
+        self.writer.start_file(rel, options)?;
         // No flush per file: on a deflated entry that forces a sync block
         // into the stream, and the next start_file or finish ends it anyway.
-        io::copy(&mut File::open(path)?, &mut self.writer)?;
+        io::copy(&mut file, &mut self.writer)?;
         Ok(())
     }
+}
+
+/// Whether a file's name says its contents are compressed already.
+fn compressed(name: &str) -> bool {
+    const COMPRESSED: &[&str] = &[
+        "png", "jpg", "jpeg", "gif", "webp", "heic", "zip", "gz", "tgz", "bz2", "xz", "7z", "zst",
+        "mp3", "m4a", "mp4", "m4v", "mov",
+    ];
+    Path::new(name)
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|ext| COMPRESSED.iter().any(|c| ext.eq_ignore_ascii_case(c)))
 }
 
 /// `options` with the entry dated as `path` is. ZIP stores local time, as
