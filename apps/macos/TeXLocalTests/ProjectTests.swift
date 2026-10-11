@@ -494,9 +494,48 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// A change to a setting shows in the model before the core answers, so its control doesn't
+    /// snap back, and one the core refuses is put back.
+    @Test(.timeLimit(.minutes(1)))
+    func aSettingShowsAtOnceAndARefusedOneIsPutBack() async throws {
+        let (project, _) = try await opened()
+        let on = Task.immediate { await project.patchSettings(["shellEscape": true]) }
+        #expect(project.settings?.shellEscape == true)
+        #expect(await on.value)
+        let refused = Task.immediate { await project.patchSettings(["engine": "nonsense"]) }
+        #expect(project.settings?.engine == "nonsense")
+        #expect(await refused.value == false)
+        #expect(project.settings?.engine == "pdflatex" && project.settings?.shellEscape == true)
+        app.alert = nil
+    }
+
+    /// Clean Build Folder removes the build folder and what the build left in the window.
+    @Test(.timeLimit(.minutes(1)))
+    func cleanBuildFolderRemovesTheBuildFolder() async throws {
+        let (project, folder) = try await opened()
+        try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
+        try "x".write(to: folder.appending(path: "build/main.aux"), atomically: false, encoding: .utf8)
+        await project.cleanBuildFolder()
+        #expect(!exists(folder.appending(path: "build")) && exists(folder.appending(path: "main.tex")))
+        #expect(project.result == nil && project.pdfURL == nil)
+    }
+
+    /// A project's open folders and folded headings come back the next time it opens.
+    @Test func theSidebarsStateIsKeptForTheProject() {
+        let id = "SidebarState \(UUID().uuidString.prefix(8))"
+        let defaults = UserDefaults.standard
+        defer { for name in ["expandedFolders", "foldedHeadings"] { defaults.removeObject(forKey: "\(name).\(id)") } }
+        let first = ProjectModel(id: id, app: app)
+        #expect(first.expandedFolders.isEmpty && first.foldedHeadings.isEmpty)
+        first.expandedFolders = ["chapters", "chapters/appendix"]
+        first.foldedHeadings = ["main.tex\t1:Methods#1"]
+        let second = ProjectModel(id: id, app: app)
+        #expect(second.expandedFolders == ["chapters", "chapters/appendix"] && second.foldedHeadings == ["main.tex\t1:Methods#1"])
+    }
+
     /// The Dock icon's menu lists the recent projects still in the library, newest first,
     /// as Pages and Xcode list their recent documents; one opens as from Home, its window
-    /// brought forward. With none, the Dock shows only its own items.
+    /// brought forward, and offers New Project…, which opens its sheet.
     @Test(.timeLimit(.minutes(1)))
     func theDockMenuOpensARecentProject() async throws {
         let first = try await project("first").info, second = try await project("second").info
@@ -504,13 +543,16 @@ final class ProjectFlowTests {
         var shown = 0
         let dock = DockMenu(app: app) { shown += 1 }
         app.recentProjects = []
-        #expect(dock.menu == nil)
+        #expect(dock.menu.items.map(\.title) == ["New Project…"])
         app.recentProjects = [second.id, "Gone", first.id]
-        let menu = try #require(dock.menu)
-        #expect(menu.items.map(\.title) == [second.name, first.name])
+        let menu = dock.menu
+        #expect(menu.items.map(\.title) == [second.name, first.name, "", "New Project…"])
+        menu.performActionForItem(at: 3)
+        #expect(shown == 1 && app.newProjectTemplate != nil)
+        app.newProjectTemplate = nil
         menu.performActionForItem(at: 1)
         try await waitUntil(timeout: .seconds(5)) { app.project?.id == first.id && app.project?.initialLoadComplete == true }
-        #expect(shown == 1 && app.recentProjects.first == first.id)
+        #expect(shown == 2 && app.recentProjects.first == first.id)
         #expect(NSApp.delegate?.responds(to: #selector(NSApplicationDelegate.applicationDockMenu(_:))) == true)
         await app.close()
     }

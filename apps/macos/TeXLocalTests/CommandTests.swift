@@ -13,6 +13,15 @@ struct MenuCommandTests {
             seen[shortcut] = command
         }
     }
+
+    /// With no project open, Find in Project… finds a project, while the window is the one in front.
+    @Test func findInProjectSearchesTheProjectsOnHome() {
+        let app = AppModel()
+        app.mainWindowIsKey = true
+        #expect(app.isEnabled(.projectSearch, on: nil) && app.title(.projectSearch, on: nil) == "Find Project…")
+        app.mainWindowIsKey = false
+        #expect(!app.isEnabled(.projectSearch, on: nil))
+    }
 }
 
 /// The running app's menu bar (HIG, The menu bar).
@@ -32,6 +41,27 @@ struct MenuStructureTests {
 
     private func item(_ title: String, in menu: NSMenu) throws -> NSMenuItem {
         try #require(all(menu).first { $0.title == title }, "\(title)")
+    }
+
+    /// The menus in the HIG's order, the Go commands in one menu, and no menu with icons on some of
+    /// a group's items and not others (HIG, Menus): macOS 27 shows the images the app asks for and
+    /// hides the system's, which the Edit menu leaves out of this.
+    @Test func theMenuBarFollowsTheGuidelines() throws {
+        let titles = try #require(NSApp.mainMenu).items.map(\.title)
+        #expect(Array(titles.dropFirst()) == ["File", "Edit", "Format", "View", "Go", "Insert", "Compile", "Window", "Help"])
+        let go = try menu("Go").items.map(\.title)
+        #expect(go.contains("Go to Line…") && go.contains("Go to PDF Position") && go.contains("Go to Previous Issue"))
+        #expect(try !all(menu("Edit")).contains { $0.title.hasPrefix("Go to") })
+        let file = try all(menu("File")).map(\.title)
+        #expect(file.contains("Export as PDF…") && !file.contains("Page Setup…"))
+        #expect(try all(menu("Compile")).contains { $0.title == "Clean Build Folder" })
+        for name in ["File", "Format", "View", "Go", "Compile"] {
+            let groups = try menu(name).items.split(whereSeparator: \.isSeparatorItem)
+            for group in groups {
+                #expect(Set(group.map { $0.image != nil && $0.preferredImageVisibility == .visible }).count == 1,
+                        "\(name): \(group.map(\.title)) \(group.map(\.preferredImageVisibility.rawValue))")
+            }
+        }
     }
 
     /// Insert's maths items say what they put in; its symbols are grids of TeX's glyphs, in full
