@@ -37,6 +37,7 @@ enum MenuCommand: String, CaseIterable {
     case viewFitPage = "view.fitPage"
     case compileRun = "compile.run"
     case compileStop = "compile.stop"
+    case compileClean = "compile.clean"
     case syncForward = "sync.forward"
     case syncInverse = "sync.inverse"
     case issueNext = "issue.next"
@@ -80,6 +81,7 @@ enum MenuCommand: String, CaseIterable {
         case .viewFitPage: "Fit Page"
         case .compileRun: "Compile"
         case .compileStop: "Stop"
+        case .compileClean: "Clean Build Folder"
         case .syncForward: "Go to PDF Position"
         case .syncInverse: "Go to Source Position"
         case .issueNext: "Go to Next Issue"
@@ -137,6 +139,8 @@ enum MenuCommand: String, CaseIterable {
         case .viewFitPage: KeyboardShortcut("9", modifiers: [.command, .option])
         case .compileRun: KeyboardShortcut(.return)
         case .compileStop: KeyboardShortcut(".")
+        // Xcode's Product › Clean Build Folder.
+        case .compileClean: KeyboardShortcut("k", modifiers: [.command, .shift])
         // As the Mac's VS Code LaTeX extension; the PDF answers a double-click for the other way.
         case .syncForward: KeyboardShortcut("j", modifiers: [.command, .option])
         // Xcode's Navigate › Jump to Next Issue.
@@ -254,12 +258,18 @@ extension AppModel {
         case .viewFitPage: requestPDF(.fitPage)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
+        case .compileClean: Task { await project?.cleanBuildFolder() }
         case .syncForward: Task { await project?.forwardSync() }
         case .syncInverse: requestPDF(.inverseFromView)
         case .issueNext: project?.goToIssue(next: true)
         case .issuePrevious: project?.goToIssue(next: false)
         }
     }
+}
+
+extension AppModel {
+    /// Live Preview runs TeXpresso, which the core found or was told where to look for.
+    var canPreviewLive: Bool { tex?.texpresso != nil }
 }
 
 struct AppCommands: Commands {
@@ -376,24 +386,16 @@ struct AppCommands: Commands {
             .disabled(project?.isLaTeX != true)
         }
         CommandMenu("Compile") {
-            items([.compileRun, .compileStop])
+            items([.compileRun, .compileStop, .compileClean])
+            Divider()
             Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
             // A mode, like the one above: checked while its window is live. Disk changes rescan on their own.
             Toggle("TeXpresso Live Preview (Experimental)", isOn: Binding(
                 get: { project?.texpresso.active == true },
                 set: { $0 ? project?.startTeXpresso() : project?.stopTeXpresso() }))
-                .disabled(project.map { !$0.initialLoadComplete || $0.texpresso.phase == .stopping } ?? true)
+                .disabled(!app.canPreviewLive || project.map { !$0.initialLoadComplete || $0.texpresso.phase == .stopping } ?? true)
             Divider()
-            // Only with a project's settings, and their engine always a choice: a
-            // selection no tag matches, nil included, is a SwiftUI fault.
-            if let project, let engine = project.settings?.engine {
-                Picker("Engine", selection: Binding(get: { engine }, set: { new in Task { await project.setEngine(new) } })) {
-                    ForEach(texEngines, id: \.0) { id, title in Text(title).tag(id) }
-                    if !texEngines.contains(where: { $0.0 == engine }) { Text(engine).tag(engine) }
-                }
-            } else {
-                Menu("Engine") { ForEach(texEngines, id: \.0) { Text($0.1) } }
-            }
+            EnginePicker(project: project)
             // The open file; the files' context menu has it for any .tex file.
             Button("Set as Main File") {
                 if let project, let path = project.openPath { Task { await project.setMainFile(path) } }

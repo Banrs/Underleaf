@@ -4,17 +4,27 @@ import SwiftUI
 /// show in the status bar and the build panel, so it doesn't repeat them.
 struct InspectorView: View {
     let project: ProjectModel
+    @Environment(AppModel.self) private var app
 
     var body: some View {
         Form {
             Section("Project") {
                 let texFiles = project.tree.flattened.filter { !$0.isDirectory && isLaTeXFile($0.path) }.map(\.path)
-                picker("Main File", project.settings?.mainFile, texFiles.map { ($0, $0) }, set: project.setMainFile)
-                picker("Engine", project.settings?.engine, texEngines, set: project.setEngine)
-                toggle("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.",
-                       project.settings?.shellEscape ?? false) { _ = await project.patchSettings(["shellEscape": $0]) }
-                toggle("Stop on First Error", "Ends the build at its first error, rather than showing them all.",
-                       project.settings?.stopOnFirstError ?? false) { _ = await project.patchSettings(["stopOnFirstError": $0]) }
+                // The current value is always a choice, before the settings come (nil) or the
+                // main file is in the file list: a selection with no tag is a SwiftUI fault.
+                let main = project.settings?.mainFile
+                Picker("Main File", selection: Binding(get: { main }, set: { new in
+                    if let new { Task.immediate { await project.setMainFile(new) } }
+                })) {
+                    ForEach(texFiles, id: \.self) { Text($0).tag(Optional($0)) }
+                    if !texFiles.contains(where: { $0 == main }) { Text(main ?? "").tag(main) }
+                }
+                EnginePicker(project: project)
+                toggle("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.", "shellEscape",
+                       project.settings?.shellEscape ?? false)
+                toggle("Stop on First Error", "Ends the build at its first error, rather than showing them all.", "stopOnFirstError",
+                       project.settings?.stopOnFirstError ?? false)
+                Button("Clean Build Folder") { Task { await project.cleanBuildFolder() } }
             }
             // Settings arrive from the core after the project opens.
             .disabled(project.settings == nil)
@@ -23,29 +33,43 @@ struct InspectorView: View {
                 Toggle(isOn: Binding(get: { project.texpresso.active },
                                      set: { $0 ? project.startTeXpresso() : project.stopTeXpresso() })) {
                     Text("TeXpresso (Experimental)")
-                    Text("Updates the preview as you type, without compiling.")
+                    Text(app.canPreviewLive ? "Updates the preview as you type, without compiling."
+                         : "Live Preview needs TeXpresso, which isn’t installed. If it is, choose its folder in Settings.")
                 }
-                .disabled(!project.initialLoadComplete || project.texpresso.phase == .stopping)
+                .disabled(!app.canPreviewLive || !project.initialLoadComplete || project.texpresso.phase == .stopping)
+                if !app.canPreviewLive {
+                    HStack {
+                        Link("Get TeXpresso…", destination: URL(string: "https://github.com/let-def/texpresso")!)
+                        Spacer()
+                        SettingsLink { Text("Open Settings…") }
+                    }
+                }
             }
         }
         .formStyle(.grouped)
     }
 
-    /// The current value is always a choice, before the settings come (nil) or the
-    /// main file is in the file list: a selection with no tag is a SwiftUI fault.
-    private func picker(_ title: String, _ value: String?, _ options: [(String, String)],
-                        set: @escaping (String) async -> Void) -> some View {
-        Picker(title, selection: Binding(get: { value }, set: { new in if let new { Task { await set(new) } } })) {
-            ForEach(options, id: \.0) { Text($0.1).tag(Optional($0.0)) }
-            if !options.contains(where: { $0.0 == value }) { Text(value ?? "").tag(value) }
-        }
-    }
-
-    private func toggle(_ title: String, _ detail: String, _ isOn: Bool,
-                        set: @escaping (Bool) async -> Void) -> some View {
-        Toggle(isOn: Binding(get: { isOn }, set: { on in Task { await set(on) } })) {
+    private func toggle(_ title: String, _ detail: String, _ key: String, _ isOn: Bool) -> some View {
+        Toggle(isOn: Binding(get: { isOn }, set: { on in Task.immediate { await project.setBuildOption([key: on]) } })) {
             Text(title)
             Text(detail)
+        }
+    }
+}
+
+/// The engine, in the inspector and the Compile menu: the current one is always a choice, as a
+/// selection no tag matches is a SwiftUI fault. A menu with no choice marked before the settings come.
+struct EnginePicker: View {
+    let project: ProjectModel?
+
+    var body: some View {
+        if let project, let engine = project.settings?.engine {
+            Picker("Engine", selection: Binding(get: { engine }, set: { new in Task.immediate { await project.setEngine(new) } })) {
+                ForEach(texEngines, id: \.0) { id, title in Text(title).tag(id) }
+                if !texEngines.contains(where: { $0.0 == engine }) { Text(engine).tag(engine) }
+            }
+        } else {
+            Menu("Engine") { ForEach(texEngines, id: \.0) { Text($0.1) } }
         }
     }
 }
