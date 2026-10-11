@@ -36,7 +36,7 @@ You also need a TeX distribution — see [Requirements](#requirements).
   taken asks Replace / Keep Both / Stop), ZIP export
 - **LaTeX editor**: autocomplete for ~140 commands and ~40 environments, `\cite{}` completion from your `.bib` files and `\ref{}` completion from your `\label{}`s. The Mac offers System, Overleaf and TeXstudio syntax colours; the browser uses CodeMirror 6. The Mac app uses the stock find bar: ⌘F to find, ⌥⌘F to find and replace
 - **Live equation preview**: a KaTeX popup at the cursor inside `$…$`, `\[…\]`, or an equation/align/cases environment
-- **Mac toolbar**: Aa for text styles, Math for formulas and symbols, and an Insert menu for figures, tables, lists, references and links, plus a PDF zoom control; the same commands are in the menu bar
+- **Mac toolbar**: Aa for text styles, Math for formulas and symbols, and an Insert menu for figures, tables, lists, references and links, plus a PDF zoom control; the same commands are in the menu bar, where File has Export as PDF… and Export Project as ZIP…, Go has Go to Line, Go to Page, Go to PDF Position, Go to Source Position and Go to Next and Previous Issue, and Compile has Clean Build Folder
 - **Web source bar**: undo/redo, text styles, math, symbols and insertions, with a project › file › section location row
 - **Auto-compile**: save-on-pause triggers a recompile; superseded runs are cancelled
 - **TeXpresso live preview** (optional, experimental): sends unsaved edits to a persistent
@@ -52,9 +52,9 @@ You also need a TeX distribution — see [Requirements](#requirements).
 - **Issues and log**: parsed errors and warnings click through to the source; raw log view
 - **PDF preview**: pinch or ⌘-scroll zoom, fit width/height, page tracking, and **Find in PDF**
 - **SyncTeX both ways**
-- **One command model** for menus, shortcuts and toolbar buttons (titles, accelerators, enabled state)
+- **One command model** for menus, shortcuts and toolbar buttons (titles, accelerators, enabled state). The Mac app's main shortcuts: ⇧⌘N new project, ⌘N new file, ⌘S save, ⌘Return compile, ⌘. stop, ⇧⌘K clean build folder, ⇧⌘F find in the project, ⌘L go to line, ⌥⌘G go to page, ⌥⌘J go to PDF position, ⌘' and ⌘" next and previous issue, ⌃⌘S sidebar, ⌥⌘P PDF, ⌥⌘I inspector, ⇧⌘L build panel
 - **Deletes go to the Trash** (Recycle Bin on Windows)
-- **Settings** (`⌘,`): the Mac app has editor font size and syntax colours, PDF paper, auto-compile, and the TeX and TeXpresso (experimental) folders (word count is in View); the browser version also has interface appearance and scaling. Per project, the TeX engine and Stop on first error
+- **Settings** (`⌘,`): the Mac app's window has five panes. General has the projects folder and the template and engine for new projects; Editor has the font, syntax colours, line numbers, closing brackets and completions; Compiling has Compile Automatically, jumping to the cursor's place after compiling and the TeX folder; PDF has the page colour; Live Preview has the TeXpresso (experimental) folder and where the preview shows (word count is in View). The browser version has interface appearance and scaling, editor font size, syntax colours, PDF paper and auto-compile. Per project, the TeX engine and Stop on first error
 
 ## Requirements
 
