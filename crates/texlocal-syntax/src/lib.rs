@@ -17,7 +17,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
-pub use complete::{Completion, Completions, SnippetField};
+pub use complete::{Completion, CompletionKind, Completions, SnippetField};
 pub use highlight::{Highlight, HighlightKind};
 pub use maths::{math_mode_at, MathPreview};
 pub use style::TextStyles;

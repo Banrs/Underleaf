@@ -13,7 +13,7 @@ struct Template {
 
 extension ProjectModel {
     func insert(_ template: Template) {
-        editor.perform(template.inline ? .inline : .block, template.body)
+        editor.perform(template.inline ? .inline : .block, template.body, title: template.title)
     }
 }
 

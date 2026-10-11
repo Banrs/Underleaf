@@ -30,10 +30,22 @@ pub struct Completion {
     pub fields: Vec<SnippetField>,
 }
 
+/// What an offer's items are, all of them: the list they were drawn from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CompletionKind {
+    Command,
+    Environment,
+    Label,
+    Citation,
+    EntryType,
+}
+
 /// Completions for the text from `start` to the caret, which they replace.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Completions {
     pub start: u32,
+    pub kind: CompletionKind,
     pub items: Vec<Completion>,
 }
 
@@ -57,28 +69,30 @@ pub fn completions(
     let from = text.lines[line].max(caret.saturating_sub(250));
     let before = String::from_utf16_lossy(&text.units[from as usize..caret as usize]);
     let catalog = &*catalog::CATALOG;
-    let offer = |start: usize, items: Vec<Completion>| {
+    let offer = |start: usize, kind: CompletionKind, items: Vec<Completion>| {
         (!items.is_empty()).then(|| Completions {
             start: from + utf16(&before[..start]) as u32,
+            kind,
             items,
         })
     };
     let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
 
     if let Some(c) = ARGUMENT.captures(&before) {
-        let names = match &c[1] {
-            c if listed(&catalog.cite_commands, c) => citations,
-            c if listed(&catalog.ref_commands, c) => labels,
-            "begin" | "end" => &catalog.environments,
+        let (names, kind) = match &c[1] {
+            c if listed(&catalog.cite_commands, c) => (citations, CompletionKind::Citation),
+            c if listed(&catalog.ref_commands, c) => (labels, CompletionKind::Label),
+            "begin" | "end" => (&catalog.environments[..], CompletionKind::Environment),
             _ => return None,
         };
         let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
-        return offer(start, words(matching(names, &before[start..], |n| n), ""));
+        let items = words(matching(names, &before[start..], |n| n), "");
+        return offer(start, kind, items);
     }
     // @article and the like, in a .bib file.
     if let Some(m) = ENTRY_TYPE.find(&before) {
         let names = matching(&catalog.bib_entry_types, &m.as_str()[1..], |t| t);
-        return offer(m.start(), words(names, "@"));
+        return offer(m.start(), CompletionKind::EntryType, words(names, "@"));
     }
     // \command, once a letter follows the backslash.
     let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
@@ -93,7 +107,7 @@ pub fn completions(
             }
         })
         .collect();
-    offer(m.start(), items)
+    offer(m.start(), CompletionKind::Command, items)
 }
 
 /// Literal names, with `@` prefixed for bibliography entry types.
@@ -207,6 +221,23 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(0, 2, 0), (6, 0, 1), (6, 1, 2), (7, 2, 0), (9, 0, 3)]
         );
+    }
+
+    #[test]
+    fn an_offer_says_what_its_items_are() {
+        use crate::CompletionKind::*;
+        let kind = |before: &str| {
+            let (labels, citations) = (["sec:a".to_owned()], ["knuth84".to_owned()]);
+            let caret = before.encode_utf16().count() as u32;
+            SourceDocument::new(before)
+                .completions(caret, false, &labels, &citations)
+                .map(|offer| offer.kind)
+        };
+        assert_eq!(kind("\\sec"), Some(Command));
+        assert_eq!(kind("\\begin{ite"), Some(Environment));
+        assert_eq!(kind("\\ref{"), Some(Label));
+        assert_eq!(kind("\\cite{kn"), Some(Citation));
+        assert_eq!(kind("@art"), Some(EntryType));
     }
 
     #[test]

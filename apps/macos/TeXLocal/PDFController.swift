@@ -543,7 +543,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     }
 }
 
-/// Double-click inverse search runs after PDFKit selects the clicked word.
+/// A Command-click goes to the source, as one in the source comes here.
 final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var onInverse: (_ page: Int, _ point: CGPoint, _ word: SyncTeXWord?) -> Void = { _, _, _ in }
     var onResize: () -> Void = {}
@@ -768,8 +768,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     override func mouseDown(with event: NSEvent) {
-        super.mouseDown(with: event)
-        if event.clickCount == 2 { goToSource(at: convert(event.locationInWindow, from: nil)) }
+        guard event.modifierFlags.contains(.command) else { return super.mouseDown(with: event) }
+        goToSource(at: convert(event.locationInWindow, from: nil))
     }
 
     /// Edit › Find › Jump to Selection, which PDFKit leaves to text views: the selection in the

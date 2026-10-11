@@ -46,6 +46,8 @@ final class MathPopover {
         popover.show(relativeTo: wanted.rect, of: wanted.view, preferredEdge: wanted.edge)
     }
 
+    var isShown: Bool { wanted != nil }
+
     func close() {
         wanted = nil
         if popover.isShown { popover.close() }

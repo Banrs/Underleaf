@@ -143,6 +143,8 @@ nonisolated struct Insertion: Decodable {
 /// Completions for the text from `start` to the caret, which they replace.
 nonisolated struct Completions: Decodable {
     var start: Int
+    /// What every item is: the list the core drew them from.
+    var kind: CompletionKind
     var items: [Completion]
 }
 

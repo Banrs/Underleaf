@@ -296,7 +296,7 @@ struct PDFFindTests {
     private func select(_ word: String, onPage index: Int, in controller: PDFController) throws {
         let page = try #require(controller.view.document?.page(at: index))
         let range = ((page.string ?? "") as NSString).range(of: word)
-        controller.view.setCurrentSelection(try #require(page.selection(for: range)), animate: false)
+        controller.view.setCurrentSelection(page.selection(for: range), animate: false)
     }
 
     /// Use Selection for Find makes the selection the system's find text and marks its

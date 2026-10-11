@@ -34,6 +34,8 @@ enum MenuCommand: String, CaseIterable {
     case viewActualSize = "view.actualSize"
     case viewFitWidth = "view.fitWidth"
     case viewFitPage = "view.fitPage"
+    case viewTextBigger = "view.textBigger"
+    case viewTextSmaller = "view.textSmaller"
     case compileRun = "compile.run"
     case compileStop = "compile.stop"
     case compileClean = "compile.clean"
@@ -77,6 +79,9 @@ enum MenuCommand: String, CaseIterable {
         case .viewActualSize: "Actual Size"
         case .viewFitWidth: "Fit Width"
         case .viewFitPage: "Fit Page"
+        // Safari's names for them, beside its Zoom In and Zoom Out.
+        case .viewTextBigger: "Make Text Bigger"
+        case .viewTextSmaller: "Make Text Smaller"
         case .compileRun: "Compile"
         case .compileStop: "Stop"
         case .compileClean: "Clean Build Folder"
@@ -130,11 +135,13 @@ enum MenuCommand: String, CaseIterable {
         case .viewActualSize: KeyboardShortcut("0")
         case .viewFitWidth: KeyboardShortcut("9")
         case .viewFitPage: KeyboardShortcut("9", modifiers: [.command, .option])
+        case .viewTextBigger: KeyboardShortcut("=", modifiers: [.command, .option])
+        case .viewTextSmaller: KeyboardShortcut("-", modifiers: [.command, .option])
         case .compileRun: KeyboardShortcut(.return)
         case .compileStop: KeyboardShortcut(".")
         // Xcode's Product › Clean Build Folder.
         case .compileClean: KeyboardShortcut("k", modifiers: [.command, .shift])
-        // As the Mac's VS Code LaTeX extension; the PDF answers a double-click for the other way.
+        // As the Mac's VS Code LaTeX extension; a Command-click goes either way.
         case .syncForward: KeyboardShortcut("j", modifiers: [.command, .option])
         // Xcode's Navigate › Jump to Next Issue.
         case .issueNext: KeyboardShortcut("'")
@@ -170,7 +177,8 @@ extension AppModel {
         case .projectNew, .projectOpen: libraryProblem == nil
         // On Home, the search of the projects.
         case .projectSearch: project != nil || (self.project == nil && mainWindowIsKey)
-        case .fileSave, .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine:
+        case .fileSave, .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine,
+             .viewTextBigger, .viewTextSmaller:
             project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .compileStop: project?.compiling == true
@@ -250,6 +258,8 @@ extension AppModel {
         case .viewActualSize: requestPDF(.actualSize)
         case .viewFitWidth: requestPDF(.fitWidth)
         case .viewFitPage: requestPDF(.fitPage)
+        case .viewTextBigger: EditorPrefs.stepFontSize(by: 1)
+        case .viewTextSmaller: EditorPrefs.stepFontSize(by: -1)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
         case .compileClean: Task { await project?.cleanBuildFolder() }
@@ -352,6 +362,9 @@ struct AppCommands: Commands {
             items([.viewTogglePdf, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
             Divider()
             items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage])
+            Divider()
+            // The source's, as Settings sets it; the zoom above is the PDF's.
+            items([.viewTextBigger, .viewTextSmaller])
         }
         // The app's own menus go between View and Window (HIG, The menu bar).
         CommandMenu("Go") {
