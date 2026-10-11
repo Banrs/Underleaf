@@ -367,7 +367,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 struct EditorView: NSViewRepresentable {
     let editor: SourceEditor
     let shown: Bool
+    let fontName: String
     let fontSize: Int
+    let lineNumbers: Bool
     let syntaxTheme: SyntaxTheme
 
     func makeNSView(context: Context) -> SourceTextView { editor.textView }
@@ -380,6 +382,8 @@ struct EditorView: NSViewRepresentable {
     func updateNSView(_ view: SourceTextView, context: Context) {
         // A new size only: setting one builds the font to compare.
         if editor.textView.fontSize != CGFloat(fontSize) { editor.textView.fontSize = CGFloat(fontSize) }
+        editor.textView.fontName = fontName
+        editor.textView.showsLineNumbers = lineNumbers
         editor.textView.syntaxTheme = syntaxTheme
         if editor.shown != shown { editor.shown = shown }
     }
@@ -396,6 +400,13 @@ enum EditorCommand {
 enum EditorPrefs {
     static let fontSizeKey = "editorFontSize", spellCheckKey = "editorSpellCheck", syntaxThemeKey = "editorSyntaxTheme"
     static let fontSize = Int(NSFont.systemFontSize)
+    /// A fixed-pitch family's name; empty, the system's monospaced font.
+    static let fontNameKey = "editorFontName", lineNumbersKey = "editorLineNumbers"
+    static let autoPairKey = "editorAutoPair", autoCompleteKey = "editorAutoComplete"
+
+    /// Settings › Editor › Typing, read as a key is typed; both on at first.
+    static var autoPair: Bool { UserDefaults.standard.object(forKey: autoPairKey) as? Bool ?? true }
+    static var autoComplete: Bool { UserDefaults.standard.object(forKey: autoCompleteKey) as? Bool ?? true }
 
     /// Edit › Spelling and Grammar › Check Spelling While Typing, as last set; on at first.
     static var spellCheck: Bool {
