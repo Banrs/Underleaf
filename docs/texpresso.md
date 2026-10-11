@@ -30,13 +30,25 @@ tools/texpresso/build.sh            # checks out into tools/texpresso/source
 
 then `tools/texpresso/install.sh tools/texpresso/source/build`, which installs it where the
 Mac app finds it on its own (or choose `tools/texpresso/source/build` in Settings). The patch
-(`tools/texpresso/underleaf-pdf.patch`, MIT like TeXpresso) only acts when
-`TEXPRESSO_PDF_OUTPUT` is set: TeXpresso then runs the document to its end,
-writes every page there with MuPDF's PDF writer (to a `.part` file, renamed when
-complete), with TeX's Type 1 fonts as CFF copies so PDFKit draws them, writes its
-SyncTeX beside it (`live.synctex`), reports `["pdf", path, pages]` on its editor
-protocol, opens no window, and quits when its input closes. The Mac app asks for
-this unless Settings › Live Preview In is TeXpresso Window; the browser client doesn't.
+(`tools/texpresso/underleaf-pdf.patch`, MIT like TeXpresso) acts when
+`TEXPRESSO_PDF_OUTPUT` is set: TeXpresso then opens no window and quits when its input
+closes. The app tells it which pages its pane shows (`["view", first, last]`); a change is
+typeset as far as those, and each of them that changed is written at once with MuPDF's PDF
+writer as a one-page PDF beside the document and reported (`["page", index, path, edit]`),
+with TeX's Type 1 fonts as CFF copies so PDFKit draws them. The rest of the document is
+typeset when typing pauses; then the whole document is written (to a `.part` file, renamed
+when complete) with its SyncTeX beside it (`live.synctex`) and reported with the pages that
+changed and whether TeX reached the document's end or stopped on an error
+(`["pdf", path, pages, run, changed, edit]`). References and contents are brought up to date
+by finishing passes in a second TeX, which takes the first one's place when it is done and
+is dropped by a keystroke. The Mac app asks for this unless Settings › Live Preview In is
+TeXpresso Window; the browser client doesn't. The core hands the pages on through
+`texpresso_wait` and takes keystrokes through `texpresso_edit`; in TeXpresso's own window
+a finishing pass runs only when asked for (`texpresso_rerun`).
+
+With or without the variable, the patch leaves TeX Live's `doc` and `source` folders out of
+the files TeX can read: TeXpresso had found a package's example `color.cfg`, `graphics.cfg`
+or `hyperref.cfg` there before the real one, so `hyperref` links raised "Undefined color".
 
 Point the app at the executable without changing your system installation:
 

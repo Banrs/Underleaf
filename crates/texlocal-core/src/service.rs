@@ -450,13 +450,58 @@ impl Service {
                     arg::<Option<String>>(args, "session")?.as_deref(),
                     &self.tool_paths().1,
                     // The Mac app shows the document in its PDF pane.
-                    arg::<Option<bool>>(args, "pdf")?.unwrap_or(false),
+                    arg::<Option<bool>>(args, "pdf")?
+                        .unwrap_or(false)
+                        .then(|| -> Result<_, CoreError> {
+                            Ok(crate::texpresso::Pane {
+                                view: arg(args, "view")?,
+                                caret: arg(args, "caret")?,
+                            })
+                        })
+                        .transpose()?
+                        .as_ref(),
                 )
                 .await?),
-            // Per keystroke: no settings or PATH to read.
             "texpresso_update" => out(self
                 .texpresso
-                .update(&root()?, s("path")?, s("text")?, s("session")?)
+                .update(
+                    &root()?,
+                    s("path")?,
+                    s("text")?,
+                    s("session")?,
+                    arg::<Option<bool>>(args, "brief")?.unwrap_or(false),
+                )
+                .await?),
+            // Per keystroke, where the editor makes the edit: the session's token finds it,
+            // with no project folder, settings or PATH to read.
+            "texpresso_edit" => Ok(json!({ "edit": self.texpresso.edit(
+                s("session")?,
+                s("path")?,
+                arg(args, "start")?,
+                arg(args, "remove")?,
+                s("text")?,
+            )? })),
+            "texpresso_view" => {
+                out(self
+                    .texpresso
+                    .view(s("session")?, arg(args, "first")?, arg(args, "last")?)?)
+            }
+            "texpresso_caret" => {
+                out(self
+                    .texpresso
+                    .caret(s("session")?, s("path")?, arg(args, "offset")?)?)
+            }
+            "texpresso_rerun" => out(self.texpresso.rerun(s("session")?)?),
+            "texpresso_wait" => out(self
+                .texpresso
+                .wait(
+                    &root()?,
+                    s("session")?,
+                    arg::<Option<u64>>(args, "after")?.unwrap_or(0),
+                    std::time::Duration::from_millis(
+                        arg::<Option<u64>>(args, "timeout")?.unwrap_or(30_000),
+                    ),
+                )
                 .await?),
             "texpresso_stop" => {
                 let token = if arg::<Option<bool>>(args, "global")?.unwrap_or(false) {
