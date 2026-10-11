@@ -703,8 +703,9 @@ struct SourceEditorTests {
         let background = resolved(.textBackgroundColor)
         for theme in SyntaxTheme.allCases {
             let c = theme.colours
-            for color in [c.command, c.keyword, c.argument, c.maths, c.comment, c.invalid].map(resolved) {
-                #expect(color.contrast(with: background) >= (appearance.increasesContrast ? 7 : 4.5), "\(theme) \(color)")
+            // By the name: an Increase Contrast appearance made here is the plain one, the setting being off.
+            for color in [c.command, c.keyword, c.argument, c.maths, c.comment, c.invalid].map({ $0.legibleAsText(in: name) }) {
+                #expect(color.contrast(with: background) >= ([.aqua, .darkAqua].contains(name) ? 4.5 : 7), "\(theme) \(color)")
             }
         }
         // Overleaf's Light commands, at 8.6:1, are its own blue.

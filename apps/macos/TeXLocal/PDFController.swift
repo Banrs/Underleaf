@@ -746,7 +746,7 @@ private final class MarkView: NSView {
     override func updateLayer() {
         let find = NSColor.findHighlightColor
         layer?.backgroundColor = find.withAlphaComponent(0.4).cgColor
-        layer?.borderColor = effectiveAppearance.increasesContrast
+        layer?.borderColor = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
             ? find.contrasting(with: paper, by: 3).cgColor : find.withAlphaComponent(0.2).cgColor
         layer?.borderWidth = 1
     }

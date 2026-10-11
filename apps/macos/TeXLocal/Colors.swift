@@ -37,19 +37,22 @@ extension NSColor {
     /// to the HIG's 4.5:1 for text under 18 points, and to WCAG's enhanced 7:1 with Increase Contrast.
     var legibleAsText: NSColor {
         let names: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
-        var resolved: [NSAppearance.Name: NSColor] = [:]
-        for name in names {
-            guard let appearance = NSAppearance(named: name) else { continue }
-            let background = NSColor.textBackground(in: appearance)
-            var color = self
-            appearance.performAsCurrentDrawingAppearance { color = usingColorSpace(.sRGB) ?? self }
-            // A translucent colour (a label's) as it shows on the background.
-            if color.alphaComponent < 1 {
-                color = background.blended(withFraction: color.alphaComponent, of: color.withAlphaComponent(1)) ?? color
-            }
-            resolved[name] = color.contrasting(with: background, by: appearance.increasesContrast ? 7 : 4.5)
-        }
+        let resolved = Dictionary(uniqueKeysWithValues: names.map { ($0, legibleAsText(in: $0)) })
         return NSColor(name: nil) { [resolved] in $0.bestMatch(from: names).flatMap { resolved[$0] } ?? self }
+    }
+
+    /// `legibleAsText` in one appearance. An Increase Contrast appearance asked for by name is the
+    /// plain one's unless the setting is on, so its ratio goes by the name.
+    func legibleAsText(in name: NSAppearance.Name) -> NSColor {
+        guard let appearance = NSAppearance(named: name) else { return self }
+        let background = NSColor.textBackground(in: appearance)
+        var color = self
+        appearance.performAsCurrentDrawingAppearance { color = usingColorSpace(.sRGB) ?? self }
+        // A translucent colour (a label's) as it shows on the background.
+        if color.alphaComponent < 1 {
+            color = background.blended(withFraction: color.alphaComponent, of: color.withAlphaComponent(1)) ?? color
+        }
+        return color.contrasting(with: background, by: [.aqua, .darkAqua].contains(name) ? 4.5 : 7)
     }
 
     /// The system's text background as it is in an appearance.
@@ -64,12 +67,4 @@ extension NSColor {
     /// The text background, resolved for each appearance: PDFKit tints a system colour it's
     /// given with the wallpaper, as Preview's canvas, which would set it a shade apart from the editor's.
     static let untintedTextBackground = NSColor(name: nil, dynamicProvider: textBackground(in:))
-}
-
-extension NSAppearance {
-    /// Increase Contrast is on: its appearances answer only `bestMatch(from:)`.
-    var increasesContrast: Bool {
-        let all: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
-        return bestMatch(from: all).map([.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua].contains) == true
-    }
 }
