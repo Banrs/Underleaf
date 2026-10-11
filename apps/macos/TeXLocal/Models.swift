@@ -43,6 +43,8 @@ nonisolated extension String {
 
 nonisolated struct TexStatus: Decodable {
     let available: Bool
+    /// latexmk's own version line.
+    var version: String?
     /// The TeX folder chosen in Settings; nil finds TeX automatically.
     var texDir: String?
     /// The folder latexmk runs from.
