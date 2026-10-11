@@ -101,6 +101,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         loading = false
         document = SourceDocument(text: text)
         lastMath = nil
+        dismissedMath = nil
         snippet = nil
         closers.removeAll()
         closeCompletions()
@@ -616,6 +617,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     /// focus and completions ask again for the same, and only its place changes.
     private var lastMath: (caret: Int, edits: Int, value: MathPreview?)?
     private var edits = 0
+    /// Where the maths starts whose preview Escape dismissed, while the caret stays in it.
+    private var dismissedMath: Int?
 
     private func math(at caret: Int) -> MathPreview? {
         if let lastMath, lastMath.caret == caret, lastMath.edits == edits { return lastMath.value }
@@ -627,8 +630,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     /// Preview maths at the caret only while the caret is visible and focused:
     /// over its line, as Overleaf's, or under it while completions show over it.
     func previewMath() {
-        guard let window, hasKeyboard, !loading,
-              let maths = math(at: selectedRange().location),
+        let maths = loading ? nil : math(at: selectedRange().location)
+        if maths?.start != dismissedMath { dismissedMath = nil }
+        guard let window, hasKeyboard, let maths, dismissedMath == nil,
               let clip = enclosingScrollView?.contentView else {
             mathPopover?.close()
             return
@@ -729,11 +733,20 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let selection = selectedRange()
         let text = self.string as NSString
         let next = character(at: selection.location)
-        if selection.length == 0, Self.pairs.values.contains(c), next == c, closers.contains(selection.location) {
-            closers.remove(selection.location)
-            setSelectedRange(NSRange(location: selection.location + 1, length: 0))
-            showPartner(of: selection.location)
-            return
+        if selection.length == 0, next == c, closers.contains(selection.location) {
+            if Self.pairs.values.contains(c) {
+                closers.remove(selection.location)
+                setSelectedRange(NSRange(location: selection.location + 1, length: 0))
+                showPartner(of: selection.location)
+                return
+            }
+            // The backslash of a closer put in as \] or \}: the bracket after it is stepped over next.
+            if c == "\\", character(at: selection.location + 1).map(Self.pairs.values.contains) == true {
+                closers.remove(selection.location)
+                closers.insert(selection.location + 1)
+                setSelectedRange(NSRange(location: selection.location + 1, length: 0))
+                return
+            }
         }
         if EditorPrefs.autoPair, let close = Self.pairs[c] {
             if selection.length > 0 {
@@ -743,7 +756,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
                 return
             }
             if next.map({ $0.isWhitespace || Self.closeBefore.contains($0) }) ?? true {
-                super.insertText("\(c)\(close)", replacementRange: selection)
+                // \[ closes with \], \{ with \} and \( with \).
+                super.insertText(isEscaped(selection.location) ? "\(c)\\\(close)" : "\(c)\(close)", replacementRange: selection)
                 closers.insert(selection.location + 1)
                 setSelectedRange(NSRange(location: selection.location + 1, length: 0))
                 offerCompletions()
@@ -753,6 +767,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         super.insertText(string, replacementRange: replacementRange)
         if Self.pairs.values.contains(c) { showPartner(of: selectedRange().location - 1) }
         offerCompletions()
+    }
+
+    /// Whether the character at `at` follows an unescaped backslash, as the bracket of `\[` does.
+    private func isEscaped(_ at: Int) -> Bool {
+        let text = string as NSString
+        var slashes = 0
+        while at - slashes > 0, text.character(at: at - slashes - 1) == 0x5C { slashes += 1 }
+        return slashes % 2 == 1
+    }
+
+    /// How long the closer after the caret is, between an empty pair: 1, or 2 between `\[` and `\]`.
+    private func closer(after caret: Int) -> Int? {
+        guard let close = character(at: caret - 1).flatMap({ Self.pairs[$0] }) else { return nil }
+        if character(at: caret) == close { return 1 }
+        return isEscaped(caret - 1) && character(at: caret) == "\\" && character(at: caret + 1) == close ? 2 : nil
     }
 
     /// Delete an empty bracket pair or backspace to the last indent stop;
@@ -767,8 +796,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let selection = selectedRange(), text = string as NSString
         guard selection.length == 0, selection.location > 0, selectedRanges.count == 1 else { return super.deleteBackward(sender) }
         let caret = selection.location
-        if EditorPrefs.autoPair, let before = character(at: caret - 1), let close = Self.pairs[before], character(at: caret) == close {
-            insertText("", replacementRange: NSRange(location: caret - 1, length: 2))
+        // Only a closer this view put in goes with its bracket.
+        if EditorPrefs.autoPair, closers.contains(caret), let closer = closer(after: caret) {
+            insertText("", replacementRange: NSRange(location: caret - 1, length: 1 + closer))
             return
         }
         let lineStart = text.lineRange(for: NSRange(location: caret, length: 0)).location
@@ -790,8 +820,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let lineText = text.substring(with: line).trimmingCharacters(in: .newlines)
         let indent = String(lineText.prefix { $0 == " " || $0 == "\t" })
         let lineEnd = line.location + (lineText as NSString).length
-        let between = range.length == 0 && range.location > 0 && range.location < text.length
-            && ["()", "[]", "{}"].contains(text.substring(with: NSRange(location: range.location - 1, length: 2)))
+        let between = range.length == 0 && closer(after: range.location) != nil
         var insert = "\n" + indent
         if between {
             insert += "\n" + indent
@@ -829,14 +858,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         EditorPrefs.spellCheck = isContinuousSpellCheckingEnabled
     }
 
+    /// Escape ends a snippet, or dismisses the maths preview until the caret leaves that maths, or
+    /// asks for completions, as Xcode's; it never goes on to the window, which would leave full screen.
     override func cancelOperation(_ sender: Any?) {
         if snippet != nil {
             snippet = nil
-            return
+        } else if mathPopover?.isShown == true, let maths = math(at: caret) {
+            dismissedMath = maths.start
+            mathPopover?.close()
+        } else {
+            complete(explicit: true)
         }
-        // NSTextView doesn't implement it, so super would throw; pass it on as NSResponder would
-        // have (the window's, which leaves full screen).
-        nextResponder?.tryToPerform(#selector(cancelOperation(_:)), with: sender)
     }
 
     // MARK: completion: the core's items in a list under the caret

@@ -71,10 +71,55 @@ struct SourceEditorTests {
         text.setSelectedRange(NSRange(location: 0, length: 2))
         text.insertText("[", replacementRange: typed)
         #expect(text.string == "[ab]" && text.selectedRange() == NSRange(location: 1, length: 2))
-        // An empty pair goes as one.
-        open("{}", caret: 1)
+        // An empty pair the editor closed goes as one; one that was there loses only its bracket.
+        open("")
+        text.insertText("{", replacementRange: typed)
         text.deleteBackward(nil)
         #expect(text.string == "")
+        open("{}", caret: 1)
+        text.deleteBackward(nil)
+        #expect(text.string == "}")
+    }
+
+    /// After a backslash a bracket closes with a backslash too, and both of the closer's
+    /// characters are stepped over; an escaped backslash before it is a line break's.
+    @Test func escapedBracketsCloseEscaped() {
+        open("\\")
+        text.insertText("[", replacementRange: typed)
+        #expect(text.string == "\\[\\]" && text.selectedRange() == NSRange(location: 2, length: 0))
+        text.insertText("x", replacementRange: typed)
+        text.insertText("\\", replacementRange: typed)
+        text.insertText("]", replacementRange: typed)
+        #expect(text.string == "\\[x\\]" && text.selectedRange() == NSRange(location: 5, length: 0))
+        open("\\")
+        text.insertText("{", replacementRange: typed)
+        #expect(text.string == "\\{\\}")
+        text.deleteBackward(nil)
+        #expect(text.string == "\\")
+        open("\\")
+        text.insertText("[", replacementRange: typed)
+        text.insertNewline(nil)
+        #expect(text.string == "\\[\n\n\\]" && text.selectedRange() == NSRange(location: 3, length: 0))
+        open("\\\\")
+        text.insertText("[", replacementRange: typed)
+        #expect(text.string == "\\\\[]")
+    }
+
+    /// Escape ends a snippet's fields, opens the list where there's something to complete, and
+    /// is never passed on: the window would leave full screen.
+    @Test func escapeStaysInTheEditor() throws {
+        final class Catcher: NSResponder {
+            var cancelled = false
+            override func cancelOperation(_ sender: Any?) { cancelled = true }
+        }
+        let catcher = Catcher()
+        text.nextResponder = catcher
+        open("plain")
+        text.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(!catcher.cancelled && text.offered == nil)
+        open("\\be")
+        text.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(!catcher.cancelled && text.offered != nil)
     }
 
     /// Settings' two typing switches, off: a bracket goes in alone and comes out alone, and
