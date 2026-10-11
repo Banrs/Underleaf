@@ -108,12 +108,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         self.home = home
     }
 
-    /// Keeps the window's frame, which a new content view controller resets. Home and a project
-    /// cross-fade, toolbar and all: whatever changes in the window's frame view this turn.
+    /// Keeps the window's frame, which a new content view controller resets.
     private func setContent(_ controller: NSViewController) {
         guard let window else { return }
         controller.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
-        if window.isVisible { window.contentView?.superview?.layer?.add(CATransition(), forKey: nil) }
         window.contentViewController = controller
     }
 

@@ -327,6 +327,7 @@ struct AppCommands: Commands {
             Divider()
             // These act on the chosen item of the list with the keyboard.
             ItemMenuItems(actions: app.mainWindowIsKey ? app.chosenItem : nil, trashShortcut: KeyboardShortcut(.delete))
+                .labelStyle(.titleAndIcon)
         }
         CommandGroup(replacing: .importExport) {
             items([.pdfSave, .projectExport])

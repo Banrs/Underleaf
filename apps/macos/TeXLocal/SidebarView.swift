@@ -227,6 +227,14 @@ struct FilesList: View {
                 } else {
                     Text(node.name).truncationMode(.middle)
                 }
+                if isMain {
+                    Spacer()
+                    Image(systemName: "star.fill")
+                        .foregroundStyle(.yellow)
+                        .imageScale(.small)
+                        .help("Main File")
+                        .accessibilityHidden(true)
+                }
             }
         } icon: {
             Image(systemName: fileSymbol(node.path, directory: node.isDirectory))
@@ -234,7 +242,8 @@ struct FilesList: View {
         // The whole row a drop target, not only its name.
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
-        .badge(isMain ? Text("Main") : nil)
+        // The star's name too: the row's label replaces its children's.
+        .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
         // Into the folder dropped on, or the dropped-on file's folder.
         .fileDrop(moves: { project.projectPath($0) != nil }) { urls in
             let folder = node.isDirectory ? node.path : node.path.parentFolder
@@ -399,14 +408,7 @@ struct OutlineList: View {
             // A step under the files' rows: a table of contents under a list.
             .environment(\.sidebarRowSize, rowSize == .large ? .medium : .small)
             .overlay {
-                if outline.isEmpty {
-                    VStack(spacing: 2) {
-                        Text("No Sections").foregroundStyle(.secondary)
-                        Text(verbatim: "Headings such as \\section appear here.").font(.caption).foregroundStyle(.tertiary)
-                    }
-                    .multilineTextAlignment(.center)
-                    .padding()
-                }
+                if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") }
             }
             // Return or a double-click goes into the source there, as in the search results.
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in

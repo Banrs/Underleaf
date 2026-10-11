@@ -251,12 +251,13 @@ struct ItemMenuItems: View {
     var trashShortcut: KeyboardShortcut?
 
     var body: some View {
-        Button("Rename") { actions?.rename() }
+        // The standard icons (HIG, Icons), which show where the menu's label style has them: File's.
+        Button { actions?.rename() } label: { Label("Rename", systemImage: "pencil") }
             .disabled(actions == nil)
-        Button("Show in Finder") { actions?.showInFinder() }
+        Button { actions?.showInFinder() } label: { Label("Show in Finder", systemImage: "folder") }
             .disabled(actions == nil)
         Divider()
-        Button("Move to Trash") { actions?.moveToTrash() }
+        Button { actions?.moveToTrash() } label: { Label("Move to Trash", systemImage: "trash") }
             .keyboardShortcut(trashShortcut)
             .disabled(actions == nil)
     }

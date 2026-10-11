@@ -19,14 +19,19 @@ struct StatusBar: View {
             content(.symbols).labelStyle(.iconOnly)
             content(.short).labelStyle(.iconOnly)
         }
-        .padding(.horizontal)
+        // Xcode's bar, measured (2026-10-06): 36 pt under its hairline, 14 pt in to the first
+        // item, the toggle's symbol 17.5 pt from the right edge.
+        .padding(.leading, 14)
+        .padding(.trailing, 16.5)
         .frame(height: Self.height)
+        // The window's lines are a device pixel, as its splits' dividers; this one in a row of
+        // its own over the bar, the row of the line over the File Outline's header beside it.
+        .padding(.top, 1 / displayScale)
         // The editors' colour, so the bar is one surface with them and with the build panel, washed
         // over its accessory's scroll edge (`buildArea`), which blurs what scrolls beneath: alone,
         // AppKit's edge is a lighter strip over a dark editor (38 over 30), with no line. The wash
         // is the hard scroll edge's own, the window's colour at 85%.
         .background(.textSurface.opacity(0.85))
-        // The window's lines are a device pixel, as its splits' dividers.
         .overlay(alignment: .top) { Rectangle().fill(.separator).frame(height: 1 / displayScale) }
         .font(.subheadline)
         .monospacedDigit()
@@ -41,7 +46,8 @@ struct StatusBar: View {
     private nonisolated enum Detail { case full, symbols, short }
 
     private func content(_ detail: Detail) -> some View {
-        HStack {
+        // Xcode's hairline before the toggle, 9 pt either side.
+        HStack(spacing: 9) {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
             Button {
@@ -112,10 +118,11 @@ struct StatusBar: View {
                 }
             }
             .fixedSize()
-            // As tall as the toggle's symbol.
+            // Xcode's: as tall as the toggle's symbol.
             if project.editsText || pages { Divider().frame(height: 12) }
             Toggle(isOn: $project.showLogs) {
-                // Only as tall as the HIG's least target, its symbol at the body size beside the bar's text.
+                // Only as tall as the HIG's least target: its symbol sits at Xcode's gaps, at the body
+                // size, the nearest to Xcode's 12.5 pt symbol beside 11 pt text (measured 2026-10-06).
                 Label("Build Panel", systemImage: "inset.filled.bottomthird.square")
                     .font(.body)
                     .frame(minHeight: 20)

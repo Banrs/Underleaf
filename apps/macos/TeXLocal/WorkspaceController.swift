@@ -221,6 +221,7 @@ final class WorkspaceController: RestoredSplitViewController {
         sidebar.header = outlineBar
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
+        sidebarItem.minimumThickness = ColumnMetrics.sidebarMinimum
         sidebarItem.isCollapsed = !app.sidebarVisible
         sidebarSearch = accessory(SearchField(text: Bindable(project).searchQuery, prompt: "Search Project", handle: searchField))
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
@@ -698,16 +699,20 @@ class HairlineSplitView: NSSplitView {
 /// Source | PDF. The status bar spans both panes as one bar, so their divider stops at its top.
 private final class ColumnsSplitView: HairlineSplitView {
     override func drawDivider(in rect: NSRect) {
+        // The bar and the line over it.
+        let bar = StatusBar.height + 1 / (window?.backingScaleFactor ?? 2)
         var shown = rect
-        shown.size.height -= StatusBar.height
-        if isFlipped == false { shown.origin.y += StatusBar.height }
+        shown.size.height -= bar
+        if isFlipped == false { shown.origin.y += bar }
         super.drawDivider(in: shown)
     }
 
     /// A double-click on the divider brings the first split back. The items' preferred
     /// fractions, AppKit's own way, land it somewhere else each time (27.2).
     override func mouseDown(with event: NSEvent) {
-        guard event.clickCount == 2, arrangedSubviews.allSatisfy({ !isSubviewCollapsed($0) }) else {
+        // On the divider, which takes presses 2 pt either side of its line: a pane passes up its own.
+        let past = convert(event.locationInWindow, from: nil).x - (arrangedSubviews.first?.frame.maxX ?? 0)
+        guard event.clickCount == 2, -2...dividerThickness + 2 ~= past, arrangedSubviews.allSatisfy({ !isSubviewCollapsed($0) }) else {
             return super.mouseDown(with: event)
         }
         setPosition(((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded(), ofDividerAt: 0)
@@ -743,8 +748,9 @@ private final class SidebarSplitViewController: RestoredSplitViewController {
 /// Pane sizes, from what each pane shows. The toolbar's sections are AppKit's layout of them
 /// (27.2), measured, for Compile's word alone (`fitToolbar`): it has no API that tells them.
 enum ColumnMetrics {
-    /// Xcode's navigator, at its default width.
+    /// Xcode's navigator: its default width, and its narrowest.
     static let sidebarIdeal: CGFloat = 256
+    static let sidebarMinimum: CGFloat = 222
     /// The window controls and the sidebar toggle, over the source while the sidebar is hidden.
     static let windowControls: CGFloat = 132
     /// The PDF and Inspector toggles, over the inspector or, without it, the last pane.
