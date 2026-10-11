@@ -33,9 +33,23 @@ extension NSColor {
         return mixed
     }
 
-    /// `contrasting(with:by:)` on the text's background in that appearance.
-    func contrasting(in appearance: NSAppearance.Name, by ratio: CGFloat) -> NSColor {
-        contrasting(with: NSAppearance(named: appearance).map(NSColor.textBackground(in:)) ?? .white, by: ratio)
+    /// This colour as text on the text's background: in each appearance raised, by `contrasting`,
+    /// to the HIG's 4.5:1 for text under 18 points, and to WCAG's enhanced 7:1 with Increase Contrast.
+    var legibleAsText: NSColor {
+        let names: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
+        var resolved: [NSAppearance.Name: NSColor] = [:]
+        for name in names {
+            guard let appearance = NSAppearance(named: name) else { continue }
+            let background = NSColor.textBackground(in: appearance)
+            var color = self
+            appearance.performAsCurrentDrawingAppearance { color = usingColorSpace(.sRGB) ?? self }
+            // A translucent colour (a label's) as it shows on the background.
+            if color.alphaComponent < 1 {
+                color = background.blended(withFraction: color.alphaComponent, of: color.withAlphaComponent(1)) ?? color
+            }
+            resolved[name] = color.contrasting(with: background, by: appearance.increasesContrast ? 7 : 4.5)
+        }
+        return NSColor(name: nil) { [resolved] in $0.bestMatch(from: names).flatMap { resolved[$0] } ?? self }
     }
 
     /// The system's text background as it is in an appearance.

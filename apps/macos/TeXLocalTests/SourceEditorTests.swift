@@ -621,7 +621,7 @@ struct SourceEditorTests {
         #expect(try colour(of: "% note") == SyntaxTheme.texstudio.colours.comment)
         let before = try renderedText()
         text.syntaxTheme = .system
-        try await waitUntil { (try? self.colour(of: "\\section")) == NSColor.systemPink } state: {
+        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.system.colours.command } state: {
             "System: \(String(describing: try? self.colour(of: "\\section")))"
         }
         #expect(try renderedText() != before, "A theme change must repaint the already-visible text.")
@@ -629,28 +629,25 @@ struct SourceEditorTests {
         try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.colours.command }
     }
 
-    /// With Increase Contrast every theme colour reaches 7:1 on the text's background, as little
-    /// changed as that takes: one that has it already stays as it is.
-    @Test(arguments: [NSAppearance.Name.aqua, .darkAqua])
-    func increasedContrastRaisesTheThemes(appearance: NSAppearance.Name) throws {
+    /// Every theme colour reaches the HIG's 4.5:1 on the text's background, and 7:1 with Increase
+    /// Contrast, as little changed as that takes: one that has it already stays as it is.
+    @Test(arguments: [NSAppearance.Name.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
+    func theThemesAreLegible(name: NSAppearance.Name) throws {
+        let appearance = try #require(NSAppearance(named: name))
         func resolved(_ color: NSColor) -> NSColor {
             var out = color
-            NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance { out = color.usingColorSpace(.sRGB) ?? color }
+            appearance.performAsCurrentDrawingAppearance { out = color.usingColorSpace(.sRGB) ?? color }
             return out
         }
         let background = resolved(.textBackgroundColor)
-        for theme in [SyntaxTheme.overleaf, .texstudio] {
+        for theme in SyntaxTheme.allCases {
             let c = theme.colours
             for color in [c.command, c.keyword, c.argument, c.maths, c.comment, c.invalid].map(resolved) {
-                let raised = color.contrasting(in: appearance, by: 7)
-                #expect(raised.contrast(with: background) >= 7, "\(theme) \(color)")
-                if color.contrast(with: background) >= 7 { #expect(raised == color) }
+                #expect(color.contrast(with: background) >= (appearance.increasesContrast ? 7 : 4.5), "\(theme) \(color)")
             }
         }
-        // Overleaf's Light comments, at 4.2:1, are raised; its commands, at 8.6:1, are not.
-        if appearance == .aqua {
-            #expect(resolved(SyntaxTheme.overleaf.colours.comment).contrast(with: background) < 4.5)
-        }
+        // Overleaf's Light commands, at 8.6:1, are its own blue.
+        if name == .aqua { #expect(resolved(SyntaxTheme.overleaf.colours.command) == NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)) }
     }
 
     /// A Command-click goes to the PDF from where it lands; a click and a double-click are the

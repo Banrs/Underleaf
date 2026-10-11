@@ -1063,22 +1063,14 @@ enum SyntaxTheme: String, CaseIterable, Identifiable {
         }
     }
 
-    /// With Increase Contrast, each raised to WCAG's enhanced 7:1 on the text's background: the
-    /// themes' own colours fall short of the HIG's 4.5:1 in places (Overleaf's comments, 4.2:1).
+    /// The themes' own colours fall short of the HIG's 4.5:1 in places (Overleaf's comments, 4.2:1;
+    /// the system's teal, 2.2:1), so each is raised to it, and further with Increase Contrast.
     private static func rgb(_ light: UInt32, _ dark: UInt32) -> NSColor {
         func srgb(_ hex: UInt32) -> NSColor {
             NSColor(srgbRed: CGFloat(hex >> 16 & 0xFF) / 255, green: CGFloat(hex >> 8 & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
         }
         let light = srgb(light), dark = srgb(dark)
-        let raised = (light: light.contrasting(in: .aqua, by: 7), dark: dark.contrasting(in: .darkAqua, by: 7))
-        return NSColor(name: nil) { appearance in
-            switch appearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]) {
-            case .darkAqua: dark
-            case .accessibilityHighContrastAqua: raised.light
-            case .accessibilityHighContrastDarkAqua: raised.dark
-            default: light
-            }
-        }
+        return NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }.legibleAsText
     }
 
     /// Overleaf's source editor themes (services/web/frontend/js/features/source-editor/themes/cm6/): "textmate",
@@ -1103,10 +1095,10 @@ enum SyntaxTheme: String, CaseIterable, Identifiable {
         command: rgb(0x800000, 0x60CDF2), keyword: rgb(0x0095FF, 0xA960F2), argument: rgb(0x008000, 0x60F260),
         maths: rgb(0x509600, 0x85F218), comment: rgb(0x808080, 0x667299), invalid: rgb(0xC00000, 0xF2F218))
 
-    /// The system's colours, which follow the accent and appearance; what the editor used before Overleaf's.
+    /// The system's colours, which follow the appearance.
     private static let systemColours = Colours(
-        command: .systemPink, keyword: .systemBrown, argument: .systemTeal,
-        maths: .systemPurple, comment: .secondaryLabelColor, invalid: .systemRed)
+        command: .systemPink.legibleAsText, keyword: .systemBrown.legibleAsText, argument: .systemTeal.legibleAsText,
+        maths: .systemPurple.legibleAsText, comment: .secondaryLabelColor.legibleAsText, invalid: .systemRed.legibleAsText)
 }
 
 private extension HighlightKind {
