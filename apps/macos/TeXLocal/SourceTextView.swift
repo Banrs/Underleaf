@@ -4,9 +4,7 @@ import AppKit
 /// supplies LaTeX syntax; this view adds the gutter, colours, completion,
 /// brackets and indentation, with core edits grouped into undo steps.
 final class SourceTextView: NSTextView, NSTextStorageDelegate {
-    /// A plain-text document view, as `scrollablePlainDocumentContentTextView` sets one up, to go
-    /// in SwiftUI's scroll view: that is an NSScrollView underneath (27.2), so TextKit 2's viewport
-    /// stays bounded by its clip and the scrolling code here finds it as `enclosingScrollView`.
+    /// A plain-text document view for a scroll view, as `scrollablePlainDocumentContentTextView` sets one up.
     static func plainDocument() -> SourceTextView {
         let view = SourceTextView(usingTextLayoutManager: true)
         view.isRichText = false
@@ -21,45 +19,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         view.textContainer?.widthTracksTextView = true
         view.textContainer?.size = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         return view
-    }
-
-    /// The view has a new scroll view, or none (`SourceEditor` watches its scrolling). SwiftUI
-    /// puts the view in its scroll view after its superview (27.2), so it's told as it's sized.
-    var attached: () -> Void = {}
-    private weak var attachedTo: NSScrollView?
-
-    private func noteScrollView() {
-        guard enclosingScrollView !== attachedTo else { return }
-        attachedTo = enclosingScrollView
-        attached()
-    }
-
-    override func viewDidMoveToSuperview() {
-        super.viewDidMoveToSuperview()
-        noteScrollView()
-        reportContentHeight()
-    }
-
-    /// The height the text takes, as the view sizes itself to it by TextKit 2's estimates where it
-    /// hasn't laid out, and at least what shows, so it takes clicks under a short document.
-    /// SwiftUI's scroll view sizes it by this (`SourceColumn`), told through `heightChanged`:
-    /// SwiftUI doesn't measure a representable again on its own.
-    var heightChanged: (CGFloat) -> Void = { _ in }
-
-    private var reportedHeight: CGFloat = 0, sizing = false
-
-    func reportContentHeight() {
-        guard !sizing else { return }
-        sizing = true
-        defer { sizing = false }
-        if let clip = enclosingScrollView?.contentView {
-            minSize = NSSize(width: 0, height: clip.bounds.height - clip.contentInsets.top - clip.contentInsets.bottom)
-        }
-        sizeToFit()
-        let height = frame.height
-        guard height != reportedHeight else { return }
-        reportedHeight = height
-        heightChanged(height)
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -107,7 +66,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         closeCompletions()
         updateGutterWidth()
         staleColours = 0
-        reportContentHeight()
     }
 
     // MARK: edits reach the core
@@ -296,8 +254,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     // The top paragraph stays put: TextKit 2 keeps the offset, over heights a new width re-estimates (27.2).
     override func setFrameSize(_ size: NSSize) {
-        noteScrollView()
-        defer { reportContentHeight() }
         guard size.width != frame.width else { return super.setFrameSize(size) }
         keepingTopLine {
             super.setFrameSize(size)
@@ -350,25 +306,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             let line = fragment.textLineFragments.last { $0.characterRange.location <= inParagraph } ?? fragment.textLineFragments.first
             return paragraph.minY + (line?.typographicBounds.midY ?? paragraph.height / 2) - insets.top - shown / 2
         }
-    }
-
-    /// The caret's autoscroll as it moves or text is typed: SwiftUI's clip view takes no
-    /// `scrollToVisible` from a view inside it (27.2), so the clip is scrolled here, the least
-    /// that shows the rect between the bars.
-    override func scrollToVisible(_ rect: NSRect) -> Bool {
-        guard let scroll = enclosingScrollView else { return super.scrollToVisible(rect) }
-        let clip = scroll.contentView, insets = clip.contentInsets
-        let target = convert(rect, to: clip)
-        let shown = NSRect(x: clip.bounds.minX, y: clip.bounds.minY + insets.top, width: clip.bounds.width,
-                           height: clip.bounds.height - insets.top - insets.bottom)
-        var origin = clip.bounds.origin
-        if target.minY < shown.minY { origin.y -= shown.minY - target.minY }
-        else if target.maxY > shown.maxY { origin.y += min(target.maxY - shown.maxY, target.minY - shown.minY) }
-        origin = clip.constrainBoundsRect(NSRect(origin: origin, size: clip.bounds.size)).origin
-        guard origin != clip.bounds.origin else { return false }
-        clip.scroll(to: origin)
-        scroll.reflectScrolledClipView(clip)
-        return true
     }
 
     /// Laying the range out first: far from the viewport it has no rect yet, and TextKit 2's
@@ -424,7 +361,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
         fragments.sort { $0.offset < $1.offset }
-        reportContentHeight()
         if let from = staleColours { colour(from: from) }
         // Scrolled, it follows the text.
         if offered != nil { showCompletions(reload: false) }

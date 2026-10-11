@@ -11,15 +11,12 @@ struct SourceColumn: View {
     var body: some View {
         // Keep the editor under previews so it retains its text and scroll position.
         ZStack {
-            // SwiftUI's scroll view, under the toolbar and the status bar, which AppKit's edges
-            // draw over (the bar's is its accessory's, as over the PDF).
-            ScrollView {
-                EditorView(editor: project.editor, shown: project.editsText, fontName: fontName, fontSize: fontSize,
-                           lineNumbers: lineNumbers, syntaxTheme: syntaxTheme)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: project.editor.layout.height)
-            }
-            .background(.textSurface)
+            // Under the toolbar and the status bar, as the PDF: AppKit insets the scroll view and
+            // draws its edges over it.
+            EditorView(editor: project.editor, shown: project.editsText, fontName: fontName, fontSize: fontSize,
+                       lineNumbers: lineNumbers, syntaxTheme: syntaxTheme)
+                .ignoresSafeArea(.container, edges: [.top, .bottom])
+                .background(.textSurface)
             if project.openPath == nil {
                 ContentUnavailableView("No File Open", systemImage: "text.document",
                                        description: Text("Choose a file in the sidebar."))

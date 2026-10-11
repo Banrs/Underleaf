@@ -13,8 +13,8 @@ nonisolated struct SyncTeXWord: Equatable, Sendable {
 /// Owns formatting commands; find is the text view's own find bar.
 final class SourceEditor: NSObject, NSTextViewDelegate {
     let textView = SourceTextView.plainDocument()
-    /// What SwiftUI lays the text view out by (`SourceColumn`).
-    let layout = EditorLayout()
+    /// The text view's own scroll view, which AppKit insets under the toolbar and the status bar.
+    let scrollView = NSScrollView()
     var onChanged: () -> Void = {}
     /// The caret's line and column (UTF-16, from 0).
     var onCursor: (Int, Int) -> Void = { _, _ in }
@@ -71,15 +71,11 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         // Untinted, as the column's surface around it (`SourceColumn`).
         text.backgroundColor = .untintedTextBackground
         text.isHidden = true
-        text.attached = { [weak self] in self?.watchScrolling() }
-        text.heightChanged = { [weak self] height in self?.layout.height = height }
-    }
-
-    /// The top line follows the scroll view the text view is in.
-    private func watchScrolling() {
-        if let scrolling { NotificationCenter.default.removeObserver(scrolling) }
-        scrolling = nil
-        guard let clip = textView.enclosingScrollView?.contentView else { return }
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.documentView = text
+        // The top line follows the scrolling.
+        let clip = scrollView.contentView
         clip.postsBoundsChangedNotifications = true
         scrolling = NotificationCenter.default.addObserver(of: clip, for: .boundsDidChange) { [weak self] _ in self?.scrolled() }
     }
@@ -101,10 +97,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         undo = prior?.undo ?? UndoManager()
         let selection = prior?.selection ?? NSRange(location: 0, length: 0)
         textView.setSelectedRange(NSMaxRange(selection) <= (text as NSString).length ? selection : NSRange(location: 0, length: 0))
-        if let scrollView = textView.enclosingScrollView {
-            scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
-            scrollView.reflectScrolledClipView(scrollView.contentView)
-        }
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
         if let top = prior?.top { textView.scroll(toShownTop: top) }
         reportCursor()
         focusWhenShown = focus
@@ -176,7 +170,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     private func scroll(to offset: Int, atTop: Bool) {
-        guard let target = textView.textRange(NSRange(location: offset, length: 0)), let scrollView = textView.enclosingScrollView else { return }
+        guard let target = textView.textRange(NSRange(location: offset, length: 0)) else { return }
         let insets = scrollView.contentInsets, shown = scrollView.contentView.bounds.height - insets.top - insets.bottom
         textView.scroll(target.location) { atTop ? $0.minY - insets.top : $0.midY - insets.top - shown / 2 }
     }
@@ -184,7 +178,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     /// The first line at least half showing below the toolbar.
     private func scrolled() {
         textView.previewMath()
-        guard let manager = textView.textLayoutManager, let font = textView.font, let scrollView = textView.enclosingScrollView else { return }
+        guard let manager = textView.textLayoutManager, let font = textView.font else { return }
         let y = scrollView.contentView.bounds.minY + scrollView.contentInsets.top - textView.textContainerOrigin.y
             + font.boundingRectForFont.height / 2
         guard let fragment = manager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, y))) else { return }
@@ -362,8 +356,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
 }
 
-/// The editor's text view, reused across SwiftUI updates, as the content of SwiftUI's scroll
-/// view (`SourceColumn`), which sizes it to its text.
+/// The editor's scroll view and text view, reused across SwiftUI updates.
 struct EditorView: NSViewRepresentable {
     let editor: SourceEditor
     let shown: Bool
@@ -372,14 +365,9 @@ struct EditorView: NSViewRepresentable {
     let lineNumbers: Bool
     let syntaxTheme: SyntaxTheme
 
-    func makeNSView(context: Context) -> SourceTextView { editor.textView }
+    func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
 
-    /// The size SwiftUI proposes: the column's width and the text's height (`SourceColumn`).
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: SourceTextView, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? nsView.frame.width, height: proposal.height ?? nsView.frame.height)
-    }
-
-    func updateNSView(_ view: SourceTextView, context: Context) {
+    func updateNSView(_ view: NSScrollView, context: Context) {
         // A new size only: setting one builds the font to compare.
         if editor.textView.fontSize != CGFloat(fontSize) { editor.textView.fontSize = CGFloat(fontSize) }
         editor.textView.fontName = fontName
@@ -418,9 +406,4 @@ enum EditorPrefs {
 /// The text's edits and selection changes, counted.
 @Observable final class EditorChanges {
     var count = 0
-}
-
-/// The text's height, which the text view reports as it lays out (`SourceTextView.heightChanged`).
-@Observable final class EditorLayout {
-    var height: CGFloat = 0
 }

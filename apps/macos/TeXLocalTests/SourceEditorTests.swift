@@ -545,13 +545,11 @@ struct SourceEditorTests {
         #expect(kept.map(\.range) == ["prosewrod", "commentwrod", "naïvve", "afterwrod"].map(relative))
     }
 
-    /// The text view in a scroll view, as SwiftUI's scroll view holds it in the app.
+    /// The editor's scroll view in a window.
     private func inWindow() -> NSWindow {
         let window = Self.window()
-        let scrollView = NSScrollView(frame: window.contentView!.bounds)
-        scrollView.documentView = editor.textView
-        editor.textView.frame.size.width = scrollView.contentSize.width
-        window.contentView!.addSubview(scrollView)
+        editor.scrollView.frame = window.contentView!.bounds
+        window.contentView!.addSubview(editor.scrollView)
         editor.shown = true
         return window
     }
