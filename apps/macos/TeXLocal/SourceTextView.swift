@@ -601,9 +601,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// Preview maths at the caret only while the caret is visible and focused:
     /// over its line, as Overleaf's, or under it while completions show over it.
     func previewMath() {
-        let maths = hasKeyboard && !loading ? math(at: selectedRange().location) : nil
+        // Asked for whether or not it shows: Escape's dismissal lasts while the caret is in that maths.
+        let maths = loading ? nil : math(at: selectedRange().location)
         if maths?.start != dismissedMath { dismissedMath = nil }
-        guard let window, let maths, dismissedMath == nil,
+        guard let window, hasKeyboard, let maths, dismissedMath == nil,
               let clip = enclosingScrollView?.contentView else {
             mathPopover?.close()
             return
@@ -838,10 +839,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         EditorPrefs.spellCheck = isContinuousSpellCheckingEnabled
     }
 
-    /// Escape ends a snippet, or dismisses the maths preview until the caret leaves that maths, or
-    /// asks for completions, as Xcode's; it never goes on to the window, which would leave full screen.
+    /// Escape closes the completion list, or ends a snippet, or dismisses the maths preview until
+    /// the caret leaves that maths, or asks for completions, as Xcode's; it never goes on to the
+    /// window, which would leave full screen.
     override func cancelOperation(_ sender: Any?) {
-        if snippet != nil {
+        if offered != nil {
+            closeCompletions()
+        } else if snippet != nil {
             snippet = nil
         } else if mathPopover?.isShown == true, let maths = math(at: caret) {
             dismissedMath = maths.start
@@ -903,20 +907,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return closeCompletions() }
             guard reload else { return completionList.place(under: start) }
         }
-        completionList.show(offered.items.map { ($0.label, offered.kind) }, font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+        completionList.show(offered.items.map(\.label), kind: offered.kind, font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
                             theme: syntaxTheme, under: start, in: host)
         // Out of the list's way.
         if host != nil { previewMath() }
     }
 
-    /// Arrows move through the open list, Return and Tab accept, Escape closes it.
+    /// Arrows move through the open list, Return and Tab accept. Escape is `cancelOperation`
+    /// here: the text view's own goes straight to its `complete(_:)`.
     override func doCommand(by selector: Selector) {
+        if selector == #selector(cancelOperation(_:)) { return cancelOperation(nil) }
         guard offered != nil else { return super.doCommand(by: selector) }
         switch selector {
         case #selector(moveUp(_:)): completionList.move(-1)
         case #selector(moveDown(_:)): completionList.move(1)
         case #selector(insertNewline(_:)), #selector(insertTab(_:)): acceptCompletion(completionList.selection)
-        case #selector(cancelOperation(_:)): closeCompletions()
         default: super.doCommand(by: selector)
         }
     }
