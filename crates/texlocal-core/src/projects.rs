@@ -306,13 +306,29 @@ pub fn rename_project(
     let root = project_root(data_dir, id)?;
     let clean = sanitize_name(new_name)?;
     let dest = data_dir.join(&clean);
-    if occupied(&root, &dest) {
-        return Err(CoreError::conflict(
-            "A project with that name already exists",
-        ));
+    // The new name is taken as a new project's is, by making its folder, and
+    // the project moves onto that empty folder: after a check alone, a new
+    // project could take the name before the move and then fill the renamed
+    // project with its own files. A case-only rename's destination is the
+    // project itself.
+    let reserved = !same_entry(&root, &dest);
+    if reserved {
+        match fs::create_dir(&dest) {
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+                return Err(CoreError::conflict(
+                    "A project with that name already exists",
+                ));
+            }
+            made => made?,
+        }
     }
-    before_move(&root)?;
-    fs::rename(&root, &dest)?;
+    let moved = before_move(&root).and_then(|()| Ok(fs::rename(&root, &dest)?));
+    if let Err(err) = moved {
+        if reserved {
+            let _ = fs::remove_dir(&dest);
+        }
+        return Err(err);
+    }
     let main_file = read_settings(&dest).main_file;
     Ok(project_info(
         clean,

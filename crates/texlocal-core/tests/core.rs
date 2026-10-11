@@ -125,6 +125,30 @@ fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
     assert_eq!(err.status, 409);
 }
 
+/// `before_move` runs once the rename is sure to go ahead: a project made
+/// then gets another name, not the one the rename is taking.
+#[test]
+fn a_project_made_while_a_rename_is_under_way_gets_another_name() {
+    let data = data_dir();
+    let root = project(data.path(), "X");
+    fs::write(root.join("main.tex"), "the user's").unwrap();
+    let mut made = None;
+    let renamed = rename_project(data.path(), "X", "R", |_| {
+        made = Some(create_project(data.path(), "R", "blank")?.name);
+        Ok(())
+    });
+    let renamed = renamed.unwrap_or_else(|e| panic!("rename: {} {}", e.status, e.message));
+    assert_eq!(renamed.name, "R");
+    assert_eq!(made.as_deref(), Some("R 2"));
+    let text = fs::read_to_string(data.path().join("R/main.tex")).unwrap();
+    assert_eq!(text, "the user's");
+
+    // A rename that doesn't go ahead leaves no folder of the new name.
+    let stopped = rename_project(data.path(), "R", "S", |_| Err(CoreError::conflict("no")));
+    assert_eq!(stopped.unwrap_err().status, 409);
+    assert_eq!(names_in(data.path()), ["R", "R 2"]);
+}
+
 #[test]
 fn a_folder_cannot_be_moved_into_itself() {
     let data = data_dir();

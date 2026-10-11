@@ -704,4 +704,48 @@ mod tests {
             assert_eq!(left, 2, "one project renamed, one left as it was");
         }
     }
+
+    #[test]
+    fn a_rename_and_a_new_project_of_one_name_keep_the_renamed_project_s_files() {
+        for round in 0..120 {
+            let (data, service) = service();
+            fs::write(data.path().join("P/main.tex"), "the user's").unwrap();
+            let start = std::sync::Barrier::new(2);
+            let call = |command: &'static str, args: Value| {
+                let (service, start) = (&service, &start);
+                move || {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .build()
+                        .unwrap();
+                    start.wait();
+                    let result = runtime.block_on(service.call(command, &args));
+                    result.map_err(|e| (e.status, e.message))
+                }
+            };
+            let (renamed, made) = std::thread::scope(|scope| {
+                let rename = call("rename_project", json!({ "id": "P", "name": "R" }));
+                let create = call(
+                    "create_project",
+                    json!({ "name": "R", "template": "blank" }),
+                );
+                let (rename, create) = (scope.spawn(rename), scope.spawn(create));
+                (rename.join().unwrap(), create.join().unwrap())
+            });
+            // The new project is always made; the rename goes ahead or finds
+            // the name taken.
+            assert!(made.is_ok(), "round {round}: create {made:?}");
+            let kept = match renamed {
+                Ok(_) => "R",
+                Err((409, _)) => "P",
+                Err(other) => panic!("round {round}: rename {other:?}"),
+            };
+            let text = fs::read_to_string(data.path().join(kept).join("main.tex")).unwrap();
+            assert_eq!(text, "the user's", "round {round}");
+            assert_eq!(
+                fs::read_dir(data.path()).unwrap().count(),
+                3,
+                "round {round}"
+            );
+        }
+    }
 }
