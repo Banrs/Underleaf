@@ -132,6 +132,39 @@ sleep 20
 }
 
 #[tokio::test]
+async fn a_build_stopped_by_a_rename_forgets_latexmks_record() {
+    let tmp = TempDir::new().unwrap();
+    let mut service = Service::new(tmp.path().to_path_buf());
+    service.compile.path_env = Some(stub_env(
+        &tmp.path().join("bin"),
+        "#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nsleep 20\n",
+    ));
+    create_project(tmp.path(), "one", "blank").unwrap();
+    let service = Arc::new(service);
+    let build = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move { service.call("compile", &json!({ "id": "one" })).await }
+    });
+    let record = tmp.path().join("one/build/main.fdb_latexmk");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !record.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("latexmk did not write its record");
+
+    // The folder moves before the build can remove the record itself.
+    service
+        .call("rename_project", &json!({ "id": "one", "name": "uno" }))
+        .await
+        .unwrap();
+    let result = build.await.unwrap().unwrap();
+    assert_eq!(result["stopped"], true);
+    assert!(!tmp.path().join("uno/build/main.fdb_latexmk").exists());
+}
+
+#[tokio::test]
 async fn a_good_run_keeps_latexmks_record() {
     let (_tmp, root, mgr) = setup(
         "#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nprintf 'fake' > build/main.pdf\nexit 0\n",

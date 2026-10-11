@@ -294,6 +294,9 @@ struct RunningEntry {
     gate: Arc<ProjectGate>,
     latest: Option<Arc<()>>,
     pid: Option<u32>,
+    /// The active run's latexmk record, for a Stop to remove where it is: a
+    /// rename moves the folder before the run can remove it itself.
+    record: Option<PathBuf>,
     stopped: bool,
 }
 
@@ -354,6 +357,7 @@ impl Drop for Registration<'_> {
         }
         if self.gate_guard.is_some() {
             entry.pid = None;
+            entry.record = None;
         }
         self.child = None;
         if let Some(record) = self.record.take() {
@@ -453,6 +457,9 @@ impl CompileManager {
         entry.stopped = true;
         if let Some(pid) = entry.pid {
             kill_pid_tree(pid);
+        }
+        if let Some(record) = entry.record.take() {
+            let _ = std::fs::remove_file(record);
         }
         true
     }
@@ -593,6 +600,7 @@ impl CompileManager {
             if registration.stopped(&running) {
                 None
             } else {
+                running.get_mut(root).unwrap().record = Some(run.output("fdb_latexmk"));
                 Some(
                     base_command("latexmk", Some(root), &path_env)
                         .and_then(|mut cmd| cmd.args(&args).spawn())
@@ -625,6 +633,10 @@ impl CompileManager {
                 } else {
                     End::Exited(code)
                 };
+                if end == End::Exited(0) {
+                    // A good run's record is kept, whatever stops it from here.
+                    running.get_mut(root).expect("registered project").record = None;
+                }
                 (end, output)
             }
         };
