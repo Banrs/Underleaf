@@ -279,6 +279,7 @@ final class AppModel {
         do {
             let renamed = try await core.call("rename_project", ["id": id, "name": name], as: ProjectInfo.self)
             recentProjects = recentProjects.map { $0 == id ? renamed.id : $0 }
+            ProjectModel.moveSidebarState(from: id, to: renamed.id)
             return renamed
         } catch {
             alert = AppAlert("Couldn’t Rename “\(shown)”", error)
@@ -322,6 +323,7 @@ final class AppModel {
                 do {
                     try item.recycle()
                     self?.recentProjects.removeAll { $0 == project.id }
+                    ProjectModel.forgetSidebarState(of: project.id)
                     return true
                 } catch {
                     self?.alert = AppAlert("Couldn’t Move “\(project.name)” to the Trash", error)
