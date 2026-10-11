@@ -421,6 +421,17 @@ enum EditorCommand {
 enum EditorPrefs {
     static let fontSizeKey = "editorFontSize", spellCheckKey = "editorSpellCheck", syntaxThemeKey = "editorSyntaxTheme"
     static let fontSize = Int(NSFont.systemFontSize)
+    /// The sizes Settings and the View menu's text size commands allow.
+    static let fontSizes = 10...28
+
+    /// A point larger or smaller, for View › Increase and Decrease Editor Text Size; false at the range's end.
+    @discardableResult
+    static func stepFontSize(by step: Int, dryRun: Bool = false) -> Bool {
+        let current = UserDefaults.standard.object(forKey: fontSizeKey) as? Int ?? fontSize
+        let next = min(max(current + step, fontSizes.lowerBound), fontSizes.upperBound)
+        if !dryRun, next != current { UserDefaults.standard.set(next, forKey: fontSizeKey) }
+        return next != current
+    }
     /// A fixed-pitch family's name; empty, the system's monospaced font.
     static let fontNameKey = "editorFontName", lineNumbersKey = "editorLineNumbers"
     static let autoPairKey = "editorAutoPair", autoCompleteKey = "editorAutoComplete"

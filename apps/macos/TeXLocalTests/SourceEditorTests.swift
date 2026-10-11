@@ -787,6 +787,17 @@ struct SourceEditorTests {
         #expect(error.customLabel == "Error on line 3" && step(issues, from: error)?.customLabel == "Warning on line 5")
     }
 
+    /// The View menu's text size steps a point at a time and stops at the ends of Settings' range.
+    @Test func theTextSizeStepsWithinItsRange() {
+        let defaults = UserDefaults.standard, before = defaults.object(forKey: EditorPrefs.fontSizeKey)
+        defer { defaults.set(before, forKey: EditorPrefs.fontSizeKey) }
+        defaults.set(27, forKey: EditorPrefs.fontSizeKey)
+        #expect(EditorPrefs.stepFontSize(by: 1, dryRun: true) && defaults.integer(forKey: EditorPrefs.fontSizeKey) == 27)
+        #expect(EditorPrefs.stepFontSize(by: 1) && defaults.integer(forKey: EditorPrefs.fontSizeKey) == 28)
+        #expect(!EditorPrefs.stepFontSize(by: 1) && defaults.integer(forKey: EditorPrefs.fontSizeKey) == 28)
+        #expect(EditorPrefs.stepFontSize(by: -1) && defaults.integer(forKey: EditorPrefs.fontSizeKey) == 27)
+    }
+
     /// Go to Line…'s sheet puts the caret at its line's start.
     @Test func goToLinePutsTheCaretOnTheLine() {
         open((1...300).map { "line \($0)" }.joined(separator: "\n"), caret: 0)
