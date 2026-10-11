@@ -154,13 +154,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         didSet {
             guard syntaxTheme != oldValue else { return }
             colour(from: 0)
-            // Each shown fragment draws in a view of its own, which new rendering attributes don't
-            // redraw, nor does the text view's own display (27.2).
-            func redraw(_ view: NSView) {
-                view.needsDisplay = true
-                view.subviews.forEach(redraw)
-            }
-            redraw(self)
+            redrawFragments()
         }
     }
 
@@ -517,6 +511,16 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
     }
 
+    /// Each shown fragment draws in a view of its own, which new rendering attributes don't
+    /// redraw, nor does the text view's own display (27.2).
+    private func redrawFragments() {
+        func redraw(_ view: NSView) {
+            view.needsDisplay = true
+            view.subviews.forEach(redraw)
+        }
+        redraw(self)
+    }
+
     // MARK: the selection
 
     private static let pairs: [Character: Character] = ["(": ")", "[": "]", "{": "}"]
@@ -525,6 +529,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !loading else { return }
         if !typing { closeCompletions() }
+        if partnerMarked, let manager = textLayoutManager {
+            partnerMarked = false
+            manager.removeRenderingAttribute(.backgroundColor, for: manager.documentRange)
+            redrawFragments()
+        }
         previewMath()
         if let snippet, !mirroring, !snippet.contains(selectedRange()) { self.snippet = nil }
         let lineStart = (string as NSString).lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
@@ -646,8 +655,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private func showPartner(of at: Int) {
         guard let i = partner(of: at), let first = fragments.first, let last = fragments.last,
               first.offset <= i, i < offset(last.fragment.rangeInElement.endLocation) else { return }
-        showFindIndicator(for: NSRange(location: i, length: 1))
+        let range = NSRange(location: i, length: 1)
+        guard reducesMotion(), let manager = textLayoutManager, let marked = textRange(range) else { return showFindIndicator(for: range) }
+        // The find indicator bounces: with Reduce Motion the partner is filled where it is,
+        // until the selection next changes.
+        manager.addRenderingAttribute(.backgroundColor, value: NSColor.unemphasizedSelectedTextBackgroundColor, for: marked)
+        partnerMarked = true
+        redrawFragments()
     }
+
+    var reducesMotion = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private var partnerMarked = false
 
     override func moveRight(_ sender: Any?) {
         let before = selectedRange()

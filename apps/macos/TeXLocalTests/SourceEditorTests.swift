@@ -605,6 +605,28 @@ struct SourceEditorTests {
         try await waitUntil { (try? self.colour(of: "]")) == colours.invalid }
     }
 
+    /// With Reduce Motion a bracket's partner is filled where it is, not bounced, until the caret next moves.
+    @Test func reduceMotionMarksABracketsPartnerInPlace() throws {
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
+        open("(a)", caret: 0)
+        text.reducesMotion = { true }
+        _ = try colour(of: "a")
+        func filled() throws -> [Int] {
+            let manager = try #require(text.textLayoutManager)
+            var offsets: [Int] = []
+            manager.enumerateRenderingAttributes(from: manager.documentRange.location, reverse: false) { _, attributes, range in
+                if attributes[.backgroundColor] != nil { offsets.append(self.text.offset(range.location)) }
+                return true
+            }
+            return offsets
+        }
+        text.moveRight(nil)
+        #expect(try filled() == [2])
+        text.moveRight(nil)
+        #expect(try filled() == [])
+    }
+
     /// Choosing another colour theme recolours what is open.
     @Test func aThemeRecoloursTheText() async throws {
         // Held to the end: the text lays out in it.
