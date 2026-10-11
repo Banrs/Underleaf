@@ -111,14 +111,20 @@ impl Export<'_> {
     fn add_file(&mut self, rel: &str, path: &Path) -> Result<(), CoreError> {
         let mut file = File::open(path)?;
         let meta = file.metadata()?;
-        // Past 4 GiB (a video, a data set), sizes need ZIP64's fields.
-        let options = dated(self.options, meta.modified()).large_file(meta.len() >= 1 << 32);
+        let options = dated(self.options, meta.modified()).large_file(needs_zip64(meta.len()));
         self.writer.start_file(rel, options)?;
         // No flush per file: on a deflated entry that forces a sync block
         // into the stream, and the next start_file or finish ends it anyway.
         io::copy(&mut file, &mut self.writer)?;
         Ok(())
     }
+}
+
+/// Past 4 GiB (a video, a data set), sizes need ZIP64's fields; and from
+/// 3 GiB a file gets them too, as one that doesn't compress is stored a
+/// little larger than it is, deflate's blocks each adding their header.
+fn needs_zip64(len: u64) -> bool {
+    len >= 3 << 30
 }
 
 /// `options` with the entry dated as `modified`. ZIP stores local time, as
@@ -131,4 +137,21 @@ fn dated(options: SimpleFileOptions, modified: io::Result<SystemTime>) -> Simple
     // Outside ZIP's 1980–2107, the entry keeps the default.
     let date = zip::DateTime::try_from(local).ok();
     date.map_or(options, |date| options.last_modified_time(date))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needs_zip64;
+
+    #[test]
+    fn a_file_that_could_deflate_past_4_gib_is_written_as_zip64() {
+        assert!(!needs_zip64(0));
+        assert!(!needs_zip64((3 << 30) - 1));
+        // Deflate stores what it can't compress in blocks of at most 65,535
+        // bytes, 5 more each: under 4 GiB itself, over it once stored.
+        let len: u64 = (1 << 32) - 1_000;
+        assert!(len + len.div_ceil(65_535) * 5 > u32::MAX as u64);
+        assert!(needs_zip64(len));
+        assert!(needs_zip64(1 << 32));
+    }
 }
