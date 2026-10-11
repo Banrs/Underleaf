@@ -1,6 +1,11 @@
 //! Optional persistent TeXpresso viewer. Author buffers stay in its VFS; the
 //! ordinary latexmk build and PDF continue to use saved project files.
-use std::collections::HashMap;
+//!
+//! A build with Underleaf's patch (tools/texpresso) shows nothing itself: it writes the
+//! pages the client says it is showing as one-page PDFs the moment they are typeset again,
+//! and the whole document when a run has ended. `Manager::wait` hands those to the client
+//! as they come; `Manager::edit` takes a keystroke without waiting for anything.
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
@@ -14,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::ChildStdin;
+use tokio::sync::mpsc;
 
 use crate::{lock, paths, settings, tail, CoreError, BUILD_DIR, SETTINGS_FILE};
 
@@ -23,15 +29,35 @@ const MAX_TOTAL: usize = 64 * 1024 * 1024;
 const MAX_OUTPUT: usize = 128 * 1024;
 const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 const LEASE: Duration = Duration::from_secs(120);
+/// The longest `wait` waits, well inside the lease it renews.
+const MAX_WAIT: Duration = Duration::from_secs(60);
 const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
 const REPLACED: &str =
     "Another window started TeXpresso for this project. Start TeXpresso again to preview here.";
 const TOO_MANY: &str = "Too many files for TeXpresso (limit 256 files / 64 MB).";
+const TOO_LARGE: &str = "TeXpresso takes files of up to 8 MB.";
+const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
 
 #[derive(Debug, Deserialize)]
 pub struct FileBuffer {
     pub path: String,
     pub text: String,
+}
+
+/// A place in a file, in UTF-16 units as the editors count.
+#[derive(Debug, Deserialize)]
+pub struct Caret {
+    pub path: String,
+    pub offset: usize,
+}
+
+/// A client that shows the document itself, in its own pane: the pages it shows there,
+/// from 0, and where its caret is, for a build with Underleaf's patch to have those pages
+/// first and a snapshot ready where the first key will land.
+#[derive(Debug, Default)]
+pub struct Pane {
+    pub view: Option<(u32, u32)>,
+    pub caret: Option<Caret>,
 }
 
 /// `Status`'s document fields alone (`Manager::pdf_state`).
@@ -58,6 +84,75 @@ pub struct Status {
     pub pdf: Option<String>,
     #[serde(rename = "pdfVersion")]
     pub pdf_version: u64,
+    /// The page protocol the build speaks (`Events::live`).
+    pub live: Option<u32>,
+}
+
+/// A page typeset again, alone in a PDF that is complete on disk.
+#[derive(Debug, Clone, Serialize)]
+pub struct PageUpdate {
+    /// From 0.
+    pub page: u32,
+    pub path: String,
+    /// Rises with every event of the session: a later page or document has a higher one.
+    pub serial: u64,
+    /// The last edit (`Manager::edit`'s number) the page shows.
+    pub edit: u64,
+}
+
+/// The whole document, complete on disk, its SyncTeX beside it.
+#[derive(Debug, Clone, Serialize)]
+pub struct Document {
+    pub path: String,
+    /// `Status::pdf_version` with this document.
+    pub version: u64,
+    pub serial: u64,
+    pub pages: u32,
+    /// How the run that wrote it ended: `complete` at the document's end, `stopped` on an
+    /// error before it, `partial` while it is still being typeset. None from a build
+    /// that doesn't say.
+    pub run: Option<String>,
+    /// Ranges of pages, first and last, that differ from the document before; None from a
+    /// build that doesn't say, when any may.
+    pub changed: Option<Vec<[u32; 2]>>,
+    pub edit: u64,
+}
+
+/// A run of TeX that is over.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunEnd {
+    pub pages: u32,
+    /// `complete` or `stopped`, as `Document::run`.
+    pub run: String,
+}
+
+/// `Manager::update`'s answer: the edit's number, 0 when the text is as TeXpresso has it,
+/// and the session's status unless the client asked for the number alone.
+#[derive(Debug, Serialize)]
+pub struct Updated {
+    pub edit: u64,
+    #[serde(flatten)]
+    pub status: Option<Status>,
+}
+
+/// What is new for a client since the `seq` it last had (`Manager::wait`).
+#[derive(Debug, Clone, Serialize)]
+pub struct Events {
+    pub seq: u64,
+    pub running: bool,
+    pub error: Option<String>,
+    /// 1 from a build that sends pages as they change; None from one that only writes the
+    /// whole document, known once `Status::pdf_version` is above 0.
+    pub live: Option<u32>,
+    /// `Status::revision`: when it has risen, the log or output may have changed.
+    pub revision: u64,
+    /// The last edit whose effect on the pages in view has been sent, changed or not.
+    pub synced: u64,
+    /// The document, when a new one was written; it comes before `pages`.
+    pub pdf: Option<Document>,
+    /// The latest of each page written since `pdf`, lowest page first.
+    pub pages: Vec<PageUpdate>,
+    pub done: Option<RunEnd>,
 }
 
 // Retain a bounded tail while preserving absolute byte offsets for backtracking.
@@ -94,6 +189,156 @@ impl Output {
     }
 }
 
+/// A file's text as TeXpresso has it, in pieces of a few kilobytes that know their length
+/// in UTF-16 units: an edit the editor gives in those units finds its bytes from the
+/// pieces' lengths and one piece's text, however long the file.
+#[derive(Default)]
+struct Text {
+    pieces: Vec<Piece>,
+    bytes: usize,
+}
+struct Piece {
+    text: String,
+    units: usize,
+}
+const PIECE: usize = 2048;
+fn utf16_len(text: &str) -> usize {
+    if text.is_ascii() {
+        text.len()
+    } else {
+        text.chars().map(char::len_utf16).sum()
+    }
+}
+/// The byte offset of `units` UTF-16 units into `text`; None inside a character or past
+/// the end.
+fn byte_at(text: &str, units: usize) -> Option<usize> {
+    if text.is_ascii() {
+        return (units <= text.len()).then_some(units);
+    }
+    let mut seen = 0;
+    for (at, c) in text.char_indices() {
+        if seen >= units {
+            return (seen == units).then_some(at);
+        }
+        seen += c.len_utf16();
+    }
+    (seen == units).then_some(text.len())
+}
+/// In equal parts: a piece that typing has filled splits in half, with room in both.
+fn pieces(text: &str, into: &mut Vec<Piece>) {
+    let size = text.len().div_ceil(text.len().div_ceil(PIECE).max(1));
+    let mut rest = text;
+    while !rest.is_empty() {
+        let mut end = rest.len().min(size);
+        while !rest.is_char_boundary(end) {
+            end += 1;
+        }
+        let (piece, after) = rest.split_at(end);
+        into.push(Piece {
+            text: piece.to_owned(),
+            units: utf16_len(piece),
+        });
+        rest = after;
+    }
+}
+impl Text {
+    fn new(text: &str) -> Self {
+        let mut all = Vec::with_capacity(text.len() / PIECE + 1);
+        pieces(text, &mut all);
+        Self {
+            pieces: all,
+            bytes: text.len(),
+        }
+    }
+    fn string(&self) -> String {
+        let mut text = String::with_capacity(self.bytes);
+        self.pieces.iter().for_each(|p| text.push_str(&p.text));
+        text
+    }
+    /// The piece `units` falls in or ends, and the bytes and units before that piece.
+    fn find(&self, units: usize) -> Option<(usize, usize, usize)> {
+        let (mut bytes, mut seen) = (0, 0);
+        for (index, piece) in self.pieces.iter().enumerate() {
+            if seen + piece.units >= units {
+                return Some((index, bytes, seen));
+            }
+            bytes += piece.text.len();
+            seen += piece.units;
+        }
+        (units == seen).then_some((self.pieces.len(), bytes, seen))
+    }
+    /// The byte offset of a place given in UTF-16 units.
+    fn byte_offset(&self, units: usize) -> Option<usize> {
+        let (index, bytes, seen) = self.find(units)?;
+        match self.pieces.get(index) {
+            Some(piece) => Some(bytes + byte_at(&piece.text, units - seen)?),
+            None => Some(bytes),
+        }
+    }
+    /// Replaces `remove` UTF-16 units at `start` with `inserted`. The same in bytes, as
+    /// TeXpresso takes it, or None (and nothing replaced) when the range isn't the text's.
+    fn edit(&mut self, start: usize, remove: usize, inserted: &str) -> Option<(usize, usize)> {
+        let (first, bytes, seen) = self.find(start)?;
+        let from = match self.pieces.get(first) {
+            Some(piece) => byte_at(&piece.text, start - seen)?,
+            None => 0,
+        };
+        // Where the removed units end: in `last`, `to` bytes in.
+        let (mut last, mut to, mut left) = (first, from, remove);
+        let mut removed = 0;
+        while left > 0 {
+            let piece = self.pieces.get(last)?;
+            let rest = &piece.text[to..];
+            let units = if to == 0 {
+                piece.units
+            } else {
+                utf16_len(rest)
+            };
+            if left <= units {
+                let end = byte_at(rest, left)?;
+                removed += end;
+                to += end;
+                break;
+            }
+            left -= units;
+            removed += rest.len();
+            last += 1;
+            to = 0;
+        }
+        let mut joined = String::new();
+        if let Some(piece) = self.pieces.get(first) {
+            joined.push_str(&piece.text[..from]);
+        }
+        joined.push_str(inserted);
+        let mut end = first;
+        if let Some(piece) = self.pieces.get(last) {
+            joined.push_str(&piece.text[to..]);
+            end = last + 1;
+        }
+        // A small piece takes its neighbour along, so typing and deleting leave no crumbs.
+        if joined.len() < PIECE / 2 && end < self.pieces.len() {
+            joined.push_str(&self.pieces[end].text);
+            end += 1;
+        }
+        let mut replacement = Vec::new();
+        pieces(&joined, &mut replacement);
+        self.pieces
+            .splice(first..end.min(self.pieces.len()), replacement);
+        self.bytes = self.bytes - removed + inserted.len();
+        Some((bytes + from, removed))
+    }
+}
+
+/// The events a client hasn't had yet, each with the `seq` it came at.
+#[derive(Default)]
+struct Feed {
+    seq: u64,
+    pages: BTreeMap<u32, PageUpdate>,
+    document: Option<Document>,
+    done: Option<(u64, RunEnd)>,
+    synced: u64,
+}
+
 struct State {
     pid: Option<u32>,
     last_used: Instant,
@@ -106,13 +351,20 @@ struct State {
     pdf_version: u64,
     /// The settings file as last seen, by `settings_stamp`.
     settings: Stamp,
+    /// Whether TeXpresso has said anything, and the page protocol it said it speaks.
+    spoken: bool,
+    live: Option<u32>,
+    feed: Feed,
+    /// Edits sent, each followed by its number for TeXpresso to say what shows it.
+    edits: u64,
 }
-struct Input {
-    stdin: ChildStdin,
-    files: HashMap<PathBuf, String>,
+#[derive(Default)]
+struct Files {
+    texts: HashMap<PathBuf, Text>,
     /// Where the paths clients send lead, found once: a session's files
     /// don't move under it, as a rename or delete stops it.
     paths: HashMap<String, PathBuf>,
+    bytes: usize,
 }
 struct Session {
     token: String,
@@ -121,7 +373,12 @@ struct Session {
     /// Where a patched build writes the document, when the client shows it.
     pdf: Option<PathBuf>,
     state: Mutex<State>,
-    input: tokio::sync::Mutex<Input>,
+    /// Never held across a wait: a keystroke takes it on the editor's own thread.
+    files: Mutex<Files>,
+    /// Lines for TeXpresso's stdin, written in order by the session's writer.
+    lines: mpsc::UnboundedSender<Vec<u8>>,
+    /// Wakes `Manager::wait`.
+    changed: tokio::sync::Notify,
     revision: Arc<AtomicU64>,
 }
 impl Session {
@@ -131,6 +388,13 @@ impl Session {
     }
     fn bump(&self, state: &mut State) {
         state.revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
+    }
+    /// Something a waiting client is told at once. Its number.
+    fn event(&self, state: &mut State) -> u64 {
+        self.bump(state);
+        state.feed.seq += 1;
+        self.changed.notify_waiters();
+        state.feed.seq
     }
     /// For its owner: renew the lease, and stop if the main file has changed
     /// since the start. Whether it still runs.
@@ -155,9 +419,10 @@ impl Session {
             }
             remove_pdf_folder(self.pdf.as_deref());
             state.error = error;
-            self.bump(&mut state);
-            if let Ok(mut input) = self.input.try_lock() {
-                input.files.clear();
+            self.event(&mut state);
+            if let Ok(mut files) = self.files.try_lock() {
+                files.texts.clear();
+                files.bytes = 0;
             }
         }
     }
@@ -185,13 +450,56 @@ impl Session {
                 .written_pdf(&state)
                 .map(|pdf| pdf.to_string_lossy().into_owned()),
             pdf_version: state.pdf_version,
+            live: state.live,
         }
     }
-    async fn send(&self, messages: &[Value]) {
-        let mut input = self.input.lock().await;
-        if let Err(err) = write_messages(&mut input.stdin, messages).await {
-            self.stop(Some(unsent(err)));
+    fn events(&self, state: &State, after: u64) -> Events {
+        let feed = &state.feed;
+        let new = |serial: u64| serial > after;
+        Events {
+            seq: feed.seq,
+            running: state.pid.is_some(),
+            error: state.error.clone(),
+            live: state.live,
+            revision: state.revision,
+            synced: feed.synced,
+            pdf: feed.document.clone().filter(|d| new(d.serial)),
+            pages: feed
+                .pages
+                .values()
+                .filter(|p| new(p.serial))
+                .cloned()
+                .collect(),
+            done: feed
+                .done
+                .as_ref()
+                .filter(|(serial, _)| new(*serial))
+                .map(|(_, end)| end.clone()),
         }
+    }
+    /// Messages for TeXpresso, in the order of the calls: nothing here waits for it.
+    fn send(&self, messages: &[Value]) {
+        let mut lines = Vec::new();
+        for message in messages {
+            serde_json::to_writer(&mut lines, message).expect("JSON values serialize");
+            lines.push(b'\n');
+        }
+        // A writer that has gone has stopped the session, or is about to.
+        let _ = self.lines.send(lines);
+    }
+    /// The number of a new edit, with the message that has a patched build say when the
+    /// pages show it; an upstream build would only report a command it doesn't know.
+    fn mark(&self, messages: &mut Vec<Value>) -> u64 {
+        let mut state = lock(&self.state);
+        state.edits += 1;
+        if self.pdf.is_some() && (state.live.is_some() || !state.spoken) {
+            messages.push(json!(["mark", state.edits]));
+        }
+        state.edits
+    }
+    fn speaks_pages(&self) -> bool {
+        let state = lock(&self.state);
+        self.pdf.is_some() && (state.live.is_some() || !state.spoken)
     }
 }
 impl Drop for Session {
@@ -277,6 +585,14 @@ impl Manager {
             .cloned()
             .ok_or_else(|| CoreError::conflict(REPLACED))
     }
+    /// The session a token is for, without the disk: its token is its owner's alone.
+    fn held(&self, token: &str) -> Result<Arc<Session>, CoreError> {
+        lock(&self.sessions)
+            .values()
+            .find(|session| session.token == token)
+            .cloned()
+            .ok_or_else(|| CoreError::conflict(REPLACED))
+    }
     /// The project's session; with a token, only while that client still owns it.
     fn session(&self, root: &Path, token: Option<&str>) -> Result<Option<Arc<Session>>, CoreError> {
         match token {
@@ -305,6 +621,7 @@ impl Manager {
             session: None,
             pdf: None,
             pdf_version: 0,
+            live: None,
         }
     }
     /// Inspection does not acquire ownership or renew the viewer's lease.
@@ -323,13 +640,15 @@ impl Manager {
         }
         Ok(session.status())
     }
+    /// With a `pane`, a build with Underleaf's patch writes the document for it instead
+    /// of opening a window; upstream opens its window all the same.
     pub async fn start(
         &self,
         root: &Path,
         files: &[FileBuffer],
         expected: Option<&str>,
         path_env: &str,
-        pdf: bool,
+        pane: Option<&Pane>,
     ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = fs::canonicalize(root)?;
@@ -340,24 +659,24 @@ impl Manager {
         }
         let stamp = settings_stamp(&root);
         let main = settings::read_settings(&root).main_file;
-        let (mut buffers, mut paths) = (HashMap::new(), HashMap::new());
-        let main_path = validate_buffer(&root, &main, "", &paths)?;
+        let mut buffers = Files::default();
+        let main_path = validate_buffer(&root, &main, "", &buffers.paths)?;
         if !main_path.is_file() {
             return Err(CoreError::bad_request("The main file does not exist."));
         }
+        let mut opened = Vec::new();
         for file in files {
-            let path = validate_buffer(&root, &file.path, &file.text, &paths)?;
-            paths.insert(file.path.clone(), path.clone());
-            if buffers.insert(path, file.text.clone()).is_some() {
+            let path = validate_buffer(&root, &file.path, &file.text, &buffers.paths)?;
+            buffers.paths.insert(file.path.clone(), path.clone());
+            opened.push(json!(["open", path, file.text]));
+            buffers.bytes += file.text.len();
+            if buffers.texts.insert(path, Text::new(&file.text)).is_some() {
                 return Err(CoreError::bad_request(
                     "Files sent to TeXpresso repeat a path.",
                 ));
             }
         }
-        check_limits(
-            buffers.len(),
-            buffers.values().map(String::len).sum::<usize>(),
-        )?;
+        check_limits(buffers.texts.len(), buffers.bytes)?;
         let failed = |error: String| {
             Ok(Status {
                 error: Some(error),
@@ -374,16 +693,14 @@ impl Manager {
         let mut token = [0u8; 16];
         getrandom::fill(&mut token).map_err(|err| CoreError::internal(err.to_string()))?;
         let token: String = token.iter().map(|byte| format!("{byte:02x}")).collect();
-        // For a client that shows it, a build with Underleaf's patch writes the
-        // document here instead of opening its own window; upstream opens one.
         // The session's own folder: no build output or other session shares it.
-        let pdf = match pdf {
-            true => {
+        let pdf = match pane {
+            Some(_) => {
                 let folder = std::env::temp_dir().join(format!("texlocal-texpresso-{token}"));
                 fs::DirBuilder::new().mode(0o700).create(&folder)?;
                 Some(fs::canonicalize(folder)?.join("live.pdf"))
             }
-            false => None,
+            None => None,
         };
         let mut command = std::process::Command::new(&executable);
         command
@@ -427,16 +744,21 @@ impl Manager {
         };
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
+        let (lines, queued) = mpsc::unbounded_channel();
+        // Where the caret is in bytes, as TeXpresso counts, from the text just sent.
+        let caret = pane.and_then(|pane| pane.caret.as_ref()).and_then(|caret| {
+            let path = buffers.paths.get(&caret.path)?;
+            let offset = buffers.texts.get(path)?.byte_offset(caret.offset)?;
+            Some(json!(["caret", path, offset]))
+        });
         let session = Arc::new(Session {
             token,
             executable,
             main,
             pdf,
-            input: tokio::sync::Mutex::new(Input {
-                stdin: child.stdin.take().unwrap(),
-                files: buffers,
-                paths,
-            }),
+            files: Mutex::new(buffers),
+            lines,
+            changed: tokio::sync::Notify::new(),
             revision: Arc::clone(&self.revision),
             state: Mutex::new(State {
                 pid: child.id(),
@@ -449,6 +771,10 @@ impl Manager {
                 revision: self.revision.fetch_add(1, Ordering::Relaxed) + 1,
                 pdf_version: 0,
                 settings: stamp,
+                spoken: false,
+                live: None,
+                feed: Feed::default(),
+                edits: 0,
             }),
         });
         {
@@ -458,6 +784,11 @@ impl Manager {
             }
             sessions.insert(root, Arc::clone(&session));
         }
+        tokio::spawn(write_lines(
+            child.stdin.take().unwrap(),
+            queued,
+            Arc::downgrade(&session),
+        ));
         tokio::spawn(read_output(stdout, Arc::clone(&session), true));
         tokio::spawn(read_output(stderr, Arc::clone(&session), false));
         let weak = Arc::downgrade(&session);
@@ -492,71 +823,188 @@ impl Manager {
                 }
             }
         });
-        let mut messages = vec![json!(["rerun", true])];
-        {
-            let input = session.input.lock().await;
-            messages.extend(
-                input
-                    .files
-                    .iter()
-                    .map(|(path, text)| json!(["open", path, text])),
-            );
+        // No idle reruns: upstream's start TeX again from nothing after every pause in
+        // typing, and show no page until one is over. A patched build makes its own
+        // finishing passes beside the document; for upstream there is `rerun`.
+        if let Some((first, last)) = pane.and_then(|pane| pane.view) {
+            opened.push(json!(["view", first, last.max(first)]));
         }
-        session.send(&messages).await;
+        opened.extend(caret);
+        session.send(&opened);
         Ok(session.status())
     }
-    /// An edit, sent as the change from the buffer TeXpresso has, which takes
-    /// it in place: once per keystroke, so no copy of the whole buffer.
+    /// The whole text of a file: sent as the change from the buffer TeXpresso has, or
+    /// whole when it has none. It is also what repairs a copy `edit` refused to change.
+    /// `brief` leaves the status, and the log in it, out of the answer.
     pub async fn update(
         &self,
         root: &Path,
         rel: &str,
         text: &str,
         token: &str,
-    ) -> Result<Status, CoreError> {
+        brief: bool,
+    ) -> Result<Updated, CoreError> {
         let _request = self.requests.lock().await;
         let root = fs::canonicalize(root)?;
         let session = self.owned(&root, token)?;
-        if !session.renew(&root) {
-            return Ok(session.status());
-        }
-        let mut input = session.input.lock().await;
-        let input = &mut *input;
-        let path = validate_buffer(&root, rel, text, &input.paths)?;
-        let others = input.files.iter().filter(|(p, _)| *p != &path);
-        check_limits(
-            others.clone().count() + 1,
-            others.map(|(_, t)| t.len()).sum::<usize>() + text.len(),
-        )?;
-        let previous = input.files.get_mut(&path);
-        let change = previous.as_deref().map(|previous| delta(previous, text));
-        let message = match change {
-            Some((_, 0, "")) => return Ok(session.status()),
-            Some((offset, remove, inserted)) => json!(["change", path, offset, remove, inserted]),
-            None => json!(["open", path, text]),
+        let updated = |edit| Updated {
+            edit,
+            status: (!brief).then(|| session.status()),
         };
-        if let Err(err) = write_messages(&mut input.stdin, &[message]).await {
-            session.stop(Some(unsent(err)));
-        } else {
-            match (previous, change) {
-                (Some(previous), Some((offset, remove, inserted))) => {
-                    previous.replace_range(offset..offset + remove, inserted)
+        if !session.renew(&root) {
+            return Ok(updated(0));
+        }
+        let edit = {
+            let mut files = lock(&session.files);
+            let files = &mut *files;
+            let path = validate_buffer(&root, rel, text, &files.paths)?;
+            let previous = files.texts.get(&path).map(Text::string);
+            let held = previous.as_ref().map_or(0, String::len);
+            check_limits(
+                files.texts.len() + usize::from(previous.is_none()),
+                files.bytes - held + text.len(),
+            )?;
+            let message = match previous.as_deref().map(|previous| delta(previous, text)) {
+                Some((_, 0, "")) => None,
+                Some((offset, remove, inserted)) => {
+                    Some(json!(["change", path, offset, remove, inserted]))
                 }
-                _ => {
-                    input.paths.insert(rel.to_owned(), path.clone());
-                    input.files.insert(path, text.to_owned());
+                None => Some(json!(["open", path, text])),
+            };
+            match message {
+                Some(message) => {
+                    let mut messages = vec![message];
+                    let edit = session.mark(&mut messages);
+                    session.send(&messages);
+                    files.paths.insert(rel.to_owned(), path.clone());
+                    files.bytes = files.bytes - held + text.len();
+                    files.texts.insert(path, Text::new(text));
+                    edit
                 }
+                None => 0,
             }
+        };
+        if edit > 0 {
             session.bump(&mut lock(&session.state));
         }
-        Ok(session.status())
+        Ok(updated(edit))
+    }
+    /// A keystroke, as the editor has it: `remove` UTF-16 units at `start` of a file the
+    /// session has, replaced by `text`. It waits for nothing (no disk, no TeXpresso), so
+    /// the editor can call it where the edit is made. Its number, which `Events::synced`
+    /// reaches when the pages in view show it; 0 for a session that has ended. An edit
+    /// that doesn't fit the session's copy is refused with status 412 and changes nothing:
+    /// `update` with the whole text then puts both right.
+    pub fn edit(
+        &self,
+        token: &str,
+        rel: &str,
+        start: usize,
+        remove: usize,
+        text: &str,
+    ) -> Result<u64, CoreError> {
+        let session = self.held(token)?;
+        if text.contains('\0') {
+            return Err(CoreError::bad_request(
+                "A file sent to TeXpresso has an invalid path or text.",
+            ));
+        }
+        let mut files = lock(&session.files);
+        let files = &mut *files;
+        {
+            let mut state = lock(&session.state);
+            state.last_used = Instant::now();
+            if state.pid.is_none() {
+                return Ok(0);
+            }
+        }
+        let unfit = || CoreError::unfit(UNFIT);
+        let path = files.paths.get(rel).ok_or_else(unfit)?;
+        let held = files.texts.get_mut(path).ok_or_else(unfit)?;
+        if held.bytes + text.len() > MAX_FILE {
+            return Err(CoreError::bad_request(TOO_LARGE));
+        }
+        if files.bytes + text.len() > MAX_TOTAL {
+            return Err(CoreError::bad_request(TOO_MANY));
+        }
+        let before = held.bytes;
+        let (offset, removed) = held.edit(start, remove, text).ok_or_else(unfit)?;
+        files.bytes = files.bytes - before + held.bytes;
+        let mut messages = vec![json!(["change", path, offset, removed, text])];
+        let edit = session.mark(&mut messages);
+        session.send(&messages);
+        Ok(edit)
+    }
+    /// The pages the client shows, from 0: a patched build typesets as far as the last of
+    /// them first, and sends each as it changes.
+    pub fn view(&self, token: &str, first: u32, last: u32) -> Result<(), CoreError> {
+        let session = self.held(token)?;
+        if session.speaks_pages() {
+            session.send(&[json!(["view", first, last.max(first)])]);
+        }
+        Ok(())
+    }
+    /// Where the client's caret has settled: a patched build takes a snapshot there, so
+    /// the first key typed there is answered as quickly as the ones after it. Refused as
+    /// `edit` is for a file or place the session's copy doesn't have.
+    pub fn caret(&self, token: &str, rel: &str, offset: usize) -> Result<(), CoreError> {
+        let session = self.held(token)?;
+        let files = lock(&session.files);
+        let unfit = || CoreError::unfit(UNFIT);
+        let path = files.paths.get(rel).ok_or_else(unfit)?;
+        let text = files.texts.get(path).ok_or_else(unfit)?;
+        let offset = text.byte_offset(offset).ok_or_else(unfit)?;
+        if session.speaks_pages() {
+            session.send(&[json!(["caret", path, offset])]);
+        }
+        Ok(())
+    }
+    /// Asks for a finishing pass now, for references and contents: a patched build makes
+    /// its own after a pause; upstream makes one only when asked.
+    pub fn rerun(&self, token: &str) -> Result<(), CoreError> {
+        self.held(token)?.send(&[json!(["rerun-once"])]);
+        Ok(())
+    }
+    /// Waits until the session has something a client at `after` hasn't had (`Events`),
+    /// it ends, or `timeout` passes, and answers with what is new; other calls go on
+    /// meanwhile. `after` is the `seq` of the last answer, 0 at first.
+    pub async fn wait(
+        &self,
+        root: &Path,
+        token: &str,
+        after: u64,
+        timeout: Duration,
+    ) -> Result<Events, CoreError> {
+        let root = fs::canonicalize(root)?;
+        let session = self.owned(&root, token)?;
+        session.renew(&root);
+        let deadline = tokio::time::Instant::now() + timeout.min(MAX_WAIT);
+        loop {
+            let changed = session.changed.notified();
+            tokio::pin!(changed);
+            // Listening before the look: an event in between isn't missed.
+            changed.as_mut().enable();
+            {
+                let mut state = lock(&session.state);
+                state.last_used = Instant::now();
+                // A `seq` from another session is no place in this one's events.
+                let after = if after > state.feed.seq { 0 } else { after };
+                if state.feed.seq > after
+                    || state.pid.is_none()
+                    || tokio::time::Instant::now() >= deadline
+                {
+                    return Ok(session.events(&state, after));
+                }
+            }
+            let _ = tokio::time::timeout_at(deadline, changed).await;
+        }
     }
     pub async fn rescan(&self, root: &Path, token: &str) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = fs::canonicalize(root)?;
         let session = self.owned(&root, token)?;
         if session.renew(&root) {
-            session.send(&[json!(["rescan"])]).await;
+            session.send(&[json!(["rescan"])]);
         }
         Ok(session.status())
     }
@@ -586,9 +1034,7 @@ fn validate_buffer(
     known: &HashMap<String, PathBuf>,
 ) -> Result<PathBuf, CoreError> {
     if text.len() > MAX_FILE {
-        return Err(CoreError::bad_request(
-            "TeXpresso takes files of up to 8 MB.",
-        ));
+        return Err(CoreError::bad_request(TOO_LARGE));
     }
     if path.len() > 4096 || path.contains('\0') || text.contains('\0') {
         return Err(CoreError::bad_request(
@@ -623,20 +1069,42 @@ fn check_limits(files: usize, bytes: usize) -> Result<(), CoreError> {
 fn unsent(err: std::io::Error) -> String {
     format!("Couldn't send changes to TeXpresso: {err}. Start TeXpresso again.")
 }
+/// How many bytes two texts share at their start, a block at a time.
+fn common(a: impl Iterator<Item = u8> + Clone, b: impl Iterator<Item = u8> + Clone) -> usize {
+    a.zip(b).take_while(|(a, b)| a == b).count()
+}
+fn common_prefix(a: &[u8], b: &[u8]) -> usize {
+    const BLOCK: usize = 256;
+    let blocks = a
+        .chunks_exact(BLOCK)
+        .zip(b.chunks_exact(BLOCK))
+        .take_while(|(a, b)| a == b)
+        .count();
+    let start = blocks * BLOCK;
+    start + common(a[start..].iter().copied(), b[start..].iter().copied())
+}
+fn common_suffix(a: &[u8], b: &[u8]) -> usize {
+    const BLOCK: usize = 256;
+    let blocks = a
+        .rchunks_exact(BLOCK)
+        .zip(b.rchunks_exact(BLOCK))
+        .take_while(|(a, b)| a == b)
+        .count();
+    let (a, b) = (
+        &a[..a.len() - blocks * BLOCK],
+        &b[..b.len() - blocks * BLOCK],
+    );
+    blocks * BLOCK + common(a.iter().rev().copied(), b.iter().rev().copied())
+}
 // Both boundaries must be UTF-8 boundaries even when differing codepoints
 // share leading or trailing bytes.
 fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
     let (a, b) = (old.as_bytes(), new.as_bytes());
-    let mut start = a.iter().zip(b).take_while(|(a, b)| a == b).count();
+    let mut start = common_prefix(a, b);
     while !old.is_char_boundary(start) || !new.is_char_boundary(start) {
         start -= 1;
     }
-    let mut suffix = a[start..]
-        .iter()
-        .rev()
-        .zip(b[start..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
+    let mut suffix = common_suffix(&a[start..], &b[start..]);
     while !old.is_char_boundary(old.len() - suffix) || !new.is_char_boundary(new.len() - suffix) {
         suffix -= 1;
     }
@@ -646,23 +1114,33 @@ fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
         &new[start..new.len() - suffix],
     )
 }
-async fn write_messages(stdin: &mut ChildStdin, messages: &[Value]) -> std::io::Result<()> {
-    let operation = async {
-        for message in messages {
-            let mut bytes = serde_json::to_vec(message)?;
-            bytes.push(b'\n');
-            stdin.write_all(&bytes).await?;
+/// The session's one writer to TeXpresso's stdin: callers queue lines and go on, and a
+/// TeXpresso that has stopped reading stops the session instead of holding them.
+async fn write_lines(
+    mut stdin: ChildStdin,
+    mut queued: mpsc::UnboundedReceiver<Vec<u8>>,
+    session: std::sync::Weak<Session>,
+) {
+    while let Some(lines) = queued.recv().await {
+        let write = async {
+            stdin.write_all(&lines).await?;
+            stdin.flush().await
+        };
+        let written = tokio::time::timeout(Duration::from_secs(5), write)
+            .await
+            .unwrap_or_else(|_| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "viewer stopped reading commands",
+                ))
+            });
+        if let Err(err) = written {
+            if let Some(session) = session.upgrade() {
+                session.stop(Some(unsent(err)));
+            }
+            break;
         }
-        stdin.flush().await
-    };
-    tokio::time::timeout(Duration::from_secs(5), operation)
-        .await
-        .unwrap_or_else(|_| {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "viewer stopped reading commands",
-            ))
-        })
+    }
 }
 async fn read_output(mut reader: impl AsyncRead + Unpin, session: Arc<Session>, protocol: bool) {
     let mut chunk = [0; 8192];
@@ -683,13 +1161,13 @@ async fn read_output(mut reader: impl AsyncRead + Unpin, session: Arc<Session>, 
             if *byte == b'\n' {
                 if let Ok(message) = serde_json::from_slice::<Value>(&pending) {
                     if message[0] == "reset-sync" {
-                        let mut input = session.input.lock().await;
-                        let messages: Vec<_> = input
-                            .files
+                        let files = lock(&session.files);
+                        let messages: Vec<_> = files
+                            .texts
                             .iter()
-                            .map(|(p, t)| json!(["open", p, t]))
+                            .map(|(p, t)| json!(["open", p, t.string()]))
                             .collect();
-                        let _ = write_messages(&mut input.stdin, &messages).await;
+                        session.send(&messages);
                     } else {
                         apply_message(&session, &message);
                     }
@@ -704,13 +1182,75 @@ async fn read_output(mut reader: impl AsyncRead + Unpin, session: Arc<Session>, 
 fn apply_message(session: &Session, message: &Value) {
     let mut guard = lock(&session.state);
     let state = &mut *guard;
-    // [pdf, path, pages]: the document written to the path it was given.
-    if message[0] == "pdf" {
-        if session.pdf.is_some() {
-            state.pdf_version += 1;
-            session.bump(state);
+    let verb = message[0].as_str().unwrap_or_default();
+    // A patched build's first word is that it sends pages.
+    state.spoken = true;
+    let number = |index: usize| message[index].as_u64();
+    match verb {
+        "live" => {
+            state.live = number(1).map(|version| version as u32);
+            session.event(state);
+            return;
         }
-        return;
+        // [page, index, path, mark]: one page, complete at a path in the session's folder.
+        "page" => {
+            let folder = session.pdf.as_deref().and_then(Path::parent);
+            let path = message[2].as_str().filter(|path| {
+                folder.is_some_and(|folder| Path::new(path).parent() == Some(folder))
+            });
+            if let (Some(page), Some(path)) = (number(1), path) {
+                let update = PageUpdate {
+                    page: page as u32,
+                    path: path.to_owned(),
+                    serial: session.event(state),
+                    edit: number(3).unwrap_or(0),
+                };
+                state.feed.pages.insert(update.page, update);
+            }
+            return;
+        }
+        // [pdf, path, pages], and from a patched build [.., run, changed, mark]: the whole
+        // document written to the path it was given.
+        "pdf" => {
+            if let Some(pdf) = &session.pdf {
+                state.pdf_version += 1;
+                let changed = message[4].as_array().map(|ranges| {
+                    let page = |range: &Value, at: usize| range[at].as_u64().unwrap_or(0) as u32;
+                    ranges.iter().map(|r| [page(r, 0), page(r, 1)]).collect()
+                });
+                let document = Document {
+                    path: pdf.to_string_lossy().into_owned(),
+                    version: state.pdf_version,
+                    serial: session.event(state),
+                    pages: number(2).unwrap_or(0) as u32,
+                    run: message[3].as_str().map(str::to_owned),
+                    changed,
+                    edit: number(5).unwrap_or(0),
+                };
+                // The pages written before it are in it, and their own files are going.
+                state.feed.pages.clear();
+                state.feed.document = Some(document);
+            }
+            return;
+        }
+        "done" => {
+            if let (Some(pages), Some(run)) = (number(1), message[2].as_str()) {
+                let end = RunEnd {
+                    pages: pages as u32,
+                    run: run.to_owned(),
+                };
+                state.feed.done = Some((session.event(state), end));
+            }
+            return;
+        }
+        "synced" => {
+            if let Some(edit) = number(1) {
+                state.feed.synced = edit;
+                session.event(state);
+            }
+            return;
+        }
+        _ => {}
     }
     let output = match message[1].as_str() {
         Some("out") => &mut state.output,
@@ -718,13 +1258,9 @@ fn apply_message(session: &Session, message: &Value) {
         _ => return,
     };
     // Upstream sends [truncate, buffer, end] and [append, buffer, byte-offset, text].
-    match (
-        message[0].as_str(),
-        message[2].as_u64(),
-        message[3].as_str(),
-    ) {
-        (Some("truncate"), Some(end), _) => output.truncate(end),
-        (Some("append"), Some(offset), Some(text)) => output.append(offset, text.as_bytes()),
+    match (verb, message[2].as_u64(), message[3].as_str()) {
+        ("truncate", Some(end), _) => output.truncate(end),
+        ("append", Some(offset), Some(text)) => output.append(offset, text.as_bytes()),
         _ => return,
     }
     state.protocol_seen = true;
@@ -822,7 +1358,7 @@ mod tests {
                 }],
                 None,
                 &path_env,
-                true,
+                Some(&Pane::default()),
             )
             .await
             .unwrap();
@@ -837,9 +1373,8 @@ mod tests {
             fs::read(root.join(BUILD_DIR).join("texpresso-live.pdf")).unwrap(),
             b"normal build"
         );
-        until(|| commands(&tmp).len() >= 2).await;
+        until(|| !commands(&tmp).is_empty()).await;
         let sent = commands(&tmp);
-        assert!(sent.iter().any(|c| c == &json!(["rerun", true])));
         let opened = sent.iter().find(|c| c[0] == "open").unwrap();
         assert_eq!(
             opened[1],
@@ -850,9 +1385,11 @@ mod tests {
         );
         assert_eq!(opened[2], original);
         let second = manager
-            .update(&root, "main.tex", updated, token)
+            .update(&root, "main.tex", updated, token, false)
             .await
             .unwrap();
+        assert_eq!(second.edit, 1);
+        let second = second.status.unwrap();
         assert!(second.running && second.revision > first.revision);
         until(|| commands(&tmp).iter().any(|c| c[0] == "change")).await;
         let sent = commands(&tmp);
@@ -873,15 +1410,15 @@ mod tests {
             "disk text"
         );
         assert!(manager
-            .update(&root, "../escape.tex", "bad", token)
+            .update(&root, "../escape.tex", "bad", token, false)
             .await
             .is_err());
         assert!(manager
-            .update(&root, "build/out.tex", "bad", token)
+            .update(&root, "build/out.tex", "bad", token, false)
             .await
             .is_err());
         assert!(manager
-            .update(&root, "main.tex", &"x".repeat(MAX_FILE + 1), token,)
+            .update(&root, "main.tex", &"x".repeat(MAX_FILE + 1), token, true)
             .await
             .is_err());
         manager.rescan(&root, token).await.unwrap();
@@ -895,14 +1432,14 @@ mod tests {
         );
         assert_eq!(
             manager
-                .start(&root, &[], Some(token), &path_env, false)
+                .start(&root, &[], Some(token), &path_env, None)
                 .await
                 .unwrap_err()
                 .status,
             409
         );
         let restarted = manager
-            .start(&root, &[], None, &path_env, false)
+            .start(&root, &[], None, &path_env, None)
             .await
             .unwrap();
         assert!(restarted.running && restarted.revision > second.revision);
@@ -912,6 +1449,7 @@ mod tests {
                 "main.tex",
                 "EXIT_CLEAN",
                 restarted.session.as_deref().unwrap(),
+                true,
             )
             .await
             .unwrap();
@@ -922,7 +1460,7 @@ mod tests {
             .error
             .is_none());
         manager
-            .start(&root, &[], None, &path_env, false)
+            .start(&root, &[], None, &path_env, None)
             .await
             .unwrap();
         manager.kill_all();
@@ -933,7 +1471,7 @@ mod tests {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
         let live = manager
-            .start(&root, &[], None, &path_env, true)
+            .start(&root, &[], None, &path_env, Some(&Pane::default()))
             .await
             .unwrap();
         until(|| manager.status(&root, None, &path_env).unwrap().pdf_version == 1).await;
@@ -959,7 +1497,7 @@ mod tests {
             }]
         };
         let started = manager
-            .start(&root, &buffer("abc"), None, &path_env, false)
+            .start(&root, &buffer("abc"), None, &path_env, None)
             .await
             .unwrap();
         let token = started.session.as_deref().unwrap();
@@ -972,10 +1510,11 @@ mod tests {
         let mut text = String::from("abc");
         for edit in ["abXc", "aXc", "aXc", "aXcd"] {
             let sent = changes().len();
-            manager
-                .update(&root, "main.tex", edit, token)
+            let updated = manager
+                .update(&root, "main.tex", edit, token, true)
                 .await
                 .unwrap();
+            assert!(updated.status.is_none() && (updated.edit > 0) == (text != edit));
             if text != edit {
                 until(|| changes().len() > sent).await;
                 let change = changes().pop().unwrap();
@@ -990,8 +1529,10 @@ mod tests {
         fs::write(root.join("other.tex"), "").unwrap();
         crate::settings::write_settings(&root, &json!({ "mainFile": "other.tex" })).unwrap();
         let status = manager
-            .update(&root, "main.tex", "abc", token)
+            .update(&root, "main.tex", "abc", token, false)
             .await
+            .unwrap()
+            .status
             .unwrap();
         assert!(!status.running);
         assert!(status.error.unwrap().contains("main file changed"));
@@ -1002,7 +1543,7 @@ mod tests {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
         let owner = manager
-            .start(&root, &[], None, &path_env, false)
+            .start(&root, &[], None, &path_env, None)
             .await
             .unwrap();
         until(|| {
@@ -1021,6 +1562,7 @@ mod tests {
                 "main.tex",
                 "EXIT_STUB",
                 owner.session.as_deref().unwrap(),
+                false,
             )
             .await
             .unwrap();
@@ -1043,7 +1585,7 @@ mod tests {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
         manager
-            .start(&root, &[], None, &path_env, false)
+            .start(&root, &[], None, &path_env, None)
             .await
             .unwrap();
         let session = manager
@@ -1064,7 +1606,7 @@ mod tests {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
         manager
-            .start(&root, &[], None, &path_env, false)
+            .start(&root, &[], None, &path_env, None)
             .await
             .unwrap();
         let session = manager
@@ -1094,7 +1636,7 @@ mod tests {
         let manager = Arc::new(Manager::default());
         assert!(!manager.status(&root, None, &path_env).unwrap().running);
         let old = manager
-            .start(&root, &[], None, &path_env, false)
+            .start(&root, &[], None, &path_env, None)
             .await
             .unwrap()
             .session
@@ -1113,7 +1655,7 @@ mod tests {
                         }],
                         None,
                         &path_env,
-                        false,
+                        None,
                     )
                     .await
                     .unwrap()
@@ -1122,7 +1664,11 @@ mod tests {
         tokio::task::yield_now().await;
         let stale_edit = tokio::spawn({
             let (manager, root, old) = (Arc::clone(&manager), root.clone(), old.clone());
-            async move { manager.update(&root, "main.tex", "stale A", &old).await }
+            async move {
+                manager
+                    .update(&root, "main.tex", "stale A", &old, false)
+                    .await
+            }
         });
         drop(blocked);
         let current = replacement.await.unwrap().session.unwrap();
@@ -1167,12 +1713,13 @@ mod tests {
         );
         assert!(session.state.lock().unwrap().last_used > before);
         assert_eq!(
-            session.input.lock().await.files[&fs::canonicalize(root.join("main.tex")).unwrap()],
+            session.files.lock().unwrap().texts[&fs::canonicalize(root.join("main.tex")).unwrap()]
+                .string(),
             "owner B"
         );
         assert_eq!(
             manager
-                .start(&root, &[], Some(&old), &path_env, false)
+                .start(&root, &[], Some(&old), &path_env, None)
                 .await
                 .unwrap_err()
                 .status,
@@ -1181,7 +1728,7 @@ mod tests {
         manager.stop(&root).unwrap();
         assert!(!manager.status(&root, None, &path_env).unwrap().running);
         let restarted = manager
-            .start(&root, &[], Some(&current), &path_env, false)
+            .start(&root, &[], Some(&current), &path_env, None)
             .await
             .unwrap();
         assert!(restarted.running);
@@ -1196,11 +1743,337 @@ mod tests {
         );
         assert_eq!(
             manager
-                .start(&root, &[], restarted.session.as_deref(), &path_env, false)
+                .start(&root, &[], restarted.session.as_deref(), &path_env, None)
                 .await
                 .unwrap_err()
                 .status,
             409
         );
+    }
+
+    #[test]
+    fn edits_in_utf16_units_change_the_same_bytes_as_in_a_plain_string() {
+        // What the editor has: UTF-16 units. What TeXpresso takes: bytes.
+        let bytes_at = |text: &str, units: usize| {
+            let mut seen = 0;
+            for (at, c) in text.char_indices() {
+                if seen == units {
+                    return Some(at);
+                }
+                seen += c.len_utf16();
+            }
+            (seen == units).then_some(text.len())
+        };
+        let mut plain = "aé😀b\n".repeat(900);
+        let mut text = Text::new(&plain);
+        let mut seed = 7u64;
+        let mut next = |below: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % below.max(1)
+        };
+        for round in 0..4000 {
+            let units = utf16_len(&plain);
+            let start = next(units + 1);
+            let remove = match round % 7 {
+                0 => next(5000),
+                1 => next(3),
+                _ => 0,
+            }
+            .min(units - start);
+            let inserted = [
+                "x",
+                "é",
+                "😀",
+                "",
+                "\\section{Ünïcode 😀}\n",
+                &"y".repeat(next(4000)),
+            ][next(6)]
+            .to_owned();
+            let fits = bytes_at(&plain, start).zip(bytes_at(&plain, start + remove));
+            let changed = text.edit(start, remove, &inserted);
+            assert_eq!(changed, fits.map(|(from, to)| (from, to - from)), "{round}");
+            if let Some((from, to)) = fits {
+                plain.replace_range(from..to, &inserted);
+            }
+            assert_eq!(text.bytes, plain.len());
+            assert_eq!(text.byte_offset(start), bytes_at(&plain, start));
+        }
+        assert_eq!(text.string(), plain);
+        assert!(text
+            .pieces
+            .iter()
+            .all(|p| p.units == utf16_len(&p.text) && p.text.len() <= PIECE + 3));
+        // Typing leaves no crumbs behind: the pieces stay a few kilobytes each.
+        assert!(text.pieces.len() <= plain.len() / (PIECE / 8) + 2);
+        let units = utf16_len(&plain);
+        assert_eq!(text.edit(units + 1, 0, "x"), None);
+        assert_eq!(text.edit(units, 1, ""), None);
+        assert_eq!(text.edit(0, units + 1, ""), None);
+        assert_eq!(text.string(), plain);
+        let mut pair = Text::new("a😀b");
+        assert_eq!(pair.edit(2, 0, "x"), None);
+        assert_eq!(pair.edit(1, 1, ""), None);
+        assert_eq!(pair.byte_offset(2), None);
+        assert_eq!(pair.edit(1, 2, "é"), Some((1, 4)));
+        assert_eq!(pair.string(), "aéb");
+        let mut empty = Text::new("");
+        assert_eq!(empty.edit(0, 0, "é"), Some((0, 0)));
+        assert_eq!(empty.edit(1, 0, "x"), Some((2, 0)));
+        assert_eq!(empty.string(), "éx");
+    }
+
+    /// A stub that speaks as a build with Underleaf's patch does: it says so first, writes
+    /// "the document", answers each numbered edit with page 1 and that the view shows it,
+    /// and a request for a finishing pass with a new document.
+    fn setup_live() -> (tempfile::TempDir, PathBuf, String) {
+        let (tmp, root, path_env) = setup();
+        let stub = tmp.path().join("bin/texpresso");
+        fs::write(&stub, format!(
+            concat!(
+                "#!/bin/sh\ndir=${{TEXPRESSO_PDF_OUTPUT%/*}}\n",
+                "printf '[\"live\",1]\\n[\"pdf\",\"%s\",3,\"partial\",[[0,2]],0]\\n' \"$TEXPRESSO_PDF_OUTPUT\"\n",
+                "while IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> '{}'\n",
+                "  case \"$line\" in\n",
+                "    '[\"mark\",'*) n=${{line#*,}}; n=${{n%]}}\n",
+                "      printf '[\"page\",1,\"%s/page-1-%s.pdf\",%s]\\n[\"synced\",%s]\\n' \"$dir\" \"$n\" \"$n\" \"$n\";;\n",
+                "    *rerun-once*) printf '[\"pdf\",\"%s\",4,\"complete\",[[1,1],[3,3]],9]\\n[\"done\",4,\"complete\"]\\n' \"$TEXPRESSO_PDF_OUTPUT\";;\n",
+                "  esac\ndone\n"
+            ),
+            tmp.path().join("commands").display()
+        )).unwrap();
+        (tmp, root, path_env)
+    }
+    fn main_buffer(text: &str) -> Vec<FileBuffer> {
+        vec![FileBuffer {
+            path: "main.tex".into(),
+            text: text.into(),
+        }]
+    }
+    const SOON: Duration = Duration::from_secs(3);
+
+    #[tokio::test]
+    async fn a_keystroke_goes_as_bytes_at_once_and_one_that_does_not_fit_is_refused() {
+        let (tmp, root, path_env) = setup_live();
+        let manager = Manager::default();
+        let pane = Pane {
+            view: Some((2, 3)),
+            caret: Some(Caret {
+                path: "main.tex".into(),
+                offset: 4,
+            }),
+        };
+        let started = manager
+            .start(&root, &main_buffer("aé😀b"), None, &path_env, Some(&pane))
+            .await
+            .unwrap();
+        let token = started.session.as_deref().unwrap();
+        let path = fs::canonicalize(root.join("main.tex")).unwrap();
+        // Four units in: after a, é and the pair, seven bytes in.
+        assert_eq!(manager.edit(token, "main.tex", 4, 0, "X").unwrap(), 1);
+        assert_eq!(manager.edit(token, "main.tex", 1, 3, "").unwrap(), 2);
+        manager.view(token, 5, 4).unwrap();
+        manager.caret(token, "main.tex", 2).unwrap();
+        manager.rerun(token).unwrap();
+        until(|| commands(&tmp).len() >= 10).await;
+        let sent = commands(&tmp);
+        assert_eq!(
+            sent[1..],
+            [
+                json!(["view", 2, 3]),
+                json!(["caret", path, 7]),
+                json!(["change", path, 7, 0, "X"]),
+                json!(["mark", 1]),
+                json!(["change", path, 1, 6, ""]),
+                json!(["mark", 2]),
+                json!(["view", 5, 5]),
+                json!(["caret", path, 2]),
+                json!(["rerun-once"]),
+            ]
+        );
+        // No finishing passes of upstream's kind, which start the document over.
+        assert!(!sent.iter().any(|c| c[0] == "rerun"));
+
+        // The copy is "aXb" now: nothing below is in it, and nothing is sent or changed.
+        for (file, start, remove) in [("main.tex", 4, 0), ("main.tex", 2, 2), ("other.tex", 0, 0)] {
+            assert_eq!(
+                manager
+                    .edit(token, file, start, remove, "no")
+                    .unwrap_err()
+                    .status,
+                412
+            );
+        }
+        assert_eq!(manager.caret(token, "main.tex", 9).unwrap_err().status, 412);
+        assert_eq!(
+            manager
+                .edit(token, "main.tex", 0, 0, "\0")
+                .unwrap_err()
+                .status,
+            400
+        );
+        assert_eq!(
+            manager
+                .edit("stale", "main.tex", 0, 0, "x")
+                .unwrap_err()
+                .status,
+            409
+        );
+        // The whole text puts the copy right, sent as the change from what TeXpresso has.
+        let repaired = manager
+            .update(&root, "main.tex", "aXb😀", token, true)
+            .await
+            .unwrap();
+        assert_eq!(repaired.edit, 3);
+        assert_eq!(manager.edit(token, "main.tex", 5, 0, "!").unwrap(), 4);
+        until(|| commands(&tmp).len() >= 14).await;
+        assert_eq!(
+            commands(&tmp)[10..],
+            [
+                json!(["change", path, 3, 0, "😀"]),
+                json!(["mark", 3]),
+                json!(["change", path, 7, 0, "!"]),
+                json!(["mark", 4]),
+            ]
+        );
+        // A session that has ended takes no edit, and says so with no number.
+        manager.stop(&root).unwrap();
+        assert_eq!(manager.edit(token, "main.tex", 0, 0, "x").unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn waiting_hands_over_the_latest_of_each_page_and_ends_with_the_session() {
+        let (_tmp, root, path_env) = setup_live();
+        let manager = Arc::new(Manager::default());
+        let started = manager
+            .start(
+                &root,
+                &main_buffer("abc"),
+                None,
+                &path_env,
+                Some(&Pane::default()),
+            )
+            .await
+            .unwrap();
+        let token = started.session.clone().unwrap();
+        let wait = |after: u64, timeout: Duration| {
+            let (manager, root, token) = (Arc::clone(&manager), root.clone(), token.clone());
+            async move { manager.wait(&root, &token, after, timeout).await.unwrap() }
+        };
+        // The build says what it speaks, then the first document.
+        let mut events = wait(0, SOON).await;
+        while events.pdf.is_none() {
+            events = wait(events.seq, SOON).await;
+        }
+        let first = wait(0, SOON).await;
+        assert_eq!(first.live, Some(1));
+        let document = first.pdf.unwrap();
+        assert_eq!((document.version, document.pages), (1, 3));
+        assert_eq!(document.run.as_deref(), Some("partial"));
+        assert_eq!(document.changed, Some(vec![[0, 2]]));
+        assert!(first.pages.is_empty() && first.done.is_none() && first.running);
+
+        // Nothing new: the wait lasts its time, and other calls go on meanwhile.
+        let began = Instant::now();
+        let waiting = tokio::spawn(wait(first.seq, Duration::from_secs(20)));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!waiting.is_finished());
+        assert_eq!(manager.edit(&token, "main.tex", 3, 0, "d").unwrap(), 1);
+        assert_eq!(manager.edit(&token, "main.tex", 4, 0, "e").unwrap(), 2);
+        let mut events = waiting.await.unwrap();
+        assert!(began.elapsed() < SOON && events.seq > first.seq);
+        while events.synced < 2 {
+            events = wait(events.seq, SOON).await;
+        }
+        // Two edits wrote page 1 twice: a client that was away has only the later.
+        let all = wait(0, SOON).await;
+        assert_eq!(all.pages.len(), 1);
+        let page = &all.pages[0];
+        let folder = PathBuf::from(&document.path).parent().unwrap().to_owned();
+        assert_eq!((page.page, page.edit), (1, 2));
+        assert_eq!(PathBuf::from(&page.path), folder.join("page-1-2.pdf"));
+        assert!(page.serial > document.serial && all.pdf.unwrap().serial == document.serial);
+        // And one that has seen it is told nothing twice.
+        let quiet = wait(all.seq, Duration::from_millis(60)).await;
+        assert!(quiet.pages.is_empty() && quiet.pdf.is_none() && quiet.seq == all.seq);
+        assert_eq!(quiet.synced, 2);
+
+        // A new document takes the place of the pages before it.
+        manager.rerun(&token).unwrap();
+        let mut events = wait(all.seq, SOON).await;
+        while events.done.is_none() {
+            events = wait(all.seq, SOON).await;
+        }
+        let document = events.pdf.unwrap();
+        assert_eq!((document.version, document.pages, document.edit), (2, 4, 9));
+        assert_eq!(document.run.as_deref(), Some("complete"));
+        assert_eq!(document.changed, Some(vec![[1, 1], [3, 3]]));
+        assert!(events.pages.is_empty());
+        let done = events.done.unwrap();
+        assert_eq!((done.pages, done.run.as_str()), (4, "complete"));
+        let status = manager.status(&root, Some(&token), &path_env).unwrap();
+        assert_eq!((status.live, status.pdf_version), (Some(1), 2));
+
+        // A page file from outside the session's folder is nobody's page.
+        let session = manager.held(&token).unwrap();
+        apply_message(&session, &json!(["page", 0, "/etc/passwd", 1]));
+        assert!(wait(events.seq, Duration::ZERO).await.pages.is_empty());
+
+        // Stopping answers the wait at once.
+        let waiting = tokio::spawn(wait(events.seq, Duration::from_secs(20)));
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let began = Instant::now();
+        manager.stop(&root).unwrap();
+        let ended = waiting.await.unwrap();
+        assert!(!ended.running && began.elapsed() < Duration::from_secs(1));
+        assert!(!wait(ended.seq, Duration::from_secs(20)).await.running);
+        assert_eq!(
+            manager
+                .wait(&root, "stale", 0, Duration::ZERO)
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+    }
+
+    #[tokio::test]
+    async fn a_build_that_only_writes_the_document_is_sent_nothing_it_does_not_know() {
+        let (tmp, root, path_env) = setup();
+        let manager = Manager::default();
+        let started = manager
+            .start(
+                &root,
+                &main_buffer("abc"),
+                None,
+                &path_env,
+                Some(&Pane::default()),
+            )
+            .await
+            .unwrap();
+        let token = started.session.as_deref().unwrap();
+        let mut events = manager.wait(&root, token, 0, SOON).await.unwrap();
+        while events.pdf.is_none() {
+            events = manager.wait(&root, token, events.seq, SOON).await.unwrap();
+        }
+        // No word of pages before the document: the build is an older one.
+        let document = events.pdf.unwrap();
+        assert_eq!(
+            (events.live, document.version, document.pages),
+            (None, 1, 1)
+        );
+        assert!(document.run.is_none() && document.changed.is_none());
+        assert_eq!(manager.edit(token, "main.tex", 3, 0, "d").unwrap(), 1);
+        manager.view(token, 0, 1).unwrap();
+        manager.caret(token, "main.tex", 1).unwrap();
+        until(|| commands(&tmp).iter().any(|c| c[0] == "change")).await;
+        manager.rescan(&root, token).await.unwrap();
+        until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
+        let verbs: Vec<_> = commands(&tmp)
+            .iter()
+            .map(|c| c[0].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(verbs, ["open", "change", "rescan"]);
     }
 }
