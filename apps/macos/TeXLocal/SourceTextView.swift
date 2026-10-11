@@ -902,7 +902,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// window it holds its items unseen, as the tests use it.
     private func showCompletions(reload: Bool) {
         guard let offered else { return }
-        var start = NSRect.zero, host: NSWindow?
+        var start = NSRect.zero, floor: CGFloat = 0, host: NSWindow?
         if let window, let clip = enclosingScrollView?.contentView {
             host = window
             start = firstRect(forCharacterRange: NSRange(location: offered.start, length: 0), actualRange: nil)
@@ -911,10 +911,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             shown.origin.y += insets.bottom
             shown.size.height -= insets.top + insets.bottom
             guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return closeCompletions() }
-            guard reload else { return completionList.place(under: start) }
+            // Not under the status bar.
+            floor = shown.minY
+            guard reload else { return completionList.place(under: start, over: floor) }
         }
         completionList.show(offered.items.map(\.label), kind: offered.kind, font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
-                            theme: syntaxTheme, under: start, in: host)
+                            theme: syntaxTheme, under: start, over: floor, in: host)
         // Out of the list's way.
         if host != nil { previewMath() }
     }
