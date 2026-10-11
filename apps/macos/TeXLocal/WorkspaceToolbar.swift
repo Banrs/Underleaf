@@ -120,15 +120,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .insert:
             // Notes' ellipsis, which means More (HIG, Icons), with Insert as its name for
             // VoiceOver, Customize Toolbar and the overflow menu: what it holds is the menu bar's
-            // Insert, under Format's and Math's while it stands for them too (`ToolbarFit`).
-            item = menuItem(id, "Insert", "ellipsis", Group { [fit, formatItems, mathItems, project] in
-                if fit.mergesEditing {
-                    Menu("Format") { formatItems }
-                    Menu("Math") { mathItems }
-                    Divider()
-                }
-                InsertMenuItems(project: project)
-            })
+            // Insert, under Format's and Math's while it stands for them too (`configure`).
+            item = menuItem(id, "Insert", "ellipsis", InsertMenuItems(project: project))
         case .bold:
             item = button(id, MenuCommand.editBold.title, "bold", #selector(bold))
             item.visibilityPriority = .low
@@ -235,11 +228,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.label = title
         item.toolTip = title
         item.image = symbol(image, title)
-        item.menu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { items })
+        item.menu = menu(items)
         // No chevrons, as Notes' tools: with them, each menu draws its own capsule (27.2).
         item.showsIndicator = false
         item.visibilityPriority = .low
         return item
+    }
+
+    private func menu(_ items: some View) -> NSMenu {
+        NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { items })
     }
 
     /// Aa opens its popover (`FormatPopover`); the overflow menu has the same as a menu.
@@ -247,9 +244,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let item = button(.format, "Format", "textformat", #selector(showFormat(_:)))
         let form = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
         form.image = item.image
-        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { [formatItems] in
-            formatItems
-        })
+        form.submenu = menu(formatItems)
         item.menuFormRepresentation = form
         // Off outside LaTeX, as Math and Insert (`configure`).
         item.autovalidates = false
@@ -270,6 +265,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private var mathItems: some View {
         MathMenuItems(project: project) { [app, project] in app.perform(.editMath, on: project) }
+    }
+
+    /// Insert's menu while it stands for Format and Math too.
+    private var mergedItems: some View {
+        Group { [formatItems, mathItems, project] in
+            Menu("Format") { formatItems }
+            Menu("Math") { mathItems }
+            Divider()
+            InsertMenuItems(project: project)
+        }
     }
 
     // ---------- state ----------
@@ -328,7 +333,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             }
         case .insert:
             if changed(\.isLaTeX) { item.isEnabled = state.isLaTeX }
-            if changed(\.mergesEditing) { item.toolTip = state.mergesEditing ? "Format, Math and Insert" : item.label }
+            if changed(\.mergesEditing), let item = item as? NSMenuToolbarItem {
+                item.toolTip = state.mergesEditing ? "Format, Math and Insert" : item.label
+                // A menu for each: items a shown pull-down gains at its head take its hidden
+                // title's place, and the first of them isn't shown (27.2).
+                item.menu = state.mergesEditing ? menu(mergedItems) : menu(InsertMenuItems(project: project))
+            }
         case .zoom:
             let control = item.view as? NSSegmentedControl
             if changed(\.zoomLabel) { control?.setLabel(state.zoomLabel, forSegment: 1) }
@@ -486,7 +496,8 @@ private struct ToolbarMenuItems<Content: View>: View {
 }
 
 /// What the toolbar shows of each pane's tools while the pane is narrower than all of them:
-/// Compile as its symbol, Format and Math inside Insert's menu, and no Zoom, which View has.
+/// Format and Math inside Insert's menu, Compile as its symbol where that keeps Zoom its place
+/// or the source holds Compile too, and then no Zoom, which View has.
 @Observable final class ToolbarFit {
     var mergesEditing = false
     var compactCompile = false

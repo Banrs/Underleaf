@@ -208,8 +208,10 @@ final class WorkspaceController: RestoredSplitViewController {
             // A PDF sliding in is already at its width.
             let pdf = pdfItem.viewController.view.frame.width - toggles
             set(\.mergesEditing, source.maxX - leading < ColumnMetrics.sourceTools)
-            set(\.compactCompile, pdf < ColumnMetrics.zoom + ColumnMetrics.compile)
-            set(\.hidesZoom, pdf < ColumnMetrics.zoom + ColumnMetrics.compileSymbol)
+            // Compile gives up its word while that keeps Zoom its place.
+            let hidesZoom = pdf < ColumnMetrics.zoom + ColumnMetrics.compileSymbol
+            set(\.hidesZoom, hidesZoom)
+            set(\.compactCompile, !hidesZoom && pdf < ColumnMetrics.zoom + ColumnMetrics.compile)
         }
     }
 

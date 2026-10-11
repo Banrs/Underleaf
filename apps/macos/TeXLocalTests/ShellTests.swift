@@ -35,8 +35,8 @@ struct ShellTests {
         try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == id })
     }
 
-    /// A wide window shows every tool; at its narrowest Compile is its symbol, Insert stands for
-    /// Format and Math, and Zoom has gone; widened again, they are all back.
+    /// A wide window shows every tool; at its narrowest Insert stands for Format and Math and
+    /// Zoom has gone, Compile keeping its word; widened again, they are all back.
     @Test func theToolbarGivesWayToANarrowWindowAndTakesItBack() async throws {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
@@ -47,12 +47,15 @@ struct ShellTests {
         try await resize(window, to: 100)
         let narrowest = ColumnMetrics.sourceMinimum(sidebarHidden: true, pdfHidden: false) + ColumnMetrics.pdfMinimum
         #expect(abs(window.contentLayoutRect.width - narrowest) < 2)
-        #expect(fit.mergesEditing && fit.compactCompile && fit.hidesZoom)
+        #expect(fit.mergesEditing && !fit.compactCompile && fit.hidesZoom)
         #expect(try item(.format, in: workspace).isHidden && item(.math, in: workspace).isHidden)
         #expect(try !item(.insert, in: workspace).isHidden)
+        let insert = try #require(try item(.insert, in: workspace) as? NSMenuToolbarItem).menu
+        insert.delegate?.menuNeedsUpdate?(insert)
+        #expect(insert.items.prefix(2).map(\.title) == ["Format", "Math"])
+        #expect(insert.items.prefix(2).allSatisfy { $0.submenu?.items.isEmpty == false })
         #expect(try item(.zoom, in: workspace).isHidden)
-        let compile = try item(.compile, in: workspace)
-        #expect(compile.title.isEmpty && compile.image != nil && compile.label == MenuCommand.compileRun.title)
+        #expect(try item(.compile, in: workspace).title == MenuCommand.compileRun.title)
 
         try await resize(window, to: 1300)
         #expect(!fit.mergesEditing && !fit.compactCompile && !fit.hidesZoom)
@@ -69,6 +72,9 @@ struct ShellTests {
                 < ColumnMetrics.sourceMinimum(sidebarHidden: true, pdfHidden: false) + ColumnMetrics.pdfMinimum)
         #expect(workspace.toolbar.fit.mergesEditing && workspace.toolbar.fit.compactCompile)
         #expect(try item(.zoom, in: workspace).isHidden)
+        // Compile as its symbol, still Compile to the overflow menu and VoiceOver.
+        let compile = try item(.compile, in: workspace)
+        #expect(compile.title.isEmpty && compile.image != nil && compile.label == MenuCommand.compileRun.title)
     }
 
     /// A sidebar the window folded is still the user's shown sidebar: it isn't saved as hidden,
