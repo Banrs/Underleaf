@@ -1,17 +1,17 @@
 # TeXpresso live preview
 
 Underleaf can run an optional [TeXpresso](https://github.com/let-def/texpresso)
-session from both the Mac and browser clients. It sends unsaved editor changes
-after a short typing pause to a persistent XeTeX process. Errors while typing
-appear in the TeXpresso log; correcting the source updates the same preview.
+session from both the Mac and browser clients. It sends each edit to a persistent
+XeTeX process as it is made. Errors while typing appear in the Live Preview log;
+correcting the source updates the same preview.
 
 Upstream TeXpresso shows the preview in a window of its own. Built with
-Underleaf's patch (below), it writes the whole document as a PDF after each
-change instead, and the Mac app shows it in the PDF pane until live preview
-stops, when the last build's PDF returns. The browser client keeps TeXpresso's
-window either way. Compile still uses latexmk and the project's selected engine.
-Automatic latexmk builds pause during a live session, without changing your
-saved preference.
+Underleaf's patch (below), it writes each page the editor shows as that page changes,
+and the Mac app draws it in the PDF pane at once; the whole document follows when
+typing pauses. The pane shows the live document until live preview stops, when the
+last build's PDF returns. The browser client keeps TeXpresso's window either way.
+Compile still uses latexmk and the project's selected engine. Automatic latexmk
+builds pause during a live session, without changing your saved preference.
 
 ## Start locally
 
@@ -41,8 +41,8 @@ when complete) with its SyncTeX beside it (`live.synctex`) and reported with the
 changed and whether TeX reached the document's end or stopped on an error
 (`["pdf", path, pages, run, changed, edit]`). References and contents are brought up to date
 by finishing passes in a second TeX, which takes the first one's place when it is done and
-is dropped by a keystroke. The Mac app asks for this unless Settings › Live Preview In is
-TeXpresso Window; the browser client doesn't. The core hands the pages on through
+is dropped by a keystroke. The Mac app asks for this unless Settings › Live Preview › Show Preview In is
+TeXpresso’s Window; the browser client doesn't. The core hands the pages on through
 `texpresso_wait` and takes keystrokes through `texpresso_edit`; in TeXpresso's own window
 a finishing pass runs only when asked for (`texpresso_rerun`).
 

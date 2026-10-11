@@ -1,84 +1,68 @@
-# Underleaf handoff — 6 October 2026
+# Underleaf handoff — 12 October 2026
 
 ## Branches
 
-`main` holds the work. The SwiftUI-shell branch (`swiftui-shell`, and the Claude worktree
-branch it was built on) was fast-forwarded into it; `origin/codex/texpresso` is merged too.
+`main` holds the work. `refactor/frontend-native` (the HIG refactor, the Xcode-style
+completion list and the page-by-page live preview) was fast-forwarded into it on 12 October.
 
 ## The Mac app's shape
 
 - **Window, toolbar and splits are AppKit**: only `NSToolbar`'s tracking separators follow
   the source|PDF divider, and a three-column `NavigationSplitView` can't hide its detail
-  column. A SwiftUI shell was tried (d8d9cf0) and reverted (a2fd29d) for that. Panes, bars,
-  sheets, popovers and Home are SwiftUI, hosting AppKit's text and PDF views where SwiftUI
-  has none.
-- **Source**: one TextKit 2 `NSTextView` (`SourceTextView`), shared across files, inside
-  SwiftUI's `ScrollView` (`SourceColumn`), which on 27.2 is an `NSScrollView` underneath. The
-  text view reports its height (`heightChanged`), scrolls SwiftUI's clip itself for the caret
-  and far ranges (`scrollToVisible`, `scrollRangeToVisible`), and notices its scroll view once
-  SwiftUI places it (`attached`). Xcode's metrics for the font, gutter and current line.
-- **Status bar**: the source/PDF columns' bottom accessory, with no ground of its own: AppKit's
-  own scroll edge lies under it (`.automatic`, the HIG's default), a frosted ground over both
-  panes with no hairline. SwiftUI's hard edge (the editors' colour and a 1 px hairline, as
-  Xcode's) draws only over a SwiftUI scroll view, and one around PDFKit's view takes its
-  rubber-banding and its insets (27.2), so the PDF view sits directly in its pane, as
-  Preview's: PDFKit insets its pages and scroller from the toolbar and the bar and bounces at
-  its ends. Quick Look and the empty states sit in the pane on the editors' colour.
-- **Dark paper**: PDFKit lays a white layer under each page's tiles, which shows as a light
-  line where a page's edge falls inside a pixel; each page's overlay draws a black edge a
-  device pixel either side of the page's (`PageOverlay`), kept to the zoom.
-- **File Outline header**: the files' bottom accessory, its line the files list's own hard
-  scroll edge (`HeaderEdge` at the pane's bottom safe area, which follows the header as it
-  folds): a 1 px hairline on the status bar's row when folded. `Divider()` is kept for
-  separators inside stacks and menus.
-- **Split dividers**: AppKit's thin divider at a device pixel (`HairlineSplitView`), the
-  weight of those scroll-edge lines (AppKit's own is a point, 2 px on Retina; Xcode keeps
-  1 pt). The source|PDF divider stops at the status bar's top (`ColumnsSplitView`), so the
-  bar runs across both panes as one. Drags still take a 4–5 pt band around the pixel.
-- **Divider drags**: a width that changes faster than a frame can leave TextKit's viewport laid
-  out for a passing width and the editor blank; once widths settle the text view lays its
-  viewport out again (`layOutViewportOnceSettled`).
-- **Build panel**: below the columns, so the status bar rides up as it opens (Xcode's
-  arrangement), with AppKit's collapse animation. Its controls are a bar at its foot
-  (`BuildPanelBar`, the panel's own `safeAreaBar`), as Xcode's console bar: a pop-up for
-  Issues, Build Log and TeXpresso, then Warnings or Copy Log, then a filter.
-- **Issues**: Compile › Go to Next/Previous Issue (⌘' and ⇧⌘') step round the issues that
-  name a file; the editor's gutter marks the open file's issue lines until it's edited.
-- **One background** for source and PDF: the system text background, resolved per
-  appearance for PDFKit, which would tint a system colour with the wallpaper.
-- **The PDF hidden at launch** is collapsed in `viewDidAppear`, not as the columns load:
-  collapsed for the first layout, the source never gets the toolbar's scroll edge (27.2).
-- **TeXpresso live preview**: a build with `tools/texpresso/underleaf-pdf.patch` writes the
-  document and its SyncTeX for the PDF pane (Settings › Live Preview In can choose its own
-  window instead). For 3 s after an edit the app asks for the document every 15 ms; SyncTeX
-  works on live pages through the session's token. See `docs/texpresso.md`.
+  column. Panes, bars, sheets, popovers, Settings and Home are SwiftUI, hosting AppKit's text
+  and PDF views where SwiftUI has none.
+- **Narrow windows**: the window stops at 542 pt (about 605 with source and PDF); source and
+  PDF keep minimums of 260 and 200 pt, the sidebar Xcode's navigator's 222. Tools without room
+  go to `NSToolbar`'s own overflow menu by `visibilityPriority`, and nowhere else; Compile
+  gives up its word for its symbol first. AppKit overflows by the toolbar's whole width, so
+  between about 900 and 700 pt a pane's tools can sit over its neighbour. Sidebar and
+  inspector fold for a narrow window and are not saved as hidden for it (`sidebarFolded`).
+- **Source**: one TextKit 2 `NSTextView` (`SourceTextView`), shared across files, in an
+  `NSScrollView` of its own (`EditorView`). Xcode's metrics for the font, gutter and current
+  line; the completion list (`CompletionList`) is a copy of Xcode 27's, an opaque panel in a
+  child window that never takes the keyboard.
+- **Status bar**: the source/PDF columns' bottom accessory at Xcode's measured spacing (14 pt
+  in, 9 between items, 36 high). Its ground is the editors' colour at 85% over AppKit's
+  accessory edge, with a device-pixel separator line in a row of its own above it, the row of
+  the File Outline header's line. SwiftUI's hard scroll edge (Xcode's look) draws only over a
+  SwiftUI scroll view, and one around PDFKit's view takes its rubber-banding and insets
+  (27.2), so the PDF view sits directly in its pane.
+- **Build panel**: below the columns, so the status bar rides up as it opens, with AppKit's
+  collapse animation. Its controls are a bar at its foot, as Xcode's console bar: a pop-up for
+  Issues, Build Log and Live Preview Log, then Warnings or Copy Log, then a filter. Its list
+  hides the system's wallpaper-tinted ground so it is the editors' colour.
+- **Split dividers** are a device pixel (`HairlineSplitView`); the source|PDF divider stops
+  above the status bar (`ColumnsSplitView`), and a double-click on it restores the even split.
+  A display link lays the splits out during pane animations, which otherwise don't always
+  reach the screen (27.2).
+- **PDF**: a rebuilt document's pages replace those showing, in the same `PDFDocument`, since
+  a new document flashes the pane's background for a few frames. PDFKit keeps every such
+  page's objects for the document's life, so once the app has grown by 512 MB since a document
+  was last shown whole, the next one is shown whole (`PDFController.memoryAtWhole`).
+- **Live preview**: each edit goes to the core as the text storage makes it (`texpresso_edit`);
+  a thread of the session's own waits in the core (`texpresso_wait`) for the pages in view,
+  and each is drawn over PDFKit's page at once (`LiveCanvas`, an IOSurface). The whole
+  document follows 300 ms after the last key and replaces only the pages that changed. The
+  protocol and the engine's passes are in `docs/texpresso.md`.
+- **Settings**: a five-pane window (General, Editor, Compiling, PDF, Live Preview).
+- **Words**: the feature is Live Preview, and TeXpresso is named only where the program is the
+  subject; the verb is Compile and a run and its result are a build.
 
 Platform quirks met on the way (27.2) are in the code's comments where they're handled.
 
-**SwiftUI vs AppKit** (checked 6 October against WWDC26: State of the Union, "Use SwiftUI with
-AppKit and UIKit", "Modernize your AppKit app"): Apple calls SwiftUI the best way to build
-apps, doesn't call AppKit legacy, and endorses hosting each in the other. What stays AppKit
-has no SwiftUI equivalent in the 27 SDK: the tracking separators, split-item accessories,
-`PDFView`, inline `QLPreviewView`, a code editor (`TextEditor` has no gutter or custom layout),
-a standalone search field, writing the pasteboard from code, the find pasteboard, caret-anchored
-panels and popovers, Finder reveal, page setup. AppKit notifications go through the 27 SDK's
-typed main-actor messages (`addObserver(of:for:)`, tokens removed by hand), deferred work through
-`Task`, VoiceOver announcements through `AccessibilityNotification.Announcement`.
-
-## Validation, 6 October
+## Validation, 12 October
 
 CI: `ci.yml` runs the web tests and bundle and the Rust core's rustfmt, clippy and tests on
 Linux; `macos-app.yml` builds the app, checks the core is linked statically, runs the native
 tests and fails a run in which none passed.
 
-- Native: 102 tests in 18 suites pass. The empty UI-test target is gone, and with it the
-  need to skip it.
-- `npm test`: 148, including the TeXpresso installer's 5. Rust: 197, with rustfmt and
-  clippy `-D warnings` clean.
-- Checked on a QA copy: PDFKit's scroll view is the only one round the pages, with its own
-  insets (52 under the toolbar, 36 over the bar) and elasticity; the source keeps its text
-  through 40 divider moves in 0.1 s; dark paper's page edges are no lighter than the
-  background at four zooms. A real trackpad's bounce remains a manual check.
+- Native: 140 tests in 19 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
+  `-D warnings` clean. `npm run verify:texpresso`: 25 checks against the patched engine.
+- Live preview, measured from 60 fps screen recordings of a Release build on a one-page
+  document: the pane shows a key's page one frame after the editor shows the glyph (median
+  17 ms, worst 42 ms); TeXpresso's own window, the same way, in zero to one frame (worst
+  41 ms). Headless, a key reaches its page in 12.9 ms median through the core against 12.2 ms
+  to the window's flush.
 
 The native tests run a host app that shares the app's defaults unless built with another
 bundle identifier: build with `TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev`, as CI does with
@@ -103,8 +87,12 @@ its signature, and compare the installed and built binaries.
 
 ## Open
 
+- Live preview is about half a frame behind TeXpresso's own window at a steady typing pace;
+  each page file carries its fonts whole, and most of drawing a fresh page is setting them up.
+- `texpresso-xetex` has not been rebuilt with the patch's change that leaves TeX Live's `doc`
+  and `source` folders out (it needs ICU, HarfBuzz and Graphite headers): run
+  `tools/texpresso/build.sh` where they are installed.
+- Not seen on screen since the live preview's rewrite: a restart after TeXpresso exits, a
+  quick Stop and Start, Find and the selection while pages are replaced.
 - Physical trackpad gestures and interactive IME remain manual checks. ZIP import has
   per-entry limits but no total extraction budget.
-
-API references: [AppKit scroll edges and split accessories](https://developer.apple.com/videos/play/wwdc2025/310/),
-[TextKit rendering attributes](https://developer.apple.com/documentation/appkit/nstextlayoutmanager/renderingattributesvalidator).
