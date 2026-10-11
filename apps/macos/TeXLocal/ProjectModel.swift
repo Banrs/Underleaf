@@ -288,6 +288,11 @@ final class ProjectModel {
             topHeading = Outline.current(outline, file: openPath, line: line)
         }
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
+        editor.textView.issueClicked = { [weak self] line in
+            guard let self, let place = issues.firstIndex(where: { $0.file == self.openPath && $0.line == line }) else { return }
+            showBuildPanel()
+            chosenIssue = place
+        }
         editor.textView.headings = { [weak self] in
             guard let self else { return [] }
             return outline.filter { $0.file == self.openPath }.map { ($0.line, $0.displayTitle) }
