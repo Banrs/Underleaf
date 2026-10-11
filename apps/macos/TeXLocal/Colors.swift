@@ -51,11 +51,3 @@ extension NSColor {
     /// given with the wallpaper, as Preview's canvas, which would set it a shade apart from the editor's.
     static let untintedTextBackground = NSColor(name: nil, dynamicProvider: textBackground(in:))
 }
-
-extension NSAppearance {
-    /// Increase Contrast is on: its appearances answer only `bestMatch(from:)`.
-    var increasesContrast: Bool {
-        let all: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
-        return bestMatch(from: all).map([.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua].contains) == true
-    }
-}
