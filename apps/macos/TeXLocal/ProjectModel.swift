@@ -1,3 +1,4 @@
+import Accessibility
 import AppKit
 import Observation
 
@@ -26,6 +27,8 @@ final class ProjectModel {
     private(set) var topHeading: Int?
 
     var dirty = false
+    /// Why the open file's last save failed, until one succeeds: the status bar says Not Saved.
+    private(set) var saveFailure: String?
     /// Edits since the build of the PDF on screen started.
     private(set) var pdfOutdated = false
     @ObservationIgnored private var edits = 0
@@ -48,7 +51,11 @@ final class ProjectModel {
     }
     var hasPDF: Bool { shown != .none }
     var livePDF: Bool { if case .live = shown { true } else { false } }
-    var showLogs = false
+    var showLogs = false {
+        didSet { if !showLogs { panelOpenedByBuild = false } }
+    }
+    /// A failed build opened the panel, so the next clean one closes it; one the person opened stays.
+    @ObservationIgnored private var panelOpenedByBuild = false
     /// The PDF view's page, scale and find, for the menus and the window.
     let pdf = PDFController()
     var panelTab: PanelTab = .issues
@@ -204,6 +211,40 @@ final class ProjectModel {
 
     private func report(_ error: Error, _ title: String) {
         app?.alert = AppAlert(title, error)
+    }
+
+    /// News that interrupts nothing, in the status bar for a few seconds and spoken by VoiceOver.
+    private(set) var notice: String?
+    @ObservationIgnored private var noticeTask: Task<Void, Never>?
+
+    private func note(_ text: String) {
+        notice = text
+        announce(text)
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            if !Task.isCancelled { self?.notice = nil }
+        }
+    }
+
+    @ObservationIgnored private var announced: (text: String, at: ContinuousClock.Instant)?
+
+    /// Not within 0.3 s of the last announcement, nor the same one again within a few seconds:
+    /// VoiceOver would cut one short or repeat itself.
+    private func announce(_ text: String) {
+        let now = ContinuousClock.now
+        if let announced, now - announced.at < (text == announced.text ? .seconds(3) : .milliseconds(300)) { return }
+        announced = (text, now)
+        AccessibilityNotification.Announcement(text).post()
+    }
+
+    /// A SyncTeX search that finds no match is ordinary (a comment, the preamble, a figure): a
+    /// sound, and the core's word for what it missed in the status bar. Anything else is a
+    /// failure to explain.
+    private func reportSync(_ error: Error, _ title: String) {
+        guard (error as? CoreError)?.status == 404 else { return report(error, title) }
+        NSSound.beep()
+        note(error.localizedDescription)
     }
 
     /// The tree's entry at a project path.
@@ -408,19 +449,21 @@ final class ProjectModel {
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: Self.autosaveDelay)
             guard !Task.isCancelled, let self else { return }
-            let saved = await self.save()
+            let saved = await self.save(reporting: false)
             guard saved, !Task.isCancelled else { return }
             if self.autoCompile { await self.compile(auto: true) }
         }
     }
 
-    /// Queued after earlier mutations; true means the text reached disk.
+    /// Queued after earlier mutations; true means the text reached disk. A failure is an alert
+    /// only when `reporting`, for a save someone asked for or something waits on: an autosave's
+    /// stays in the status bar, where it doesn't come back at every pause in typing.
     @discardableResult
-    func save() async -> Bool {
-        await mutate { await $0.write() }
+    func save(reporting: Bool = true) async -> Bool {
+        await mutate { await $0.write(reporting: reporting) }
     }
 
-    private func write() async -> Bool {
+    private func write(reporting: Bool = true) async -> Bool {
         guard hasUnsavedText, let document = editor.document else { return true }
         // Not over another app's change until asked which to keep.
         guard diskConflict == nil, missingFile == nil else { return false }
@@ -433,6 +476,7 @@ final class ProjectModel {
             // Before the write, so its own change event matches.
             diskText = text
             try await core.perform("write_file", ["id": id, "path": path, "text": text])
+            saveFailure = nil
             analyze()
             refreshSymbols(delayed: true)
             return true
@@ -440,7 +484,10 @@ final class ProjectModel {
             // The disk still has what it had, so a later change event isn't taken for another app's.
             if diskText == text { diskText = previous }
             dirty = true
-            report(error, "“\(path.fileName)” Wasn’t Saved")
+            let title = String(localized: "“\(path.fileName)” Wasn’t Saved")
+            if saveFailure == nil { announce(title) }
+            saveFailure = error.localizedDescription
+            if reporting { report(error, title) }
             return false
         }
     }
@@ -474,11 +521,11 @@ final class ProjectModel {
     }
 
     /// Saves before a file switch, close or quit; cancels pending autosave.
-    func flush() async -> Bool {
+    func flush(reporting: Bool = true) async -> Bool {
         saveTask?.cancel()
         // Repeat if an edit arrives during the write.
         repeat {
-            guard await save() else { return false }
+            guard await save(reporting: reporting) else { return false }
         } while hasUnsavedText
         return true
     }
@@ -620,9 +667,10 @@ final class ProjectModel {
 
     // ---------- compile ----------
 
-    /// A request during a build queues one follow-up. Automatic failures open
-    /// issues when the new build has no PDF; clean builds close empty issues.
-    /// Automatic ones wait while TeXpresso previews, without changing the preference.
+    /// A request during a build queues one follow-up. Only a build the person asked for moves
+    /// the build panel: a failure opens it on the issues, and a clean build closes the panel a
+    /// failure opened. An automatic one changes the status bar and the gutter alone, and waits
+    /// while TeXpresso previews, without changing the preference.
     func compile(auto: Bool = false) async {
         guard texAvailable, !closed, !auto || !livePreviewing else { return }
         if compiling {
@@ -634,26 +682,29 @@ final class ProjectModel {
         stopRequested = false
         // Through the mutation lane, after the settings and renames asked for before.
         let built = edits
-        let saved = await flush()
+        let saved = await flush(reporting: !auto)
         if saved, !stopRequested, !closed, !auto || !livePreviewing {
+            let result: CompileResult
             do {
-                let result = try await core.call("compile", ["id": id], as: CompileResult.self)
-                // The PDF is the main file's now: a main-file change stopped any build of the old one.
-                if result.pdf != nil, !closed {
-                    await showPDFOnDisk(reloadIfUnchanged: result.pdfChanged)
-                    // Edits made while it built aren't in it.
-                    pdfOutdated = edits != built
-                }
-                if !closed {
-                    self.result = result
-                    resultEdits = built
-                    chosenIssue = nil
-                    markIssues()
-                    if result.failed, !auto || result.pdf == nil { showBuildPanel() }
-                    if result.ok, panelTab == .issues, result.errors.isEmpty, result.warnings.isEmpty { showLogs = false }
-                }
+                result = try await core.call("compile", ["id": id], as: CompileResult.self)
             } catch {
-                if !auto, !closed { report(error, "Couldn’t Compile") }
+                // A build the core couldn't run failed too, and says why where the others do.
+                let issue = LogItem(type: "error", file: nil, line: nil, message: error.localizedDescription)
+                result = CompileResult(ok: false, stopped: false, pdf: nil, pdfChanged: false, durationMs: 0,
+                                       errors: [issue], warnings: [], log: "")
+            }
+            // The PDF is the main file's now: a main-file change stopped any build of the old one.
+            if result.pdf != nil, !closed {
+                await showPDFOnDisk(reloadIfUnchanged: result.pdfChanged)
+                // Edits made while it built aren't in it.
+                pdfOutdated = edits != built
+            }
+            if !closed {
+                self.result = result
+                resultEdits = built
+                chosenIssue = nil
+                markIssues()
+                if !auto { finishedManualBuild(result) }
             }
         }
         compiling = false
@@ -661,6 +712,21 @@ final class ProjectModel {
         let again = saved && !closed ? compileQueued : nil
         compileQueued = nil
         if let again { await compile(auto: again) }
+    }
+
+    private func finishedManualBuild(_ result: CompileResult) {
+        if result.failed {
+            let opens = !showLogs
+            showBuildPanel()
+            if opens { panelOpenedByBuild = true }
+            announce(errorCount == 0 ? String(localized: "Build failed")
+                     : String(AttributedString(localized: "Build failed, ^[\(errorCount) error](inflect: true)").characters))
+            // The Dock says so while another app is in front.
+            if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+        } else if result.ok {
+            if panelOpenedByBuild, panelTab == .issues, issues.isEmpty { showLogs = false }
+            announce(String(localized: "Build succeeded"))
+        }
     }
 
     /// A build still running stops and reports nothing, so it can't supersede the next project's.
@@ -679,6 +745,7 @@ final class ProjectModel {
         compileQueued = nil
         folderWatcher = nil
         removeExport()
+        noticeTask?.cancel()
         saveTask?.cancel()
         analysis?.cancel()
         symbolsTask?.cancel()
@@ -832,7 +899,9 @@ final class ProjectModel {
                 guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, livePDF == live else { return }
                 app?.requestPDF(.reveal(loc, word))
             } catch {
-                if !Task.isCancelled, !closed { report(error, "Couldn’t Find This Line in the PDF") }
+                if !Task.isCancelled, !closed {
+                    reportSync(error, "Couldn’t Find This Line in the PDF")
+                }
             }
         }
         syncTask = task
@@ -857,7 +926,9 @@ final class ProjectModel {
                 guard !Task.isCancelled, !closed else { return }
                 await open(loc.file, line: loc.line, column: loc.column)
             } catch {
-                if !Task.isCancelled, !closed { report(error, "Couldn’t Find This Spot in the Source") }
+                if !Task.isCancelled, !closed {
+                    reportSync(error, "Couldn’t Find This Spot in the Source")
+                }
             }
         }
         syncTask = task
@@ -989,6 +1060,7 @@ final class ProjectModel {
         openPath = nil
         diskText = nil
         dirty = false
+        saveFailure = nil
         outline = []
         counts = nil
     }

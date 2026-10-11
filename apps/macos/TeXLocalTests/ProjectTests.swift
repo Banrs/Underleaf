@@ -247,7 +247,6 @@ final class ProjectFlowTests {
         #expect(project.editor.perform(.bold))
         let expected = project.editor.textView.string
         let zip = try await project.exportZip()
-        defer { try? files.removeItem(at: zip.deletingLastPathComponent()) }
         let unzip = Process()
         unzip.executableURL = URL(filePath: "/usr/bin/unzip")
         unzip.arguments = ["-p", zip.path(percentEncoded: false), try #require(project.openPath)]
@@ -257,18 +256,84 @@ final class ProjectFlowTests {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         unzip.waitUntilExit()
         #expect(String(decoding: data, as: UTF8.self) == expected)
+        // The archive is the save panel's to copy: the next export removes it, and closing the last.
+        let next = try await project.exportZip()
+        #expect(!exists(zip) && exists(next))
         await app.close()
+        #expect(!exists(next.deletingLastPathComponent()))
     }
 
-    /// A failed automatic build that still wrote a PDF leaves the build panel
-    /// shut while typing goes on; Compile opens it on the issues. CI has no TeX.
+    /// Automatic builds leave the build panel as it is while typing goes on, failed or clean;
+    /// Compile opens it on a failure's issues, and closes the panel it opened once the build is
+    /// clean. CI has no TeX.
     @Test(.timeLimit(.minutes(1)))
-    func onlyCompileOpensThePanelOverAPDF() async throws {
+    func onlyCompileMovesThePanel() async throws {
         let project = try await openedWithTeX("\\documentclass{article}\\begin{document}\\undefinedmacro x\\end{document}")
         await project.compile(auto: true)
         #expect(project.result?.failed == true && project.result?.pdf != nil && !project.showLogs)
         await project.compile()
         #expect(project.showLogs && project.panelTab == .issues)
+        let text = project.editor.textView
+        text.insertText("", replacementRange: (text.string as NSString).range(of: "\\undefinedmacro"))
+        await project.compile(auto: true)
+        #expect(project.result?.ok == true && project.showLogs)
+        await project.compile()
+        #expect(project.result?.ok == true && !project.showLogs)
+        await app.close()
+    }
+
+    /// An autosave that fails says so in the status bar, without an alert at each pause in
+    /// typing; a save that was asked for explains itself, and the next good one clears both.
+    @Test(.timeLimit(.minutes(1)))
+    func aFailedAutosaveInterruptsNothing() async throws {
+        let (project, folder) = try await opened("original")
+        let main = folder.appending(path: try #require(project.openPath))
+        func lock(_ locked: Bool) throws {
+            try files.setAttributes([.posixPermissions: locked ? 0o444 : 0o644], ofItemAtPath: main.path(percentEncoded: false))
+            try files.setAttributes([.posixPermissions: locked ? 0o555 : 0o755], ofItemAtPath: folder.path(percentEncoded: false))
+        }
+        try lock(true)
+        defer { try? lock(false) }
+        #expect(project.editor.perform(.bold))
+        #expect(await !project.save(reporting: false))
+        #expect(project.saveFailure != nil && app.alert == nil && project.dirty)
+        #expect(await !project.flush())
+        #expect(app.alert != nil)
+        app.alert = nil
+        try lock(false)
+        #expect(await project.save(reporting: false))
+        #expect(project.saveFailure == nil && app.alert == nil)
+        await app.close()
+    }
+
+    /// A search with no PDF to search, like one on a line SyncTeX has no match for, is a line
+    /// in the status bar, not an alert.
+    @Test(.timeLimit(.minutes(1)))
+    func aSyncTeXMissIsNoAlert() async throws {
+        let (project, _) = try await opened()
+        await project.forwardSync()
+        #expect(project.notice == "No compiled PDF yet" && app.alert == nil)
+        await app.close()
+    }
+
+    /// A project that can't be read doesn't open on an empty workspace: the alert says why over Home.
+    @Test(.timeLimit(.minutes(1)))
+    func aProjectThatCannotLoadStaysClosed() async throws {
+        await app.open("No Such Project \(UUID().uuidString.prefix(8))")
+        #expect(app.project == nil && app.alert != nil && !app.isOpening)
+    }
+
+    /// A file of a project already in the library opens that project on the file, where it had
+    /// been copied into a second project.
+    @Test(.timeLimit(.minutes(1)))
+    func aLibraryFileOpensItsOwnProject() async throws {
+        let (info, folder) = try await project()
+        try "notes".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
+        await app.refresh()
+        let count = app.projects.count
+        await app.importProject(from: folder.appending(path: "notes.tex"))
+        #expect(app.project?.id == info.id && app.project?.openPath == "notes.tex")
+        #expect(app.projects.count == count && app.alert == nil)
         await app.close()
     }
 
@@ -326,18 +391,16 @@ final class ProjectFlowTests {
         }
         #expect(project.editor.textView.forwardSync() != nil)
         await project.forwardSync()
-        #expect(app.alert?.message.contains("TeXpresso") == true, "Alert: \(String(describing: app.alert?.message))")
-        app.alert = nil
+        #expect(project.notice?.contains("TeXpresso") == true, "Notice: \(String(describing: project.notice))")
         project.stopTeXpresso()
         try await waitUntil(timeout: .seconds(10)) { !project.livePDF }
         #expect(!project.hasPDF && project.pdf.view.document == nil && project.pdf.pageCount == 0)
         await app.close()
     }
 
-    /// A clean no-op build keeps the PDF's pages and closes an empty Issues
-    /// panel, while a Log panel stays open.
+    /// A clean no-op build keeps the PDF's pages, and leaves open a panel the person opened.
     @Test(.timeLimit(.minutes(1)))
-    func aNoOpBuildKeepsThePDFDocumentAndClosesEmptyIssues() async throws {
+    func aNoOpBuildKeepsThePDFDocumentAndThePanel() async throws {
         let project = try await openedWithTeX("\\documentclass{article}\\begin{document}x\\end{document}")
         (project.showLogs, project.panelTab) = (true, .log)
         await project.compile()
@@ -347,7 +410,7 @@ final class ProjectFlowTests {
         await project.compile()
         #expect(project.result?.ok == true && project.result?.pdfChanged == false)
         #expect(project.pdf.shownVersion == shown)
-        #expect(!project.showLogs)
+        #expect(project.showLogs)
         await app.close()
     }
 

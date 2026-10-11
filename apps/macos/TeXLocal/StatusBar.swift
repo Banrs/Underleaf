@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Status below source and PDF, which scroll on beneath it, the same whether the build panel
-/// shows or not. Page uses PDFKit numbering, which can differ from LaTeX; save failures and the
-/// engine appear elsewhere.
+/// shows or not. Page uses PDFKit numbering, which can differ from LaTeX; the engine appears
+/// elsewhere.
 struct StatusBar: View {
     /// The bar's height, which the folded File Outline's header shares (`OutlineHeader`).
     static let height: CGFloat = 36
@@ -49,6 +49,18 @@ struct StatusBar: View {
                         .hitTarget()
                 }
                 .help("Show TeXpresso Log")
+            }
+            if let reason = project.saveFailure {
+                // An autosave's failure, here until a save succeeds; saving again says why in an alert.
+                Button { Task { await project.saveEdits() } } label: {
+                    Label("Not Saved", systemImage: "exclamationmark.triangle.fill")
+                        .symbolRenderingMode(.multicolor)
+                        .hitTarget()
+                }
+                .help("\(reason) Click to save again.")
+            }
+            if let notice = project.notice {
+                Text(notice).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             let counts = showsCounts && project.editsText && app.showWordCount ? project.counts : nil
@@ -116,9 +128,8 @@ struct StatusBar: View {
     private var buildStatus: some View {
         HStack {
             if project.compiling {
-                // The mini spinner, about as wide as the other states' symbols.
-                Label { Text("Compiling…") } icon: { ProgressView().controlSize(.mini) }
-                    .labelStyle(.titleAndIcon)
+                // The toolbar's Stop has the build's one spinner.
+                Text("Compiling…")
             } else if let result = project.result {
                 if result.stopped {
                     Text("Build Stopped")
