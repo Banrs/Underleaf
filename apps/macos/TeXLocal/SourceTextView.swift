@@ -928,12 +928,14 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
     }
 
-    /// Only a chosen completion goes in, replacing what's typed of it.
+    /// Only a chosen completion goes in, replacing what's typed of it, as an undo step of its
+    /// own: undone, what was typed is back.
     private func acceptCompletion(_ index: Int) {
         guard let offered, offered.items.indices.contains(index), caret >= offered.start else { return closeCompletions() }
         let item = offered.items[index]
         closeCompletions()
-        insertText(item.text, replacementRange: NSRange(location: offered.start, length: caret - offered.start))
+        apply([TextEdit(NSRange(location: offered.start, length: caret - offered.start), item.text)], named: String(localized: "Completion"),
+              select: NSRange(location: offered.start + (item.text as NSString).length, length: 0))
         startSnippet(item.fields, at: offered.start)
     }
 

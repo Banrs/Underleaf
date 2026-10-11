@@ -243,6 +243,45 @@ struct SourceEditorTests {
         #expect(text.selectedRange().location == NSMaxRange(string.range(of: "\\caption{")))
         text.insertTab(nil)
         #expect(text.selectedRange().location == NSMaxRange(string.range(of: "fig:")))
+        #expect(text.undoManager?.undoActionName == "Insert")
+        open("")
+        #expect(editor.perform(.block, "figure", title: "Figure"))
+        #expect(text.undoManager?.undoActionName == "Insert Figure")
+    }
+
+    /// Writing Tools are kept to the prose: commands, their names, maths and comments are passed over.
+    @Test func writingToolsPassOverTheLaTeX() {
+        let source = "Some \\emph{prose} with $x^2$ and \\label{sec:a}. % note"
+        open(source)
+        let string = source as NSString
+        let ignored = editor.textView(text, writingToolsIgnoredRangesInEnclosingRange: NSRange(location: 0, length: string.length)).map(\.rangeValue)
+        func isIgnored(_ word: String) -> Bool {
+            ignored.contains { NSIntersectionRange($0, string.range(of: word)).length > 0 }
+        }
+        #expect(isIgnored("\\emph") && isIgnored("$x^2$") && isIgnored("sec:a") && isIgnored("% note"))
+        #expect(!isIgnored("Some") && !isIgnored("prose") && !isIgnored("with"))
+        #expect(text.writingToolsBehavior == .limited)
+    }
+
+    /// The context menu has the editor's own commands first and none of the system's that do
+    /// nothing for LaTeX source.
+    @Test func theContextMenuIsTheSourcesOwn() throws {
+        open("word", caret: 0)
+        text.forwardSync = { {} }
+        let menu = NSMenu()
+        for (title, action) in [("Cut", #selector(NSText.cut(_:))), ("Speech", #selector(NSTextView.startSpeaking(_:))),
+                                ("Layout Orientation", #selector(NSTextView.changeLayoutOrientation(_:)))] {
+            menu.addItem(.separator())
+            menu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: ""))
+        }
+        let transformations = NSMenuItem(title: "Transformations", action: nil, keyEquivalent: "")
+        transformations.submenu = NSMenu()
+        transformations.submenu?.addItem(NSMenuItem(title: "Make Upper Case", action: #selector(NSResponder.uppercaseWord(_:)), keyEquivalent: ""))
+        menu.addItem(transformations)
+        let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+                                                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        let shown = try #require(editor.textView(text, menu: menu, for: event, at: 0))
+        #expect(shown.items.map { $0.isSeparatorItem ? "-" : $0.title } == ["Go to PDF Position", "Comment Selection", "-", "Cut"])
     }
 
     /// A line revealed far down is at the top exactly, and stays there as the column
@@ -383,7 +422,7 @@ struct SourceEditorTests {
         #expect(offered.start == 2 && offered.items.first?.label == "\\begin")
         // Return accepts the selected item, the first.
         text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
-        #expect(text.offered == nil)
+        #expect(text.offered == nil && text.undoManager?.undoActionName == "Completion")
         #expect(text.string == "  \\begin{env}\n    \n  \\end{env}")
         #expect(text.selectedRange() == NSRange(location: 9, length: 3))
         text.insertText("itemize", replacementRange: typed)

@@ -65,6 +65,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.isAutomaticTextCompletionEnabled = false
         text.smartInsertDeleteEnabled = false
         text.inlinePredictionType = .no
+        // Writing Tools proofread and rewrite the prose in place, as plain text, and leave the LaTeX alone (below).
+        text.writingToolsBehavior = .limited
+        text.allowedWritingToolsResultOptions = .plainText
         text.setAccessibilityLabel(String(localized: "Source"))
         text.delegate = self
         text.textStorage?.delegate = text
@@ -205,12 +208,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
                   orthography: NSOrthography, wordCount: Int) -> [NSTextCheckingResult] {
-        let document = textView.document
-        // The highlighter also colours words inside \text{…} as math. The
-        // prose scan owns those boundaries; colours supply syntax names only.
-        let code = document.highlights(in: range).filter {
-            [.command, .argument, .stringLiteral, .builtin].contains($0.kind)
-        }.map(\.range) + document.notProse(in: range)
+        let code = code(in: range, kinds: [.command, .argument, .stringLiteral, .builtin])
         return results.filter { result in
             // Language metadata can span both prose and TeX without changing it.
             if result.resultType == .orthography { return true }
@@ -221,31 +219,66 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
     }
 
+    /// What isn't prose in a range: the runs the highlighter gives those kinds, and the names
+    /// commands take. The highlighter also colours words inside \text{…} as maths; the prose
+    /// scan owns those boundaries, so spelling asks for the syntax's names only.
+    private func code(in range: NSRange, kinds: Set<HighlightKind>) -> [NSRange] {
+        let document = textView.document
+        return document.highlights(in: range).filter { kinds.contains($0.kind) }.map(\.range) + document.notProse(in: range)
+    }
+
+    /// Writing Tools pass over everything coloured as LaTeX, comments too: only prose is rewritten.
+    func textView(_ view: NSTextView, writingToolsIgnoredRangesInEnclosingRange range: NSRange) -> [NSValue] {
+        code(in: range, kinds: [.command, .argument, .mathDelimiter, .mathIdentifier, .number, .comment, .invalid, .stringLiteral, .builtin])
+            .map(NSValue.init(range:))
+    }
+
     func textViewDidChangeSelection(_ notification: Notification) {
         changes.count += 1
         guard !textView.loading else { return }
         reportCursor()
     }
 
-    /// The system's text menu, with Go to PDF Position above it while there's somewhere to go.
+    /// The system's text menu without what does nothing for LaTeX source (the layout's direction,
+    /// speech, the case transformations), under Go to PDF Position, while there's somewhere to
+    /// go, and Comment Selection.
     func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
-        guard textView.forwardSync() != nil else { return menu }
-        let item = NSMenuItem(title: MenuCommand.syncForward.title, action: #selector(goToPDF), keyEquivalent: "")
-        item.target = self
-        menu.insertItem(item, at: 0)
-        menu.insertItem(.separator(), at: 1)
+        let unwanted = [#selector(NSTextView.changeLayoutOrientation(_:)), #selector(NSTextView.startSpeaking(_:)),
+                        #selector(NSResponder.uppercaseWord(_:))]
+        for item in menu.items where unwanted.contains(where: { action in
+            item.action == action || item.submenu?.items.contains { $0.action == action } == true
+        }) {
+            menu.removeItem(item)
+        }
+        var own: [NSMenuItem] = []
+        if textView.forwardSync() != nil {
+            own.append(NSMenuItem(title: MenuCommand.syncForward.title, action: #selector(goToPDF), keyEquivalent: ""))
+        }
+        if textView.isEditable {
+            own.append(NSMenuItem(title: MenuCommand.editComment.title, action: #selector(toggleComment), keyEquivalent: ""))
+        }
+        own.forEach { $0.target = self }
+        for item in (own + [.separator()]).reversed() { menu.insertItem(item, at: 0) }
+        // A separator only between two groups.
+        for item in menu.items.reversed() where item.isSeparatorItem {
+            let index = menu.index(of: item)
+            if index == 0 || index == menu.numberOfItems - 1 || menu.item(at: index + 1)?.isSeparatorItem == true { menu.removeItem(item) }
+        }
         return menu
     }
 
     @objc private func goToPDF() { textView.forwardSync()?() }
+    @objc private func toggleComment() { perform(.comment) }
 
     // ---------- commands ----------
 
-    /// False when there's no text to run it on, or no block of that id.
+    /// False when there's no text to run it on, or no block of that id. `title` names what an
+    /// insertion puts in, for Undo.
     @discardableResult
-    func perform(_ command: EditorCommand, _ argument: String? = nil) -> Bool {
+    func perform(_ command: EditorCommand, _ argument: String? = nil, title: String? = nil) -> Bool {
         guard path != nil, textView.isEditable else { return false }
         let document = textView.document, selection = textView.selectedRange()
+        let inserting = title.map { String(localized: "Insert \($0)") } ?? String(localized: "Insert")
         let insert = { (insertion: Insertion?, name: String) in
             guard let insertion else { return false }
             self.textView.apply([insertion.edit], named: name, select: NSRange(location: insertion.caret, length: 0))
@@ -261,7 +294,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         case .inline:
             // A template such as \ref{$0}: "$0" is where the selection goes.
             let parts = ((argument ?? "") + "$0").components(separatedBy: "$0")
-            wrap(parts[0], parts[1...].dropLast().joined(separator: "$0"), named: String(localized: "Insert"))
+            wrap(parts[0], parts[1...].dropLast().joined(separator: "$0"), named: inserting)
             // Empty braces: the labels or citations for them, once the menu has closed.
             if selection.length == 0 { Task { self.textView.complete(nil) } }
         case .comment:
@@ -273,7 +306,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         case .symbol:
             guard insert(document.insertSymbol(argument ?? "", replacing: selection), String(localized: "Insert Symbol")) else { return false }
         case .block:
-            guard insert(document.insertBlock(argument ?? "", replacing: selection), String(localized: "Insert")) else { return false }
+            guard insert(document.insertBlock(argument ?? "", replacing: selection), inserting) else { return false }
         }
         focus()
         return true
