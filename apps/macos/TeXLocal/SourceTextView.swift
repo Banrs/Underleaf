@@ -3,7 +3,7 @@ import AppKit
 /// Native TextKit 2 handles typing, undo and accessibility. `SourceDocument`
 /// supplies LaTeX syntax; this view adds the gutter, colours, completion,
 /// brackets and indentation, with core edits grouped into undo steps.
-final class SourceTextView: NSTextView, NSTextStorageDelegate {
+final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCustomRotorItemSearchDelegate {
     /// A plain-text document view for a scroll view, as `scrollablePlainDocumentContentTextView` sets one up.
     static func plainDocument() -> SourceTextView {
         let view = SourceTextView(usingTextLayoutManager: true)
@@ -1011,6 +1011,34 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         guard let drop = files.lazy.compactMap(fileDrop).first else { return false }
         drop()
         return true
+    }
+
+    // MARK: VoiceOver's rotors
+
+    /// The open file's headings in order, for VoiceOver's Headings rotor.
+    var headings: () -> [(line: Int, title: String)] = { [] }
+    private lazy var rotors = [NSAccessibilityCustomRotor(rotorType: .heading, itemSearchDelegate: self),
+                               NSAccessibilityCustomRotor(label: String(localized: "Issues"), itemSearchDelegate: self)]
+
+    override func accessibilityCustomRotors() -> [NSAccessibilityCustomRotor] { rotors }
+
+    /// The next or previous heading, or line with a build issue, from the rotor's current one.
+    func rotor(_ rotor: NSAccessibilityCustomRotor,
+               resultFor search: NSAccessibilityCustomRotor.SearchParameters) -> NSAccessibilityCustomRotor.ItemResult? {
+        var items = rotor.type == .heading ? headings() : issueLines.sorted { $0.key < $1.key }.map { line, error in
+            (line, error ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)"))
+        }
+        if !search.filterString.isEmpty { items = items.filter { $0.title.localizedCaseInsensitiveContains(search.filterString) } }
+        let text = string as NSString
+        let current = search.currentItem.map { document.line(at: min($0.targetRange.location, text.length)) }
+        let next = search.searchDirection == .next
+        guard let found = next ? items.first(where: { $0.line > current ?? 0 }) : items.last(where: { $0.line < current ?? .max })
+        else { return nil }
+        let result = NSAccessibilityCustomRotor.ItemResult(targetElement: self)
+        // The outline and the issues are a moment behind the text: within what there is of it.
+        result.targetRange = text.lineRange(for: NSRange(location: min(document.lineStart(found.line), text.length), length: 0))
+        result.customLabel = found.title
+        return result
     }
 
     // MARK: offsets

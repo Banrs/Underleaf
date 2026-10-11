@@ -674,6 +674,29 @@ struct SourceEditorTests {
         #expect(went == 1 && text.selectedRange() == NSRange(location: 4, length: 0))
     }
 
+    /// VoiceOver's rotors step through the file's headings and the lines with build issues, either way.
+    @Test func theRotorsStepThroughHeadingsAndIssues() throws {
+        open("a\n\\section{One}\nb\n\\section{Two}\nc", caret: 0)
+        text.headings = { [(2, "One"), (4, "Two")] }
+        text.issueLines = [3: true, 5: false]
+        let rotors = text.accessibilityCustomRotors()
+        let headings = try #require(rotors.first { $0.type == .heading }), issues = try #require(rotors.first { $0.type == .custom })
+        #expect(issues.label == "Issues")
+        func step(_ rotor: NSAccessibilityCustomRotor, from: NSAccessibilityCustomRotor.ItemResult?, next: Bool = true) -> NSAccessibilityCustomRotor.ItemResult? {
+            let search = NSAccessibilityCustomRotor.SearchParameters()
+            search.currentItem = from
+            search.searchDirection = next ? .next : .previous
+            return text.rotor(rotor, resultFor: search)
+        }
+        let one = try #require(step(headings, from: nil))
+        #expect(one.customLabel == "One" && one.targetRange == NSRange(location: 2, length: 14))
+        let two = try #require(step(headings, from: one))
+        #expect(two.customLabel == "Two" && step(headings, from: two) == nil)
+        #expect(step(headings, from: two, next: false)?.customLabel == "One")
+        let error = try #require(step(issues, from: nil))
+        #expect(error.customLabel == "Error on line 3" && step(issues, from: error)?.customLabel == "Warning on line 5")
+    }
+
     /// Go to Line…'s sheet puts the caret at its line's start.
     @Test func goToLinePutsTheCaretOnTheLine() {
         open((1...300).map { "line \($0)" }.joined(separator: "\n"), caret: 0)
