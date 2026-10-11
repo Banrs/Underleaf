@@ -649,7 +649,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     }
 }
 
-/// A Command-click goes to the source, as one in the source comes here.
+/// A double-click goes to the source, as one in the source comes here, once PDFKit has selected the word.
 final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var onInverse: (_ page: Int, _ point: CGPoint, _ word: SyncTeXWord?) -> Void = { _, _, _ in }
     var onResize: () -> Void = {}
@@ -882,8 +882,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard event.modifierFlags.contains(.command) else { return super.mouseDown(with: event) }
-        goToSource(at: convert(event.locationInWindow, from: nil))
+        super.mouseDown(with: event)
+        if event.clickCount == 2 { goToSource(at: convert(event.locationInWindow, from: nil)) }
     }
 
     /// Edit › Find › Jump to Selection, which PDFKit leaves to text views: the selection in the
@@ -1000,7 +1000,7 @@ private final class MarkView: NSView {
     override func updateLayer() {
         let find = NSColor.findHighlightColor
         layer?.backgroundColor = find.withAlphaComponent(0.4).cgColor
-        layer?.borderColor = effectiveAppearance.increasesContrast
+        layer?.borderColor = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
             ? find.contrasting(with: paper, by: 3).cgColor : find.withAlphaComponent(0.2).cgColor
         layer?.borderWidth = 1
     }

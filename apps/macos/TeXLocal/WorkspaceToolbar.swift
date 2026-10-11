@@ -24,14 +24,22 @@ extension NSToolbarItem.Identifier {
 /// Pane-aligned tools, with PDF tools following the source/PDF divider and window toggles trailing.
 /// Related tools share a capsule (HIG, Toolbars): the editing tools are separate items that
 /// AppKit joins side by side, as Xcode's and Notes'; the PDF and Inspector toggles stay apart.
-/// The window's minimum fits every default item over its pane (`ColumnMetrics`). Should added
-/// items crowd them, the least used in TeX editors leave first: Zoom, then the editing tools
-/// (equal priorities leave from the right). Back, Compile and the toggles stay (HIG, Toolbars).
+/// What a narrow window has no room for goes to the system's overflow menu, each tool with a
+/// menu form. The least used in TeX editors leave first: Zoom, then the editing tools (equal
+/// priorities leave from the right). Back, Compile and the toggles go last (HIG, Toolbars).
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
-    /// Renamed as the defaults change: a layout saved under "Workspace" has Share, and one
-    /// under "Workspace 2" the toggles' former group, which would come back or go missing.
-    let toolbar = NSToolbar(identifier: "Workspace 3")
+    /// Renamed as the defaults change: a layout saved under an earlier name has Share, the
+    /// toggles' former group or no PDF toggle, which would come back or stay missing.
+    let toolbar = NSToolbar(identifier: "Workspace 4")
+    /// Compile as its symbol, which the workspace sets where its word would be the first tool
+    /// without room.
+    var compactCompile: Bool {
+        get { fit.compact }
+        set { if fit.compact != newValue { fit.compact = newValue } }
+    }
+    private let fit = Fit()
+    @Observable final class Fit { var compact = false }
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
@@ -49,6 +57,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
+        // Compile's word is the one label, and the workspace knows its width (`ColumnMetrics`).
+        toolbar.allowsDisplayModeCustomization = false
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
         watch()
@@ -79,13 +89,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile,
-         .inspectorTrackingSeparator, .toggleInspector]
+         .inspectorTrackingSeparator, .togglePDF, .toggleInspector]
     }
 
     /// The system's toggles go to the window's split, not the nested ones, which would answer first.
     /// They stay out of the overflow menu, as the leading and trailing edges' items do (HIG, Toolbars).
     func toolbarWillAddItem(_ notification: Notification) {
-        guard let item = notification.userInfo?["item"] as? NSToolbarItem,
+        guard let item = notification.userInfo?[NSToolbarUserInfoKey.itemKey] as? NSToolbarItem,
               [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
         item.target = workspace
         item.visibilityPriority = .high
@@ -112,9 +122,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .format:
             item = formatItem()
         case .math:
-            item = menuItem(id, "Math", "radicand.squareroot", MathMenuItems(project: project) { [app, project] in
-                app.perform(.editMath, on: project)
-            })
+            item = menuItem(id, "Math", "radicand.squareroot", mathItems)
         case .insert:
             // Notes' ellipsis, which means More (HIG, Icons), with Insert as its name for
             // VoiceOver, Customize Toolbar and the overflow menu: what it holds is the menu bar's Insert.
@@ -141,21 +149,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = share
         case .compile:
             // The window's one prominent action (HIG Toolbars), as a word: a play symbol reads as
-            // media. Customize Toolbar gets a title, as it draws custom views without their style.
-            item = NSToolbarItem(itemIdentifier: id)
-            item.label = MenuCommand.compileRun.title
-            if flag {
-                item.view = NSHostingView(rootView: compileButton(compiling: project.compiling, enabled: canCompile))
-            } else {
-                item.title = MenuCommand.compileRun.title
-            }
-            // The labelled form too: sized for the longer of its two labels.
-            item.possibleLabels = [MenuCommand.compileRun.title, MenuCommand.compileStop.title]
-            let form = NSMenuItem(title: MenuCommand.compileRun.title, action: #selector(compile), keyEquivalent: "")
-            form.target = self
-            item.menuFormRepresentation = form
+            // media. It stands for the word only where the word doesn't fit (`configure`).
+            item = button(id, MenuCommand.compileRun.title, "play.fill", #selector(compile))
             item.style = .prominent
             item.visibilityPriority = .high
+            // Enabled by the models (`configure`), as its overflow copy by `validateMenuItem`.
+            item.autovalidates = false
         case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
             item = button(id, "PDF", "richtext.page", #selector(togglePDF))
@@ -234,11 +233,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.label = title
         item.toolTip = title
         item.image = symbol(image, title)
-        item.menu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { items })
+        item.menu = menu(items)
         // No chevrons, as Notes' tools: with them, each menu draws its own capsule (27.2).
         item.showsIndicator = false
         item.visibilityPriority = .low
         return item
+    }
+
+    private func menu(_ items: some View) -> NSMenu {
+        NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { items })
     }
 
     /// Aa opens its popover (`FormatPopover`); the overflow menu has the same as a menu.
@@ -246,18 +249,27 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let item = button(.format, "Format", "textformat", #selector(showFormat(_:)))
         let form = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
         form.image = item.image
-        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { [app, project] in
-            ForEach([MenuCommand.editBold, .editItalic, .editUnderline], id: \.self) { command in
-                Button(command.title) { app.perform(command, on: project) }
-            }
-            Divider()
-            SectionLevelItems(project: project)
-        })
+        form.submenu = menu(formatItems)
         item.menuFormRepresentation = form
         // Off outside LaTeX, as Math and Insert (`configure`).
         item.autovalidates = false
         item.visibilityPriority = .low
         return item
+    }
+
+    /// Format's popover as a menu, for the overflow menu.
+    private var formatItems: some View {
+        Group { [app, project] in
+            ForEach([MenuCommand.editBold, .editItalic, .editUnderline], id: \.self) { command in
+                Button(command.title) { app.perform(command, on: project) }
+            }
+            Divider()
+            SectionLevelItems(project: project)
+        }
+    }
+
+    private var mathItems: some View {
+        MathMenuItems(project: project) { [app, project] in app.perform(.editMath, on: project) }
     }
 
     // ---------- state ----------
@@ -273,6 +285,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let compiling: Bool
         let canCompile: Bool
         let pdfTitle: String
+        let compactCompile: Bool
     }
 
     private var state: State {
@@ -280,7 +293,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
               hasPDF: project.hasPDF, canShare: project.buildPDF != nil, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
               compiling: project.compiling, canCompile: canCompile,
-              pdfTitle: app.title(.viewTogglePdf, on: project))
+              pdfTitle: app.title(.viewTogglePdf, on: project), compactCompile: fit.compact)
     }
 
     /// Applies the state as it changes, in the same pass. A column resizing refits the PDF
@@ -318,20 +331,20 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .share:
             if changed(\.canShare) { item.isEnabled = state.canShare }
         case .compile:
+            let command = state.compiling ? MenuCommand.compileStop : .compileRun
             if changed(\.compiling) {
-                let command = state.compiling ? MenuCommand.compileStop : .compileRun
+                // The overflow menu's copy too.
                 item.label = command.title
                 item.toolTip = command.title
-                item.menuFormRepresentation?.title = command.title
                 // Stop on clear glass: still prominent, whose glass stays its own, where a plain
                 // item's joins its neighbours'.
                 item.backgroundTintColor = state.compiling ? .clear : nil
             }
-            if changed(\.canCompile) { item.isEnabled = state.canCompile }
-            if changed(\.compiling) || changed(\.canCompile) {
-                (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(compiling: state.compiling,
-                                                                                      enabled: state.canCompile)
+            if changed(\.compiling) || changed(\.compactCompile) {
+                item.title = state.compactCompile ? "" : command.title
+                item.image = state.compactCompile ? symbol(state.compiling ? "stop.fill" : "play.fill", command.title) : nil
             }
+            if changed(\.canCompile) { item.isEnabled = state.canCompile }
         case .togglePDF:
             if changed(\.pdfTitle) { item.toolTip = state.pdfTitle }
         default:
@@ -383,13 +396,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         perform(project.compiling ? .compileStop : .compileRun)
     }
 
-    /// The overflow menu's Compile, which the item's own view doesn't enable.
+    /// The overflow menu's Compile, which doesn't follow the item's `isEnabled`.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         menuItem.action != #selector(compile) || canCompile
-    }
-
-    private func compileButton(compiling: Bool, enabled: Bool) -> CompileButton {
-        CompileButton(compiling: compiling, enabled: enabled) { [weak self] in self?.compile() }
     }
 
     @objc private func togglePDF() { perform(.viewTogglePdf) }
@@ -462,38 +471,5 @@ private struct ToolbarMenuItems<Content: View>: View {
 
     var body: some View {
         content().disabled(!isEnabled())
-    }
-}
-
-/// Compile as its word, and Stop with a spinner in Compile's width. It fills the item's glass,
-/// which doesn't pass clicks on to an undersized custom view.
-private struct CompileButton: View {
-    let compiling: Bool
-    let enabled: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            ZStack {
-                Text(MenuCommand.compileRun.title)
-                    .opacity(compiling ? 0 : 1)
-                HStack(spacing: 4) {
-                    // The button stays a button to VoiceOver; the status bar says Compiling.
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityHidden(true)
-                    Text(MenuCommand.compileStop.title)
-                }
-                .opacity(compiling ? 1 : 0)
-            }
-            // The item's glass as AppKit draws a titled item's: 36 points high (the UI kit's
-            // toolbar controls), the title 12 points in from each end, 74 points for Compile (27.2).
-            .padding(.horizontal, 12)
-            .frame(height: 36)
-            .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
     }
 }

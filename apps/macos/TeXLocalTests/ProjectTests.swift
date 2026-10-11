@@ -389,7 +389,7 @@ final class ProjectFlowTests {
         try await waitUntil(timeout: .seconds(10)) { project.livePDF && project.pdf.pageCount == 1 } state: {
             "phase \(project.texpresso.phase), log \(project.texpresso.log)"
         }
-        #expect(project.editor.textView.forwardSync() != nil)
+        #expect(project.editor.textView.forwardSync(false) != nil)
         await project.forwardSync()
         #expect(project.notice?.contains("TeXpresso") == true, "Notice: \(String(describing: project.notice))")
         project.stopTeXpresso()

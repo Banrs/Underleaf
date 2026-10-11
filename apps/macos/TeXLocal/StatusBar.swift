@@ -4,7 +4,8 @@ import SwiftUI
 /// shows or not. Page uses PDFKit numbering, which can differ from LaTeX; the engine appears
 /// elsewhere.
 struct StatusBar: View {
-    /// The bar's height, which the folded File Outline's header shares (`OutlineHeader`).
+    /// The bar's height, a toolbar control's, which the folded File Outline's header and the
+    /// build panel's bar share.
     static let height: CGFloat = 36
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -12,14 +13,13 @@ struct StatusBar: View {
     @Bindable var project: ProjectModel
 
     var body: some View {
+        // Under a narrower window the bar says less, then says it shorter.
         ViewThatFits(in: .horizontal) {
-            content(showsCounts: true).labelStyle(.titleAndIcon)
-            content(showsCounts: false).labelStyle(.iconOnly)
+            content(.full).labelStyle(.titleAndIcon)
+            content(.symbols).labelStyle(.iconOnly)
+            content(.short).labelStyle(.iconOnly)
         }
-        // Xcode's bar, measured (2026-10-06): 36 pt under its hairline, 14 pt in to the first
-        // item, the toggle's symbol 17.5 pt from the right edge.
-        .padding(.leading, 14)
-        .padding(.trailing, 16.5)
+        .padding(.horizontal)
         .frame(height: Self.height)
         // The editors' colour, so the bar is one surface with them and with the build panel, washed
         // over its accessory's scroll edge (`buildArea`), which blurs what scrolls beneath: alone,
@@ -38,15 +38,17 @@ struct StatusBar: View {
         }
     }
 
-    private func content(showsCounts: Bool) -> some View {
-        // Xcode's hairline before the toggle, 9 pt either side.
-        HStack(spacing: 9) {
+    private nonisolated enum Detail { case full, symbols, short }
+
+    private func content(_ detail: Detail) -> some View {
+        HStack {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
             Button {
                 if showingIssues { project.showLogs = false } else { project.showBuildPanel() }
             } label: {
-                buildStatus.hitTarget()
+                // The last to give way: its text shortens only where nothing else can.
+                buildStatus.fixedSize(horizontal: detail != .short, vertical: true).hitTarget()
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
             if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
@@ -70,13 +72,21 @@ struct StatusBar: View {
                 Text(notice).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            let counts = showsCounts && project.editsText && app.showWordCount ? project.counts : nil
+            let counts = detail == .full && project.editsText && app.showWordCount ? project.counts : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
             HStack(spacing: 16) {
                 if project.editsText {
                     // The caret's place; Go to Line from it.
                     Button { app.perform(.editGotoLine, on: project) } label: {
-                        Text("Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)").hitTarget()
+                        Group {
+                            if detail == .short {
+                                Text(verbatim: "\(project.cursorLine):\(project.cursorColumn + 1)")
+                                    .accessibilityLabel("Line \(project.cursorLine), Column \(project.cursorColumn + 1)")
+                            } else {
+                                Text("Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)")
+                            }
+                        }
+                        .hitTarget()
                     }
                     .help("Go to Line")
                 }
@@ -88,16 +98,24 @@ struct StatusBar: View {
                 if pages {
                     freshness
                     Button { app.perform(.pdfGotoPage, on: project) } label: {
-                        Text("Page \(project.pdf.page) of \(project.pdf.pageCount)").hitTarget()
+                        Group {
+                            if detail == .short {
+                                Text(verbatim: "\(project.pdf.page)/\(project.pdf.pageCount)")
+                                    .accessibilityLabel("Page \(project.pdf.page) of \(project.pdf.pageCount)")
+                            } else {
+                                Text("Page \(project.pdf.page) of \(project.pdf.pageCount)")
+                            }
+                        }
+                        .hitTarget()
                     }
                     .help("Go to Page")
                 }
             }
             .fixedSize()
-            if project.editsText || pages { hairline }
+            // As tall as the toggle's symbol.
+            if project.editsText || pages { Divider().frame(height: 12) }
             Toggle(isOn: $project.showLogs) {
-                // Only as tall as the HIG's least target: its symbol sits at Xcode's gaps, at the body
-                // size, the nearest to Xcode's 12.5 pt symbol beside 11 pt text (measured 2026-10-06).
+                // Only as tall as the HIG's least target, its symbol at the body size beside the bar's text.
                 Label("Build Panel", systemImage: "inset.filled.bottomthird.square")
                     .font(.body)
                     .frame(minHeight: 20)
@@ -107,9 +125,6 @@ struct StatusBar: View {
             .help(app.title(.viewToggleLogs, on: project))
         }
     }
-
-    /// Xcode's: as tall as the toggle's symbol.
-    private var hairline: some View { Divider().frame(height: 12) }
 
     /// The PDF shown isn't the source's: edits since its build, or a failed build after it.
     @ViewBuilder
@@ -157,7 +172,6 @@ struct StatusBar: View {
                 badge("\(project.warningCount)", "exclamationmark.triangle.fill", spoken: "^[\(project.warningCount) warning](inflect: true)")
             }
         }
-        .fixedSize()
         // A build starting or ending crossfades its status; nothing here moves with typing.
         .animation(reduceMotion ? nil : .snappy, value: project.compiling)
     }

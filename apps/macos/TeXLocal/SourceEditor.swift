@@ -251,7 +251,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             menu.removeItem(item)
         }
         var own: [NSMenuItem] = []
-        if textView.forwardSync() != nil {
+        if textView.forwardSync(false) != nil {
             own.append(NSMenuItem(title: MenuCommand.syncForward.title, action: #selector(goToPDF), keyEquivalent: ""))
         }
         if textView.isEditable {
@@ -267,7 +267,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         return menu
     }
 
-    @objc private func goToPDF() { textView.forwardSync()?() }
+    @objc private func goToPDF() { textView.forwardSync(false)?() }
     @objc private func toggleComment() { perform(.comment) }
 
     // ---------- commands ----------
