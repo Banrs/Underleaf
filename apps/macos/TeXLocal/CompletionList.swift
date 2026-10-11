@@ -2,11 +2,11 @@ import AppKit
 import SwiftUI
 
 /// What a completion is, for its badge.
-enum CompletionKind {
+nonisolated enum CompletionKind: String, Decodable {
     case command, environment, label, citation, entryType
 
     /// A letter on a coloured square, as Xcode's kinds; the colour is the editor's for the same text.
-    func badge(in theme: SyntaxTheme) -> (symbol: String, color: NSColor, name: String) {
+    @MainActor func badge(in theme: SyntaxTheme) -> (symbol: String, color: NSColor, name: String) {
         let colours = theme.colours
         return switch self {
         case .command: ("c.square.fill", colours.command, String(localized: "Command"))

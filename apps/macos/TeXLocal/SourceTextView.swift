@@ -903,14 +903,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return closeCompletions() }
             guard reload else { return completionList.place(under: start) }
         }
-        let rows = offered.items.map { item -> (label: String, kind: CompletionKind) in
-            let kind: CompletionKind = item.label.hasPrefix("\\") ? .command
-                : item.label.hasPrefix("@") ? .entryType
-                : symbols.citations.contains(item.label) ? .citation
-                : symbols.labels.contains(item.label) ? .label : .environment
-            return (item.label, kind)
-        }
-        completionList.show(rows, font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+        completionList.show(offered.items.map { ($0.label, offered.kind) }, font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
                             theme: syntaxTheme, under: start, in: host)
         // Out of the list's way.
         if host != nil { previewMath() }
