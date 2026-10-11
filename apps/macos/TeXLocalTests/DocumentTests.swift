@@ -195,7 +195,7 @@ struct PDFFitTests {
     @Test func theMenusAndTheSavedPageReadTheProjectsPDF() throws {
         let app = AppModel()
         let project = ProjectModel(id: "PDFFitTests", app: app)
-        project.pdfURL = URL(filePath: "/dev/null")
+        project.shown = .build(URL(filePath: "/dev/null"))
         let view = project.pdf.view
         project.pdf.restorePage = 3
         project.pdf.show(try pages(3))
@@ -221,7 +221,7 @@ struct PDFFitTests {
     @Test(arguments: [PDFController.Zoom.fitPage, .scale(1.5), .fitWidth])
     func theSavedZoomComesBack(zoom: PDFController.Zoom) throws {
         let project = ProjectModel(id: "PDFFitTests", app: AppModel())
-        project.pdfURL = URL(filePath: "/dev/null")
+        project.shown = .build(URL(filePath: "/dev/null"))
         project.pdf.restoreZoom = zoom
         project.pdf.show(try pages(3))
         // Kept until the view has a size to fit in.
