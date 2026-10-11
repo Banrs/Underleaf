@@ -23,7 +23,7 @@ struct BuildPanel: View {
                                            description: Text(project.livePDF ? "The PDF pane shows Live Preview."
                                                              : "Live Preview shows the document in its own window. Compile to update the PDF here."))
                 } else {
-                    log(project.texpresso.log, title: "TeXpresso Log")
+                    log(project.texpresso.log, title: "Live Preview Log")
                 }
             }
         }

@@ -57,7 +57,7 @@ struct StatusBar: View {
                           systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
                         .hitTarget()
                 }
-                .help("Show the TeXpresso log")
+                .help("Show the Live Preview log")
             }
             if let reason = project.saveFailure {
                 // An autosave's failure, here until a save succeeds; saving again says why in an alert.
@@ -163,7 +163,7 @@ struct StatusBar: View {
                           "xmark.octagon.fill")
                 }
             } else {
-                Text(project.noBuildTitle)
+                Text("No Build Yet")
             }
             if project.errorCount > 0, project.result?.failed != true {
                 badge("\(project.errorCount)", "xmark.octagon.fill", spoken: "^[\(project.errorCount) error](inflect: true)")
