@@ -359,12 +359,15 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// So once the app has grown by this much since, the next document is shown whole.
     private static let memoryGrowth: UInt64 = 512 << 20
     private var hasGrown: Bool {
-        let now = Self.memory
+        let now = memory()
         return now > memoryAtWhole && now - memoryAtWhole > Self.memoryGrowth
     }
 
+    /// The app's memory now; a test's own count, to grow at will.
+    @ObservationIgnored var memory: () -> UInt64 = { PDFController.footprint }
+
     /// As Activity Monitor counts it; none where it can't be read.
-    private static var memory: UInt64 {
+    private static var footprint: UInt64 {
         var usage = rusage_info_current()
         let read = withUnsafeMutablePointer(to: &usage) {
             $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_CURRENT, $0) }
@@ -400,7 +403,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         } else {
             view.removeLive()
             view.document = document
-            memoryAtWhole = Self.memory
+            memoryAtWhole = memory()
         }
         observeMagnification()
         // A document resets the limits (27.2). Setting them turns fitting off, so before the fit below.

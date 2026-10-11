@@ -128,6 +128,62 @@ struct PDFSwapTests {
         try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 400 }
     }
 
+    /// A live page in view is drawn over PDFKit's own, which takes it when the whole document
+    /// brings it: the selection and Find's matches on the other pages stay through both.
+    @Test func aLivePageInViewLeavesTheSelectionAndFindOnOtherPages() async throws {
+        let controller = PDFController(), view = controller.view
+        let window = onScreen(controller)
+        defer { window.close() }
+        controller.show(try document(["alpha", "beta", "alpha"]))
+        try await waitUntil(timeout: .seconds(5)) { paper(view) > 0 }
+        let shown = try #require(view.document)
+        controller.finding = true
+        controller.findText = "alpha"
+        controller.find("alpha")
+        try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 400 }
+        let selection = try #require(shown.page(at: 1)?.selection(for: NSRange(location: 0, length: 4)))
+        view.setCurrentSelection(selection, animate: false)
+        controller.showLive(try #require(try document(["gamma"]).page(at: 0)), at: 0)
+        // Over the page, which PDFKit's document still has as it was.
+        #expect(view.hasLive(at: 0) && text(view) == ["alpha", "beta", "alpha"])
+        #expect(view.currentSelection?.string == "beta" && controller.matches.count == 400)
+        controller.showLive(try document(["gamma", "beta", "alpha"]), changed: [0], complete: true)
+        #expect(text(view) == ["gamma", "beta", "alpha"] && view.document === shown)
+        #expect(view.currentSelection?.string == "beta" && controller.matches.count == 200)
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "alpha" && view.highlightedSelections?.count == 200 }
+        #expect(view.currentSelection?.string == "beta")
+        // The layer goes once PDFKit's own page has drawn beneath it.
+        try await waitUntil(timeout: .seconds(5)) { !view.hasLive(at: 0) }
+    }
+
+    /// Once the app has grown by half a gigabyte since a document was last shown whole, the next
+    /// build's, or the next live document that is all there, is shown whole: only a new document
+    /// frees what the replaced pages hold.
+    @Test func aDocumentIsShownWholeOnceTheAppHasGrown() throws {
+        let controller = PDFController(), view = controller.view
+        view.setFrameSize(NSSize(width: 600, height: 500))
+        var memory: UInt64 = 1 << 30
+        controller.memory = { memory }
+        controller.show(try document(["a", "b"]))
+        let first = try #require(view.document)
+        controller.showLive(try document(["a2", "b"]), changed: [0], complete: true)
+        #expect(view.document === first && text(view) == ["a2", "b"])
+        memory += 513 << 20
+        // TeX stopped short of the end: the pages past there aren't in its document.
+        controller.showLive(try document(["a3"]), changed: [0], complete: false)
+        #expect(view.document === first && text(view) == ["a3", "b"])
+        let whole = try document(["a4", "b4"])
+        controller.showLive(whole, changed: [0], complete: true)
+        #expect(view.document === whole && text(view) == ["a4", "b4"])
+        // Counted from there on.
+        controller.showLive(try document(["a5", "b4"]), changed: [0], complete: true)
+        #expect(view.document === whole && text(view) == ["a5", "b4"])
+        memory += 513 << 20
+        let build = try document(["c"])
+        controller.show(build)
+        #expect(view.document === build)
+    }
+
     /// A link to another page of the document leads to that page as shown, not the build's copy.
     @Test func linksLeadToThePagesShowing() throws {
         func linked() throws -> PDFDocument {
