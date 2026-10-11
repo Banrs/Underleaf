@@ -313,8 +313,8 @@ final class ProjectModel {
             guard let self else { return [] }
             return outline.filter { $0.file == self.openPath }.map { ($0.line, $0.displayTitle) }
         }
-        editor.textView.forwardSync = { [weak self] in
-            self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync() } } : nil
+        editor.textView.forwardSync = { [weak self] quietly in
+            self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync(quietly: quietly) } } : nil
         }
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)

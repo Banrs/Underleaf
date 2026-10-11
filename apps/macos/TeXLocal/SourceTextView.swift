@@ -61,8 +61,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         /// LaTeX to put in where it's dropped: a figure's `\includegraphics`.
         case insert(String)
     }
-    /// Go to PDF Position, or nil while there's no PDF or no TeX open.
-    var forwardSync: () -> (() -> Void)? = { nil }
+    /// Go to PDF Position, or nil while there's no PDF or no TeX open. Asked quietly, it says
+    /// nothing where the PDF has no such place.
+    var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
 
     /// The text is being replaced whole: no edit of the user's.
     private(set) var loading = false
@@ -1026,15 +1027,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         setSelectedRange(selection)
     }
 
-    /// A Command-click goes to the PDF from where it lands, as TeXShop's and Skim's; a double-click
-    /// stays the system's, selecting a word.
+    /// A double-click goes to the PDF, as one in the PDF comes here, once AppKit has selected the
+    /// word: quietly, a word the PDF doesn't have (the preamble's, a comment's) raising no alert.
     override func mouseDown(with event: NSEvent) {
         if event.type == .leftMouseDown, inGutter(event) { return selectLines(with: event) }
-        guard event.type == .leftMouseDown, event.modifierFlags.contains(.command), let sync = forwardSync() else {
-            return super.mouseDown(with: event)
-        }
-        setSelectedRange(NSRange(location: characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)), length: 0))
-        sync()
+        super.mouseDown(with: event)
+        if event.type == .leftMouseDown, event.clickCount == 2 { forwardSync(true)?() }
     }
 
     /// A click in the gutter selects its line, a drag the lines it passes and Shift from the

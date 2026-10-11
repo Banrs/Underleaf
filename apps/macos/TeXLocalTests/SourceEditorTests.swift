@@ -267,7 +267,7 @@ struct SourceEditorTests {
     /// nothing for LaTeX source.
     @Test func theContextMenuIsTheSourcesOwn() throws {
         open("word", caret: 0)
-        text.forwardSync = { {} }
+        text.forwardSync = { _ in {} }
         let menu = NSMenu()
         for (title, action) in [("Cut", #selector(NSText.cut(_:))), ("Speech", #selector(NSTextView.startSpeaking(_:))),
                                 ("Layout Orientation", #selector(NSTextView.changeLayoutOrientation(_:)))] {
@@ -712,28 +712,27 @@ struct SourceEditorTests {
         if name == .aqua { #expect(resolved(SyntaxTheme.overleaf.colours.command) == NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)) }
     }
 
-    /// A Command-click goes to the PDF from where it lands; a click and a double-click are the
-    /// system's, which place the caret and select the word.
-    @Test func aCommandClickGoesToThePDF() throws {
+    /// A double-click selects the word, as the system's does, and goes to the PDF, quietly; a click
+    /// only places the caret.
+    @Test func aDoubleClickGoesToThePDF() throws {
         let window = inWindow()
         open("one two", caret: 0)
         text.layoutSubtreeIfNeeded()
-        var went = 0
-        text.forwardSync = { { went += 1 } }
+        var went: [Bool] = []
+        text.forwardSync = { quietly in { went.append(quietly) } }
         let glyph = text.firstRect(forCharacterRange: NSRange(location: 4, length: 1), actualRange: nil)
         let point = window.convertPoint(fromScreen: NSPoint(x: glyph.minX + 1, y: glyph.midY))
-        func event(_ type: NSEvent.EventType, clicks: Int, command: Bool = false) throws -> NSEvent {
-            try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: command ? .command : [], timestamp: 0,
+        func event(_ type: NSEvent.EventType, clicks: Int) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
                                             windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1))
         }
-        for clicks in 1...2 {
-            // The release ends the text view's own tracking.
-            NSApp.postEvent(try event(.leftMouseUp, clicks: clicks), atStart: false)
-            text.mouseDown(with: try event(.leftMouseDown, clicks: clicks))
-        }
-        #expect(went == 0 && text.selectedRange() == NSRange(location: 4, length: 3))
-        text.mouseDown(with: try event(.leftMouseDown, clicks: 1, command: true))
-        #expect(went == 1 && text.selectedRange() == NSRange(location: 4, length: 0))
+        // The release ends the text view's own tracking.
+        NSApp.postEvent(try event(.leftMouseUp, clicks: 1), atStart: false)
+        text.mouseDown(with: try event(.leftMouseDown, clicks: 1))
+        #expect(went.isEmpty && text.selectedRange() == NSRange(location: 4, length: 0))
+        NSApp.postEvent(try event(.leftMouseUp, clicks: 2), atStart: false)
+        text.mouseDown(with: try event(.leftMouseDown, clicks: 2))
+        #expect(went == [true] && text.selectedRange() == NSRange(location: 4, length: 3))
     }
 
     /// A click in the gutter selects its line, with Shift from the selection there was; on a
