@@ -20,16 +20,16 @@ nonisolated enum CompletionKind: String, Decodable {
 
 /// The core's completions under the typed text, as Xcode 27's list (measured from Xcode 27.1,
 /// 2026-10-11): an opaque panel of its own with rounded corners and a 1 pt inner line, 22 pt
-/// rows at the 13 pt font with 5 pt round them, the chosen row in the current line's grey with
-/// 5 pt corners, a 16 pt badge 10 pt into it and the label after, what's typed of it stronger.
-/// At least 258 pt wide, and at most 8 rows. Typing stays in the document, which moves the
+/// rows at the 13 pt font with 5 pt round them, the chosen row raised from the ground with 5 pt
+/// corners and the others fainter, a 16 pt badge 10 pt into it and the label after, what's typed
+/// of it stronger. At least 258 pt wide, and at most 8 rows. Typing stays in the document, which moves the
 /// selection and accepts it.
 final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     /// A click chose this row.
     var clicked: (Int) -> Void = { _ in }
     var selection: Int { max(table.selectedRow, 0) }
 
-    private let table = NSTableView()
+    private let table = Table()
     private let scroll = NSScrollView()
     /// Sized from the start, so that its views have margins to keep as it's resized.
     private let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: minimumWidth, height: minimumWidth),
@@ -47,12 +47,36 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// A square symbol's side over its point size.
     private static let squareSide: CGFloat = 0.9
 
-    /// The chosen row as the editor's current line, whichever window has the keyboard.
-    private final class Row: NSTableRowView {
-        override func drawSelection(in dirtyRect: NSRect) {
-            NSColor.secondarySystemFill.setFill()
-            NSBezierPath(roundedRect: bounds.insetBy(dx: CompletionList.margin, dy: 0),
-                         xRadius: CompletionList.highlightRadius, yRadius: CompletionList.highlightRadius).fill()
+    /// Xcode shows the rows not chosen at 85%.
+    private static let faint: CGFloat = 0.85
+
+    /// The rows over the chosen one's ground, which is raised as Xcode's: a control's face in
+    /// Light and the fill that lightens in Dark, with a shadow that falls on the rows beside it,
+    /// so it is drawn beneath them all.
+    private final class Table: NSTableView {
+        override func drawBackground(inClipRect clipRect: NSRect) {
+            super.drawBackground(inClipRect: clipRect)
+            guard selectedRow >= 0 else { return }
+            let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let pill = NSBezierPath(roundedRect: rect(ofRow: selectedRow).insetBy(dx: CompletionList.margin, dy: 0),
+                                    xRadius: CompletionList.highlightRadius, yRadius: CompletionList.highlightRadius)
+            // The shadow alone, round the pill: Dark's fill is translucent, and would cast next to none.
+            NSGraphicsContext.saveGraphicsState()
+            let around = NSBezierPath(rect: bounds)
+            around.append(pill)
+            around.windingRule = .evenOdd
+            around.addClip()
+            let shadow = NSShadow()
+            // Xcode's, measured: a point down, soft over 16 pt, and stronger on the dark ground.
+            shadow.shadowOffset = NSSize(width: 0, height: -1)
+            shadow.shadowBlurRadius = 16
+            shadow.shadowColor = .shadowColor.withAlphaComponent(dark ? 0.38 : 0.17)
+            shadow.set()
+            NSColor.black.setFill()
+            pill.fill()
+            NSGraphicsContext.restoreGraphicsState()
+            (dark ? NSColor.secondarySystemFill : .controlColor).setFill()
+            pill.fill()
         }
     }
 
@@ -63,6 +87,7 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         table.style = .plain
         table.intercellSpacing = .zero
         table.backgroundColor = .clear
+        table.selectionHighlightStyle = .none
         table.dataSource = self
         table.delegate = self
         table.target = self
@@ -196,7 +221,13 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func numberOfRows(in tableView: NSTableView) -> Int { labels.count }
 
-    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { Row() }
+    /// The chosen row's ground moves with it, and its neighbours fade.
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        table.needsDisplay = true
+        table.enumerateAvailableRowViews { view, row in
+            (view.view(atColumn: 0) as? NSView)?.alphaValue = row == table.selectedRow ? 1 : Self.faint
+        }
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let cell = NSTableCellView(), image = NSImageView(), text = NSTextField(labelWithString: "")
@@ -222,6 +253,7 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
         cell.imageView = image
         cell.textField = text
+        cell.alphaValue = row == tableView.selectedRow ? 1 : Self.faint
         NSLayoutConstraint.activate([
             image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: Self.margin + Self.contentInset),
             image.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
