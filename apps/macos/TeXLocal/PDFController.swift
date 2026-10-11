@@ -82,6 +82,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
+            dropLive()
             restoreZoomIfReady()
             if fit == .page { fitPage() }
             restorePageIfReady()
@@ -109,6 +110,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     @objc private func scaleChanged() {
         view.fitPageEdges()
+        if view.liveScaleChanged { dropLive() }
         guard view.document != nil, view.hasShownArea else { return }
         scale = view.scaleFactor
         // Any other scale than the fitted one (a pinch, a zoom command) ends fitting. A pinch keeps
@@ -180,6 +182,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     func setDarkPaper(_ dark: Bool) {
         guard dark != view.darkPaper else { return }
+        dropLive()
         let fit = fit, scale = view.scaleFactor, place = view.shownDestination
         view.darkPaper = dark
         guard view.document != nil else { return }
@@ -343,6 +346,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// frames later (27.2), and each build would flash the pane.
     func show(_ document: PDFDocument) {
         shownVersion += 1
+        liveWaiting.removeAll()
+        removeLiveLayers()
         // Read before the swap: a page keeps its document only weakly.
         let place = restorePage == nil ? view.shownDestination.flatMap { destination in
             destination.page.flatMap { view.document?.index(for: $0) }.map { (index: $0, point: destination.point) }
@@ -392,6 +397,9 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// No PDF, as before the first: the pane shows its empty state, without the find bar.
     func clear() {
         shownVersion += 1
+        liveSettling?.cancel()
+        liveWaiting.removeAll()
+        view.removeLive()
         (finding, findText) = (false, "")
         view.removeMarks()
         if let document = search?.document {
@@ -401,6 +409,61 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         view.document = nil
         (query, matches, matchIndex, limited) = ("", [], 0, false)
         (page, pageCount) = (0, 0)
+    }
+
+    // ---------- live preview ----------
+
+    /// Live pages showing over PDFKit's, which hasn't been given them yet, by index.
+    @ObservationIgnored private var liveWaiting: [Int: PDFPage] = [:]
+    @ObservationIgnored private var liveSettling: Task<Void, Never>?
+
+    /// A page as TeXpresso has just typeset it, in place of the one at `index`. It shows at once,
+    /// drawn over PDFKit's page; PDFKit's document takes it once the typing pauses, so a key
+    /// costs one drawing, and the selection, Find and the place stay as they are meanwhile.
+    func showLive(_ page: PDFPage, at index: Int) {
+        guard let shown = view.document?.page(at: index) else { return }
+        liveWaiting[index] = page
+        guard view.showLive(page, over: shown, at: index) else { return settleLive() }
+        liveSettling?.cancel()
+        liveSettling = Task { [weak self] in
+            guard (try? await Task.sleep(for: .milliseconds(250))) != nil else { return }
+            self?.settleLive()
+            self?.removeLiveLayers()
+        }
+    }
+
+    /// PDFKit's document takes the live pages it hasn't been given.
+    private func settleLive() {
+        guard let document = view.document, !liveWaiting.isEmpty else { return }
+        shownVersion += 1
+        for (index, page) in liveWaiting {
+            guard let old = document.page(at: index) else { continue }
+            // The selection and a mark on the page going go with it.
+            if view.currentSelection?.pages.contains(old) == true { view.clearSelection() }
+            if view.marks.contains(where: { $0.page === old }) { view.removeMarks() }
+            if !matches.isEmpty { view.highlightedSelections = nil }
+            document.insert(page, at: index)
+            document.removePage(at: index + 1)
+        }
+        liveWaiting.removeAll()
+        pageChanged()
+        if finding { find(findText, keepingPlace: true) }
+    }
+
+    /// The layers go once PDFKit has drawn its own pages' tiles and faded them in beneath (27.2).
+    private func removeLiveLayers() {
+        liveSettling?.cancel()
+        liveSettling = Task { [weak self] in
+            guard (try? await Task.sleep(for: .milliseconds(400))) != nil else { return }
+            self?.view.removeLive()
+        }
+    }
+
+    /// The pages have moved or changed size under the live layers: PDFKit's own show at once.
+    private func dropLive() {
+        liveSettling?.cancel()
+        settleLive()
+        view.removeLive()
     }
 
     /// Before the page: where a page lands depends on the scale.
@@ -502,6 +565,10 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     /// PDFKit draws page tiles off the main actor; only page pixels change.
     override nonisolated func draw(_ page: PDFPage, to context: CGContext) {
+        Self.drawPaper(page, to: context, dark: pagesDark.load(ordering: .relaxed))
+    }
+
+    private nonisolated static func drawPaper(_ page: PDFPage, to context: CGContext, dark: Bool) {
         context.saveGState()
         defer { context.restoreGState() }
         let box = page.bounds(for: .cropBox).applying(page.transform(for: .cropBox))
@@ -511,7 +578,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
             page.draw(with: .cropBox, to: context)
         }
         drawPage()
-        guard pagesDark.load(ordering: .relaxed) else { return }
+        guard dark else { return }
         context.setBlendMode(.difference)
         context.setFillColor(.white)
         context.fill(box)
@@ -520,6 +587,64 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         context.setBlendMode(.normal)
         drawPage()
         context.endTransparencyLayer()
+    }
+
+    // ---------- live preview ----------
+
+    /// Live preview's pages as TeXpresso typesets them, each drawn over PDFKit's own: a page given
+    /// to PDFKit fades in over an eighth of a second (27.2), and a layer's contents change in one
+    /// frame. The layers are in PDFKit's document view, so they scroll and magnify with the pages.
+    private let liveCanvas = LiveCanvas()
+    private var liveLayers: [Int: CALayer] = [:]
+    /// The scale the layers were drawn at: PDFKit's is its scroll view's magnification, which a pinch changes step by step.
+    private var liveScale: CGFloat = 0
+    private var shownScale: CGFloat { documentView?.enclosingScrollView?.magnification ?? scaleFactor }
+    var liveScaleChanged: Bool { !liveLayers.isEmpty && shownScale != liveScale }
+
+    /// Draws `page` over `shown`, the page at `index`, on the pixels PDFKit's own tiles take: it
+    /// rounds a page's frame to the display's pixels and draws at the view's scale from the
+    /// frame's corner (27.2), so PDFKit's page can take the layer's place unseen. False for a
+    /// page that isn't showing, which has no frame to draw in.
+    func showLive(_ page: PDFPage, over shown: PDFPage, at index: Int) -> Bool {
+        guard let documentView, let window, let overlay = overlays.object(forKey: shown), overlay.window != nil else { return false }
+        if liveCanvas.superview !== documentView {
+            liveCanvas.frame = documentView.bounds
+            documentView.addSubview(liveCanvas)
+        }
+        // The overlay's frame is PDFKit's page's. The document view is in the page's points, and
+        // PDFKit's scale is its scroll view's magnification: the size on screen is the one in the window.
+        let frame = liveCanvas.convert(overlay.bounds, from: overlay), onScreen = overlay.convert(overlay.bounds, to: nil).size
+        let pixel = window.backingScaleFactor
+        let box = page.bounds(for: .cropBox), scale = scaleFactor * pixel
+        let width = Int((onScreen.width * pixel).rounded()), height = Int((onScreen.height * pixel).rounded())
+        guard width >= 1, height >= 1,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return false }
+        context.scaleBy(x: scale, y: scale)
+        context.translateBy(x: -box.minX, y: -box.minY)
+        Self.drawPaper(page, to: context, dark: darkPaper)
+        let layer = liveLayers[index] ?? {
+            let layer = CALayer()
+            // A layer animates what changes by default; these change with the page they show.
+            layer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+            liveCanvas.layer?.addSublayer(layer)
+            liveLayers[index] = layer
+            return layer
+        }()
+        layer.contents = context.makeImage()
+        // From the page's corner, as many pixels as the bitmap has.
+        layer.frame = CGRect(x: frame.minX, y: frame.minY, width: frame.width * CGFloat(width) / (onScreen.width * pixel),
+                             height: frame.height * CGFloat(height) / (onScreen.height * pixel))
+        liveScale = shownScale
+        return true
+    }
+
+    /// PDFKit's own pages show again: they have the live ones' content, or the pages have moved.
+    func removeLive() {
+        for layer in liveLayers.values { layer.removeFromSuperlayer() }
+        liveLayers.removeAll()
     }
 
     /// Forward search's marks, in the pages' overlays rather than on the pages: an
@@ -689,6 +814,21 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         let point = convert(location, to: page)
         onInverse(document.index(for: page) + 1, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox)), page.syncWord(at: point))
     }
+}
+
+/// The live pages' layers, over PDFKit's pages in its document view; it takes no clicks.
+private final class LiveCanvas: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        autoresizingMask = [.width, .height]
+        // Over the page views PDFKit adds after it.
+        layer?.zPosition = 1
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 /// A page's overlay, which takes no clicks: the PDF view keeps them all.
