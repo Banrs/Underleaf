@@ -52,14 +52,22 @@ final class ProjectModel {
     }
     var hasPDF: Bool { shown != .none }
     var livePDF: Bool { if case .live = shown { true } else { false } }
+    /// The last build's PDF, which is the one to save or share: the live document is TeXpresso's
+    /// working file, rewritten as its pages come.
+    private(set) var buildPDF: URL?
     var showLogs = false {
-        didSet { if !showLogs { panelOpenedByBuild = false } }
+        didSet {
+            if !showLogs { panelOpenedByBuild = false }
+            texpresso.showsLog = showLogs && panelTab == .texpresso
+        }
     }
     /// A failed build opened the panel, so the next clean one closes it; one the person opened stays.
     @ObservationIgnored private var panelOpenedByBuild = false
     /// The PDF view's page, scale and find, for the menus and the window.
     let pdf = PDFController()
-    var panelTab: PanelTab = .issues
+    var panelTab: PanelTab = .issues {
+        didSet { texpresso.showsLog = showLogs && panelTab == .texpresso }
+    }
     /// The panel bar's filters over the issues and over the logs' lines, and whether warnings show.
     var issueFilter = ""
     var logFilter = ""
@@ -70,6 +78,8 @@ final class ProjectModel {
     @ObservationIgnored private var liveDiskTask: Task<Void, Never>?
     @ObservationIgnored private var liveDiskPaths = Set<String>()
     @ObservationIgnored private var liveIntent = 0
+    /// Changes under way that end the live session in the core and start it again after.
+    @ObservationIgnored private var liveChanges = 0
 
     /// Show issues, including the core's fallback issue for a failed build.
     func showBuildPanel() {
@@ -198,19 +208,30 @@ final class ProjectModel {
         let defaults = UserDefaults.standard
         expandedFolders = Set(defaults.stringArray(forKey: Self.key("expandedFolders", id)) ?? [])
         foldedHeadings = Set(defaults.stringArray(forKey: Self.key("foldedHeadings", id)) ?? [])
-        texpresso = TeXpressoSession(id: id) { command, arguments in
-            try await Core.shared.call(command, arguments, as: TeXpressoStatus.self)
-        }
-        texpresso.pdfCall = { arguments in
-            try await Core.shared.call("texpresso_pdf", arguments, as: TeXpressoPDF.self)
-        }
+        let core = Core.shared
+        texpresso = TeXpressoSession(id: id, calls: .init(
+            status: { try await core.call($0, $1, as: TeXpressoStatus.self) },
+            update: { try await core.call("texpresso_update", $0, as: TeXpressoEdit.self).edit },
+            now: { try core.now($0, $1, as: TeXpressoEdit.self)?.edit ?? 0 },
+            wait: core.waiting("texpresso_wait", as: TeXpressoEvents.self)))
         texpresso.onFailure = { [weak self] in self?.showTeXpressoLog() }
         texpresso.onOwnershipLost = { [weak self] in self?.cancelTeXpressoWork() }
-        texpresso.onPDF = { [weak self] in self?.showLivePDF($0) }
-        // The last build's PDF comes back, and automatic builds paused for it resume.
-        texpresso.onEnded = { [weak self] in
+        texpresso.showDocument = { [weak self] in self?.showLive($0) }
+        texpresso.showPage = { [weak self] page, index in
+            if self?.livePDF == true { self?.pdf.showLive(page, at: index) }
+        }
+        texpresso.shownPages = { [weak self] in self?.pdf.view.document?.pageCount ?? 0 }
+        pdf.onVisiblePages = { [weak self] in self?.texpresso.view($0) }
+        texpresso.onEnded = { [weak self] restartable in
             guard let self else { return }
-            if livePDF { Task { await self.endLivePDF() } }
+            // TeXpresso went by itself: it starts again where it was, and the live pages stay meanwhile.
+            if restartable, !closed {
+                let start = liveStart
+                texpresso.restart(files: start.files, caret: start.caret)
+                if texpresso.active { return note(String(localized: "TeXpresso Restarted")) }
+            }
+            // The last build's PDF comes back, and automatic builds paused for it resume.
+            Task { await self.endLivePDF() }
             if autoCompile { Task { await self.compile(auto: true) } }
         }
     }
@@ -296,6 +317,11 @@ final class ProjectModel {
             guard let self else { return }
             cursorLine = line
             cursorColumn = column
+            if texpresso.active, let path = editor.path { texpresso.caretMoved(path, editor.textView.selectedRange().location) }
+        }
+        editor.textView.textEdited = { [weak self] range, text in
+            guard let self, texpresso.active, let path = editor.path else { return }
+            texpresso.edit(path, range, text) { self.editor.textView.string }
         }
         editor.onScroll = { [weak self] line in
             guard let self else { return }
@@ -357,9 +383,12 @@ final class ProjectModel {
         if files != tree, !closed, !Task.isCancelled {
             tree = files
             analyze()
-            // TeXpresso's rescan retains virtual files. A fresh session
-            // drops overrides for deleted or renamed includes.
-            if initialLoadComplete, texpresso.active { restartTeXpresso() }
+            // TeXpresso keeps the texts it was sent through a rescan, so only a new session drops
+            // one whose file has gone or moved; any other change it finds by looking again.
+            if initialLoadComplete, texpresso.active {
+                let paths = Set(files.flattened.map(\.path))
+                if texpresso.files.isSubset(of: paths) { texpresso.rescan() } else { restartTeXpresso() }
+            }
         }
     }
 
@@ -377,17 +406,22 @@ final class ProjectModel {
 
     /// The main file's PDF on disk, unless a later load replaces this one. A no-op
     /// build's PDF is already shown: reopening every page would lose PDFKit's state.
-    /// `replacingLive`, it takes the live document's place, which stays until then.
+    /// During live preview it is kept for after it, and `replacingLive` it takes the
+    /// live document's place, unless live preview is on again by then.
     @discardableResult private func showPDFOnDisk(reloadIfUnchanged: Bool = true, replacingLive: Bool = false) async -> Bool {
-        // A build during live preview keeps its PDF for after it.
-        guard !livePDF || replacingLive else { return true }
         pdfLoad?.cancel()
         let load = Task {
-            guard !closed, !livePDF || replacingLive, let path = try? await core.call("pdf_path", ["id": id], as: String.self),
+            guard !closed, let path = try? await core.call("pdf_path", ["id": id], as: String.self),
                   !Task.isCancelled, !closed else { return false }
             let url = URL(fileURLWithPath: path)
-            if !reloadIfUnchanged, url == pdfURL { return true }
-            guard let document = await PDFController.loadDocument(url), !Task.isCancelled, !closed else { return false }
+            var live: Bool { replacingLive ? livePreviewing : livePDF }
+            if live {
+                buildPDF = FileManager.default.fileExists(atPath: path) ? url : nil
+                return true
+            }
+            if !reloadIfUnchanged, shown == .build(url) { return true }
+            guard let document = await PDFController.loadDocument(url), !Task.isCancelled, !closed, !live else { return false }
+            buildPDF = url
             shown = .build(url)
             pdf.show(document)
             return true
@@ -399,22 +433,18 @@ final class ProjectModel {
     /// Live preview over, the last build's PDF, or the pane's empty state without one: the live
     /// document isn't a build's, to save or sync with. A new live session's document wins.
     private func endLivePDF() async {
-        guard !(await showPDFOnDisk(replacingLive: true)), livePDF, !texpresso.active, !closed else { return }
+        guard livePDF, !livePreviewing, !(await showPDFOnDisk(replacingLive: true)), livePDF, !livePreviewing, !closed else { return }
         shown = .none
         pdf.clear()
     }
 
-    /// TeXpresso's document in the PDF pane, as a build's replaces the last; the pane shows on
-    /// the first, as the preview the person asked for.
-    private func showLivePDF(_ url: URL) {
-        pdfLoad?.cancel()
-        pdfLoad = Task {
-            guard let document = await PDFController.loadDocument(url), !Task.isCancelled, !closed, texpresso.active else { return false }
-            if !livePDF, app?.showPDF == false { app?.showPDF = true }
-            shown = .live(url)
-            pdf.show(document)
-            return true
-        }
+    /// TeXpresso's document in the PDF pane; the pane shows on the first, as the preview the
+    /// person asked for.
+    private func showLive(_ live: LiveDocument) {
+        guard texpresso.active, !closed else { return }
+        if !livePDF, app?.showPDF == false { app?.showPDF = true }
+        shown = .live(live.url)
+        pdf.showLive(live.document, changed: live.changed, complete: live.complete)
     }
 
     // ---------- editing ----------
@@ -427,7 +457,6 @@ final class ProjectModel {
         openTask?.cancel()
         let task = Task {
             if path != openPath {
-                texpresso.flushEdits()
                 guard await saveEdits(), !Task.isCancelled, !closed else { return }
                 do {
                     let text = isTextFile(path) ? try await readText(path) : nil
@@ -439,6 +468,8 @@ final class ProjectModel {
                         editor.open(path: path, text: text, focus: focus)
                         cursorLine = editor.currentLine
                         markIssues()
+                        // Its text as the editor has it, so the first key there is an edit of a text TeXpresso has.
+                        texpresso.update(TeXpressoFile(path: path, text: editor.textView.string))
                     }
                 } catch {
                     if !Task.isCancelled, !closed { report(error, "Couldn’t Open “\(path.fileName)”") }
@@ -485,9 +516,6 @@ final class ProjectModel {
         edits += 1
         if let openPath { lastEdit[openPath] = edits }
         if !editor.textView.issueLines.isEmpty { editor.textView.issueLines = [:] }
-        if texpresso.active, let document = editor.document {
-            texpresso.update(TeXpressoFile(path: document.path, text: document.text))
-        }
         if hasPDF { pdfOutdated = true }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
@@ -871,8 +899,11 @@ final class ProjectModel {
         }
         guard cleaned, !closed else { return }
         pdfLoad?.cancel()
-        shown = .none
-        pdf.clear()
+        buildPDF = nil
+        if !livePDF {
+            shown = .none
+            pdf.clear()
+        }
         result = nil
         chosenIssue = nil
         pdfOutdated = false
@@ -886,33 +917,42 @@ final class ProjectModel {
 
     // ---------- TeXpresso live preview ----------
 
-    private var livePreviewing: Bool { texpresso.active || liveRestartTask != nil }
+    private var livePreviewing: Bool { texpresso.active || liveRestartTask != nil || liveChanges > 0 }
 
     /// The core ends a live session when a rename or a new main file changes what it previews.
-    /// One live before `change` starts again after it, unless stopped or started meanwhile.
+    /// One live before `change` starts again after it, unless stopped or started meanwhile; the
+    /// live pages stay until then.
     @discardableResult
     private func keepingLive(_ change: () async -> Bool) async -> Bool {
-        let live = texpresso.active ? liveIntent : nil
+        guard texpresso.active else { return await change() }
+        let live = liveIntent
+        liveChanges += 1
         let changed = await change()
-        if changed, live == liveIntent, !closed { restartTeXpresso() }
+        liveChanges -= 1
+        if changed, live == liveIntent, !closed { restartTeXpresso() } else { await endLivePDF() }
         return changed
     }
 
-    private var liveFiles: [TeXpressoFile] {
-        guard editsText, let document = editor.document, document.path == openPath else { return [] }
-        return [TeXpressoFile(path: document.path, text: document.text)]
+    /// The editor's text as its storage has it, which the edits that follow are edits of, and the caret in it.
+    private var liveStart: (files: [TeXpressoFile], caret: (path: String, offset: Int)?) {
+        guard editsText, let path = editor.path, path == openPath else { return ([], nil) }
+        return ([TeXpressoFile(path: path, text: editor.textView.string)], (path, editor.textView.selectedRange().location))
     }
 
     func startTeXpresso() {
         guard !closed, texpresso.canStart else { return }
         liveIntent += 1
+        if let pages = pdf.visiblePages { texpresso.view(pages) }
         // The preview is the feedback; the log opens only on a failure.
-        texpresso.start(files: liveFiles)
+        let start = liveStart
+        texpresso.start(files: start.files, caret: start.caret)
     }
 
     func stopTeXpresso() {
         cancelTeXpressoWork()
         texpresso.stop()
+        // Stopped already, while it was to start again: its pages go as they do when it stops.
+        if !texpresso.active { Task { await endLivePDF() } }
     }
 
     private func cancelTeXpressoWork() {
@@ -928,16 +968,17 @@ final class ProjectModel {
         showLogs = true
     }
 
-    func rescanTeXpresso() { texpresso.rescan(files: liveFiles) }
-
     private func restartTeXpresso() {
         liveRestartTask?.cancel()
         liveRestartTask = Task { [weak self] in
             // Coalesce a rename's tree and main-file notifications.
             try? await Task.sleep(for: .milliseconds(180))
             guard let self, !closed, !Task.isCancelled else { return }
-            texpresso.restart(files: liveFiles)
+            let start = liveStart
+            texpresso.restart(files: start.files, caret: start.caret)
             liveRestartTask = nil
+            // Not started after all: another window has the project's session.
+            if !texpresso.active { await endLivePDF() }
         }
     }
 
@@ -963,7 +1004,7 @@ final class ProjectModel {
                 liveDiskPaths.remove(path)
             }
             guard others, !closed, !Task.isCancelled else { return }
-            rescanTeXpresso()
+            texpresso.rescan()
         }
     }
 

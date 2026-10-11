@@ -265,6 +265,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private nonisolated struct State: Equatable {
         let isLaTeX: Bool
         let hasPDF: Bool
+        let canShare: Bool
         let showsPDF: Bool
         let zoomLabel: String
         let canZoomIn: Bool
@@ -276,7 +277,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private var state: State {
         State(isLaTeX: project.isLaTeX,
-              hasPDF: project.hasPDF, showsPDF: app.showPDF,
+              hasPDF: project.hasPDF, canShare: project.buildPDF != nil, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
               compiling: project.compiling, canCompile: canCompile,
               pdfTitle: app.title(.viewTogglePdf, on: project))
@@ -315,7 +316,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             if changed(\.hasPDF) || changed(\.canZoomIn) { control?.setEnabled(state.hasPDF && state.canZoomIn, forSegment: 2) }
             if changed(\.showsPDF) { item.isHidden = !state.showsPDF }
         case .share:
-            if changed(\.hasPDF) { item.isEnabled = state.hasPDF }
+            if changed(\.canShare) { item.isEnabled = state.canShare }
         case .compile:
             if changed(\.compiling) {
                 let command = state.compiling ? MenuCommand.compileStop : .compileRun
@@ -394,7 +395,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     @objc private func togglePDF() { perform(.viewTogglePdf) }
 
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
-        project.pdfURL.map { [$0] } ?? []
+        project.buildPDF.map { [$0] } ?? []
     }
 }
 

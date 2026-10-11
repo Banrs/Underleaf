@@ -185,7 +185,8 @@ extension AppModel {
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
         case .viewZoomOut: project.map { $0.hasPDF && $0.pdf.canZoomOut } ?? false
         case .syncInverse: project.map { $0.hasPDF } ?? false
-        case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage:
+        case .pdfSave: project?.buildPDF != nil
+        case .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage:
             project?.hasPDF == true
         case .syncForward: project.map { $0.hasPDF && $0.isLaTeX } ?? false
         case .issueNext, .issuePrevious: project?.issues.contains { $0.file != nil } == true
@@ -233,7 +234,7 @@ extension AppModel {
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.saveEdits() }
         case .pdfSave:
-            if let project, let url = project.pdfURL {
+            if let project, let url = project.buildPDF {
                 exporting = ExportFile(name: "\(project.id).pdf", type: .pdf) { url }
             }
         // The PDF, not the first responder (usually the source).
@@ -331,7 +332,7 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .importExport) {
             items([.pdfSave, .projectExport])
             Divider()
-            if let project, project.hasPDF, let url = project.pdfURL {
+            if let project, let url = project.buildPDF {
                 ShareLink(item: url)
             } else {
                 Button {} label: { Label("Share…", systemImage: "square.and.arrow.up") }.labelStyle(.titleAndIcon).disabled(true)

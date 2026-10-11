@@ -82,6 +82,52 @@ struct PDFSwapTests {
         #expect(controller.page == 1 && controller.pageCount == 1)
     }
 
+    /// A live document's pages that changed replace the ones showing, and no others. One TeX
+    /// stopped short of the end keeps the pages past where it stopped; a complete one is as long
+    /// as it says; and an older build's, which doesn't say what changed, replaces them all.
+    @Test func aLiveDocumentTakesOnlyThePagesThatChanged() throws {
+        let controller = PDFController(), view = controller.view
+        view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try document(["a", "b", "c", "d"]))
+        controller.go(toPage: 3)
+        let shown = try #require(view.document), first = shown.page(at: 0), version = controller.shownVersion
+        controller.showLive(try document(["a2", "b2"]), changed: [1], complete: false)
+        #expect(text(view) == ["a", "b2", "c", "d"])
+        #expect(shown.page(at: 0) === first && view.document === shown && controller.page == 3 && controller.pageCount == 4)
+        controller.showLive(try document(["a3", "b3", "c3"]), changed: [2], complete: true)
+        #expect(text(view) == ["a", "b2", "c3"] && controller.pageCount == 3)
+        controller.showLive(try document(["a4", "b4", "c4", "d4", "e4"]), changed: [3, 4], complete: true)
+        #expect(text(view) == ["a", "b2", "c3", "d4", "e4"] && controller.pageCount == 5)
+        // A forward search under way still lands: these are the pages it was asked about.
+        #expect(controller.shownVersion == version && shown.page(at: 0) === first)
+        controller.showLive(try document(["x"]), changed: nil, complete: true)
+        #expect(text(view) == ["x"] && view.document === shown)
+    }
+
+    /// A live page takes its place among PDFKit's with the selection and Find's matches on the
+    /// other pages as they were.
+    @Test func aLivePageLeavesTheSelectionAndFindOnOtherPages() async throws {
+        let controller = PDFController(), view = controller.view
+        view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try document(["alpha", "beta", "alpha"]))
+        let shown = try #require(view.document)
+        controller.finding = true
+        controller.findText = "alpha"
+        controller.find("alpha")
+        try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 400 }
+        let selection = try #require(shown.page(at: 1)?.selection(for: NSRange(location: 0, length: 4)))
+        view.setCurrentSelection(selection, animate: false)
+        // Out of view, so PDFKit's document takes it at once.
+        controller.showLive(try #require(try document(["gamma"]).page(at: 0)), at: 2)
+        #expect(text(view) == ["alpha", "beta", "gamma"])
+        #expect(view.currentSelection?.string == "beta" && controller.matches.count == 200)
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "alpha" && view.highlightedSelections?.count == 200 }
+        #expect(view.currentSelection?.string == "beta")
+        controller.showLive(try #require(try document(["alpha"]).page(at: 0)), at: 1)
+        #expect(view.currentSelection == nil)
+        try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 400 }
+    }
+
     /// A link to another page of the document leads to that page as shown, not the build's copy.
     @Test func linksLeadToThePagesShowing() throws {
         func linked() throws -> PDFDocument {

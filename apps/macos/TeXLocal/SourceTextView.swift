@@ -61,6 +61,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         /// LaTeX to put in where it's dropped: a figure's `\includegraphics`.
         case insert(String)
     }
+    /// Each edit as it is made, for live preview: the range of the text before it, and what replaced it.
+    var textEdited: (NSRange, String) -> Void = { _, _ in }
     /// Go to PDF Position, or nil while there's no PDF or no TeX open.
     var forwardSync: () -> (() -> Void)? = { nil }
 
@@ -102,7 +104,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
                      range edited: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters), !loading else { return }
         let old = NSRange(location: edited.location, length: edited.length - delta)
-        document.edit(old, with: (textStorage.string as NSString).substring(with: edited))
+        let text = (textStorage.string as NSString).substring(with: edited)
+        document.edit(old, with: text)
+        textEdited(old, text)
         edits += 1
         staleColours = min(staleColours ?? edited.location, edited.location)
         // The fields follow the change itself, when it's the one expected.
