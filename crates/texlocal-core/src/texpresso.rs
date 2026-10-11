@@ -29,6 +29,9 @@ const MAX_TOTAL: usize = 64 * 1024 * 1024;
 const MAX_OUTPUT: usize = 128 * 1024;
 const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 const LEASE: Duration = Duration::from_secs(120);
+/// How long TeXpresso may leave what it was sent unread before the session is given up:
+/// it reads nothing while it makes its TeX formats, five seconds and more the first time.
+const UNREAD: Duration = Duration::from_secs(60);
 /// The longest `wait` waits, well inside the lease it renews.
 const MAX_WAIT: Duration = Duration::from_secs(60);
 const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
@@ -1126,7 +1129,7 @@ async fn write_lines(
             stdin.write_all(&lines).await?;
             stdin.flush().await
         };
-        let written = tokio::time::timeout(Duration::from_secs(5), write)
+        let written = tokio::time::timeout(UNREAD, write)
             .await
             .unwrap_or_else(|_| {
                 Err(std::io::Error::new(
