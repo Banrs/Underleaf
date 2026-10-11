@@ -69,18 +69,8 @@ struct BuildPanel: View {
         }
     }
 
-    /// The log's lines with the bar's filter in them, as Xcode's console filters its output.
-    @ViewBuilder
     private func log(_ text: String, title: String) -> some View {
-        let filter = project.logFilter
-        let shown = filter.isEmpty ? text
-            : text.split(separator: "\n", omittingEmptySubsequences: false)
-                .filter { $0.localizedCaseInsensitiveContains(filter) }.joined(separator: "\n")
-        if shown.isEmpty {
-            ContentUnavailableView.search(text: filter)
-        } else {
-            LogPane(text: shown, title: title)
-        }
+        LogPane(text: text, filter: project.logFilter, title: title)
     }
 }
 
@@ -149,7 +139,7 @@ private struct IssueList: View {
     var body: some View {
         let selection = Binding { project.chosenIssue } set: { project.chooseIssue($0, focus: false) }
         ScrollViewReader { proxy in
-            List(items, id: \.offset, selection: selection) { IssueRow(item: $0.element) }
+            List(items, id: \.offset, selection: selection) { IssueRow(item: $0.element, chosen: $0.offset == project.chosenIssue) }
                 .listStyle(.inset)
                 .accessibilityLabel("Issues")
                 .contextMenu(forSelectionType: Int.self) { rows in
@@ -190,11 +180,13 @@ private struct IssueList: View {
 /// An error or warning: its message, and its location when the log names one.
 private struct IssueRow: View {
     let item: LogItem
+    /// The chosen row shows its whole message; the others' tooltips have theirs.
+    var chosen = false
 
     var body: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.message).lineLimit(3)
+                Text(item.message).lineLimit(chosen ? nil : 3)
                 if let location = location(line: ":") {
                     Text(location)
                         .font(.subheadline)
@@ -205,6 +197,7 @@ private struct IssueRow: View {
             Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
         }
+        .help(item.message)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
         // Spoken as words: "main.tex, line 12", not "main.tex colon 12".
@@ -219,16 +212,36 @@ private struct IssueRow: View {
 
 /// The log under the panel's bar: the text view runs on beneath the bar, inset by its height so
 /// its last line and its scroller end at the bar's top. The bar's safe area reaches SwiftUI but
-/// not an AppKit scroll view, which takes the inset itself.
+/// not an AppKit scroll view, which takes the inset itself. With the bar's filter, only the
+/// lines with it in them, as Xcode's console filters its output.
 private struct LogPane: View {
     let text: String
+    let filter: String
     var title = "Build Log"
+    /// The filter's lines, found off the main actor when the log or the filter changes: not on
+    /// every redraw of a log that can be megabytes. Nil until the first are in.
+    @State private var filtered: String?
 
     var body: some View {
-        GeometryReader { geometry in
-            LogTextView(text: text, title: title, bottomInset: geometry.safeAreaInsets.bottom)
-                .ignoresSafeArea(.container, edges: .bottom)
+        let shown = filter.isEmpty ? text : filtered ?? text
+        Group {
+            if shown.isEmpty {
+                ContentUnavailableView.search(text: filter)
+            } else {
+                GeometryReader { geometry in
+                    LogTextView(text: shown, title: title, bottomInset: geometry.safeAreaInsets.bottom)
+                        .ignoresSafeArea(.container, edges: .bottom)
+                }
+            }
         }
+        .task(id: [text, filter]) {
+            filtered = filter.isEmpty ? nil : await Self.lines(of: text, with: filter)
+        }
+    }
+
+    @concurrent private nonisolated static func lines(of text: String, with filter: String) async -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { $0.localizedCaseInsensitiveContains(filter) }.joined(separator: "\n")
     }
 }
 

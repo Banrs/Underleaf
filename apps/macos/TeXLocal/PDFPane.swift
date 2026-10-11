@@ -34,6 +34,9 @@ struct PDFPane: View {
             } actions: {
                 GetMacTeXButton().buttonStyle(.borderedProminent)
             }
+        } else if project.compiling {
+            // The toolbar has the build's spinner and its Stop.
+            ContentUnavailableView("Compiling…", systemImage: "richtext.page")
         } else if project.result?.failed == true {
             ContentUnavailableView {
                 Label("Build Failed", systemImage: "xmark.octagon")

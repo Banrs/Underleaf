@@ -45,11 +45,12 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     var zoomLabel: String { Self.label(scale) }
     /// The limit's, for the toolbar to reserve.
     var widestZoomLabel: String { Self.label(Self.maxScale) }
-    private(set) var canZoomIn = true
-    private(set) var canZoomOut = true
-    /// 999%, so the toolbar's scale reserves a three-digit label's width (`widestZoomLabel`):
-    /// PDFKit would go to 10,000%, and Pages' zoom stops at 400%.
-    private static let maxScale: CGFloat = 9.99
+    var canZoomIn: Bool { scale < Self.maxScale }
+    var canZoomOut: Bool { scale > Self.minScale }
+    /// 10% to 800%: PDFKit would go to 10,000%, and the toolbar's scale reserves a three-digit
+    /// label's width (`widestZoomLabel`).
+    private static let minScale: CGFloat = 0.1
+    private static let maxScale: CGFloat = 8
     private static func label(_ scale: CGFloat) -> String {
         Double(scale).formatted(.percent.precision(.fractionLength(0)))
     }
@@ -100,30 +101,22 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         }
     }
 
-    /// Set only when changed: Observation notifies on every set, and these come on each
-    /// page turn of a scroll and each step of a pinch, for the toolbar, status bar and scale menu.
-    private func update<Value: Equatable>(_ key: ReferenceWritableKeyPath<PDFController, Value>, _ value: Value) {
-        if self[keyPath: key] != value { self[keyPath: key] = value }
-    }
-
     @objc private func pageChanged() {
         guard let document = view.document, let page = view.currentPage else { return }
-        update(\.page, document.index(for: page) + 1)
-        update(\.pageCount, document.pageCount)
+        self.page = document.index(for: page) + 1
+        pageCount = document.pageCount
     }
 
     @objc private func scaleChanged() {
         view.fitPageEdges()
         guard view.document != nil, view.hasShownArea else { return }
-        update(\.scale, view.scaleFactor)
-        update(\.canZoomIn, view.canZoomIn)
-        update(\.canZoomOut, view.canZoomOut)
+        scale = view.scaleFactor
         // Any other scale than the fitted one (a pinch, a zoom command) ends fitting. A pinch keeps
         // autoScales on until it ends: one back at the width fits again, one ending off it doesn't.
         if view.autoScales, abs(view.scaleFactor - view.scaleFactorForSizeToFit) < 0.001 {
-            update(\.fit, .width)
+            fit = .width
         } else if fit == .width || (fit == .page && abs(view.scaleFactor - pageScale) > 0.001) {
-            update(\.fit, nil)
+            fit = nil
         }
     }
 
@@ -156,6 +149,18 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         guard let document = view.document, document.pageCount > 0,
               let page = document.page(at: min(max(number, 1), document.pageCount) - 1) else { return }
         view.go(to: page)
+    }
+
+    /// The document, not the view: on white paper, scaled down to the sheet where its pages are
+    /// larger (A4 on US Letter), whether or not the pane shows.
+    func print(title: String) {
+        guard let operation = view.document?.printOperation(for: .shared, scalingMode: .pageScaleDownToFit, autoRotate: true) else { return }
+        operation.jobTitle = title
+        if let window = view.window ?? NSApp.mainWindow {
+            operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+        } else {
+            operation.run()
+        }
     }
 
     /// In a continuous single-page layout, auto-scaling fits the page width.
@@ -359,7 +364,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         }
         let document = view.document ?? document
         observeMagnification()
-        // A document resets the limit (27.2). Setting it turns fitting off, so before the fit below.
+        // A document resets the limits (27.2). Setting them turns fitting off, so before the fit below.
+        view.minScaleFactor = Self.minScale
         view.maxScaleFactor = Self.maxScale
         view.documentView?.enclosingScrollView?.setAccessibilityLabel("PDF")
         view.matchScroller()
@@ -383,9 +389,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         if finding { find(findText, keepingPlace: true) }
     }
 
-    /// No PDF, as before the first: the pane shows its empty state.
+    /// No PDF, as before the first: the pane shows its empty state, without the find bar.
     func clear() {
         shownVersion += 1
+        (finding, findText) = (false, "")
         view.removeMarks()
         if let document = search?.document {
             search = nil
@@ -403,7 +410,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         switch zoom {
         case .fitWidth: fitWidth()
         case .fitPage: fitPage()
-        case .scale(let scale): setScale(min(max(CGFloat(scale), view.minScaleFactor), Self.maxScale))
+        case .scale(let scale): setScale(min(max(CGFloat(scale), Self.minScale), Self.maxScale))
         }
     }
 

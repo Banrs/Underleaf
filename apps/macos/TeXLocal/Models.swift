@@ -53,7 +53,7 @@ nonisolated struct TexStatus: Decodable {
 }
 
 nonisolated struct ProjectSettings: Decodable {
-    let mainFile: String
+    var mainFile: String
     let engine: String
     let shellEscape: Bool
     let stopOnFirstError: Bool

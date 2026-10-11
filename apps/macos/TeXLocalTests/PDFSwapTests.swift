@@ -103,4 +103,31 @@ struct PDFSwapTests {
         let target = try #require(link.destination?.page ?? (link.action as? PDFActionGoTo)?.destination.page)
         #expect(target === shown.page(at: 1))
     }
+
+    /// With no PDF left to show, its find bar goes too.
+    @Test func clearingThePDFClosesItsFind() throws {
+        let controller = PDFController()
+        controller.show(try document(["one"]))
+        controller.finding = true
+        controller.findText = "one"
+        controller.clear()
+        #expect(!controller.finding && controller.findText.isEmpty && controller.pageCount == 0)
+    }
+
+    /// The models assign without comparing first: a set to an equal value notifies no observer.
+    /// The macro's doing on this toolchain, which this pins.
+    @Test func anEqualSetNotifiesNoObserver() {
+        let project = ProjectModel(id: "ObservationTests", app: AppModel())
+        func notifies(_ change: () -> Void) -> Bool {
+            nonisolated(unsafe) var notified = false
+            withObservationTracking { _ = (project.cursorLine, project.counts, project.shown) } onChange: { notified = true }
+            change()
+            return notified
+        }
+        project.counts = Counts(words: 1, lines: 1)
+        #expect(!notifies { project.cursorLine = project.cursorLine })
+        #expect(!notifies { project.counts = Counts(words: 1, lines: 1) })
+        #expect(!notifies { project.shown = .none })
+        #expect(notifies { project.cursorLine += 1 })
+    }
 }

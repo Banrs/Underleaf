@@ -1,3 +1,4 @@
+import Accessibility
 import AppKit
 import Observation
 
@@ -15,7 +16,7 @@ final class ProjectModel {
     var documentClass: DocumentClass?
     /// The main file `documentClass` was read from.
     @ObservationIgnored private var classFile: String?
-    var counts: (words: Int, lines: Int)?
+    var counts: Counts?
     var cursorLine = 1
     /// The caret's column (UTF-16, from 0), for the status bar.
     var cursorColumn = 0
@@ -26,6 +27,8 @@ final class ProjectModel {
     private(set) var topHeading: Int?
 
     var dirty = false
+    /// Why the open file's last save failed, until one succeeds: the status bar says Not Saved.
+    private(set) var saveFailure: String?
     /// Edits since the build of the PDF on screen started.
     private(set) var pdfOutdated = false
     @ObservationIgnored private var edits = 0
@@ -37,11 +40,22 @@ final class ProjectModel {
     var result: CompileResult?
     /// The issue chosen in the list or by Go to Next Issue, a place in `issues`; a new build starts with none.
     private(set) var chosenIssue: Int?
-    /// The PDF the viewer shows; nil until one loads.
-    var pdfURL: URL?
-    /// The PDF pane shows TeXpresso's live document, not the last build's.
-    private(set) var livePDF = false
-    var showLogs = false
+    /// What the PDF pane shows: nothing until one loads, the last build's PDF, or TeXpresso's live document.
+    nonisolated enum ShownPDF: Equatable { case none, build(URL), live(URL) }
+    var shown = ShownPDF.none
+    var pdfURL: URL? {
+        switch shown {
+        case .none: nil
+        case .build(let url), .live(let url): url
+        }
+    }
+    var hasPDF: Bool { shown != .none }
+    var livePDF: Bool { if case .live = shown { true } else { false } }
+    var showLogs = false {
+        didSet { if !showLogs { panelOpenedByBuild = false } }
+    }
+    /// A failed build opened the panel, so the next clean one closes it; one the person opened stays.
+    @ObservationIgnored private var panelOpenedByBuild = false
     /// The PDF view's page, scale and find, for the menus and the window.
     let pdf = PDFController()
     var panelTab: PanelTab = .issues
@@ -99,14 +113,16 @@ final class ProjectModel {
         editor.textView.issueLines = lines
     }
 
-    /// The open file on disk, for the window's document icon.
-    var openURL: URL?
+    /// The open file on disk, for the window's document icon and the preview of a file the editor doesn't edit.
+    var openURL: URL? { openPath.flatMap(url) }
     /// The open file's path, while the alert asks whether to keep the edits
     /// here or the change on disk.
     var diskConflict: String?
     /// The open file's path, while the alert asks what becomes of its unsaved
     /// edits now another app has moved or deleted it.
     var missingFile: String?
+    /// Bumped when a file the editor only previews changes on disk, for its preview to read it again.
+    private(set) var previewVersion = 0
     /// The text last read or written, to tell another app's change from our save.
     private var diskText: String?
     private var folderWatcher: FolderWatcher?
@@ -122,6 +138,8 @@ final class ProjectModel {
     /// The latest finished search's hits: nil until the first for a query ends,
     /// so its results pane doesn't read No Results while it runs.
     var searchHits: [SearchHit]?
+    /// Why the latest search found nothing, when it couldn't be run.
+    private(set) var searchFailure: String?
 
     let editor = SourceEditor()
     private weak var app: AppModel?
@@ -179,7 +197,6 @@ final class ProjectModel {
     }
     var editsText: Bool { openPath.map(isTextFile) ?? false }
     var hasUnsavedText: Bool { dirty && openPath != nil && editor.path == openPath }
-    var hasPDF: Bool { pdfURL != nil }
 
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
@@ -194,6 +211,40 @@ final class ProjectModel {
 
     private func report(_ error: Error, _ title: String) {
         app?.alert = AppAlert(title, error)
+    }
+
+    /// News that interrupts nothing, in the status bar for a few seconds and spoken by VoiceOver.
+    private(set) var notice: String?
+    @ObservationIgnored private var noticeTask: Task<Void, Never>?
+
+    private func note(_ text: String) {
+        notice = text
+        announce(text)
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            if !Task.isCancelled { self?.notice = nil }
+        }
+    }
+
+    @ObservationIgnored private var announced: (text: String, at: ContinuousClock.Instant)?
+
+    /// Not within 0.3 s of the last announcement, nor the same one again within a few seconds:
+    /// VoiceOver would cut one short or repeat itself.
+    private func announce(_ text: String) {
+        let now = ContinuousClock.now
+        if let announced, now - announced.at < (text == announced.text ? .seconds(3) : .milliseconds(300)) { return }
+        announced = (text, now)
+        AccessibilityNotification.Announcement(text).post()
+    }
+
+    /// A SyncTeX search that finds no match is ordinary (a comment, the preamble, a figure): a
+    /// sound, and the core's word for what it missed in the status bar. Anything else is a
+    /// failure to explain.
+    private func reportSync(_ error: Error, _ title: String) {
+        guard (error as? CoreError)?.status == 404 else { return report(error, title) }
+        NSSound.beep()
+        note(error.localizedDescription)
     }
 
     /// The tree's entry at a project path.
@@ -213,16 +264,14 @@ final class ProjectModel {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line, column in
             guard let self else { return }
-            // Each set notifies: the outline follows the line alone.
-            if cursorLine != line { cursorLine = line }
+            cursorLine = line
             cursorColumn = column
         }
         editor.onScroll = { [weak self] line in
             guard let self else { return }
             topLine = line
             // The outline redraws only as a heading reaches the top.
-            let heading = Outline.current(outline, file: openPath, line: line)
-            if heading != topHeading { topHeading = heading }
+            topHeading = Outline.current(outline, file: openPath, line: line)
         }
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
         editor.textView.forwardSync = { [weak self] in
@@ -244,34 +293,34 @@ final class ProjectModel {
             // The workspace is installed only after its first outline is ready.
             await analysis?.value
         } catch {
-            if !closed { report(error, "Couldn’t Open “\(id)”") }
+            // Home stays, with the alert over it: a workspace would have no files to show.
+            guard !closed else { return }
+            report(error, "Couldn’t Open “\(id)”")
+            if app?.project === self { await app?.close() }
+            return
         }
+        // The PDF first, so the pane doesn't open on its empty state and then change.
+        let hasPDF = await showPDFOnDisk()
         guard !closed else { return }
         initialLoadComplete = true
-        if await !showPDFOnDisk(), autoCompile { await compile(auto: true) }
+        if !hasPDF, autoCompile { await compile(auto: true) }
     }
 
-    /// `quietly` for a reload another app's change asked for: its failure
-    /// isn't the user's to act on, and the next change tries again. A read that started
-    /// before the last one taken is dropped: a folder change's read ending after a new
-    /// file's would take away the row its name is being typed in.
-    func reloadTree(quietly: Bool = false) async {
+    /// A failed read keeps the tree as it was, and the folder's next change reads again. A read
+    /// that started before the last one taken is dropped: a folder change's read ending after a
+    /// new file's would take away the row its name is being typed in.
+    func reloadTree() async {
         treeReads += 1
         let read = treeReads
-        do {
-            let files = try await core.call("file_tree", ["id": id], as: [TreeNode].self)
-            guard read > treeTaken else { return }
-            treeTaken = read
-            // A save's temporary file can trigger an unchanged tree reload.
-            if files != tree, !closed, !Task.isCancelled {
-                tree = files
-                analyze()
-                // TeXpresso's rescan retains virtual files. A fresh session
-                // drops overrides for deleted or renamed includes.
-                if initialLoadComplete, texpresso.active { restartTeXpresso() }
-            }
-        } catch {
-            if !quietly { report(error, "Couldn’t Read the Project’s Files") }
+        guard let files = try? await core.call("file_tree", ["id": id], as: [TreeNode].self), read > treeTaken else { return }
+        treeTaken = read
+        // A save's temporary file can trigger an unchanged tree reload.
+        if files != tree, !closed, !Task.isCancelled {
+            tree = files
+            analyze()
+            // TeXpresso's rescan retains virtual files. A fresh session
+            // drops overrides for deleted or renamed includes.
+            if initialLoadComplete, texpresso.active { restartTeXpresso() }
         }
     }
 
@@ -300,8 +349,7 @@ final class ProjectModel {
             let url = URL(fileURLWithPath: path)
             if !reloadIfUnchanged, url == pdfURL { return true }
             guard let document = await PDFController.loadDocument(url), !Task.isCancelled, !closed else { return false }
-            livePDF = false
-            pdfURL = url
+            shown = .build(url)
             pdf.show(document)
             return true
         }
@@ -313,8 +361,7 @@ final class ProjectModel {
     /// document isn't a build's, to save or sync with. A new live session's document wins.
     private func endLivePDF() async {
         guard !(await showPDFOnDisk(replacingLive: true)), livePDF, !texpresso.active, !closed else { return }
-        livePDF = false
-        pdfURL = nil
+        shown = .none
         pdf.clear()
     }
 
@@ -325,8 +372,7 @@ final class ProjectModel {
         pdfLoad = Task {
             guard let document = await PDFController.loadDocument(url), !Task.isCancelled, !closed, texpresso.active else { return false }
             if !livePDF, app?.showPDF == false { app?.showPDF = true }
-            livePDF = true
-            pdfURL = url
+            shown = .live(url)
             pdf.show(document)
             return true
         }
@@ -345,10 +391,9 @@ final class ProjectModel {
                 texpresso.flushEdits()
                 guard await saveEdits(), !Task.isCancelled, !closed else { return }
                 do {
-                    let text = isTextFile(path) ? try await core.call("read_file", ["id": id, "path": path], as: FileText.self).text : nil
+                    let text = isTextFile(path) ? try await readText(path) : nil
                     guard !Task.isCancelled, !closed else { return }
                     openPath = path
-                    openURL = url(path)
                     diskText = text
                     analyze()
                     if let text {
@@ -365,6 +410,10 @@ final class ProjectModel {
         }
         openTask = task
         await task.value
+    }
+
+    private func readText(_ path: String) async throws -> String {
+        try await core.call("read_file", ["id": id, "path": path], as: FileText.self).text
     }
 
     /// A file of the project on disk, to drag out; nil until its folder is watched.
@@ -395,24 +444,26 @@ final class ProjectModel {
         if texpresso.active, let document = editor.document {
             texpresso.update(TeXpressoFile(path: document.path, text: document.text))
         }
-        if hasPDF, !pdfOutdated { pdfOutdated = true }
+        if hasPDF { pdfOutdated = true }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: Self.autosaveDelay)
             guard !Task.isCancelled, let self else { return }
-            let saved = await self.save()
+            let saved = await self.save(reporting: false)
             guard saved, !Task.isCancelled else { return }
             if self.autoCompile { await self.compile(auto: true) }
         }
     }
 
-    /// Queued after earlier mutations; true means the text reached disk.
+    /// Queued after earlier mutations; true means the text reached disk. A failure is an alert
+    /// only when `reporting`, for a save someone asked for or something waits on: an autosave's
+    /// stays in the status bar, where it doesn't come back at every pause in typing.
     @discardableResult
-    func save() async -> Bool {
-        await mutate { await $0.write() }
+    func save(reporting: Bool = true) async -> Bool {
+        await mutate { await $0.write(reporting: reporting) }
     }
 
-    private func write() async -> Bool {
+    private func write(reporting: Bool = true) async -> Bool {
         guard hasUnsavedText, let document = editor.document else { return true }
         // Not over another app's change until asked which to keep.
         guard diskConflict == nil, missingFile == nil else { return false }
@@ -425,6 +476,7 @@ final class ProjectModel {
             // Before the write, so its own change event matches.
             diskText = text
             try await core.perform("write_file", ["id": id, "path": path, "text": text])
+            saveFailure = nil
             analyze()
             refreshSymbols(delayed: true)
             return true
@@ -432,7 +484,10 @@ final class ProjectModel {
             // The disk still has what it had, so a later change event isn't taken for another app's.
             if diskText == text { diskText = previous }
             dirty = true
-            report(error, "“\(path.fileName)” Wasn’t Saved")
+            let title = String(localized: "“\(path.fileName)” Wasn’t Saved")
+            if saveFailure == nil { announce(title) }
+            saveFailure = error.localizedDescription
+            if reporting { report(error, title) }
             return false
         }
     }
@@ -454,11 +509,11 @@ final class ProjectModel {
                 item.id = index
                 return item
             }
-            counts = (doc.words, doc.lines)
+            counts = Counts(words: doc.words, lines: doc.lines)
             // The class changes with the main file only.
             guard let main = settings?.mainFile, main == path || main != classFile,
                   let text = main == path ? editor.document?.text
-                    : try? await core.call("read_file", ["id": id, "path": main], as: FileText.self).text,
+                    : try? await readText(main),
                   !Task.isCancelled else { return }
             documentClass = DocumentClass(in: text)
             classFile = main
@@ -466,11 +521,11 @@ final class ProjectModel {
     }
 
     /// Saves before a file switch, close or quit; cancels pending autosave.
-    func flush() async -> Bool {
+    func flush(reporting: Bool = true) async -> Bool {
         saveTask?.cancel()
         // Repeat if an edit arrives during the write.
         repeat {
-            guard await save() else { return false }
+            guard await save(reporting: reporting) else { return false }
         } while hasUnsavedText
         return true
     }
@@ -526,7 +581,7 @@ final class ProjectModel {
             treeReload?.cancel()
             treeReload = Task { [weak self] in
                 guard !Task.isCancelled else { return }
-                await self?.reloadTree(quietly: true)
+                await self?.reloadTree()
             }
         }
         if texpresso.active, !liveDiskPaths.isEmpty { refreshTeXpressoDisk() }
@@ -539,15 +594,18 @@ final class ProjectModel {
             fileGone(path)
             return false
         }
-        guard editsText, let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self),
-              path == openPath, !closed, file.text != diskText else { return false }
-        diskText = file.text
+        guard editsText else {
+            previewVersion += 1
+            return false
+        }
+        guard let text = try? await readText(path), path == openPath, !closed, text != diskText else { return false }
+        diskText = text
         guard !dirty else {
             saveTask?.cancel()
             diskConflict = path
             return false
         }
-        showDiskText(file.text, of: path)
+        showDiskText(text, of: path)
         return true
     }
 
@@ -609,9 +667,10 @@ final class ProjectModel {
 
     // ---------- compile ----------
 
-    /// A request during a build queues one follow-up. Automatic failures open
-    /// issues when the new build has no PDF; clean builds close empty issues.
-    /// Automatic ones wait while TeXpresso previews, without changing the preference.
+    /// A request during a build queues one follow-up. Only a build the person asked for moves
+    /// the build panel: a failure opens it on the issues, and a clean build closes the panel a
+    /// failure opened. An automatic one changes the status bar and the gutter alone, and waits
+    /// while TeXpresso previews, without changing the preference.
     func compile(auto: Bool = false) async {
         guard texAvailable, !closed, !auto || !livePreviewing else { return }
         if compiling {
@@ -623,26 +682,29 @@ final class ProjectModel {
         stopRequested = false
         // Through the mutation lane, after the settings and renames asked for before.
         let built = edits
-        let saved = await flush()
+        let saved = await flush(reporting: !auto)
         if saved, !stopRequested, !closed, !auto || !livePreviewing {
+            let result: CompileResult
             do {
-                let result = try await core.call("compile", ["id": id], as: CompileResult.self)
-                // The PDF is the main file's now: a main-file change stopped any build of the old one.
-                if result.pdf != nil, !closed {
-                    await showPDFOnDisk(reloadIfUnchanged: result.pdfChanged)
-                    // Edits made while it built aren't in it.
-                    pdfOutdated = edits != built
-                }
-                if !closed {
-                    self.result = result
-                    resultEdits = built
-                    chosenIssue = nil
-                    markIssues()
-                    if result.failed, !auto || result.pdf == nil { showBuildPanel() }
-                    if result.ok, panelTab == .issues, result.errors.isEmpty, result.warnings.isEmpty { showLogs = false }
-                }
+                result = try await core.call("compile", ["id": id], as: CompileResult.self)
             } catch {
-                if !auto, !closed { report(error, "Couldn’t Compile") }
+                // A build the core couldn't run failed too, and says why where the others do.
+                let issue = LogItem(type: "error", file: nil, line: nil, message: error.localizedDescription)
+                result = CompileResult(ok: false, stopped: false, pdf: nil, pdfChanged: false, durationMs: 0,
+                                       errors: [issue], warnings: [], log: "")
+            }
+            // The PDF is the main file's now: a main-file change stopped any build of the old one.
+            if result.pdf != nil, !closed {
+                await showPDFOnDisk(reloadIfUnchanged: result.pdfChanged)
+                // Edits made while it built aren't in it.
+                pdfOutdated = edits != built
+            }
+            if !closed {
+                self.result = result
+                resultEdits = built
+                chosenIssue = nil
+                markIssues()
+                if !auto { finishedManualBuild(result) }
             }
         }
         compiling = false
@@ -650,6 +712,21 @@ final class ProjectModel {
         let again = saved && !closed ? compileQueued : nil
         compileQueued = nil
         if let again { await compile(auto: again) }
+    }
+
+    private func finishedManualBuild(_ result: CompileResult) {
+        if result.failed {
+            let opens = !showLogs
+            showBuildPanel()
+            if opens { panelOpenedByBuild = true }
+            announce(errorCount == 0 ? String(localized: "Build failed")
+                     : String(AttributedString(localized: "Build failed, ^[\(errorCount) error](inflect: true)").characters))
+            // The Dock says so while another app is in front.
+            if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+        } else if result.ok {
+            if panelOpenedByBuild, panelTab == .issues, issues.isEmpty { showLogs = false }
+            announce(String(localized: "Build succeeded"))
+        }
     }
 
     /// A build still running stops and reports nothing, so it can't supersede the next project's.
@@ -667,6 +744,8 @@ final class ProjectModel {
         app?.undoManager?.removeAllActions(withTarget: self)
         compileQueued = nil
         folderWatcher = nil
+        removeExport()
+        noticeTask?.cancel()
         saveTask?.cancel()
         analysis?.cancel()
         symbolsTask?.cancel()
@@ -820,7 +899,9 @@ final class ProjectModel {
                 guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, livePDF == live else { return }
                 app?.requestPDF(.reveal(loc, word))
             } catch {
-                if !Task.isCancelled, !closed { report(error, "Couldn’t Find This Line in the PDF") }
+                if !Task.isCancelled, !closed {
+                    reportSync(error, "Couldn’t Find This Line in the PDF")
+                }
             }
         }
         syncTask = task
@@ -845,7 +926,9 @@ final class ProjectModel {
                 guard !Task.isCancelled, !closed else { return }
                 await open(loc.file, line: loc.line, column: loc.column)
             } catch {
-                if !Task.isCancelled, !closed { report(error, "Couldn’t Find This Spot in the Source") }
+                if !Task.isCancelled, !closed {
+                    reportSync(error, "Couldn’t Find This Spot in the Source")
+                }
             }
         }
         syncTask = task
@@ -915,15 +998,11 @@ final class ProjectModel {
                 // text; only the save path changes, so the old path can't return.
                 if let was = model.openPath, case let now = remapPath(was, from: result.from, to: result.to), now != was {
                     model.openPath = now
-                    model.openURL = model.url(now)
                     // Its new kind may edit or preview it differently.
                     if isTextFile(now) != isTextFile(was) || isLaTeXFile(now) != isLaTeXFile(was) { reopen = now }
                 }
                 mainChanged = result.mainFile != model.settings?.mainFile
-                model.settings = model.settings.map {
-                    ProjectSettings(mainFile: result.mainFile, engine: $0.engine,
-                                    shellEscape: $0.shellEscape, stopOnFirstError: $0.stopOnFirstError)
-                }
+                model.settings?.mainFile = result.mainFile
                 return true
             }
             // Opening flushes edits, so it must run after this mutation releases the queue.
@@ -979,9 +1058,9 @@ final class ProjectModel {
     private func clearOpenFile() {
         analysis?.cancel()
         openPath = nil
-        openURL = nil
         diskText = nil
         dirty = false
+        saveFailure = nil
         outline = []
         counts = nil
     }
@@ -1027,9 +1106,9 @@ final class ProjectModel {
 
     // ---------- export ----------
 
-    /// In a temporary folder; the save panel copies it where it goes. The core archives the
-    /// files on disk, so the open file's edits are saved first: an archive without them would
-    /// be a stale copy reported as a good one.
+    /// In a temporary folder; the save panel copies it where it goes, and the next export or the
+    /// project's closing removes it. The core archives the files on disk, so the open file's
+    /// edits are saved first: an archive without them would be a stale copy reported as a good one.
     func exportZip() async throws -> URL {
         guard await saveEdits() else {
             let name = openPath?.fileName ?? id
@@ -1037,11 +1116,20 @@ final class ProjectModel {
                 NSLocalizedFailureReasonErrorKey: String(localized: "“\(name)” couldn’t be saved, so the archive would be missing its changes."),
             ])
         }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-            .appendingPathComponent("\(id).zip")
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        removeExport()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        exportFolder = folder
+        let url = folder.appendingPathComponent("\(id).zip")
         try await core.perform("export_zip", ["id": id, "dest": url.path])
         return url
+    }
+
+    @ObservationIgnored private var exportFolder: URL?
+
+    private func removeExport() {
+        if let exportFolder { try? FileManager.default.removeItem(at: exportFolder) }
+        exportFolder = nil
     }
 
     // ---------- search ----------
@@ -1049,11 +1137,15 @@ final class ProjectModel {
     /// Hits for the current query, unless the calling task is cancelled by a newer one.
     func search() async {
         guard isSearching else {
-            searchHits = nil
+            (searchHits, searchFailure) = (nil, nil)
             return
         }
-        let hits = (try? await core.call("search_project", ["id": id, "query": searchQuery], as: [SearchHit].self)) ?? []
-        if !Task.isCancelled { searchHits = hits }
+        do {
+            let hits = try await core.call("search_project", ["id": id, "query": searchQuery], as: [SearchHit].self)
+            if !Task.isCancelled { (searchHits, searchFailure) = (hits, nil) }
+        } catch {
+            if !Task.isCancelled { (searchHits, searchFailure) = ([], error.localizedDescription) }
+        }
     }
 
     // ---------- editor commands ----------
@@ -1064,6 +1156,12 @@ final class ProjectModel {
         guard item.file != openPath || cursorLine != item.line || topLine != item.line else { return }
         Task { await open(item.file, line: item.line, atTop: true, focus: false) }
     }
+}
+
+/// The open file's words and lines, for the status bar.
+nonisolated struct Counts: Equatable {
+    let words: Int
+    let lines: Int
 }
 
 /// Where a project was left, in the window's restorable state (`MainWindowController`).
