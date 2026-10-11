@@ -649,6 +649,20 @@ class HairlineSplitView: NSSplitView {
         needsLayout = true
     }
 }
+extension AppModel {
+    /// The side columns as the window has them: the user's choice, unless the window folded one.
+    /// Showing a folded one unfolds it.
+    var sidebarShown: Bool {
+        get { sidebarVisible && !sidebarFolded }
+        set { (sidebarVisible, sidebarFolded) = (newValue, false) }
+    }
+
+    var inspectorShown: Bool {
+        get { inspectorVisible && !inspectorFolded }
+        set { (inspectorVisible, inspectorFolded) = (newValue, false) }
+    }
+}
+
 
 /// Source | PDF. The status bar spans both panes as one bar, so their divider stops at its top.
 private final class ColumnsSplitView: HairlineSplitView {

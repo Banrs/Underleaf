@@ -189,9 +189,9 @@ extension AppModel {
     /// View-menu titles say what the item will do (HIG, The menu bar).
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
         let shown: Bool? = switch command {
-        case .viewToggleSidebar: sidebarVisible
+        case .viewToggleSidebar: sidebarShown
         case .viewTogglePdf: showPDF
-        case .viewToggleInspector: inspectorVisible
+        case .viewToggleInspector: inspectorShown
         case .viewToggleLogs: project?.showLogs == true
         case .viewToggleWordCount: showWordCount
         default: nil
@@ -217,10 +217,10 @@ extension AppModel {
         case .projectExport:
             if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
         case .projectSearch:
-            sidebarVisible = true
+            sidebarShown = true
             searchFocusToken += 1
         case .fileNew, .fileNewFolder:
-            sidebarVisible = true
+            sidebarShown = true
             newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.saveEdits() }
@@ -242,9 +242,9 @@ extension AppModel {
         case .editGotoLine: prompt = .gotoLine
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
-        case .viewToggleSidebar: sidebarVisible.toggle()
+        case .viewToggleSidebar: sidebarShown.toggle()
         case .viewTogglePdf: togglePDF()
-        case .viewToggleInspector: inspectorVisible.toggle()
+        case .viewToggleInspector: inspectorShown.toggle()
         case .viewToggleLogs: project?.showLogs.toggle()
         case .viewToggleWordCount: showWordCount.toggle()
         case .viewZoomIn: requestPDF(.zoomIn)
@@ -358,7 +358,7 @@ struct AppCommands: Commands {
             item(.viewToggleSidebar)
             // The keyboard's and VoiceOver's way to the File Outline header's fold.
             Button(app.outlineCollapsed ? "Show File Outline" : "Hide File Outline") { app.outlineCollapsed.toggle() }
-                .disabled(project?.isLaTeX != true || !app.sidebarVisible)
+                .disabled(project?.isLaTeX != true || !app.sidebarShown)
             items([.viewTogglePdf, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
             Divider()
             items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage])
