@@ -596,8 +596,9 @@ struct SourceEditorTests {
         }
     }
 
-    /// A double-click goes to the PDF from the word it selects; a single click only places the caret.
-    @Test func aDoubleClickGoesToThePDF() throws {
+    /// A Command-click goes to the PDF from where it lands; a click and a double-click are the
+    /// system's, which place the caret and select the word.
+    @Test func aCommandClickGoesToThePDF() throws {
         let window = inWindow()
         open("one two", caret: 0)
         text.layoutSubtreeIfNeeded()
@@ -605,17 +606,18 @@ struct SourceEditorTests {
         text.forwardSync = { { went += 1 } }
         let glyph = text.firstRect(forCharacterRange: NSRange(location: 4, length: 1), actualRange: nil)
         let point = window.convertPoint(fromScreen: NSPoint(x: glyph.minX + 1, y: glyph.midY))
-        func event(_ type: NSEvent.EventType, clicks: Int) throws -> NSEvent {
-            try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
-                                            context: nil, eventNumber: 0, clickCount: clicks, pressure: 1))
+        func event(_ type: NSEvent.EventType, clicks: Int, command: Bool = false) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: command ? .command : [], timestamp: 0,
+                                            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1))
         }
         for clicks in 1...2 {
             // The release ends the text view's own tracking.
             NSApp.postEvent(try event(.leftMouseUp, clicks: clicks), atStart: false)
             text.mouseDown(with: try event(.leftMouseDown, clicks: clicks))
-            #expect(went == clicks - 1)
         }
-        #expect(text.selectedRange() == NSRange(location: 4, length: 3))
+        #expect(went == 0 && text.selectedRange() == NSRange(location: 4, length: 3))
+        text.mouseDown(with: try event(.leftMouseDown, clicks: 1, command: true))
+        #expect(went == 1 && text.selectedRange() == NSRange(location: 4, length: 0))
     }
 
     /// Go to Line…'s sheet puts the caret at its line's start.
