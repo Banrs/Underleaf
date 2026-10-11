@@ -723,14 +723,22 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         let pixel = window.backingScaleFactor
         let box = page.bounds(for: .cropBox), scale = scaleFactor * pixel
         let width = Int((onScreen.width * pixel).rounded()), height = Int((onScreen.height * pixel).rounded())
+        // Drawn into a surface the window server takes as it is: a bitmap of the layer's own is
+        // drawn again into the display's colours as it goes to the screen, 3 ms for a page (27.2).
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
         guard width >= 1, height >= 1,
-              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+              let surface = IOSurface(properties: [.width: width, .height: height, .bytesPerElement: 4,
+                                                   .pixelFormat: kCVPixelFormatType_32BGRA]),
+              surface.lock(options: [], seed: nil) == KERN_SUCCESS,
+              let context = CGContext(data: surface.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: surface.bytesPerRow, space: space,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
         else { return false }
         context.scaleBy(x: scale, y: scale)
         context.translateBy(x: -box.minX, y: -box.minY)
         Self.drawPaper(page, to: context, dark: darkPaper)
+        surface.unlock(options: [], seed: nil)
+        if let name = space.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, name) }
         let layer = liveLayers[index] ?? {
             let layer = CALayer()
             // A layer animates what changes by default; these change with the page they show.
@@ -739,7 +747,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
             liveLayers[index] = layer
             return layer
         }()
-        layer.contents = context.makeImage()
+        layer.contents = surface
         // From the page's corner, as many pixels as the bitmap has.
         layer.frame = CGRect(x: frame.minX, y: frame.minY, width: frame.width * CGFloat(width) / (onScreen.width * pixel),
                              height: frame.height * CGFloat(height) / (onScreen.height * pixel))
