@@ -288,6 +288,10 @@ final class ProjectModel {
             topHeading = Outline.current(outline, file: openPath, line: line)
         }
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
+        editor.textView.headings = { [weak self] in
+            guard let self else { return [] }
+            return outline.filter { $0.file == self.openPath }.map { ($0.line, $0.displayTitle) }
+        }
         editor.textView.forwardSync = { [weak self] in
             self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync() } } : nil
         }
