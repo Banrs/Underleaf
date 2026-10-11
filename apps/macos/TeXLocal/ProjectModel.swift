@@ -248,11 +248,17 @@ final class ProjectModel {
             // The workspace is installed only after its first outline is ready.
             await analysis?.value
         } catch {
-            if !closed { report(error, "Couldn’t Open “\(id)”") }
+            // Home stays, with the alert over it: a workspace would have no files to show.
+            guard !closed else { return }
+            report(error, "Couldn’t Open “\(id)”")
+            if app?.project === self { await app?.close() }
+            return
         }
+        // The PDF first, so the pane doesn't open on its empty state and then change.
+        let hasPDF = await showPDFOnDisk()
         guard !closed else { return }
         initialLoadComplete = true
-        if await !showPDFOnDisk(), autoCompile { await compile(auto: true) }
+        if !hasPDF, autoCompile { await compile(auto: true) }
     }
 
     /// A failed read keeps the tree as it was, and the folder's next change reads again. A read
