@@ -596,6 +596,25 @@ final class ProjectFlowTests {
         #expect(second.expandedFolders == ["chapters", "chapters/appendix"] && second.foldedHeadings == ["main.tex\t1:Methods#1"])
     }
 
+    /// A renamed project keeps its open folders and folded headings, which go with its id; a
+    /// deleted one's are forgotten.
+    @Test(.timeLimit(.minutes(1)))
+    func theSidebarsStateFollowsARenameAndGoesWithTheProject() async throws {
+        let info = try await project().info
+        let defaults = UserDefaults.standard
+        let renamed = "Renamed \(UUID().uuidString.prefix(8))"
+        defer { ProjectModel.forgetSidebarState(of: info.id); ProjectModel.forgetSidebarState(of: renamed) }
+        defaults.set(["chapters"], forKey: "expandedFolders.\(info.id)")
+        defaults.set(["main.tex\t1:Intro#1"], forKey: "foldedHeadings.\(info.id)")
+        await app.rename(info, to: renamed)
+        folders.append(Core.libraryFolder.appending(path: renamed))
+        #expect(defaults.stringArray(forKey: "expandedFolders.\(renamed)") == ["chapters"])
+        #expect(defaults.stringArray(forKey: "foldedHeadings.\(renamed)") == ["main.tex\t1:Intro#1"])
+        #expect(defaults.object(forKey: "expandedFolders.\(info.id)") == nil && defaults.object(forKey: "foldedHeadings.\(info.id)") == nil)
+        ProjectModel.forgetSidebarState(of: renamed)
+        #expect(defaults.object(forKey: "expandedFolders.\(renamed)") == nil && defaults.object(forKey: "foldedHeadings.\(renamed)") == nil)
+    }
+
     /// The Dock icon's menu lists the recent projects still in the library, newest first,
     /// as Pages and Xcode list their recent documents; one opens as from Home, its window
     /// brought forward, and offers New Project…, which opens its sheet.

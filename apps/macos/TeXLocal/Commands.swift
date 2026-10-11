@@ -167,7 +167,7 @@ extension AppModel {
     /// `project` is nil on the projects screen or while Settings is in front.
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         switch command {
-        case .projectNew, .projectOpen: true
+        case .projectNew, .projectOpen: libraryProblem == nil
         // On Home, the search of the projects.
         case .projectSearch: project != nil || (self.project == nil && mainWindowIsKey)
         case .fileSave, .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine:

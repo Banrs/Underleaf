@@ -10,15 +10,20 @@ struct HomeView: View {
     @FocusState private var searching: Bool
     @State private var query = ""
     @AppStorage("dismissedTeXTip") private var dismissedTeXTip = false
+    /// What has been opening or copying for over 300 ms: a quicker one shows nothing.
+    @State private var slow: Set<String> = []
 
     var body: some View {
         // Over the list, which runs on under it and the toolbar with one edge effect.
-        list.safeAreaBar(edge: .top) {
+        Group {
+            if let problem = app.libraryProblem { unavailable(problem) } else { list }
+        }
+        .safeAreaBar(edge: .top) {
             if app.tex?.available == false, !dismissedTeXTip { texMissing }
         }
         // Projects, copied in, as the Open panel says; other items are left out. One
         // opens; several stay listed under Recent.
-        .fileDrop(accepts: AppModel.canOpen) { urls in
+        .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in
             Task {
                 for url in urls { await app.importProject(from: url, open: urls.count == 1) }
             }
@@ -29,14 +34,31 @@ struct HomeView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button("Open", systemImage: "folder") { app.openingProject = true }
                     .help("Open a Folder, .tex File or .zip as a Project")
+                    .disabled(app.libraryProblem != nil)
                 Button("New Project", systemImage: "plus") { app.newProject() }
                     .help("New Project")
+                    .disabled(app.libraryProblem != nil)
             }
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
         .searchFocused($searching)
         // Edit › Find Project…
         .onChange(of: app.searchFocusToken) { searching = true }
+        .task(id: app.opening) {
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+            slow = Set(app.opening)
+        }
+    }
+
+    /// Instead of the list, with no alert as the app starts (HIG, Alerts).
+    private func unavailable(_ problem: AppAlert) -> some View {
+        ContentUnavailableView {
+            Label(problem.title, systemImage: "externaldrive.badge.exclamationmark")
+        } description: {
+            Text(problem.message)
+        } actions: {
+            Button("Try Again") { Task { await app.retryLibrary() } }
+        }
     }
 
     private var list: some View {
@@ -54,9 +76,11 @@ struct HomeView: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("New")
             Section {
+                ForEach(copying, id: \.self) { CopyingRow(name: $0) }
                 ForEach(shown) { project in
                     // Its own view, so a row redraws only when its rename starts or ends.
-                    ProjectRow(project: project, rename: rename, ended: { listFocused = true }) { commitRename(project) }
+                    ProjectRow(project: project, working: working.contains(project.id), rename: rename,
+                               ended: { listFocused = true }) { commitRename(project) }
                 }
                 if app.projectsLoaded, shown.isEmpty { empty.frame(maxWidth: .infinity).selectionDisabled() }
             } header: {
@@ -127,6 +151,15 @@ struct HomeView: View {
         Task { await app.rename(project, to: name) }
     }
 
+    /// Being opened or copied in for a while.
+    private var working: Set<String> { slow.intersection(app.opening) }
+
+    /// Items being copied in, which are not projects yet.
+    private var copying: [String] {
+        let ids = Set(app.projects.map(\.id))
+        return query.isEmpty ? app.opening.filter { working.contains($0) && !ids.contains($0) } : []
+    }
+
     /// Newest first, as the core lists them.
     private var shown: [ProjectInfo] {
         query.isEmpty ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
@@ -150,14 +183,25 @@ struct HomeView: View {
 }
 
 /// A project: its name over its main file and when it last changed.
-/// While renamed, a field takes the name's place.
+/// While renamed, a field takes the name's place; while it opens, a spinner follows.
 private struct ProjectRow: View {
     let project: ProjectInfo
+    let working: Bool
     let rename: InPlaceRename<ProjectInfo.ID>
     let ended: () -> Void
     let commit: () -> Void
 
     var body: some View {
+        HStack {
+            label
+            if working {
+                Spacer()
+                ProgressView().controlSize(.small).accessibilityLabel("Opening")
+            }
+        }
+    }
+
+    private var label: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 if rename.id == project.id {
@@ -174,6 +218,26 @@ private struct ProjectRow: View {
             Image(systemName: "text.document")
                 .font(.title2)
                 .foregroundStyle(Color.secondary)
+        }
+    }
+}
+
+/// An item being copied into the library, in the place its project will take.
+private struct CopyingRow: View {
+    let name: String
+
+    var body: some View {
+        HStack {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).font(.headline)
+                    Text("Copying…").font(.subheadline).foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: "text.document").font(.title2).foregroundStyle(Color.secondary)
+            }
+            Spacer()
+            ProgressView().controlSize(.small).accessibilityLabel("Copying")
         }
     }
 }
@@ -349,7 +413,7 @@ struct NewProjectSheet: View {
     List {
         ProjectRow(project: ProjectInfo(id: "thesis", name: "Thesis", mtime: Date.now.timeIntervalSince1970 * 1000 - 3_600_000,
                                         mainFile: "main.tex"),
-                   rename: InPlaceRename(), ended: {}) {}
+                   working: false, rename: InPlaceRename(), ended: {}) {}
     }
     .listStyle(.inset)
 }

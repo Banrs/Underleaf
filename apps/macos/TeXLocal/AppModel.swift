@@ -60,7 +60,7 @@ final class AppModel {
     /// Why the library can't be listed, for Home to say in place of its list: no alert as the app starts.
     private(set) var libraryProblem: AppAlert? = Core.shared.isOpen ? nil : AppAlert(
         "Couldn’t Open the Library Folder",
-        "Make sure you can create and write to \((Core.libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath), then open TeXLocal again.")
+        "Make sure you can create and write to \((Core.libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath), then try again.")
 
     // Requests from menu commands to the views that own the UI.
     var newProjectTemplate: ProjectTemplate?
@@ -129,6 +129,7 @@ final class AppModel {
 
     /// Without a template, the one Settings names for new projects.
     func newProject(_ template: String? = nil) {
+        guard libraryProblem == nil else { return }
         let template = template ?? UserDefaults.standard.string(forKey: DefaultsKey.newProjectTemplate)
         newProjectTemplate = ProjectTemplate.all.first { $0.id == template } ?? ProjectTemplate.all.first { $0.id == "article" }
     }
@@ -154,6 +155,13 @@ final class AppModel {
     private let core = Core.shared
     /// The latest TeX status read; a TeX folder choice cancels it.
     @ObservationIgnored private var texCheck: Task<Void, Never>?
+
+    /// Home's Try Again: opens the library folder again if need be, then lists it.
+    func retryLibrary() async {
+        core.reopen()
+        if core.isOpen { libraryProblem = nil }
+        await refresh()
+    }
 
     func refresh() async {
         guard core.isOpen else { return }
@@ -271,6 +279,7 @@ final class AppModel {
         do {
             let renamed = try await core.call("rename_project", ["id": id, "name": name], as: ProjectInfo.self)
             recentProjects = recentProjects.map { $0 == id ? renamed.id : $0 }
+            ProjectModel.moveSidebarState(from: id, to: renamed.id)
             return renamed
         } catch {
             alert = AppAlert("Couldn’t Rename “\(shown)”", error)
@@ -314,6 +323,7 @@ final class AppModel {
                 do {
                     try item.recycle()
                     self?.recentProjects.removeAll { $0 == project.id }
+                    ProjectModel.forgetSidebarState(of: project.id)
                     return true
                 } catch {
                     self?.alert = AppAlert("Couldn’t Move “\(project.name)” to the Trash", error)
