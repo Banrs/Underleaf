@@ -671,17 +671,18 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     /// PDFKit draws page tiles off the main actor; only page pixels change.
     override nonisolated func draw(_ page: PDFPage, to context: CGContext) {
-        Self.drawPaper(page, to: context, dark: pagesDark.load(ordering: .relaxed))
+        Self.drawPaper(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox)), to: context,
+                       dark: pagesDark.load(ordering: .relaxed)) { page.draw(with: .cropBox, to: context) }
     }
 
-    private nonisolated static func drawPaper(_ page: PDFPage, to context: CGContext, dark: Bool) {
+    /// The page as `draw` draws it, on white paper, or dark with its colours kept.
+    private nonisolated static func drawPaper(_ box: CGRect, to context: CGContext, dark: Bool, page draw: () -> Void) {
         context.saveGState()
         defer { context.restoreGState() }
-        let box = page.bounds(for: .cropBox).applying(page.transform(for: .cropBox))
         func drawPage() {
             context.setFillColor(.white)
             context.fill(box)
-            page.draw(with: .cropBox, to: context)
+            draw()
         }
         drawPage()
         guard dark else { return }
@@ -725,20 +726,13 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         let width = Int((onScreen.width * pixel).rounded()), height = Int((onScreen.height * pixel).rounded())
         // Drawn into a surface the window server takes as it is: a bitmap of the layer's own is
         // drawn again into the display's colours as it goes to the screen, 3 ms for a page (27.2).
-        let space = CGColorSpace(name: CGColorSpace.sRGB)!
         guard width >= 1, height >= 1,
               let surface = IOSurface(properties: [.width: width, .height: height, .bytesPerElement: 4,
                                                    .pixelFormat: kCVPixelFormatType_32BGRA]),
-              surface.lock(options: [], seed: nil) == KERN_SUCCESS,
-              let context = CGContext(data: surface.baseAddress, width: width, height: height, bitsPerComponent: 8,
-                                      bytesPerRow: surface.bytesPerRow, space: space,
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
-        else { return false }
-        context.scaleBy(x: scale, y: scale)
-        context.translateBy(x: -box.minX, y: -box.minY)
-        Self.drawPaper(page, to: context, dark: darkPaper)
+              surface.lock(options: [], seed: nil) == KERN_SUCCESS else { return false }
+        Self.drawLive(page, to: surface, box: box, scale: scale, dark: darkPaper)
         surface.unlock(options: [], seed: nil)
-        if let name = space.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, name) }
+        if let name = Self.liveSpace.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, name) }
         let layer = liveLayers[index] ?? {
             let layer = CALayer()
             // A layer animates what changes by default; these change with the page they show.
@@ -753,6 +747,33 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
                              height: frame.height * CGFloat(height) / (onScreen.height * pixel))
         liveScale = shownScale
         return true
+    }
+
+    private nonisolated static let liveSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+
+    /// The page's upper and lower halves at once, each in a context on its own rows of the
+    /// surface, by Core Graphics itself: most of a page's time is its fonts', which each live
+    /// page brings anew, and PDFKit draws a page for one caller at a time (27.2). A page whose
+    /// box PDFKit would turn or move is drawn whole, by PDFKit.
+    private nonisolated static func drawLive(_ page: PDFPage, to surface: IOSurface, box: CGRect, scale: CGFloat, dark: Bool) {
+        // Drawing a page is safe from any thread, as PDFKit's own tiles are drawn.
+        nonisolated(unsafe) let page = page
+        nonisolated(unsafe) let ref = page.rotation == 0 && box.origin == .zero && page.bounds(for: .mediaBox) == box ? page.pageRef : nil
+        let (width, height, halves) = (surface.width, surface.height, ref == nil ? 1 : 2)
+        DispatchQueue.concurrentPerform(iterations: halves) { half in
+            let rows = (height * half / halves)..<(height * (half + 1) / halves)
+            guard let context = CGContext(data: surface.baseAddress + rows.lowerBound * surface.bytesPerRow, width: width,
+                                          height: rows.count, bitsPerComponent: 8, bytesPerRow: surface.bytesPerRow, space: liveSpace,
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+            else { return }
+            // A context counts from its own bottom row, the picture's rows from its top.
+            context.translateBy(x: 0, y: CGFloat(rows.upperBound - height))
+            context.scaleBy(x: scale, y: scale)
+            context.translateBy(x: -box.minX, y: -box.minY)
+            drawPaper(box, to: context, dark: dark) {
+                if let ref { context.drawPDFPage(ref) } else { page.draw(with: .cropBox, to: context) }
+            }
+        }
     }
 
     /// A live page is drawn over the page at `index`.
