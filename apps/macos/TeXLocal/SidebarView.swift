@@ -58,7 +58,7 @@ struct FilesList: View {
                     ContentUnavailableView {
                         Label("No Files", systemImage: "doc")
                     } description: {
-                        Text("Create or drop files here.")
+                        Text("Create a file, or drag files here from the Finder.")
                     } actions: {
                         Button(MenuCommand.fileNew.title) { create(NewEntry(directory: false, folder: "")) }
                         Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload, on: project) }

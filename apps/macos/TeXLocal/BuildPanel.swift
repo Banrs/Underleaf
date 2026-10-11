@@ -2,7 +2,7 @@ import SwiftUI
 
 /// What the build panel shows, by title: its bar's pop-up.
 enum PanelTab: String, CaseIterable {
-    case issues = "Issues", log = "Build Log", texpresso = "TeXpresso"
+    case issues = "Issues", log = "Build Log", texpresso = "Live Preview Log"
 }
 
 /// The build panel below the editors and their status bar: the build's issues or its whole log,
@@ -20,8 +20,8 @@ struct BuildPanel: View {
             case .texpresso:
                 if project.texpresso.log.isEmpty {
                     ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
-                                           description: Text(project.livePDF ? "The PDF pane shows TeXpresso’s live preview."
-                                                             : "TeXpresso shows the document in its own window. Compile to update the PDF here."))
+                                           description: Text(project.livePDF ? "The PDF pane shows Live Preview."
+                                                             : "Live Preview shows the document in its own window. Compile to update the PDF here."))
                 } else {
                     log(project.texpresso.log, title: "TeXpresso Log")
                 }
@@ -101,7 +101,7 @@ struct BuildPanelBar: View {
                         Label("Warnings", systemImage: "exclamationmark.triangle")
                     }
                     .toggleStyle(.button)
-                    .help(project.showsWarnings ? "Hide Warnings" : "Show Warnings")
+                    .help(project.showsWarnings ? "Hide warnings" : "Show warnings")
                 }
                 SearchField(text: $project.issueFilter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
                     .frame(maxWidth: 180)
@@ -111,7 +111,7 @@ struct BuildPanelBar: View {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)
                 }
-                .help("Copy Log")
+                .help("Copy the whole log")
                 .disabled(text.isEmpty)
                 SearchField(text: $project.logFilter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
                     .frame(maxWidth: 180)

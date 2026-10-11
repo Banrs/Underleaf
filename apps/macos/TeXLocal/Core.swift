@@ -67,7 +67,7 @@ final class Core {
     private func result<T: Decodable & Sendable>(_ command: String, _ args: [String: Any], as: T.Type) async throws -> T? {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
         guard let handle else {
-            throw CoreError(message: "TeXLocal can’t open its library folder.")
+            throw CoreError(message: "TeXLocal can’t open its projects folder.")
         }
         return try await withCheckedThrowingContinuation { done in
             DispatchQueue.global(qos: .userInitiated).async {

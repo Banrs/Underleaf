@@ -233,7 +233,7 @@ final class ProjectModel {
 
     /// A PDF from before the project opened may be on screen, but its
     /// build's issues weren't kept.
-    var noBuildTitle: String { hasPDF ? "Not Built Since Opening" : "Not Compiled" }
+    var noBuildTitle: String { "No Build Yet" }
     /// The latest build failed without writing a PDF, so the one shown is an earlier build's.
     var showsLastSuccessfulBuild: Bool { hasPDF && result?.failed == true && result?.pdf == nil }
     var texAvailable: Bool { app?.tex?.available ?? false }

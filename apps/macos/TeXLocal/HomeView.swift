@@ -33,10 +33,10 @@ struct HomeView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button("Open", systemImage: "folder") { app.openingProject = true }
-                    .help("Open a Folder, .tex File or .zip as a Project")
+                    .help("Open a folder, .tex file or .zip as a project")
                     .disabled(app.libraryProblem != nil)
                 Button("New Project", systemImage: "plus") { app.newProject() }
-                    .help("New Project")
+                    .help("Start a new project")
                     .disabled(app.libraryProblem != nil)
             }
         }
@@ -124,7 +124,7 @@ struct HomeView: View {
                         TemplateCard(template: template)
                     }
                     .buttonStyle(TemplateButtonStyle())
-                    .help("New \(template.title) Project")
+                    .help("Start a project from this template")
                 }
             }
         }
@@ -168,7 +168,7 @@ struct HomeView: View {
     private var texMissing: some View {
         HStack(alignment: .firstTextBaseline) {
             Label(
-                "TeX isn’t installed. Install MacTeX to compile. TeXLocal notices it once it’s there.",
+                "TeX isn’t installed. Install MacTeX to compile. TeXLocal finds it once it’s installed.",
                 systemImage: "exclamationmark.triangle.fill"
             )
             .symbolRenderingMode(.multicolor)
@@ -247,7 +247,7 @@ struct GetMacTeXButton: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        Button("Get MacTeX") { openURL(URL(string: "https://tug.org/mactex/")!) }
+        Button("Get MacTeX…") { openURL(URL(string: "https://tug.org/mactex/")!) }
     }
 }
 
