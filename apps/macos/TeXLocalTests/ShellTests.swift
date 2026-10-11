@@ -35,46 +35,44 @@ struct ShellTests {
         try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == id })
     }
 
-    /// A wide window shows every tool; at its narrowest Insert stands for Format and Math and
-    /// Zoom has gone, Compile keeping its word; widened again, they are all back.
-    @Test func theToolbarGivesWayToANarrowWindowAndTakesItBack() async throws {
+    /// A wide window has Compile as its word. At its narrowest the panes are at their least
+    /// or wider, Compile is its symbol, and nothing has left the toolbar but for its overflow
+    /// menu, where each tool that can go has a menu form.
+    @Test func aNarrowWindowKeepsEveryToolOrItsMenuForm() async throws {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
-        let fit = workspace.toolbar.fit
-        #expect(!fit.mergesEditing && !fit.compactCompile && !fit.hidesZoom)
+        #expect(!workspace.toolbar.compactCompile)
         #expect(try item(.compile, in: workspace).title == MenuCommand.compileRun.title)
 
-        try await resize(window, to: 100)
-        let narrowest = ColumnMetrics.sourceMinimum(sidebarHidden: true, pdfHidden: false) + ColumnMetrics.pdfMinimum
-        #expect(abs(window.contentLayoutRect.width - narrowest) < 2)
-        #expect(fit.mergesEditing && !fit.compactCompile && fit.hidesZoom)
-        #expect(try item(.format, in: workspace).isHidden && item(.math, in: workspace).isHidden)
-        #expect(try !item(.insert, in: workspace).isHidden)
-        let insert = try #require(try item(.insert, in: workspace) as? NSMenuToolbarItem).menu
-        insert.delegate?.menuNeedsUpdate?(insert)
-        #expect(insert.items.prefix(2).map(\.title) == ["Format", "Math"])
-        #expect(insert.items.prefix(2).allSatisfy { $0.submenu?.items.isEmpty == false })
-        #expect(try item(.zoom, in: workspace).isHidden)
-        #expect(try item(.compile, in: workspace).title == MenuCommand.compileRun.title)
-
-        try await resize(window, to: 1300)
-        #expect(!fit.mergesEditing && !fit.compactCompile && !fit.hidesZoom)
-        #expect(try !item(.format, in: workspace).isHidden && !item(.zoom, in: workspace).isHidden)
-    }
-
-    /// With the PDF hidden the source holds Compile and the toggles too, in a narrower window.
-    @Test func theSourceAloneFitsANarrowerWindow() async throws {
-        let (window, workspace) = try await workspace(showPDF: false)
-        defer { workspace.close(); window.close() }
-        try await resize(window, to: 100)
-        #expect(abs(window.contentLayoutRect.width - ColumnMetrics.contentMinimum.width) < 2)
-        #expect(ColumnMetrics.contentMinimum.width
-                < ColumnMetrics.sourceMinimum(sidebarHidden: true, pdfHidden: false) + ColumnMetrics.pdfMinimum)
-        #expect(workspace.toolbar.fit.mergesEditing && workspace.toolbar.fit.compactCompile)
-        #expect(try item(.zoom, in: workspace).isHidden)
+        // The least a drag of the window's edge gets to.
+        #expect(window.contentMinSize.width == ColumnMetrics.toolbarMinimum)
+        #expect(ColumnMetrics.toolbarMinimum >= ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
+        try await resize(window, to: window.contentMinSize.width)
         // Compile as its symbol, still Compile to the overflow menu and VoiceOver.
         let compile = try item(.compile, in: workspace)
+        #expect(workspace.toolbar.compactCompile)
         #expect(compile.title.isEmpty && compile.image != nil && compile.label == MenuCommand.compileRun.title)
+        for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {
+            let item = try item(id, in: workspace)
+            #expect(!item.isHidden && item.visibilityPriority == .low)
+            #expect(item is NSMenuToolbarItem || item.menuFormRepresentation?.submenu != nil)
+        }
+        for id in [NSToolbarItem.Identifier.back, .compile, .togglePDF] {
+            #expect(try item(id, in: workspace).visibilityPriority == .high)
+        }
+
+        try await resize(window, to: 1300)
+        #expect(!workspace.toolbar.compactCompile)
+    }
+
+    /// With the PDF hidden the window is no narrower: its toolbar holds it there.
+    @Test func theSourceAloneStopsAtTheToolbarsMinimum() async throws {
+        let (window, workspace) = try await workspace(showPDF: false)
+        defer { workspace.close(); window.close() }
+        #expect(window.contentMinSize.width == ColumnMetrics.toolbarMinimum)
+        try await resize(window, to: window.contentMinSize.width)
+        #expect(workspace.toolbar.compactCompile)
+        #expect(try item(.zoom, in: workspace).isHidden)
     }
 
     /// A sidebar the window folded is still the user's shown sidebar: it isn't saved as hidden,

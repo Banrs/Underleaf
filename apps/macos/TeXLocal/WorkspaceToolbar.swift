@@ -24,16 +24,22 @@ extension NSToolbarItem.Identifier {
 /// Pane-aligned tools, with PDF tools following the source/PDF divider and window toggles trailing.
 /// Related tools share a capsule (HIG, Toolbars): the editing tools are separate items that
 /// AppKit joins side by side, as Xcode's and Notes'; the PDF and Inspector toggles stay apart.
-/// A pane narrower than its tools gets fewer of them (`ToolbarFit`), since AppKit's overflow
-/// answers only a toolbar short of room as a whole. That takes the least used in TeX editors
-/// first: Zoom, then the editing tools. Back, Compile and the toggles go last (HIG, Toolbars).
+/// What a narrow window has no room for goes to the system's overflow menu, each tool with a
+/// menu form. The least used in TeX editors leave first: Zoom, then the editing tools (equal
+/// priorities leave from the right). Back, Compile and the toggles go last (HIG, Toolbars).
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
     /// Renamed as the defaults change: a layout saved under an earlier name has Share, the
     /// toggles' former group or no PDF toggle, which would come back or stay missing.
     let toolbar = NSToolbar(identifier: "Workspace 4")
-    /// What fits over the panes, which the workspace sets as they resize.
-    let fit = ToolbarFit()
+    /// Compile as its symbol, which the workspace sets where its word would be the first tool
+    /// without room.
+    var compactCompile: Bool {
+        get { fit.compact }
+        set { if fit.compact != newValue { fit.compact = newValue } }
+    }
+    private let fit = Fit()
+    @Observable final class Fit { var compact = false }
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
@@ -51,7 +57,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
-        // The sections are fitted to their panes as icons (`ToolbarFit`).
+        // Compile's word is the one label, and the workspace knows its width (`ColumnMetrics`).
         toolbar.allowsDisplayModeCustomization = false
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
@@ -119,8 +125,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = menuItem(id, "Math", "radicand.squareroot", mathItems)
         case .insert:
             // Notes' ellipsis, which means More (HIG, Icons), with Insert as its name for
-            // VoiceOver, Customize Toolbar and the overflow menu: what it holds is the menu bar's
-            // Insert, under Format's and Math's while it stands for them too (`configure`).
+            // VoiceOver, Customize Toolbar and the overflow menu: what it holds is the menu bar's Insert.
             item = menuItem(id, "Insert", "ellipsis", InsertMenuItems(project: project))
         case .bold:
             item = button(id, MenuCommand.editBold.title, "bold", #selector(bold))
@@ -252,7 +257,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         return item
     }
 
-    /// Format's popover as a menu: the overflow menu's, and Insert's while it stands for Format.
+    /// Format's popover as a menu, for the overflow menu.
     private var formatItems: some View {
         Group { [app, project] in
             ForEach([MenuCommand.editBold, .editItalic, .editUnderline], id: \.self) { command in
@@ -267,16 +272,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         MathMenuItems(project: project) { [app, project] in app.perform(.editMath, on: project) }
     }
 
-    /// Insert's menu while it stands for Format and Math too.
-    private var mergedItems: some View {
-        Group { [formatItems, mathItems, project] in
-            Menu("Format") { formatItems }
-            Menu("Math") { mathItems }
-            Divider()
-            InsertMenuItems(project: project)
-        }
-    }
-
     // ---------- state ----------
 
     private nonisolated struct State: Equatable {
@@ -289,9 +284,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let compiling: Bool
         let canCompile: Bool
         let pdfTitle: String
-        let mergesEditing: Bool
         let compactCompile: Bool
-        let hidesZoom: Bool
     }
 
     private var state: State {
@@ -299,10 +292,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
               hasPDF: project.hasPDF, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
               compiling: project.compiling, canCompile: canCompile,
-              pdfTitle: app.title(.viewTogglePdf, on: project),
-              // Format and Math go only into an Insert that is there to take them.
-              mergesEditing: fit.mergesEditing && toolbar.items.contains { $0.itemIdentifier == .insert },
-              compactCompile: fit.compactCompile, hidesZoom: fit.hidesZoom)
+              pdfTitle: app.title(.viewTogglePdf, on: project), compactCompile: fit.compact)
     }
 
     /// Applies the state as it changes, in the same pass. A column resizing refits the PDF
@@ -325,20 +315,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             old?[keyPath: field] != state[keyPath: field]
         }
         switch item.itemIdentifier {
-        case .format, .math:
+        case .format, .math, .insert:
             if changed(\.isLaTeX) { item.isEnabled = state.isLaTeX }
-            if changed(\.mergesEditing) {
-                item.isHidden = state.mergesEditing
-                if state.mergesEditing { format.popover.close() }
-            }
-        case .insert:
-            if changed(\.isLaTeX) { item.isEnabled = state.isLaTeX }
-            if changed(\.mergesEditing), let item = item as? NSMenuToolbarItem {
-                item.toolTip = state.mergesEditing ? "Format, Math and Insert" : item.label
-                // A menu for each: items a shown pull-down gains at its head take its hidden
-                // title's place, and the first of them isn't shown (27.2).
-                item.menu = state.mergesEditing ? menu(mergedItems) : menu(InsertMenuItems(project: project))
-            }
         case .zoom:
             let control = item.view as? NSSegmentedControl
             if changed(\.zoomLabel) { control?.setLabel(state.zoomLabel, forSegment: 1) }
@@ -348,7 +326,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                 item.isEnabled = state.hasPDF
             }
             if changed(\.hasPDF) || changed(\.canZoomIn) { control?.setEnabled(state.hasPDF && state.canZoomIn, forSegment: 2) }
-            if changed(\.showsPDF) || changed(\.hidesZoom) { item.isHidden = !state.showsPDF || state.hidesZoom }
+            if changed(\.showsPDF) { item.isHidden = !state.showsPDF }
         case .share:
             if changed(\.hasPDF) { item.isEnabled = state.hasPDF }
         case .compile:
@@ -493,13 +471,4 @@ private struct ToolbarMenuItems<Content: View>: View {
     var body: some View {
         content().disabled(!isEnabled())
     }
-}
-
-/// What the toolbar shows of each pane's tools while the pane is narrower than all of them:
-/// Format and Math inside Insert's menu, Compile as its symbol where that keeps Zoom its place
-/// or the source holds Compile too, and then no Zoom, which View has.
-@Observable final class ToolbarFit {
-    var mergesEditing = false
-    var compactCompile = false
-    var hidesZoom = false
 }

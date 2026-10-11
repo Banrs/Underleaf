@@ -159,60 +159,41 @@ final class WorkspaceController: RestoredSplitViewController {
 
     @objc private func panesResized() { fitColumns() }
 
-    /// The source's minimum holds its toolbar section at its least, with the sections a hidden
-    /// sidebar and a hidden PDF hand on to it (`ColumnMetrics`). It drops as soon as the section
-    /// shrinks, before AppKit makes room for the pane coming back (`returning`), and rises once
-    /// the columns have the room, at the end of the pane's fold.
-    private func fitColumns(returning: NSSplitViewItem? = nil) {
-        func hidden(_ item: NSSplitViewItem) -> Bool { item.isCollapsed && item !== returning }
-        let source = ColumnMetrics.sourceMinimum(sidebarHidden: hidden(sidebarItem), pdfHidden: hidden(pdfItem))
-        let others = hidden(pdfItem) ? 0 : columns.splitView.dividerThickness + pdfItem.minimumThickness
-        if source < sourceItem.minimumThickness || columns.splitView.bounds.width >= source + others {
-            if source != sourceItem.minimumThickness { sourceItem.minimumThickness = source }
-        }
-        // AppKit folds the side columns by their split's own items' minimums.
-        let area = sourceItem.minimumThickness + others + ColumnMetrics.toolbarInset
+    /// The window stops where its panes or its toolbar are at their least, whichever is wider.
+    /// AppKit folds the side columns on the way there, by the area's own minimum; with the
+    /// sidebar open the window controls are over it.
+    private func fitColumns() {
+        let pdf = pdfItem.isCollapsed ? 0 : columns.splitView.dividerThickness + pdfItem.minimumThickness
+        let panes = sourceItem.minimumThickness + pdf + ColumnMetrics.toolbarInset
+        let area = max(panes, ColumnMetrics.toolbarMinimum - ColumnMetrics.windowControls)
         if areaItem.minimumThickness != area { areaItem.minimumThickness = area }
-        // The window stops where the panes do with the side columns folded: AppKit folds those
-        // over an animation, and the source has room for its wider minimum only at its end.
-        let width = ColumnMetrics.sourceMinimum(sidebarHidden: true, pdfHidden: hidden(pdfItem)) + others
-            + ColumnMetrics.toolbarInset
+        let width = max(panes, ColumnMetrics.toolbarMinimum)
         if let window = view.window, window.contentMinSize.width != width { window.contentMinSize.width = width }
         fitToolbar()
     }
 
-    /// Each pane's toolbar section runs between the tracking separators over the pane's edges,
-    /// short of the window controls with the sidebar's toggle at one end and of the PDF and
-    /// Inspector toggles at the other where those are over it. A section narrower than its tools
-    /// gets fewer at once; it gets them back once no pane is moving, as a pane's animation can
-    /// widen a section on its way to a narrower one.
+    /// Compile gives up its word where that is the first tool without room: over a PDF narrower
+    /// than Zoom and Compile, or once the source's tools have outgrown their pane and take the
+    /// PDF's room. It takes the word back once no pane is moving, as a pane's animation can
+    /// widen the room on its way to less.
     private func fitToolbar() {
         func edges(_ item: NSSplitViewItem) -> NSRect {
             let view = item.viewController.view
             return view.convert(view.bounds, to: splitView)
         }
         let source = edges(sourceItem), area = edges(areaItem)
+        // Short of the window controls with the sidebar's toggle, and of the PDF and Inspector toggles.
         let leading = max(source.minX, ColumnMetrics.windowControls)
-        let toggles = max(0, area.maxX - (splitView.bounds.maxX - ColumnMetrics.toggles))
-        let fit = toolbar.fit
-        func set(_ flag: ReferenceWritableKeyPath<ToolbarFit, Bool>, _ compact: Bool) {
-            if fit[keyPath: flag] != compact, compact || paneAnimations == 0 { fit[keyPath: flag] = compact }
-        }
+        let trailing = min(area.maxX, splitView.bounds.maxX - ColumnMetrics.toggles)
+        var room = trailing - leading - ColumnMetrics.sourceTools
         if pdfItem.isCollapsed {
-            // The source is heading for all of the area, and holds Compile too.
-            let compact = area.maxX - toggles - leading
-                < ColumnMetrics.sourceTools + ColumnMetrics.separator + ColumnMetrics.compile
-            set(\.mergesEditing, compact)
-            set(\.compactCompile, compact)
+            room -= ColumnMetrics.separator
         } else {
             // A PDF sliding in is already at its width.
-            let pdf = pdfItem.viewController.view.frame.width - toggles
-            set(\.mergesEditing, source.maxX - leading < ColumnMetrics.sourceTools)
-            // Compile gives up its word while that keeps Zoom its place.
-            let hidesZoom = pdf < ColumnMetrics.zoom + ColumnMetrics.compileSymbol
-            set(\.hidesZoom, hidesZoom)
-            set(\.compactCompile, !hidesZoom && pdf < ColumnMetrics.zoom + ColumnMetrics.compile)
+            room = min(room, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
         }
+        let compact = room < ColumnMetrics.compile
+        if toolbar.compactCompile != compact, compact || paneAnimations == 0 { toolbar.compactCompile = compact }
     }
 
     // ---------- layout ----------
@@ -249,8 +230,7 @@ final class WorkspaceController: RestoredSplitViewController {
     private func buildArea(size: CGSize) {
         let sidebarWidth = app.sidebarVisible ? ColumnMetrics.sidebarIdeal : 0
         let inspectorWidth = app.inspectorVisible ? inspectorItem.minimumThickness : 0
-        // As the side columns leave the toolbar (`fitColumns`).
-        let sourceMinimum = ColumnMetrics.sourceMinimum(sidebarHidden: !app.sidebarVisible, pdfHidden: false)
+        let sourceMinimum = ColumnMetrics.sourceMinimum
         let panes = max(size.width - sidebarWidth - inspectorWidth, sourceMinimum + ColumnMetrics.pdfMinimum)
         let pdfWidth = min((panes * ColumnMetrics.pdfShare).rounded(), panes - sourceMinimum)
         panelHeight = max(ColumnMetrics.panelMinimum, (size.height * ColumnMetrics.panelShare).rounded())
@@ -437,7 +417,6 @@ final class WorkspaceController: RestoredSplitViewController {
         let id = ObjectIdentifier(item)
         if !collapsed {
             mount(item.viewController, true)
-            fitColumns(returning: item)
         }
         paneAnimation(true)
         NSAnimationContext.runAnimationGroup { context in
@@ -758,10 +737,8 @@ private final class SidebarSplitViewController: RestoredSplitViewController {
     }
 }
 
-/// Pane sizes. Source and PDF are no narrower than their toolbar sections at their least: a
-/// tracking separator keeps a section over its pane only while the items fit there, and AppKit
-/// moves items to the overflow menu only for a toolbar short of room as a whole (27.2). The
-/// sections' widths are AppKit's layout of them (27.2), measured: it has no API that tells them.
+/// Pane sizes, from what each pane shows. The toolbar's sections are AppKit's layout of them
+/// (27.2), measured, for Compile's word alone (`fitToolbar`): it has no API that tells them.
 enum ColumnMetrics {
     /// Xcode's navigator, at its default width.
     static let sidebarIdeal: CGFloat = 256
@@ -769,17 +746,20 @@ enum ColumnMetrics {
     static let windowControls: CGFloat = 132
     /// The PDF and Inspector toggles, over the inspector or, without it, the last pane.
     static let toggles: CGFloat = 92
-    /// The source's tools: Back, AppKit's narrowest title and Format, Math and Insert, and
-    /// with Insert standing for all three (`ToolbarFit`).
+    /// The source's tools: Back, AppKit's narrowest title and Format, Math and Insert.
     static let sourceTools: CGFloat = 338
-    static let sourceToolsMerged: CGFloat = 260
-    /// The PDF's: Zoom, and Compile as its word or its symbol.
+    /// The PDF's: Zoom, and Compile as its word.
     static let zoom: CGFloat = 156
     static let compile: CGFloat = 90
-    static let compileSymbol: CGFloat = 52
     /// The source|PDF separator's own gap, where no divider places it: before Compile while the
     /// PDF is hidden.
     static let separator: CGFloat = 5
+    /// The line numbers and some 25 characters at the default size.
+    static let sourceMinimum: CGFloat = 260
+    /// The toolbar with all it can spare in its overflow menu: the window controls, Back, AppKit's
+    /// narrowest title, the menu's chevron, Compile as its symbol and the toggles. In a narrower
+    /// window AppKit takes Compile and then Back there too (27.2), measured.
+    static let toolbarMinimum: CGFloat = 542
     /// A page readable at Fit Width, and room for Compile and the toggles.
     static let pdfMinimum: CGFloat = 200
     static let pdfShare: CGFloat = 0.5
@@ -794,16 +774,10 @@ enum ColumnMetrics {
     static let outlineShare: CGFloat = 0.45
     /// The columns' trailing safe-area inset, for the last column's toolbar section (`buildArea`).
     static let toolbarInset: CGFloat = 0.5
-    /// The source's minimum: its tools at their fewest, with the window controls a hidden sidebar
-    /// leaves over it, and Compile and the toggles a hidden PDF does.
-    static func sourceMinimum(sidebarHidden: Bool, pdfHidden: Bool) -> CGFloat {
-        sourceToolsMerged + (sidebarHidden ? windowControls : 0) + (pdfHidden ? separator + compileSymbol + toggles : 0)
-    }
-    /// The narrowest window, with only the source showing: a narrower one folds the sidebar and
-    /// the inspector instead, as Mail's does (HIG, Sidebars), and the PDF adds its own minimum.
-    /// The height holds the sidebar's two lists under its search field, and the editors over the
-    /// build panel at its least.
-    static let contentMinimum = CGSize(width: sourceMinimum(sidebarHidden: true, pdfHidden: true), height: 400)
+    /// The narrowest window: a narrower one folds the sidebar and the inspector instead, as
+    /// Mail's does (HIG, Sidebars). The height holds the sidebar's two lists under its search
+    /// field, and the editors over the build panel at its least.
+    static let contentMinimum = CGSize(width: toolbarMinimum, height: 400)
 }
 
 /// Whether a pane's SwiftUI content is there: hidden, a hosting view still updates all of it
