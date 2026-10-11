@@ -9,7 +9,7 @@ struct MenuCommandTests {
         var seen: [KeyboardShortcut: MenuCommand] = [:]
         for command in MenuCommand.allCases {
             guard let shortcut = command.shortcut else { continue }
-            #expect(seen[shortcut] == nil, "\(command.rawValue) and \(seen[shortcut]?.rawValue ?? "")")
+            #expect(seen[shortcut] == nil, "\(command) and \(seen[shortcut].map { "\($0)" } ?? "")")
             seen[shortcut] = command
         }
     }
