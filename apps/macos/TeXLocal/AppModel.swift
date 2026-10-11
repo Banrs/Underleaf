@@ -47,6 +47,8 @@ struct ExportFile: Transferable {
 @Observable
 final class AppModel {
     var projects: [ProjectInfo] = []
+    /// The first list has come: Home says there are no projects only after it.
+    private(set) var projectsLoaded = false
     var tex: TexStatus?
     private(set) var settingTeX = false
     var project: ProjectModel?
@@ -147,6 +149,7 @@ final class AppModel {
         } catch {
             alert = AppAlert("Couldn’t Load Your Projects", error)
         }
+        projectsLoaded = true
         await refreshTeXStatus()
     }
 
