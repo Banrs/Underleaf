@@ -32,8 +32,8 @@ struct InspectorView: View {
                 // As Compile › TeXpresso Live Preview: on while this window's session is live.
                 Toggle(isOn: Binding(get: { project.texpresso.active },
                                      set: { $0 ? project.startTeXpresso() : project.stopTeXpresso() })) {
-                    Text("TeXpresso (Experimental)")
-                    Text(app.canPreviewLive ? "Updates the preview as you type, without compiling."
+                    Text("Live Preview")
+                    Text(app.canPreviewLive ? "Experimental. Updates the preview as you type, without compiling."
                          : "Live Preview needs TeXpresso, which isn’t installed. If it is, choose its folder in Settings.")
                 }
                 .disabled(!app.canPreviewLive || !project.initialLoadComplete || project.texpresso.phase == .stopping)

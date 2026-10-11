@@ -59,7 +59,7 @@ final class AppModel {
     var alert: AppAlert?
     /// Why the library can't be listed, for Home to say in place of its list: no alert as the app starts.
     private(set) var libraryProblem: AppAlert? = Core.shared.isOpen ? nil : AppAlert(
-        "Couldn’t Open the Library Folder",
+        "Couldn’t Open the Projects Folder",
         "Make sure you can create and write to \((Core.libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath), then try again.")
 
     // Requests from menu commands to the views that own the UI.
@@ -166,7 +166,7 @@ final class AppModel {
             projects = try await core.call("list_projects", as: [ProjectInfo].self)
             libraryProblem = nil
         } catch {
-            libraryProblem = AppAlert("Couldn’t Load Your Projects", error)
+            libraryProblem = AppAlert("Couldn’t Load Projects", error)
         }
         projectsLoaded = true
         await refreshTeXStatus()

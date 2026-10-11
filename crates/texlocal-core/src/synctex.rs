@@ -136,7 +136,7 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
     let mut first = matches
         .first()
         .cloned()
-        .ok_or_else(|| CoreError::not_found("No SyncTeX match"))?;
+        .ok_or_else(|| CoreError::not_found("Nothing in the PDF matches this line."))?;
     matches.sort_by(|a, b| {
         a.page
             .total_cmp(&b.page)
@@ -205,7 +205,7 @@ pub async fn synctex_inverse_with_context(
         .find_map(|ln| ln.strip_prefix("Line:"))
         .and_then(|s| s.trim().parse::<u32>().ok());
     let (Some(file), Some(line)) = (file, line) else {
-        return Err(CoreError::not_found("No SyncTeX match"));
+        return Err(CoreError::not_found("Nothing in the source matches this spot."));
     };
 
     let abs = root.join(file);

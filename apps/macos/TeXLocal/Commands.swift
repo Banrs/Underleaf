@@ -389,7 +389,7 @@ struct AppCommands: Commands {
             Divider()
             Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
             // A mode, like the one above: checked while its window is live. Disk changes rescan on their own.
-            Toggle("TeXpresso Live Preview (Experimental)", isOn: Binding(
+            Toggle("Live Preview", isOn: Binding(
                 get: { project?.texpresso.active == true },
                 set: { $0 ? project?.startTeXpresso() : project?.stopTeXpresso() }))
                 .disabled(!app.canPreviewLive || project.map { !$0.initialLoadComplete || $0.texpresso.phase == .stopping } ?? true)

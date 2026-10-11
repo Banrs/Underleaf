@@ -30,7 +30,7 @@ struct PDFPane: View {
             ContentUnavailableView {
                 Label("TeX Isn’t Installed", systemImage: "richtext.page")
             } description: {
-                Text("Install MacTeX to compile. TeXLocal notices it once it’s there.")
+                Text("Install MacTeX to compile. TeXLocal finds it once it’s installed.")
             } actions: {
                 GetMacTeXButton().buttonStyle(.borderedProminent)
             }

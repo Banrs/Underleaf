@@ -50,14 +50,14 @@ struct StatusBar: View {
                 // The last to give way: its text shortens only where nothing else can.
                 buildStatus.fixedSize(horizontal: detail != .short, vertical: true).hitTarget()
             }
-            .help(showingIssues ? "Hide Issues" : "Show Issues")
+            .help(showingIssues ? "Hide issues" : "Show issues")
             if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
                 Button { project.showTeXpressoLog() } label: {
                     Label(project.texpresso.title,
                           systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
                         .hitTarget()
                 }
-                .help("Show TeXpresso Log")
+                .help("Show the TeXpresso log")
             }
             if let reason = project.saveFailure {
                 // An autosave's failure, here until a save succeeds; saving again says why in an alert.
@@ -88,7 +88,7 @@ struct StatusBar: View {
                         }
                         .hitTarget()
                     }
-                    .help("Go to Line")
+                    .help("Go to a line")
                 }
                 if let counts {
                     Text("^[\(counts.words) word](inflect: true)")
@@ -108,7 +108,7 @@ struct StatusBar: View {
                         }
                         .hitTarget()
                     }
-                    .help("Go to Page")
+                    .help("Go to a page")
                 }
             }
             .fixedSize()
@@ -134,15 +134,15 @@ struct StatusBar: View {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill")
                     .hitTarget()
             }
-            .help("The latest PDF build failed; this is the last one that succeeded. Show Issues")
+            .help("Latest build failed. Showing the last PDF that built")
         } else if project.pdfOutdated, !project.livePDF {
             Button { app.perform(.compileRun, on: project) } label: {
                 Label("PDF Out of Date", systemImage: "arrow.clockwise")
                     .hitTarget()
             }
             .help(project.texpresso.active
-                ? "TeXpresso updates its own window. Compile to refresh this PDF."
-                : "The PDF doesn’t reflect the current source. Compile")
+                ? "Live Preview updates its own window. Compile to refresh this PDF"
+                : "The PDF is older than the source. Click to compile")
             .disabled(!app.isEnabled(.compileRun, on: project))
         }
     }
@@ -156,7 +156,7 @@ struct StatusBar: View {
                 if result.stopped {
                     Text("Build Stopped")
                 } else if result.ok {
-                    badge("Compiled in \(result.durationText)", "checkmark.circle.fill", .green)
+                    badge("Build Succeeded · \(result.durationText)", "checkmark.circle.fill", .green)
                 } else {
                     // The error count folds into the failure, so its symbol shows once.
                     badge(project.errorCount == 0 ? "Build Failed" : "Build Failed · ^[\(project.errorCount) Error](inflect: true)",
