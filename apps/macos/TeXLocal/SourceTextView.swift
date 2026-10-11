@@ -909,21 +909,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// window it holds its items unseen, as the tests use it.
     private func showCompletions(reload: Bool) {
         guard let offered else { return }
-        var start = NSRect.zero, floor: CGFloat = 0, host: NSWindow?
+        var start = NSRect.zero, shown = NSRect.zero, host: NSWindow?
         if let window, let clip = enclosingScrollView?.contentView {
             host = window
             start = firstRect(forCharacterRange: NSRange(location: offered.start, length: 0), actualRange: nil)
+            // Not under the status bar.
             let insets = enclosingScrollView?.contentInsets ?? NSEdgeInsetsZero
-            var shown = window.convertToScreen(clip.convert(clip.bounds, to: nil))
+            shown = window.convertToScreen(clip.convert(clip.bounds, to: nil))
             shown.origin.y += insets.bottom
             shown.size.height -= insets.top + insets.bottom
             guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return closeCompletions() }
-            // Not under the status bar.
-            floor = shown.minY
-            guard reload else { return completionList.place(under: start, over: floor) }
+            guard reload else { return completionList.place(under: start, in: shown) }
         }
-        completionList.show(offered.items.map(\.label), kind: offered.kind, font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
-                            theme: syntaxTheme, under: start, over: floor, in: host)
+        completionList.show(offered.items.map(\.label), typed: caret - offered.start, kind: offered.kind,
+                            font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+                            theme: syntaxTheme, under: start, in: shown, of: host)
         // Out of the list's way.
         if host != nil { previewMath() }
     }
