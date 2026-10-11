@@ -54,7 +54,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var committedString: String { hasMarkedText() ? beforeMarkedText ?? string : string }
     var symbols = Symbols(citations: [], labels: [])
     /// What dropping a file does, or nil to refuse it.
-    var fileDrop: (URL) -> (() -> Void)? = { _ in nil }
+    var fileDrop: (URL) -> FileDrop? = { _ in nil }
+
+    enum FileDrop {
+        case open(() -> Void)
+        /// LaTeX to put in where it's dropped: a figure's `\includegraphics`.
+        case insert(String)
+    }
     /// Go to PDF Position, or nil while there's no PDF or no TeX open.
     var forwardSync: () -> (() -> Void)? = { nil }
 
@@ -1051,7 +1057,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if selectedRange() == first, issueLines[number] != nil { issueClicked(number) }
     }
 
-    // MARK: file drops open
+    // MARK: file drops open, or insert a figure
 
     private func files(_ info: any NSDraggingInfo) -> [URL] {
         info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
@@ -1077,7 +1083,16 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let files = files(info)
         guard !files.isEmpty else { return super.performDragOperation(info) }
         guard let drop = files.lazy.compactMap(fileDrop).first else { return false }
-        drop()
+        switch drop {
+        case .open(let open): open()
+        case .insert(let text):
+            guard isEditable else { return false }
+            // Selected where it lands, as dropped content is, and undone in one step.
+            let at = characterIndexForInsertion(at: convert(info.draggingLocation, from: nil))
+            apply([TextEdit(NSRange(location: at, length: 0), text)], named: String(localized: "Insert Figure"),
+                  select: NSRange(location: at, length: (text as NSString).length))
+            window?.makeFirstResponder(self)
+        }
         return true
     }
 

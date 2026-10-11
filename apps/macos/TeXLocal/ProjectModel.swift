@@ -1,6 +1,7 @@
 import Accessibility
 import AppKit
 import Observation
+import UniformTypeIdentifiers
 
 /// One open project: its files, the document in the editor, and its builds.
 @Observable
@@ -449,10 +450,15 @@ final class ProjectModel {
         folderWatcher?.relativePath(FolderWatcher.realPath(url))
     }
 
-    /// A file of the project dropped on the source opens in the editor; one from elsewhere goes on the sidebar.
-    private func dropped(_ url: URL) -> (() -> Void)? {
+    /// A file of the project dropped on the source opens in the editor, and an image or a PDF
+    /// dropped on LaTeX goes in as a figure; one from elsewhere goes on the sidebar.
+    private func dropped(_ url: URL) -> SourceTextView.FileDrop? {
         guard let path = projectPath(url), node(at: path)?.isDirectory == false else { return nil }
-        return { [weak self] in Task { await self?.open(path) } }
+        let type = UTType(filenameExtension: url.pathExtension)
+        if isLaTeX, type?.conforms(to: .image) == true || type?.conforms(to: .pdf) == true {
+            return .insert("\\includegraphics{\(path)}")
+        }
+        return .open { [weak self] in Task { await self?.open(path) } }
     }
 
     func showInFinder(_ path: String) {
