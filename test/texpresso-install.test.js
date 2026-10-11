@@ -72,3 +72,20 @@ test('an install stopped mid-swap puts the earlier installation back', () => {
   assert.equal(readFileSync(join(f.dest, 'bin/texpresso'), 'utf8'), '#!/bin/sh\nearlier\n');
   assert.deepEqual(leftovers(f), []);
 });
+
+test('the format cache stays through an install of the same TeX engine, and goes with another', () => {
+  const f = fixture();
+  assert.equal(install(f).status, 0);
+  const format = join(f.dest, 'cache/texpresso/xelatex.fmt');
+  const cached = () => { mkdirSync(join(format, '..'), { recursive: true }); writeFileSync(format, 'format'); };
+  cached();
+  // A new viewer beside the same engine: what the engine cached is still its own.
+  executable(join(f.build, 'texpresso'), 'echo "Usage: texpresso"; : newer');
+  assert.equal(install(f).status, 0);
+  assert.equal(readFileSync(format, 'utf8'), 'format');
+  assert.match(readFileSync(join(f.dest, 'libexec/texpresso'), 'utf8'), /newer/);
+  executable(join(f.build, 'texpresso-xetex'), 'echo "Usage: texpresso"; : another engine');
+  assert.equal(install(f).status, 0);
+  assert.ok(!existsSync(join(f.dest, 'cache')));
+  assert.deepEqual(leftovers(f), []);
+});
