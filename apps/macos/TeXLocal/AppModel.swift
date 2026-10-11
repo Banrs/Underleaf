@@ -58,9 +58,6 @@ final class AppModel {
     var newEntry: NewEntry?
     var openingProject = false
     var addingFiles = false
-    /// An item Finder or the Dock handed the app, while the window asks
-    /// before copying it in.
-    var pendingImport: URL?
     var exporting: ExportFile?
     /// Bumped by Find in Project…, to focus the sidebar's search field.
     var searchFocusToken = 0
@@ -203,16 +200,43 @@ final class AppModel {
     }
 
     /// Copies a folder, .tex file (with its folder) or .zip into the library and opens it, or
-    /// with `open` off only lists it. The core removes a project it couldn't finish, so a bad
-    /// zip leaves none.
+    /// with `open` off only lists it; without asking, as the copy goes to the Trash like any
+    /// project. An item already in the library is its project's own, which opens instead. The
+    /// core removes a project it couldn't finish, so a bad zip leaves none.
     func importProject(from url: URL, open: Bool = true) async {
+        if await isInLibrary(url, open: open) { return }
+        // A second Return while it copies would make a second project.
+        let name = url.lastPathComponent
+        guard importing.insert(url).inserted else { return }
+        opening.append(name)
+        defer {
+            importing.remove(url)
+            stopOpening(name)
+        }
         do {
             let info = try await core.call("import_project", ["src": url.path], as: ProjectInfo.self)
             await refresh()
             if open { await self.open(info.id) }
         } catch {
-            alert = AppAlert("Couldn’t Open “\(url.lastPathComponent)”", error)
+            alert = AppAlert("Couldn’t Open “\(name)”", error)
         }
+    }
+
+    /// A project's folder in the library, or a file in one, opens that project, on the file. A
+    /// project's id is its folder's name.
+    private func isInLibrary(_ url: URL, open: Bool) async -> Bool {
+        let library = FolderWatcher.realPath(Core.libraryFolder) + "/", path = FolderWatcher.realPath(url)
+        guard path.hasPrefix(library) else { return false }
+        let parts = path.dropFirst(library.count).split(separator: "/", maxSplits: 1).map(String.init)
+        guard let id = parts.first else { return false }
+        if !projects.contains(where: { $0.id == id }) { await refresh() }
+        guard projects.contains(where: { $0.id == id }) else { return false }
+        guard open else { return true }
+        await self.open(id)
+        if parts.count > 1, let project, project.id == id, project.node(at: parts[1])?.isDirectory == false {
+            await project.open(parts[1])
+        }
+        return true
     }
 
     func rename(_ project: ProjectInfo, to name: String) async {
@@ -293,9 +317,15 @@ final class AppModel {
     /// Bumped by each `open` and `close`, so only the latest carries on: the
     /// restored project and an Open With import can overlap at launch.
     @ObservationIgnored private var openGeneration = 0
-    @ObservationIgnored private var opensUnderWay = 0
-    /// True while a project loads, before `project` may name it.
-    var isOpening: Bool { opensUnderWay > 0 }
+    /// What is opening, for Home to show at work: a project's id while it loads, before
+    /// `project` may name it, or the name of an item being copied in.
+    private(set) var opening: [String] = []
+    var isOpening: Bool { !opening.isEmpty }
+    @ObservationIgnored private var importing = Set<URL>()
+
+    private func stopOpening(_ name: String) {
+        if let place = opening.firstIndex(of: name) { opening.remove(at: place) }
+    }
 
     /// `--args -openProject <id>`: the argument domain holds it for this run only.
     @ObservationIgnored private var launchProject: String?
@@ -311,8 +341,8 @@ final class AppModel {
         openGeneration += 1
         let generation = openGeneration
         guard project?.id != id || project?.closed == true else { return }
-        opensUnderWay += 1
-        defer { opensUnderWay -= 1 }
+        opening.append(id)
+        defer { stopOpening(id) }
         guard await leave(generation) else { return }
         dropRequests()
         recentProjects = Array(([id] + recentProjects.filter { $0 != id })

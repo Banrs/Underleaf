@@ -51,9 +51,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if app.tex?.available == false { Task { await app.refreshTeXStatus() } }
     }
 
-    /// Open With and Dock drops: imported only once the copy is agreed to.
+    /// Open With and Dock drops, as File › Open…: a project's own file opens it, anything else is copied in.
     func application(_ application: NSApplication, open urls: [URL]) {
-        if let url = urls.first(where: AppModel.canOpen) { app.pendingImport = url }
+        if let url = urls.first(where: AppModel.canOpen) { Task { await app.importProject(from: url) } }
     }
 
     /// The Dock icon brings the window back, closed or minimised, even while Settings shows.
@@ -130,7 +130,7 @@ final class DockMenu: NSObject {
 
 extension View {
     /// The window's own sheets, alerts and dialogs, whichever screen shows:
-    /// File › Open…, New Project…, an item handed to the app, and `AppModel.alert`.
+    /// File › Open…, New Project… and `AppModel.alert`.
     func windowModals() -> some View {
         modifier(WindowModals())
     }
@@ -142,13 +142,6 @@ private struct WindowModals: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var app = app
         content
-            .alert(app.pendingImport.map { "Copy “\($0.lastPathComponent)” into Your Projects?" } ?? "",
-                   item: $app.pendingImport) { url in
-                Button("Copy and Open") { Task { await app.importProject(from: url) } }
-                Button("Cancel", role: .cancel) {}
-            } message: { _ in
-                Text("TeXLocal opens the copy as a new project, and a .tex brings the files in its folder. The originals stay where they are.")
-            }
             // On a view of its own: a file dialog's labels reach every dialog
             // presented from the view they're set on.
             .background {
