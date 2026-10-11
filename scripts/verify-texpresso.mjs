@@ -158,6 +158,58 @@ try {
   await marker('UL_NESTED_UNSAVED', 'Nested included-file live edit');
   assert.equal((await api('texpresso_stop')).running, false);
   evidence.checks.push({ check: 'Explicit stop confirmed' });
+
+  // As the Mac app shows it: no window, the pages in view as PDFs of their own when they
+  // change. Only a build with Underleaf's patch (tools/texpresso) says it sends them.
+  await api('set_settings', { patch: { mainFile: 'main.tex' } });
+  const paged = '\\documentclass{article}\n\\begin{document}\nPage one café.\n\\newpage\nPage two.\n\\end{document}\n';
+  assert((await api('texpresso_start', { files: [{ path: 'main.tex', text: paged }], pdf: true, view: [1, 1] })).running);
+  let seq = 0;
+  const pagesSeen = [];
+  async function event(wanted) {
+    return until(async () => {
+      const events = await api('texpresso_wait', { after: seq, timeout: 5000 });
+      assert(events.running, `Preview exited: ${JSON.stringify(events)}`);
+      seq = events.seq;
+      pagesSeen.push(...events.pages);
+      return wanted(events) && events;
+    });
+  }
+  const first = await event((events) => events.live || events.pdf);
+  if (!first.live) {
+    evidence.checks.push({ check: 'This TeXpresso sends no pages: page updates not verified' });
+  } else {
+    const isPdf = async (path) => assert.equal((await readFile(path)).subarray(0, 5).toString(), '%PDF-');
+    const whole = (first.pdf?.run === 'complete' ? first : await event((events) => events.pdf?.run === 'complete')).pdf;
+    assert.equal(whole.pages, 2);
+    await isPdf(whole.path);
+    assert((await readFile(whole.path.replace(/\.pdf$/, '.synctex'))).length > 0);
+    evidence.checks.push({ check: 'Whole document and its SyncTeX written without a window' });
+
+    // An offset in UTF-16 units, past the é that is two bytes to TeXpresso.
+    const start = performance.now();
+    const { edit } = await api('texpresso_edit', { path: 'main.tex', start: paged.indexOf('two'), remove: 0, text: 'number ' });
+    const shown = (events) => events.pages.find((page) => page.page === 1 && page.edit >= edit);
+    await isPdf(shown(await event(shown)).path);
+    evidence.checks.push({ check: 'A keystroke on the page in view came back as that page', observedWithinMs: Math.round(performance.now() - start) });
+    const after = (await event((events) => events.pdf?.edit >= edit && events.pdf.run === 'complete')).pdf;
+    assert.deepEqual(after.changed, [[1, 1]]);
+    assert(!pagesSeen.some((page) => page.page === 0), 'A page out of view, and unchanged, was sent');
+    evidence.checks.push({ check: 'The document after it names the one page that changed' });
+
+    await api('texpresso_edit', { path: 'main.tex', start: 9999, remove: 0, text: 'x' }, 412);
+    await api('texpresso_edit', { path: 'section.tex', start: 0, remove: 0, text: 'x' }, 412);
+    evidence.checks.push({ check: 'An edit that does not fit the text TeXpresso has is refused' });
+
+    const two = paged.indexOf('Page two');
+    await api('texpresso_edit', { path: 'main.tex', start: two, remove: 0, text: '\\textbf{' });
+    assert.equal((await event((events) => events.done)).done.run, 'stopped');
+    await api('texpresso_edit', { path: 'main.tex', start: two, remove: 8, text: '' });
+    const ended = (await event((events) => events.done)).done;
+    assert.deepEqual(ended, { pages: 2, run: 'complete' });
+    evidence.checks.push({ check: 'A run stopped by a half-typed construct is told apart from one that reached the end' });
+  }
+  assert.equal((await api('texpresso_stop')).running, false);
   evidence.success = true;
 } catch (error) {
   evidence.success = false;
