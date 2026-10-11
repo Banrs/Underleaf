@@ -244,14 +244,21 @@ struct ItemActions {
     let moveToTrash: () -> Void
 }
 
+/// The same items in File and in the context menus, dimmed with no item. Without icons: Show in
+/// Finder has no standard one, and a group has icons for all its items or none (HIG, Menus).
 struct ItemMenuItems: View {
-    let actions: ItemActions
+    let actions: ItemActions?
+    var trashShortcut: KeyboardShortcut?
 
     var body: some View {
-        RenameButton().renameAction(actions.rename)
-        Button("Show in Finder", action: actions.showInFinder)
+        Button("Rename") { actions?.rename() }
+            .disabled(actions == nil)
+        Button("Show in Finder") { actions?.showInFinder() }
+            .disabled(actions == nil)
         Divider()
-        Button("Move to Trash", action: actions.moveToTrash)
+        Button("Move to Trash") { actions?.moveToTrash() }
+            .keyboardShortcut(trashShortcut)
+            .disabled(actions == nil)
     }
 }
 

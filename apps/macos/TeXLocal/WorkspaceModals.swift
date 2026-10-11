@@ -28,9 +28,8 @@ struct WorkspaceModals: ViewModifier {
                                   defaultFilename: app.exporting?.name) { [name = app.exporting?.name ?? ""] result in
                         if case .failure(let error) = result { app.alert = AppAlert("Couldn’t Save “\(name)”", error) }
                     }
-                    // Save PDF As… saves; a zip is exported.
-                    .fileExporterFilenameLabel(app.exporting?.type == .pdf ? "Save As:" : "Export As:")
-                    .fileDialogConfirmationLabel(app.exporting?.type == .pdf ? "Save" : "Export")
+                    .fileExporterFilenameLabel("Export As:")
+                    .fileDialogConfirmationLabel("Export")
             }
             .sheet(item: $app.prompt) { prompt in
                 switch prompt {
