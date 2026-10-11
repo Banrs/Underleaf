@@ -205,7 +205,9 @@ pub async fn synctex_inverse_with_context(
         .find_map(|ln| ln.strip_prefix("Line:"))
         .and_then(|s| s.trim().parse::<u32>().ok());
     let (Some(file), Some(line)) = (file, line) else {
-        return Err(CoreError::not_found("Nothing in the source matches this spot."));
+        return Err(CoreError::not_found(
+            "Nothing in the source matches this spot.",
+        ));
     };
 
     let abs = root.join(file);
