@@ -99,8 +99,8 @@ impl Scanner {
     }
 
     /// Read the tokens of `src` that start before `until`, telling `visit`.
-    /// Given probes, it stops once all are answered and no group is open,
-    /// as nothing later can close one open at them.
+    /// Given probes, it stops once all are answered and no brace group is
+    /// open, as only those report their close.
     pub fn run(&mut self, src: &[u16], until: usize, probes: &[usize], visit: &mut impl Visit) {
         let catalog = &*catalog::CATALOG;
         let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
@@ -135,7 +135,8 @@ impl Scanner {
                 visit.at(groups(&stack));
                 probe += 1;
             }
-            if !probes.is_empty() && probe == probes.len() && stack.top().is_none() {
+            let brace = |g: &Group| g.end == "}";
+            if !probes.is_empty() && probe == probes.len() && !stack.iter().any(brace) {
                 break;
             }
             let pending = last_command.take();
@@ -540,5 +541,25 @@ mod tests {
         assert!(covered("Speling"));
         assert!(!covered("prose"));
         assert!(covered("key"));
+    }
+
+    #[test]
+    fn a_probed_scan_stops_in_an_open_environment() {
+        // Only a brace group reports its close, so the document environment
+        // (open to the end of every real file) keeps no scan reading.
+        let source = format!(
+            "\\begin{{document}}\n\\textbf{{a b}} c\n{}\\end{{document}}\n",
+            "More words in a paragraph.\n\n".repeat(1_000)
+        );
+        let units: Vec<u16> = source.encode_utf16().collect();
+        let at = source.find(" b}").unwrap();
+        let mut scanner = super::Scanner::default();
+        scanner.run(&units, units.len(), &[at, at], &mut ());
+        assert!(
+            scanner.i < 100,
+            "read on to {} of {}",
+            scanner.i,
+            units.len()
+        );
     }
 }
