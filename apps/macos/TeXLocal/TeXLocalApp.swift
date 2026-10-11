@@ -164,13 +164,6 @@ private struct WindowModals: ViewModifier {
             }
             .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0.id, taken: app.projects.map(\.name)) }
             .alert($app.alert)
-            // Say why and quit, rather than crash with a report that explains nothing.
-            .alert("Couldn’t Open the Library Folder", isPresented: .constant(!Core.shared.isOpen)) {
-                Button("Quit") { NSApp.terminate(nil) }
-            } message: {
-                let folder = (Core.libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
-                Text("Make sure you can create and write to \(folder), then open TeXLocal again.")
-            }
     }
 }
 

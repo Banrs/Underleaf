@@ -31,12 +31,19 @@ final class Core {
         init(_ raw: OpaquePointer) { self.raw = raw }
     }
 
-    /// Nil when the library folder can't be opened; the window says so.
-    private let handle: Handle?
+    /// Nil when the library folder can't be opened; Home says so.
+    private var handle: Handle? = Core.open()
     var isOpen: Bool { handle != nil }
 
-    private init() {
-        handle = Self.libraryFolder.withUnsafeFileSystemRepresentation { tl_open($0) }.map(Handle.init)
+    private init() {}
+
+    private static func open() -> Handle? {
+        libraryFolder.withUnsafeFileSystemRepresentation { tl_open($0) }.map(Handle.init)
+    }
+
+    /// Opens the library folder again, once what stopped it is put right.
+    func reopen() {
+        if handle == nil { handle = Self.open() }
     }
 
     private nonisolated static func run(_ handle: Handle, _ command: String, _ json: String) -> Data {

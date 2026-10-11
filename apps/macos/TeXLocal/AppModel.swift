@@ -129,6 +129,7 @@ final class AppModel {
 
     /// Without a template, the one Settings names for new projects.
     func newProject(_ template: String? = nil) {
+        guard libraryProblem == nil else { return }
         let template = template ?? UserDefaults.standard.string(forKey: DefaultsKey.newProjectTemplate)
         newProjectTemplate = ProjectTemplate.all.first { $0.id == template } ?? ProjectTemplate.all.first { $0.id == "article" }
     }
@@ -154,6 +155,13 @@ final class AppModel {
     private let core = Core.shared
     /// The latest TeX status read; a TeX folder choice cancels it.
     @ObservationIgnored private var texCheck: Task<Void, Never>?
+
+    /// Home's Try Again: opens the library folder again if need be, then lists it.
+    func retryLibrary() async {
+        core.reopen()
+        if core.isOpen { libraryProblem = nil }
+        await refresh()
+    }
 
     func refresh() async {
         guard core.isOpen else { return }
