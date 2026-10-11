@@ -64,19 +64,42 @@ final class Core {
         init(from decoder: Decoder) throws {}
     }
 
+    /// On the calling thread, for as long as the command runs.
+    private nonisolated static func answer<T: Decodable>(_ handle: Handle, _ command: String, _ json: String) throws -> T? {
+        let envelope = try JSONDecoder().decode(Envelope<T>.self, from: run(handle, command, json))
+        if let error = envelope.error { throw CoreError(message: error, status: envelope.status) }
+        return envelope.ok
+    }
+
+    private nonisolated static func json(_ args: [String: Any]) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
+    }
+
     private func result<T: Decodable & Sendable>(_ command: String, _ args: [String: Any], as: T.Type) async throws -> T? {
-        let json = String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
+        let json = try Self.json(args)
         guard let handle else {
             throw CoreError(message: "TeXLocal can’t open its projects folder.")
         }
         return try await withCheckedThrowingContinuation { done in
             DispatchQueue.global(qos: .userInitiated).async {
-                done.resume(with: Result {
-                    let envelope = try JSONDecoder().decode(Envelope<T>.self, from: Core.run(handle, command, json))
-                    if let error = envelope.error { throw CoreError(message: error, status: envelope.status) }
-                    return envelope.ok
-                })
+                done.resume(with: Result { try Core.answer(handle, command, json) })
             }
+        }
+    }
+
+    /// A command the core answers at once, where it's asked: a keystroke's edit doesn't wait for a thread.
+    func now<T: Decodable>(_ command: String, _ args: [String: Any], as: T.Type = T.self) throws -> T? {
+        guard let handle else { throw CoreError(message: "TeXLocal can’t open its library folder.") }
+        return try Self.answer(handle, command, try Self.json(args))
+    }
+
+    /// A command that waits, for a thread of the caller's own to block in.
+    func waiting<T: Decodable & Sendable>(_ command: String, as: T.Type = T.self) -> @Sendable ([String: any Sendable]) throws -> T {
+        { [handle] args in
+            guard let handle, let answer: T = try Core.answer(handle, command, try Core.json(args)) else {
+                throw CoreError(message: "The core returned nothing for \(command)")
+            }
+            return answer
         }
     }
 

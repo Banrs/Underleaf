@@ -10,6 +10,9 @@
 # The installation is prepared in a temporary folder beside the destination, checked by
 # running its launcher, and only then swapped in: a failure or an interruption leaves
 # what was installed (and the /opt/homebrew/bin link) as it was.
+#
+# The launcher keeps TeXpresso's cache (the TeX formats, five seconds to make) inside the
+# installation. It moves into the new one when texpresso-xetex, which wrote it, is the same.
 set -euo pipefail
 fail() { echo "install.sh: $*" >&2; exit 1; }
 BUILD=$(CDPATH= cd -- "${1:?usage: install.sh <build folder> [destination]}" && pwd)
@@ -100,8 +103,12 @@ wait "$pid" || true
 grep -q "Usage: texpresso" "$STAGE/check.log" || fail "the staged texpresso does not run ($(head -c 300 "$STAGE/check.log")); $DEST is unchanged"
 rm "$STAGE/check.log"
 
+KEEP=
+if [ -d "$DEST/cache" ] && cmp -s "$DEST/libexec/texpresso-xetex" "$STAGE/libexec/texpresso-xetex"; then KEEP=1; fi
+
 # Swap: the old installation steps aside, the new one moves in, and only then is the old removed.
 if [ -e "$DEST" ]; then OLD=$(mktemp -d "$DEST.old.XXXXXX"); mv "$DEST" "$OLD/previous"; fi
 mv "$STAGE" "$DEST" || fail "could not move the installation into $DEST"
+if [ -n "$KEEP" ]; then mv "$OLD/previous/cache" "$DEST/cache" || true; fi
 [ -n "${NO_LINK:-}" ] || ln -sf "$DEST/bin/texpresso" /opt/homebrew/bin/texpresso
 echo "Installed $DEST; /opt/homebrew/bin/texpresso links to it. Underleaf's Settings can stay on Automatic."

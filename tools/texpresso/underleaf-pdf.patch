@@ -1,3 +1,19 @@
+diff --git a/src/common/texlive_provider.c b/src/common/texlive_provider.c
+index 24d4d29..13f9bad 100644
+--- a/src/common/texlive_provider.c
++++ b/src/common/texlive_provider.c
+@@ -281,6 +281,11 @@ static void add(struct table *table,
+     return;
+   }
+ 
++  // TeX reads no input from a tree's documentation or sources. Listed, a package's example
++  // color.cfg, graphics.cfg or hyperref.cfg there was found before, or instead of, the real one.
++  if (has_component(dir, "doc") || has_component(dir, "source"))
++    return;
++
+   struct cell *c = lookup(table, name);
+   if (c->offset != 0)
+   {
 diff --git a/src/dvi/Makefile b/src/dvi/Makefile
 index 6036686..e645eb8 100644
 --- a/src/dvi/Makefile
@@ -469,51 +485,938 @@ index 9337b08..f67bcf3 100644
    if (init == 0 && SDL_Init(SDL_INIT_VIDEO) < 0)
    {
 diff --git a/src/frontend/editor.c b/src/frontend/editor.c
-index 6face98..e3cdbf8 100644
+index 6face98..97e0224 100644
 --- a/src/frontend/editor.c
 +++ b/src/frontend/editor.c
-@@ -554,6 +554,18 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
+@@ -320,6 +320,43 @@ bool editor_parse(fz_context *ctx,
+       goto arity;
+     *out = (struct editor_command){.tag = EDIT_RERUN_ONCE, .rerun_once = {}};
+   }
++  else if (strcmp(verb, "view") == 0)
++  {
++    if (len != 3)
++      goto arity;
++    val first = val_array_get(ctx, stack, command, 1);
++    val last = val_array_get(ctx, stack, command, 2);
++    if (!val_is_number(first) || !val_is_number(last))
++      goto arguments;
++    *out = (struct editor_command){
++        .tag = EDIT_VIEW,
++        .view = {.first = val_number(ctx, first), .last = val_number(ctx, last)},
++    };
++  }
++  else if (strcmp(verb, "mark") == 0)
++  {
++    if (len != 2)
++      goto arity;
++    val serial = val_array_get(ctx, stack, command, 1);
++    if (!val_is_number(serial))
++      goto arguments;
++    *out = (struct editor_command){.tag = EDIT_MARK,
++                                   .mark = {.serial = val_number(ctx, serial)}};
++  }
++  else if (strcmp(verb, "caret") == 0)
++  {
++    if (len != 3)
++      goto arity;
++    val path = val_array_get(ctx, stack, command, 1);
++    val offset = val_array_get(ctx, stack, command, 2);
++    if (!val_is_string(path) || !val_is_number(offset))
++      goto arguments;
++    *out = (struct editor_command){
++        .tag = EDIT_CARET,
++        .caret = {.path = val_string(ctx, stack, path),
++                  .offset = val_number(ctx, offset)},
++    };
++  }
+   else
+   {
+     fprintf(stderr, "[command] unknown verb: %s\n", verb);
+@@ -338,6 +375,13 @@ arguments:
+ 
+ // Sending output
+ 
++static bool muted;
++
++void editor_mute(bool mute)
++{
++  muted = mute;
++}
++
+ static void output_json_string(FILE *f, const char *ptr, int len)
+ {
+   for (const char *lim = ptr + len; ptr < lim; ptr++)
+@@ -469,7 +513,7 @@ static const char *editor_info_buffer(enum EDITOR_INFO_BUFFER name)
+ 
+ void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos)
+ {
+-  if (!buf)
++  if (!buf || muted)
+     return;
+   const char *data = (const char *)buf->data;
+   if (line_output)
+@@ -531,6 +575,9 @@ void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos)
+ 
+ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
+ {
++  if (muted)
++    return;
++
+   int count = buf ? buf->len : 0;
+ 
+   if (line_output && buf)
+@@ -554,6 +601,80 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
    }
  }
  
-+/* The whole document written to `path` (TEXPRESSO_PDF_OUTPUT), for the editor to show. */
-+void editor_pdf(const char *path, int pages)
++/* One message for the editor's own PDF view: `sexp` or `json` up to the path, then the path,
++   then what follows it. */
++static void live_message(const char *sexp, const char *json, const char *path,
++                         const char *sexp_rest, const char *json_rest)
 +{
-+  switch (protocol)
++  bool s = protocol == EDITOR_SEXP;
++  fputs(s ? sexp : json, stdout);
++  if (path)
 +  {
-+    case EDITOR_SEXP: fprintf(stdout, "(pdf \""); output_sexp_string(stdout, path, strlen(path)); break;
-+    case EDITOR_JSON: fprintf(stdout, "[\"pdf\", \""); output_json_string(stdout, path, strlen(path)); break;
++    putc_unlocked('"', stdout);
++    if (s) output_sexp_string(stdout, path, strlen(path));
++    else output_json_string(stdout, path, strlen(path));
++    putc_unlocked('"', stdout);
 +  }
-+  fprintf(stdout, protocol == EDITOR_SEXP ? "\" %d)\n" : "\", %d]\n", pages);
++  fputs(s ? sexp_rest : json_rest, stdout);
 +  fflush(stdout);
++}
++
++void editor_live(int version)
++{
++  char sexp[64], json[64];
++  snprintf(sexp, sizeof sexp, "(live %d)\n", version);
++  snprintf(json, sizeof json, "[\"live\", %d]\n", version);
++  live_message(sexp, json, NULL, "", "");
++}
++
++void editor_page(int page, const char *path, int mark)
++{
++  char sexp[64], json[64], sexp_rest[64], json_rest[64];
++  snprintf(sexp, sizeof sexp, "(page %d ", page);
++  snprintf(json, sizeof json, "[\"page\", %d, ", page);
++  snprintf(sexp_rest, sizeof sexp_rest, " %d)\n", mark);
++  snprintf(json_rest, sizeof json_rest, ", %d]\n", mark);
++  live_message(sexp, json, path, sexp_rest, json_rest);
++}
++
++static const char *run_name(enum EDITOR_RUN run)
++{
++  return run == RUN_COMPLETE ? "complete" : run == RUN_STOPPED ? "stopped" : "partial";
++}
++
++/* The whole document written to `path`; `changed` holds `ranges` pairs of first and last
++   page that differ from the document written before. */
++void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges, int mark)
++{
++  bool s = protocol == EDITOR_SEXP;
++  fputs(s ? "(pdf " : "[\"pdf\", ", stdout);
++  putc_unlocked('"', stdout);
++  if (s) output_sexp_string(stdout, path, strlen(path));
++  else output_json_string(stdout, path, strlen(path));
++  fprintf(stdout, s ? "\" %d %s (" : "\", %d, \"%s\", [", pages, run_name(run));
++  for (int i = 0; i < ranges; i++)
++    fprintf(stdout, s ? "%s(%d %d)" : "%s[%d, %d]", i ? (s ? " " : ", ") : "",
++            changed[2 * i], changed[2 * i + 1]);
++  fprintf(stdout, s ? ") %d)\n" : "], %d]\n", mark);
++  fflush(stdout);
++}
++
++void editor_done(int pages, enum EDITOR_RUN run)
++{
++  char sexp[64], json[64];
++  snprintf(sexp, sizeof sexp, "(done %d %s)\n", pages, run_name(run));
++  snprintf(json, sizeof json, "[\"done\", %d, \"%s\"]\n", pages, run_name(run));
++  live_message(sexp, json, NULL, "", "");
++}
++
++void editor_synced(int mark)
++{
++  char sexp[64], json[64];
++  snprintf(sexp, sizeof sexp, "(synced %d)\n", mark);
++  snprintf(json, sizeof json, "[\"synced\", %d]\n", mark);
++  live_message(sexp, json, NULL, "", "");
 +}
 +
  void editor_flush(void)
  {
    switch (protocol)
+@@ -607,7 +728,7 @@ void editor_reset_sync(void)
+ 
+ void editor_notify_file_opened(int index, const char *path, int len)
+ {
+-  if (len == 0)
++  if (len == 0 || muted)
+     return;
+   switch (protocol)
+   {
+@@ -631,6 +752,9 @@ void editor_notify_lookup(const char *path,
+                           bool read,
+                           enum EDITOR_LOOKUP_STATUS status)
+ {
++  if (muted)
++    return;
++
+   const char *kind = read ? "read" : "write";
+   const char *status_msg;
+ 
 diff --git a/src/frontend/editor.h b/src/frontend/editor.h
-index 05fdd1c..a35979d 100644
+index 05fdd1c..02f09c4 100644
 --- a/src/frontend/editor.h
 +++ b/src/frontend/editor.h
-@@ -155,6 +155,7 @@ enum EDITOR_INFO_BUFFER
+@@ -37,6 +37,9 @@ enum EDITOR_COMMAND
+   EDIT_RESUME,
+   EDIT_RERUN,
+   EDIT_RERUN_ONCE,
++  EDIT_VIEW,
++  EDIT_MARK,
++  EDIT_CARET,
+ };
+ 
+ struct editor_change
+@@ -136,6 +139,19 @@ struct editor_command
+ 
+     struct {
+     } rerun_once;
++
++    struct {
++      int first, last;
++    } view;
++
++    struct {
++      int serial;
++    } mark;
++
++    struct {
++      const char *path;
++      int offset;
++    } caret;
+   };
+ };
+ 
+@@ -155,6 +171,16 @@ enum EDITOR_INFO_BUFFER
  void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos);
  void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf);
  void editor_flush(void);
-+void editor_pdf(const char *path, int pages);
++/* For an editor showing the document in its own PDF view (TEXPRESSO_PDF_OUTPUT). `mark` is
++   the last one the editor sent (["mark", n]) that the pages reflect. */
++enum EDITOR_RUN { RUN_PARTIAL, RUN_COMPLETE, RUN_STOPPED };
++void editor_live(int version);
++void editor_page(int page, const char *path, int mark);
++void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges, int mark);
++void editor_done(int pages, enum EDITOR_RUN run);
++void editor_synced(int mark);
++/* While muted nothing is sent: a finishing pass runs beside the document being shown. */
++void editor_mute(bool muted);
  void editor_synctex(const char *dirname, const char *basename, int basename_len, int line, int column);
  void editor_reset_sync(void);
  void editor_notify_file_opened(int index, const char *path, int len);
+diff --git a/src/frontend/engine.h b/src/frontend/engine.h
+index 13e945d..ccd29ca 100644
+--- a/src/frontend/engine.h
++++ b/src/frontend/engine.h
+@@ -47,6 +47,20 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
+ 
+ txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path);
+ 
++/* The TeX engine's own, for an editor showing the document in its own PDF view (main.c). */
++void txp_tex_live(txp_engine *self);
++int txp_tex_worker_fd(txp_engine *self);
++uint64_t txp_tex_page_hash(txp_engine *self, int page);
++int txp_tex_outcome(txp_engine *self); /* enum EDITOR_RUN, once the run is over */
++bool txp_tex_aux_changed(txp_engine *self);
++void txp_tex_adopt(txp_engine *self, fz_context *ctx, txp_engine *from);
++bool txp_tex_warm(txp_engine *self, fileentry_t **entry, int *offset);
++bool txp_tex_plant(txp_engine *self, fileentry_t *entry, int offset);
++void txp_tex_take_resources(txp_engine *self, txp_engine *from);
++void txp_tex_resend_output(txp_engine *self);
++fz_rect txp_tex_page_box(txp_engine *self, int page);
++void txp_tex_run_page(txp_engine *self, fz_context *ctx, int page, fz_device *dev);
++
+ txp_engine *txp_create_dvi_engine(fz_context *ctx,
+                                   const char *dvi_path,
+                                   dvi_reshooks hooks);
+diff --git a/src/frontend/engine_tex.c b/src/frontend/engine_tex.c
+index 5866b1b..2558e51 100644
+--- a/src/frontend/engine_tex.c
++++ b/src/frontend/engine_tex.c
+@@ -102,8 +102,21 @@ struct tex_engine
+ 
+   bool aux_dirty;
+   bool finishing;
++
++  // For the editor's own PDF view (txp_tex_live): finishing passes are another engine's
++  bool live;
++  struct {
++    fileentry_t *entry;
++    int position;
++    int trace; // where its snapshot is, once taken
++  } warm;
++  // The fences are txp_tex_plant's: they may never be met, and don't hold up snapshots
++  bool planted;
+ };
+ 
++// How long a step waits for the worker's next query, in ms
++static int step_timeout = 10;
++
+ // Backtrackable process state & VFS representation
+ 
+ static process_t *get_process(struct tex_engine *t)
+@@ -207,6 +220,9 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
+   {
+     self->deferred.active = false;
+     log_rollback(ctx, self->log, self->restart);
++    fileentry_t *e;
++    for (int index = 0; (e = filesystem_scan(self->fs, &index));)
++      e->read_end = 0;
+     self->process_count = 1;
+     process_t *p = get_process(self);
+     p->pid = exec_xelatex(self->engine_path, self->use_texlive, self->name, &p->fd);
+@@ -305,6 +321,25 @@ static void decimate_processes(struct tex_engine *self)
+     }
+   }
+ 
++  // Live, the rest of the document is typeset after every pause in typing, and its
++  // snapshots would crowd out the ones the next key resumes: those stay, closer together
++  // the nearer the caret they are.
++  if (self->live && self->warm.trace > 0)
++  {
++    target = self->warm.trace;
++    delta = 1;
++    for (int i = self->process_count - 1; i >= 0; --i)
++    {
++      process_t *p = &self->processes[i];
++      if (p->trace_len <= target)
++      {
++        keep[i] = true;
++        target = p->trace_len - delta;
++        delta *= 2;
++      }
++    }
++  }
++
+   int i = 0;
+   for (int j = 0; j < self->process_count; j++)
+   {
+@@ -339,6 +374,10 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
+     pop_process(ctx, self);
+   incdvi_free(ctx, self->dvi);
+   synctex_free(ctx, self->stex);
++  log_free(ctx, self->log);
++  filesystem_free(ctx, self->fs);
++  channel_free(self->c);
++  free(self->trace);
+   fz_free(ctx, self->name);
+   fz_free(ctx, self->engine_path);
+   fz_free(ctx, self->inclusion_path);
+@@ -474,7 +513,7 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
+ static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
+ {
+   // Fences are pending: don't snapshot now
+-  if (self->fence_pos != -1)
++  if (self->fence_pos != -1 && !self->planted)
+     return 0;
+ 
+   int process = self->process_count - 1;
+@@ -550,6 +589,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+           if (!fs_path)
+           {
+             e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
++            e->wanted = true;
+             if (e->promised && !self->deferred.active)
+             {
+               // File was promised and is missing: notify the editor and wait
+@@ -581,6 +621,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+ 
+       if (!e)
+         e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
++      if (q->tag == Q_OPRD)
++        e->wanted = true;
+ 
+       log_filecell(ctx, self->log, cell);
+       log_fileentry(ctx, self->log, e);
+@@ -742,6 +784,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+       if (fork)
+       {
+         a.tag = A_FORK;
++        if (self->fence_pos == 0)
++          self->warm.trace = p->trace_len;
+         self->fence_pos -= 1;
+       }
+       else if (need_snapshot(ctx, self, q->time))
+@@ -754,6 +798,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+         a.tag = A_READ;
+         a.read.size = n;
+       }
++      if (q->read.pos + n > e->read_end)
++        e->read_end = q->read.pos + n;
+       if (0)
+       {
+         if (fork)
+@@ -986,7 +1032,9 @@ static void revert_trace(trace_entry_t *te)
+ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int reverted, int trace)
+ {
+   self->deferred.active = false;
+-  clear_convergence_stash(ctx, self);
++  // Live, what the last finishing pass wrote stays the input: it is nearer than the files.
++  if (!self->live)
++    clear_convergence_stash(ctx, self);
+ 
+   fprintf(
+     stderr,
+@@ -1066,6 +1114,7 @@ static bool possible_fence(trace_entry_t *te)
+ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, int offset)
+ {
+   self->fence_pos = -1;
++  self->planted = false;
+ 
+   if (trace <= 0)
+     return trace;
+@@ -1074,6 +1123,9 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
+     mabort();
+ 
+   self->fence_pos = 0;
++  self->warm.entry = self->trace[trace].entry;
++  self->warm.position = offset;
++  self->warm.trace = 0;
+ 
+   offset = (offset - 64) & ~(64 - 1);
+   if (offset < self->trace[trace].seen)
+@@ -1169,7 +1221,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
+     int fd = get_process(self)->fd;
+     if (fd == -1)
+       return 0;
+-    if (!channel_has_pending_query(self->c, fd, 10))
++    if (!channel_has_pending_query(self->c, fd, step_timeout))
+       return 0;
+     if (!read_query(self, self->c, &q))
+     {
+@@ -1609,6 +1661,186 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
+   return filesystem_lookup_or_create(ctx, self->fs, path);
+ }
+ 
++// For the editor's own PDF view
++
++void txp_tex_live(txp_engine *_self)
++{
++  SELF;
++  self->live = true;
++  // The caller waits, on the worker and its own input together (txp_tex_worker_fd).
++  step_timeout = 0;
++}
++
++int txp_tex_worker_fd(txp_engine *_self)
++{
++  SELF;
++  if (self->process_count == 0 || self->deferred.active)
++    return -1;
++  return get_process(self)->fd;
++}
++
++uint64_t txp_tex_page_hash(txp_engine *_self, int page)
++{
++  SELF;
++  const unsigned char *data;
++  size_t len;
++  incdvi_page_bytes(self->dvi, self->st.document.entry->saved.data, page, &data, &len);
++  uint64_t hash = 0xcbf29ce484222325ull;
++  for (size_t i = 0; i < len; i++)
++    hash = (hash ^ data[i]) * 0x100000001b3ull;
++  return hash ? hash : 1;
++}
++
++// How a run that is over ended: TeX says goodbye either way, after a fatal error too.
++int txp_tex_outcome(txp_engine *_self)
++{
++  SELF;
++  static const char *const fatal[] = {
++    "\n! Emergency stop", "(That makes 100 errors; please try again.)",
++    "\n! TeX capacity exceeded", "\n! This can't happen", "\n! I can't go on meeting you",
++  };
++  fz_buffer *out = output_data(self->st.stdout.entry);
++  if (!out)
++    out = output_data(filesystem_lookup(self->fs, "stdout"));
++  if (!out)
++    return RUN_STOPPED;
++  for (int i = 0; i < 5; i++)
++    if (memmem(out->data, out->len, fatal[i], strlen(fatal[i])))
++      return RUN_STOPPED;
++  if (!memmem(out->data, out->len, "Output written on ", 18) &&
++      !memmem(out->data, out->len, "No pages of output.", 19))
++    return RUN_STOPPED;
++  return RUN_COMPLETE;
++}
++
++// Whether a file TeX reads and writes (.aux, .toc, .out) was written other than as read:
++// another pass would show other references or contents.
++bool txp_tex_aux_changed(txp_engine *_self)
++{
++  SELF;
++  fileentry_t *e;
++  for (int index = 0; (e = filesystem_scan(self->fs, &index));)
++  {
++    if (e->saved.level != FILE_WRITE || !e->saved.data || !e->wanted ||
++        is_system_output(e->path))
++      continue;
++    fz_buffer *read = e->edit_data ? e->edit_data : e->fs_data;
++    size_t len = read ? read->len : 0;
++    if (len != e->saved.data->len || (len && memcmp(e->saved.data->data, read->data, len) != 0))
++      return true;
++  }
++  return false;
++}
++
++// A new engine for the document `_from` has finished: the editor's buffers as they are,
++// and what `_from` wrote to the files it reads as their contents.
++void txp_tex_adopt(txp_engine *_self, fz_context *ctx, txp_engine *_from)
++{
++  SELF;
++  struct tex_engine *from = (struct tex_engine *)_from;
++  fileentry_t *e;
++  for (int index = 0; (e = filesystem_scan(from->fs, &index));)
++  {
++    fz_buffer *data = e->edit_data;
++    bool written = false;
++    if ((!data || e->edit_data_from_convergence) && e->saved.level == FILE_WRITE &&
++        e->saved.data && !is_system_output(e->path))
++    {
++      data = e->saved.data;
++      written = true;
++    }
++    if (!data && !e->promised)
++      continue;
++    fileentry_t *mine = filesystem_lookup_or_create(ctx, self->fs, e->path);
++    mine->promised = e->promised;
++    if (data)
++    {
++      mine->edit_data = fz_new_buffer_from_copied_data(ctx, data->data, data->len);
++      mine->edit_data_from_convergence = written || e->edit_data_from_convergence;
++    }
++  }
++}
++
++// Where the last change or caret was: an edit there resumes a snapshot taken just before.
++bool txp_tex_warm(txp_engine *_self, fileentry_t **entry, int *offset)
++{
++  SELF;
++  if (entry) *entry = self->warm.entry;
++  if (offset) *offset = self->warm.position;
++  return self->warm.entry != NULL;
++}
++
++// Snapshots to come just before `offset` of `entry`, and a little further back, when no
++// worker has read that far: the first edit there resumes one instead of starting TeX again.
++// Whether they are set.
++bool txp_tex_plant(txp_engine *_self, fileentry_t *entry, int offset)
++{
++  SELF;
++  static const int back[] = {64, 512, 2048};
++  fz_buffer *data = entry_data(entry);
++  if ((self->fence_pos != -1 && !self->planted) || !data)
++    return false;
++  int count = 0;
++  for (int i = 0; i < 3; i++)
++  {
++    int position = fz_maxi(offset - back[i], 0) & ~(64 - 1);
++    if (position <= entry->read_end || position >= data->len ||
++        (count && position >= self->fences[count - 1].position))
++      break;
++    self->fences[count].entry = entry;
++    self->fences[count].position = position;
++    count++;
++  }
++  if (!count)
++    return false;
++  self->fence_pos = count - 1;
++  self->planted = true;
++  self->warm.trace = 0;
++  self->warm.entry = entry;
++  self->warm.position = offset;
++  return true;
++}
++
++void txp_tex_take_resources(txp_engine *_self, txp_engine *_from)
++{
++  SELF;
++  incdvi_take_resources(self->dvi, ((struct tex_engine *)_from)->dvi);
++}
++
++// TeX's output and log from their start, to an editor that has another engine's.
++void txp_tex_resend_output(txp_engine *_self)
++{
++  SELF;
++  fileentry_t *e, *out = self->st.stdout.entry, *log = self->st.log.entry;
++  for (int index = 0; (e = filesystem_scan(self->fs, &index));)
++  {
++    const char *dot = strrchr(e->path, '.');
++    if (!log && e->saved.level == FILE_WRITE && dot && strcmp(dot, ".log") == 0)
++      log = e;
++    if (!out && strcmp(e->path, "stdout") == 0)
++      out = e;
++  }
++  editor_truncate(BUF_OUT, NULL);
++  editor_truncate(BUF_LOG, NULL);
++  editor_append(BUF_OUT, output_data(out), 0);
++  editor_append(BUF_LOG, output_data(log), 0);
++}
++
++fz_rect txp_tex_page_box(txp_engine *_self, int page)
++{
++  SELF;
++  float pw, ph;
++  incdvi_page_dim(self->dvi, self->st.document.entry->saved.data, page, &pw, &ph, NULL);
++  return fz_make_rect(0, 0, pw, ph);
++}
++
++// The page straight to a device: a display list in between is only for drawing it again.
++void txp_tex_run_page(txp_engine *_self, fz_context *ctx, int page, fz_device *dev)
++{
++  SELF;
++  incdvi_render_page(ctx, self->dvi, self->st.document.entry->saved.data, page, dev);
++}
++
+ txp_engine *txp_create_tex_engine(fz_context *ctx,
+                                   const char *engine_path,
+                                   bool use_texlive,
+diff --git a/src/frontend/incdvi.c b/src/frontend/incdvi.c
+index 1f96d92..b965b6f 100644
+--- a/src/frontend/incdvi.c
++++ b/src/frontend/incdvi.c
+@@ -210,6 +210,26 @@ void incdvi_render_page(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page,
+   dvi_context_end_frame(ctx, dc);
+ }
+ 
++void incdvi_page_bytes(incdvi_t *d, fz_buffer *buf, int page, const unsigned char **data, size_t *len)
++{
++  if (page < 0 || page >= incdvi_page_count(d)) abort();
++  int bop = d->pages[page * 2] + 45, eop = d->pages[page * 2 + 1];
++  if (bop > eop) bop = eop;
++  *data = buf->data + bop;
++  *len = eop - bop;
++}
++
++void incdvi_take_resources(incdvi_t *d, incdvi_t *from)
++{
++  dvi_context *dc = d->dc;
++  dvi_context_state(from->dc)->version = dvi_context_state(dc)->version;
++  from->dc->scale = dc->scale;
++  d->dc = from->dc;
++  from->dc = dc;
++  // The font definitions are read again, into the font table taken.
++  d->fontdef_offset = 0;
++}
++
+ float incdvi_tex_scale_factor(incdvi_t *d)
+ {
+   if (d->page_len == 0)
+diff --git a/src/frontend/incdvi.h b/src/frontend/incdvi.h
+index 852f744..e26e1e9 100644
+--- a/src/frontend/incdvi.h
++++ b/src/frontend/incdvi.h
+@@ -42,4 +42,10 @@ void incdvi_render_page(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page,
+ void incdvi_find_page_loc(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page);
+ float incdvi_tex_scale_factor(incdvi_t *d);
+ 
++/* The bytes of a page, after the BOP's counters and its pointer to the page before, which
++   change with other pages: what the page shows. */
++void incdvi_page_bytes(incdvi_t *d, fz_buffer *buf, int page, const unsigned char **data, size_t *len);
++/* Take `from`'s fonts and other loaded resources, for the same document typeset again. */
++void incdvi_take_resources(incdvi_t *d, incdvi_t *from);
++
+ #endif /*!INCDVI_H*/
 diff --git a/src/frontend/main.c b/src/frontend/main.c
-index c202294..b7819d8 100644
+index c202294..755f88c 100644
 --- a/src/frontend/main.c
 +++ b/src/frontend/main.c
-@@ -151,11 +151,82 @@ static int repaint_on_resize(void *data, SDL_Event *event)
+@@ -29,6 +29,7 @@
+ #include <stdio.h>
+ #include <unistd.h>
+ #include <errno.h>
++#include <signal.h>
+ #include "mydvi.h"
+ #include "providers.h"
+ #include "renderer.h"
+@@ -42,9 +43,18 @@
  
- /* Document processing */
+ struct persistent_state *pstate;
  
-+/* TEXPRESSO_PDF_OUTPUT: the document runs to its end, then every page is written there. */
++/* TEXPRESSO_PDF_OUTPUT (<folder>/live.pdf): no window. The editor shows the document in its
++   own PDF view, from the files written into that folder; see "Live preview" below. */
 +static const char *pdf_output;
-+static bool pdf_dirty;
++static unsigned live_events;
++
+ static void schedule_event(enum custom_events ev)
+ {
+-  pstate->schedule_event(ev);
++  // There is no window to draw for, and the loop below looks for these itself.
++  if (pdf_output)
++    live_events |= 1u << ev;
++  else
++    pstate->schedule_event(ev);
+ }
+ 
+ static bool should_reload_binary(void)
+@@ -745,6 +755,16 @@ static void realize_change(struct persistent_state *ps,
+   send(notify_file_changes, ui->eng, ps->ctx, e, offset);
+ }
+ 
++/* What the editor's own PDF view has asked for. */
++static struct {
++  int first, last;      // the pages it shows
++  int mark;             // its last ["mark", n]
++  bool touched;         // a command changed a file
++  bool rerun;           // it asked for a finishing pass
++  char caret_path[1024];
++  int caret_offset;     // where its caret settled, -1 once a snapshot is there
++} live_wish = {.last = 1, .caret_offset = -1};
++
+ #define BUFFERED_OPS 64
+ #define BUFFERED_CHARS 4096
+ #define T_IDLE_MS 500
+@@ -975,6 +995,7 @@ static void interpret_command(struct persistent_state *ps,
+   switch (cmd.tag)
+   {
+     case EDIT_OPEN:
++      live_wish.touched = true;
+       if (cmd.open.base64)
+       {
+         unsigned char *buf = malloc(cmd.open.length);
+@@ -995,10 +1016,12 @@ static void interpret_command(struct persistent_state *ps,
+       break;
+ 
+     case EDIT_CLOSE:
++      live_wish.touched = true;
+       interpret_close(ps, ui, cmd.close.path);
+       break;
+ 
+     case EDIT_CHANGE:
++      live_wish.touched = true;
+       interpret_change(ps, ui, &cmd.change);
+       break;
+ 
+@@ -1131,9 +1154,24 @@ static void interpret_command(struct persistent_state *ps,
+ 
+     case EDIT_RERUN_ONCE:
+       ps->rerun_once_pending = true;
++      live_wish.rerun = true;
+       fprintf(stderr, "[command] rerun-once: pending immediate pass\n");
+       schedule_event(SCAN_EVENT);
+       break;
++
++    case EDIT_VIEW:
++      live_wish.first = fz_maxi(cmd.view.first, 0);
++      live_wish.last = fz_maxi(cmd.view.last, live_wish.first);
++      break;
++
++    case EDIT_MARK:
++      live_wish.mark = cmd.mark.serial;
++      break;
++
++    case EDIT_CARET:
++      snprintf(live_wish.caret_path, sizeof live_wish.caret_path, "%s", cmd.caret.path);
++      live_wish.caret_offset = fz_maxi(cmd.caret.offset, 0);
++      break;
+   }
+ }
+ 
+@@ -1163,6 +1201,568 @@ static void sync_fullscreen_state(struct fullscreen_state *fs,
+   fs->prev_fs = cur_fs;
+ }
+ 
++/* Runs the commands waiting on stdin. Whether stdin has closed. */
++static bool read_commands(struct persistent_state *ps, ui_state *ui,
++                          prot_parser *cmd_parser, vstack *cmd_stack)
++{
++  char buffer[4096];
++  int n = -1;
++  while (poll_stdin() && (n = read(STDIN_FILENO, buffer, 4096)) != 0)
++  {
++    if (n == -1)
++    {
++      if (errno == EINTR)
++        continue;
++      perror("poll stdin");
++      break;
++    }
++
++    // Echoed for upstream's window; with a page to write per keystroke it is only noise.
++    if (!pdf_output)
++      fprintf(stderr, "stdin: %.*s\n", n, buffer);
++
++    const char *ptr = buffer, *lim = buffer + n;
++    fz_try(ps->ctx)
++    {
++      while ((ptr = prot_parse(ps->ctx, cmd_parser, cmd_stack, ptr, lim)))
++      {
++        val cmds = vstack_get_values(ps->ctx, cmd_stack);
++        int n_cmds = val_array_length(ps->ctx, cmd_stack, cmds);
++        for (int i = 0; i < n_cmds; i++)
++        {
++          val cmd = val_array_get(ps->ctx, cmd_stack, cmds, i);
++          interpret_command(ps, ui, cmd_stack, cmd);
++        }
++      }
++    }
++    fz_catch(ps->ctx)
++    {
++      fprintf(stderr, "error while reading stdin commands: %s\n",
++              fz_caught_message(ps->ctx));
++      vstack_reset(ps->ctx, cmd_stack);
++      prot_reinitialize(cmd_parser);
++    }
++  }
++  return n == 0;
++}
++
++/* Live preview in the editor's own PDF view
++ *
++ * The editor says which pages it shows (["view", first, last]). A change is typeset as far
++ * as the last of them, and each page in view whose content differs from what the editor was
++ * last given is written at once as a one-page PDF of its own (["page", index, path, mark]).
++ * The rest of the document follows once typing pauses, in slices that a change interrupts.
++ * The whole document, with its SyncTeX, is written when a run has reached the end and
++ * differs from the one written before (["pdf", path, pages, run, changed, mark]).
++ *
++ * References and contents come from finishing passes, which a second engine runs beside the
++ * first once the document has been left alone for a moment, and only when a file TeX reads
++ * back (.aux, .toc) was written other than as read. The second replaces the first when it
++ * is done; a change in between drops it, and the first resumes its snapshots as if there
++ * had been no pass. */
++
++#define LIVE_PASSES 4
++
++/* ms after a change: before the pages past the view are typeset, before the whole document
++   is written, and before a finishing pass starts. */
++static int live_tail_ms = 150, live_whole_ms = 300, live_rerun_ms = 1000;
++
++typedef struct
++{
++  uint64_t now;   // the page as typeset, by its bytes (pages below live.checked)
++  uint64_t shown; // as the editor was last given it, in a page of its own or the document
++  uint64_t whole; // as in the whole document last written
++  int file[2];    // its own PDFs, by serial: the latest, and the one before it
++} live_page;
++
++static struct
++{
++  live_page *pages;
++  int cap;
++  int checked;       // pages below this are compared since they were typeset
++  int serial;        // of the last page file
++  uint64_t salt;     // changes when a file on disk did: its pages are other pages
++  int whole_pages;   // pages in the whole document last written, -1 before the first
++  bool had_complete; // a whole document of a run that reached the end was written
++  bool whole_complete; // and the one last written is such a one
++  bool dirty;        // a page differs from the whole document last written
++  int synced;        // the last mark told as shown
++  bool started;      // the first run is over
++  double changed_at; // when a file last changed, once it is
++  enum EDITOR_RUN run; // how the last run ended
++  bool aux;          // and whether it wrote the files it reads other than as read
++  int passes;        // finishing passes since the last change
++  txp_engine *pass;  // the one under way
++  char dir[4096];
++} live;
++
++static double live_ms(void)
++{
++  struct timespec t;
++  clock_gettime(CLOCK_MONOTONIC, &t);
++  return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
++}
++
++static live_page *live_at(fz_context *ctx, int index)
++{
++  if (index >= live.cap)
++  {
++    int cap = live.cap ? live.cap : 64;
++    while (cap <= index) cap *= 2;
++    live.pages = fz_realloc_array(ctx, live.pages, cap, live_page);
++    memset(live.pages + live.cap, 0, (cap - live.cap) * sizeof(live_page));
++    live.cap = cap;
++  }
++  return &live.pages[index];
++}
++
++static void live_page_path(char *path, size_t size, int index, int serial)
++{
++  snprintf(path, size, "%s/page-%d-%d.pdf", live.dir, index, serial);
++}
++
++/* A page's own PDF is removed one step after another replaces it (`serial`, or 0 for the
++   whole document): the editor may be about to read the one it was just told of. */
++static void live_retire(live_page *page, int index, int serial)
++{
++  char path[4200];
++  if (page->file[1])
++  {
++    live_page_path(path, sizeof path, index, page->file[1]);
++    remove(path);
++  }
++  page->file[1] = page->file[0];
++  page->file[0] = serial;
++}
++
++static bool live_write_page(fz_context *ctx, ui_state *ui, int index)
++{
++  live_page *page = &live.pages[index];
++  int serial = ++live.serial;
++  char path[4200];
++  live_page_path(path, sizeof path, index, serial);
++  fz_document_writer *writer = NULL;
++  fz_var(writer);
++  fz_try(ctx)
++  {
++    writer = fz_new_pdf_writer(ctx, path, "");
++    fz_device *dev = fz_begin_page(ctx, writer, txp_tex_page_box(ui->eng, index));
++    txp_tex_run_page(ui->eng, ctx, index, dev);
++    fz_end_page(ctx, writer);
++    fz_close_document_writer(ctx, writer);
++  }
++  fz_always(ctx)
++    fz_drop_document_writer(ctx, writer);
++  fz_catch(ctx)
++  {
++    fprintf(stderr, "[pdf] couldn't write %s: %s\n", path, fz_caught_message(ctx));
++    remove(path);
++    return false;
++  }
++  live_retire(page, index, serial);
++  page->shown = page->now;
++  // Complete on disk before the editor hears of it.
++  editor_page(index, path, live_wish.mark);
++  return true;
++}
++
++/* Compares the pages typeset since the last look, and writes those in view that differ from
++   what the editor has; with `view`, first the earlier ones that have come into view. */
++static void live_scan(fz_context *ctx, ui_state *ui, bool view)
++{
++  int count = send(page_count, ui->eng);
++  if (live.checked > count)
++    live.checked = count;
++  // Until the editor has a document, there is nothing for a page of its own to replace.
++  bool pages = live.whole_pages >= 0;
++  if (view && pages)
++    for (int i = live_wish.first; i <= live_wish.last && i < live.checked; i++)
++      if (live.pages[i].now != live.pages[i].shown)
++        live_write_page(ctx, ui, i);
++  for (; live.checked < count; live.checked++)
++  {
++    int i = live.checked;
++    live_page *page = live_at(ctx, i);
++    page->now = txp_tex_page_hash(ui->eng, i) ^ live.salt;
++    if (page->now != page->whole)
++      live.dirty = true;
++    if (pages && i >= live_wish.first && i <= live_wish.last && page->now != page->shown)
++      live_write_page(ctx, ui, i);
++  }
++}
 +
 +static void export_synctex(fz_context *ctx, ui_state *ui)
 +{
@@ -536,69 +1439,361 @@ index c202294..b7819d8 100644
 +  }
 +}
 +
-+static void export_pdf(fz_context *ctx, ui_state *ui)
++enum live_written { LIVE_WRITTEN, LIVE_INTERRUPTED, LIVE_FAILED };
++
++/* The whole document as typeset so far, to TEXPRESSO_PDF_OUTPUT. `interruptible`, it gives
++   way to a command waiting on stdin: the next keystroke's page comes first. */
++static enum live_written live_write_whole(fz_context *ctx, ui_state *ui, enum EDITOR_RUN run,
++                                          bool interruptible)
 +{
 +  int pages = send(page_count, ui->eng);
 +  char part[4200];
 +  snprintf(part, sizeof part, "%s.part", pdf_output);
 +  fz_document_writer *writer = NULL;
-+  fz_display_list *dl = NULL;
++  bool interrupted = false;
 +  fz_var(writer);
-+  fz_var(dl);
++  fz_var(interrupted);
 +  fz_try(ctx)
 +  {
 +    writer = fz_new_pdf_writer(ctx, part, "");
-+    for (int i = 0; i < pages; i++)
++    for (int i = 0; i < pages && !interrupted; i++)
 +    {
-+      dl = send(render_page, ui->eng, ctx, i);
-+      fz_device *dev = fz_begin_page(ctx, writer, fz_bound_display_list(ctx, dl));
-+      fz_run_display_list(ctx, dl, dev, fz_identity, fz_infinite_rect, NULL);
++      fz_device *dev = fz_begin_page(ctx, writer, txp_tex_page_box(ui->eng, i));
++      txp_tex_run_page(ui->eng, ctx, i, dev);
 +      fz_end_page(ctx, writer);
-+      fz_drop_display_list(ctx, dl);
-+      dl = NULL;
++      interrupted = interruptible && (i & 3) == 3 && poll_stdin();
 +    }
-+    fz_close_document_writer(ctx, writer);
++    if (!interrupted)
++      fz_close_document_writer(ctx, writer);
 +  }
 +  fz_always(ctx)
-+  {
-+    fz_drop_display_list(ctx, dl);
 +    fz_drop_document_writer(ctx, writer);
-+  }
 +  fz_catch(ctx)
 +  {
 +    fprintf(stderr, "[pdf] couldn't write %s: %s\n", part, fz_caught_message(ctx));
 +    remove(part);
-+    return;
++    return LIVE_FAILED;
++  }
++  if (interrupted)
++  {
++    remove(part);
++    return LIVE_INTERRUPTED;
 +  }
 +  // Its SyncTeX beside it, as live.synctex for live.pdf, for the editor's jumps between
 +  // source and pages; written first, so a PDF never comes without its own.
 +  export_synctex(ctx, ui);
-+  if (rename(part, pdf_output) == 0)
-+    editor_pdf(pdf_output, pages);
-+  else
++  if (rename(part, pdf_output) != 0)
++  {
 +    perror("[pdf] rename");
++    return LIVE_FAILED;
++  }
++
++  int *changed = fz_malloc_array(ctx, 2 * (pages + 1), int);
++  int ranges = 0;
++  for (int i = 0; i < live.cap; i++)
++  {
++    live_page *page = &live.pages[i];
++    if (i < pages && page->now != page->whole)
++    {
++      if (ranges && changed[2 * ranges - 1] == i - 1)
++        changed[2 * ranges - 1] = i;
++      else
++      {
++        changed[2 * ranges] = changed[2 * ranges + 1] = i;
++        ranges++;
++      }
++    }
++    page->whole = page->shown = i < pages ? page->now : 0;
++    live_retire(page, i, 0);
++  }
++  live.whole_pages = pages;
++  live.dirty = false;
++  live.whole_complete = run == RUN_COMPLETE;
++  if (run == RUN_COMPLETE)
++    live.had_complete = true;
++  editor_pdf(pdf_output, pages, run, changed, ranges, live_wish.mark);
++  fz_free(ctx, changed);
++  return LIVE_WRITTEN;
 +}
 +
- static bool need_advance(fz_context *ctx, ui_state *ui)
- {
-   if (send(get_status, ui->eng) != DOC_RUNNING)
-     return false;
- 
-+  if (pdf_output)
-+    return true;
++/* Steps `eng` until its page count leaves `count` (when not negative), a command waits, a
++   few ms have passed, or its worker has nothing more to say yet. Whether it has more. */
++static bool live_step(fz_context *ctx, txp_engine *eng, int count)
++{
++  double until = live_ms() + 4;
++  int steps = 0;
++  while (send(step, eng, ctx, false))
++  {
++    if (count >= 0 && send(page_count, eng) != count)
++      return true;
++    if ((++steps & 15) == 0 && (poll_stdin() || live_ms() > until))
++      return true;
++  }
++  return false;
++}
 +
-   if (send(is_finishing, ui->eng))
-     return true;
++/* Where the editor's caret settled, a snapshot is wanted just before it, so that the first
++   key typed there is as quick as the ones after it. A run that hasn't read that far takes
++   it on its way. One that is over is told of a change there that changes nothing, and takes
++   it as it does for a real change: the pages typeset again are the same pages, and nothing
++   is sent. A run in between is left to end first. */
++static void live_caret(struct persistent_state *ps, ui_state *ui)
++{
++  int offset = live_wish.caret_offset, at, go_up = 0;
++  if (offset < 0)
++    return;
++  const char *path = live_wish.caret_path;
++  if (path[0] == '/')
++    path = relative_path(path, ps->doc_path, &go_up);
++  fileentry_t *e = go_up > 0 ? NULL : send(find_file, ui->eng, ps->ctx, path), *warm;
++  bool running = send(get_status, ui->eng) == DOC_RUNNING;
++  if (!e || (txp_tex_warm(ui->eng, &warm, &at) && warm == e && offset >= at && offset - at < 256) ||
++      txp_tex_plant(ui->eng, e, offset))
++    live_wish.caret_offset = -1;
++  else if (!running)
++  {
++    live_wish.caret_offset = -1;
++    send(notify_file_changes, ui->eng, ps->ctx, e, offset);
++  }
++}
++
++static void live_pass_drop(fz_context *ctx)
++{
++  if (!live.pass)
++    return;
++  editor_mute(true);
++  send(destroy, live.pass, ctx);
++  editor_mute(false);
++  live.pass = NULL;
++}
++
++static void live_pass_start(struct persistent_state *ps, ui_state *ui,
++                            const char *engine_path, bool texlive)
++{
++  dvi_reshooks hooks = texlive ? dvi_texlive_hooks(ps->ctx, ps->doc_path)
++                               : dvi_tectonic_hooks(ps->ctx, ps->doc_path);
++  live.pass = txp_create_tex_engine(ps->ctx, engine_path, texlive, ps->stream_mode,
++                                    ps->inclusion_path, ps->doc_name, hooks);
++  live.passes++;
++  txp_tex_live(live.pass);
++  txp_tex_adopt(live.pass, ps->ctx, ui->eng);
++  // Its own snapshot where the first engine's is, for the edit after it takes over.
++  fileentry_t *warm;
++  int at;
++  if (txp_tex_warm(ui->eng, &warm, &at))
++    txp_tex_plant(live.pass, send(find_file, live.pass, ps->ctx, warm->path), at);
++  fprintf(stderr, "[live] finishing pass %d\n", live.passes);
++  editor_mute(true);
++  send(step, live.pass, ps->ctx, true);
++  editor_mute(false);
++}
++
++/* A slice of the finishing pass, which takes the first engine's place when it has reached
++   the end. Whether it has more steps waiting; `*promoted` when it is now the engine. */
++static bool live_pass_step(struct persistent_state *ps, ui_state *ui, bool *promoted)
++{
++  fz_context *ctx = ps->ctx;
++  editor_mute(true);
++  bool more = live_step(ctx, live.pass, -1);
++  bool over = send(get_status, live.pass) != DOC_RUNNING;
++  editor_mute(false);
++  if (!over)
++    return more;
++  if (txp_tex_outcome(live.pass) != RUN_COMPLETE)
++  {
++    // Not a document to show in place of one that reached its end: no more passes for now.
++    fprintf(stderr, "[live] finishing pass stopped on an error, dropped\n");
++    live.passes = LIVE_PASSES;
++    live_pass_drop(ctx);
++    return false;
++  }
++  txp_engine *old = ui->eng;
++  txp_tex_take_resources(live.pass, old);
++  ui->eng = live.pass;
++  live.pass = NULL;
++  editor_mute(true);
++  send(destroy, old, ctx);
++  editor_mute(false);
++  txp_tex_resend_output(ui->eng);
++  live.checked = 0;
++  *promoted = true;
++  return true;
++}
++
++/* What was said before a crash is what explains it. */
++static void live_crashed(int sig)
++{
++  (void)sig;
++  fflush(stderr);
++}
++
++static int live_env(const char *name, int value)
++{
++  const char *text = getenv(name);
++  return text && *text ? atoi(text) : value;
++}
++
++static void live_loop(struct persistent_state *ps, ui_state *ui, prot_parser *parser,
++                      vstack *stack, const char *engine_path, bool texlive)
++{
++  fz_context *ctx = ps->ctx;
++  snprintf(live.dir, sizeof live.dir, "%s", pdf_output);
++  char *slash = strrchr(live.dir, '/');
++  if (slash)
++    *slash = 0;
++  else
++    strcpy(live.dir, ".");
++  live.whole_pages = -1;
++  live.changed_at = -1e9;
++  // For measuring.
++  live_tail_ms = live_env("TEXPRESSO_LIVE_TAIL_MS", live_tail_ms);
++  live_whole_ms = live_env("TEXPRESSO_LIVE_WHOLE_MS", live_whole_ms);
++  live_rerun_ms = live_env("TEXPRESSO_LIVE_RERUN_MS", live_rerun_ms);
++  // The diagnostics of a keystroke in one write, not forty, for whoever reads them.
++  static char errors[1 << 15];
++  setvbuf(stderr, errors, _IOFBF, sizeof errors);
++  struct sigaction crashed = {.sa_handler = live_crashed, .sa_flags = SA_RESETHAND};
++  sigaction(SIGABRT, &crashed, NULL);
++  sigaction(SIGSEGV, &crashed, NULL);
++  sigaction(SIGBUS, &crashed, NULL);
++  txp_tex_live(ui->eng);
++  editor_live(1);
++
++  bool running = true; // a run whose end hasn't been told
++  for (;;)
++  {
++    int first = live_wish.first, last = live_wish.last;
++    live_wish.touched = false;
++    send(begin_changes, ui->eng, ctx);
++    if (read_commands(ps, ui, parser, stack))
++      break;
++    bool scanned = live_events & (1u << SCAN_EVENT);
++    live_events = 0;
++    flush_changes(ps, ui);
++    if (scanned)
++      send(detect_changes, ui->eng, ctx);
++    live_caret(ps, ui);
++    if (send(end_changes, ui->eng, ctx))
++    {
++      if (!ps->paused)
++        send(step, ui->eng, ctx, true);
++      running = true;
++      if (scanned)
++      {
++        live_wish.touched = true;
++        live.salt += 0x9e3779b97f4a7c15ull;
++      }
++    }
++    if (live_wish.touched)
++    {
++      // The files opened with the session aren't typing to wait out.
++      if (live.started)
++        live.changed_at = live_ms();
++      live.passes = 0;
++      live_pass_drop(ctx);
++    }
++
++    bool stepping = send(get_status, ui->eng) == DOC_RUNNING && !ps->paused;
++    int count = send(page_count, ui->eng);
++    // Pages in view first; the rest once typing has paused.
++    bool wanted = stepping && (count <= live_wish.last ||
++                               live_ms() - live.changed_at >= live_tail_ms);
++    bool more = wanted && live_step(ctx, ui->eng, count);
++    live_scan(ctx, ui, first != live_wish.first || last != live_wish.last);
++    stepping = send(get_status, ui->eng) == DOC_RUNNING && !ps->paused;
++    count = send(page_count, ui->eng);
++
++    if (running && !stepping && !ps->paused)
++    {
++      running = false;
++      live.started = true;
++      live.run = txp_tex_outcome(ui->eng);
++      live.aux = live.run == RUN_COMPLETE && txp_tex_aux_changed(ui->eng);
++      if (!live.aux)
++        live_wish.rerun = false;
++      editor_done(count, live.run);
++    }
++    if (live_wish.mark != live.synced && (!stepping || count > live_wish.last))
++    {
++      live.synced = live_wish.mark;
++      editor_synced(live.synced);
++    }
++
++    double now = live_ms(), wake = -1;
++    if (stepping)
++    {
++      // Something to show before a long document is done.
++      if (live.whole_pages < 0 && count > live_wish.last &&
++          live_write_whole(ctx, ui, RUN_PARTIAL, false) == LIVE_FAILED)
++        live.whole_pages = 0;
++      if (!wanted)
++        wake = live.changed_at + live_tail_ms;
++    }
++    else if (!running)
++    {
++      // The early document, or one of a run that stopped, is told as complete once it is,
++      // even with the same pages: the editor goes by what the last one said.
++      bool completed = live.run == RUN_COMPLETE && !live.whole_complete;
++      // A run that stopped on an error doesn't replace a document that reached its end.
++      bool differs = (live.dirty || count != live.whole_pages || completed) &&
++                     !(live.run == RUN_STOPPED && live.had_complete);
++      // Other pages wait for typing to pause; another number of them is told at once.
++      double due = live.run == RUN_COMPLETE && (count != live.whole_pages || completed)
++                       ? now : live.changed_at + live_whole_ms;
++      if (differs && now >= due)
++      {
++        enum live_written written =
++            live_write_whole(ctx, ui, live.run, live.whole_pages >= 0);
++        if (written == LIVE_INTERRUPTED)
++          more = true;
++        else if (written == LIVE_FAILED)
++          live.dirty = false, live.whole_pages = count;
++      }
++      else if (differs)
++        wake = due;
++
++      if (live_wish.rerun)
++        live.passes = fz_mini(live.passes, LIVE_PASSES - 1);
++      double pass_due = live_wish.rerun ? now : live.changed_at + live_rerun_ms;
++      if (live.pass)
++      {
++        bool promoted = false;
++        more = live_pass_step(ps, ui, &promoted) || more;
++        running = running || promoted;
++      }
++      else if (live.aux && live.passes < LIVE_PASSES && now >= pass_due)
++      {
++        live_wish.rerun = false;
++        live_pass_start(ps, ui, engine_path, texlive);
++        more = true;
++      }
++      else if (live.aux && live.passes < LIVE_PASSES && (wake < 0 || pass_due < wake))
++        wake = pass_due;
++    }
++    // A caret that waited for the run to end.
++    if (more || (!stepping && live_wish.caret_offset >= 0))
++      continue;
++
++    // Nothing to do until a command comes, a worker has more, or one of the pauses is over.
++    fflush(stderr);
++    struct pollfd fds[2] = {{STDIN_FILENO, POLLRDNORM, 0}, {-1, POLLRDNORM, 0}};
++    if (stepping && wanted)
++      fds[1].fd = txp_tex_worker_fd(ui->eng);
++    else if (!stepping && live.pass)
++      fds[1].fd = txp_tex_worker_fd(live.pass);
++    int timeout = wake < 0 ? -1 : fz_maxi((int)(wake - live_ms() + 0.999), 0);
++    if (poll(fds, 2, timeout) == -1 && errno != EINTR)
++      break;
++    if ((fds[0].revents & (POLLHUP | POLLERR | POLLNVAL)) && !poll_stdin())
++      break;
++  }
++  live_pass_drop(ctx);
++}
++
+ /* Entry point */
  
-@@ -190,6 +261,7 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
-   {
-     if (!send(step, ui->eng, ctx, false))
-       break;
-+    pdf_dirty = true;
- 
-     steps -= 1;
-     need = need_advance(ctx, ui);
-@@ -1170,6 +1242,9 @@ bool texpresso_main(struct persistent_state *ps)
+ bool texpresso_main(struct persistent_state *ps)
+@@ -1170,6 +1770,9 @@ bool texpresso_main(struct persistent_state *ps)
    editor_set_protocol(ps->protocol);
    editor_set_line_output(ps->line_output);
    pstate = ps;
@@ -608,27 +1803,114 @@ index c202294..b7819d8 100644
  
    struct fullscreen_state fs = {
      .has_backup = false,
-@@ -1334,6 +1409,9 @@ bool texpresso_main(struct persistent_state *ps)
-       }
-     }
-     if (n == 0) stdin_eof = 1;
-+    // Writing a PDF for an editor, whose pipe closing means it has gone (even unexpectedly).
-+    if (stdin_eof && pdf_output)
-+      break;
+@@ -1221,6 +1824,7 @@ bool texpresso_main(struct persistent_state *ps)
+   find_engine(engine_path, ps->exe_path);
+   fprintf(stderr, "[info] engine path: %s\n", engine_path);
+ 
++  bool tex_engine = false;
+   if (doc_ext && strcmp(doc_ext, "pdf") == 0)
+     ui->eng = txp_create_pdf_engine(ps->ctx, ps->doc_name);
+   else
+@@ -1234,10 +1838,16 @@ bool texpresso_main(struct persistent_state *ps)
+     if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
+       ui->eng = txp_create_dvi_engine(ps->ctx, ps->doc_name, hooks);
+     else
++    {
+       ui->eng = txp_create_tex_engine(ps->ctx, engine_path, using_texlive,
+                                       ps->stream_mode, ps->inclusion_path,
+                                       ps->doc_name, hooks);
++      tex_engine = true;
++    }
+   }
++  // Pages are told apart by the TeX engine's output: another kind of document has a window.
++  if (!tex_engine)
++    pdf_output = NULL;
+ 
+   ui->sdl_renderer = ps->renderer;
+   ui->doc_renderer = txp_renderer_new(ps->ctx, ui->sdl_renderer);
+@@ -1267,6 +1877,17 @@ bool texpresso_main(struct persistent_state *ps)
+   bool quit = 0, reload = 0;
+   if (!ps->paused)
+     send(step, ui->eng, ps->ctx, true);
++  if (pdf_output)
++  {
++    vstack *stack = vstack_new(ps->ctx);
++    prot_parser parser;
++    prot_initialize(&parser, (ps->protocol == EDITOR_JSON));
++    live_loop(ps, ui, &parser, stack, engine_path, using_texlive);
++    // The editor has gone: its pipe closed, even unexpectedly.
++    txp_renderer_free(ps->ctx, ui->doc_renderer);
++    send(destroy, ui->eng, ps->ctx);
++    return 0;
++  }
+   render(ps->ctx, ui);
+   schedule_event(RELOAD_EVENT);
+ 
+@@ -1297,43 +1918,8 @@ bool texpresso_main(struct persistent_state *ps)
+ 
+     // Process stdin
+     send(begin_changes, ui->eng, ps->ctx);
+-    char buffer[4096];
+-    int n = -1;
+-    while (!stdin_eof && poll_stdin() && (n = read(STDIN_FILENO, buffer, 4096)) != 0)
+-    {
+-      if (n == -1)
+-      {
+-        if (errno == EINTR)
+-          continue;
+-        perror("poll stdin");
+-        break;
+-      }
+-
+-      fprintf(stderr, "stdin: %.*s\n", n, buffer);
+-
+-      const char *ptr = buffer, *lim = buffer + n;
+-      fz_try(ps->ctx)
+-      {
+-        while ((ptr = prot_parse(ps->ctx, &cmd_parser, cmd_stack, ptr, lim)))
+-        {
+-          val cmds = vstack_get_values(ps->ctx, cmd_stack);
+-          int n_cmds = val_array_length(ps->ctx, cmd_stack, cmds);
+-          for (int i = 0; i < n_cmds; i++)
+-          {
+-            val cmd = val_array_get(ps->ctx, cmd_stack, cmds, i);
+-            interpret_command(ps, ui, cmd_stack, cmd);
+-          }
+-        }
+-      }
+-      fz_catch(ps->ctx)
+-      {
+-        fprintf(stderr, "error while reading stdin commands: %s\n",
+-                fz_caught_message(ps->ctx));
+-        vstack_reset(ps->ctx, cmd_stack);
+-        prot_reinitialize(&cmd_parser);
+-      }
+-    }
+-    if (n == 0) stdin_eof = 1;
++    if (!stdin_eof)
++      stdin_eof = read_commands(ps, ui, &cmd_parser, cmd_stack);
  
      if (send(end_changes, ui->eng, ps->ctx))
      {
-@@ -1354,6 +1432,13 @@ bool texpresso_main(struct persistent_state *ps)
-       if (ui->page >= before_page_count && ui->page < after_page_count)
-         schedule_event(RELOAD_EVENT);
+diff --git a/src/frontend/state.h b/src/frontend/state.h
+index 4854531..db8d100 100644
+--- a/src/frontend/state.h
++++ b/src/frontend/state.h
+@@ -53,6 +53,8 @@ typedef struct fileentry_s {
+   fz_buffer *edit_data;
+   bool promised;
+   bool edit_data_from_convergence;
++  // TeX has asked to read it, found or not: what it writes there is its input next time
++  bool wanted;
  
-+      if (pdf_output && pdf_dirty && !advance &&
-+          send(get_status, ui->eng) != DOC_RUNNING)
-+      {
-+        pdf_dirty = false;
-+        export_pdf(ps->ctx, ui);
-+      }
-+
-       // Fire an on-demand rerun as soon as the engine is ready, regardless of
-       // idle state. Runs in the main body of the loop (not inside the idle
-       // wait) so it triggers even during active compilation cycles.
+   // State observed and/or produced by TeX process
+   struct {
+@@ -62,6 +64,8 @@ typedef struct fileentry_s {
+   } saved;
+ 
+   int seen;
++  // How far the workers have read since TeX last started afresh, snapshots resumed or not
++  int read_end;
+   int debug_rollback_invalidation;
+ } fileentry_t;
+ 
