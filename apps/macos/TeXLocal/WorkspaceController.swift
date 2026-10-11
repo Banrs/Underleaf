@@ -719,6 +719,15 @@ enum ColumnMetrics {
     static let inspectorToggles: CGFloat = 92
     /// AppKit's standard inspector width (`NSSplitViewItem(inspectorWithViewController:)`).
     static let inspector: CGFloat = 270
+
+    /// A double-click on the divider brings the first split back. The items' preferred
+    /// fractions, AppKit's own way, land it somewhere else each time (27.2).
+    override func mouseDown(with event: NSEvent) {
+        guard event.clickCount == 2, arrangedSubviews.allSatisfy({ !isSubviewCollapsed($0) }) else {
+            return super.mouseDown(with: event)
+        }
+        setPosition(((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded(), ofDividerAt: 0)
+    }
     static let pdfShare: CGFloat = 0.5
     /// Source and PDF over the build panel: a find bar and a few lines.
     static let columnsMinimum: CGFloat = 200
