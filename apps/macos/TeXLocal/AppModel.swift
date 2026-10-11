@@ -74,11 +74,11 @@ final class AppModel {
     /// The inspector: the project's settings and facts, the window's trailing column.
     var inspectorVisible: Bool {
         didSet { UserDefaults.standard.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) }
+    }
     /// Folded by a window too narrow for them, which brings them back as it widens: not hidden,
     /// and not saved (`sidebarShown`, `inspectorShown`).
     var sidebarFolded = false
     var inspectorFolded = false
-    }
     var autoCompile: Bool {
         didSet { UserDefaults.standard.set(autoCompile, forKey: DefaultsKey.autoCompile) }
     }

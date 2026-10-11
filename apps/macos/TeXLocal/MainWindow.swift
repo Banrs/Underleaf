@@ -73,6 +73,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         workspace?.close()
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
         setContent(workspace)
+        // The height; the workspace sets the width its shown panes need (`fitColumns`).
+        window.contentMinSize = ColumnMetrics.contentMinimum
         // The editor's colour, untinted: the toolbar's scroll edge fades the text into the
         // window's background, so at rest the toolbar is the editor's surface, as Xcode's.
         window.backgroundColor = .untintedTextBackground
@@ -104,12 +106,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         self.home = home
     }
 
-    /// Keeps the window's frame and minimum, which a new content view controller resets.
+    /// Keeps the window's frame, which a new content view controller resets.
     private func setContent(_ controller: NSViewController) {
         guard let window else { return }
         controller.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
         window.contentViewController = controller
-        window.contentMinSize = ColumnMetrics.contentMinimum
     }
 
     // ---------- window ----------
@@ -176,7 +177,7 @@ struct HomeRoot: View {
 
     var body: some View {
         HomeView()
-            // SwiftUI sets the window's minimum from its content's: the app's own.
+            // SwiftUI sets the window's minimum from its content's: the workspace's narrowest.
             .frame(minWidth: ColumnMetrics.contentMinimum.width, minHeight: ColumnMetrics.contentMinimum.height)
             .windowModals()
             .environment(app)
