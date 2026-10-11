@@ -151,6 +151,18 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         view.go(to: page)
     }
 
+    /// The document, not the view: on white paper, scaled down to the sheet where its pages are
+    /// larger (A4 on US Letter), whether or not the pane shows.
+    func print(title: String) {
+        guard let operation = view.document?.printOperation(for: .shared, scalingMode: .pageScaleDownToFit, autoRotate: true) else { return }
+        operation.jobTitle = title
+        if let window = view.window ?? NSApp.mainWindow {
+            operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+        } else {
+            operation.run()
+        }
+    }
+
     /// In a continuous single-page layout, auto-scaling fits the page width.
     func fitWidth() {
         fit = .width
