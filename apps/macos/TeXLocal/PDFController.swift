@@ -352,9 +352,30 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// document already showing.
     @ObservationIgnored private(set) var shownVersion = 0
 
+    /// The app's memory when a document was last shown whole. PDFKit keeps the objects of every
+    /// page a document takes from another for that document's life (27.2: some 0.12 MB a page
+    /// of a build, megabytes for a live page with its fonts), and only a new document frees them.
+    @ObservationIgnored private var memoryAtWhole = UInt64.max
+    /// So once the app has grown by this much since, the next document is shown whole.
+    private static let memoryGrowth: UInt64 = 512 << 20
+    private var hasGrown: Bool {
+        let now = Self.memory
+        return now > memoryAtWhole && now - memoryAtWhole > Self.memoryGrowth
+    }
+
+    /// As Activity Monitor counts it; none where it can't be read.
+    private static var memory: UInt64 {
+        var usage = rusage_info_current()
+        let read = withUnsafeMutablePointer(to: &usage) {
+            $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_CURRENT, $0) }
+        }
+        return read == 0 ? usage.ri_phys_footprint : 0
+    }
+
     /// A rebuilt PDF at the same place and zoom. Its pages replace those showing, in the same
     /// document: a new document shows only PDFKit's background until its pages draw, a few
-    /// frames later (27.2), and each build would flash the pane.
+    /// frames later (27.2), and each build would flash the pane. One does once in a long while,
+    /// for the memory the replaced pages hold (`memoryAtWhole`).
     func show(_ document: PDFDocument) {
         shownVersion += 1
         liveWaiting.removeAll()
@@ -373,9 +394,13 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
             }
             view.clearSelection()
             view.highlightedSelections = nil
+        }
+        if let shown = view.document, !hasGrown {
             shown.replacePages(with: document)
         } else {
+            view.removeLive()
             view.document = document
+            memoryAtWhole = Self.memory
         }
         observeMagnification()
         // A document resets the limits (27.2). Setting them turns fitting off, so before the fit below.
@@ -454,8 +479,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         guard view.showLive(page, over: shown, at: index) else { return settleLive() }
         liveClearing?.cancel()
         liveSettling?.cancel()
+        // Only if the whole document doesn't bring this page first, as it does 300 ms after the
+        // last key: the page would go into PDFKit's document twice, for the same pixels.
         liveSettling = Task { [weak self] in
-            guard (try? await Task.sleep(for: .milliseconds(250))) != nil else { return }
+            guard (try? await Task.sleep(for: .seconds(1))) != nil else { return }
             self?.settleLive()
         }
     }
@@ -480,7 +507,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// long document doesn't stop the typing. Not `complete`, TeX stopped short of the end, and
     /// the pages past where it stopped stay as they were.
     func showLive(_ document: PDFDocument, changed: IndexSet?, complete: Bool) {
-        guard let shown = view.document, var pages = changed else {
+        // Whole too once the pages taken hold too much (`memoryAtWhole`), if it is all there.
+        guard let shown = view.document, var pages = changed, !(complete && hasGrown) else {
             show(document)
             return
         }
