@@ -78,19 +78,15 @@ private struct GoToSheet: View {
     let noun: String
     let limit: () -> Int?
     let go: (Int) -> Void
-    @State private var text = ""
+    @State private var number: Int?
     @FocusState private var focused: Bool
 
-    private var number: Int? {
-        guard let number = Int(text.trimmingCharacters(in: .whitespaces)), number >= 1 else { return nil }
-        return limit().map { min(number, $0) } ?? number
-    }
-
     var body: some View {
-        DialogSheet(title: "Go to \(noun)", action: "Go", enabled: number != nil) {
-            if let number { go(number) }
+        DialogSheet(title: "Go to \(noun)", action: "Go", enabled: number.map { $0 >= 1 } ?? false) {
+            if let number { go(limit().map { min(number, $0) } ?? number) }
         } fields: {
-            TextField(noun, text: $text, prompt: Text(limit().map { "1–\($0)" } ?? "\(noun) number"))
+            TextField(noun, value: $number, format: .number.grouping(.never),
+                      prompt: Text(limit().map { "1–\($0)" } ?? "\(noun) number"))
                 .focused($focused)
         }
         .defaultFocus($focused, true)
