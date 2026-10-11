@@ -18,12 +18,12 @@ nonisolated enum CompletionKind: String, Decodable {
     }
 }
 
-/// The core's completions under the caret, as a menu that doesn't take the keyboard: a table on
-/// the system's glass with a menu's metrics (macOS 27's design kit: 12 pt corners, items 6 pt
-/// down and 5 pt up, their highlight 5 pt in with 8 pt corners, their content 16 pt in). The
-/// glass is in the document's own window, over its content: glass in a window of its own has
-/// nothing behind it to show, and draws flat grey with no edge or shadow (27.2). Typing stays in
-/// the document, which moves the selection and accepts it.
+/// The core's completions under the typed text, as Xcode 27's list (measured from Xcode 27.1,
+/// 2026-10-11): an opaque panel of its own with rounded corners and a 1 pt inner line, 22 pt
+/// rows at the 13 pt font with 5 pt round them, the chosen row in the current line's grey with
+/// 5 pt corners, a 16 pt badge 10 pt into it and the label after, what's typed of it stronger.
+/// At least 258 pt wide, and at most 8 rows. Typing stays in the document, which moves the
+/// selection and accepts it.
 final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     /// A click chose this row.
     var clicked: (Int) -> Void = { _ in }
@@ -31,76 +31,97 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     private let table = NSTableView()
     private let scroll = NSScrollView()
-    private let glass = NSGlassEffectView()
+    /// Sized from the start, so that its views have margins to keep as it's resized.
+    private let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: minimumWidth, height: minimumWidth),
+                                styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
     private var labels: [String] = []
+    /// How much of every label is typed, in UTF-16 units.
+    private var typed = 0
     private var badge = CompletionKind.command.badge(in: .overleaf)
     private var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
     /// At most this many rows show; the rest scroll.
     private static let shownRows = 8
-    private static let cell = NSUserInterfaceItemIdentifier("completion")
 
-    private static let radius: CGFloat = 12, top: CGFloat = 6, bottom: CGFloat = 5
-    private static let highlightInset: CGFloat = 5, highlightRadius: CGFloat = 8, contentInset: CGFloat = 16
+    private static let radius: CGFloat = 8.5, margin: CGFloat = 5, minimumWidth: CGFloat = 258
+    private static let highlightRadius: CGFloat = 5, contentInset: CGFloat = 10, badgeGap: CGFloat = 2
+    /// A square symbol's side over its point size.
+    private static let squareSide: CGFloat = 0.9
 
-    /// Selected as the list that has the keyboard, though the document has it, in a menu
-    /// item's shape.
+    /// The chosen row as the editor's current line, whichever window has the keyboard.
     private final class Row: NSTableRowView {
-        override var isEmphasized: Bool {
-            get { true }
-            set {}
-        }
-
         override func drawSelection(in dirtyRect: NSRect) {
-            NSColor.selectedContentBackgroundColor.setFill()
-            NSBezierPath(roundedRect: bounds.insetBy(dx: CompletionList.highlightInset, dy: 0),
+            NSColor.secondarySystemFill.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: CompletionList.margin, dy: 0),
                          xRadius: CompletionList.highlightRadius, yRadius: CompletionList.highlightRadius).fill()
         }
     }
 
     override init() {
         super.init()
-        table.addTableColumn(NSTableColumn(identifier: Self.cell))
+        table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("completion")))
         table.headerView = nil
-        table.style = .fullWidth
+        table.style = .plain
         table.intercellSpacing = .zero
         table.backgroundColor = .clear
         table.dataSource = self
         table.delegate = self
         table.target = self
         table.action = #selector(click)
+        // A click chooses a row and leaves the keyboard in the document.
+        table.refusesFirstResponder = true
         scroll.documentView = table
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
+        scroll.scrollerStyle = .overlay
         scroll.automaticallyAdjustsContentInsets = false
-        scroll.contentInsets = NSEdgeInsets(top: Self.top, left: 0, bottom: Self.bottom, right: 0)
-        // A click chooses a row and leaves the keyboard in the document.
-        table.refusesFirstResponder = true
-        glass.cornerRadius = Self.radius
-        glass.contentView = scroll
+        let ground = NSBox()
+        ground.boxType = .custom
+        ground.cornerRadius = Self.radius
+        ground.fillColor = .untintedUnderPageBackground
+        ground.borderColor = .tertiarySystemFill
+        guard let content = panel.contentView else { return }
+        ground.frame = content.bounds
+        // Whole rows only: the rows' view stops at the margins.
+        scroll.frame = content.bounds.insetBy(dx: 0, dy: Self.margin)
+        for view in [ground, scroll] {
+            view.autoresizingMask = [.width, .height]
+            content.addSubview(view)
+        }
+        // Clear round the ground's corners, which the window's shadow then follows.
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.animationBehavior = .none
     }
 
-    /// Shows `labels`, all of one kind, in `font` with the first selected, their text under
-    /// the typed text's start, `start`: a screen rect of `window`'s, and over `floor`, a
-    /// height on the screen. Without a window it holds them unseen.
-    func show(_ labels: [String], kind: CompletionKind, font: NSFont, theme: SyntaxTheme, under start: NSRect,
-              over floor: CGFloat, in window: NSWindow?) {
+    /// Shows `labels`, all of one kind and each starting with the `typed` units before the
+    /// caret, in `font` with the first selected, their text under the typed text's start,
+    /// `start`, in the `editor`'s part of the screen, of `window`'s. Without a window it holds
+    /// them unseen.
+    func show(_ labels: [String], typed: Int, kind: CompletionKind, font: NSFont, theme: SyntaxTheme, under start: NSRect,
+              in editor: NSRect, of window: NSWindow?) {
         guard !labels.isEmpty else { return close() }
         self.labels = labels
+        self.typed = typed
         self.font = font
         badge = kind.badge(in: theme)
-        // The system's 24 pt row at its 13 pt text, for the editor's font.
-        table.rowHeight = (font.ascender - font.descender + font.leading).rounded(.up) + 8
+        // Xcode's 22 pt row at its 13 pt text, for the editor's font.
+        table.rowHeight = lineHeight + 6
         table.reloadData()
         table.selectRowIndexes([0], byExtendingSelection: false)
         table.scrollRowToVisible(0)
-        // Over everything in the window, the toolbar too.
-        guard let host = window?.contentView?.superview else { return }
-        let opening = glass.superview == nil
-        if glass.superview !== host { host.addSubview(glass, positioned: .above, relativeTo: nil) }
+        guard let window else { return }
+        let opening = panel.parent == nil
         fit()
-        place(under: start, over: floor)
+        place(under: start, in: editor, on: window.screen)
+        if panel.parent !== window {
+            panel.appearance = window.effectiveAppearance
+            window.addChildWindow(panel, ordered: .above)
+        }
         if opening { announce() }
     }
+
+    /// The font's line, to a whole point: 16 pt at 13.
+    private var lineHeight: CGFloat { (font.ascender - font.descender + font.leading).rounded(.up) }
 
     /// The list never has VoiceOver's focus, which stays in the document: the row chosen is
     /// spoken as the list opens and as the arrows move through it, as Xcode's list speaks it.
@@ -112,47 +133,50 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         AccessibilityNotification.Announcement(announcement).post()
     }
 
-    /// From the glass's leading edge to its labels' text.
+    /// From the panel's leading edge to its labels' text.
     private var textStart: CGFloat = 0
+    /// Wide enough for its widest label.
+    private var width = CompletionList.minimumWidth
 
-    /// Sized to its rows and widest label.
+    /// Measures its widest label, and takes the height of its rows.
     private func fit() {
         // The editor's font is monospaced: the longest label is the widest.
-        guard let host = glass.superview, let longest = labels.indices.max(by: { labels[$0].count < labels[$1].count }),
+        guard let longest = labels.indices.max(by: { labels[$0].count < labels[$1].count }),
               let cell = tableView(table, viewFor: nil, row: longest) as? NSTableCellView, let text = cell.textField else { return }
-        var width = cell.fittingSize.width.rounded(.up)
+        width = max(cell.fittingSize.width.rounded(.up), Self.minimumWidth)
         cell.setFrameSize(NSSize(width: width, height: table.rowHeight))
         cell.layoutSubtreeIfNeeded()
-        // The table keeps its cells in from a row's ends; a label's text starts 2 pt into its frame.
-        let inRow = table.frameOfCell(atColumn: 0, row: 0)
-        width += table.rect(ofRow: 0).width - inRow.width
-        textStart = inRow.minX + text.frame.minX + 2
+        // A label's text starts 2 pt into its frame.
+        textStart = text.frame.minX + 2
         let rows = CGFloat(min(labels.count, Self.shownRows))
-        glass.setFrameSize(NSSize(width: min(width, host.bounds.width / 2), height: rows * table.rowHeight + Self.top + Self.bottom))
-        glass.layoutSubtreeIfNeeded()
-        table.sizeLastColumnToFit()
+        panel.setContentSize(NSSize(width: width, height: rows * table.rowHeight + 2 * Self.margin))
     }
 
     /// Over the typed text, there being no room under it.
     private(set) var isAbove = false
 
-    /// Moves it under `start`, a screen rect, or over it when there's no room under it down to `floor`.
-    func place(under start: NSRect, over floor: CGFloat) {
-        guard let host = glass.superview, let window = host.window else { return }
-        var room = host.bounds
-        let foot = host.convert(window.convertFromScreen(NSRect(x: 0, y: floor, width: 0, height: 0)), from: nil).minY
-        room = NSRect(x: room.minX, y: foot, width: room.width, height: room.maxY - foot)
-        let start = host.convert(window.convertFromScreen(start), from: nil)
-        var frame = glass.frame
-        frame.origin = NSPoint(x: start.minX - textStart, y: start.minY - frame.height)
-        isAbove = frame.minY < room.minY
-        if isAbove { frame.origin.y = start.maxY }
+    /// Moves it under `start`, a screen rect, hard against its line, or over it when there's no
+    /// room under it down to the `editor`'s foot and the screen's. It ends at the editor's
+    /// trailing edge, its labels' ends cut, unless its least width needs more, and never off
+    /// the screen's sides: Xcode's only ends at the screen's.
+    func place(under start: NSRect, in editor: NSRect, on screen: NSScreen? = nil) {
+        guard let room = (screen ?? panel.screen ?? panel.parent?.screen)?.visibleFrame else { return }
+        var frame = panel.frame
+        frame.origin.x = start.minX - textStart
+        frame.size.width = min(width, max(Self.minimumWidth, editor.maxX - frame.minX))
         frame.origin.x = max(room.minX, min(frame.minX, room.maxX - frame.width))
-        glass.frame = frame
+        frame.origin.y = start.minY - frame.height
+        isAbove = frame.minY < max(editor.minY, room.minY) && start.maxY + frame.height <= room.maxY
+        if isAbove { frame.origin.y = start.maxY }
+        guard frame != panel.frame else { return }
+        panel.setFrame(frame, display: true)
+        table.sizeLastColumnToFit()
+        panel.invalidateShadow()
     }
 
     func close() {
-        glass.removeFromSuperview()
+        panel.parent?.removeChildWindow(panel)
+        panel.orderOut(nil)
         labels = []
         table.reloadData()
     }
@@ -175,34 +199,45 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { Row() }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let cell = tableView.makeView(withIdentifier: Self.cell, owner: nil) as? NSTableCellView ?? Self.makeCell()
-        cell.textField?.stringValue = labels[row]
-        cell.textField?.font = font
-        // The letter in the text's background: white on Light's deep squares, dark on Dark's pale ones.
-        cell.imageView?.image = NSImage(systemSymbolName: badge.symbol, accessibilityDescription: badge.name)?
-            .withSymbolConfiguration(.init(pointSize: font.pointSize, weight: .regular)
-                .applying(.init(paletteColors: [.textBackgroundColor, badge.color])))
-        return cell
-    }
-
-    private static func makeCell() -> NSTableCellView {
         let cell = NSTableCellView(), image = NSImageView(), text = NSTextField(labelWithString: "")
-        cell.identifier = Self.cell
-        text.lineBreakMode = .byTruncatingTail
+        // What's typed as the document's text and heavier, the rest of the label behind it.
+        let label = NSMutableAttributedString(string: labels[row], attributes: [
+            .font: font, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: Self.oneLine])
+        label.addAttributes([.font: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask), .foregroundColor: NSColor.labelColor],
+                            range: NSRange(location: 0, length: min(typed, label.length)))
+        text.attributedStringValue = label
+        text.maximumNumberOfLines = 1
+        text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // The square as high as the label's line, Xcode's 16 pt at 13, and the letter in the text's
+        // background: white on Light's deep squares, dark on Dark's pale ones.
+        let side = lineHeight
+        image.image = NSImage(systemSymbolName: badge.symbol, accessibilityDescription: badge.name)?
+            .withSymbolConfiguration(.init(pointSize: side / Self.squareSide, weight: .regular)
+                .applying(.init(paletteColors: [.textBackgroundColor, badge.color])))
+        // The symbol at its own size in the square, its margins outside.
+        image.imageScaling = .scaleNone
         for view in [image, text] {
             view.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(view)
         }
         cell.imageView = image
         cell.textField = text
-        image.setContentHuggingPriority(.required, for: .horizontal)
         NSLayoutConstraint.activate([
-            image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: contentInset),
+            image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: Self.margin + Self.contentInset),
             image.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            text.leadingAnchor.constraint(equalToSystemSpacingAfter: image.trailingAnchor, multiplier: 1),
-            text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -contentInset),
+            image.widthAnchor.constraint(equalToConstant: side),
+            image.heightAnchor.constraint(equalToConstant: side),
+            text.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: Self.badgeGap),
+            text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -(Self.margin + Self.contentInset)),
             text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         return cell
     }
+
+    /// An attributed label wraps unless its own style says otherwise.
+    private static let oneLine: NSParagraphStyle = {
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        return style
+    }()
 }
