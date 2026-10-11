@@ -58,14 +58,16 @@ struct WorkspaceModals: ViewModifier {
                 Button("Keep Editing", role: .cancel) { project.keepEdits() }
                 Button("Revert", role: .destructive) { Task { await project.revertToDisk(path) } }
             } message: { path in
-                Text("Another app changed \(path) while it has unsaved changes here. Revert to the version on disk, or keep editing and save over it.")
+                Text("Another app changed \(path) while it has unsaved changes here.")
             }
             .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "",
                    item: $project.missingFile) { _ in
                 Button("Save Again") { project.saveMissingFile() }
                 Button("Discard Changes", role: .destructive) { project.closeMissingFile() }
+                // Leaves the edits unsaved in the editor.
+                Button("Cancel", role: .cancel) {}
             } message: { path in
-                Text("Another app moved or deleted \(path), which has unsaved changes here. Save them to make the file again, or discard them and close it.")
+                Text("Another app moved or deleted \(path), which has unsaved changes here.")
             }
     }
 }
