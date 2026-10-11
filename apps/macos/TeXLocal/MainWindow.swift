@@ -41,6 +41,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
                 [weak self] _ in self?.showProject()
             },
             track({ [app] in app.project?.saved }) { [weak self] _ in self?.window?.invalidateRestorableState() },
+            // The close button's dot, for the one time the disk doesn't have what the window shows.
+            track({ [app] in app.project?.saveFailure != nil }) { [weak self] in self?.window?.isDocumentEdited = $0 },
         ]
     }
 

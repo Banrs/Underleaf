@@ -145,11 +145,6 @@ final class AppModel {
     /// Shows the PDF column too, so the action happens now rather than when
     /// the column next appears.
     func requestPDF(_ action: PDFAction) {
-        // Printing needs no pane, and leaves a hidden one hidden.
-        if case .print = action {
-            if let project { project.pdf.print(title: project.id) }
-            return
-        }
         showPDF = true
         performPDF?(action)
     }

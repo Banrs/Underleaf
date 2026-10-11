@@ -164,7 +164,7 @@ struct NewEntry: Equatable {
 }
 
 enum PDFAction {
-    case zoomIn, zoomOut, actualSize, fitWidth, fitPage, goToPage(Int), find, inverseFromView, print
+    case zoomIn, zoomOut, actualSize, fitWidth, fitPage, goToPage(Int), find, inverseFromView
     /// Go to PDF Position's result.
     case reveal(ForwardLoc, SyncTeXWord?)
 }
@@ -235,8 +235,9 @@ extension AppModel {
             if let project, let url = project.pdfURL {
                 exporting = ExportFile(name: "\(project.id).pdf", type: .pdf) { url }
             }
-        // The PDF, not the first responder (usually the source).
-        case .filePrint: requestPDF(.print)
+        // The PDF, not the first responder (usually the source), and whether or not its pane shows.
+        case .filePrint:
+            if let project { project.pdf.print(title: project.id) }
         case .editBold: project?.editor.perform(.bold)
         case .editItalic: project?.editor.perform(.italic)
         case .editUnderline: project?.editor.perform(.underline)

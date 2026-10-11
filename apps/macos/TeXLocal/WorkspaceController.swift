@@ -622,7 +622,6 @@ final class WorkspaceController: RestoredSplitViewController {
         case .fitPage: pdf.fitPage()
         case .goToPage(let page): pdf.go(toPage: page)
         case .find: showPDFFind()
-        case .print: pdf.view.print(with: .shared, autoRotate: true)
         case let .reveal(loc, word): pdf.reveal(loc, word: word)
         case .inverseFromView:
             if case let (page, point)? = pdf.sourcePoint() {
