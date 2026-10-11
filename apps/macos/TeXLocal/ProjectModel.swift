@@ -678,6 +678,7 @@ final class ProjectModel {
         app?.undoManager?.removeAllActions(withTarget: self)
         compileQueued = nil
         folderWatcher = nil
+        removeExport()
         saveTask?.cancel()
         analysis?.cancel()
         symbolsTask?.cancel()
@@ -1033,9 +1034,9 @@ final class ProjectModel {
 
     // ---------- export ----------
 
-    /// In a temporary folder; the save panel copies it where it goes. The core archives the
-    /// files on disk, so the open file's edits are saved first: an archive without them would
-    /// be a stale copy reported as a good one.
+    /// In a temporary folder; the save panel copies it where it goes, and the next export or the
+    /// project's closing removes it. The core archives the files on disk, so the open file's
+    /// edits are saved first: an archive without them would be a stale copy reported as a good one.
     func exportZip() async throws -> URL {
         guard await saveEdits() else {
             let name = openPath?.fileName ?? id
@@ -1043,11 +1044,20 @@ final class ProjectModel {
                 NSLocalizedFailureReasonErrorKey: String(localized: "“\(name)” couldn’t be saved, so the archive would be missing its changes."),
             ])
         }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-            .appendingPathComponent("\(id).zip")
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        removeExport()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        exportFolder = folder
+        let url = folder.appendingPathComponent("\(id).zip")
         try await core.perform("export_zip", ["id": id, "dest": url.path])
         return url
+    }
+
+    @ObservationIgnored private var exportFolder: URL?
+
+    private func removeExport() {
+        if let exportFolder { try? FileManager.default.removeItem(at: exportFolder) }
+        exportFolder = nil
     }
 
     // ---------- search ----------
