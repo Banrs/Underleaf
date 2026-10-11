@@ -539,8 +539,8 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A file dropped on the source opens: the project's own in the editor. One
-    /// from elsewhere is refused: the sidebar copies files in.
+    /// A file dropped on the source opens: the project's own in the editor, but its image goes
+    /// into LaTeX as a figure. One from elsewhere is refused: the sidebar copies files in.
     @Test(.timeLimit(.minutes(1)))
     func aDroppedFileOpens() async throws {
         let (project, folder) = try await opened()
@@ -549,7 +549,17 @@ final class ProjectFlowTests {
         try await waitUntil(timeout: .seconds(5)) { project.tree.flattened.contains { $0.path == "notes.tex" } }
         let drop = project.editor.textView.fileDrop
 
-        let openNotes = try #require(drop(notes))
+        let plot = folder.appending(path: "plot.png")
+        try Data().write(to: plot)
+        try await waitUntil(timeout: .seconds(5)) { project.tree.flattened.contains { $0.path == "plot.png" } }
+        guard case .insert("\\includegraphics{plot.png}") = drop(plot) else {
+            Issue.record("An image dropped on LaTeX is a figure")
+            return
+        }
+        guard case .open(let openNotes) = drop(notes) else {
+            Issue.record("A text file dropped on the source opens")
+            return
+        }
         openNotes()
         try await waitUntil(timeout: .seconds(5)) { project.openPath == "notes.tex" }
         #expect(drop(files.temporaryDirectory.appending(path: "outside.tex")) == nil)

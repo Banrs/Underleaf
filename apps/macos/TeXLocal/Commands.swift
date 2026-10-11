@@ -134,7 +134,7 @@ enum MenuCommand: String, CaseIterable {
         case .compileStop: KeyboardShortcut(".")
         // Xcode's Product › Clean Build Folder.
         case .compileClean: KeyboardShortcut("k", modifiers: [.command, .shift])
-        // As the Mac's VS Code LaTeX extension; the PDF answers a double-click for the other way.
+        // As the Mac's VS Code LaTeX extension; a Command-click goes either way.
         case .syncForward: KeyboardShortcut("j", modifiers: [.command, .option])
         // Xcode's Navigate › Jump to Next Issue.
         case .issueNext: KeyboardShortcut("'")

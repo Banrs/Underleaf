@@ -71,10 +71,55 @@ struct SourceEditorTests {
         text.setSelectedRange(NSRange(location: 0, length: 2))
         text.insertText("[", replacementRange: typed)
         #expect(text.string == "[ab]" && text.selectedRange() == NSRange(location: 1, length: 2))
-        // An empty pair goes as one.
-        open("{}", caret: 1)
+        // An empty pair the editor closed goes as one; one that was there loses only its bracket.
+        open("")
+        text.insertText("{", replacementRange: typed)
         text.deleteBackward(nil)
         #expect(text.string == "")
+        open("{}", caret: 1)
+        text.deleteBackward(nil)
+        #expect(text.string == "}")
+    }
+
+    /// After a backslash a bracket closes with a backslash too, and both of the closer's
+    /// characters are stepped over; an escaped backslash before it is a line break's.
+    @Test func escapedBracketsCloseEscaped() {
+        open("\\")
+        text.insertText("[", replacementRange: typed)
+        #expect(text.string == "\\[\\]" && text.selectedRange() == NSRange(location: 2, length: 0))
+        text.insertText("x", replacementRange: typed)
+        text.insertText("\\", replacementRange: typed)
+        text.insertText("]", replacementRange: typed)
+        #expect(text.string == "\\[x\\]" && text.selectedRange() == NSRange(location: 5, length: 0))
+        open("\\")
+        text.insertText("{", replacementRange: typed)
+        #expect(text.string == "\\{\\}")
+        text.deleteBackward(nil)
+        #expect(text.string == "\\")
+        open("\\")
+        text.insertText("[", replacementRange: typed)
+        text.insertNewline(nil)
+        #expect(text.string == "\\[\n\n\\]" && text.selectedRange() == NSRange(location: 3, length: 0))
+        open("\\\\")
+        text.insertText("[", replacementRange: typed)
+        #expect(text.string == "\\\\[]")
+    }
+
+    /// Escape ends a snippet's fields, opens the list where there's something to complete, and
+    /// is never passed on: the window would leave full screen.
+    @Test func escapeStaysInTheEditor() throws {
+        final class Catcher: NSResponder {
+            var cancelled = false
+            override func cancelOperation(_ sender: Any?) { cancelled = true }
+        }
+        let catcher = Catcher()
+        text.nextResponder = catcher
+        open("plain")
+        text.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(!catcher.cancelled && text.offered == nil)
+        open("\\be")
+        text.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(!catcher.cancelled && text.offered != nil)
     }
 
     /// Settings' two typing switches, off: a bracket goes in alone and comes out alone, and
@@ -198,6 +243,45 @@ struct SourceEditorTests {
         #expect(text.selectedRange().location == NSMaxRange(string.range(of: "\\caption{")))
         text.insertTab(nil)
         #expect(text.selectedRange().location == NSMaxRange(string.range(of: "fig:")))
+        #expect(text.undoManager?.undoActionName == "Insert")
+        open("")
+        #expect(editor.perform(.block, "figure", title: "Figure"))
+        #expect(text.undoManager?.undoActionName == "Insert Figure")
+    }
+
+    /// Writing Tools are kept to the prose: commands, their names, maths and comments are passed over.
+    @Test func writingToolsPassOverTheLaTeX() {
+        let source = "Some \\emph{prose} with $x^2$ and \\label{sec:a}. % note"
+        open(source)
+        let string = source as NSString
+        let ignored = editor.textView(text, writingToolsIgnoredRangesInEnclosingRange: NSRange(location: 0, length: string.length)).map(\.rangeValue)
+        func isIgnored(_ word: String) -> Bool {
+            ignored.contains { NSIntersectionRange($0, string.range(of: word)).length > 0 }
+        }
+        #expect(isIgnored("\\emph") && isIgnored("$x^2$") && isIgnored("sec:a") && isIgnored("% note"))
+        #expect(!isIgnored("Some") && !isIgnored("prose") && !isIgnored("with"))
+        #expect(text.writingToolsBehavior == .limited)
+    }
+
+    /// The context menu has the editor's own commands first and none of the system's that do
+    /// nothing for LaTeX source.
+    @Test func theContextMenuIsTheSourcesOwn() throws {
+        open("word", caret: 0)
+        text.forwardSync = { {} }
+        let menu = NSMenu()
+        for (title, action) in [("Cut", #selector(NSText.cut(_:))), ("Speech", #selector(NSTextView.startSpeaking(_:))),
+                                ("Layout Orientation", #selector(NSTextView.changeLayoutOrientation(_:)))] {
+            menu.addItem(.separator())
+            menu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: ""))
+        }
+        let transformations = NSMenuItem(title: "Transformations", action: nil, keyEquivalent: "")
+        transformations.submenu = NSMenu()
+        transformations.submenu?.addItem(NSMenuItem(title: "Make Upper Case", action: #selector(NSResponder.uppercaseWord(_:)), keyEquivalent: ""))
+        menu.addItem(transformations)
+        let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+                                                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        let shown = try #require(editor.textView(text, menu: menu, for: event, at: 0))
+        #expect(shown.items.map { $0.isSeparatorItem ? "-" : $0.title } == ["Go to PDF Position", "Comment Selection", "-", "Cut"])
     }
 
     /// A line revealed far down is at the top exactly, and stays there as the column
@@ -338,7 +422,7 @@ struct SourceEditorTests {
         #expect(offered.start == 2 && offered.items.first?.label == "\\begin")
         // Return accepts the selected item, the first.
         text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
-        #expect(text.offered == nil)
+        #expect(text.offered == nil && text.undoManager?.undoActionName == "Completion")
         #expect(text.string == "  \\begin{env}\n    \n  \\end{env}")
         #expect(text.selectedRange() == NSRange(location: 9, length: 3))
         text.insertText("itemize", replacementRange: typed)
@@ -500,13 +584,11 @@ struct SourceEditorTests {
         #expect(kept.map(\.range) == ["prosewrod", "commentwrod", "naïvve", "afterwrod"].map(relative))
     }
 
-    /// The text view in a scroll view, as SwiftUI's scroll view holds it in the app.
+    /// The editor's scroll view in a window.
     private func inWindow() -> NSWindow {
         let window = Self.window()
-        let scrollView = NSScrollView(frame: window.contentView!.bounds)
-        scrollView.documentView = editor.textView
-        editor.textView.frame.size.width = scrollView.contentSize.width
-        window.contentView!.addSubview(scrollView)
+        editor.scrollView.frame = window.contentView!.bounds
+        window.contentView!.addSubview(editor.scrollView)
         editor.shown = true
         return window
     }
@@ -548,6 +630,42 @@ struct SourceEditorTests {
         try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.colours.command }
     }
 
+    /// An edit recolours the shown lines after it, which it can change: display maths opened
+    /// above them makes a stray closing delimiter theirs.
+    @Test func anEditRecoloursTheLinesBelowIt() async throws {
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
+        open("a\nb\nxyz\n\\]", caret: 0)
+        let colours = SyntaxTheme.overleaf.colours
+        try await waitUntil { (try? self.colour(of: "]")) == colours.invalid }
+        text.insertText("\\[\n", replacementRange: NSRange(location: 2, length: 0))
+        try await waitUntil { (try? self.colour(of: "]")) == colours.maths }
+        text.undoManager?.undo()
+        try await waitUntil { (try? self.colour(of: "]")) == colours.invalid }
+    }
+
+    /// With Reduce Motion a bracket's partner is filled where it is, not bounced, until the caret next moves.
+    @Test func reduceMotionMarksABracketsPartnerInPlace() throws {
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
+        open("(a)", caret: 0)
+        text.reducesMotion = { true }
+        _ = try colour(of: "a")
+        func filled() throws -> [Int] {
+            let manager = try #require(text.textLayoutManager)
+            var offsets: [Int] = []
+            manager.enumerateRenderingAttributes(from: manager.documentRange.location, reverse: false) { _, attributes, range in
+                if attributes[.backgroundColor] != nil { offsets.append(self.text.offset(range.location)) }
+                return true
+            }
+            return offsets
+        }
+        text.moveRight(nil)
+        #expect(try filled() == [2])
+        text.moveRight(nil)
+        #expect(try filled() == [])
+    }
+
     /// Choosing another colour theme recolours what is open.
     @Test func aThemeRecoloursTheText() async throws {
         // Held to the end: the text lays out in it.
@@ -564,7 +682,7 @@ struct SourceEditorTests {
         #expect(try colour(of: "% note") == SyntaxTheme.texstudio.colours.comment)
         let before = try renderedText()
         text.syntaxTheme = .system
-        try await waitUntil { (try? self.colour(of: "\\section")) == NSColor.systemPink } state: {
+        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.system.colours.command } state: {
             "System: \(String(describing: try? self.colour(of: "\\section")))"
         }
         #expect(try renderedText() != before, "A theme change must repaint the already-visible text.")
@@ -572,32 +690,30 @@ struct SourceEditorTests {
         try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.colours.command }
     }
 
-    /// With Increase Contrast every theme colour reaches 7:1 on the text's background, as little
-    /// changed as that takes: one that has it already stays as it is.
-    @Test(arguments: [NSAppearance.Name.aqua, .darkAqua])
-    func increasedContrastRaisesTheThemes(appearance: NSAppearance.Name) throws {
+    /// Every theme colour reaches the HIG's 4.5:1 on the text's background, and 7:1 with Increase
+    /// Contrast, as little changed as that takes: one that has it already stays as it is.
+    @Test(arguments: [NSAppearance.Name.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
+    func theThemesAreLegible(name: NSAppearance.Name) throws {
+        let appearance = try #require(NSAppearance(named: name))
         func resolved(_ color: NSColor) -> NSColor {
             var out = color
-            NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance { out = color.usingColorSpace(.sRGB) ?? color }
+            appearance.performAsCurrentDrawingAppearance { out = color.usingColorSpace(.sRGB) ?? color }
             return out
         }
         let background = resolved(.textBackgroundColor)
-        for theme in [SyntaxTheme.overleaf, .texstudio] {
+        for theme in SyntaxTheme.allCases {
             let c = theme.colours
             for color in [c.command, c.keyword, c.argument, c.maths, c.comment, c.invalid].map(resolved) {
-                let raised = color.contrasting(in: appearance, by: 7)
-                #expect(raised.contrast(with: background) >= 7, "\(theme) \(color)")
-                if color.contrast(with: background) >= 7 { #expect(raised == color) }
+                #expect(color.contrast(with: background) >= (appearance.increasesContrast ? 7 : 4.5), "\(theme) \(color)")
             }
         }
-        // Overleaf's Light comments, at 4.2:1, are raised; its commands, at 8.6:1, are not.
-        if appearance == .aqua {
-            #expect(resolved(SyntaxTheme.overleaf.colours.comment).contrast(with: background) < 4.5)
-        }
+        // Overleaf's Light commands, at 8.6:1, are its own blue.
+        if name == .aqua { #expect(resolved(SyntaxTheme.overleaf.colours.command) == NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)) }
     }
 
-    /// A double-click goes to the PDF from the word it selects; a single click only places the caret.
-    @Test func aDoubleClickGoesToThePDF() throws {
+    /// A Command-click goes to the PDF from where it lands; a click and a double-click are the
+    /// system's, which place the caret and select the word.
+    @Test func aCommandClickGoesToThePDF() throws {
         let window = inWindow()
         open("one two", caret: 0)
         text.layoutSubtreeIfNeeded()
@@ -605,17 +721,81 @@ struct SourceEditorTests {
         text.forwardSync = { { went += 1 } }
         let glyph = text.firstRect(forCharacterRange: NSRange(location: 4, length: 1), actualRange: nil)
         let point = window.convertPoint(fromScreen: NSPoint(x: glyph.minX + 1, y: glyph.midY))
-        func event(_ type: NSEvent.EventType, clicks: Int) throws -> NSEvent {
-            try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
-                                            context: nil, eventNumber: 0, clickCount: clicks, pressure: 1))
+        func event(_ type: NSEvent.EventType, clicks: Int, command: Bool = false) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: command ? .command : [], timestamp: 0,
+                                            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1))
         }
         for clicks in 1...2 {
             // The release ends the text view's own tracking.
             NSApp.postEvent(try event(.leftMouseUp, clicks: clicks), atStart: false)
             text.mouseDown(with: try event(.leftMouseDown, clicks: clicks))
-            #expect(went == clicks - 1)
         }
-        #expect(text.selectedRange() == NSRange(location: 4, length: 3))
+        #expect(went == 0 && text.selectedRange() == NSRange(location: 4, length: 3))
+        text.mouseDown(with: try event(.leftMouseDown, clicks: 1, command: true))
+        #expect(went == 1 && text.selectedRange() == NSRange(location: 4, length: 0))
+    }
+
+    /// A click in the gutter selects its line, with Shift from the selection there was; on a
+    /// line the build marked it also asks for the issue.
+    @Test func aClickInTheGutterSelectsTheLine() throws {
+        let window = inWindow()
+        open("one\ntwo\nthree", caret: 0)
+        text.layoutSubtreeIfNeeded()
+        text.issueLines = [2: true]
+        var asked: [Int] = []
+        text.issueClicked = { asked.append($0) }
+        func click(line: Int, shift: Bool = false) throws {
+            let glyph = text.firstRect(forCharacterRange: NSRange(location: text.document.lineStart(line), length: 1), actualRange: nil)
+            let inText = window.convertPoint(fromScreen: NSPoint(x: glyph.minX, y: glyph.midY))
+            let point = NSPoint(x: text.convert(NSPoint(x: 5, y: 0), to: nil).x, y: inText.y)
+            func event(_ type: NSEvent.EventType) throws -> NSEvent {
+                try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: shift ? .shift : [], timestamp: 0,
+                                                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            }
+            // The release ends the tracking.
+            NSApp.postEvent(try event(.leftMouseUp), atStart: false)
+            text.mouseDown(with: try event(.leftMouseDown))
+        }
+        try click(line: 1)
+        #expect(text.selectedRange() == NSRange(location: 0, length: 4) && asked.isEmpty)
+        try click(line: 3, shift: true)
+        #expect(text.selectedRange() == NSRange(location: 0, length: 13))
+        try click(line: 2)
+        #expect(text.selectedRange() == NSRange(location: 4, length: 4) && asked == [2])
+    }
+
+    /// VoiceOver's rotors step through the file's headings and the lines with build issues, either way.
+    @Test func theRotorsStepThroughHeadingsAndIssues() throws {
+        open("a\n\\section{One}\nb\n\\section{Two}\nc", caret: 0)
+        text.headings = { [(2, "One"), (4, "Two")] }
+        text.issueLines = [3: true, 5: false]
+        let rotors = text.accessibilityCustomRotors()
+        let headings = try #require(rotors.first { $0.type == .heading }), issues = try #require(rotors.first { $0.type == .custom })
+        #expect(issues.label == "Issues")
+        func step(_ rotor: NSAccessibilityCustomRotor, from: NSAccessibilityCustomRotor.ItemResult?, next: Bool = true) -> NSAccessibilityCustomRotor.ItemResult? {
+            let search = NSAccessibilityCustomRotor.SearchParameters()
+            search.currentItem = from
+            search.searchDirection = next ? .next : .previous
+            return text.rotor(rotor, resultFor: search)
+        }
+        let one = try #require(step(headings, from: nil))
+        #expect(one.customLabel == "One" && one.targetRange == NSRange(location: 2, length: 14))
+        let two = try #require(step(headings, from: one))
+        #expect(two.customLabel == "Two" && step(headings, from: two) == nil)
+        #expect(step(headings, from: two, next: false)?.customLabel == "One")
+        let error = try #require(step(issues, from: nil))
+        #expect(error.customLabel == "Error on line 3" && step(issues, from: error)?.customLabel == "Warning on line 5")
+    }
+
+    /// The View menu's text size steps a point at a time and stops at the ends of Settings' range.
+    @Test func theTextSizeStepsWithinItsRange() {
+        let defaults = UserDefaults.standard, before = defaults.object(forKey: EditorPrefs.fontSizeKey)
+        defer { defaults.set(before, forKey: EditorPrefs.fontSizeKey) }
+        defaults.set(27, forKey: EditorPrefs.fontSizeKey)
+        #expect(EditorPrefs.stepFontSize(by: 1, dryRun: true) && defaults.integer(forKey: EditorPrefs.fontSizeKey) == 27)
+        #expect(EditorPrefs.stepFontSize(by: 1) && defaults.integer(forKey: EditorPrefs.fontSizeKey) == 28)
+        #expect(!EditorPrefs.stepFontSize(by: 1) && defaults.integer(forKey: EditorPrefs.fontSizeKey) == 28)
+        #expect(EditorPrefs.stepFontSize(by: -1) && defaults.integer(forKey: EditorPrefs.fontSizeKey) == 27)
     }
 
     /// Go to Line…'s sheet puts the caret at its line's start.

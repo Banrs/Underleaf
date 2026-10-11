@@ -1,12 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// What a completion is, for its badge.
-enum CompletionKind {
+/// What a completion is, for its badge (crates/texlocal-syntax `CompletionKind`).
+nonisolated enum CompletionKind: String, Decodable {
     case command, environment, label, citation, entryType
 
     /// A letter on a coloured square, as Xcode's kinds; the colour is the editor's for the same text.
-    func badge(in theme: SyntaxTheme) -> (symbol: String, color: NSColor, name: String) {
+    @MainActor func badge(in theme: SyntaxTheme) -> (symbol: String, color: NSColor, name: String) {
         let colours = theme.colours
         return switch self {
         case .command: ("c.square.fill", colours.command, String(localized: "Command"))
@@ -18,235 +18,191 @@ enum CompletionKind {
     }
 }
 
-/// The core's completions under the caret: a SwiftUI list on the system's glass, in a
-/// panel that never takes the keyboard, so typing stays in the document, which moves
-/// the selection and accepts it.
-final class CompletionList {
+/// The core's completions under the caret, as a menu that doesn't take the keyboard: a table on
+/// the system's glass with a menu's metrics (macOS 27's design kit: 12 pt corners, items 6 pt
+/// down and 5 pt up, their highlight 5 pt in with 8 pt corners, their content 16 pt in). The
+/// glass is in the document's own window, over its content: glass in a window of its own has
+/// nothing behind it to show, and draws flat grey with no edge or shadow (27.2). Typing stays in
+/// the document, which moves the selection and accepts it.
+final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     /// A click chose this row.
     var clicked: (Int) -> Void = { _ in }
-    var selection: Int { rows.selection ?? 0 }
+    var selection: Int { max(table.selectedRow, 0) }
 
-    private let panel = Panel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
-    /// Key to what it holds, so its list draws as focused; the document's window keeps the keyboard.
-    private final class Panel: NSPanel {
-        override var isKeyWindow: Bool { true }
-    }
-    private let rows = Rows()
+    private let table = NSTableView()
+    private let scroll = NSScrollView()
+    private let glass = NSGlassEffectView()
+    private var labels: [String] = []
+    private var badge = CompletionKind.command.badge(in: .overleaf)
+    private var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
     /// At most this many rows show; the rest scroll.
     private static let shownRows = 8
+    private static let cell = NSUserInterfaceItemIdentifier("completion")
 
-    init() {
-        let glass = NSGlassEffectView()
-        glass.contentView = NSHostingView(rootView: RowsView(rows: rows) { [unowned self] in clicked($0) })
-        panel.contentView = glass
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.isReleasedWhenClosed = false
-        // After the layout pass that measured them: resizing the panel inside it would lay
-        // the same hosting view out again, which AppKit skips (#30).
-        rows.measured = { [weak self] in
-            guard let self, !fitPending else { return }
-            fitPending = true
-            Task { [weak self] in
-                self?.fitPending = false
-                self?.fit()
-            }
+    private static let radius: CGFloat = 12, top: CGFloat = 6, bottom: CGFloat = 5
+    private static let highlightInset: CGFloat = 5, highlightRadius: CGFloat = 8, contentInset: CGFloat = 16
+
+    /// Selected as the list that has the keyboard, though the document has it, in a menu
+    /// item's shape.
+    private final class Row: NSTableRowView {
+        override var isEmphasized: Bool {
+            get { true }
+            set {}
+        }
+
+        override func drawSelection(in dirtyRect: NSRect) {
+            NSColor.selectedContentBackgroundColor.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: CompletionList.highlightInset, dy: 0),
+                         xRadius: CompletionList.highlightRadius, yRadius: CompletionList.highlightRadius).fill()
         }
     }
 
-    private var fitPending = false
+    override init() {
+        super.init()
+        table.addTableColumn(NSTableColumn(identifier: Self.cell))
+        table.headerView = nil
+        table.style = .fullWidth
+        table.intercellSpacing = .zero
+        table.backgroundColor = .clear
+        table.dataSource = self
+        table.delegate = self
+        table.target = self
+        table.action = #selector(click)
+        scroll.documentView = table
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsets(top: Self.top, left: 0, bottom: Self.bottom, right: 0)
+        // A click chooses a row and leaves the keyboard in the document.
+        table.refusesFirstResponder = true
+        glass.cornerRadius = Self.radius
+        glass.contentView = scroll
+    }
 
-    /// Shows `rows` in `font` with the first selected, the labels' text under
-    /// the typed text's start, `start`: a screen rect of `window`'s. Without a
-    /// window it holds them unseen.
-    func show(_ rows: [(label: String, kind: CompletionKind)], font: NSFont, theme: SyntaxTheme, under start: NSRect, in window: NSWindow?) {
-        guard !rows.isEmpty else { return close() }
-        if self.rows.font != font { self.rows.metrics = nil }
-        self.rows.items = rows.map { Item(label: $0.label, badge: $0.kind.badge(in: theme)) }
-        self.rows.font = font
-        guard let window else {
-            self.rows.selection = 0
-            return
-        }
-        let opening = parent == nil
-        if parent !== window {
-            parent?.removeChildWindow(panel)
-            // Room to lay the rows out in, before the list has measured them.
-            if self.rows.metrics == nil { panel.setContentSize(NSSize(width: font.pointSize * 30, height: font.pointSize * 20)) }
-        }
-        parent = window
-        self.start = start
-        // Shown once the list has measured its rows (`fit`).
-        panel.contentView?.layoutSubtreeIfNeeded()
-        focusList()
-        self.rows.selection = 0
+    /// Shows `labels`, all of one kind, in `font` with the first selected, their text under
+    /// the typed text's start, `start`: a screen rect of `window`'s, and over `floor`, a
+    /// height on the screen. Without a window it holds them unseen.
+    func show(_ labels: [String], kind: CompletionKind, font: NSFont, theme: SyntaxTheme, under start: NSRect,
+              over floor: CGFloat, in window: NSWindow?) {
+        guard !labels.isEmpty else { return close() }
+        self.labels = labels
+        self.font = font
+        badge = kind.badge(in: theme)
+        // The system's 24 pt row at its 13 pt text, for the editor's font.
+        table.rowHeight = (font.ascender - font.descender + font.leading).rounded(.up) + 8
+        table.reloadData()
+        table.selectRowIndexes([0], byExtendingSelection: false)
+        table.scrollRowToVisible(0)
+        // Over everything in the window, the toolbar too.
+        guard let host = window?.contentView?.superview else { return }
+        let opening = glass.superview == nil
+        if glass.superview !== host { host.addSubview(glass, positioned: .above, relativeTo: nil) }
         fit()
+        place(under: start, over: floor)
         if opening { announce() }
     }
 
-    /// The panel never has VoiceOver's focus, which stays in the document: the row chosen is
+    /// The list never has VoiceOver's focus, which stays in the document: the row chosen is
     /// spoken as the list opens and as the arrows move through it, as Xcode's list speaks it.
     private func announce() {
-        guard rows.items.indices.contains(selection) else { return }
-        let item = rows.items[selection]
-        let position = String(localized: "\(selection + 1) of \(rows.items.count)")
-        var announcement = AttributedString([item.label, item.badge.name, position].formatted(.list(type: .and, width: .narrow)))
+        guard labels.indices.contains(selection) else { return }
+        let position = String(localized: "\(selection + 1) of \(labels.count)")
+        var announcement = AttributedString([labels[selection], badge.name, position].formatted(.list(type: .and, width: .narrow)))
         announcement.accessibilitySpeechAnnouncementPriority = .high
         AccessibilityNotification.Announcement(announcement).post()
     }
 
-    /// Selected as the list that has the keyboard, though the document has it: a table
-    /// draws the focused list's selection only as its key window's first responder, which
-    /// the panel says it is while never taking the keyboard. SwiftUI's own focus (`focused`)
-    /// gives the row the focused list's fill but the unfocused one's text (27.2).
-    private func focusList() {
-        func table(in view: NSView) -> NSTableView? {
-            view as? NSTableView ?? view.subviews.lazy.compactMap(table).first
-        }
-        guard !(panel.firstResponder is NSTableView), let content = panel.contentView, let list = table(in: content) else { return }
-        panel.makeFirstResponder(list)
-    }
+    /// From the glass's leading edge to its labels' text.
+    private var textStart: CGFloat = 0
 
-    private weak var parent: NSWindow?
-    private var start = NSRect.zero
-
-    /// Sized to its rows and widest label, from where the list puts the first row and its text.
+    /// Sized to its rows and widest label.
     private func fit() {
-        guard let metrics = rows.metrics, let parent, !rows.items.isEmpty else { return }
         // The editor's font is monospaced: the longest label is the widest.
-        let longest = rows.items.max { $0.label.count < $1.label.count }?.label ?? ""
-        let widest = (longest as NSString).size(withAttributes: [.font: rows.font]).width
-        let screen = (parent.screen ?? NSScreen.main)?.visibleFrame ?? .infinite
-        let size = NSSize(width: min(metrics.textStart + widest.rounded(.up) + metrics.textEnd, screen.width / 2),
-                          height: metrics.height(rows: min(rows.items.count, Self.shownRows)))
-        if panel.contentView?.frame.size != size { panel.setContentSize(size) }
-        place(under: start)
-        if panel.parent !== parent { parent.addChildWindow(panel, ordered: .above) }
+        guard let host = glass.superview, let longest = labels.indices.max(by: { labels[$0].count < labels[$1].count }),
+              let cell = tableView(table, viewFor: nil, row: longest) as? NSTableCellView, let text = cell.textField else { return }
+        var width = cell.fittingSize.width.rounded(.up)
+        cell.setFrameSize(NSSize(width: width, height: table.rowHeight))
+        cell.layoutSubtreeIfNeeded()
+        // The table keeps its cells in from a row's ends; a label's text starts 2 pt into its frame.
+        let inRow = table.frameOfCell(atColumn: 0, row: 0)
+        width += table.rect(ofRow: 0).width - inRow.width
+        textStart = inRow.minX + text.frame.minX + 2
+        let rows = CGFloat(min(labels.count, Self.shownRows))
+        glass.setFrameSize(NSSize(width: min(width, host.bounds.width / 2), height: rows * table.rowHeight + Self.top + Self.bottom))
+        glass.layoutSubtreeIfNeeded()
+        table.sizeLastColumnToFit()
     }
 
     /// Over the typed text, there being no room under it.
     private(set) var isAbove = false
 
-    /// Moves it under `start`, a screen rect, or over it when there's no room under it.
-    func place(under start: NSRect) {
-        self.start = start
-        guard let window = parent, let metrics = rows.metrics else { return }
-        let screen = (window.screen ?? NSScreen.main)?.visibleFrame ?? .infinite
-        var frame = NSRect(origin: NSPoint(x: start.minX - metrics.textStart, y: start.minY - panel.frame.height), size: panel.frame.size)
-        isAbove = frame.minY < screen.minY
+    /// Moves it under `start`, a screen rect, or over it when there's no room under it down to `floor`.
+    func place(under start: NSRect, over floor: CGFloat) {
+        guard let host = glass.superview, let window = host.window else { return }
+        var room = host.bounds
+        let foot = host.convert(window.convertFromScreen(NSRect(x: 0, y: floor, width: 0, height: 0)), from: nil).minY
+        room = NSRect(x: room.minX, y: foot, width: room.width, height: room.maxY - foot)
+        let start = host.convert(window.convertFromScreen(start), from: nil)
+        var frame = glass.frame
+        frame.origin = NSPoint(x: start.minX - textStart, y: start.minY - frame.height)
+        isAbove = frame.minY < room.minY
         if isAbove { frame.origin.y = start.maxY }
-        frame.origin.x = max(screen.minX, min(frame.minX, screen.maxX - frame.width))
-        panel.setFrame(frame, display: true)
+        frame.origin.x = max(room.minX, min(frame.minX, room.maxX - frame.width))
+        glass.frame = frame
     }
 
     func close() {
-        panel.parent?.removeChildWindow(panel)
-        panel.orderOut(nil)
-        parent = nil
-        rows.items = []
+        glass.removeFromSuperview()
+        labels = []
+        table.reloadData()
     }
 
     /// Moves the selection by `step` rows, stopping at the ends.
     func move(_ step: Int) {
-        guard !rows.items.isEmpty else { return }
-        rows.selection = max(0, min(rows.items.count - 1, selection + step))
+        guard !labels.isEmpty else { return }
+        let row = max(0, min(labels.count - 1, selection + step))
+        table.selectRowIndexes([row], byExtendingSelection: false)
+        table.scrollRowToVisible(row)
         announce()
     }
 
-    fileprivate struct Item {
-        let label: String
-        let badge: (symbol: String, color: NSColor, name: String)
+    @objc private func click() {
+        if table.clickedRow >= 0 { clicked(table.clickedRow) }
     }
 
-    /// Where the list lays out its rows, measured in the window: the first label's top and
-    /// height, the gap from one row to the next, and its text from the list's leading side.
-    /// The rows' content is inset as far at the trailing side as at the leading one.
-    fileprivate struct Metrics: Equatable {
-        var top: CGFloat
-        var labelHeight: CGFloat
-        var pitch: CGFloat?
-        var textStart: CGFloat
-        var textEnd: CGFloat
+    func numberOfRows(in tableView: NSTableView) -> Int { labels.count }
 
-        /// The same space under the last label as over the first.
-        func height(rows: Int) -> CGFloat {
-            2 * top + labelHeight + CGFloat(rows - 1) * (pitch ?? labelHeight)
-        }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { Row() }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let cell = tableView.makeView(withIdentifier: Self.cell, owner: nil) as? NSTableCellView ?? Self.makeCell()
+        cell.textField?.stringValue = labels[row]
+        cell.textField?.font = font
+        // The letter in the text's background: white on Light's deep squares, dark on Dark's pale ones.
+        cell.imageView?.image = NSImage(systemSymbolName: badge.symbol, accessibilityDescription: badge.name)?
+            .withSymbolConfiguration(.init(pointSize: font.pointSize, weight: .regular)
+                .applying(.init(paletteColors: [.textBackgroundColor, badge.color])))
+        return cell
     }
 
-    @Observable fileprivate final class Rows {
-        var items: [Item] = []
-        var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        var selection: Int?
-        @ObservationIgnored var metrics: Metrics? {
-            didSet { if metrics != oldValue { measured() } }
+    private static func makeCell() -> NSTableCellView {
+        let cell = NSTableCellView(), image = NSImageView(), text = NSTextField(labelWithString: "")
+        cell.identifier = Self.cell
+        text.lineBreakMode = .byTruncatingTail
+        for view in [image, text] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(view)
         }
-        @ObservationIgnored var measured: () -> Void = {}
-    }
-
-    private struct RowsView: View {
-        let rows: Rows
-        let click: (Int) -> Void
-        @State private var list = CGRect.zero
-        @State private var first: (label: CGRect, text: CGRect)?
-        @State private var second: CGRect?
-
-        var body: some View {
-            @Bindable var rows = rows
-            ScrollViewReader { proxy in
-                List(selection: $rows.selection) {
-                    ForEach(rows.items.indices, id: \.self) { index in
-                        row(rows.items[index], index)
-                            .listRowSeparator(.hidden)
-                            .simultaneousGesture(TapGesture().onEnded { click(index) })
-                    }
-                }
-                .listStyle(.inset)
-                .scrollContentBackground(.hidden)
-                .onChange(of: rows.selection) { if let row = rows.selection { proxy.scrollTo(row) } }
-            }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { list = $0; measure() }
-        }
-
-        private func row(_ item: Item, _ index: Int) -> some View {
-            Label {
-                Text(item.label)
-                    .font(Font(rows.font))
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { text in
-                        guard index == 0, let label = first?.label else { return }
-                        first = (label, text)
-                        measure()
-                    }
-            } icon: {
-                // The letter in the text's background: white on Light's deep squares, dark on Dark's pale ones.
-                Image(systemName: item.badge.symbol)
-                    .font(.system(size: rows.font.pointSize))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(Color(nsColor: .textBackgroundColor), Color(nsColor: item.badge.color))
-            }
-            .lineLimit(1)
-            // One element: the label, then its kind.
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Text(verbatim: item.label))
-            .accessibilityValue(Text(item.badge.name))
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { label in
-                switch index {
-                case 0: first = (label, first?.text ?? label)
-                case 1: second = label
-                default: return
-                }
-                measure()
-            }
-        }
-
-        /// The list's own margins, for the panel's size: in global space, y runs down.
-        private func measure() {
-            // Only rows laid out inside the list: a row not yet placed reports no real frame.
-            guard let first, list.width > 0, first.text.width > 0, list.contains(first.text), list.contains(first.label) else { return }
-            let pitch = second.flatMap { $0.minY > first.label.minY && list.contains($0) ? $0.minY - first.label.minY : nil }
-                ?? rows.metrics?.pitch
-            rows.metrics = Metrics(top: first.label.minY - list.minY, labelHeight: first.label.height, pitch: pitch,
-                                   textStart: first.text.minX - list.minX, textEnd: first.label.minX - list.minX)
-        }
+        cell.imageView = image
+        cell.textField = text
+        image.setContentHuggingPriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: contentInset),
+            image.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            text.leadingAnchor.constraint(equalToSystemSpacingAfter: image.trailingAnchor, multiplier: 1),
+            text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -contentInset),
+            text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
     }
 }

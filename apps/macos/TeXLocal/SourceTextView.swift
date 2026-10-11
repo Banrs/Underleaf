@@ -3,10 +3,8 @@ import AppKit
 /// Native TextKit 2 handles typing, undo and accessibility. `SourceDocument`
 /// supplies LaTeX syntax; this view adds the gutter, colours, completion,
 /// brackets and indentation, with core edits grouped into undo steps.
-final class SourceTextView: NSTextView, NSTextStorageDelegate {
-    /// A plain-text document view, as `scrollablePlainDocumentContentTextView` sets one up, to go
-    /// in SwiftUI's scroll view: that is an NSScrollView underneath (27.2), so TextKit 2's viewport
-    /// stays bounded by its clip and the scrolling code here finds it as `enclosingScrollView`.
+final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCustomRotorItemSearchDelegate {
+    /// A plain-text document view for a scroll view, as `scrollablePlainDocumentContentTextView` sets one up.
     static func plainDocument() -> SourceTextView {
         let view = SourceTextView(usingTextLayoutManager: true)
         view.isRichText = false
@@ -23,56 +21,30 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         return view
     }
 
-    /// The view has a new scroll view, or none (`SourceEditor` watches its scrolling). SwiftUI
-    /// puts the view in its scroll view after its superview (27.2), so it's told as it's sized.
-    var attached: () -> Void = {}
-    private weak var attachedTo: NSScrollView?
-
-    private func noteScrollView() {
-        guard enclosingScrollView !== attachedTo else { return }
-        attachedTo = enclosingScrollView
-        attached()
+    /// The pointer is the split divider's by it and the arrow over the gutter, where a click
+    /// selects lines; elsewhere the text view sets its own, on every move.
+    private func setsCursor(with event: NSEvent) -> Bool {
+        if updateDividerCursor(with: event) { return true }
+        guard inGutter(event) else { return false }
+        NSCursor.arrow.set()
+        return true
     }
 
-    override func viewDidMoveToSuperview() {
-        super.viewDidMoveToSuperview()
-        noteScrollView()
-        reportContentHeight()
-    }
-
-    /// The height the text takes, as the view sizes itself to it by TextKit 2's estimates where it
-    /// hasn't laid out, and at least what shows, so it takes clicks under a short document.
-    /// SwiftUI's scroll view sizes it by this (`SourceColumn`), told through `heightChanged`:
-    /// SwiftUI doesn't measure a representable again on its own.
-    var heightChanged: (CGFloat) -> Void = { _ in }
-
-    private var reportedHeight: CGFloat = 0, sizing = false
-
-    func reportContentHeight() {
-        guard !sizing else { return }
-        sizing = true
-        defer { sizing = false }
-        if let clip = enclosingScrollView?.contentView {
-            minSize = NSSize(width: 0, height: clip.bounds.height - clip.contentInsets.top - clip.contentInsets.bottom)
-        }
-        sizeToFit()
-        let height = frame.height
-        guard height != reportedHeight else { return }
-        reportedHeight = height
-        heightChanged(height)
+    private func inGutter(_ event: NSEvent) -> Bool {
+        let point = convert(event.locationInWindow, from: nil)
+        return visibleRect.contains(point) && point.x < textContainerOrigin.x
     }
 
     override func mouseMoved(with event: NSEvent) {
-        if updateDividerCursor(with: event) { return }
-        super.mouseMoved(with: event)
+        if !setsCursor(with: event) { super.mouseMoved(with: event) }
     }
 
     override func mouseEntered(with event: NSEvent) {
-        if !updateDividerCursor(with: event) { super.mouseEntered(with: event) }
+        if !setsCursor(with: event) { super.mouseEntered(with: event) }
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) }
+        if !setsCursor(with: event) { super.cursorUpdate(with: event) }
     }
 
     /// The open file's text as the core mirrors it; every change reaches it.
@@ -82,7 +54,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     var committedString: String { hasMarkedText() ? beforeMarkedText ?? string : string }
     var symbols = Symbols(citations: [], labels: [])
     /// What dropping a file does, or nil to refuse it.
-    var fileDrop: (URL) -> (() -> Void)? = { _ in nil }
+    var fileDrop: (URL) -> FileDrop? = { _ in nil }
+
+    enum FileDrop {
+        case open(() -> Void)
+        /// LaTeX to put in where it's dropped: a figure's `\includegraphics`.
+        case insert(String)
+    }
     /// Go to PDF Position, or nil while there's no PDF or no TeX open.
     var forwardSync: () -> (() -> Void)? = { nil }
 
@@ -101,12 +79,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         loading = false
         document = SourceDocument(text: text)
         lastMath = nil
+        dismissedMath = nil
         snippet = nil
         closers.removeAll()
         closeCompletions()
         updateGutterWidth()
-        recolour()
-        reportContentHeight()
+        staleColours = 0
     }
 
     // MARK: edits reach the core
@@ -126,6 +104,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let old = NSRange(location: edited.location, length: edited.length - delta)
         document.edit(old, with: (textStorage.string as NSString).substring(with: edited))
         edits += 1
+        staleColours = min(staleColours ?? edited.location, edited.location)
         // The fields follow the change itself, when it's the one expected.
         let changed = changing.flatMap { $0.location == old.location && NSMaxRange($0) <= NSMaxRange(old) ? $0 : nil }
         changing = nil
@@ -180,7 +159,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     var syntaxTheme = SyntaxTheme.overleaf {
         didSet {
             guard syntaxTheme != oldValue else { return }
-            recolour(redrawing: true)
+            colour(from: 0)
+            redrawFragments()
         }
     }
 
@@ -223,8 +203,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             storage.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: storage.length))
         }
         typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: style]
-        // Xcode's numbers, measured: semi-condensed SF a point under the text, tabular.
-        let numbers = NSFont.systemFont(ofSize: fontSize - 1, weight: .regular, width: NSFont.Width(rawValue: -0.1))
+        // Xcode's numbers, measured: semi-condensed SF a point under the text, tabular; never under
+        // the 10 points the HIG gives as the Mac's smallest text.
+        let numbers = NSFont.systemFont(ofSize: max(10, fontSize - 1), weight: .regular, width: NSFont.Width(rawValue: -0.1))
         numberFont = NSFont(descriptor: numbers.fontDescriptor.addingAttributes([.featureSettings: [[
             NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
             .selectorIdentifier: kMonospacedNumbersSelector]]]), size: 0) ?? numbers
@@ -258,6 +239,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     var issueLines: [Int: Bool] = [:] {
         didSet { if issueLines != oldValue { redrawLineAndGutter() } }
     }
+    /// A click on a marked line's gutter: the build panel shows what the mark is for.
+    var issueClicked: (Int) -> Void = { _ in }
+    /// The build panel's symbols, an error's and a warning's, to fit the gutter's 14 pt margin.
+    private static let issueSymbols = [true: "xmark.octagon.fill", false: "exclamationmark.triangle.fill"].compactMapValues {
+        NSImage(systemSymbolName: $0, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular).applying(.preferringMulticolor()))
+    }
 
     /// Settings' Show Line Numbers. Off, the gutter is a margin that keeps the issues' marks.
     var showsLineNumbers = true {
@@ -287,8 +275,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     // The top paragraph stays put: TextKit 2 keeps the offset, over heights a new width re-estimates (27.2).
     override func setFrameSize(_ size: NSSize) {
-        noteScrollView()
-        defer { reportContentHeight() }
         guard size.width != frame.width else { return super.setFrameSize(size) }
         keepingTopLine {
             super.setFrameSize(size)
@@ -341,25 +327,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             let line = fragment.textLineFragments.last { $0.characterRange.location <= inParagraph } ?? fragment.textLineFragments.first
             return paragraph.minY + (line?.typographicBounds.midY ?? paragraph.height / 2) - insets.top - shown / 2
         }
-    }
-
-    /// The caret's autoscroll as it moves or text is typed: SwiftUI's clip view takes no
-    /// `scrollToVisible` from a view inside it (27.2), so the clip is scrolled here, the least
-    /// that shows the rect between the bars.
-    override func scrollToVisible(_ rect: NSRect) -> Bool {
-        guard let scroll = enclosingScrollView else { return super.scrollToVisible(rect) }
-        let clip = scroll.contentView, insets = clip.contentInsets
-        let target = convert(rect, to: clip)
-        let shown = NSRect(x: clip.bounds.minX, y: clip.bounds.minY + insets.top, width: clip.bounds.width,
-                           height: clip.bounds.height - insets.top - insets.bottom)
-        var origin = clip.bounds.origin
-        if target.minY < shown.minY { origin.y -= shown.minY - target.minY }
-        else if target.maxY > shown.maxY { origin.y += min(target.maxY - shown.maxY, target.minY - shown.minY) }
-        origin = clip.constrainBoundsRect(NSRect(origin: origin, size: clip.bounds.size)).origin
-        guard origin != clip.bounds.origin else { return false }
-        clip.scroll(to: origin)
-        scroll.reflectScrolledClipView(clip)
-        return true
     }
 
     /// Laying the range out first: far from the viewport it has no rect yet, and TextKit 2's
@@ -415,12 +382,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
         fragments.sort { $0.offset < $1.offset }
-        reportContentHeight()
-        // Invalidated, the fragments laid out before keep no colours until validated again.
-        if needsColours, let manager = textLayoutManager {
-            needsColours = false
-            for (_, fragment) in fragments { manager.renderingAttributesValidator?(manager, fragment) }
-        }
+        if let from = staleColours { colour(from: from) }
         // Scrolled, it follows the text.
         if offered != nil { showCompletions(reload: false) }
         redrawLineAndGutter()
@@ -497,11 +459,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             guard frame.maxY >= rect.minY, frame.minY <= rect.maxY, let line = fragment.textLineFragments.first else { continue }
             let lineNumber = document.line(at: offset), issue = issueLines[lineNumber]
             if let issue {
-                // The number on the issue's colour, in the highlight's shape and place.
+                // The number on the issue's colour, in the highlight's shape and place, after its
+                // symbol: the two kinds differ by more than colour.
                 (issue ? NSColor.systemRed : .systemYellow).withAlphaComponent(0.3).setFill()
                 let bounds = line.typographicBounds
-                NSBezierPath(roundedRect: NSRect(x: 14, y: frame.minY + bounds.minY + rowShift, width: numbersEnd - 10, height: bounds.height),
-                             xRadius: 4, yRadius: 4).fill()
+                let row = NSRect(x: 14, y: frame.minY + bounds.minY + rowShift, width: numbersEnd - 10, height: bounds.height)
+                NSBezierPath(roundedRect: row, xRadius: 4, yRadius: 4).fill()
+                if let symbol = Self.issueSymbols[issue] {
+                    let size = symbol.size
+                    symbol.draw(in: NSRect(x: 7 - size.width / 2, y: row.midY - size.height / 2, width: size.width, height: size.height),
+                                from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                }
             }
             guard showsLineNumbers else { continue }
             func draw(_ lineNumber: Int, on line: NSTextLineFragment) {
@@ -517,13 +485,16 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     // MARK: colours
 
-    /// The shown fragments' colours were invalidated (`recolour`).
-    private var needsColours = false
+    /// Where the text first changed since it was last coloured, or 0 for all of it: coloured
+    /// again once it's laid out, which every edit leads to, an undone one too.
+    private var staleColours: Int?
 
-    /// TextKit validates colours when it renders a fragment, without editing the
-    /// document's attributes or disturbing its estimated scroll geometry.
-    private func recolour(redrawing: Bool = false) {
+    /// Colours the text from an offset's line on, as an edit changes no colour before its own
+    /// line. TextKit validates colours when it lays a fragment out anew, without editing the
+    /// document's attributes; the fragments already shown keep none until validated here.
+    private func colour(from start: Int) {
         guard let manager = textLayoutManager else { return }
+        staleColours = nil
         if manager.renderingAttributesValidator == nil {
             manager.renderingAttributesValidator = { [weak self] manager, fragment in
                 guard let self else { return }
@@ -538,20 +509,22 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
                 }
             }
         }
-        manager.invalidateRenderingAttributes(for: manager.documentRange)
-        // TextKit validates only the fragments it lays out anew; the rest, after the next layout.
-        needsColours = true
-        needsLayout = true
-        if redrawing {
-            for (_, fragment) in fragments { manager.renderingAttributesValidator?(manager, fragment) }
-            // Each shown fragment draws in a view of its own, which new rendering attributes don't
-            // redraw, nor does the text view's own display (27.2).
-            func redraw(_ view: NSView) {
-                view.needsDisplay = true
-                view.subviews.forEach(redraw)
-            }
-            redraw(self)
+        let line = document.lineStart(document.line(at: start))
+        let stale = textRange(NSRange(location: line, length: 0)).flatMap { NSTextRange(location: $0.location, end: manager.documentRange.endLocation) }
+        manager.invalidateRenderingAttributes(for: stale ?? manager.documentRange)
+        for (_, fragment) in fragments[(fragments.lastIndex { $0.offset <= line } ?? 0)...] {
+            manager.renderingAttributesValidator?(manager, fragment)
         }
+    }
+
+    /// Each shown fragment draws in a view of its own, which new rendering attributes don't
+    /// redraw, nor does the text view's own display (27.2).
+    private func redrawFragments() {
+        func redraw(_ view: NSView) {
+            view.needsDisplay = true
+            view.subviews.forEach(redraw)
+        }
+        redraw(self)
     }
 
     // MARK: the selection
@@ -562,6 +535,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !loading else { return }
         if !typing { closeCompletions() }
+        if partnerMarked, let manager = textLayoutManager {
+            partnerMarked = false
+            manager.removeRenderingAttribute(.backgroundColor, for: manager.documentRange)
+            redrawFragments()
+        }
         previewMath()
         if let snippet, !mirroring, !snippet.contains(selectedRange()) { self.snippet = nil }
         let lineStart = (string as NSString).lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
@@ -616,6 +594,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     /// focus and completions ask again for the same, and only its place changes.
     private var lastMath: (caret: Int, edits: Int, value: MathPreview?)?
     private var edits = 0
+    /// Where the maths starts whose preview Escape dismissed, while the caret stays in it.
+    private var dismissedMath: Int?
 
     private func math(at caret: Int) -> MathPreview? {
         if let lastMath, lastMath.caret == caret, lastMath.edits == edits { return lastMath.value }
@@ -627,8 +607,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     /// Preview maths at the caret only while the caret is visible and focused:
     /// over its line, as Overleaf's, or under it while completions show over it.
     func previewMath() {
-        guard let window, hasKeyboard, !loading,
-              let maths = math(at: selectedRange().location),
+        // Asked for whether or not it shows: Escape's dismissal lasts while the caret is in that maths.
+        let maths = loading ? nil : math(at: selectedRange().location)
+        if maths?.start != dismissedMath { dismissedMath = nil }
+        guard let window, hasKeyboard, let maths, dismissedMath == nil,
               let clip = enclosingScrollView?.contentView else {
             mathPopover?.close()
             return
@@ -680,8 +662,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     private func showPartner(of at: Int) {
         guard let i = partner(of: at), let first = fragments.first, let last = fragments.last,
               first.offset <= i, i < offset(last.fragment.rangeInElement.endLocation) else { return }
-        showFindIndicator(for: NSRange(location: i, length: 1))
+        let range = NSRange(location: i, length: 1)
+        guard reducesMotion(), let manager = textLayoutManager, let marked = textRange(range) else { return showFindIndicator(for: range) }
+        // The find indicator bounces: with Reduce Motion the partner is filled where it is,
+        // until the selection next changes.
+        manager.addRenderingAttribute(.backgroundColor, value: NSColor.unemphasizedSelectedTextBackgroundColor, for: marked)
+        partnerMarked = true
+        redrawFragments()
     }
+
+    var reducesMotion = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private var partnerMarked = false
 
     override func moveRight(_ sender: Any?) {
         let before = selectedRange()
@@ -729,11 +720,20 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let selection = selectedRange()
         let text = self.string as NSString
         let next = character(at: selection.location)
-        if selection.length == 0, Self.pairs.values.contains(c), next == c, closers.contains(selection.location) {
-            closers.remove(selection.location)
-            setSelectedRange(NSRange(location: selection.location + 1, length: 0))
-            showPartner(of: selection.location)
-            return
+        if selection.length == 0, next == c, closers.contains(selection.location) {
+            if Self.pairs.values.contains(c) {
+                closers.remove(selection.location)
+                setSelectedRange(NSRange(location: selection.location + 1, length: 0))
+                showPartner(of: selection.location)
+                return
+            }
+            // The backslash of a closer put in as \] or \}: the bracket after it is stepped over next.
+            if c == "\\", character(at: selection.location + 1).map(Self.pairs.values.contains) == true {
+                closers.remove(selection.location)
+                closers.insert(selection.location + 1)
+                setSelectedRange(NSRange(location: selection.location + 1, length: 0))
+                return
+            }
         }
         if EditorPrefs.autoPair, let close = Self.pairs[c] {
             if selection.length > 0 {
@@ -743,7 +743,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
                 return
             }
             if next.map({ $0.isWhitespace || Self.closeBefore.contains($0) }) ?? true {
-                super.insertText("\(c)\(close)", replacementRange: selection)
+                // \[ closes with \], \{ with \} and \( with \).
+                super.insertText(isEscaped(selection.location) ? "\(c)\\\(close)" : "\(c)\(close)", replacementRange: selection)
                 closers.insert(selection.location + 1)
                 setSelectedRange(NSRange(location: selection.location + 1, length: 0))
                 offerCompletions()
@@ -753,6 +754,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         super.insertText(string, replacementRange: replacementRange)
         if Self.pairs.values.contains(c) { showPartner(of: selectedRange().location - 1) }
         offerCompletions()
+    }
+
+    /// Whether the character at `at` follows an unescaped backslash, as the bracket of `\[` does.
+    private func isEscaped(_ at: Int) -> Bool {
+        let text = string as NSString
+        var slashes = 0
+        while at - slashes > 0, text.character(at: at - slashes - 1) == 0x5C { slashes += 1 }
+        return slashes % 2 == 1
+    }
+
+    /// How long the closer after the caret is, between an empty pair: 1, or 2 between `\[` and `\]`.
+    private func closer(after caret: Int) -> Int? {
+        guard let close = character(at: caret - 1).flatMap({ Self.pairs[$0] }) else { return nil }
+        if character(at: caret) == close { return 1 }
+        return isEscaped(caret - 1) && character(at: caret) == "\\" && character(at: caret + 1) == close ? 2 : nil
     }
 
     /// Delete an empty bracket pair or backspace to the last indent stop;
@@ -767,8 +783,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let selection = selectedRange(), text = string as NSString
         guard selection.length == 0, selection.location > 0, selectedRanges.count == 1 else { return super.deleteBackward(sender) }
         let caret = selection.location
-        if EditorPrefs.autoPair, let before = character(at: caret - 1), let close = Self.pairs[before], character(at: caret) == close {
-            insertText("", replacementRange: NSRange(location: caret - 1, length: 2))
+        // Only a closer this view put in goes with its bracket.
+        if EditorPrefs.autoPair, closers.contains(caret), let closer = closer(after: caret) {
+            insertText("", replacementRange: NSRange(location: caret - 1, length: 1 + closer))
             return
         }
         let lineStart = text.lineRange(for: NSRange(location: caret, length: 0)).location
@@ -790,8 +807,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let lineText = text.substring(with: line).trimmingCharacters(in: .newlines)
         let indent = String(lineText.prefix { $0 == " " || $0 == "\t" })
         let lineEnd = line.location + (lineText as NSString).length
-        let between = range.length == 0 && range.location > 0 && range.location < text.length
-            && ["()", "[]", "{}"].contains(text.substring(with: NSRange(location: range.location - 1, length: 2)))
+        let between = range.length == 0 && closer(after: range.location) != nil
         var insert = "\n" + indent
         if between {
             insert += "\n" + indent
@@ -829,14 +845,20 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         EditorPrefs.spellCheck = isContinuousSpellCheckingEnabled
     }
 
+    /// Escape closes the completion list, or ends a snippet, or dismisses the maths preview until
+    /// the caret leaves that maths, or asks for completions, as Xcode's; it never goes on to the
+    /// window, which would leave full screen.
     override func cancelOperation(_ sender: Any?) {
-        if snippet != nil {
+        if offered != nil {
+            closeCompletions()
+        } else if snippet != nil {
             snippet = nil
-            return
+        } else if mathPopover?.isShown == true, let maths = math(at: caret) {
+            dismissedMath = maths.start
+            mathPopover?.close()
+        } else {
+            complete(explicit: true)
         }
-        // NSTextView doesn't implement it, so super would throw; pass it on as NSResponder would
-        // have (the window's, which leaves full screen).
-        nextResponder?.tryToPerform(#selector(cancelOperation(_:)), with: sender)
     }
 
     // MARK: completion: the core's items in a list under the caret
@@ -880,7 +902,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     /// window it holds its items unseen, as the tests use it.
     private func showCompletions(reload: Bool) {
         guard let offered else { return }
-        var start = NSRect.zero, host: NSWindow?
+        var start = NSRect.zero, floor: CGFloat = 0, host: NSWindow?
         if let window, let clip = enclosingScrollView?.contentView {
             host = window
             start = firstRect(forCharacterRange: NSRange(location: offered.start, length: 0), actualRange: nil)
@@ -889,39 +911,37 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             shown.origin.y += insets.bottom
             shown.size.height -= insets.top + insets.bottom
             guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return closeCompletions() }
-            guard reload else { return completionList.place(under: start) }
+            // Not under the status bar.
+            floor = shown.minY
+            guard reload else { return completionList.place(under: start, over: floor) }
         }
-        let rows = offered.items.map { item -> (label: String, kind: CompletionKind) in
-            let kind: CompletionKind = item.label.hasPrefix("\\") ? .command
-                : item.label.hasPrefix("@") ? .entryType
-                : symbols.citations.contains(item.label) ? .citation
-                : symbols.labels.contains(item.label) ? .label : .environment
-            return (item.label, kind)
-        }
-        completionList.show(rows, font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
-                            theme: syntaxTheme, under: start, in: host)
+        completionList.show(offered.items.map(\.label), kind: offered.kind, font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+                            theme: syntaxTheme, under: start, over: floor, in: host)
         // Out of the list's way.
         if host != nil { previewMath() }
     }
 
-    /// Arrows move through the open list, Return and Tab accept, Escape closes it.
+    /// Arrows move through the open list, Return and Tab accept. Escape is `cancelOperation`
+    /// here: the text view's own goes straight to its `complete(_:)`.
     override func doCommand(by selector: Selector) {
+        if selector == #selector(cancelOperation(_:)) { return cancelOperation(nil) }
         guard offered != nil else { return super.doCommand(by: selector) }
         switch selector {
         case #selector(moveUp(_:)): completionList.move(-1)
         case #selector(moveDown(_:)): completionList.move(1)
         case #selector(insertNewline(_:)), #selector(insertTab(_:)): acceptCompletion(completionList.selection)
-        case #selector(cancelOperation(_:)): closeCompletions()
         default: super.doCommand(by: selector)
         }
     }
 
-    /// Only a chosen completion goes in, replacing what's typed of it.
+    /// Only a chosen completion goes in, replacing what's typed of it, as an undo step of its
+    /// own: undone, what was typed is back.
     private func acceptCompletion(_ index: Int) {
         guard let offered, offered.items.indices.contains(index), caret >= offered.start else { return closeCompletions() }
         let item = offered.items[index]
         closeCompletions()
-        insertText(item.text, replacementRange: NSRange(location: offered.start, length: caret - offered.start))
+        apply([TextEdit(NSRange(location: offered.start, length: caret - offered.start), item.text)], named: String(localized: "Completion"),
+              select: NSRange(location: offered.start + (item.text as NSString).length, length: 0))
         startSnippet(item.fields, at: offered.start)
     }
 
@@ -990,8 +1010,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     /// What's typed in a field goes in its other places too, in the same undo step.
     override func didChangeText() {
         super.didChangeText()
-        // The lines an edit made show their colours: their first layout drops them.
-        defer { recolour() }
         guard needsMirror, !mirroring, let snippet, let typed = snippet.typed else { return }
         needsMirror = false
         let text = (string as NSString).substring(with: typed)
@@ -1008,14 +1026,40 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         setSelectedRange(selection)
     }
 
-    /// A double-click goes to the PDF, as one in the PDF comes here.
+    /// A Command-click goes to the PDF from where it lands, as TeXShop's and Skim's; a double-click
+    /// stays the system's, selecting a word.
     override func mouseDown(with event: NSEvent) {
-        // Let AppKit select the word before SyncTeX reads the source position.
-        super.mouseDown(with: event)
-        if event.type == .leftMouseDown, event.clickCount == 2 { forwardSync()?() }
+        if event.type == .leftMouseDown, inGutter(event) { return selectLines(with: event) }
+        guard event.type == .leftMouseDown, event.modifierFlags.contains(.command), let sync = forwardSync() else {
+            return super.mouseDown(with: event)
+        }
+        setSelectedRange(NSRange(location: characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)), length: 0))
+        sync()
     }
 
-    // MARK: file drops open
+    /// A click in the gutter selects its line, a drag the lines it passes and Shift from the
+    /// selection there was, as Xcode's; on an issue's mark the build panel shows the issue.
+    private func selectLines(with event: NSEvent) {
+        let text = string as NSString
+        func line(at event: NSEvent) -> NSRange {
+            let point = NSPoint(x: textContainerOrigin.x, y: convert(event.locationInWindow, from: nil).y)
+            return text.lineRange(for: NSRange(location: characterIndexForInsertion(at: point), length: 0))
+        }
+        let first = line(at: event)
+        let anchor = event.modifierFlags.contains(.shift) ? selectedRange() : first
+        window?.makeFirstResponder(self)
+        var current = event
+        repeat {
+            setSelectedRange(NSUnionRange(anchor, line(at: current)))
+            autoscroll(with: current)
+            guard let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) else { break }
+            current = next
+        } while current.type != .leftMouseUp
+        let number = document.line(at: first.location)
+        if selectedRange() == first, issueLines[number] != nil { issueClicked(number) }
+    }
+
+    // MARK: file drops open, or insert a figure
 
     private func files(_ info: any NSDraggingInfo) -> [URL] {
         info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
@@ -1041,8 +1085,45 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let files = files(info)
         guard !files.isEmpty else { return super.performDragOperation(info) }
         guard let drop = files.lazy.compactMap(fileDrop).first else { return false }
-        drop()
+        switch drop {
+        case .open(let open): open()
+        case .insert(let text):
+            guard isEditable else { return false }
+            // Selected where it lands, as dropped content is, and undone in one step.
+            let at = characterIndexForInsertion(at: convert(info.draggingLocation, from: nil))
+            apply([TextEdit(NSRange(location: at, length: 0), text)], named: String(localized: "Insert Figure"),
+                  select: NSRange(location: at, length: (text as NSString).length))
+            window?.makeFirstResponder(self)
+        }
         return true
+    }
+
+    // MARK: VoiceOver's rotors
+
+    /// The open file's headings in order, for VoiceOver's Headings rotor.
+    var headings: () -> [(line: Int, title: String)] = { [] }
+    private lazy var rotors = [NSAccessibilityCustomRotor(rotorType: .heading, itemSearchDelegate: self),
+                               NSAccessibilityCustomRotor(label: String(localized: "Issues"), itemSearchDelegate: self)]
+
+    override func accessibilityCustomRotors() -> [NSAccessibilityCustomRotor] { rotors }
+
+    /// The next or previous heading, or line with a build issue, from the rotor's current one.
+    func rotor(_ rotor: NSAccessibilityCustomRotor,
+               resultFor search: NSAccessibilityCustomRotor.SearchParameters) -> NSAccessibilityCustomRotor.ItemResult? {
+        var items = rotor.type == .heading ? headings() : issueLines.sorted { $0.key < $1.key }.map { line, error in
+            (line, error ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)"))
+        }
+        if !search.filterString.isEmpty { items = items.filter { $0.title.localizedCaseInsensitiveContains(search.filterString) } }
+        let text = string as NSString
+        let current = search.currentItem.map { document.line(at: min($0.targetRange.location, text.length)) }
+        let next = search.searchDirection == .next
+        guard let found = next ? items.first(where: { $0.line > current ?? 0 }) : items.last(where: { $0.line < current ?? .max })
+        else { return nil }
+        let result = NSAccessibilityCustomRotor.ItemResult(targetElement: self)
+        // The outline and the issues are a moment behind the text: within what there is of it.
+        result.targetRange = text.lineRange(for: NSRange(location: min(document.lineStart(found.line), text.length), length: 0))
+        result.customLabel = found.title
+        return result
     }
 
     // MARK: offsets
@@ -1095,22 +1176,14 @@ enum SyntaxTheme: String, CaseIterable, Identifiable {
         }
     }
 
-    /// With Increase Contrast, each raised to WCAG's enhanced 7:1 on the text's background: the
-    /// themes' own colours fall short of the HIG's 4.5:1 in places (Overleaf's comments, 4.2:1).
+    /// The themes' own colours fall short of the HIG's 4.5:1 in places (Overleaf's comments, 4.2:1;
+    /// the system's teal, 2.2:1), so each is raised to it, and further with Increase Contrast.
     private static func rgb(_ light: UInt32, _ dark: UInt32) -> NSColor {
         func srgb(_ hex: UInt32) -> NSColor {
             NSColor(srgbRed: CGFloat(hex >> 16 & 0xFF) / 255, green: CGFloat(hex >> 8 & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
         }
         let light = srgb(light), dark = srgb(dark)
-        let raised = (light: light.contrasting(in: .aqua, by: 7), dark: dark.contrasting(in: .darkAqua, by: 7))
-        return NSColor(name: nil) { appearance in
-            switch appearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]) {
-            case .darkAqua: dark
-            case .accessibilityHighContrastAqua: raised.light
-            case .accessibilityHighContrastDarkAqua: raised.dark
-            default: light
-            }
-        }
+        return NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }.legibleAsText
     }
 
     /// Overleaf's source editor themes (services/web/frontend/js/features/source-editor/themes/cm6/): "textmate",
@@ -1135,10 +1208,10 @@ enum SyntaxTheme: String, CaseIterable, Identifiable {
         command: rgb(0x800000, 0x60CDF2), keyword: rgb(0x0095FF, 0xA960F2), argument: rgb(0x008000, 0x60F260),
         maths: rgb(0x509600, 0x85F218), comment: rgb(0x808080, 0x667299), invalid: rgb(0xC00000, 0xF2F218))
 
-    /// The system's colours, which follow the accent and appearance; what the editor used before Overleaf's.
+    /// The system's colours, which follow the appearance.
     private static let systemColours = Colours(
-        command: .systemPink, keyword: .systemBrown, argument: .systemTeal,
-        maths: .systemPurple, comment: .secondaryLabelColor, invalid: .systemRed)
+        command: .systemPink.legibleAsText, keyword: .systemBrown.legibleAsText, argument: .systemTeal.legibleAsText,
+        maths: .systemPurple.legibleAsText, comment: .secondaryLabelColor.legibleAsText, invalid: .systemRed.legibleAsText)
 }
 
 private extension HighlightKind {

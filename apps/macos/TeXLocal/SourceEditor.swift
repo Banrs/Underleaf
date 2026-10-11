@@ -13,8 +13,8 @@ nonisolated struct SyncTeXWord: Equatable, Sendable {
 /// Owns formatting commands; find is the text view's own find bar.
 final class SourceEditor: NSObject, NSTextViewDelegate {
     let textView = SourceTextView.plainDocument()
-    /// What SwiftUI lays the text view out by (`SourceColumn`).
-    let layout = EditorLayout()
+    /// The text view's own scroll view, which AppKit insets under the toolbar and the status bar.
+    let scrollView = NSScrollView()
     var onChanged: () -> Void = {}
     /// The caret's line and column (UTF-16, from 0).
     var onCursor: (Int, Int) -> Void = { _, _ in }
@@ -65,21 +65,20 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.isAutomaticTextCompletionEnabled = false
         text.smartInsertDeleteEnabled = false
         text.inlinePredictionType = .no
+        // Writing Tools proofread and rewrite the prose in place, as plain text, and leave the LaTeX alone (below).
+        text.writingToolsBehavior = .limited
+        text.allowedWritingToolsResultOptions = .plainText
         text.setAccessibilityLabel(String(localized: "Source"))
         text.delegate = self
         text.textStorage?.delegate = text
         // Untinted, as the column's surface around it (`SourceColumn`).
         text.backgroundColor = .untintedTextBackground
         text.isHidden = true
-        text.attached = { [weak self] in self?.watchScrolling() }
-        text.heightChanged = { [weak self] height in self?.layout.height = height }
-    }
-
-    /// The top line follows the scroll view the text view is in.
-    private func watchScrolling() {
-        if let scrolling { NotificationCenter.default.removeObserver(scrolling) }
-        scrolling = nil
-        guard let clip = textView.enclosingScrollView?.contentView else { return }
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.documentView = text
+        // The top line follows the scrolling.
+        let clip = scrollView.contentView
         clip.postsBoundsChangedNotifications = true
         scrolling = NotificationCenter.default.addObserver(of: clip, for: .boundsDidChange) { [weak self] _ in self?.scrolled() }
     }
@@ -101,10 +100,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         undo = prior?.undo ?? UndoManager()
         let selection = prior?.selection ?? NSRange(location: 0, length: 0)
         textView.setSelectedRange(NSMaxRange(selection) <= (text as NSString).length ? selection : NSRange(location: 0, length: 0))
-        if let scrollView = textView.enclosingScrollView {
-            scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
-            scrollView.reflectScrolledClipView(scrollView.contentView)
-        }
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
         if let top = prior?.top { textView.scroll(toShownTop: top) }
         reportCursor()
         focusWhenShown = focus
@@ -176,7 +173,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     private func scroll(to offset: Int, atTop: Bool) {
-        guard let target = textView.textRange(NSRange(location: offset, length: 0)), let scrollView = textView.enclosingScrollView else { return }
+        guard let target = textView.textRange(NSRange(location: offset, length: 0)) else { return }
         let insets = scrollView.contentInsets, shown = scrollView.contentView.bounds.height - insets.top - insets.bottom
         textView.scroll(target.location) { atTop ? $0.minY - insets.top : $0.midY - insets.top - shown / 2 }
     }
@@ -184,7 +181,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     /// The first line at least half showing below the toolbar.
     private func scrolled() {
         textView.previewMath()
-        guard let manager = textView.textLayoutManager, let font = textView.font, let scrollView = textView.enclosingScrollView else { return }
+        guard let manager = textView.textLayoutManager, let font = textView.font else { return }
         let y = scrollView.contentView.bounds.minY + scrollView.contentInsets.top - textView.textContainerOrigin.y
             + font.boundingRectForFont.height / 2
         guard let fragment = manager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, y))) else { return }
@@ -211,12 +208,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
                   orthography: NSOrthography, wordCount: Int) -> [NSTextCheckingResult] {
-        let document = textView.document
-        // The highlighter also colours words inside \text{…} as math. The
-        // prose scan owns those boundaries; colours supply syntax names only.
-        let code = document.highlights(in: range).filter {
-            [.command, .argument, .stringLiteral, .builtin].contains($0.kind)
-        }.map(\.range) + document.notProse(in: range)
+        let code = code(in: range, kinds: [.command, .argument, .stringLiteral, .builtin])
         return results.filter { result in
             // Language metadata can span both prose and TeX without changing it.
             if result.resultType == .orthography { return true }
@@ -227,31 +219,66 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
     }
 
+    /// What isn't prose in a range: the runs the highlighter gives those kinds, and the names
+    /// commands take. The highlighter also colours words inside \text{…} as maths; the prose
+    /// scan owns those boundaries, so spelling asks for the syntax's names only.
+    private func code(in range: NSRange, kinds: Set<HighlightKind>) -> [NSRange] {
+        let document = textView.document
+        return document.highlights(in: range).filter { kinds.contains($0.kind) }.map(\.range) + document.notProse(in: range)
+    }
+
+    /// Writing Tools pass over everything coloured as LaTeX, comments too: only prose is rewritten.
+    func textView(_ view: NSTextView, writingToolsIgnoredRangesInEnclosingRange range: NSRange) -> [NSValue] {
+        code(in: range, kinds: [.command, .argument, .mathDelimiter, .mathIdentifier, .number, .comment, .invalid, .stringLiteral, .builtin])
+            .map(NSValue.init(range:))
+    }
+
     func textViewDidChangeSelection(_ notification: Notification) {
         changes.count += 1
         guard !textView.loading else { return }
         reportCursor()
     }
 
-    /// The system's text menu, with Go to PDF Position above it while there's somewhere to go.
+    /// The system's text menu without what does nothing for LaTeX source (the layout's direction,
+    /// speech, the case transformations), under Go to PDF Position, while there's somewhere to
+    /// go, and Comment Selection.
     func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
-        guard textView.forwardSync() != nil else { return menu }
-        let item = NSMenuItem(title: MenuCommand.syncForward.title, action: #selector(goToPDF), keyEquivalent: "")
-        item.target = self
-        menu.insertItem(item, at: 0)
-        menu.insertItem(.separator(), at: 1)
+        let unwanted = [#selector(NSTextView.changeLayoutOrientation(_:)), #selector(NSTextView.startSpeaking(_:)),
+                        #selector(NSResponder.uppercaseWord(_:))]
+        for item in menu.items where unwanted.contains(where: { action in
+            item.action == action || item.submenu?.items.contains { $0.action == action } == true
+        }) {
+            menu.removeItem(item)
+        }
+        var own: [NSMenuItem] = []
+        if textView.forwardSync() != nil {
+            own.append(NSMenuItem(title: MenuCommand.syncForward.title, action: #selector(goToPDF), keyEquivalent: ""))
+        }
+        if textView.isEditable {
+            own.append(NSMenuItem(title: MenuCommand.editComment.title, action: #selector(toggleComment), keyEquivalent: ""))
+        }
+        own.forEach { $0.target = self }
+        for item in (own + [.separator()]).reversed() { menu.insertItem(item, at: 0) }
+        // A separator only between two groups.
+        for item in menu.items.reversed() where item.isSeparatorItem {
+            let index = menu.index(of: item)
+            if index == 0 || index == menu.numberOfItems - 1 || menu.item(at: index + 1)?.isSeparatorItem == true { menu.removeItem(item) }
+        }
         return menu
     }
 
     @objc private func goToPDF() { textView.forwardSync()?() }
+    @objc private func toggleComment() { perform(.comment) }
 
     // ---------- commands ----------
 
-    /// False when there's no text to run it on, or no block of that id.
+    /// False when there's no text to run it on, or no block of that id. `title` names what an
+    /// insertion puts in, for Undo.
     @discardableResult
-    func perform(_ command: EditorCommand, _ argument: String? = nil) -> Bool {
+    func perform(_ command: EditorCommand, _ argument: String? = nil, title: String? = nil) -> Bool {
         guard path != nil, textView.isEditable else { return false }
         let document = textView.document, selection = textView.selectedRange()
+        let inserting = title.map { String(localized: "Insert \($0)") } ?? String(localized: "Insert")
         let insert = { (insertion: Insertion?, name: String) in
             guard let insertion else { return false }
             self.textView.apply([insertion.edit], named: name, select: NSRange(location: insertion.caret, length: 0))
@@ -267,7 +294,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         case .inline:
             // A template such as \ref{$0}: "$0" is where the selection goes.
             let parts = ((argument ?? "") + "$0").components(separatedBy: "$0")
-            wrap(parts[0], parts[1...].dropLast().joined(separator: "$0"), named: String(localized: "Insert"))
+            wrap(parts[0], parts[1...].dropLast().joined(separator: "$0"), named: inserting)
             // Empty braces: the labels or citations for them, once the menu has closed.
             if selection.length == 0 { Task { self.textView.complete(nil) } }
         case .comment:
@@ -279,7 +306,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         case .symbol:
             guard insert(document.insertSymbol(argument ?? "", replacing: selection), String(localized: "Insert Symbol")) else { return false }
         case .block:
-            guard insert(document.insertBlock(argument ?? "", replacing: selection), String(localized: "Insert")) else { return false }
+            guard insert(document.insertBlock(argument ?? "", replacing: selection), inserting) else { return false }
         }
         focus()
         return true
@@ -362,8 +389,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
 }
 
-/// The editor's text view, reused across SwiftUI updates, as the content of SwiftUI's scroll
-/// view (`SourceColumn`), which sizes it to its text.
+/// The editor's scroll view and text view, reused across SwiftUI updates.
 struct EditorView: NSViewRepresentable {
     let editor: SourceEditor
     let shown: Bool
@@ -372,14 +398,9 @@ struct EditorView: NSViewRepresentable {
     let lineNumbers: Bool
     let syntaxTheme: SyntaxTheme
 
-    func makeNSView(context: Context) -> SourceTextView { editor.textView }
+    func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
 
-    /// The size SwiftUI proposes: the column's width and the text's height (`SourceColumn`).
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: SourceTextView, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? nsView.frame.width, height: proposal.height ?? nsView.frame.height)
-    }
-
-    func updateNSView(_ view: SourceTextView, context: Context) {
+    func updateNSView(_ view: NSScrollView, context: Context) {
         // A new size only: setting one builds the font to compare.
         if editor.textView.fontSize != CGFloat(fontSize) { editor.textView.fontSize = CGFloat(fontSize) }
         editor.textView.fontName = fontName
@@ -400,6 +421,17 @@ enum EditorCommand {
 enum EditorPrefs {
     static let fontSizeKey = "editorFontSize", spellCheckKey = "editorSpellCheck", syntaxThemeKey = "editorSyntaxTheme"
     static let fontSize = Int(NSFont.systemFontSize)
+    /// The sizes Settings and the View menu's text size commands allow.
+    static let fontSizes = 10...28
+
+    /// A point larger or smaller, for View › Increase and Decrease Editor Text Size; false at the range's end.
+    @discardableResult
+    static func stepFontSize(by step: Int, dryRun: Bool = false) -> Bool {
+        let current = UserDefaults.standard.object(forKey: fontSizeKey) as? Int ?? fontSize
+        let next = min(max(current + step, fontSizes.lowerBound), fontSizes.upperBound)
+        if !dryRun, next != current { UserDefaults.standard.set(next, forKey: fontSizeKey) }
+        return next != current
+    }
     /// A fixed-pitch family's name; empty, the system's monospaced font.
     static let fontNameKey = "editorFontName", lineNumbersKey = "editorLineNumbers"
     static let autoPairKey = "editorAutoPair", autoCompleteKey = "editorAutoComplete"
@@ -418,9 +450,4 @@ enum EditorPrefs {
 /// The text's edits and selection changes, counted.
 @Observable final class EditorChanges {
     var count = 0
-}
-
-/// The text's height, which the text view reports as it lays out (`SourceTextView.heightChanged`).
-@Observable final class EditorLayout {
-    var height: CGFloat = 0
 }

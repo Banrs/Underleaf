@@ -8,8 +8,13 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     let popover = NSPopover()
     private let app: AppModel
     private let project: ProjectModel
-    /// When it last closed: the click on Aa that closes it isn't one to open it again.
-    private var closed = Date.distantPast
+    /// The click that closed it, when one did: on Aa, it isn't one to open it again.
+    private var closingClick: Int?
+
+    /// The mouse click being handled; its press and release have one number.
+    private var click: Int? {
+        NSApp.currentEvent.flatMap { [.leftMouseDown, .leftMouseUp].contains($0.type) ? $0.eventNumber : nil }
+    }
 
     init(app: AppModel, project: ProjectModel) {
         self.app = app
@@ -25,7 +30,7 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
             popover.close()
             return
         }
-        guard Date.now.timeIntervalSince(closed) > 0.25 else { return }
+        if let click, click == closingClick { return }
         // Made anew, so it opens at the caret's level.
         let content = NSHostingController(rootView: FormatPanel(app: app, project: project) { [weak self] in
             self?.popover.close()
@@ -35,8 +40,11 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
         popover.show(relativeTo: item)
     }
 
+    func popoverWillClose(_ notification: Notification) {
+        closingClick = click
+    }
+
     func popoverDidClose(_ notification: Notification) {
-        closed = .now
         popover.contentViewController = nil
     }
 }
@@ -45,15 +53,16 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
 /// levels the document's class has, each at its weight and shape there and its size scaled into
 /// Notes', at an even pitch, after its number as the class prints it. A style toggles and the popover
 /// stays, as Notes' does; a level is chosen and it closes, as a menu. It opens with the caret's
-/// level checked and nothing highlighted; the arrow keys start from the checked level.
+/// level checked and nothing highlighted; the arrow keys start from the checked level, and the
+/// pointer highlights a level without taking the keyboard's focus to it.
 struct FormatPanel: View {
     let app: AppModel
     let project: ProjectModel
     let close: () -> Void
-    /// The keyboard's level, the pointer's or the arrow keys'.
+    /// The keyboard's level, which the arrow keys move.
     @FocusState private var focused: HeadingLevel?
-    /// Highlighted once the pointer or the arrow keys have moved.
-    @State private var engaged = false
+    /// The level under the pointer or last reached by the arrow keys, as a menu's highlight.
+    @State private var highlighted: HeadingLevel?
     /// The selection's, read again as the text or the selection changes.
     @State private var styles = TextStyles()
 
@@ -67,7 +76,7 @@ struct FormatPanel: View {
         let headings = project.headingStyles
         let layout = Layout(headings)
         VStack(spacing: 0) {
-            HStack(spacing: 5) {
+            HStack {
                 toggle(.editBold, symbol: "bold", on: styles.bold != nil)
                 toggle(.editItalic, symbol: "italic", on: styles.italic != nil)
                 toggle(.editUnderline, symbol: "underline", on: styles.underline != nil)
@@ -111,13 +120,13 @@ struct FormatPanel: View {
         .toggleStyle(.button)
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
-        .font(.system(size: 19))
-        .frame(width: 24, height: 24)
+        .controlSize(.large)
+        .imageScale(.large)
         .help(command.title)
     }
 
     private func row(_ level: HeadingLevel, marker: String?, layout: Layout) -> some View {
-        let lit = engaged && focused == level
+        let lit = highlighted == level
         let font = layout.font(level)
         return Button { choose(level) } label: {
             HStack(spacing: 6) {
@@ -151,8 +160,9 @@ struct FormatPanel: View {
         .focusEffectDisabled()
         .onHover { inside in
             if inside {
-                focused = level
-                engaged = true
+                highlighted = level
+            } else if highlighted == level {
+                highlighted = nil
             }
         }
         // The level alone: the marker is the document's numbering, not the level's name.
@@ -161,9 +171,10 @@ struct FormatPanel: View {
     }
 
     private func move(by step: Int, in levels: [HeadingLevel]) -> KeyPress.Result {
-        let index = focused.flatMap(levels.firstIndex) ?? (step > 0 ? -1 : levels.count)
-        if engaged { focused = levels[min(max(index + step, 0), levels.count - 1)] }
-        engaged = true
+        // From the highlight; with none yet, the keyboard's own level is highlighted first.
+        let next = highlighted.flatMap(levels.firstIndex).map { levels[min(max($0 + step, 0), levels.count - 1)] } ?? focused
+        highlighted = next
+        focused = next
         return .handled
     }
 
@@ -172,10 +183,10 @@ struct FormatPanel: View {
         close()
     }
 
-    /// Return and Space choose the keyboard's level.
+    /// Return and Space choose the highlighted level, or the keyboard's.
     private func chooseFocused() -> KeyPress.Result {
-        guard let focused else { return .ignored }
-        choose(focused)
+        guard let level = highlighted ?? focused else { return .ignored }
+        choose(level)
         return .handled
     }
 
