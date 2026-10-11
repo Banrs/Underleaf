@@ -389,9 +389,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         if finding { find(findText, keepingPlace: true) }
     }
 
-    /// No PDF, as before the first: the pane shows its empty state.
+    /// No PDF, as before the first: the pane shows its empty state, without the find bar.
     func clear() {
         shownVersion += 1
+        (finding, findText) = (false, "")
         view.removeMarks()
         if let document = search?.document {
             search = nil
