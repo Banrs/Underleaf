@@ -181,12 +181,12 @@ struct DialogSheet<Fields: View>: View {
                 if let message {
                     Text(message)
                         .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            // A grouped form's own inset, so the title lines up with its sections
-            // (UI kit Dialogs: content 20 pt from every edge).
-            .padding([.horizontal, .top], 20)
+            // A grouped form's own inset, so the title lines up with its sections.
+            .scenePadding([.horizontal, .top])
             // The grouped form's background differs in dark mode, leaving seams.
             Form { fields }
                 .formStyle(.grouped)
@@ -194,7 +194,8 @@ struct DialogSheet<Fields: View>: View {
                 .scrollDisabled(true)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(width: 390) // UI kit Dialogs
+        // The form size is wider (about 560 pt); the UI kit's dialog is 390.
+        .frame(width: 390)
         // macOS 27 resets the control size in sheets: set it here.
         .controlSize(.regular)
         .toolbar {
