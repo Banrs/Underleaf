@@ -96,9 +96,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 /// The Dock icon's menu: the recent projects, newest first, as Pages, Xcode and Preview
-/// list their recent documents there. Not the system's recent documents, which come back
-/// through `application(_:open:)` as items to copy in. One opens as from Home's Recent
-/// list, with the window brought forward.
+/// list their recent documents there, and New Project…, which File has too. Not the system's
+/// recent documents, which come back through `application(_:open:)` as items to copy in. One
+/// opens as from Home's project list, with the window brought forward.
 final class DockMenu: NSObject {
     private let app: AppModel
     private let show: () -> Void
@@ -108,17 +108,24 @@ final class DockMenu: NSObject {
         self.show = show
     }
 
-    var menu: NSMenu? {
-        let recents = app.recents
-        guard !recents.isEmpty else { return nil }
+    var menu: NSMenu {
         let menu = NSMenu()
-        for project in recents {
+        for project in app.recents {
             let item = NSMenuItem(title: project.name, action: #selector(open(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = project.id
             menu.addItem(item)
         }
+        if !menu.items.isEmpty { menu.addItem(.separator()) }
+        let new = NSMenuItem(title: "New Project…", action: #selector(newProject), keyEquivalent: "")
+        new.target = self
+        menu.addItem(new)
         return menu
+    }
+
+    @objc private func newProject() {
+        show()
+        app.newProject()
     }
 
     @objc private func open(_ item: NSMenuItem) {
