@@ -114,6 +114,8 @@ final class ProjectModel {
     /// The open file's path, while the alert asks what becomes of its unsaved
     /// edits now another app has moved or deleted it.
     var missingFile: String?
+    /// Bumped when a file the editor only previews changes on disk, for its preview to read it again.
+    private(set) var previewVersion = 0
     /// The text last read or written, to tell another app's change from our save.
     private var diskText: String?
     private var folderWatcher: FolderWatcher?
@@ -543,15 +545,18 @@ final class ProjectModel {
             fileGone(path)
             return false
         }
-        guard editsText, let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self),
-              path == openPath, !closed, file.text != diskText else { return false }
-        diskText = file.text
+        guard editsText else {
+            previewVersion += 1
+            return false
+        }
+        guard let text = try? await readText(path), path == openPath, !closed, text != diskText else { return false }
+        diskText = text
         guard !dirty else {
             saveTask?.cancel()
             diskConflict = path
             return false
         }
-        showDiskText(file.text, of: path)
+        showDiskText(text, of: path)
         return true
     }
 
