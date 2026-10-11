@@ -101,6 +101,10 @@ chmod +x "$STAGE/bin/texpresso"
 wait "$pid" || true
 { kill "$watchdog"; wait "$watchdog"; } 2>/dev/null || true
 grep -q "Usage: texpresso" "$STAGE/check.log" || fail "the staged texpresso does not run ($(head -c 300 "$STAGE/check.log")); $DEST is unchanged"
+# And texpresso-xetex's, which the launcher only starts for a document: a build folder put
+# together by hand can have it without the libraries it was linked to.
+"$STAGE/libexec/texpresso-xetex" --help >"$STAGE/check.log" 2>&1 </dev/null || true
+grep -q "Usage: " "$STAGE/check.log" || fail "the staged texpresso-xetex does not run ($(head -c 300 "$STAGE/check.log")); $DEST is unchanged"
 rm "$STAGE/check.log"
 
 KEEP=

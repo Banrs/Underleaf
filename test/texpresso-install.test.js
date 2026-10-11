@@ -50,6 +50,7 @@ test('an installation replaces the earlier one and leaves nothing beside it', ()
 for (const [name, options, setup] of [
   ['missing build outputs', { built: false }, (f) => earlier(f.dest)],
   ['a launcher that does not run', { usage: false }, (f) => earlier(f.dest)],
+  ['a TeX program that does not run', {}, (f) => { earlier(f.dest); executable(join(f.build, 'texpresso-xetex'), 'exit 1'); }],
   ['a destination holding unrelated files', {}, (f) => earlier(f.dest, { 'notes.txt': 'mine' })],
 ]) {
   test(`with ${name}, the destination is left as it was`, () => {
