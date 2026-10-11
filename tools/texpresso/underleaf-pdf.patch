@@ -1130,10 +1130,18 @@ index 852f744..e26e1e9 100644
 +
  #endif /*!INCDVI_H*/
 diff --git a/src/frontend/main.c b/src/frontend/main.c
-index c202294..214400a 100644
+index c202294..755f88c 100644
 --- a/src/frontend/main.c
 +++ b/src/frontend/main.c
-@@ -42,9 +42,18 @@
+@@ -29,6 +29,7 @@
+ #include <stdio.h>
+ #include <unistd.h>
+ #include <errno.h>
++#include <signal.h>
+ #include "mydvi.h"
+ #include "providers.h"
+ #include "renderer.h"
+@@ -42,9 +43,18 @@
  
  struct persistent_state *pstate;
  
@@ -1153,7 +1161,7 @@ index c202294..214400a 100644
  }
  
  static bool should_reload_binary(void)
-@@ -745,6 +754,16 @@ static void realize_change(struct persistent_state *ps,
+@@ -745,6 +755,16 @@ static void realize_change(struct persistent_state *ps,
    send(notify_file_changes, ui->eng, ps->ctx, e, offset);
  }
  
@@ -1170,7 +1178,7 @@ index c202294..214400a 100644
  #define BUFFERED_OPS 64
  #define BUFFERED_CHARS 4096
  #define T_IDLE_MS 500
-@@ -975,6 +994,7 @@ static void interpret_command(struct persistent_state *ps,
+@@ -975,6 +995,7 @@ static void interpret_command(struct persistent_state *ps,
    switch (cmd.tag)
    {
      case EDIT_OPEN:
@@ -1178,7 +1186,7 @@ index c202294..214400a 100644
        if (cmd.open.base64)
        {
          unsigned char *buf = malloc(cmd.open.length);
-@@ -995,10 +1015,12 @@ static void interpret_command(struct persistent_state *ps,
+@@ -995,10 +1016,12 @@ static void interpret_command(struct persistent_state *ps,
        break;
  
      case EDIT_CLOSE:
@@ -1191,7 +1199,7 @@ index c202294..214400a 100644
        interpret_change(ps, ui, &cmd.change);
        break;
  
-@@ -1131,9 +1153,24 @@ static void interpret_command(struct persistent_state *ps,
+@@ -1131,9 +1154,24 @@ static void interpret_command(struct persistent_state *ps,
  
      case EDIT_RERUN_ONCE:
        ps->rerun_once_pending = true;
@@ -1216,7 +1224,7 @@ index c202294..214400a 100644
    }
  }
  
-@@ -1163,6 +1200,557 @@ static void sync_fullscreen_state(struct fullscreen_state *fs,
+@@ -1163,6 +1201,568 @@ static void sync_fullscreen_state(struct fullscreen_state *fs,
    fs->prev_fs = cur_fs;
  }
  
@@ -1612,6 +1620,13 @@ index c202294..214400a 100644
 +  return true;
 +}
 +
++/* What was said before a crash is what explains it. */
++static void live_crashed(int sig)
++{
++  (void)sig;
++  fflush(stderr);
++}
++
 +static int live_env(const char *name, int value)
 +{
 +  const char *text = getenv(name);
@@ -1637,6 +1652,10 @@ index c202294..214400a 100644
 +  // The diagnostics of a keystroke in one write, not forty, for whoever reads them.
 +  static char errors[1 << 15];
 +  setvbuf(stderr, errors, _IOFBF, sizeof errors);
++  struct sigaction crashed = {.sa_handler = live_crashed, .sa_flags = SA_RESETHAND};
++  sigaction(SIGABRT, &crashed, NULL);
++  sigaction(SIGSEGV, &crashed, NULL);
++  sigaction(SIGBUS, &crashed, NULL);
 +  txp_tex_live(ui->eng);
 +  editor_live(1);
 +
@@ -1774,7 +1793,7 @@ index c202294..214400a 100644
  /* Entry point */
  
  bool texpresso_main(struct persistent_state *ps)
-@@ -1170,6 +1758,9 @@ bool texpresso_main(struct persistent_state *ps)
+@@ -1170,6 +1770,9 @@ bool texpresso_main(struct persistent_state *ps)
    editor_set_protocol(ps->protocol);
    editor_set_line_output(ps->line_output);
    pstate = ps;
@@ -1784,7 +1803,7 @@ index c202294..214400a 100644
  
    struct fullscreen_state fs = {
      .has_backup = false,
-@@ -1221,6 +1812,7 @@ bool texpresso_main(struct persistent_state *ps)
+@@ -1221,6 +1824,7 @@ bool texpresso_main(struct persistent_state *ps)
    find_engine(engine_path, ps->exe_path);
    fprintf(stderr, "[info] engine path: %s\n", engine_path);
  
@@ -1792,7 +1811,7 @@ index c202294..214400a 100644
    if (doc_ext && strcmp(doc_ext, "pdf") == 0)
      ui->eng = txp_create_pdf_engine(ps->ctx, ps->doc_name);
    else
-@@ -1234,10 +1826,16 @@ bool texpresso_main(struct persistent_state *ps)
+@@ -1234,10 +1838,16 @@ bool texpresso_main(struct persistent_state *ps)
      if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
        ui->eng = txp_create_dvi_engine(ps->ctx, ps->doc_name, hooks);
      else
@@ -1809,7 +1828,7 @@ index c202294..214400a 100644
  
    ui->sdl_renderer = ps->renderer;
    ui->doc_renderer = txp_renderer_new(ps->ctx, ui->sdl_renderer);
-@@ -1267,6 +1865,17 @@ bool texpresso_main(struct persistent_state *ps)
+@@ -1267,6 +1877,17 @@ bool texpresso_main(struct persistent_state *ps)
    bool quit = 0, reload = 0;
    if (!ps->paused)
      send(step, ui->eng, ps->ctx, true);
@@ -1827,7 +1846,7 @@ index c202294..214400a 100644
    render(ps->ctx, ui);
    schedule_event(RELOAD_EVENT);
  
-@@ -1297,43 +1906,8 @@ bool texpresso_main(struct persistent_state *ps)
+@@ -1297,43 +1918,8 @@ bool texpresso_main(struct persistent_state *ps)
  
      // Process stdin
      send(begin_changes, ui->eng, ps->ctx);

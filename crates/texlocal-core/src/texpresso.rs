@@ -490,18 +490,19 @@ impl Session {
         // A writer that has gone has stopped the session, or is about to.
         let _ = self.lines.send(lines);
     }
-    /// The number of a new edit, with the message that has a patched build say when the
-    /// pages show it; an upstream build would only report a command it doesn't know.
+    /// The number of a new edit, with the message that has a build that sends pages say
+    /// when they show it.
     fn mark(&self, messages: &mut Vec<Value>) -> u64 {
         let mut state = lock(&self.state);
         state.edits += 1;
-        if self.pdf.is_some() && (state.live.is_some() || !state.spoken) {
+        if self.sends_pages(&state) {
             messages.push(json!(["mark", state.edits]));
         }
         state.edits
     }
-    fn speaks_pages(&self) -> bool {
-        let state = lock(&self.state);
+    /// Whether to send what only a build that sends pages knows: it has said it is one,
+    /// or nothing at all yet. Another would only report a command it doesn't know.
+    fn sends_pages(&self, state: &State) -> bool {
         self.pdf.is_some() && (state.live.is_some() || !state.spoken)
     }
 }
@@ -826,9 +827,9 @@ impl Manager {
                 }
             }
         });
-        // No idle reruns: upstream's start TeX again from nothing after every pause in
-        // typing, and show no page until one is over. A patched build makes its own
-        // finishing passes beside the document; for upstream there is `rerun`.
+        // TeXpresso's idle reruns stay off: each starts TeX again from nothing after a pause
+        // in typing and shows no page until it is over. A build that sends pages makes its
+        // finishing passes beside the document; for another there is `rerun`.
         if let Some((first, last)) = pane.and_then(|pane| pane.view) {
             opened.push(json!(["view", first, last.max(first)]));
         }
@@ -942,7 +943,7 @@ impl Manager {
     /// them first, and sends each as it changes.
     pub fn view(&self, token: &str, first: u32, last: u32) -> Result<(), CoreError> {
         let session = self.held(token)?;
-        if session.speaks_pages() {
+        if session.sends_pages(&lock(&session.state)) {
             session.send(&[json!(["view", first, last.max(first)])]);
         }
         Ok(())
@@ -957,7 +958,7 @@ impl Manager {
         let path = files.paths.get(rel).ok_or_else(unfit)?;
         let text = files.texts.get(path).ok_or_else(unfit)?;
         let offset = text.byte_offset(offset).ok_or_else(unfit)?;
-        if session.speaks_pages() {
+        if session.sends_pages(&lock(&session.state)) {
             session.send(&[json!(["caret", path, offset])]);
         }
         Ok(())
