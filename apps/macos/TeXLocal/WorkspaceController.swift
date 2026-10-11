@@ -89,7 +89,8 @@ final class WorkspaceController: RestoredSplitViewController {
         self.app = app
         self.project = project
         super.init()
-        splitView.autosaveName = "Workspace"
+        // Not "Workspace", whose saved sidebar is the earlier opening width's.
+        splitView.autosaveName = "Workspace 2"
         buildSidebar(height: size.height)
         // Before the area, which opens in the room the side columns leave; added after it.
         buildInspector()
@@ -98,6 +99,11 @@ final class WorkspaceController: RestoredSplitViewController {
         for item in panes {
             item.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         }
+        // The opening sizes: the sidebar's width, and the split a double-click on its divider restores.
+        detent = { [unowned self] divider in
+            divider == 0 && !sidebarItem.isCollapsed ? ColumnMetrics.sidebarIdeal : nil
+        }
+        columns.detent = { [unowned columns] _ in (columns.splitView as? ColumnsSplitView)?.openingPosition }
         toolbar = WorkspaceToolbar(app: app, project: project, workspace: self)
         watch()
     }
@@ -660,8 +666,12 @@ private nonisolated enum OutlineState {
 
 /// A split whose autosave has restored its panes as its view loads; `loaded`
 /// then hides the ones its owner's models hide.
+///
+/// AppKit has no split detents: a drag that comes near `detent`, a divider's opening
+/// position, stops there, with the alignment haptic as it arrives.
 class RestoredSplitViewController: NSSplitViewController {
     var loaded: () -> Void = {}
+    var detent: (_ divider: Int) -> CGFloat? = { _ in nil }
 
     /// NSSplitViewController's own: side by side, with the thin divider.
     init(splitView: NSSplitView = HairlineSplitView()) {
@@ -676,6 +686,19 @@ class RestoredSplitViewController: NSSplitViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         loaded()
+    }
+
+    /// NSSplitViewController declares this without acting on it, so super isn't called.
+    override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
+                            ofSubviewAt dividerIndex: Int) -> CGFloat {
+        guard let detent = detent(dividerIndex),
+              abs(proposedPosition - detent) <= ColumnMetrics.detentReach else { return proposedPosition }
+        // Once, as the divider arrives: not on each step of a drag held there.
+        let pane = splitView.arrangedSubviews[dividerIndex].frame
+        if abs((splitView.isVertical ? pane.maxX : pane.maxY) - detent) >= 0.5 {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
+        }
+        return detent
     }
 }
 
@@ -715,7 +738,12 @@ private final class ColumnsSplitView: HairlineSplitView {
         guard event.clickCount == 2, -2...dividerThickness + 2 ~= past, arrangedSubviews.allSatisfy({ !isSubviewCollapsed($0) }) else {
             return super.mouseDown(with: event)
         }
-        setPosition(((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded(), ofDividerAt: 0)
+        setPosition(openingPosition, ofDividerAt: 0)
+    }
+
+    /// Where the divider stands at first: a double-click brings it back, and a drag stops there (`detent`).
+    var openingPosition: CGFloat {
+        ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded()
     }
 }
 
@@ -748,9 +776,12 @@ private final class SidebarSplitViewController: RestoredSplitViewController {
 /// Pane sizes, from what each pane shows. The toolbar's sections are AppKit's layout of them
 /// (27.2), measured, for Compile's word alone (`fitToolbar`): it has no API that tells them.
 enum ColumnMetrics {
-    /// Xcode's navigator: its default width, and its narrowest.
-    static let sidebarIdeal: CGFloat = 256
+    /// The sidebar opens at the width of AppKit's inspector (27.2), so the side columns frame
+    /// the editors alike; its narrowest is Xcode's navigator's.
+    static let sidebarIdeal: CGFloat = 270
     static let sidebarMinimum: CGFloat = 222
+    /// Catches a drag aimed at a detent without trapping one passing through.
+    static let detentReach: CGFloat = 8
     /// The window controls and the sidebar toggle, over the source while the sidebar is hidden.
     static let windowControls: CGFloat = 132
     /// The PDF and Inspector toggles, over the inspector or, without it, the last pane.

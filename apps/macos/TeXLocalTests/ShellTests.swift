@@ -5,10 +5,10 @@ import Testing
 /// The window's panes and the toolbar over them.
 @MainActor
 struct ShellTests {
-    /// A workspace in a window on screen, the sidebar and the inspector hidden.
-    private func workspace(showPDF: Bool) async throws -> (NSWindow, WorkspaceController) {
+    /// A workspace in a window on screen, the inspector hidden, and the sidebar unless asked for.
+    private func workspace(showPDF: Bool, sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
         let app = AppModel()
-        app.sidebarVisible = false
+        app.sidebarVisible = sidebar
         app.inspectorVisible = false
         app.showPDF = showPDF
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1300, height: 600),
@@ -73,6 +73,28 @@ struct ShellTests {
         try await resize(window, to: window.contentMinSize.width)
         #expect(workspace.toolbar.compactCompile)
         #expect(try item(.zoom, in: workspace).isHidden)
+    }
+
+    /// A divider dragged near where it opened stops there: the sidebar at its opening width, source
+    /// and PDF at the split a double-click on their divider restores. Out of reach, it goes where
+    /// it is dragged, and a hidden sidebar has nowhere to stop.
+    @Test func aDividerStopsWhereItOpened() async throws {
+        let (window, workspace) = try await workspace(showPDF: true, sidebar: true)
+        defer { workspace.close(); window.close() }
+        let split = workspace.splitView, opening = ColumnMetrics.sidebarIdeal, reach = ColumnMetrics.detentReach
+        func sidebar(_ position: CGFloat) -> CGFloat {
+            workspace.splitView(split, constrainSplitPosition: position, ofSubviewAt: 0)
+        }
+        #expect(sidebar(opening + 3) == opening && sidebar(opening - reach) == opening)
+        #expect(sidebar(opening + reach + 1) == opening + reach + 1)
+        workspace.sidebarItem.isCollapsed = true
+        #expect(sidebar(opening + 3) == opening + 3)
+
+        let columns = workspace.columns, even = ((columns.splitView.bounds.width - columns.splitView.dividerThickness) / 2).rounded()
+        func divider(_ position: CGFloat) -> CGFloat {
+            columns.splitView(columns.splitView, constrainSplitPosition: position, ofSubviewAt: 0)
+        }
+        #expect(divider(even - 5) == even && divider(even + 40) == even + 40)
     }
 
     /// A sidebar the window folded is still the user's shown sidebar: it isn't saved as hidden,
