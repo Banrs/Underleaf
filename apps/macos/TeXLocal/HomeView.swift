@@ -1,18 +1,20 @@
 import SwiftUI
 
-/// The projects: new ones from templates, then recent ones to search and open.
+/// The projects: new ones from templates, then all of them to search and open.
 struct HomeView: View {
     @Environment(AppModel.self) private var app
     /// Single selection: every action here acts on one project.
     @State private var selection: ProjectInfo.ID?
     @State private var rename = InPlaceRename<ProjectInfo.ID>()
     @FocusState private var listFocused: Bool
+    @FocusState private var searching: Bool
     @State private var query = ""
+    @AppStorage("dismissedTeXTip") private var dismissedTeXTip = false
 
     var body: some View {
         // Over the list, which runs on under it and the toolbar with one edge effect.
         list.safeAreaBar(edge: .top) {
-            if app.tex?.available == false { texMissing }
+            if app.tex?.available == false, !dismissedTeXTip { texMissing }
         }
         // Projects, copied in, as the Open panel says; other items are left out. One
         // opens; several stay listed under Recent.
@@ -32,6 +34,9 @@ struct HomeView: View {
             }
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
+        .searchFocused($searching)
+        // Edit › Find Project…
+        .onChange(of: app.searchFocusToken) { searching = true }
     }
 
     private var list: some View {
@@ -53,9 +58,9 @@ struct HomeView: View {
                     // Its own view, so a row redraws only when its rename starts or ends.
                     ProjectRow(project: project, rename: rename, ended: { listFocused = true }) { commitRename(project) }
                 }
-                if shown.isEmpty { empty.frame(maxWidth: .infinity).selectionDisabled() }
+                if app.projectsLoaded, shown.isEmpty { empty.frame(maxWidth: .infinity).selectionDisabled() }
             } header: {
-                Text("Recent")
+                Text("All Projects")
             }
             .listSectionSeparator(.hidden)
         }
@@ -102,7 +107,7 @@ struct HomeView: View {
         .scrollIndicators(.never)
     }
 
-    /// In the Recent section, not over the list, so the templates stay in view.
+    /// In the projects' section, not over the list, so the templates stay in view.
     @ViewBuilder private var empty: some View {
         if !query.isEmpty {
             ContentUnavailableView.search(text: query)
@@ -136,12 +141,15 @@ struct HomeView: View {
             .symbolRenderingMode(.multicolor)
             Spacer()
             GetMacTeXButton()
+            Button("Dismiss", systemImage: "xmark") { dismissedTeXTip = true }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
         }
         .padding()
     }
 }
 
-/// A recent project: its name over its main file and when it last changed.
+/// A project: its name over its main file and when it last changed.
 /// While renamed, a field takes the name's place.
 private struct ProjectRow: View {
     let project: ProjectInfo
@@ -300,21 +308,23 @@ private struct PagePreview: View {
     }
 }
 
-/// Starts as Untitled, so Create is ready at once.
+/// Starts as the first Untitled not taken, as Finder numbers a new folder, so Create is ready at once.
 struct NewProjectSheet: View {
     @Environment(AppModel.self) private var app
-    @State private var name = "Untitled"
+    @State private var name: String
     @State private var template: String
     @FocusState private var nameFocused: Bool
 
-    init(template: String) {
+    init(template: String, taken: [String]) {
         _template = State(initialValue: template)
+        let names = Set(taken.map { $0.lowercased() })
+        _name = State(initialValue: (1...).lazy.map { $0 == 1 ? "Untitled" : "Untitled".numbered($0) }.first { !names.contains($0.lowercased()) } ?? "Untitled")
     }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
 
     var body: some View {
-        DialogSheet(title: "New Project", message: "Its files stay in a folder on this Mac.",
+        DialogSheet(title: "New Project", message: "Saved in \((Core.libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath).",
                     action: "Create", enabled: !trimmed.isEmpty, failure: { "Couldn’t Create “\(trimmed)”" }) {
             try await app.create(name: trimmed, template: template)
         } fields: {
@@ -335,7 +345,7 @@ struct NewProjectSheet: View {
     .padding()
 }
 
-#Preview("Recent project") {
+#Preview("Project") {
     List {
         ProjectRow(project: ProjectInfo(id: "thesis", name: "Thesis", mtime: Date.now.timeIntervalSince1970 * 1000 - 3_600_000,
                                         mainFile: "main.tex"),
