@@ -131,6 +131,8 @@ final class ProjectModel {
     /// The latest finished search's hits: nil until the first for a query ends,
     /// so its results pane doesn't read No Results while it runs.
     var searchHits: [SearchHit]?
+    /// Why the latest search found nothing, when it couldn't be run.
+    private(set) var searchFailure: String?
 
     let editor = SourceEditor()
     private weak var app: AppModel?
@@ -1053,11 +1055,15 @@ final class ProjectModel {
     /// Hits for the current query, unless the calling task is cancelled by a newer one.
     func search() async {
         guard isSearching else {
-            searchHits = nil
+            (searchHits, searchFailure) = (nil, nil)
             return
         }
-        let hits = (try? await core.call("search_project", ["id": id, "query": searchQuery], as: [SearchHit].self)) ?? []
-        if !Task.isCancelled { searchHits = hits }
+        do {
+            let hits = try await core.call("search_project", ["id": id, "query": searchQuery], as: [SearchHit].self)
+            if !Task.isCancelled { (searchHits, searchFailure) = (hits, nil) }
+        } catch {
+            if !Task.isCancelled { (searchHits, searchFailure) = ([], error.localizedDescription) }
+        }
     }
 
     // ---------- editor commands ----------
