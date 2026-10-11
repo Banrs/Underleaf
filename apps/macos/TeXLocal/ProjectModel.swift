@@ -698,6 +698,10 @@ final class ProjectModel {
                 await showPDFOnDisk(reloadIfUnchanged: result.pdfChanged)
                 // Edits made while it built aren't in it.
                 pdfOutdated = edits != built
+                // Settings' jump to the caret's place, in a PDF pane that is showing.
+                if result.ok, app?.showPDF == true, isLaTeX, UserDefaults.standard.bool(forKey: DefaultsKey.syncAfterCompile) {
+                    Task { await forwardSync(quietly: true) }
+                }
             }
             if !closed {
                 self.result = result
@@ -885,7 +889,7 @@ final class ProjectModel {
     // ---------- SyncTeX ----------
 
     /// Each sync replaces the one before; the PDF pane shows the spot once it has its width.
-    func forwardSync() async {
+    func forwardSync(quietly: Bool = false) async {
         guard let path = openPath else { return }
         let (line, column, word) = (editor.currentLine, editor.currentColumn, editor.currentSyncWord)
         let live = livePDF, args = syncArguments(["id": id, "file": path, "line": line, "column": column])
@@ -899,9 +903,7 @@ final class ProjectModel {
                 guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, livePDF == live else { return }
                 app?.requestPDF(.reveal(loc, word))
             } catch {
-                if !Task.isCancelled, !closed {
-                    reportSync(error, "Couldn’t Find This Line in the PDF")
-                }
+                if !quietly, !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Line in the PDF") }
             }
         }
         syncTask = task

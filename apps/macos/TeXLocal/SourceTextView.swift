@@ -190,22 +190,28 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     var fontSize = NSFont.systemFontSize {
         didSet { applyFont() }
     }
+    /// Settings' fixed-pitch family; empty, the system's monospaced font.
+    var fontName = "" {
+        didSet { if fontName != oldValue { applyFont() } }
+    }
     /// How far the current line's highlight sits below its line's top: the
     /// extra line height goes above the glyphs, Xcode centres them.
     private var rowShift: CGFloat = 0
     private var applied: NSFont?
 
     /// SF Mono as Xcode's Default themes give it, regular in Light and medium in
-    /// Dark, its lines 1.1 times the font's (DVTLineSpacing) to whole points: 18 at 13.
+    /// Dark, or the family chosen in Settings; its lines 1.1 times the font's
+    /// (DVTLineSpacing) to whole points: 18 at 13.
     private func applyFont() {
         let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: dark ? .medium : .regular)
+        let chosen = fontName.isEmpty ? nil : NSFontManager.shared.font(withFamily: fontName, traits: [], weight: 5, size: fontSize)
+        let font = chosen ?? .monospacedSystemFont(ofSize: fontSize, weight: dark ? .medium : .regular)
         guard font != applied else { return }
-        let resized = applied?.pointSize != font.pointSize
+        let resized = applied?.pointSize != font.pointSize || applied?.familyName != font.familyName
         applied = font
         self.font = font
         typingAttributes[.font] = font
-        // The weights share their metrics: an appearance change leaves the lines and gutter as they are.
+        // The system font's weights share their metrics: an appearance change leaves the lines and gutter as they are.
         guard resized else { return }
         let natural = font.ascender.rounded(.up) - font.descender.rounded(.down) + font.leading
         let style = NSMutableParagraphStyle()
@@ -253,6 +259,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         didSet { if issueLines != oldValue { redrawLineAndGutter() } }
     }
 
+    /// Settings' Show Line Numbers. Off, the gutter is a margin that keeps the issues' marks.
+    var showsLineNumbers = true {
+        didSet { if showsLineNumbers != oldValue { updateGutterWidth() } }
+    }
+
     private func digits(_ n: Int) -> Int { max(4, String(n).count) }
 
     /// Xcode's, measured at 13 pt (2026-10-05): one width up to 9,999 lines, the numbers
@@ -260,7 +271,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     /// text 11 pt after.
     func updateGutterWidth() {
         lineCountDigits = digits(document.lineCount)
-        numbersEnd = 19.5 + CGFloat(lineCountDigits - 1) * digitWidth
+        numbersEnd = showsLineNumbers ? 19.5 + CGFloat(lineCountDigits - 1) * digitWidth : 14
         let width = numbersEnd + 11 - (textContainer?.lineFragmentPadding ?? 0)
         guard width != gutterWidth else { return }
         gutterWidth = width
@@ -492,6 +503,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
                 NSBezierPath(roundedRect: NSRect(x: 14, y: frame.minY + bounds.minY + rowShift, width: numbersEnd - 10, height: bounds.height),
                              xRadius: 4, yRadius: 4).fill()
             }
+            guard showsLineNumbers else { continue }
             func draw(_ lineNumber: Int, on line: NSTextLineFragment) {
                 (lineNumber == current?.number || issueLines[lineNumber] != nil ? NSColor.labelColor : .tertiaryLabelColor).setFill()
                 let number = numberLine(lineNumber)
@@ -723,7 +735,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             showPartner(of: selection.location)
             return
         }
-        if let close = Self.pairs[c] {
+        if EditorPrefs.autoPair, let close = Self.pairs[c] {
             if selection.length > 0 {
                 super.insertText("\(c)\(text.substring(with: selection))\(close)", replacementRange: selection)
                 closers.insert(NSMaxRange(selection) + 1)
@@ -755,7 +767,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let selection = selectedRange(), text = string as NSString
         guard selection.length == 0, selection.location > 0, selectedRanges.count == 1 else { return super.deleteBackward(sender) }
         let caret = selection.location
-        if let before = character(at: caret - 1), let close = Self.pairs[before], character(at: caret) == close {
+        if EditorPrefs.autoPair, let before = character(at: caret - 1), let close = Self.pairs[before], character(at: caret) == close {
             insertText("", replacementRange: NSRange(location: caret - 1, length: 2))
             return
         }
@@ -841,8 +853,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     private var caret: Int { selectedRange().location }
 
-    /// Offer core completions after typing when the caret has candidates.
-    private func offerCompletions() { complete(explicit: false) }
+    /// Offer core completions after typing when the caret has candidates. With Settings'
+    /// Suggest Completions While Typing off, typing only filters a list Escape opened.
+    private func offerCompletions() {
+        if EditorPrefs.autoComplete || offered != nil { complete(explicit: false) }
+    }
 
     override func complete(_ sender: Any?) { complete(explicit: true) }
 

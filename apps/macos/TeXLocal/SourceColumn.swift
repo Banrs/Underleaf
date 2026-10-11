@@ -3,7 +3,9 @@ import SwiftUI
 
 struct SourceColumn: View {
     let project: ProjectModel
+    @AppStorage(EditorPrefs.fontNameKey) private var fontName = ""
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
+    @AppStorage(EditorPrefs.lineNumbersKey) private var lineNumbers = true
     @AppStorage(EditorPrefs.syntaxThemeKey) private var syntaxTheme = SyntaxTheme.overleaf
 
     var body: some View {
@@ -12,7 +14,8 @@ struct SourceColumn: View {
             // SwiftUI's scroll view, under the toolbar and the status bar, which AppKit's edges
             // draw over (the bar's is its accessory's, as over the PDF).
             ScrollView {
-                EditorView(editor: project.editor, shown: project.editsText, fontSize: fontSize, syntaxTheme: syntaxTheme)
+                EditorView(editor: project.editor, shown: project.editsText, fontName: fontName, fontSize: fontSize,
+                           lineNumbers: lineNumbers, syntaxTheme: syntaxTheme)
                     .frame(maxWidth: .infinity)
                     .frame(height: project.editor.layout.height)
             }
