@@ -181,12 +181,12 @@ struct DialogSheet<Fields: View>: View {
                 if let message {
                     Text(message)
                         .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            // A grouped form's own inset, so the title lines up with its sections
-            // (UI kit Dialogs: content 20 pt from every edge).
-            .padding([.horizontal, .top], 20)
+            // A grouped form's own inset, so the title lines up with its sections.
+            .scenePadding([.horizontal, .top])
             // The grouped form's background differs in dark mode, leaving seams.
             Form { fields }
                 .formStyle(.grouped)
@@ -194,7 +194,8 @@ struct DialogSheet<Fields: View>: View {
                 .scrollDisabled(true)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(width: 390) // UI kit Dialogs
+        // The form size is wider (about 560 pt); the UI kit's dialog is 390.
+        .frame(width: 390)
         // macOS 27 resets the control size in sheets: set it here.
         .controlSize(.regular)
         .toolbar {
@@ -243,14 +244,21 @@ struct ItemActions {
     let moveToTrash: () -> Void
 }
 
+/// The same items in File and in the context menus, dimmed with no item. Without icons: Show in
+/// Finder has no standard one, and a group has icons for all its items or none (HIG, Menus).
 struct ItemMenuItems: View {
-    let actions: ItemActions
+    let actions: ItemActions?
+    var trashShortcut: KeyboardShortcut?
 
     var body: some View {
-        RenameButton().renameAction(actions.rename)
-        Button("Show in Finder", action: actions.showInFinder)
+        Button("Rename") { actions?.rename() }
+            .disabled(actions == nil)
+        Button("Show in Finder") { actions?.showInFinder() }
+            .disabled(actions == nil)
         Divider()
-        Button("Move to Trash", action: actions.moveToTrash)
+        Button("Move to Trash") { actions?.moveToTrash() }
+            .keyboardShortcut(trashShortcut)
+            .disabled(actions == nil)
     }
 }
 

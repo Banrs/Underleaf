@@ -67,6 +67,14 @@ struct OutlineTests {
         #expect(tree[1].children?.map(\.item.title) == ["A1", "A2"])
         #expect(tree[1].children?[0].children?.map(\.item.title) == ["A1a"])
     }
+
+    /// Two headings with one title fold on their own, and each keeps its key as the others fold.
+    @Test func headingsOfOneTitleFoldApart() {
+        let tree = Outline.tree(outline("2:A", "3:Intro", "2:B", "3:Intro"))
+        let keys = tree.flatMap { [$0] + $0.descendants }.map(\.foldKey)
+        #expect(Set(keys).count == 4)
+        #expect(tree[0].descendants.map(\.foldKey) != tree[1].descendants.map(\.foldKey))
+    }
 }
 
 /// Aa's levels: those the main file's class has, numbered and set as it sets them.

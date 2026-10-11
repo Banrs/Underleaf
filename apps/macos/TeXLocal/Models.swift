@@ -56,9 +56,17 @@ nonisolated struct TexStatus: Decodable {
 
 nonisolated struct ProjectSettings: Decodable {
     var mainFile: String
-    let engine: String
-    let shellEscape: Bool
-    let stopOnFirstError: Bool
+    var engine: String
+    var shellEscape: Bool
+    var stopOnFirstError: Bool
+
+    /// What `set_settings` does with `patch`, so a change can show before the core answers.
+    mutating func apply(_ patch: [String: Any]) {
+        mainFile = patch["mainFile"] as? String ?? mainFile
+        engine = patch["engine"] as? String ?? engine
+        shellEscape = patch["shellEscape"] as? Bool ?? shellEscape
+        stopOnFirstError = patch["stopOnFirstError"] as? Bool ?? stopOnFirstError
+    }
 }
 
 nonisolated struct LogItem: Decodable, Equatable {
@@ -106,6 +114,14 @@ nonisolated struct SearchHit: Decodable, Identifiable {
     let after: String
 
     var id: String { "\(file):\(line):\(before.count)" }
+}
+
+/// The hits of one file, as the results list them.
+nonisolated struct SearchGroup: Identifiable {
+    let file: String
+    let hits: [SearchHit]
+
+    var id: String { file }
 }
 
 nonisolated struct FileText: Decodable {

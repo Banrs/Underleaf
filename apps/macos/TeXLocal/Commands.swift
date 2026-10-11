@@ -13,7 +13,6 @@ enum MenuCommand: String, CaseIterable {
     case fileUpload = "file.upload"
     case fileSave = "file.save"
     case pdfSave = "pdf.save"
-    case filePageSetup = "file.pageSetup"
     case filePrint = "file.print"
     case editBold = "edit.bold"
     case editItalic = "edit.italic"
@@ -37,6 +36,7 @@ enum MenuCommand: String, CaseIterable {
     case viewFitPage = "view.fitPage"
     case compileRun = "compile.run"
     case compileStop = "compile.stop"
+    case compileClean = "compile.clean"
     case syncForward = "sync.forward"
     case syncInverse = "sync.inverse"
     case issueNext = "issue.next"
@@ -55,8 +55,7 @@ enum MenuCommand: String, CaseIterable {
         case .fileNewFolder: "New Folder"
         case .fileUpload: "Add Files…"
         case .fileSave: "Save"
-        case .pdfSave: "Save PDF As…"
-        case .filePageSetup: "Page Setup…"
+        case .pdfSave: "Export as PDF…"
         case .filePrint: "Print…"
         case .editBold: "Bold"
         case .editItalic: "Italic"
@@ -80,6 +79,7 @@ enum MenuCommand: String, CaseIterable {
         case .viewFitPage: "Fit Page"
         case .compileRun: "Compile"
         case .compileStop: "Stop"
+        case .compileClean: "Clean Build Folder"
         case .syncForward: "Go to PDF Position"
         case .syncInverse: "Go to Source Position"
         case .issueNext: "Go to Next Issue"
@@ -87,22 +87,20 @@ enum MenuCommand: String, CaseIterable {
         }
     }
 
-    /// The standard icon for the action (HIG, Icons) where its group has them: the system's Close
-    /// above Save has one, and Bold, Italic and Underline are the HIG's text-formatting trio.
+    /// Menus carry icons for a whole group or none of it (HIG, Menus): only Bold, Italic and
+    /// Underline, the text-formatting trio, have them.
     var symbol: String? {
         switch self {
-        case .fileSave: "square.and.arrow.down"
         case .editBold: "bold"
         case .editItalic: "italic"
         case .editUnderline: "underline"
-        case .projectSearch, .pdfFind: "text.page.badge.magnifyingglass"
         default: nil
         }
     }
 
-    /// The menus' key equivalents, clear of the system's (HIG, Keyboards). ⌥⌘G is Go to
-    /// Page, as in the Mac's PDF readers; Find in PDF… has none, as ⌘F finds in the PDF
-    /// while it has the keyboard.
+    /// The menus' key equivalents, clear of the system's and on keys every keyboard layout has
+    /// (HIG, Keyboards). ⌥⌘G is Go to Page, as in the Mac's PDF readers; Find in PDF… has none, as
+    /// ⌘F finds in the PDF while it has the keyboard.
     var shortcut: KeyboardShortcut? {
         switch self {
         case .projectNew: KeyboardShortcut("n", modifiers: [.command, .shift])
@@ -112,8 +110,6 @@ enum MenuCommand: String, CaseIterable {
         case .fileNew: KeyboardShortcut("n")
         case .fileNewFolder: KeyboardShortcut("n", modifiers: [.command, .shift, .option])
         case .fileSave: KeyboardShortcut("s")
-        case .pdfSave: KeyboardShortcut("s", modifiers: [.command, .shift])
-        case .filePageSetup: KeyboardShortcut("p", modifiers: [.command, .shift])
         case .filePrint: KeyboardShortcut("p")
         case .editBold: KeyboardShortcut("b")
         case .editItalic: KeyboardShortcut("i")
@@ -121,13 +117,12 @@ enum MenuCommand: String, CaseIterable {
         // Pages' Insert › Equation.
         case .editMath: KeyboardShortcut("e", modifiers: [.command, .option])
         case .editComment: KeyboardShortcut("/")
-        // Xcode's Editor › Structure.
-        case .editMoveLineUp: KeyboardShortcut("[", modifiers: [.command, .option])
-        case .editMoveLineDown: KeyboardShortcut("]", modifiers: [.command, .option])
+        case .editMoveLineUp: KeyboardShortcut(.upArrow, modifiers: [.command, .control])
+        case .editMoveLineDown: KeyboardShortcut(.downArrow, modifiers: [.command, .control])
         case .editGotoLine: KeyboardShortcut("l")
         case .pdfGotoPage: KeyboardShortcut("g", modifiers: [.command, .option])
         case .viewToggleSidebar: KeyboardShortcut("s", modifiers: [.command, .control])
-        case .viewTogglePdf: KeyboardShortcut("\\", modifiers: [.command, .shift])
+        case .viewTogglePdf: KeyboardShortcut("p", modifiers: [.command, .option])
         case .viewToggleInspector: KeyboardShortcut("i", modifiers: [.command, .option])
         case .viewToggleLogs: KeyboardShortcut("l", modifiers: [.command, .shift])
         case .viewZoomIn: KeyboardShortcut("=")
@@ -137,12 +132,14 @@ enum MenuCommand: String, CaseIterable {
         case .viewFitPage: KeyboardShortcut("9", modifiers: [.command, .option])
         case .compileRun: KeyboardShortcut(.return)
         case .compileStop: KeyboardShortcut(".")
+        // Xcode's Product › Clean Build Folder.
+        case .compileClean: KeyboardShortcut("k", modifiers: [.command, .shift])
         // As the Mac's VS Code LaTeX extension; the PDF answers a double-click for the other way.
         case .syncForward: KeyboardShortcut("j", modifiers: [.command, .option])
         // Xcode's Navigate › Jump to Next Issue.
         case .issueNext: KeyboardShortcut("'")
-        case .issuePrevious: KeyboardShortcut("'", modifiers: [.command, .shift])
-        case .projectExport, .fileUpload, .pdfFind, .viewToggleWordCount, .syncInverse: nil
+        case .issuePrevious: KeyboardShortcut("\"")
+        case .pdfSave, .projectExport, .fileUpload, .pdfFind, .viewToggleWordCount, .syncInverse: nil
         }
     }
 }
@@ -170,7 +167,9 @@ extension AppModel {
     /// `project` is nil on the projects screen or while Settings is in front.
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         switch command {
-        case .projectNew, .projectOpen, .filePageSetup: true
+        case .projectNew, .projectOpen: true
+        // On Home, the search of the projects.
+        case .projectSearch: project != nil || (self.project == nil && mainWindowIsKey)
         case .fileSave, .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine:
             project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
@@ -188,6 +187,7 @@ extension AppModel {
 
     /// View-menu titles say what the item will do (HIG, The menu bar).
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
+        if command == .projectSearch, self.project == nil { return "Find Project…" }
         let shown: Bool? = switch command {
         case .viewToggleSidebar: sidebarVisible
         case .viewTogglePdf: showPDF
@@ -217,7 +217,7 @@ extension AppModel {
         case .projectExport:
             if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
         case .projectSearch:
-            sidebarVisible = true
+            if project != nil { sidebarVisible = true }
             searchFocusToken += 1
         case .fileNew, .fileNewFolder:
             sidebarVisible = true
@@ -228,8 +228,6 @@ extension AppModel {
             if let project, let url = project.pdfURL {
                 exporting = ExportFile(name: "\(project.id).pdf", type: .pdf) { url }
             }
-        // AppKit: SwiftUI has no page setup panel.
-        case .filePageSetup: NSApp.runPageLayout(nil)
         // The PDF, not the first responder (usually the source).
         case .filePrint: requestPDF(.print)
         case .editBold: project?.editor.perform(.bold)
@@ -254,12 +252,18 @@ extension AppModel {
         case .viewFitPage: requestPDF(.fitPage)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
+        case .compileClean: Task { await project?.cleanBuildFolder() }
         case .syncForward: Task { await project?.forwardSync() }
         case .syncInverse: requestPDF(.inverseFromView)
         case .issueNext: project?.goToIssue(next: true)
         case .issuePrevious: project?.goToIssue(next: false)
         }
     }
+}
+
+extension AppModel {
+    /// Live Preview runs TeXpresso, which the core found or was told where to look for.
+    var canPreviewLive: Bool { tex?.texpresso != nil }
 }
 
 struct AppCommands: Commands {
@@ -295,8 +299,7 @@ struct AppCommands: Commands {
                     } label: {
                         Label(recent.name, systemImage: "text.document")
                     }
-                    // An object rather than an action, so it keeps its icon
-                    // (HIG, Menus); macOS 27 hides menu images otherwise.
+                    // Documents keep their icon (HIG, Menus); macOS 27 hides menu images otherwise.
                     .labelStyle(.titleAndIcon)
                 }
                 Divider()
@@ -312,17 +315,10 @@ struct AppCommands: Commands {
             Divider()
             item(.projectClose)
             Divider()
-            // These act on the chosen item of the list with the keyboard. After Save, as
-            // Pages and Finder put Rename; the standard icons (HIG, Icons) on all three.
-            let chosen = app.mainWindowIsKey ? app.chosenItem : nil
-            Button { chosen?.rename() } label: { Label("Rename", systemImage: "pencil") }.labelStyle(.titleAndIcon)
-                .disabled(chosen == nil)
-            Button { chosen?.showInFinder() } label: { Label("Show in Finder", systemImage: "folder") }.labelStyle(.titleAndIcon)
-                .disabled(chosen == nil)
-            Button { chosen?.moveToTrash() } label: { Label("Move to Trash", systemImage: "trash") }.labelStyle(.titleAndIcon)
-                .keyboardShortcut(.delete)
-                .disabled(chosen == nil)
-            Divider()
+            // These act on the chosen item of the list with the keyboard.
+            ItemMenuItems(actions: app.mainWindowIsKey ? app.chosenItem : nil, trashShortcut: KeyboardShortcut(.delete))
+        }
+        CommandGroup(replacing: .importExport) {
             items([.pdfSave, .projectExport])
             Divider()
             if let project, project.hasPDF, let url = project.pdfURL {
@@ -332,18 +328,13 @@ struct AppCommands: Commands {
             }
         }
         CommandGroup(replacing: .printItem) {
-            item(.filePageSetup)
             item(.filePrint)
         }
         // The system's own, answered by whatever has the keyboard; a
         // replacement group loses the spelling and substitution checkmarks.
         TextEditingCommands()
         CommandGroup(before: .textEditing) {
-            item(.editGotoLine)
-            item(.pdfGotoPage)
-            Divider()
-            item(.projectSearch)
-            item(.pdfFind)
+            items([.projectSearch, .pdfFind])
         }
         CommandGroup(replacing: .textFormatting) {
             items([.editBold, .editItalic, .editUnderline])
@@ -351,10 +342,9 @@ struct AppCommands: Commands {
             Menu("Section Level") { SectionLevelItems(project: project) }
                 .disabled(project?.isLaTeX != true)
             Divider()
-            // As Xcode's Editor › Structure has them.
             items([.editComment, .editMoveLineUp, .editMoveLineDown])
         }
-        CommandGroup(before: .toolbar) {
+        CommandGroup(replacing: .sidebar) {
             item(.viewToggleSidebar)
             // The keyboard's and VoiceOver's way to the File Outline header's fold.
             Button(app.outlineCollapsed ? "Show File Outline" : "Hide File Outline") { app.outlineCollapsed.toggle() }
@@ -362,9 +352,15 @@ struct AppCommands: Commands {
             items([.viewTogglePdf, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
             Divider()
             items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage])
-            Divider()
         }
         // The app's own menus go between View and Window (HIG, The menu bar).
+        CommandMenu("Go") {
+            items([.editGotoLine, .pdfGotoPage])
+            Divider()
+            items([.syncForward, .syncInverse])
+            Divider()
+            items([.issueNext, .issuePrevious])
+        }
         CommandMenu("Insert") {
             Group {
                 MathMenuItems(project: project, shortcut: app.shortcut(.editMath, on: project)) {
@@ -376,33 +372,21 @@ struct AppCommands: Commands {
             .disabled(project?.isLaTeX != true)
         }
         CommandMenu("Compile") {
-            items([.compileRun, .compileStop])
+            items([.compileRun, .compileStop, .compileClean])
+            Divider()
             Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
             // A mode, like the one above: checked while its window is live. Disk changes rescan on their own.
             Toggle("TeXpresso Live Preview (Experimental)", isOn: Binding(
                 get: { project?.texpresso.active == true },
                 set: { $0 ? project?.startTeXpresso() : project?.stopTeXpresso() }))
-                .disabled(project.map { !$0.initialLoadComplete || $0.texpresso.phase == .stopping } ?? true)
+                .disabled(!app.canPreviewLive || project.map { !$0.initialLoadComplete || $0.texpresso.phase == .stopping } ?? true)
             Divider()
-            // Only with a project's settings, and their engine always a choice: a
-            // selection no tag matches, nil included, is a SwiftUI fault.
-            if let project, let engine = project.settings?.engine {
-                Picker("Engine", selection: Binding(get: { engine }, set: { new in Task { await project.setEngine(new) } })) {
-                    ForEach(texEngines, id: \.0) { id, title in Text(title).tag(id) }
-                    if !texEngines.contains(where: { $0.0 == engine }) { Text(engine).tag(engine) }
-                }
-            } else {
-                Menu("Engine") { ForEach(texEngines, id: \.0) { Text($0.1) } }
-            }
+            EnginePicker(project: project)
             // The open file; the files' context menu has it for any .tex file.
             Button("Set as Main File") {
                 if let project, let path = project.openPath { Task { await project.setMainFile(path) } }
             }
             .disabled(project?.isLaTeX != true || project?.openPath == project?.settings?.mainFile)
-            Divider()
-            items([.syncForward, .syncInverse])
-            Divider()
-            items([.issueNext, .issuePrevious])
         }
     }
 }

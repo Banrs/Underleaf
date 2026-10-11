@@ -572,6 +572,8 @@ impl Service {
                 .await?),
             // Reports whether a build was running.
             "stop_compile" => out(self.compile.stop(&root()?)),
+            // Stops a running build first; the next build starts from nothing.
+            "clean_build" => out(self.compile.clean(&root()?).await?),
             "synctex_forward" => {
                 let root = root()?;
                 out(synctex::synctex_forward_at(

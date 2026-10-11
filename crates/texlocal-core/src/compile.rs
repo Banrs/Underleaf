@@ -464,6 +464,23 @@ impl CompileManager {
         true
     }
 
+    /// Removes the project's build folder, with a running build stopped and settled first. A
+    /// folder that isn't there is already clean.
+    pub async fn clean(&self, root: &Path) -> Result<(), CoreError> {
+        self.stop(root);
+        let gate = Arc::clone(
+            &lock(&self.running)
+                .entry(root.to_path_buf())
+                .or_default()
+                .gate,
+        );
+        let _idle = gate.lock().await;
+        match std::fs::remove_dir_all(root.join(BUILD_DIR)) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+            _ => Ok(()),
+        }
+    }
+
     fn register<'a>(&'a self, root: &'a Path) -> Registration<'a> {
         let mut running = lock(&self.running);
         let entry = running.entry(root.to_path_buf()).or_default();
@@ -743,6 +760,19 @@ mod tests {
     use crate::tail;
     use std::ffi::OsString;
     use std::path::Path;
+
+    #[tokio::test]
+    async fn cleaning_removes_the_build_folder_and_a_missing_one_is_clean() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = super::CompileManager::default();
+        manager.clean(dir.path()).await.unwrap();
+        std::fs::create_dir_all(dir.path().join("build/sub")).unwrap();
+        std::fs::write(dir.path().join("build/main.aux"), "x").unwrap();
+        std::fs::write(dir.path().join("main.tex"), "x").unwrap();
+        manager.clean(dir.path()).await.unwrap();
+        assert!(!dir.path().join("build").exists());
+        assert!(dir.path().join("main.tex").exists());
+    }
 
     #[test]
     fn a_long_log_is_read_from_its_last_whole_line() {
