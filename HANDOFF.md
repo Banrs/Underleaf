@@ -2,8 +2,8 @@
 
 ## Branches
 
-`main` holds the work. `refactor/frontend-native` (the HIG refactor, the Xcode-style
-completion list and the page-by-page live preview) was fast-forwarded into it on 12 October.
+`main` holds the work, and there is no other branch: the refactors' branches were merged
+into it and deleted on 12 October.
 
 ## The Mac app's shape
 
@@ -12,7 +12,8 @@ completion list and the page-by-page live preview) was fast-forwarded into it on
   column. Panes, bars, sheets, popovers, Settings and Home are SwiftUI, hosting AppKit's text
   and PDF views where SwiftUI has none.
 - **Narrow windows**: the window stops at 542 pt (about 605 with source and PDF); source and
-  PDF keep minimums of 260 and 200 pt, the sidebar Xcode's navigator's 222. Tools without room
+  PDF keep minimums of 260 and 200 pt, the sidebar Xcode's navigator's 222; it opens at 270,
+  the width of AppKit's inspector. Tools without room
   go to `NSToolbar`'s own overflow menu by `visibilityPriority`, and nowhere else; Compile
   gives up its word for its symbol first. AppKit overflows by the toolbar's whole width, so
   between about 900 and 700 pt a pane's tools can sit over its neighbour. Sidebar and
@@ -20,7 +21,8 @@ completion list and the page-by-page live preview) was fast-forwarded into it on
 - **Source**: one TextKit 2 `NSTextView` (`SourceTextView`), shared across files, in an
   `NSScrollView` of its own (`EditorView`). Xcode's metrics for the font, gutter and current
   line; the completion list (`CompletionList`) is a copy of Xcode 27's, an opaque panel in a
-  child window that never takes the keyboard.
+  child window that never takes the keyboard, its chosen row raised with Xcode's shadow and
+  the others fainter. Unlike Xcode's it ends at the editor's trailing edge.
 - **Status bar**: the source/PDF columns' bottom accessory at Xcode's measured spacing (14 pt
   in, 9 between items, 36 high). Its ground is the editors' colour at 85% over AppKit's
   accessory edge, with a device-pixel separator line in a row of its own above it, the row of
@@ -33,6 +35,8 @@ completion list and the page-by-page live preview) was fast-forwarded into it on
   hides the system's wallpaper-tinted ground so it is the editors' colour.
 - **Split dividers** are a device pixel (`HairlineSplitView`); the source|PDF divider stops
   above the status bar (`ColumnsSplitView`), and a double-click on it restores the even split.
+  A drag stops at the sidebar's opening width and at the even split, with the alignment
+  haptic as it arrives (`RestoredSplitViewController.detent`).
   A display link lays the splits out during pane animations, which otherwise don't always
   reach the screen (27.2).
 - **PDF**: a rebuilt document's pages replace those showing, in the same `PDFDocument`, since
@@ -56,8 +60,9 @@ CI: `ci.yml` runs the web tests and bundle and the Rust core's rustfmt, clippy a
 Linux; `macos-app.yml` builds the app, checks the core is linked statically, runs the native
 tests and fails a run in which none passed.
 
-- Native: 140 tests in 19 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
-  `-D warnings` clean. `npm run verify:texpresso`: 25 checks against the patched engine.
+- Native: 143 tests in 19 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
+  `-D warnings` clean. `npm run verify:texpresso`: 25 checks against the patched engine, both
+  of its programs built from the patched source.
 - Live preview, measured from 60 fps screen recordings of a Release build on a one-page
   document: the pane shows a key's page one frame after the editor shows the glyph (median
   17 ms, worst 42 ms); TeXpresso's own window, the same way, in zero to one frame (worst
@@ -89,10 +94,12 @@ its signature, and compare the installed and built binaries.
 
 - Live preview is about half a frame behind TeXpresso's own window at a steady typing pace;
   each page file carries its fonts whole, and most of drawing a fresh page is setting them up.
-- `texpresso-xetex` has not been rebuilt with the patch's change that leaves TeX Live's `doc`
-  and `source` folders out (it needs ICU, HarfBuzz and Graphite headers): run
-  `tools/texpresso/build.sh` where they are installed.
-- Not seen on screen since the live preview's rewrite: a restart after TeXpresso exits, a
-  quick Stop and Start, Find and the selection while pages are replaced.
-- Physical trackpad gestures and interactive IME remain manual checks. ZIP import has
-  per-entry limits but no total extraction budget.
+  A long document's latency has not been measured on screen.
+- The engine installed on Daniel's Mac is the patched `texpresso` built against MuPDF and SDL2
+  made from source (Homebrew has neither there), and `texpresso-xetex` built against Homebrew's
+  `icu4c`, `harfbuzz` and `graphite2`, which have to stay installed. `tools/texpresso/build.sh`
+  builds both where Homebrew has all of TeXpresso's dependencies and `pkg-config`.
+- Watched on screen since the live preview's rewrite: a restart after TeXpresso exits, and a
+  quick Stop and Start. Find and the selection while pages are replaced are tested (in view
+  and out of it), not watched.
+- Physical trackpad gestures, the dividers' haptic and interactive IME remain manual checks.
