@@ -4,8 +4,8 @@
 # Installs a TeXpresso built by build.sh where Underleaf finds it automatically: the
 # programs and the libraries the build linked from outside Homebrew go in <destination>
 # (default ~/Library/Application Support/TeXLocal/TeXpresso), pointed at each other
-# relatively, and /opt/homebrew/bin/texpresso links to its launcher. Libraries from
-# /opt/homebrew stay where they are.
+# relatively, and /opt/homebrew/bin/texpresso links to its launcher (not with NO_LINK=1, for
+# an installation to try beside the one in use). Libraries from /opt/homebrew stay where they are.
 #
 # The installation is prepared in a temporary folder beside the destination, checked by
 # running its launcher, and only then swapped in: a failure or an interruption leaves
@@ -114,5 +114,9 @@ if [ -d "$DEST/cache" ] && cmp -s "$DEST/libexec/texpresso-xetex" "$STAGE/libexe
 if [ -e "$DEST" ]; then OLD=$(mktemp -d "$DEST.old.XXXXXX"); mv "$DEST" "$OLD/previous"; fi
 mv "$STAGE" "$DEST" || fail "could not move the installation into $DEST"
 if [ -n "$KEEP" ]; then mv "$OLD/previous/cache" "$DEST/cache" || true; fi
-[ -n "${NO_LINK:-}" ] || ln -sf "$DEST/bin/texpresso" /opt/homebrew/bin/texpresso
-echo "Installed $DEST; /opt/homebrew/bin/texpresso links to it. Underleaf's Settings can stay on Automatic."
+if [ -n "${NO_LINK:-}" ]; then
+  echo "Installed $DEST. Choose it in Underleaf's Settings: /opt/homebrew/bin/texpresso is as it was."
+else
+  ln -sf "$DEST/bin/texpresso" /opt/homebrew/bin/texpresso
+  echo "Installed $DEST; /opt/homebrew/bin/texpresso links to it. Underleaf's Settings can stay on Automatic."
+fi
