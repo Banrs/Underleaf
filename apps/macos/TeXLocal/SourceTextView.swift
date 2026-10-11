@@ -21,17 +21,30 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return view
     }
 
+    /// The pointer is the split divider's by it and the arrow over the gutter, where a click
+    /// selects lines; elsewhere the text view sets its own, on every move.
+    private func setsCursor(with event: NSEvent) -> Bool {
+        if updateDividerCursor(with: event) { return true }
+        guard inGutter(event) else { return false }
+        NSCursor.arrow.set()
+        return true
+    }
+
+    private func inGutter(_ event: NSEvent) -> Bool {
+        let point = convert(event.locationInWindow, from: nil)
+        return visibleRect.contains(point) && point.x < textContainerOrigin.x
+    }
+
     override func mouseMoved(with event: NSEvent) {
-        if updateDividerCursor(with: event) { return }
-        super.mouseMoved(with: event)
+        if !setsCursor(with: event) { super.mouseMoved(with: event) }
     }
 
     override func mouseEntered(with event: NSEvent) {
-        if !updateDividerCursor(with: event) { super.mouseEntered(with: event) }
+        if !setsCursor(with: event) { super.mouseEntered(with: event) }
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) }
+        if !setsCursor(with: event) { super.cursorUpdate(with: event) }
     }
 
     /// The open file's text as the core mirrors it; every change reaches it.
@@ -190,8 +203,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             storage.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: storage.length))
         }
         typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: style]
-        // Xcode's numbers, measured: semi-condensed SF a point under the text, tabular.
-        let numbers = NSFont.systemFont(ofSize: fontSize - 1, weight: .regular, width: NSFont.Width(rawValue: -0.1))
+        // Xcode's numbers, measured: semi-condensed SF a point under the text, tabular; never under
+        // the 10 points the HIG gives as the Mac's smallest text.
+        let numbers = NSFont.systemFont(ofSize: max(10, fontSize - 1), weight: .regular, width: NSFont.Width(rawValue: -0.1))
         numberFont = NSFont(descriptor: numbers.fontDescriptor.addingAttributes([.featureSettings: [[
             NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
             .selectorIdentifier: kMonospacedNumbersSelector]]]), size: 0) ?? numbers
@@ -224,6 +238,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// The lines the last build has issues on, true for an error: their numbers are marked.
     var issueLines: [Int: Bool] = [:] {
         didSet { if issueLines != oldValue { redrawLineAndGutter() } }
+    }
+    /// A click on a marked line's gutter: the build panel shows what the mark is for.
+    var issueClicked: (Int) -> Void = { _ in }
+    /// The build panel's symbols, an error's and a warning's, to fit the gutter's 14 pt margin.
+    private static let issueSymbols = [true: "xmark.octagon.fill", false: "exclamationmark.triangle.fill"].compactMapValues {
+        NSImage(systemSymbolName: $0, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular).applying(.preferringMulticolor()))
     }
 
     /// Settings' Show Line Numbers. Off, the gutter is a margin that keeps the issues' marks.
@@ -438,11 +459,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             guard frame.maxY >= rect.minY, frame.minY <= rect.maxY, let line = fragment.textLineFragments.first else { continue }
             let lineNumber = document.line(at: offset), issue = issueLines[lineNumber]
             if let issue {
-                // The number on the issue's colour, in the highlight's shape and place.
+                // The number on the issue's colour, in the highlight's shape and place, after its
+                // symbol: the two kinds differ by more than colour.
                 (issue ? NSColor.systemRed : .systemYellow).withAlphaComponent(0.3).setFill()
                 let bounds = line.typographicBounds
-                NSBezierPath(roundedRect: NSRect(x: 14, y: frame.minY + bounds.minY + rowShift, width: numbersEnd - 10, height: bounds.height),
-                             xRadius: 4, yRadius: 4).fill()
+                let row = NSRect(x: 14, y: frame.minY + bounds.minY + rowShift, width: numbersEnd - 10, height: bounds.height)
+                NSBezierPath(roundedRect: row, xRadius: 4, yRadius: 4).fill()
+                if let symbol = Self.issueSymbols[issue] {
+                    let size = symbol.size
+                    symbol.draw(in: NSRect(x: 7 - size.width / 2, y: row.midY - size.height / 2, width: size.width, height: size.height),
+                                from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                }
             }
             guard showsLineNumbers else { continue }
             func draw(_ lineNumber: Int, on line: NSTextLineFragment) {
@@ -976,11 +1003,34 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// A Command-click goes to the PDF from where it lands, as TeXShop's and Skim's; a double-click
     /// stays the system's, selecting a word.
     override func mouseDown(with event: NSEvent) {
+        if event.type == .leftMouseDown, inGutter(event) { return selectLines(with: event) }
         guard event.type == .leftMouseDown, event.modifierFlags.contains(.command), let sync = forwardSync() else {
             return super.mouseDown(with: event)
         }
         setSelectedRange(NSRange(location: characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)), length: 0))
         sync()
+    }
+
+    /// A click in the gutter selects its line, a drag the lines it passes and Shift from the
+    /// selection there was, as Xcode's; on an issue's mark the build panel shows the issue.
+    private func selectLines(with event: NSEvent) {
+        let text = string as NSString
+        func line(at event: NSEvent) -> NSRange {
+            let point = NSPoint(x: textContainerOrigin.x, y: convert(event.locationInWindow, from: nil).y)
+            return text.lineRange(for: NSRange(location: characterIndexForInsertion(at: point), length: 0))
+        }
+        let first = line(at: event)
+        let anchor = event.modifierFlags.contains(.shift) ? selectedRange() : first
+        window?.makeFirstResponder(self)
+        var current = event
+        repeat {
+            setSelectedRange(NSUnionRange(anchor, line(at: current)))
+            autoscroll(with: current)
+            guard let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) else { break }
+            current = next
+        } while current.type != .leftMouseUp
+        let number = document.line(at: first.location)
+        if selectedRange() == first, issueLines[number] != nil { issueClicked(number) }
     }
 
     // MARK: file drops open

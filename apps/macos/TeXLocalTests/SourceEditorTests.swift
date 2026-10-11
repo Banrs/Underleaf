@@ -674,6 +674,35 @@ struct SourceEditorTests {
         #expect(went == 1 && text.selectedRange() == NSRange(location: 4, length: 0))
     }
 
+    /// A click in the gutter selects its line, with Shift from the selection there was; on a
+    /// line the build marked it also asks for the issue.
+    @Test func aClickInTheGutterSelectsTheLine() throws {
+        let window = inWindow()
+        open("one\ntwo\nthree", caret: 0)
+        text.layoutSubtreeIfNeeded()
+        text.issueLines = [2: true]
+        var asked: [Int] = []
+        text.issueClicked = { asked.append($0) }
+        func click(line: Int, shift: Bool = false) throws {
+            let glyph = text.firstRect(forCharacterRange: NSRange(location: text.document.lineStart(line), length: 1), actualRange: nil)
+            let inText = window.convertPoint(fromScreen: NSPoint(x: glyph.minX, y: glyph.midY))
+            let point = NSPoint(x: text.convert(NSPoint(x: 5, y: 0), to: nil).x, y: inText.y)
+            func event(_ type: NSEvent.EventType) throws -> NSEvent {
+                try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: shift ? .shift : [], timestamp: 0,
+                                                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            }
+            // The release ends the tracking.
+            NSApp.postEvent(try event(.leftMouseUp), atStart: false)
+            text.mouseDown(with: try event(.leftMouseDown))
+        }
+        try click(line: 1)
+        #expect(text.selectedRange() == NSRange(location: 0, length: 4) && asked.isEmpty)
+        try click(line: 3, shift: true)
+        #expect(text.selectedRange() == NSRange(location: 0, length: 13))
+        try click(line: 2)
+        #expect(text.selectedRange() == NSRange(location: 4, length: 4) && asked == [2])
+    }
+
     /// VoiceOver's rotors step through the file's headings and the lines with build issues, either way.
     @Test func theRotorsStepThroughHeadingsAndIssues() throws {
         open("a\n\\section{One}\nb\n\\section{Two}\nc", caret: 0)
