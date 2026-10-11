@@ -231,7 +231,7 @@ final class ProjectModel {
             if restartable, !closed {
                 let start = liveStart
                 texpresso.restart(files: start.files, caret: start.caret)
-                if texpresso.active { return note(String(localized: "TeXpresso Restarted")) }
+                if texpresso.active { return note(String(localized: "Live Preview Restarted")) }
             }
             // The last build's PDF comes back, and automatic builds paused for it resume.
             Task { await self.endLivePDF() }

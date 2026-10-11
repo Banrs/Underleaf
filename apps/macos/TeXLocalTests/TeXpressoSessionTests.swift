@@ -372,10 +372,10 @@ struct TeXpressoSessionTests {
         core.feed.send(TeXpressoEvents(seq: 2, running: true, done: .init(pages: 3, run: "complete")))
         try await waitUntil { core.feed.asked.last == 2 }
         try await Task.sleep(for: .milliseconds(1_200))
-        #expect(!session.halted && session.title == "TeXpresso Live")
+        #expect(!session.halted && session.title == "Live Preview On")
         core.feed.send(TeXpressoEvents(seq: 3, running: true, done: .init(pages: 1, run: "stopped")))
         try await waitUntil(timeout: .seconds(5)) { session.halted }
-        #expect(session.needsAttention && session.title == "TeXpresso Paused at an Error")
+        #expect(session.needsAttention && session.title == "Live Preview Paused at an Error")
         core.feed.send(TeXpressoEvents(seq: 4, running: true, done: .init(pages: 3, run: "complete")))
         try await waitUntil { !session.halted }
         session.stop()
@@ -402,7 +402,7 @@ struct TeXpressoSessionTests {
         session.showsLog = true
         #expect(session.needsAttention)
         session.showsLog = false
-        #expect(!session.needsAttention && session.title == "TeXpresso Stopped" && session.log == "TeXpresso exited (signal 11).")
+        #expect(!session.needsAttention && session.title == "Live Preview Stopped" && session.log == "TeXpresso exited (signal 11).")
     }
 
     /// The log is asked for while it shows and has changed, not at every answer.

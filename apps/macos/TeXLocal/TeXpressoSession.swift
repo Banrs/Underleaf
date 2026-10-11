@@ -209,10 +209,10 @@ final class TeXpressoSession {
     var used: Bool { phase != .stopped || status != nil || failure != nil }
     var title: String {
         switch phase {
-        case .stopped: return needsAttention ? "TeXpresso Needs Attention" : "TeXpresso Stopped"
-        case .starting: return "Starting TeXpresso…"
-        case .running: return halted ? "TeXpresso Paused at an Error" : needsAttention ? "TeXpresso Needs Attention" : "TeXpresso Live"
-        case .stopping: return "Stopping TeXpresso…"
+        case .stopped: return needsAttention ? "Live Preview Needs Attention" : "Live Preview Stopped"
+        case .starting: return "Starting Live Preview…"
+        case .running: return halted ? "Live Preview Paused at an Error" : needsAttention ? "Live Preview Needs Attention" : "Live Preview On"
+        case .stopping: return "Stopping Live Preview…"
         }
     }
 
