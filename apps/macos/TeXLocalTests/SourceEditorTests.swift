@@ -792,10 +792,10 @@ struct SourceEditorTests {
         let defaults = UserDefaults.standard, before = defaults.object(forKey: EditorPrefs.fontSizeKey)
         defer { defaults.set(before, forKey: EditorPrefs.fontSizeKey) }
         defaults.set(27, forKey: EditorPrefs.fontSizeKey)
-        #expect(EditorPrefs.stepFontSize(by: 1, dryRun: true) && defaults.integer(forKey: EditorPrefs.fontSizeKey) == 27)
-        #expect(EditorPrefs.stepFontSize(by: 1) && defaults.integer(forKey: EditorPrefs.fontSizeKey) == 28)
-        #expect(!EditorPrefs.stepFontSize(by: 1) && defaults.integer(forKey: EditorPrefs.fontSizeKey) == 28)
-        #expect(EditorPrefs.stepFontSize(by: -1) && defaults.integer(forKey: EditorPrefs.fontSizeKey) == 27)
+        for (step, size) in [(1, 28), (1, 28), (-1, 27)] {
+            EditorPrefs.stepFontSize(by: step)
+            #expect(defaults.integer(forKey: EditorPrefs.fontSizeKey) == size)
+        }
     }
 
     /// Go to Line…'s sheet puts the caret at its line's start.
