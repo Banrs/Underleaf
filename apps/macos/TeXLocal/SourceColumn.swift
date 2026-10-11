@@ -23,7 +23,7 @@ struct SourceColumn: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.textSurface)
             } else if !project.editsText, let url = project.openURL {
-                FilePreview(url: url)
+                FilePreview(url: url, version: project.previewVersion)
             }
         }
         .modifier(WorkspaceModals(project: project))
@@ -34,16 +34,29 @@ struct SourceColumn: View {
 /// Quick Look's preview of a file the editor doesn't edit.
 private struct FilePreview: NSViewRepresentable {
     let url: URL
+    /// The project's count of the file's changes on disk: the preview reads it again at each.
+    let version: Int
+
+    final class Shown {
+        var version = 0
+    }
+
+    func makeCoordinator() -> Shown { Shown() }
 
     func makeNSView(context: Context) -> QLPreviewView {
         QLPreviewView(frame: .zero, style: .normal)
     }
 
     func updateNSView(_ view: QLPreviewView, context: Context) {
-        if view.previewItem?.previewItemURL != url { view.previewItem = url as NSURL }
+        if view.previewItem?.previewItemURL != url {
+            view.previewItem = url as NSURL
+        } else if context.coordinator.version != version {
+            view.refreshPreviewItem()
+        }
+        context.coordinator.version = version
     }
 
-    static func dismantleNSView(_ view: QLPreviewView, coordinator: ()) {
+    static func dismantleNSView(_ view: QLPreviewView, coordinator: Shown) {
         view.close()
     }
 }
