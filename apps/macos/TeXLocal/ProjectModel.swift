@@ -140,7 +140,22 @@ final class ProjectModel {
     var foldedHeadings: Set<String> {
         didSet { UserDefaults.standard.set(foldedHeadings.sorted(), forKey: Self.key("foldedHeadings", id)) }
     }
+    private static let sidebarKeys = ["expandedFolders", "foldedHeadings"]
     private static func key(_ name: String, _ id: String) -> String { "\(name).\(id)" }
+
+    /// A project's id is its folder's name, so a rename moves what is kept under it.
+    static func moveSidebarState(from id: String, to new: String) {
+        let defaults = UserDefaults.standard
+        for name in sidebarKeys {
+            guard let value = defaults.object(forKey: key(name, id)) else { continue }
+            defaults.set(value, forKey: key(name, new))
+            defaults.removeObject(forKey: key(name, id))
+        }
+    }
+
+    static func forgetSidebarState(of id: String) {
+        for name in sidebarKeys { UserDefaults.standard.removeObject(forKey: key(name, id)) }
+    }
 
     var searchQuery = ""
     var isSearching: Bool { !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty }

@@ -368,7 +368,7 @@ nonisolated enum LiveViewer: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .pane: "PDF Pane"
-        case .window: "TeXpresso Window"
+        case .window: "TeXpresso’s Window"
         }
     }
 }

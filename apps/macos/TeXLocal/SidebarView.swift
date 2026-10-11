@@ -168,7 +168,12 @@ struct FilesList: View {
             .onChange(of: hit) { _, id in open(id, focus: false) }
             .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
             .overlay {
-                if project.searchHits?.isEmpty == true { ContentUnavailableView.search(text: project.searchQuery) }
+                if let failure = project.searchFailure {
+                    ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",
+                                           description: Text(failure))
+                } else if project.searchHits?.isEmpty == true {
+                    ContentUnavailableView.search(text: project.searchQuery)
+                }
             }
     }
 
