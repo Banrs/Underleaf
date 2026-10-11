@@ -32,7 +32,7 @@ struct AppAlert: Sendable {
     }
 }
 
-/// What Save PDF As… or Export Project as ZIP… writes (`fileExporter`),
+/// What Export as PDF… or Export Project as ZIP… writes (`fileExporter`),
 /// made only once the panel is done.
 struct ExportFile: Transferable {
     let name: String

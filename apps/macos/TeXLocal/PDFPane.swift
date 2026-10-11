@@ -35,7 +35,7 @@ struct PDFPane: View {
                 GetMacTeXButton().buttonStyle(.borderedProminent)
             }
         } else if project.compiling {
-            // The toolbar has the build's spinner and its Stop.
+            // The status bar has the build's spinner, the toolbar its Stop.
             ContentUnavailableView("Compiling…", systemImage: "richtext.page")
         } else if project.result?.failed == true {
             ContentUnavailableView {

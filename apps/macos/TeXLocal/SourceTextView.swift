@@ -721,18 +721,24 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let selection = selectedRange()
         let text = self.string as NSString
         let next = character(at: selection.location)
-        if selection.length == 0, next == c, closers.contains(selection.location) {
-            if Self.pairs.values.contains(c) {
+        if selection.length == 0, closers.contains(selection.location), Self.pairs.values.contains(c) {
+            if next == c {
                 closers.remove(selection.location)
                 setSelectedRange(NSRange(location: selection.location + 1, length: 0))
                 showPartner(of: selection.location)
                 return
             }
-            // The backslash of a closer put in as \] or \}: the bracket after it is stepped over next.
-            if c == "\\", character(at: selection.location + 1).map(Self.pairs.values.contains) == true {
+            // A closer put in as \] or \}: its bracket steps over both, and a backslash typed for it
+            // goes. A backslash alone is typed in, being a command's as often as the closer's.
+            if next == "\\", character(at: selection.location + 1) == c {
                 closers.remove(selection.location)
-                closers.insert(selection.location + 1)
-                setSelectedRange(NSRange(location: selection.location + 1, length: 0))
+                var bracket = selection.location + 1
+                if isEscaped(selection.location) {
+                    insertText("", replacementRange: NSRange(location: selection.location - 1, length: 1))
+                    bracket -= 1
+                }
+                setSelectedRange(NSRange(location: bracket + 1, length: 0))
+                showPartner(of: bracket)
                 return
             }
         }

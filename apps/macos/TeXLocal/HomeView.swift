@@ -22,7 +22,7 @@ struct HomeView: View {
             if app.tex?.available == false, !dismissedTeXTip { texMissing }
         }
         // Projects, copied in, as the Open panel says; other items are left out. One
-        // opens; several stay listed under Recent.
+        // opens; several stay listed under All Projects.
         .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in
             Task {
                 for url in urls { await app.importProject(from: url, open: urls.count == 1) }

@@ -533,9 +533,15 @@ final class ProjectFlowTests {
         // Past the autosave, which would have made the file again.
         try await Task.sleep(for: .seconds(1))
         #expect(!exists(notes))
+        // Cancel leaves the edits unsaved: an autosave doesn't make the file, and a save asks again.
+        project.missingFile = nil
+        #expect(project.editor.perform(.italic))
+        try await Task.sleep(for: .seconds(1))
+        #expect(!exists(notes) && project.missingFile == nil)
+        #expect(await !project.saveEdits() && project.missingFile == "notes.tex")
         project.saveMissingFile()
         try await waitUntil(timeout: .seconds(5)) { exists(notes) }
-        #expect(try String(contentsOf: notes, encoding: .utf8).contains("\\textbf{}"))
+        #expect(try String(contentsOf: notes, encoding: .utf8).contains("\\textbf{\\textit{}}"))
         await app.close()
     }
 

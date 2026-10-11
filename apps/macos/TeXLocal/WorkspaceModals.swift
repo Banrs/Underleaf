@@ -79,15 +79,22 @@ private struct GoToSheet: View {
     let noun: String
     let limit: () -> Int?
     let go: (Int) -> Void
-    @State private var number: Int?
+    @State private var text = ""
     @FocusState private var focused: Bool
 
+    /// Read from the text as it is typed: a field of a number's own tells its binding only as
+    /// editing ends, and Go would wait for a first Return.
+    private var number: Int? {
+        guard let number = try? Int(text.trimmingCharacters(in: .whitespaces), format: .number.grouping(.never)),
+              number >= 1 else { return nil }
+        return limit().map { min(number, $0) } ?? number
+    }
+
     var body: some View {
-        DialogSheet(title: "Go to \(noun)", action: "Go", enabled: number.map { $0 >= 1 } ?? false) {
-            if let number { go(limit().map { min(number, $0) } ?? number) }
+        DialogSheet(title: "Go to \(noun)", action: "Go", enabled: number != nil) {
+            if let number { go(number) }
         } fields: {
-            TextField(noun, value: $number, format: .number.grouping(.never),
-                      prompt: Text(limit().map { "1–\($0)" } ?? "\(noun) number"))
+            TextField(noun, text: $text, prompt: Text(limit().map { "1–\($0)" } ?? "\(noun) number"))
                 .focused($focused)
         }
         .defaultFocus($focused, true)

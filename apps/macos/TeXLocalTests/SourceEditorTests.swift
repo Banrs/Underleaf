@@ -91,6 +91,13 @@ struct SourceEditorTests {
         text.insertText("\\", replacementRange: typed)
         text.insertText("]", replacementRange: typed)
         #expect(text.string == "\\[x\\]" && text.selectedRange() == NSRange(location: 5, length: 0))
+        // A command typed inside keeps the closer whole, and the bracket alone steps over it.
+        open("\\")
+        text.insertText("(", replacementRange: typed)
+        for c in "\\pi" { text.insertText(String(c), replacementRange: typed) }
+        #expect(text.string == "\\(\\pi\\)" && text.selectedRange() == NSRange(location: 5, length: 0))
+        text.insertText(")", replacementRange: typed)
+        #expect(text.string == "\\(\\pi\\)" && text.selectedRange() == NSRange(location: 7, length: 0))
         open("\\")
         text.insertText("{", replacementRange: typed)
         #expect(text.string == "\\{\\}")

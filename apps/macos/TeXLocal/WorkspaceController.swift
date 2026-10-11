@@ -553,6 +553,8 @@ final class WorkspaceController: RestoredSplitViewController {
         paneFrames = nil
         watches.forEach { $0.cancel() }
         app.performPDF = nil
+        // The next workspace's columns are AppKit's to fold afresh: it brings back only what it folded.
+        (app.sidebarFolded, app.inspectorFolded) = (false, false)
         collapses = []
         NotificationCenter.default.removeObserver(self)
         toolbar.close()

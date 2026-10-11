@@ -29,7 +29,7 @@ struct InspectorView: View {
             // Settings arrive from the core after the project opens.
             .disabled(project.settings == nil)
             Section("Live Preview") {
-                // As Compile › TeXpresso Live Preview: on while this window's session is live.
+                // As Compile › Live Preview: on while this window's session is live.
                 Toggle(isOn: Binding(get: { project.texpresso.active },
                                      set: { $0 ? project.startTeXpresso() : project.stopTeXpresso() })) {
                     Text("Live Preview")

@@ -80,7 +80,7 @@ private struct EditorSettings: View {
     /// The installed fixed-pitch families, read once.
     private static let families = Set((NSFontManager.shared.availableFontNames(with: .fixedPitchFontMask) ?? [])
         .compactMap { NSFont(name: $0, size: 0)?.familyName }).sorted()
-    private static let sizes: ClosedRange<Double> = 10...28
+    private static let sizes = Double(EditorPrefs.fontSizes.lowerBound)...Double(EditorPrefs.fontSizes.upperBound)
 
     var body: some View {
         PaneForm {

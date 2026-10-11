@@ -122,6 +122,9 @@ final class ProjectModel {
     /// The open file's path, while the alert asks what becomes of its unsaved
     /// edits now another app has moved or deleted it.
     var missingFile: String?
+    /// That path until the edits are saved again or discarded: the alert's Cancel leaves it,
+    /// and no save puts the file back unasked.
+    @ObservationIgnored private var goneFile: String?
     /// Bumped when a file the editor only previews changes on disk, for its preview to read it again.
     private(set) var previewVersion = 0
     /// The text last read or written, to tell another app's change from our save.
@@ -510,6 +513,11 @@ final class ProjectModel {
         guard diskConflict == nil, missingFile == nil else { return false }
         // The editor's text, which is the open file's: they change together.
         let (path, text) = document
+        // Nor back where another app moved or deleted it from: a save someone asked for asks again.
+        if goneFile == path {
+            if reporting { missingFile = path }
+            return false
+        }
         // An edit during the write marks it dirty again, and its own save follows.
         dirty = false
         let previous = diskText
@@ -635,6 +643,8 @@ final class ProjectModel {
             fileGone(path)
             return false
         }
+        // Back, if it had gone.
+        goneFile = nil
         guard editsText else {
             previewVersion += 1
             return false
@@ -656,7 +666,9 @@ final class ProjectModel {
     private func fileGone(_ path: String) {
         saveTask?.cancel()
         if hasUnsavedText {
-            missingFile = path
+            // Asked once: after Cancel, at the next save someone asks for.
+            if goneFile != path { missingFile = path }
+            goneFile = path
         } else {
             clearOpenFile()
         }
@@ -664,13 +676,13 @@ final class ProjectModel {
 
     /// The edits saved where the file was, making it again.
     func saveMissingFile() {
-        missingFile = nil
+        (missingFile, goneFile) = (nil, nil)
         Task { await saveEdits() }
     }
 
     /// Discards unsaved edits to a file that no longer exists.
     func closeMissingFile() {
-        missingFile = nil
+        (missingFile, goneFile) = (nil, nil)
         clearOpenFile()
     }
 
@@ -739,8 +751,10 @@ final class ProjectModel {
                 await showPDFOnDisk(reloadIfUnchanged: result.pdfChanged)
                 // Edits made while it built aren't in it.
                 pdfOutdated = edits != built
-                // Settings' jump to the caret's place, in a PDF pane that is showing.
-                if result.ok, app?.showPDF == true, isLaTeX, UserDefaults.standard.bool(forKey: DefaultsKey.syncAfterCompile) {
+                // Settings' jump to the caret's place, in a PDF pane that is showing. Not after typing
+                // through the build: the PDF hasn't the caret's text yet, and the sync would save it
+                // mid-word and start the next build at once.
+                if result.ok, !pdfOutdated, app?.showPDF == true, isLaTeX, UserDefaults.standard.bool(forKey: DefaultsKey.syncAfterCompile) {
                     Task { await forwardSync(quietly: true) }
                 }
             }
@@ -1217,7 +1231,7 @@ final class ProjectModel {
     /// Hits for the current query, unless the calling task is cancelled by a newer one.
     func search() async {
         guard isSearching else {
-            (searchHits, searchFailure) = (nil, nil)
+            (searchHits, searchFailure, searchGroups) = (nil, nil, [])
             return
         }
         do {

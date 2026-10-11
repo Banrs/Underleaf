@@ -150,8 +150,9 @@ struct StatusBar: View {
     private var buildStatus: some View {
         HStack {
             if project.compiling {
-                // The toolbar's Stop has the build's one spinner.
-                Text("Compiling…")
+                // The build's one spinner: the mini one, about as wide as the other states' symbols.
+                Label { Text("Compiling…") } icon: { ProgressView().controlSize(.mini) }
+                    .labelStyle(.titleAndIcon)
             } else if let result = project.result {
                 if result.stopped {
                     Text("Build Stopped")
