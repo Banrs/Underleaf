@@ -247,9 +247,11 @@ final class WorkspaceController: RestoredSplitViewController {
         // AppKit's standard 10 pt and 9 pt bar margins.
         statusBar.automaticallyAppliesContentInsets = false
         // AppKit's own edge under the bar, over both panes (HIG, Scroll views: prefer the automatic
-        // style). The PDF is PDFKit's view directly in its pane, which scrolls and rubber-bands as
-        // Preview's; SwiftUI's edge draws only over a SwiftUI scroll view, and one around PDFKit's
-        // takes its rubber-banding (27.2). `.soft` draws nothing over these panes.
+        // style), which the bar washes in the editors' colour under its line (`StatusBar`). The PDF
+        // is PDFKit's view directly in its pane, which scrolls and rubber-bands as Preview's;
+        // SwiftUI's edge draws only over a SwiftUI scroll view, and one around PDFKit's takes its
+        // rubber-banding (27.2). `.soft` draws nothing over these panes, and glass of our own
+        // there shows the text beneath sharp, through the bar's own.
         statusBar.preferredScrollEdgeEffectStyle = .automatic
         columnsItem.addBottomAlignedAccessoryViewController(statusBar)
         area.addSplitViewItem(columnsItem)

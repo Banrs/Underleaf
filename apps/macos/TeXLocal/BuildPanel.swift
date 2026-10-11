@@ -141,6 +141,8 @@ private struct IssueList: View {
         ScrollViewReader { proxy in
             List(items, id: \.offset, selection: selection) { IssueRow(item: $0.element, chosen: $0.offset == project.chosenIssue) }
                 .listStyle(.inset)
+                // The panel's surface, the editors': a list's own is the window's, tinted by the wallpaper.
+                .scrollContentBackground(.hidden)
                 .accessibilityLabel("Issues")
                 .contextMenu(forSelectionType: Int.self) { rows in
                     if let item = rows.first.flatMap(item) {

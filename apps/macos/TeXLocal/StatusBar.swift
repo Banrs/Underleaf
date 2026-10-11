@@ -8,6 +8,7 @@ struct StatusBar: View {
     static let height: CGFloat = 36
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.displayScale) private var displayScale
     @Bindable var project: ProjectModel
 
     var body: some View {
@@ -20,7 +21,13 @@ struct StatusBar: View {
         .padding(.leading, 14)
         .padding(.trailing, 16.5)
         .frame(height: Self.height)
-        // No ground of its own: its accessory's scroll edge is under it (`buildArea`).
+        // The editors' colour, so the bar is one surface with them and with the build panel, washed
+        // over its accessory's scroll edge (`buildArea`), which blurs what scrolls beneath: alone,
+        // AppKit's edge is a lighter strip over a dark editor (38 over 30), with no line. The wash
+        // is the hard scroll edge's own, the window's colour at 85%.
+        .background(.textSurface.opacity(0.85))
+        // The window's lines are a device pixel, as its splits' dividers.
+        .overlay(alignment: .top) { Rectangle().fill(.separator).frame(height: 1 / displayScale) }
         .font(.subheadline)
         .monospacedDigit()
         .controlSize(.small)
