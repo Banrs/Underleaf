@@ -11,6 +11,10 @@ enum DefaultsKey {
     static let showPDF = "showPDF"
     static let openProject = "openProject"
     static let outlineCollapsed = "OutlineCollapsed"
+    static let syncAfterCompile = "syncAfterCompile"
+    static let newProjectTemplate = "newProjectTemplate"
+    static let newProjectEngine = "newProjectEngine"
+    static let settingsPane = "settingsPane"
 }
 
 /// An alert: a short, specific title and the detail in the message (HIG, Alerts).
@@ -120,8 +124,10 @@ final class AppModel {
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
     }
 
-    func newProject(_ template: String = "article") {
-        newProjectTemplate = ProjectTemplate.all.first { $0.id == template }
+    /// Without a template, the one Settings names for new projects.
+    func newProject(_ template: String? = nil) {
+        let template = template ?? UserDefaults.standard.string(forKey: DefaultsKey.newProjectTemplate)
+        newProjectTemplate = ProjectTemplate.all.first { $0.id == template } ?? ProjectTemplate.all.first { $0.id == "article" }
     }
 
     func togglePDF() {
@@ -181,6 +187,10 @@ final class AppModel {
 
     func create(name: String, template: String) async throws {
         let info = try await core.call("create_project", ["name": name, "template": template], as: ProjectInfo.self)
+        // Settings' engine for new projects; the core's own is pdfLaTeX. The project stands if this fails.
+        if let engine = UserDefaults.standard.string(forKey: DefaultsKey.newProjectEngine), engine != "pdflatex" {
+            _ = try? await core.call("set_settings", ["id": info.id, "patch": ["engine": engine]], as: ProjectSettings.self)
+        }
         await refresh()
         // Not awaited: the sheet goes as the project opens, not after its first build.
         Task { await open(info.id) }
