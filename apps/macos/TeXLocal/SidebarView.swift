@@ -9,8 +9,6 @@ struct FilesList: View {
     @State private var hit: SearchHit.ID?
     @State private var rename = InPlaceRename<String>()
     @FocusState private var listFocused: Bool
-    /// The open folders, by path.
-    @State private var expanded: Set<String> = []
 
     var body: some View {
         // The File Outline's header is the files' bottom bar: they scroll on beneath it, under
@@ -23,7 +21,7 @@ struct FilesList: View {
         }
             // Each search reads every file in the project; it waits for typing to pause.
             .task(id: project.searchQuery) {
-                if project.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
+                if project.isSearching { try? await Task.sleep(for: PDFFind.debounce) }
                 if !Task.isCancelled { await project.search() }
             }
             // File › New File and New Folder, taken once.
@@ -39,7 +37,10 @@ struct FilesList: View {
             List(selection: $selection) {
                 Section("Files") {
                     // Between the top-level rows, into the project's top level.
-                    TreeRows(nodes: project.tree, children: \.children, isExpanded: { $expanded.contains($0.path) },
+                    TreeRows(nodes: project.tree, children: \.children, isExpanded: { node in
+                        disclosure(\.expandedFolders, of: project, key: node.path,
+                                   subtree: node.children?.flattened.filter(\.isDirectory).map(\.path) ?? [])
+                    },
                              insert: { urls in Task { await project.dropFiles(urls, into: "") } }) { node in
                         row(node).tag(node.path)
                     }
@@ -82,7 +83,7 @@ struct FilesList: View {
             } primaryAction: { paths in
                 // A folder opens or closes; a file is already open once chosen.
                 guard let path = paths.first, project.node(at: path)?.isDirectory == true else { return }
-                if expanded.remove(path) == nil { expanded.insert(path) }
+                if project.expandedFolders.remove(path) == nil { project.expandedFolders.insert(path) }
             }
             // The empty space's: the project's top level's, as a Finder window's background
             // has its folder's.
@@ -126,7 +127,7 @@ struct FilesList: View {
     /// Its folders open, so its row shows.
     private func showRow(_ path: String) {
         var folder = path.parentFolder
-        while !folder.isEmpty { expanded.insert(folder); folder = folder.parentFolder }
+        while !folder.isEmpty { project.expandedFolders.insert(folder); folder = folder.parentFolder }
     }
 
     /// The chosen folder, or the chosen file's; the top level with neither.
@@ -180,10 +181,9 @@ struct FilesList: View {
     /// Hits grouped by file, each line with its match picked out.
     @ViewBuilder
     private var searchResults: some View {
-        let groups = Dictionary(grouping: project.searchHits ?? [], by: \.file).sorted { $0.key < $1.key }
-        ForEach(groups, id: \.key) { file, hits in
+        ForEach(project.searchGroups) { group in
             Section {
-                ForEach(hits) { hit in
+                ForEach(group.hits) { hit in
                     HStack(alignment: .firstTextBaseline) {
                         Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
                             .lineLimit(2)
@@ -198,8 +198,13 @@ struct FilesList: View {
                     .accessibilityElement(children: .combine)
                 }
             } header: {
-                // Middle truncation keeps the extension and the count, as Finder keeps a name's end.
-                Text("\(file) — \(hits.count)").truncationMode(.middle)
+                HStack {
+                    Text(group.file).truncationMode(.middle)
+                    Spacer()
+                    Text(group.hits.count, format: .number).monospacedDigit()
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(group.file), \(String(AttributedString(localized: "^[\(group.hits.count) match](inflect: true)").characters))")
             }
         }
     }
@@ -217,14 +222,6 @@ struct FilesList: View {
                 } else {
                     Text(node.name).truncationMode(.middle)
                 }
-                if isMain {
-                    Spacer()
-                    Image(systemName: "star.fill")
-                        .foregroundStyle(.yellow)
-                        .imageScale(.small)
-                        .help("Main File")
-                        .accessibilityHidden(true)
-                }
             }
         } icon: {
             Image(systemName: fileSymbol(node.path, directory: node.isDirectory))
@@ -232,8 +229,7 @@ struct FilesList: View {
         // The whole row a drop target, not only its name.
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
-        // The star's name too: the row's label replaces its children's.
-        .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
+        .badge(isMain ? Text("Main") : nil)
         // Into the folder dropped on, or the dropped-on file's folder.
         .fileDrop(moves: { project.projectPath($0) != nil }) { urls in
             let folder = node.isDirectory ? node.path : node.path.parentFolder
@@ -292,12 +288,17 @@ private struct TreeRows<Node: Identifiable, Row: View>: View {
     }
 }
 
-private extension Binding<Set<String>> {
-    /// On while the set holds `key`; a switch that adds or removes it.
-    func contains(_ key: String) -> Binding<Bool> {
-        Binding<Bool>(get: { wrappedValue.contains(key) },
-                      set: { if $0 { wrappedValue.insert(key) } else { wrappedValue.remove(key) } })
-    }
+/// A disclosure group's state, on while `set` of the project holds `key` (with `inverted`, while it
+/// doesn't). With Option held the `subtree`'s keys go with it, as Option-clicking a disclosure
+/// triangle opens or closes everything below (HIG, Outline views). Not a `Binding` of the set:
+/// two changes in one click would each start from the set as it was.
+private func disclosure(_ set: ReferenceWritableKeyPath<ProjectModel, Set<String>>, of project: ProjectModel, key: String,
+                        inverted: Bool = false, subtree: @autoclosure @escaping () -> [String]) -> Binding<Bool> {
+    Binding(get: { project[keyPath: set].contains(key) != inverted },
+            set: { on in
+                let keys = NSEvent.modifierFlags.contains(.option) ? [key] + subtree() : [key]
+                if on != inverted { project[keyPath: set].formUnion(keys) } else { project[keyPath: set].subtract(keys) }
+            })
 }
 
 #Preview("File tree") {
@@ -309,7 +310,9 @@ private extension Binding<Set<String>> {
                 TreeNode(type: "dir", name: "figures", path: "figures",
                          children: [file("figures/plot.pdf"), file("figures/diagram.png")]),
                 file("main.tex"), file("references.bib"),
-            ], children: \.children, isExpanded: { $expanded.contains($0.path) }) { node in
+            ], children: \.children, isExpanded: { node in
+                Binding(get: { expanded.contains(node.path) }, set: { if $0 { expanded.insert(node.path) } else { expanded.remove(node.path) } })
+            }) { node in
                 Label(node.name, systemImage: fileSymbol(node.path, directory: node.isDirectory))
             }
         }
@@ -357,8 +360,6 @@ private func fileDropConfiguration(_ accepts: (URL) -> Bool, _ moves: (URL) -> B
 struct OutlineList: View {
     let project: ProjectModel
     @Environment(\.sidebarRowSize) private var rowSize
-    /// Folded headings, by file, level and title, for this session.
-    @State private var folded: Set<String> = []
     /// The line the selection follows: the caret's or the top line, whichever
     /// changed last; the caret's when both do, as its `onChange` runs second.
     @State private var line = 1
@@ -378,9 +379,7 @@ struct OutlineList: View {
         ScrollViewReader { proxy in
             List(selection: selection) {
                 TreeRows(nodes: Outline.tree(outline), children: \.children, isExpanded: { node in
-                    let key = "\(node.item.file)\t\(node.item.level):\(node.item.title)"
-                    return Binding(get: { !folded.contains(key) },
-                                   set: { if $0 { folded.remove(key) } else { folded.insert(key) } })
+                    disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
                 }) { node in
                     HeadingRow(item: node.item).equatable().tag(node.id)
                 }
@@ -395,7 +394,14 @@ struct OutlineList: View {
             // A step under the files' rows: a table of contents under a list.
             .environment(\.sidebarRowSize, rowSize == .large ? .medium : .small)
             .overlay {
-                if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") }
+                if outline.isEmpty {
+                    VStack(spacing: 2) {
+                        Text("No Sections").foregroundStyle(.secondary)
+                        Text(verbatim: "Headings such as \\section appear here.").font(.caption).foregroundStyle(.tertiary)
+                    }
+                    .multilineTextAlignment(.center)
+                    .padding()
+                }
             }
             // Return or a double-click goes into the source there, as in the search results.
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in

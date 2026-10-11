@@ -3,8 +3,11 @@ import Foundation
 nonisolated struct OutlineNode: Identifiable {
     let item: OutlineItem
     let children: [OutlineNode]?
+    /// Its fold's key in `ProjectModel.foldedHeadings`: file, level, title and which of that name it is.
+    let foldKey: String
 
     var id: Int { item.id }
+    var descendants: [OutlineNode] { (children ?? []).flatMap { [$0] + $0.descendants } }
 }
 
 /// A heading from `analyze_project`; its id is its place in the outline.
@@ -41,13 +44,16 @@ enum Outline {
     /// any section sits flush rather than under a missing parent.
     static func tree(_ outline: [OutlineItem]) -> [OutlineNode] {
         var index = 0
+        var seen: [String: Int] = [:]
         func nested(under level: Int) -> [OutlineNode] {
             var nodes: [OutlineNode] = []
             while index < outline.count, outline[index].level > level {
                 let item = outline[index]
                 index += 1
+                let key = "\(item.file)\t\(item.level):\(item.title)"
+                seen[key, default: 0] += 1
                 let kids = nested(under: item.level)
-                nodes.append(OutlineNode(item: item, children: kids.isEmpty ? nil : kids))
+                nodes.append(OutlineNode(item: item, children: kids.isEmpty ? nil : kids, foldKey: "\(key)#\(seen[key]!)"))
             }
             return nodes
         }
