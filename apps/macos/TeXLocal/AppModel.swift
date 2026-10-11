@@ -60,7 +60,7 @@ final class AppModel {
     /// Why the library can't be listed, for Home to say in place of its list: no alert as the app starts.
     private(set) var libraryProblem: AppAlert? = Core.shared.isOpen ? nil : AppAlert(
         "Couldn’t Open the Library Folder",
-        "Make sure you can create and write to \((Core.libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath), then open TeXLocal again.")
+        "Make sure you can create and write to \((Core.libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath), then try again.")
 
     // Requests from menu commands to the views that own the UI.
     var newProjectTemplate: ProjectTemplate?
