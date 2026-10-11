@@ -271,7 +271,8 @@ function textFilesIn(nodes, folder) {
 function renderLocation(row, { openFile, reveal }) {
   const path = state.openPath;
   const here = state.outline.length ? outlineChain(state.cursorLine).at(-1) ?? null : undefined;
-  const key = JSON.stringify([path, state.settings?.title || state.projectId, here && [here.title, here.line]]);
+  // No outline is 0, as JSON writes undefined as the null the top of the file is.
+  const key = JSON.stringify([path, state.settings?.title || state.projectId, here === undefined ? 0 : here && [here.title, here.line]]);
   if (row.dataset.key === key) return;
   row.dataset.key = key;
   if (!path) { row.replaceChildren(); return; }

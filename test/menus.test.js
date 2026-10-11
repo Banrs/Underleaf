@@ -90,6 +90,23 @@ test('the location row is rebuilt only when what it shows changes', (t) => {
   assert.deepEqual(checked, ['✓Method']);
 });
 
+test('the section crumb follows an outline that comes or goes below the caret', (t) => {
+  t.after(() => { state.outline = []; state.cursorLine = 1; });
+  state.editor = {};
+  state.openPath = 'main.tex';
+  state.outline = [];
+  state.cursorLine = 1;
+  const bar = buildSourceBar({ commandButton: (id) => el('button', {}, id), openFile() {}, reveal() {}, afterHeading() {} });
+  bar.update();
+  assert.equal(bar.location.querySelector('.location-section'), null);
+  state.outline = [{ depth: 2, title: 'Intro', line: 10 }];
+  bar.update();
+  assert.equal(bar.location.querySelector('.location-section')?.textContent, 'Top of File');
+  state.outline = [];
+  bar.update();
+  assert.equal(bar.location.querySelector('.location-section'), null, 'no heading left: no crumb');
+});
+
 test('context menu coordinates and viewport bounds use the body zoom', () => {
   for (const zoom of [0.8, 1, 1.3]) {
     document.body.style.zoom = String(zoom);
