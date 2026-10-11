@@ -93,7 +93,7 @@ impl Names {
         }
     }
 
-    fn resume(&mut self, text: &Text, end: usize, ranges: &mut Vec<TextRange>) {
+    pub fn resume(&mut self, text: &Text, end: usize, ranges: &mut Vec<TextRange>) {
         if let Some(from) = self.from {
             self.parsed_until = argument_ranges(text, from, end, ranges);
         }

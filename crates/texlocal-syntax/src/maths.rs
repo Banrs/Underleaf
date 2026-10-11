@@ -381,6 +381,9 @@ impl Scans {
     /// pointers whatever the groups open.
     pub fn resume(&mut self, text: &Text, before: usize, end: usize) -> Point {
         let mut point = self.0[self.0.len() - 1].clone();
+        // Its names were read through the text as it was when it was kept,
+        // past what an edit since may have changed.
+        point.names.resume(text, text.units.len(), &mut Vec::new());
         while point.scanner.i + SPACING <= before && point.scanner.i < text.units.len() {
             let until = point.scanner.i + SPACING;
             let mut keeping = Keeping {
