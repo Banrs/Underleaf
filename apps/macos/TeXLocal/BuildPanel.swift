@@ -139,7 +139,7 @@ private struct IssueList: View {
     var body: some View {
         let selection = Binding { project.chosenIssue } set: { project.chooseIssue($0, focus: false) }
         ScrollViewReader { proxy in
-            List(items, id: \.offset, selection: selection) { IssueRow(item: $0.element) }
+            List(items, id: \.offset, selection: selection) { IssueRow(item: $0.element, chosen: $0.offset == project.chosenIssue) }
                 .listStyle(.inset)
                 .accessibilityLabel("Issues")
                 .contextMenu(forSelectionType: Int.self) { rows in
@@ -180,11 +180,13 @@ private struct IssueList: View {
 /// An error or warning: its message, and its location when the log names one.
 private struct IssueRow: View {
     let item: LogItem
+    /// The chosen row shows its whole message; the others' tooltips have theirs.
+    var chosen = false
 
     var body: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.message).lineLimit(3)
+                Text(item.message).lineLimit(chosen ? nil : 3)
                 if let location = location(line: ":") {
                     Text(location)
                         .font(.subheadline)
@@ -195,6 +197,7 @@ private struct IssueRow: View {
             Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
         }
+        .help(item.message)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
         // Spoken as words: "main.tex, line 12", not "main.tex colon 12".
