@@ -64,9 +64,8 @@ final class AppModel {
     var exporting: ExportFile?
     /// Bumped by Find in Project…, to focus the sidebar's search field.
     var searchFocusToken = 0
-    /// The token lets the same action be asked for twice in a row.
-    var pdfRequest: (action: PDFAction, token: Int)?
-    private var pdfToken = 0
+    /// The workspace's, which shows the PDF column and then acts on it.
+    @ObservationIgnored var performPDF: ((PDFAction) -> Void)?
 
     // Stored here rather than as @AppStorage so the menus and models observe them.
     var sidebarVisible: Bool {
@@ -134,11 +133,10 @@ final class AppModel {
     }
 
     /// Shows the PDF column too, so the action happens now rather than when
-    /// the column next appears. The workspace takes each request once.
+    /// the column next appears.
     func requestPDF(_ action: PDFAction) {
         showPDF = true
-        pdfToken += 1
-        pdfRequest = (action, pdfToken)
+        performPDF?(action)
     }
 
     private let core = Core.shared
@@ -336,7 +334,6 @@ final class AppModel {
 
     /// The project's own requests, which the next project mustn't present.
     private func dropRequests() {
-        pdfRequest = nil
         prompt = nil
         newEntry = nil
         addingFiles = false

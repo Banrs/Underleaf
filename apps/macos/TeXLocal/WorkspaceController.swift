@@ -359,7 +359,6 @@ final class WorkspaceController: RestoredSplitViewController {
             track({ project.showLogs }) { [weak self] in self?.setPanelShown($0) },
             track({ OutlineState(app, project) }) { [weak self] in self?.setOutline($0) },
             track({ pdf.finding }) { [weak self] finding in if let self { setHidden(pdfFind, !finding) } },
-            track({ app.pdfRequest?.token }) { [weak self] _ in self?.takePDFRequest() },
             track({ app.searchFocusToken }, initial: false) { [weak self] _ in self?.focusSearch() },
         ]
     }
@@ -408,6 +407,7 @@ final class WorkspaceController: RestoredSplitViewController {
                 self.paneAnimation(false)
                 done?()
             }
+        app.performPDF = { [weak self] in self?.performPDF($0) }
         }
     }
 
@@ -569,14 +569,13 @@ final class WorkspaceController: RestoredSplitViewController {
         pdf.finding = true
         setHidden(pdfFind, false)
         focusField(pdf.findField, in: pdfFind)
+        app.performPDF = nil
     }
 
     // ---------- the menus' PDF requests ----------
 
-    /// Each request once, after a hidden column has opened to its width.
-    private func takePDFRequest() {
-        guard let action = app.pdfRequest?.action else { return }
-        app.pdfRequest = nil
+    /// After a hidden column has opened to its width.
+    private func performPDF(_ action: PDFAction) {
         setCollapsed(pdfItem, false) { [weak self] in
             guard let self, project.hasPDF else { return }
             perform(action)
