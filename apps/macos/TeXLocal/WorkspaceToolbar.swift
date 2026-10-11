@@ -79,13 +79,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile,
-         .inspectorTrackingSeparator, .toggleInspector]
+         .inspectorTrackingSeparator, .togglePDF, .toggleInspector]
     }
 
     /// The system's toggles go to the window's split, not the nested ones, which would answer first.
     /// They stay out of the overflow menu, as the leading and trailing edges' items do (HIG, Toolbars).
     func toolbarWillAddItem(_ notification: Notification) {
-        guard let item = notification.userInfo?["item"] as? NSToolbarItem,
+        guard let item = notification.userInfo?[NSToolbarUserInfoKey.itemKey] as? NSToolbarItem,
               [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
         item.target = workspace
         item.visibilityPriority = .high
