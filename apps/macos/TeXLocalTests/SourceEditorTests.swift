@@ -593,6 +593,20 @@ struct SourceEditorTests {
         try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.colours.command }
     }
 
+    /// An edit recolours the shown lines after it, which it can change: display maths opened
+    /// above them makes a stray closing delimiter theirs.
+    @Test func anEditRecoloursTheLinesBelowIt() async throws {
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
+        open("a\nb\nxyz\n\\]", caret: 0)
+        let colours = SyntaxTheme.overleaf.colours
+        try await waitUntil { (try? self.colour(of: "]")) == colours.invalid }
+        text.insertText("\\[\n", replacementRange: NSRange(location: 2, length: 0))
+        try await waitUntil { (try? self.colour(of: "]")) == colours.maths }
+        text.undoManager?.undo()
+        try await waitUntil { (try? self.colour(of: "]")) == colours.invalid }
+    }
+
     /// Choosing another colour theme recolours what is open.
     @Test func aThemeRecoloursTheText() async throws {
         // Held to the end: the text lays out in it.

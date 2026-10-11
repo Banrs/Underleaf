@@ -106,7 +106,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         closers.removeAll()
         closeCompletions()
         updateGutterWidth()
-        recolour()
+        staleColours = 0
         reportContentHeight()
     }
 
@@ -127,6 +127,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let old = NSRange(location: edited.location, length: edited.length - delta)
         document.edit(old, with: (textStorage.string as NSString).substring(with: edited))
         edits += 1
+        staleColours = min(staleColours ?? edited.location, edited.location)
         // The fields follow the change itself, when it's the one expected.
         let changed = changing.flatMap { $0.location == old.location && NSMaxRange($0) <= NSMaxRange(old) ? $0 : nil }
         changing = nil
@@ -181,7 +182,14 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     var syntaxTheme = SyntaxTheme.overleaf {
         didSet {
             guard syntaxTheme != oldValue else { return }
-            recolour(redrawing: true)
+            colour(from: 0)
+            // Each shown fragment draws in a view of its own, which new rendering attributes don't
+            // redraw, nor does the text view's own display (27.2).
+            func redraw(_ view: NSView) {
+                view.needsDisplay = true
+                view.subviews.forEach(redraw)
+            }
+            redraw(self)
         }
     }
 
@@ -417,11 +425,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         super.textViewportLayoutControllerDidLayout(controller)
         fragments.sort { $0.offset < $1.offset }
         reportContentHeight()
-        // Invalidated, the fragments laid out before keep no colours until validated again.
-        if needsColours, let manager = textLayoutManager {
-            needsColours = false
-            for (_, fragment) in fragments { manager.renderingAttributesValidator?(manager, fragment) }
-        }
+        if let from = staleColours { colour(from: from) }
         // Scrolled, it follows the text.
         if offered != nil { showCompletions(reload: false) }
         redrawLineAndGutter()
@@ -518,13 +522,16 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     // MARK: colours
 
-    /// The shown fragments' colours were invalidated (`recolour`).
-    private var needsColours = false
+    /// Where the text first changed since it was last coloured, or 0 for all of it: coloured
+    /// again once it's laid out, which every edit leads to, an undone one too.
+    private var staleColours: Int?
 
-    /// TextKit validates colours when it renders a fragment, without editing the
-    /// document's attributes or disturbing its estimated scroll geometry.
-    private func recolour(redrawing: Bool = false) {
+    /// Colours the text from an offset's line on, as an edit changes no colour before its own
+    /// line. TextKit validates colours when it lays a fragment out anew, without editing the
+    /// document's attributes; the fragments already shown keep none until validated here.
+    private func colour(from start: Int) {
         guard let manager = textLayoutManager else { return }
+        staleColours = nil
         if manager.renderingAttributesValidator == nil {
             manager.renderingAttributesValidator = { [weak self] manager, fragment in
                 guard let self else { return }
@@ -539,19 +546,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
                 }
             }
         }
-        manager.invalidateRenderingAttributes(for: manager.documentRange)
-        // TextKit validates only the fragments it lays out anew; the rest, after the next layout.
-        needsColours = true
-        needsLayout = true
-        if redrawing {
-            for (_, fragment) in fragments { manager.renderingAttributesValidator?(manager, fragment) }
-            // Each shown fragment draws in a view of its own, which new rendering attributes don't
-            // redraw, nor does the text view's own display (27.2).
-            func redraw(_ view: NSView) {
-                view.needsDisplay = true
-                view.subviews.forEach(redraw)
-            }
-            redraw(self)
+        let line = document.lineStart(document.line(at: start))
+        let stale = textRange(NSRange(location: line, length: 0)).flatMap { NSTextRange(location: $0.location, end: manager.documentRange.endLocation) }
+        manager.invalidateRenderingAttributes(for: stale ?? manager.documentRange)
+        for (_, fragment) in fragments[(fragments.lastIndex { $0.offset <= line } ?? 0)...] {
+            manager.renderingAttributesValidator?(manager, fragment)
         }
     }
 
@@ -630,9 +629,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     /// Preview maths at the caret only while the caret is visible and focused:
     /// over its line, as Overleaf's, or under it while completions show over it.
     func previewMath() {
-        let maths = loading ? nil : math(at: selectedRange().location)
+        let maths = hasKeyboard && !loading ? math(at: selectedRange().location) : nil
         if maths?.start != dismissedMath { dismissedMath = nil }
-        guard let window, hasKeyboard, let maths, dismissedMath == nil,
+        guard let window, let maths, dismissedMath == nil,
               let clip = enclosingScrollView?.contentView else {
             mathPopover?.close()
             return
@@ -1022,8 +1021,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     /// What's typed in a field goes in its other places too, in the same undo step.
     override func didChangeText() {
         super.didChangeText()
-        // The lines an edit made show their colours: their first layout drops them.
-        defer { recolour() }
         guard needsMirror, !mirroring, let snippet, let typed = snippet.typed else { return }
         needsMirror = false
         let text = (string as NSString).substring(with: typed)
