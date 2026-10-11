@@ -77,6 +77,38 @@ struct SourceEditorTests {
         #expect(text.string == "")
     }
 
+    /// Settings' two typing switches, off: a bracket goes in alone and comes out alone, and
+    /// the list waits to be asked for, then follows the typing as before.
+    @Test func typingAssistanceCanBeTurnedOff() throws {
+        let defaults = UserDefaults.standard, keys = [EditorPrefs.autoPairKey, EditorPrefs.autoCompleteKey]
+        let before = keys.map { defaults.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, before) { defaults.set(value, forKey: key) } }
+        for key in keys { defaults.set(false, forKey: key) }
+        open("")
+        text.insertText("{", replacementRange: typed)
+        #expect(text.string == "{")
+        open("{}", caret: 1)
+        text.deleteBackward(nil)
+        #expect(text.string == "}")
+        open("\\")
+        text.insertText("b", replacementRange: typed)
+        #expect(text.offered == nil)
+        text.complete(nil)
+        let all = try #require(text.offered).items.count
+        text.insertText("e", replacementRange: typed)
+        #expect(try #require(text.offered).items.count < all)
+    }
+
+    /// Without its numbers the gutter is a margin, and the text starts further left.
+    @Test func hidingLineNumbersNarrowsTheGutter() {
+        open("a")
+        let numbered = text.textContainerOrigin.x
+        text.showsLineNumbers = false
+        #expect(text.textContainerOrigin.x < numbered)
+        text.showsLineNumbers = true
+        #expect(text.textContainerOrigin.x == numbered)
+    }
+
     @Test func anEmojiAfterAnOpeningBracketIsOccupiedText() {
         open("😀", caret: 0)
         text.insertText("(", replacementRange: typed)
