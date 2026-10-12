@@ -27,7 +27,15 @@ into it and deleted on 12 October.
 - **Compile** is a hosted SwiftUI button in the toolbar's prominent item (`CompileButton`),
   drawn as AppKit draws its own item, which can't show a spinner: Stop has the build's
   spinner beside its word, or round its stop symbol where Compile is its symbol, at the width
-  Compile has there. The status bar's Compiling has none of its own.
+  Compile has there. The status bar's Compiling has none of its own. AppKit also changes an
+  item's title for its image in one step: while the window's edge or a divider is dragged, or
+  a pane is on its way, the word gives way to the symbol and takes its place back over a
+  quarter second, the toolbar laying the item out at each width (`Compression`). On its way
+  it is no wider than its room (`compileShort`): at the widths between, by time alone, AppKit
+  sent Zoom to the overflow menu 36 pt early and brought it back, and took Compile itself out
+  at a jump to the narrowest window, where SwiftUI moves nothing and it stayed out
+  (`CompileHost`). None of this was watched on screen (Daniel, 12 October: "no more on-screen
+  tests"): the widths, and which tools the toolbar keeps at each, are the unit suite's.
 - **Source**: one TextKit 2 `NSTextView` (`SourceTextView`), shared across files, in an
   `NSScrollView` of its own (`EditorView`). Xcode's metrics for the font, gutter and current
   line; the completion list (`CompletionList`) is a copy of Xcode 27's, an opaque panel in a
@@ -70,7 +78,7 @@ CI: `ci.yml` runs the web tests and bundle and the Rust core's rustfmt, clippy a
 Linux; `macos-app.yml` builds the app, checks the core is linked statically, runs the native
 tests and fails a run in which none passed.
 
-- Native: 144 tests in 19 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
+- Native: 147 tests in 19 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
   `-D warnings` clean. `npm run verify:texpresso`: 25 checks against the patched engine, both
   of its programs built from the patched source.
 - Live preview, measured from 60 fps screen recordings of a Release build on a one-page

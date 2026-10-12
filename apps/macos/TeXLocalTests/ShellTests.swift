@@ -1,11 +1,13 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import TeXLocal
 
 /// The window's panes and the toolbar over them.
 @MainActor
 struct ShellTests {
-    /// A workspace in a window on screen, the inspector hidden, and the sidebar unless asked for.
+    /// A workspace in a window on screen, unseen, the inspector hidden, and the sidebar unless
+    /// asked for.
     private func workspace(showPDF: Bool, sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
         let app = AppModel()
         app.sidebarVisible = sidebar
@@ -14,6 +16,7 @@ struct ShellTests {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1300, height: 600),
                               styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.alphaValue = 0
         let workspace = WorkspaceController(app: app, project: ProjectModel(id: "ShellTests", app: app),
                                             size: window.contentLayoutRect.size)
         window.contentViewController = workspace
@@ -91,6 +94,89 @@ struct ShellTests {
             try await Task.sleep(for: .milliseconds(50))
             #expect(button.fittingSize == idle && compile.backgroundTintColor == nil)
         }
+    }
+
+    /// Between its first view's width and its last's, the layout is as far along as it is told:
+    /// each step of an animation is a width of its own.
+    @Test func compressionIsEveryWidthBetweenItsViews() {
+        func width(_ compact: CGFloat, short: CGFloat = 0) -> CGFloat {
+            NSHostingView(rootView: Compression(compact: compact, short: short) {
+                Color.clear.frame(width: 74, height: 36)
+                Color.clear.frame(width: 36, height: 36)
+            }).fittingSize.width
+        }
+        #expect(width(0) == 74 && width(0.5) == 55 && width(1) == 36)
+        // A spring's overshoot is no narrower than the symbol, nor wider than the word.
+        #expect(width(1.2) == 36 && width(-0.2) == 74)
+        // No wider than its room, which may close faster than it moves, nor narrower than the symbol.
+        #expect(width(0.5, short: 10) == 55 && width(0.5, short: 30) == 44 && width(0, short: 100) == 36)
+    }
+
+    /// While what it follows is moving, Compile's word gives way to its symbol through the
+    /// widths between them, and takes its place back so: the toolbar gives its item each, and
+    /// Zoom, beside it, stays in the toolbar as it does where Compile changes in one step. A
+    /// room that closes at once has the symbol at once, and Compile still in the toolbar; a
+    /// window that opens has Compile in its form. Animations run on a display's frames, which
+    /// a CI runner may not have, and not at all with Reduce Motion on.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CI"] == nil
+                    && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion))
+    func compileGivesWayThroughTheWidthsBetween() async throws {
+        let (window, workspace) = try await workspace(showPDF: true)
+        defer { workspace.close(); window.close() }
+        let compile = try item(.compile, in: workspace), zoom = try item(.zoom, in: workspace)
+        let button = try #require(compile.view)
+        // Nothing was moving as it opened.
+        let word = button.frame.width
+        #expect(word == button.fittingSize.width && word > 60)
+
+        /// The widths on the way to `end`, and whether Zoom was in the toolbar at each.
+        func way(to end: CGFloat) async throws -> (between: Set<CGFloat>, zoom: Bool) {
+            var between: Set<CGFloat> = [], stayed = true
+            for _ in 0..<120 where button.frame.width != end {
+                if button.frame.width > 36, button.frame.width < word { between.insert(button.frame.width) }
+                stayed = stayed && zoom.isVisible
+                try await Task.sleep(for: .milliseconds(16))
+            }
+            return (between, stayed)
+        }
+
+        workspace.moving = { true }
+        // The window's edge, dragged to where the word has no room.
+        var width: CGFloat = 1300
+        while !workspace.toolbar.compactCompile, width > window.contentMinSize.width {
+            width -= 2
+            window.setContentSize(NSSize(width: width, height: 600))
+        }
+        #expect(zoom.isVisible && button.fittingSize.width > 60)
+        let narrower = try await way(to: 36)
+        #expect(narrower.between.count > 2 && narrower.zoom, "widths on the way: \(narrower.between.sorted())")
+        #expect(button.frame.width == 36)
+
+        window.setContentSize(NSSize(width: 1300, height: 600))
+        let wider = try await way(to: word)
+        #expect(wider.between.count > 2 && wider.zoom, "widths on the way: \(wider.between.sorted())")
+        #expect(button.frame.width == word)
+
+        window.setContentSize(NSSize(width: window.contentMinSize.width, height: 600))
+        #expect(button.fittingSize.width == 36 && compile.isVisible)
+    }
+
+    /// SwiftUI stops what is on its way in a view taken out of its window: the button has its
+    /// form at once there, where it would stay as wide as it was.
+    @Test func compileOutOfItsWindowHasItsFormAtOnce() async throws {
+        let host = CompileHost(rootView: CompileButton(compiling: false, compact: false, enabled: true) {})
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.contentView?.addSubview(host)
+        window.orderFront(nil)
+        defer { window.close() }
+        #expect(host.fittingSize.width > 60)
+        host.show(CompileButton(compiling: false, compact: true, enabled: true, animated: true) {})
+        try await Task.sleep(for: .milliseconds(50))
+        host.removeFromSuperview()
+        #expect(host.fittingSize.width == 36)
     }
 
     /// With the PDF hidden the window is no narrower: its toolbar holds it there.

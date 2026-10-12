@@ -82,6 +82,16 @@ final class WorkspaceController: RestoredSplitViewController {
     /// Pane animations running and the frames laying out the split views (`paneAnimation`).
     private var paneAnimations = 0
     private var paneFrames: CADisplayLink?
+    /// The last pane animation has just ended, and Compile may take its word back.
+    private var settling = false
+    /// Whether what Compile follows is being moved: the window's edge or a divider under the
+    /// pointer, or a pane on its way in or out. Compile then moves between its word and its
+    /// symbol; a window that opens or is restored has it in its form at once. A test says so
+    /// itself.
+    lazy var moving: () -> Bool = { [unowned self] in
+        paneAnimations > 0 || settling || view.window?.inLiveResize == true
+            || NSApp.currentEvent?.type == .leftMouseDragged
+    }
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
 
@@ -181,7 +191,8 @@ final class WorkspaceController: RestoredSplitViewController {
     /// Compile gives up its word where that is the first tool without room: over a PDF narrower
     /// than Zoom and Compile, or once the source's tools have outgrown their pane and take the
     /// PDF's room. It takes the word back once no pane is moving, as a pane's animation can
-    /// widen the room on its way to less.
+    /// widen the room on its way to less. It moves from one to the other while what it follows
+    /// is moving (`moving`), no wider on its way than the room it is told of here.
     private func fitToolbar() {
         func edges(_ item: NSSplitViewItem) -> NSRect {
             let view = item.viewController.view
@@ -199,7 +210,11 @@ final class WorkspaceController: RestoredSplitViewController {
             room = min(room, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
         }
         let compact = room < ColumnMetrics.compile
-        if toolbar.compactCompile != compact, compact || paneAnimations == 0 { toolbar.compactCompile = compact }
+        toolbar.compileShort = min(max(ColumnMetrics.compile - room, 0), ColumnMetrics.compile)
+        if toolbar.compactCompile != compact, compact || paneAnimations == 0 {
+            toolbar.animatesCompression = moving()
+            toolbar.compactCompile = compact
+        }
     }
 
     // ---------- layout ----------
@@ -461,7 +476,9 @@ final class WorkspaceController: RestoredSplitViewController {
         } else {
             paneFrames?.invalidate()
             paneFrames = nil
+            settling = true
             fitColumns()
+            settling = false
         }
     }
 
