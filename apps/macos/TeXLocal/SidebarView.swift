@@ -453,7 +453,7 @@ struct OutlineHeader: View {
     /// A sidebar section header's row (measured, 27.2).
     private static let row: CGFloat = 19
     /// Centred in the status bar's height, as folded, and kept there open.
-    private static let top = (StatusBar.height - row) / 2
+    private static let top = (BarMetrics.height - row) / 2
     static let openHeight = top + row
 
     var body: some View {

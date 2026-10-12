@@ -30,7 +30,6 @@ enum BarMetrics {
 /// shows or not. Page uses PDFKit numbering, which can differ from LaTeX; the engine appears
 /// elsewhere.
 struct StatusBar: View {
-    static let height = BarMetrics.height
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @Environment(\.colorScheme) private var colorScheme
