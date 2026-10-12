@@ -823,7 +823,7 @@ struct SourceEditorTests {
     @Test func anIssuesMessageFitsItsRoom() {
         let font = NSFont.systemFont(ofSize: 12)
         func width(_ string: String) -> CGFloat { (string as NSString).size(withAttributes: [.font: font]).width }
-        var label = IssueLabel("Paragraph ended before \\section was complete", others: 0, font: font)
+        let label = IssueLabel("Paragraph ended before \\section was complete", others: 0, font: font)
         #expect(abs(label.width - width("Paragraph ended before \\section was complete")) < 0.01)
         let whole = label.line(in: label.width)
         #expect(whole?.cut == false && whole?.width == label.width)
@@ -833,10 +833,10 @@ struct SourceEditorTests {
         #expect(twelve?.cut == true && abs((twelve?.width ?? 0) - width("Paragraph en…")) < 0.5)
         #expect(label.line(in: width("Paragra…") + 1) == nil && label.line(in: 0) == nil && label.line(in: -40) == nil)
         // A short message has room or it hasn't.
-        var short = IssueLabel("Bad math", others: 0, font: font)
+        let short = IssueLabel("Bad math", others: 0, font: font)
         #expect(short.line(in: short.width)?.cut == false && short.line(in: short.width - 1) == nil)
         // The line's other issues are counted after it, and the count is kept where it is cut.
-        var counted = IssueLabel("Missing number, treated as zero", others: 2, font: font)
+        let counted = IssueLabel("Missing number, treated as zero", others: 2, font: font)
         #expect(abs(counted.width - width("Missing number, treated as zero  +2")) < 0.01)
         let both = counted.line(in: width("Missing number, treated…  +2") + 1)
         #expect(both?.cut == true && abs((both?.width ?? 0) - width("Missing number, treated…  +2")) < 0.5)
@@ -847,14 +847,14 @@ struct SourceEditorTests {
                     - width("There's no line here to end.")) < 0.01)
         // An undefined command's name is at its message's end, which a cut would take first: with
         // no room for all of it, fewer words and the name, and the cut is theirs.
-        var undefined = IssueLabel("Undefined control sequence: \\undefinedmacro", others: 0, font: font)
+        let undefined = IssueLabel("Undefined control sequence: \\undefinedmacro", others: 0, font: font)
         #expect(undefined.line(in: undefined.width)?.cut == false)
         let named = undefined.line(in: undefined.width - 1)
         #expect(named?.cut == true && abs((named?.width ?? 0) - width("Undefined: \\undefinedmacro")) < 0.01)
         let part = undefined.line(in: width("Undefined: \\undefin…") + 1)
         #expect(part?.cut == true && abs((part?.width ?? 0) - width("Undefined: \\undefin…")) < 0.5)
         #expect(undefined.line(in: width("Undefin…") + 1) == nil)
-        var several = IssueLabel("Undefined control sequence: \\foo", others: 2, font: font)
+        let several = IssueLabel("Undefined control sequence: \\foo", others: 2, font: font)
         #expect(abs((several.line(in: several.width - 1)?.width ?? 0) - width("Undefined: \\foo  +2")) < 0.01)
     }
 

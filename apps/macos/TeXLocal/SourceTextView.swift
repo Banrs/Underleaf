@@ -454,12 +454,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private func numberLine(_ number: Int) -> (line: CTLine, width: CGFloat) {
         if let cached = numberLines[number] { return cached }
         if numberLines.count > 4096 { numberLines.removeAll(keepingCapacity: true) }
-        let text = NSAttributedString(string: String(number), attributes: [
-            .font: numberFont, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true])
-        let line = CTLineCreateWithAttributedString(text)
-        let typeset = (line, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
-        numberLines[number] = typeset
-        return typeset
+        let line = typeset(String(number), in: numberFont)
+        numberLines[number] = line
+        return line
     }
 
     /// The line numbers' colour with Increase Contrast.
@@ -550,8 +547,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// The viewport's issues, placed when the text is laid out and not when it is drawn, which is
     /// every frame of a scroll.
     private(set) var issueRows: [IssueRow] = []
-    /// The rows there were, while the viewport's are placed.
-    private var formerRows: [IssueRow] = []
     /// What a row has besides its paragraph changed, the issues or the font or the display's
     /// scale: none is kept the next time they are placed.
     private var issuesStale = false
@@ -562,16 +557,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
     /// The least between a line's text and its issue's message: three of the text's digits.
     private var issueGap: CGFloat = 0
-    /// All that each line's issues say, a line each: its help tag's words.
-    private var issueSays: [Int: String] = [:]
     /// The help tags of the rows that don't show all that their issues say, with where each is.
     private var issueTips: [(tag: NSView.ToolTipTag, rect: NSRect, text: NSString)] = []
-    /// The commands each line's issues name as undefined, which the line underlines in the
-    /// system's red, as Xcode does an issue's token. Drawn here, under the text: TextKit 2 draws
-    /// no underline it is given as a rendering attribute, as the syntax colours are given (27.2:
-    /// of an underline, a strikethrough, a spelling state and a background colour set on shown
-    /// text, it drew the last two).
-    private var undefined: [Int: [String]] = [:]
 
     /// The band's fill: the named system fill nearest Xcode 27.1's for a line with an issue, which
     /// is 245 over white where its current line is 235 (a 2x capture, 2026-10-12). Resolved on
@@ -585,15 +572,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private func issuesChanged() {
         issueLabels.removeAll()
-        undefined.removeAll()
-        issueSays.removeAll()
-        for line in issueLines.keys {
-            guard let message = issueMessages[line] else { continue }
-            let all = [message] + (issueOthers[line] ?? [])
-            issueSays[line] = all.joined(separator: "\n")
-            let commands = all.compactMap(UndefinedCommand.named)
-            if !commands.isEmpty { undefined[line] = commands }
-        }
         issuesStale = true
         placeIssues()
         redrawLineAndGutter()
@@ -614,7 +592,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         guard !issueLines.isEmpty || !issueRows.isEmpty else { return }
         let anew = issuesStale
         issuesStale = false
-        swap(&issueRows, &formerRows)
+        // The rows there were: each is kept or placed again, or is left here, gone from the viewport.
+        var formerRows = issueRows
+        issueRows.removeAll()
         var changed = false
         func place(_ number: Int, on fragment: NSTextLayoutFragment, extra: Bool = false) {
             guard let isError = issueLines[number] else { return }
@@ -636,19 +616,16 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             setNeedsDisplay(placed.band.union(placed.mark))
             issueRows.append(placed)
         }
-        if !issueLines.isEmpty {
-            for (offset, fragment) in fragments {
-                let number = document.line(at: offset)
-                place(number, on: fragment)
-                if issueLines[number + 1] != nil, extraLine(of: fragment) != nil { place(number + 1, on: fragment, extra: true) }
-            }
+        for (offset, fragment) in fragments {
+            let number = document.line(at: offset)
+            place(number, on: fragment)
+            if issueLines[number + 1] != nil, extraLine(of: fragment) != nil { place(number + 1, on: fragment, extra: true) }
         }
         for former in formerRows {
             changed = true
             setNeedsDisplay(former.band.union(former.mark))
             former.message?.view.removeFromSuperview()
         }
-        formerRows.removeAll(keepingCapacity: true)
         guard changed else { return }
         updateIssueTips()
         coverIssues()
@@ -672,24 +649,30 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         // The fragment's lines in the view: its frame has the line fragment's padding in it.
         let left = textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = textContainerOrigin.y + fragment.layoutFragmentFrame.minY
-        if let message = issueMessages[number] {
-            let others = issueOthers[number]?.count ?? 0
-            let trailing = bounds.width - 8 - (textContainer?.lineFragmentPadding ?? 0)
-            var label = issueLabels[number] ?? IssueLabel(message, others: others, font: issueFont)
-            let fitted = label.line(in: trailing - (left + last.typographicBounds.maxX) - issueGap)
-            issueLabels[number] = label
-            if let fitted {
-                // On the text's baseline, in the band's rows: they are `rowShift` below the lines'.
-                let rect = NSRect(x: trailing - fitted.width, y: top + last.typographicBounds.minY + rowShift,
-                                  width: fitted.width, height: last.typographicBounds.height)
-                let view = view ?? IssueMessageView()
-                view.show(fitted.line, baseline: last.glyphOrigin.y - rowShift, in: rect)
-                if view.superview !== self { addSubview(view) }
-                issue.message = (view, rect, fitted.cut)
-            }
-            if fitted?.cut != false || others > 0 { issue.tip = issueSays[number] }
+        guard let message = issueMessages[number] else { return issue }
+        // All that the line's issues say.
+        let said = [message] + (issueOthers[number] ?? [])
+        let trailing = bounds.width - 8 - (textContainer?.lineFragmentPadding ?? 0)
+        let label = issueLabels[number] ?? IssueLabel(message, others: said.count - 1, font: issueFont)
+        issueLabels[number] = label
+        let fitted = label.line(in: trailing - (left + last.typographicBounds.maxX) - issueGap)
+        if let fitted {
+            // On the text's baseline, in the band's rows: they are `rowShift` below the lines'.
+            let rect = NSRect(x: trailing - fitted.width, y: top + last.typographicBounds.minY + rowShift,
+                              width: fitted.width, height: last.typographicBounds.height)
+            let view = view ?? IssueMessageView()
+            view.show(fitted.line, baseline: last.glyphOrigin.y - rowShift, in: rect)
+            if view.superview !== self { addSubview(view) }
+            issue.message = (view, rect, fitted.cut)
         }
-        if let commands = undefined[number], let font {
+        if fitted?.cut != false || said.count > 1 { issue.tip = said.joined(separator: "\n") }
+        // The commands the issues name as undefined are underlined in the system's red, as Xcode
+        // does an issue's token. Drawn here, under the text: TextKit 2 draws no underline it is
+        // given as a rendering attribute, as the syntax colours are given (27.2: of an underline, a
+        // strikethrough, a spelling state and a background colour set on shown text, it drew the
+        // last two).
+        let commands = said.compactMap(UndefinedCommand.named)
+        if !commands.isEmpty, let font {
             // As far under the baseline as the font puts an underline and a point thick at the
             // least, as Xcode's is (the font's own is a pixel at 13 points), its edges on whole
             // pixels, the ends as the top and bottom.
@@ -723,7 +706,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             tips.append((issue.mark, tip))
             if let message = issue.message { tips.append((message.rect, tip)) }
         }
-        guard tips.count != issueTips.count || !zip(tips, issueTips).allSatisfy({ $0.rect == $1.rect && $1.text.isEqual(to: $0.text) }) else { return }
+        guard !tips.elementsEqual(issueTips, by: { $0.rect == $1.rect && $1.text.isEqual(to: $0.text) }) else { return }
         for tip in issueTips { removeToolTip(tip.tag) }
         // The string is the tag's owner, which AppKit asks for its description and doesn't keep.
         issueTips = tips.map { tip in
@@ -738,8 +721,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         guard !issueRows.isEmpty else { return }
         let selected = selectedRanges
         for issue in issueRows {
-            guard let view = issue.message?.view else { continue }
-            view.covered = issue.end.map { end in selected.contains { NSLocationInRange(end, $0.rangeValue) } } ?? false
+            issue.message?.view.covered = issue.end.map { end in selected.contains { NSLocationInRange(end, $0.rangeValue) } } ?? false
         }
     }
 
@@ -1001,7 +983,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             if next == "\\", character(at: selection.location + 1) == c {
                 closers.remove(selection.location)
                 var bracket = selection.location + 1
-                if isEscaped(selection.location) {
+                if text.isEscaped(at: selection.location) {
                     insertText("", replacementRange: NSRange(location: selection.location - 1, length: 1))
                     bracket -= 1
                 }
@@ -1019,7 +1001,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             }
             if next.map({ $0.isWhitespace || Self.closeBefore.contains($0) }) ?? true {
                 // \[ closes with \], \{ with \} and \( with \).
-                super.insertText(isEscaped(selection.location) ? "\(c)\\\(close)" : "\(c)\(close)", replacementRange: selection)
+                super.insertText(text.isEscaped(at: selection.location) ? "\(c)\\\(close)" : "\(c)\(close)", replacementRange: selection)
                 closers.insert(selection.location + 1)
                 setSelectedRange(NSRange(location: selection.location + 1, length: 0))
                 offerCompletions()
@@ -1031,18 +1013,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         offerCompletions()
     }
 
-    /// Whether the character at `at` follows an unescaped backslash, as the bracket of `\[` does.
-    private func isEscaped(_ at: Int) -> Bool {
-        var slashes = 0
-        while at - slashes > 0, text.character(at: at - slashes - 1) == 0x5C { slashes += 1 }
-        return slashes % 2 == 1
-    }
-
     /// How long the closer after the caret is, between an empty pair: 1, or 2 between `\[` and `\]`.
     private func closer(after caret: Int) -> Int? {
         guard let close = character(at: caret - 1).flatMap({ Self.pairs[$0] }) else { return nil }
         if character(at: caret) == close { return 1 }
-        return isEscaped(caret - 1) && character(at: caret) == "\\" && character(at: caret + 1) == close ? 2 : nil
+        return text.isEscaped(at: caret - 1) && character(at: caret) == "\\" && character(at: caret + 1) == close ? 2 : nil
     }
 
     /// Delete an empty bracket pair or backspace to the last indent stop;
@@ -1486,8 +1461,6 @@ struct IssueLabel {
     let width: CGFloat
     /// What a cut one ends with, the ellipsis and the count, is this wide.
     private let endingWidth: CGFloat
-    /// The last room asked for and its answer: the same until the pane's width changes.
-    private var fitted: (room: CGFloat, line: (line: CTLine, width: CGFloat, cut: Bool)?)?
 
     /// The fewest of a message's characters worth showing before the ellipsis.
     static let least = 10
@@ -1495,37 +1468,32 @@ struct IssueLabel {
     private static let saysError = "LaTeX Error: "
 
     init(_ message: String, others: Int, font: NSFont) {
-        func typeset(_ string: String) -> (CTLine, CGFloat) {
-            let line = CTLineCreateWithAttributedString(NSAttributedString(string: string, attributes: [
-                .font: font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true]))
-            return (line, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
-        }
         // One line, whatever TeX's own breaks, and without LaTeX's words for what the gutter's mark
         // says already: they are the first to be read and the room is short.
         var message = message.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         if message.hasPrefix(Self.saysError) { message.removeFirst(Self.saysError.count) }
         let count = others > 0 ? "  +\(others)" : ""
-        short = UndefinedCommand.named(in: message).map { typeset(String(localized: "Undefined: \($0)") + count) }
-        (whole, width) = typeset(message + count)
-        (ending, endingWidth) = typeset("…" + count)
+        short = UndefinedCommand.named(in: message).map { typeset(String(localized: "Undefined: \($0)") + count, in: font) }
+        (whole, width) = typeset(message + count, in: font)
+        (ending, endingWidth) = typeset("…" + count, in: font)
     }
 
     /// The message for a room this wide, or nil where it has none; `cut` where it isn't all there.
-    mutating func line(in room: CGFloat) -> (line: CTLine, width: CGFloat, cut: Bool)? {
-        if let fitted, fitted.room == room { return fitted.line }
-        var line: (line: CTLine, width: CGFloat, cut: Bool)?
-        let most = short ?? (whole, width)
-        if width <= room {
-            line = (whole, width, false)
-        } else if let short, short.width <= room {
-            line = (short.line, short.width, true)
-        } else if CTLineGetStringIndexForPosition(most.line, CGPoint(x: room - endingWidth, y: 0)) >= Self.least,
-                  let cut = CTLineCreateTruncatedLine(most.line, Double(room), .end, ending) {
-            line = (cut, CGFloat(CTLineGetTypographicBounds(cut, nil, nil, nil)), true)
-        }
-        fitted = (room, line)
-        return line
+    func line(in room: CGFloat) -> (line: CTLine, width: CGFloat, cut: Bool)? {
+        if width <= room { return (whole, width, false) }
+        if let short, short.width <= room { return (short.line, short.width, true) }
+        let most = short?.line ?? whole
+        guard CTLineGetStringIndexForPosition(most, CGPoint(x: room - endingWidth, y: 0)) >= Self.least,
+              let cut = CTLineCreateTruncatedLine(most, Double(room), .end, ending) else { return nil }
+        return (cut, CGFloat(CTLineGetTypographicBounds(cut, nil, nil, nil)), true)
     }
+}
+
+/// A string typeset as one line, to be drawn in the context's colour, and how wide it is.
+private func typeset(_ string: String, in font: NSFont) -> (line: CTLine, width: CGFloat) {
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: string, attributes: [
+        .font: font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true]))
+    return (line, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
 }
 
 /// The one issue whose place on its line its message gives: TeX names the command it doesn't know,
@@ -1552,14 +1520,9 @@ enum UndefinedCommand {
     /// after a backslash that is itself a command's (`\\foo` is a line break and a word), and not
     /// in a comment.
     static func ranges(of command: String, in line: NSString) -> [NSRange] {
-        func escaped(_ at: Int) -> Bool {
-            var slashes = 0
-            while at - slashes > 0, line.character(at: at - slashes - 1) == 0x5C { slashes += 1 }
-            return slashes % 2 == 1
-        }
         // To the first percent sign that isn't `\%`.
         var end = 0
-        while end < line.length, line.character(at: end) != 0x25 || escaped(end) { end += 1 }
+        while end < line.length, line.character(at: end) != 0x25 || line.isEscaped(at: end) { end += 1 }
         let word = command.dropFirst().first.map(isLetter) ?? false
         var found: [NSRange] = [], from = 0
         while from < end {
@@ -1567,9 +1530,18 @@ enum UndefinedCommand {
             guard range.location != NSNotFound else { break }
             from = NSMaxRange(range)
             let next = from < line.length ? Unicode.Scalar(line.character(at: from)).map(Character.init) : nil
-            if !escaped(range.location), !(word && next.map(isLetter) == true) { found.append(range) }
+            if !line.isEscaped(at: range.location), !(word && next.map(isLetter) == true) { found.append(range) }
         }
         return found
+    }
+}
+
+private extension NSString {
+    /// Whether the character at `at` follows an unescaped backslash, as the bracket of `\[` does.
+    func isEscaped(at: Int) -> Bool {
+        var slashes = 0
+        while at - slashes > 0, character(at: at - slashes - 1) == 0x5C { slashes += 1 }
+        return slashes % 2 == 1
     }
 }
 
