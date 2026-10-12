@@ -35,7 +35,6 @@ nonisolated struct TeXpressoEvents: Decodable, Sendable {
     }
 
     struct RunEnd: Decodable, Sendable {
-        let pages: Int
         let run: String
     }
 
@@ -185,10 +184,7 @@ final class TeXpressoSession {
     /// The document goes to the PDF pane, not TeXpresso's own window.
     @ObservationIgnored private var inPane = true
 
-    private struct Start {
-        var files: [TeXpressoFile]
-        var caret: (path: String, offset: Int)?
-    }
+    private typealias Start = (files: [TeXpressoFile], caret: (path: String, offset: Int)?)
 
     init(id: String, calls: Calls) {
         self.id = id
@@ -232,18 +228,17 @@ final class TeXpressoSession {
     /// `caret` is where the first key will land, in one of `files`: TeX is ready there.
     func start(files: [TeXpressoFile], caret: (path: String, offset: Int)? = nil) {
         guard canStart else { return }
-        beginStart(Start(files: files, caret: caret), replacing: false)
+        beginStart((files, caret), replacing: false)
     }
 
     func restart(files: [TeXpressoFile], caret: (path: String, offset: Int)? = nil) {
         guard !closed, phase != .stopping, owner != nil || phase == .starting else { return }
-        let start = Start(files: files, caret: caret)
         if phase == .starting, queued != nil {
-            queued = start
+            queued = (files, caret)
             for file in files { pending[file.path] = nil }
             return
         }
-        beginStart(start, replacing: true)
+        beginStart((files, caret), replacing: true)
     }
 
     private func beginStart(_ start: Start, replacing: Bool) {
@@ -258,8 +253,7 @@ final class TeXpressoSession {
         inPane = LiveViewer.current == .pane
         let current = generation
         enqueue { session in
-            guard session.generation == current, !session.closed else { return }
-            guard let start = session.queued else { return }
+            guard session.generation == current, !session.closed, let start = session.queued else { return }
             session.queued = nil
             do {
                 // A patched build writes the document for the PDF pane rather than opening a window;

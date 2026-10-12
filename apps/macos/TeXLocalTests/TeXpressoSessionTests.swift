@@ -408,15 +408,15 @@ struct TeXpressoSessionTests {
         let core = FakeCore(), session = core.session()
         session.start(files: [main])
         await session.waitForPendingCalls()
-        core.feed.send(TeXpressoEvents(seq: 1, running: true, done: .init(pages: 1, run: "stopped")))
-        core.feed.send(TeXpressoEvents(seq: 2, running: true, done: .init(pages: 3, run: "complete")))
+        core.feed.send(TeXpressoEvents(seq: 1, running: true, done: .init(run: "stopped")))
+        core.feed.send(TeXpressoEvents(seq: 2, running: true, done: .init(run: "complete")))
         try await waitUntil { core.feed.asked.last == 2 }
         try await Task.sleep(for: .milliseconds(1_200))
         #expect(!session.halted && session.title == "Live Preview On")
-        core.feed.send(TeXpressoEvents(seq: 3, running: true, done: .init(pages: 1, run: "stopped")))
+        core.feed.send(TeXpressoEvents(seq: 3, running: true, done: .init(run: "stopped")))
         try await waitUntil(timeout: .seconds(5)) { session.halted }
         #expect(session.needsAttention && session.title == "Live Preview Paused at an Error")
-        core.feed.send(TeXpressoEvents(seq: 4, running: true, done: .init(pages: 3, run: "complete")))
+        core.feed.send(TeXpressoEvents(seq: 4, running: true, done: .init(run: "complete")))
         try await waitUntil { !session.halted }
         session.stop()
         await session.waitForPendingCalls()

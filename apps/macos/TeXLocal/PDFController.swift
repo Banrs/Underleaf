@@ -299,26 +299,18 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// anchor (step 0), or the next or previous one from it, as a text view's find goes on from its selection.
     @ObservationIgnored private var startFrom: (anchor: Position, step: Int)?
 
-    /// A place in reading order: the page, then down it, then across.
-    private struct Position: Comparable {
-        var page: Int, down: CGFloat, across: CGFloat
-
-        static func < (a: Self, b: Self) -> Bool {
-            (a.page, a.down, a.across) < (b.page, b.down, b.across)
-        }
-    }
+    /// A place in reading order, which is a tuple's own: the page, then down it, then across.
+    private typealias Position = (page: Int, down: CGFloat, across: CGFloat)
 
     private func position(_ selection: PDFSelection) -> Position? {
         guard let document = view.document, let page = selection.pages.first else { return nil }
         let box = selection.bounds(for: page)
-        return Position(page: document.index(for: page), down: -box.maxY, across: box.minX)
+        return (document.index(for: page), -box.maxY, box.minX)
     }
 
     /// The selection, or the top of what shows.
     private var anchor: Position? {
-        if let selection = view.currentSelection, let place = position(selection) { return place }
-        guard let document = view.document, let place = view.shownDestination, let page = place.page else { return nil }
-        return Position(page: document.index(for: page), down: -place.point.y, across: place.point.x)
+        view.currentSelection.flatMap(position) ?? shownPlace.map { ($0.index, -$0.point.y, $0.point.x) }
     }
 
     private func index(from anchor: Position, step: Int) -> Int {
@@ -448,9 +440,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     /// The top of what shows, as a page's index and a point on it.
     private var shownPlace: (index: Int, point: CGPoint)? {
-        view.shownDestination.flatMap { destination in
-            destination.page.flatMap { view.document?.index(for: $0) }.map { (index: $0, point: destination.point) }
-        }
+        guard let destination = view.shownDestination, let page = destination.page, let document = view.document else { return nil }
+        return (document.index(for: page), destination.point)
     }
 
     private func go(to place: (index: Int, point: CGPoint)) {
@@ -540,10 +531,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// the pages past where it stopped stay as they were.
     func showLive(_ document: PDFDocument, changed: IndexSet?, complete: Bool) {
         // Whole too once the pages taken hold too much (`memoryAtWhole`), if it is all there.
-        guard let shown = view.document, var pages = changed, !(complete && hasGrown) else {
-            show(document)
-            return
-        }
+        guard let shown = view.document, var pages = changed, !(complete && hasGrown) else { return show(document) }
         // An earlier document's pages still to come are in this one too.
         if let liveBacklog { pages.formUnion(liveBacklog.pages) }
         if shown.pageCount < document.pageCount { pages.insert(integersIn: shown.pageCount..<document.pageCount) }
@@ -952,8 +940,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        if updateDividerCursor(with: event) { return }
-        super.mouseMoved(with: event)
+        if !updateDividerCursor(with: event) { super.mouseMoved(with: event) }
     }
 
     override func cursorUpdate(with event: NSEvent) {
