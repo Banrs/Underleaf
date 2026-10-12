@@ -942,8 +942,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) }
     }
 
-    /// SwiftUI reassigns unchanged frames during layout. PDFView would refit
-    /// the width and undo a pinch while auto-scaling is still active.
+    /// SwiftUI reassigns unchanged frames during layout. PDFView would refit the width and undo
+    /// a pinch while auto-scaling is still active: in its own `setFrame:`, whatever the size, so
+    /// `setFrameSize`'s check below doesn't stand in for this one (27.2).
     override var frame: NSRect {
         get { super.frame }
         set { if newValue != super.frame { super.frame = newValue } }
