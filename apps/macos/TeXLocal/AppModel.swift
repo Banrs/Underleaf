@@ -261,7 +261,7 @@ final class AppModel {
         guard projects.contains(where: { $0.id == id }) else { return false }
         guard open else { return true }
         await self.open(id)
-        if parts.count > 1, let project, project.id == id, project.node(at: parts[1])?.isDirectory == false {
+        if parts.count > 1, let project, project.id == id, project.tree.node(at: parts[1])?.isDirectory == false {
             await project.open(parts[1])
         }
         return true

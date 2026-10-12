@@ -566,7 +566,7 @@ final class ProjectFlowTests {
     @Test(.timeLimit(.minutes(1)))
     func anotherAppsFilesComeAndGo() async throws {
         let (project, folder) = try await opened()
-        let paths = { Set(project.tree.flattened.map(\.path)) }
+        let paths = { Set(project.tree.nodes.flattened.map(\.path)) }
 
         try "x".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
         try await waitUntil(timeout: .seconds(5)) { paths().contains("notes.tex") }
@@ -695,12 +695,12 @@ final class ProjectFlowTests {
         let (project, folder) = try await opened()
         let notes = folder.appending(path: "notes.tex")
         try "notes".write(to: notes, atomically: false, encoding: .utf8)
-        try await waitUntil(timeout: .seconds(5)) { project.tree.flattened.contains { $0.path == "notes.tex" } }
+        try await waitUntil(timeout: .seconds(5)) { project.tree.nodes.flattened.contains { $0.path == "notes.tex" } }
         let drop = project.editor.textView.fileDrop
 
         let plot = folder.appending(path: "plot.png")
         try Data().write(to: plot)
-        try await waitUntil(timeout: .seconds(5)) { project.tree.flattened.contains { $0.path == "plot.png" } }
+        try await waitUntil(timeout: .seconds(5)) { project.tree.nodes.flattened.contains { $0.path == "plot.png" } }
         guard case .insert("\\includegraphics{plot.png}") = drop(plot) else {
             Issue.record("An image dropped on LaTeX is a figure")
             return
@@ -756,6 +756,26 @@ final class ProjectFlowTests {
         await project.search.run()
         #expect(project.search.hits == nil && project.search.failure == nil && project.search.groups.isEmpty)
         await app.close()
+    }
+
+    /// The tree tells its project of a read only when the files have changed, and takes none
+    /// once the project has closed.
+    @Test(.timeLimit(.minutes(1)))
+    func theTreeTellsOfAChangeOnly() async throws {
+        let info = try await project().info, tree = FileTree(id: info.id)
+        var changes = 0
+        tree.onChange = { _ in changes += 1 }
+        try await tree.read()
+        #expect(changes == 1 && tree.node(at: info.mainFile)?.isDirectory == false)
+        await tree.reload()
+        #expect(changes == 1)
+        try await Core.shared.perform("write_file", ["id": info.id, "path": "notes.tex", "text": "x"])
+        await tree.reload()
+        #expect(changes == 2 && tree.node(at: "notes.tex") != nil)
+        tree.close()
+        try await Core.shared.perform("write_file", ["id": info.id, "path": "more.tex", "text": "x"])
+        await tree.reload()
+        #expect(changes == 2 && tree.node(at: "more.tex") == nil)
     }
 
     /// A project's open folders and folded headings come back the next time it opens.
@@ -826,7 +846,7 @@ final class ProjectFlowTests {
         #expect(await project.createEntry(in: "", directory: true) == "untitled folder")
         #expect(await project.createEntry(in: "", directory: true) == "untitled folder 2")
         #expect(await project.createEntry(in: "untitled folder", directory: false) == "untitled folder/untitled.tex")
-        #expect(project.tree.flattened.contains { $0.path == "untitled folder/untitled.tex" })
+        #expect(project.tree.nodes.flattened.contains { $0.path == "untitled folder/untitled.tex" })
         #expect(exists(folder.appending(path: "untitled folder 2")) && exists(folder.appending(path: "untitled folder/untitled.tex")))
         #expect(".latexmkrc".numbered(2) == ".latexmkrc 2")
         #expect(app.alert == nil)
@@ -840,7 +860,7 @@ final class ProjectFlowTests {
         let (project, folder) = try await opened()
         try files.createDirectory(at: folder.appending(path: "parts"), withIntermediateDirectories: false)
         try "notes".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
-        try await waitUntil(timeout: .seconds(5)) { project.tree.flattened.contains { $0.path == "notes.tex" } }
+        try await waitUntil(timeout: .seconds(5)) { project.tree.nodes.flattened.contains { $0.path == "notes.tex" } }
         let url = { (path: String) in try #require(project.url(path)) }
 
         await project.dropFiles([try url("notes.tex")], into: "parts")

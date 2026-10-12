@@ -8,7 +8,8 @@ import UniformTypeIdentifiers
 final class ProjectModel {
     let id: String
     var settings: ProjectSettings?
-    var tree: [TreeNode] = []
+    /// The project's files, as the sidebar lists them.
+    let tree: FileTree
     /// The first file and its outline are ready for the workspace to appear.
     private(set) var initialLoadComplete = false
     var openPath: String?
@@ -118,10 +119,6 @@ final class ProjectModel {
     @ObservationIgnored private var diskText: String?
     /// Has the project's folder too, so it is observed: the window's document icon follows `openURL`.
     private var folderWatcher: FolderWatcher?
-    @ObservationIgnored private var treeReload: Task<Void, Never>?
-    /// The tree's reads, numbered as they start: the latest started, and the latest taken.
-    @ObservationIgnored private var treeReads = 0
-    @ObservationIgnored private var treeTaken = 0
 
     var importClash: ImportClash?
 
@@ -182,6 +179,7 @@ final class ProjectModel {
         self.id = id
         self.app = app
         search = ProjectSearch(id: id)
+        tree = FileTree(id: id)
         let defaults = UserDefaults.standard
         expandedFolders = Set(defaults.stringArray(forKey: Self.key("expandedFolders", id)) ?? [])
         foldedHeadings = Set(defaults.stringArray(forKey: Self.key("foldedHeadings", id)) ?? [])
@@ -194,6 +192,7 @@ final class ProjectModel {
         panel = BuildPanelModel(texpresso: texpresso)
         texpresso.onFailure = { [weak self] in self?.panel.show(.texpresso) }
         texpresso.onOwnershipLost = { [weak self] in self?.cancelTeXpressoWork() }
+        tree.onChange = { [weak self] in self?.filesChanged($0) }
         texpresso.showDocument = { [weak self] in self?.showLive($0) }
         texpresso.showPage = { [weak self] page, index in
             if self?.livePDF == true { self?.pdf.showLive(page, at: index) }
@@ -252,9 +251,6 @@ final class ProjectModel {
         notices.note(error.localizedDescription)
     }
 
-    /// The tree's entry at a project path.
-    func node(at path: String) -> TreeNode? { tree.flattened.first { $0.path == path } }
-
     var saved: SavedWorkspace {
         SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: panel.shown, pdfPage: pdf.restorePage ?? pdf.page,
                        pdfZoom: pdf.restoreZoom ?? pdf.zoom)
@@ -297,7 +293,7 @@ final class ProjectModel {
         }
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
-            try await readTree()
+            try await tree.read()
             let root = try await core.call("project_root", ["id": id], as: String.self)
             guard !closed else { return }
             // Watched for other apps' edits and files, rather than saving over them.
@@ -308,7 +304,7 @@ final class ProjectModel {
                 pdf.restorePage = saved.pdfPage
                 pdf.restoreZoom = saved.pdfZoom
             }
-            let restored = saved?.file.flatMap { node(at: $0) == nil ? nil : $0 }
+            let restored = saved?.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
             // The workspace is installed only after its first outline is ready.
             await analysis?.value
@@ -327,29 +323,14 @@ final class ProjectModel {
         if !hasPDF, autoCompile { await compile(auto: true) }
     }
 
-    /// A failed read keeps the tree as it was, and the folder's next change reads again.
-    private func reloadTree() async {
-        try? await readTree()
-    }
-
-    /// A read that started before the last one taken is dropped: a folder change's read ending
-    /// after a new file's would take away the row its name is being typed in.
-    private func readTree() async throws {
-        treeReads += 1
-        let read = treeReads
-        let files = try await core.call("file_tree", ["id": id], as: [TreeNode].self)
-        guard read > treeTaken else { return }
-        treeTaken = read
-        // A save's temporary file can trigger an unchanged tree reload.
-        if files != tree, !closed, !Task.isCancelled {
-            tree = files
-            analyze()
-            // TeXpresso keeps the texts it was sent through a rescan, so only a new session drops
-            // one whose file has gone or moved; any other change it finds by looking again.
-            if initialLoadComplete, texpresso.active {
-                let paths = Set(files.flattened.map(\.path))
-                if texpresso.files.isSubset(of: paths) { texpresso.rescan() } else { restartTeXpresso() }
-            }
+    /// The tree has other files: the outline is read again, and TeXpresso looks again.
+    private func filesChanged(_ files: [TreeNode]) {
+        analyze()
+        // TeXpresso keeps the texts it was sent through a rescan, so only a new session drops
+        // one whose file has gone or moved; any other change it finds by looking again.
+        if initialLoadComplete, texpresso.active {
+            let paths = Set(files.flattened.map(\.path))
+            if texpresso.files.isSubset(of: paths) { texpresso.rescan() } else { restartTeXpresso() }
         }
     }
 
@@ -461,7 +442,7 @@ final class ProjectModel {
     /// A file of the project dropped on the source opens in the editor, and an image or a PDF
     /// dropped on LaTeX goes in as a figure; one from elsewhere goes on the sidebar.
     private func dropped(_ url: URL) -> SourceTextView.FileDrop? {
-        guard let path = projectPath(url), node(at: path)?.isDirectory == false else { return nil }
+        guard let path = projectPath(url), tree.node(at: path)?.isDirectory == false else { return nil }
         let type = UTType(filenameExtension: url.pathExtension)
         if isLaTeX, type?.conforms(to: .image) == true || type?.conforms(to: .pdf) == true {
             return .insert("\\includegraphics{\(path)}")
@@ -590,7 +571,7 @@ final class ProjectModel {
     /// it shows; what it shows (not hidden files or the build's) is the core's.
     private func folderChanged(_ changes: [FolderWatcher.Change]) {
         guard let watcher = folderWatcher else { return }
-        let folders = Set(tree.flattened.filter(\.isDirectory).map(\.path))
+        let folders = Set(tree.nodes.flattened.filter(\.isDirectory).map(\.path))
         var openFileChanged = false, treeChanged = false
         for change in changes {
             guard let path = watcher.relativePath(change.path) else {
@@ -606,7 +587,7 @@ final class ProjectModel {
                 || change.structural && openPath?.hasPrefix(path + "/") == true
             let parent = path.parentFolder
             treeChanged = treeChanged || change.structural && (parent.isEmpty || folders.contains(parent))
-            if texpresso.active, node(at: path) != nil { liveDiskPaths.insert(path) }
+            if texpresso.active, tree.node(at: path) != nil { liveDiskPaths.insert(path) }
         }
         if openFileChanged {
             // In the mutation lane, so our own rename or write is never read as another app's change.
@@ -615,14 +596,7 @@ final class ProjectModel {
                 await compile(auto: true)
             }
         }
-        // A newer reload replaces one that hasn't started.
-        if treeChanged {
-            treeReload?.cancel()
-            treeReload = Task { [weak self] in
-                guard !Task.isCancelled else { return }
-                await self?.reloadTree()
-            }
-        }
+        if treeChanged { tree.reloadSoon() }
         if texpresso.active, !liveDiskPaths.isEmpty { refreshTeXpressoDisk() }
     }
 
@@ -829,7 +803,7 @@ final class ProjectModel {
         saveTask?.cancel()
         analysis?.cancel()
         symbolsTask?.cancel()
-        treeReload?.cancel()
+        tree.close()
         openTask?.cancel()
         syncTask?.cancel()
         pdfLoad?.cancel()
@@ -1074,7 +1048,7 @@ final class ProjectModel {
             return false
         }
         guard let made, !closed else { return nil }
-        await reloadTree()
+        await tree.reload()
         if !directory { await open(made, focus: false) }
         return made
     }
@@ -1127,7 +1101,7 @@ final class ProjectModel {
                 clearOpenFile()
                 await open(reopen, focus: false)
             }
-            await reloadTree()
+            await tree.reload()
             return renaming
         }
         guard !closed else { return nil }
@@ -1141,11 +1115,11 @@ final class ProjectModel {
         let item = UndoableTrash(
             original: original, name: path.fileName, undoManager: app?.undoManager,
             trash: { [weak self] item in await self?.trashEntry(path, item) ?? false },
-            changed: { [weak self] in await self?.reloadTree() },
+            changed: { [weak self] in await self?.tree.reload() },
             failed: { [weak self] title, error in self?.report(error, title) })
         trashed.append(item)
         await item.moveToTrash()
-        if !closed { await reloadTree() }
+        if !closed { await tree.reload() }
     }
 
     /// In the lane, so it follows the saves and renames asked for before it.
@@ -1220,7 +1194,7 @@ final class ProjectModel {
             report(error, "Couldn’t Add the Files")
         }
         // After a failure too: the files copied before it are there.
-        await reloadTree()
+        await tree.reload()
     }
 
     // ---------- export ----------

@@ -44,7 +44,7 @@ struct FilesList: View {
             List(selection: $selection) {
                 Section("Files") {
                     // Between the top-level rows, into the project's top level.
-                    TreeRows(nodes: project.tree, children: \.children, isExpanded: { node in
+                    TreeRows(nodes: project.tree.nodes, children: \.children, isExpanded: { node in
                         disclosure(\.expandedFolders, of: project, key: node.path,
                                    subtree: node.children?.flattened.filter(\.isDirectory).map(\.path) ?? [])
                     },
@@ -61,7 +61,7 @@ struct FilesList: View {
                 Task { await project.dropFiles(urls, into: "") }
             }
             .overlay {
-                if project.initialLoadComplete, project.tree.isEmpty {
+                if project.initialLoadComplete, project.tree.nodes.isEmpty {
                     ContentUnavailableView {
                         Label("No Files", systemImage: "text.document")
                     } description: {
@@ -75,7 +75,7 @@ struct FilesList: View {
             // The clicked row's menu, which leaves the selection (and the open file) as
             // it is. None for no row: SwiftUI's asks AppKit for row -1's view, which raises (27.2).
             .contextMenu(forSelectionType: String.self) { paths in
-                if let path = paths.first, let node = project.node(at: path) {
+                if let path = paths.first, let node = project.tree.node(at: path) {
                     if node.isDirectory {
                         Button(MenuCommand.fileNew.title) { create(NewEntry(directory: false, folder: node.path)) }
                         Button(MenuCommand.fileNewFolder.title) { create(NewEntry(directory: true, folder: node.path)) }
@@ -89,7 +89,7 @@ struct FilesList: View {
                 }
             } primaryAction: { paths in
                 // A folder opens or closes; a file is already open once chosen.
-                guard let path = paths.first, project.node(at: path)?.isDirectory == true else { return }
+                guard let path = paths.first, project.tree.node(at: path)?.isDirectory == true else { return }
                 if project.expandedFolders.remove(path) == nil { project.expandedFolders.insert(path) }
             }
             // The empty space's: the project's top level's, as a Finder window's background
@@ -101,7 +101,7 @@ struct FilesList: View {
                 Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload, on: project) }
             }
             .onChange(of: selection) { _, path in
-                if let path, path != project.openPath, project.node(at: path)?.isDirectory == false {
+                if let path, path != project.openPath, project.tree.node(at: path)?.isDirectory == false {
                     Task {
                         await project.open(path, focus: false)
                         // It didn't open (reported): the file on screen stays chosen.
@@ -116,13 +116,13 @@ struct FilesList: View {
             // Return renames the chosen item, as in Finder: after the key event, through
             // which the list keeps the keyboard from the field.
             .onKeyPress(.return) {
-                guard rename.id == nil, let node = selection.flatMap({ project.node(at: $0) }) else { return .ignored }
+                guard rename.id == nil, let node = selection.flatMap({ project.tree.node(at: $0) }) else { return .ignored }
                 Task { actions(node).rename() }
                 return .handled
             }
             .focused($listFocused)
             .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in
-                project.node(at: path).map(actions)
+                project.tree.node(at: path).map(actions)
             }
             // A row named in place comes into view first: the list makes only the rows it shows.
             .onChange(of: rename.id) { _, id in
@@ -139,7 +139,7 @@ struct FilesList: View {
 
     /// The chosen folder, or the chosen file's; the top level with neither.
     private var chosenFolder: String {
-        guard let path = selection, let node = project.node(at: path) else { return "" }
+        guard let path = selection, let node = project.tree.node(at: path) else { return "" }
         return node.isDirectory ? path : path.parentFolder
     }
 
@@ -270,7 +270,7 @@ struct FilesList: View {
         Task {
             await project.renameEntry(node.path, to: path)
             // A renamed folder stays chosen, as in Finder; a file follows the open file.
-            if selection == node.path, project.node(at: path) != nil { selection = path }
+            if selection == node.path, project.tree.node(at: path) != nil { selection = path }
         }
     }
 }
