@@ -6,7 +6,7 @@ enum PanelTab: String, CaseIterable {
 }
 
 /// The build panel below the editors and their status bar: the build's issues or its whole log,
-/// ending above `BuildPanelBar` at the panel's foot, as Xcode's console over its bar, with a
+/// ending at `BuildPanelBar` at the panel's foot, as Xcode's console at its bar, with a
 /// device-pixel line between. On the editors' surface, as Xcode's console is on its editor's.
 /// No close button: the status bar's toggle and View › Hide Build Panel close it.
 struct BuildPanel: View {
@@ -14,30 +14,35 @@ struct BuildPanel: View {
     @Environment(\.displayScale) private var displayScale
 
     var body: some View {
-        // In the panel's own content, not a split-item accessory, so the bar rides the panel's edge
-        // as the panel opens: AppKit shows a bottom accessory only once the pane has its height
-        // (27.2). The bar is opaque, so nothing scrolls under it: a stack, not a safe-area bar,
-        // whose edge SwiftUI draws over a list but not over the log's NSScrollView.
-        VStack(spacing: 0) {
-            Group {
-                switch project.panelTab {
-                case .issues: issues
-                case .log: log
-                case .texpresso:
-                    if project.texpresso.log.isEmpty {
-                        ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
-                                               description: Text(project.livePDF ? "The PDF pane shows Live Preview."
-                                                                 : "Live Preview shows the document in its own window. Compile to update the PDF here."))
-                    } else {
-                        LogPane(text: project.texpresso.log, filter: project.logFilter, title: "Live Preview Log")
-                    }
+        Group {
+            switch project.panelTab {
+            case .issues: issues
+            case .log: log
+            case .texpresso:
+                if project.texpresso.log.isEmpty {
+                    ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
+                                           description: Text(project.livePDF ? "The PDF pane shows Live Preview."
+                                                             : "Live Preview shows the document in its own window. Compile to update the PDF here."))
+                } else {
+                    LogPane(text: project.texpresso.log, filter: project.logFilter, title: "Live Preview Log")
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Rectangle().fill(.separator).frame(height: 1 / displayScale)
-            BuildPanelBar(project: project)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.textSurface)
+        // The bar's own line is the edge, the same over the list and over the logs, where SwiftUI
+        // draws none (an AppKit scroll view).
+        .scrollEdgeEffectHidden(true, for: .bottom)
+        // In the panel's own content, not a split-item accessory, so the bar rides the panel's edge
+        // as the panel opens: AppKit shows a bottom accessory only once the pane has its height
+        // (27.2). A safe-area bar: in one a search field is the filled capsule it is in a toolbar,
+        // as Xcode's console filter; in a plain stack it is a form's outlined field (27.2).
+        .safeAreaBar(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                Rectangle().fill(.separator).frame(height: 1 / displayScale)
+                BuildPanelBar(project: project)
+            }
+        }
     }
 
     private func matches(_ item: LogItem) -> Bool {
@@ -78,7 +83,7 @@ struct BuildPanel: View {
 
 /// The bar at the panel's foot, as Xcode's console bar: what the panel shows, chosen from a
 /// pop-up as Xcode's console chooses its output, then that view's controls and filter. The panel's
-/// content ends above it (`BuildPanel`), and it paints the panel's surface. Its controls are small
+/// content ends at the line over it (`BuildPanel`), and it paints the panel's surface. Its controls are small
 /// and its text subheadline, as the status bar's above it: 8 + 20 + 8 is its 36 pt.
 struct BuildPanelBar: View {
     @Bindable var project: ProjectModel
@@ -106,8 +111,7 @@ struct BuildPanelBar: View {
                     .toggleStyle(.button)
                     .help(project.showsWarnings ? "Hide warnings" : "Show warnings")
                 }
-                SearchField(text: $project.issueFilter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
-                    .frame(maxWidth: 180)
+                filter($project.issueFilter)
             } else {
                 let text = project.panelTab == .texpresso ? project.texpresso.log : project.result?.log ?? ""
                 Button("Copy Log", systemImage: "document.on.document") {
@@ -116,8 +120,7 @@ struct BuildPanelBar: View {
                 }
                 .help("Copy the whole log")
                 .disabled(text.isEmpty)
-                SearchField(text: $project.logFilter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
-                    .frame(maxWidth: 180)
+                filter($project.logFilter)
             }
         }
         .font(.subheadline)
@@ -129,6 +132,14 @@ struct BuildPanelBar: View {
         .padding(.leading, BarMetrics.consoleLeading)
         .padding(.trailing, BarMetrics.consoleTrailing)
         .background(.textSurface)
+    }
+
+    /// Xcode's console filter: the regular 24 pt field in a bar of small controls. At the small
+    /// size a search field is an outlined box, and SwiftUI's change of size drops its symbol (27.2).
+    private func filter(_ text: Binding<String>) -> some View {
+        SearchField(text: text, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
+            .controlSize(.regular)
+            .frame(maxWidth: 180)
     }
 }
 
@@ -215,7 +226,9 @@ private struct IssueRow: View {
     }
 }
 
-/// The log above the panel's bar. With the bar's filter, only the lines with it in them, as
+/// The log over the panel's bar: the text view is inset by the bar's height, so its last line and
+/// its scroller end at the bar's top. The bar's safe area reaches SwiftUI but not an AppKit scroll
+/// view, which takes the inset itself. With the bar's filter, only the lines with it in them, as
 /// Xcode's console filters its output.
 private struct LogPane: View {
     let text: String
@@ -234,7 +247,10 @@ private struct LogPane: View {
             if shown.isEmpty {
                 ContentUnavailableView.search(text: filter)
             } else {
-                LogTextView(text: shown, title: title)
+                GeometryReader { geometry in
+                    LogTextView(text: shown, title: title, bottomInset: geometry.safeAreaInsets.bottom)
+                        .ignoresSafeArea(.container, edges: .bottom)
+                }
             }
         }
         .task(id: [text, filter]) {
@@ -253,6 +269,8 @@ private struct LogPane: View {
 struct LogTextView: NSViewRepresentable {
     let text: String
     var title = "Build Log"
+    /// The bar over the text view's foot (`LogPane`).
+    var bottomInset: CGFloat = 0
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -279,6 +297,13 @@ struct LogTextView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
         view.setAccessibilityLabel(title)
+        if scroll.contentInsets.bottom != bottomInset {
+            let atEnd = scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1
+            scroll.automaticallyAdjustsContentInsets = false
+            scroll.contentInsets.bottom = bottomInset
+            scroll.scrollerInsets.bottom = bottomInset
+            if atEnd { view.scrollToEndOfDocument(nil) }
+        }
         guard context.coordinator.shown != text else { return }
         updateText(in: scroll)
         context.coordinator.shown = text
