@@ -121,12 +121,13 @@ struct HeadingStylesTests {
 @MainActor
 struct FindTests {
     @Test func theMatchCountLabel() {
-        #expect(FindMatches(index: 3, total: 12).label(for: "loop") == "3 of 12")
-        #expect(FindMatches(index: 1, total: 1).label(for: "loop") == "1 of 1")
-        #expect(FindMatches(index: 2, total: 1000, limited: true).label(for: "a") == "2 of 1,000+")
-        #expect(FindMatches(index: 2290, total: 2290).label(for: "a") == "2,290 of 2,290")
-        #expect(FindMatches().label(for: "loop") == "Not found")
-        #expect(FindMatches().label(for: "").isEmpty)
+        #expect(PDFFind.count(3, of: 12, limited: false, for: "loop") == "3 of 12")
+        #expect(PDFFind.count(1, of: 1, limited: false, for: "loop") == "1 of 1")
+        #expect(PDFFind.count(2, of: 1000, limited: true, for: "a") == "2 of 1,000+")
+        #expect(PDFFind.count(2290, of: 2290, limited: false, for: "a") == "2,290 of 2,290")
+        // As the bar asks with no matches: the first of none.
+        #expect(PDFFind.count(1, of: 0, limited: false, for: "loop") == "Not found")
+        #expect(PDFFind.count(1, of: 0, limited: false, for: "").isEmpty)
     }
 }
 

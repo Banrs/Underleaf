@@ -1,19 +1,5 @@
 import SwiftUI
 
-/// The PDF find bar's count: the chosen match, from 1, of all of them; `limited` means more exist.
-struct FindMatches {
-    var index = 0
-    var total = 0
-    var limited = false
-
-    func label(for query: String) -> String {
-        if query.isEmpty { return "" }
-        if total == 0 { return String(localized: "Not found") }
-        let count = "\(total.formatted())\(limited ? "+" : "")"
-        return String(localized: "\(index) of \(count)")
-    }
-}
-
 /// A field the window can focus after AppKit creates it.
 final class FieldHandle {
     fileprivate(set) weak var field: NSTextField?

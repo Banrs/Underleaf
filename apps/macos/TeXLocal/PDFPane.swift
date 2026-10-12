@@ -70,9 +70,8 @@ struct PDFFindBar: View {
     @State private var announcement: Task<Void, Never>?
 
     var body: some View {
-        let matches = FindMatches(index: controller.matchIndex + 1, total: controller.matches.count, limited: controller.limited)
         // For the query the matches are for, which the field can be ahead of.
-        let label = matches.label(for: controller.query)
+        let label = PDFFind.count(controller.matchIndex + 1, of: controller.matches.count, limited: controller.limited, for: controller.query)
         HStack {
             SearchField(text: $controller.findText, prompt: "Find in PDF", handle: controller.findField,
                         step: controller.findNext, close: controller.closeFind)
@@ -83,7 +82,7 @@ struct PDFFindBar: View {
                 Button("Next Match", systemImage: "chevron.forward") { controller.findNext(1) }
                     .help("Go to the next match")
             }
-            .disabled(matches.total == 0)
+            .disabled(controller.matches.isEmpty)
             .fixedSize()
             // The first to give way in a narrow pane.
             Text(label)
@@ -98,9 +97,7 @@ struct PDFFindBar: View {
         .onChange(of: label) { _, label in
             announcement?.cancel()
             guard !label.isEmpty else { return }
-            announcement = Task {
-                try? await Task.sleep(for: .milliseconds(500))
-                guard !Task.isCancelled else { return }
+            restart(&announcement, after: .milliseconds(500)) {
                 var spoken = AttributedString(label)
                 spoken.accessibilitySpeechAnnouncementPriority = .low
                 AccessibilityNotification.Announcement(spoken).post()
@@ -143,6 +140,15 @@ enum PDFFind {
 
     static func normalize(_ query: String) -> String {
         String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery))
+    }
+
+    /// The find bar's count for `query`'s matches: the chosen one, from 1, of all of them, with a
+    /// plus where more exist than were kept (`limited`).
+    static func count(_ index: Int, of total: Int, limited: Bool, for query: String) -> String {
+        if query.isEmpty { return "" }
+        if total == 0 { return String(localized: "Not found") }
+        let count = "\(total.formatted())\(limited ? "+" : "")"
+        return String(localized: "\(index) of \(count)")
     }
 
     /// The find text every app shares (the find pasteboard), which Use Selection for Find sets and
