@@ -839,8 +839,8 @@ final class ProjectModel {
             if opens { panelOpenedByBuild = true }
             // The Dock says so while another app is in front.
             if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
-        } else if result.ok {
-            if panelOpenedByBuild, panelTab == .issues, issues.isEmpty { showLogs = false }
+        } else if result.ok, panelOpenedByBuild, panelTab == .issues, issues.isEmpty {
+            showLogs = false
         }
         announceResult(result)
     }
