@@ -174,13 +174,10 @@ final class AppModel {
     /// `status` searches the disk for latexmk. Not while a TeX folder is being chosen.
     func refreshTeXStatus() async {
         guard !settingTeX else { return }
-        texCheck?.cancel()
-        let check = Task {
+        await restart(&texCheck) { [self] in
             let status = try? await core.call("status", as: TexStatus.self)
             if !Task.isCancelled, let status { tex = status }
-        }
-        texCheck = check
-        await check.value
+        }.value
     }
 
     /// Nil finds TeX, or TeXpresso, automatically. The core refuses a folder without

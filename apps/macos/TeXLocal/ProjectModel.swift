@@ -197,7 +197,7 @@ final class ProjectModel {
         panel = BuildPanelModel(texpresso: texpresso)
         texpresso.onFailure = { [weak self] in self?.panel.show(.texpresso) }
         texpresso.onOwnershipLost = { [weak self] in self?.cancelTeXpressoWork() }
-        tree.onChange = { [weak self] in self?.filesChanged($0) }
+        tree.onChange = { [weak self] in self?.filesChanged() }
         texpresso.showDocument = { [weak self] in self?.showLive($0) }
         texpresso.showPage = { [weak self] page, index in
             if self?.livePDF == true { self?.pdf.showLive(page, at: index) }
@@ -329,12 +329,12 @@ final class ProjectModel {
     }
 
     /// The tree has other files: the outline is read again, and TeXpresso looks again.
-    private func filesChanged(_ files: [TreeNode]) {
+    private func filesChanged() {
         analyze()
         // TeXpresso keeps the texts it was sent through a rescan, so only a new session drops
         // one whose file has gone or moved; any other change it finds by looking again.
         if initialLoadComplete, texpresso.active {
-            let paths = Set(files.flattened.map(\.path))
+            let paths = Set(tree.nodes.flattened.map(\.path))
             if texpresso.files.isSubset(of: paths) { texpresso.rescan() } else { restartTeXpresso() }
         }
     }
@@ -356,8 +356,7 @@ final class ProjectModel {
     /// During live preview it is kept for after it, and `replacingLive` it takes the
     /// live document's place, unless live preview is on again by then.
     @discardableResult private func showPDFOnDisk(reloadIfUnchanged: Bool = true, replacingLive: Bool = false) async -> Bool {
-        pdfLoad?.cancel()
-        let load = Task {
+        await restart(&pdfLoad) { [self] in
             guard !closed, let path = try? await core.call("pdf_path", ["id": id], as: String.self),
                   !Task.isCancelled, !closed else { return false }
             let url = URL(fileURLWithPath: path)
@@ -372,9 +371,7 @@ final class ProjectModel {
             shown = .build(url)
             pdf.show(document)
             return true
-        }
-        pdfLoad = load
-        return await load.value
+        }.value
     }
 
     /// Live preview over, the last build's PDF, or the pane's empty state without one: the live
@@ -401,8 +398,7 @@ final class ProjectModel {
     /// open carries on, so the editor can't show one file while `openPath`,
     /// where autosave writes, names another.
     func open(_ path: String, line: Int? = nil, column: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
-        openTask?.cancel()
-        let task = Task {
+        await restart(&openTask) { [self] in
             if path != openPath {
                 do {
                     // Read first and saved last, with nothing awaited between the save and the switch:
@@ -425,9 +421,7 @@ final class ProjectModel {
                 }
             }
             if let line, editsText, !Task.isCancelled, !closed { editor.reveal(line: line, column: column, atTop: atTop, focus: focus) }
-        }
-        openTask = task
-        await task.value
+        }.value
     }
 
     private func readText(_ path: String) async throws -> String {
@@ -475,7 +469,6 @@ final class ProjectModel {
     /// Queued after earlier mutations; true means the text reached disk. A failure is an alert
     /// only when `reporting`, for a save someone asked for or something waits on: an autosave's
     /// stays in the status bar, where it doesn't come back at every pause in typing.
-    @discardableResult
     func save(reporting: Bool = true) async -> Bool {
         await mutate { await $0.write(reporting: reporting) }
     }
@@ -794,9 +787,7 @@ final class ProjectModel {
         closed = true
         // The old workspace can remain visible while a live start drains.
         editor.textView.isEditable = false
-        liveIntent += 1
-        liveRestartTask?.cancel()
-        liveDiskTask?.cancel()
+        cancelTeXpressoWork()
         texpresso.close()
         // Its renames and its files' moves to the Trash can't be undone once it's closed: nothing
         // would show the result. The window's stack outlives it.
@@ -844,7 +835,6 @@ final class ProjectModel {
 
     /// The change shows at once, from a call made as the control is set: the core's answer replaces
     /// it, and a refusal puts back what was there.
-    @discardableResult
     func patchSettings(_ patch: [String: Any]) async -> Bool {
         let before = settings
         settings?.apply(patch)
@@ -932,8 +922,8 @@ final class ProjectModel {
     func stopTeXpresso() {
         cancelTeXpressoWork()
         texpresso.stop()
-        // Stopped already, while it was to start again: its pages go as they do when it stops.
-        if !texpresso.active { Task { await endLivePDF() } }
+        // Its pages go now, not as its stop ends: one stopped already, while it was to start again, ends nothing.
+        Task { await endLivePDF() }
     }
 
     private func cancelTeXpressoWork() {
@@ -986,8 +976,7 @@ final class ProjectModel {
         guard let path = openPath else { return }
         let (line, column, word) = (editor.currentLine, editor.currentColumn, editor.currentSyncWord)
         let live = livePDF, args = syncArguments(["id": id, "file": path, "line": line, "column": column])
-        syncTask?.cancel()
-        let task = Task {
+        await restart(&syncTask) { [self] in
             guard await saveEdits(reporting: !quietly), !Task.isCancelled, !closed, openPath == path else { return }
             // Only on the pages it was found in: a rebuild may have moved it.
             let shown = pdf.shownVersion
@@ -998,9 +987,7 @@ final class ProjectModel {
             } catch {
                 if !quietly, !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Line in the PDF") }
             }
-        }
-        syncTask = task
-        await task.value
+        }.value
     }
 
     /// SyncTeX for the pages shown: TeXpresso's, through its session, or the last build's.
@@ -1011,8 +998,7 @@ final class ProjectModel {
 
     /// `word`, the PDF's word clicked `offset` in, takes the caret to it on the line.
     func inverseSync(page: Int, x: Double, y: Double, word: SyncTeXWord? = nil) async {
-        syncTask?.cancel()
-        let task = Task {
+        await restart(&syncTask) { [self] in
             do {
                 // A nil word bridges as null, which the core reads as none.
                 let args = syncArguments(["id": id, "page": page, "x": x, "y": y, "word": word?.text as Any, "offset": word?.offset as Any,
@@ -1023,9 +1009,7 @@ final class ProjectModel {
             } catch {
                 if !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Spot in the Source") }
             }
-        }
-        syncTask = task
-        await task.value
+        }.value
     }
 
     // ---------- files ----------

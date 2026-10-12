@@ -1,5 +1,3 @@
-import Foundation
-
 nonisolated struct OutlineNode: Identifiable {
     let item: OutlineItem
     let children: [OutlineNode]?

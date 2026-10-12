@@ -1,4 +1,3 @@
-import Foundation
 import Observation
 
 /// A project's files as the core lists them: read as the project opens, and again as its
@@ -9,8 +8,8 @@ final class FileTree {
     private let core = Core.shared
 
     private(set) var nodes: [TreeNode] = []
-    /// The tree has changed, to these: for what else follows the project's files.
-    @ObservationIgnored var onChange: ([TreeNode]) -> Void = { _ in }
+    /// The tree has changed: for what else follows the project's files.
+    @ObservationIgnored var onChange: () -> Void = {}
     @ObservationIgnored private var reloading: Task<Void, Never>?
     /// The tree's reads, numbered as they start: the latest started, and the latest taken.
     @ObservationIgnored private var reads = 0
@@ -36,7 +35,7 @@ final class FileTree {
         // A save's temporary file can trigger an unchanged tree reload.
         if files != nodes, !closed, !Task.isCancelled {
             nodes = files
-            onChange(files)
+            onChange()
         }
     }
 

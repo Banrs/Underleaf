@@ -795,7 +795,7 @@ final class ProjectFlowTests {
     func theTreeTellsOfAChangeOnly() async throws {
         let info = try await project().info, tree = FileTree(id: info.id)
         var changes = 0
-        tree.onChange = { _ in changes += 1 }
+        tree.onChange = { changes += 1 }
         try await tree.read()
         #expect(changes == 1 && tree.node(at: info.mainFile)?.isDirectory == false)
         await tree.reload()

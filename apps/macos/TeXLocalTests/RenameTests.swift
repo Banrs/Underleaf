@@ -29,9 +29,19 @@ struct FileKindTests {
     }
 }
 
-/// Work put off in a slot: the last of its kind runs, once, after its delay.
+/// Work in a task slot: the latest of its kind carries on, and work put off runs once, after its delay.
 @MainActor
-struct RestartTests {
+struct TaskSlotTests {
+    @Test(.timeLimit(.minutes(1)))
+    func theLatestOfItsKindCarriesOn() async {
+        var slot: Task<Int, Never>?
+        let first = restart(&slot) { Task.isCancelled ? 0 : 1 }
+        let second = restart(&slot) { Task.isCancelled ? 0 : 2 }
+        #expect(first.isCancelled && !second.isCancelled && slot == second)
+        #expect(await first.value == 0)
+        #expect(await second.value == 2)
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func theLastOfItsKindRunsAlone() async {
         var slot: Task<Void, Never>?, ran: [Int] = []
