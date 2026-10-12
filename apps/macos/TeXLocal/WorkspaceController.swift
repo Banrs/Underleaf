@@ -291,7 +291,7 @@ final class WorkspaceController: RestoredSplitViewController {
         columnsItem.addBottomAlignedAccessoryViewController(statusBar)
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
-        area.loaded = { [unowned self] in if !project.showLogs { panelItem.isCollapsed = true } }
+        area.loaded = { [unowned self] in if !project.panel.shown { panelItem.isCollapsed = true } }
 
         areaItem = NSSplitViewItem(viewController: area)
         addSplitViewItem(areaItem)
@@ -397,7 +397,7 @@ final class WorkspaceController: RestoredSplitViewController {
             track({ app.inspectorShown }) { [weak self] visible in if let self { setCollapsed(inspectorItem, !visible) } },
             // Until the workspace appears, `viewDidAppear` has it.
             track({ app.showPDF }) { [weak self] visible in if let self, appeared { setCollapsed(pdfItem, !visible) } },
-            track({ project.showLogs }) { [weak self] in self?.setPanelShown($0) },
+            track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
             track({ OutlineState(app, project) }) { [weak self] in self?.setOutline($0) },
             track({ pdf.finding }) { [weak self] finding in if let self { setHidden(pdfFind, !finding) } },
             track({ app.searchFocusToken }, initial: false) { [weak self] _ in self?.focusSearch() },

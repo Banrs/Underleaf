@@ -5,6 +5,52 @@ enum PanelTab: String, CaseIterable {
     case issues = "Issues", log = "Build Log", texpresso = "Live Preview Log"
 }
 
+/// The build panel's state for a project: whether it shows, what it shows, and its bar's settings.
+@Observable
+final class BuildPanelModel {
+    /// TeXpresso's session, which follows its log while the panel shows it.
+    private let texpresso: TeXpressoSession
+
+    var shown = false {
+        didSet {
+            if !shown { openedByBuild = false }
+            texpresso.showsLog = shown && tab == .texpresso
+        }
+    }
+    /// A failed build opened the panel, so the next clean one closes it; one the person opened stays.
+    @ObservationIgnored private var openedByBuild = false
+    var tab: PanelTab = .issues {
+        didSet { texpresso.showsLog = shown && tab == .texpresso }
+    }
+    /// The panel bar's filters over the issues and over the logs' lines, and whether warnings show.
+    var issueFilter = ""
+    var logFilter = ""
+    var showsWarnings = true
+
+    init(texpresso: TeXpressoSession) {
+        self.texpresso = texpresso
+    }
+
+    /// The panel, open on `tab`. The issues include the core's fallback issue for a failed build.
+    func show(_ tab: PanelTab) {
+        self.tab = tab
+        shown = true
+    }
+
+    /// A build the person asked for failed: the panel opens on its issues.
+    func openForFailedBuild() {
+        let opens = !shown
+        show(.issues)
+        if opens { openedByBuild = true }
+    }
+
+    /// A build the person asked for came out clean: the panel a failure opened closes, unless
+    /// it was turned to a log since.
+    func closeAfterCleanBuild() {
+        if openedByBuild, tab == .issues { shown = false }
+    }
+}
+
 /// The build panel below the editors and their status bar: the build's issues or its whole log,
 /// ending at `BuildPanelBar` at the panel's foot, as Xcode's console at its bar, with a
 /// device-pixel line between. On the editors' surface, as Xcode's console is on its editor's.
@@ -15,7 +61,7 @@ struct BuildPanel: View {
 
     var body: some View {
         Group {
-            switch project.panelTab {
+            switch project.panel.tab {
             case .issues: issues
             case .log: log
             case .texpresso:
@@ -24,7 +70,7 @@ struct BuildPanel: View {
                                            description: Text(project.livePDF ? "The PDF pane shows Live Preview."
                                                              : "Live Preview shows the document in its own window. Compile to update the PDF here."))
                 } else {
-                    LogPane(text: project.texpresso.log, filter: project.logFilter, title: "Live Preview Log")
+                    LogPane(text: project.texpresso.log, filter: project.panel.logFilter, title: "Live Preview Log")
                 }
             }
         }
@@ -46,25 +92,25 @@ struct BuildPanel: View {
     }
 
     private func matches(_ item: LogItem) -> Bool {
-        project.issueFilter.isEmpty || item.message.localizedCaseInsensitiveContains(project.issueFilter)
-            || (item.file?.localizedCaseInsensitiveContains(project.issueFilter) ?? false)
+        project.panel.issueFilter.isEmpty || item.message.localizedCaseInsensitiveContains(project.panel.issueFilter)
+            || (item.file?.localizedCaseInsensitiveContains(project.panel.issueFilter) ?? false)
     }
 
     /// "No Issues" before any build too: the status bar says whether one has run.
     @ViewBuilder
     private var issues: some View {
         // Enumerate before filtering: duplicate messages keep distinct, stable row IDs.
-        let items = project.issues.enumerated().filter { (project.showsWarnings || $0.element.isError) && matches($0.element) }
+        let items = project.issues.enumerated().filter { (project.panel.showsWarnings || $0.element.isError) && matches($0.element) }
         if !items.isEmpty {
             IssueList(items: items, project: project)
-        } else if !project.showsWarnings, project.result?.warnings.contains(where: matches) == true {
+        } else if !project.panel.showsWarnings, project.result?.warnings.contains(where: matches) == true {
             ContentUnavailableView {
                 Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
             } actions: {
-                Button("Show Warnings") { project.showsWarnings = true }
+                Button("Show Warnings") { project.panel.showsWarnings = true }
             }
-        } else if !project.issueFilter.isEmpty {
-            ContentUnavailableView.search(text: project.issueFilter)
+        } else if !project.panel.issueFilter.isEmpty {
+            ContentUnavailableView.search(text: project.panel.issueFilter)
         } else {
             ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
         }
@@ -73,7 +119,7 @@ struct BuildPanel: View {
     @ViewBuilder
     private var log: some View {
         if let text = project.result?.log, !text.isEmpty {
-            LogPane(text: text, filter: project.logFilter)
+            LogPane(text: text, filter: project.panel.logFilter)
         } else {
             ContentUnavailableView("No Log", systemImage: "text.page",
                                    description: Text("Compile to see the log here."))
@@ -86,11 +132,12 @@ struct BuildPanel: View {
 /// content ends at the line over it (`BuildPanel`), and it paints the panel's surface. Its controls are small
 /// and its text subheadline, as the status bar's above it: 8 + 20 + 8 is its 36 pt.
 struct BuildPanelBar: View {
-    @Bindable var project: ProjectModel
+    let project: ProjectModel
 
     var body: some View {
+        @Bindable var panel = project.panel
         HStack {
-            Picker("Show", selection: $project.panelTab) {
+            Picker("Show", selection: $panel.tab) {
                 // TeXpresso's only once it has been started: most never use it.
                 ForEach(PanelTab.allCases.filter { $0 != .texpresso || project.texpresso.used }, id: \.self) { Text($0.rawValue) }
             }
@@ -103,24 +150,24 @@ struct BuildPanelBar: View {
             Spacer(minLength: 0)
             // The view's button before its filter, as Xcode's console bar's toggles before its
             // filter: no icon on its own at the bar's end.
-            if project.panelTab == .issues {
+            if panel.tab == .issues {
                 if project.warningCount > 0 {
-                    Toggle(isOn: $project.showsWarnings) {
+                    Toggle(isOn: $panel.showsWarnings) {
                         Label("Warnings", systemImage: "exclamationmark.triangle")
                     }
                     .toggleStyle(.button)
-                    .help(project.showsWarnings ? "Hide warnings" : "Show warnings")
+                    .help(panel.showsWarnings ? "Hide warnings" : "Show warnings")
                 }
-                filter($project.issueFilter)
+                filter($panel.issueFilter)
             } else {
-                let text = project.panelTab == .texpresso ? project.texpresso.log : project.result?.log ?? ""
+                let text = panel.tab == .texpresso ? project.texpresso.log : project.result?.log ?? ""
                 Button("Copy Log", systemImage: "document.on.document") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)
                 }
                 .help("Copy the whole log")
                 .disabled(text.isEmpty)
-                filter($project.logFilter)
+                filter($panel.logFilter)
             }
         }
         .font(.subheadline)

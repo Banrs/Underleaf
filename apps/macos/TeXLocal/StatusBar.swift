@@ -32,7 +32,7 @@ struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @Environment(\.displayScale) private var displayScale
-    @Bindable var project: ProjectModel
+    let project: ProjectModel
 
     var body: some View {
         // Under a narrower window the bar says less, then says it shorter.
@@ -67,16 +67,16 @@ struct StatusBar: View {
     private func content(_ detail: Detail) -> some View {
         HStack(spacing: BarMetrics.spacing) {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
-            let showingIssues = project.showLogs && project.panelTab == .issues
+            let showingIssues = project.panel.shown && project.panel.tab == .issues
             Button {
-                if showingIssues { project.showLogs = false } else { project.showBuildPanel() }
+                if showingIssues { project.panel.shown = false } else { project.panel.show(.issues) }
             } label: {
                 // The last to give way: its text shortens only where nothing else can.
                 buildStatus.fixedSize(horizontal: detail != .short, vertical: true).hitTarget()
             }
             .help(showingIssues ? "Hide issues" : "Show issues")
             if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
-                Button { project.showTeXpressoLog() } label: {
+                Button { project.panel.show(.texpresso) } label: {
                     Label(project.texpresso.title,
                           systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
                         .hitTarget()
@@ -129,12 +129,12 @@ struct StatusBar: View {
             if project.editsText || pages {
                 Rectangle().fill(.separator).frame(width: 1 / displayScale, height: BarMetrics.dividerHeight)
             }
-            Toggle(isOn: $project.showLogs) {
+            Toggle(isOn: Bindable(project.panel).shown) {
                 // Only as tall as the HIG's least target: its symbol sits at Xcode's gaps, at the body
                 // size, the nearest to Xcode's 12.5 pt symbol beside 11 pt text (measured 2026-10-06).
                 // Its state is the accent colour alone: with Differentiate Without Colour the off
                 // state is the plain square, without the panel's filled third.
-                Label("Build Panel", systemImage: differentiateWithoutColor && !project.showLogs
+                Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
                       ? "square" : "inset.filled.bottomthird.square")
                     .font(.body)
                     .frame(minHeight: BarMetrics.target)
@@ -159,7 +159,7 @@ struct StatusBar: View {
     @ViewBuilder
     private var freshness: some View {
         if project.showsLastSuccessfulBuild {
-            Button { project.showBuildPanel() } label: {
+            Button { project.panel.show(.issues) } label: {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill")
                     .hitTarget()
             }

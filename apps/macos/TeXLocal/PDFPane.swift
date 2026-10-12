@@ -43,8 +43,8 @@ struct PDFPane: View {
             } description: {
                 Text("The build made no PDF. The build panel shows what went wrong.")
             } actions: {
-                if !project.showLogs {
-                    Button("Show Build Panel") { project.showBuildPanel() }
+                if !project.panel.shown {
+                    Button("Show Build Panel") { project.panel.show(.issues) }
                         .buttonStyle(.borderedProminent)
                 }
             }

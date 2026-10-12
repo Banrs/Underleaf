@@ -200,7 +200,7 @@ extension AppModel {
         case .viewToggleSidebar: sidebarShown
         case .viewTogglePdf: showPDF
         case .viewToggleInspector: inspectorShown
-        case .viewToggleLogs: project?.showLogs == true
+        case .viewToggleLogs: project?.panel.shown == true
         case .viewToggleWordCount: showWordCount
         default: nil
         }
@@ -252,7 +252,7 @@ extension AppModel {
         case .viewToggleSidebar: sidebarShown.toggle()
         case .viewTogglePdf: togglePDF()
         case .viewToggleInspector: inspectorShown.toggle()
-        case .viewToggleLogs: project?.showLogs.toggle()
+        case .viewToggleLogs: project?.panel.shown.toggle()
         case .viewToggleWordCount: showWordCount.toggle()
         case .viewZoomIn: requestPDF(.zoomIn)
         case .viewZoomOut: requestPDF(.zoomOut)

@@ -276,15 +276,15 @@ final class ProjectFlowTests {
     func onlyCompileMovesThePanel() async throws {
         let project = try await openedWithTeX("\\documentclass{article}\\begin{document}\\undefinedmacro x\\end{document}")
         await project.compile(auto: true)
-        #expect(project.result?.failed == true && project.result?.pdf != nil && !project.showLogs)
+        #expect(project.result?.failed == true && project.result?.pdf != nil && !project.panel.shown)
         await project.compile()
-        #expect(project.showLogs && project.panelTab == .issues)
+        #expect(project.panel.shown && project.panel.tab == .issues)
         let text = project.editor.textView
         text.insertText("", replacementRange: (text.string as NSString).range(of: "\\undefinedmacro"))
         await project.compile(auto: true)
-        #expect(project.result?.ok == true && project.showLogs)
+        #expect(project.result?.ok == true && project.panel.shown)
         await project.compile()
-        #expect(project.result?.ok == true && !project.showLogs)
+        #expect(project.result?.ok == true && !project.panel.shown)
         await app.close()
     }
 
@@ -408,15 +408,48 @@ final class ProjectFlowTests {
     @Test(.timeLimit(.minutes(1)))
     func aNoOpBuildKeepsThePDFDocumentAndThePanel() async throws {
         let project = try await openedWithTeX("\\documentclass{article}\\begin{document}x\\end{document}")
-        (project.showLogs, project.panelTab) = (true, .log)
+        (project.panel.shown, project.panel.tab) = (true, .log)
         await project.compile()
-        #expect(project.result?.ok == true && project.result?.pdfChanged == true && project.showLogs)
+        #expect(project.result?.ok == true && project.result?.pdfChanged == true && project.panel.shown)
         let shown = project.pdf.shownVersion
-        project.panelTab = .issues
+        project.panel.tab = .issues
         await project.compile()
         #expect(project.result?.ok == true && project.result?.pdfChanged == false)
         #expect(project.pdf.shownVersion == shown)
-        #expect(project.showLogs)
+        #expect(project.panel.shown)
+        await app.close()
+    }
+
+    /// A clean build closes the panel only where a failed one opened it and it still shows the
+    /// issues: not one the person opened, before the failure or again after closing it. The live
+    /// preview's log is followed while the panel shows it, and no longer.
+    @Test(.timeLimit(.minutes(1)))
+    func aCleanBuildClosesOnlyThePanelAFailureOpened() async throws {
+        let project = try await opened().project, panel = project.panel
+        panel.openForFailedBuild()
+        #expect(panel.shown && panel.tab == .issues)
+        panel.tab = .log
+        panel.closeAfterCleanBuild()
+        #expect(panel.shown)
+        panel.tab = .issues
+        panel.closeAfterCleanBuild()
+        #expect(!panel.shown)
+        panel.show(.log)
+        panel.openForFailedBuild()
+        panel.closeAfterCleanBuild()
+        #expect(panel.shown && panel.tab == .issues)
+        panel.shown = false
+        panel.openForFailedBuild()
+        panel.shown = false
+        panel.show(.texpresso)
+        #expect(project.texpresso.showsLog)
+        panel.tab = .issues
+        #expect(!project.texpresso.showsLog)
+        panel.closeAfterCleanBuild()
+        #expect(panel.shown)
+        panel.tab = .texpresso
+        panel.shown = false
+        #expect(!project.texpresso.showsLog)
         await app.close()
     }
 

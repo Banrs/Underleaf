@@ -49,23 +49,10 @@ final class ProjectModel {
     /// The last build's PDF, which is the one to save or share: the live document is TeXpresso's
     /// working file, rewritten as its pages come.
     private(set) var buildPDF: URL?
-    var showLogs = false {
-        didSet {
-            if !showLogs { panelOpenedByBuild = false }
-            texpresso.showsLog = showLogs && panelTab == .texpresso
-        }
-    }
-    /// A failed build opened the panel, so the next clean one closes it; one the person opened stays.
-    @ObservationIgnored private var panelOpenedByBuild = false
     /// The PDF view's page, scale and find, for the menus and the window.
     let pdf = PDFController()
-    var panelTab: PanelTab = .issues {
-        didSet { texpresso.showsLog = showLogs && panelTab == .texpresso }
-    }
-    /// The panel bar's filters over the issues and over the logs' lines, and whether warnings show.
-    var issueFilter = ""
-    var logFilter = ""
-    var showsWarnings = true
+    /// The build panel: whether it shows, and what.
+    let panel: BuildPanelModel
     /// TeXpresso's live preview, in the PDF pane or its own window; the last build's PDF comes back after it.
     let texpresso: TeXpressoSession
     @ObservationIgnored private var liveRestartTask: Task<Void, Never>?
@@ -74,12 +61,6 @@ final class ProjectModel {
     @ObservationIgnored private var liveIntent = 0
     /// Changes under way that end the live session in the core and start it again after.
     @ObservationIgnored private var liveChanges = 0
-
-    /// Show issues, including the core's fallback issue for a failed build.
-    func showBuildPanel() {
-        panelTab = .issues
-        showLogs = true
-    }
 
     /// The build's errors, then its warnings.
     var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) }
@@ -102,7 +83,7 @@ final class ProjectModel {
         } else {
             next ? first : last
         }
-        showBuildPanel()
+        panel.show(.issues)
         chooseIssue(place, focus: true)
     }
 
@@ -210,7 +191,8 @@ final class ProjectModel {
             update: { try await core.perform("texpresso_update", $0) },
             now: { try core.now($0, $1) },
             wait: core.waiting("texpresso_wait", as: TeXpressoEvents.self)))
-        texpresso.onFailure = { [weak self] in self?.showTeXpressoLog() }
+        panel = BuildPanelModel(texpresso: texpresso)
+        texpresso.onFailure = { [weak self] in self?.panel.show(.texpresso) }
         texpresso.onOwnershipLost = { [weak self] in self?.cancelTeXpressoWork() }
         texpresso.showDocument = { [weak self] in self?.showLive($0) }
         texpresso.showPage = { [weak self] page, index in
@@ -299,7 +281,7 @@ final class ProjectModel {
     func node(at path: String) -> TreeNode? { tree.flattened.first { $0.path == path } }
 
     var saved: SavedWorkspace {
-        SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: showLogs, pdfPage: pdf.restorePage ?? pdf.page,
+        SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: panel.shown, pdfPage: pdf.restorePage ?? pdf.page,
                        pdfZoom: pdf.restoreZoom ?? pdf.zoom)
     }
 
@@ -328,7 +310,7 @@ final class ProjectModel {
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
         editor.textView.issueClicked = { [weak self] line in
             guard let self, let place = issues.firstIndex(where: { $0.file == self.openPath && $0.line == line }) else { return }
-            showBuildPanel()
+            panel.show(.issues)
             chosenIssue = place
         }
         editor.textView.headings = { [weak self] in
@@ -347,7 +329,7 @@ final class ProjectModel {
             folderWatcher = FolderWatcher(folder: URL(fileURLWithPath: root)) { [weak self] in self?.folderChanged($0) }
             refreshSymbols()
             if let saved {
-                showLogs = saved.buildPanel
+                panel.shown = saved.buildPanel
                 pdf.restorePage = saved.pdfPage
                 pdf.restoreZoom = saved.pdfZoom
             }
@@ -830,13 +812,11 @@ final class ProjectModel {
 
     private func finishedManualBuild(_ result: CompileResult) {
         if result.failed {
-            let opens = !showLogs
-            showBuildPanel()
-            if opens { panelOpenedByBuild = true }
+            panel.openForFailedBuild()
             // The Dock says so while another app is in front.
             if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
-        } else if result.ok, panelOpenedByBuild, panelTab == .issues, issues.isEmpty {
-            showLogs = false
+        } else if result.ok, issues.isEmpty {
+            panel.closeAfterCleanBuild()
         }
         announceResult(result)
     }
@@ -1006,11 +986,6 @@ final class ProjectModel {
         liveRestartTask = nil
         liveDiskTask?.cancel()
         liveDiskPaths.removeAll()
-    }
-
-    func showTeXpressoLog() {
-        panelTab = .texpresso
-        showLogs = true
     }
 
     private func restartTeXpresso() {
