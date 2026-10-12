@@ -991,24 +991,12 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         if abs(up.x - down.x) <= 4, abs(up.y - down.y) <= 4 { goToSource(at: convert(down, from: nil)) }
     }
 
-    /// Edit › Find › Jump to Selection, which PDFKit leaves to text views: the selection in the
-    /// middle of what shows, as a text view centres its own.
-    override func centerSelectionInVisibleArea(_ sender: Any?) {
+    /// Edit › Find › Jump to Selection, which the window answers for the pages (`MainWindowController`):
+    /// the selection in the middle of what shows, as a text view centres its own.
+    func jumpToSelection() {
         guard let selection = currentSelection, let page = selection.pages.first else { return }
         let box = selection.bounds(for: page)
         go(to: PDFDestination(page: page, at: CGPoint(x: box.minX, y: box.midY + shownHeight / 2 / scaleFactor)))
-    }
-
-    /// Jump to Selection only with one; PDFKit's own items as PDFKit has them. Its
-    /// `validateMenuItem:` isn't in its interface, so it is asked for as a method, which a
-    /// PDFKit without one doesn't have: asked for an implementation, the runtime gives its
-    /// forwarding in place of a missing one, and calling that raises.
-    @objc(validateMenuItem:) func validate(_ item: NSMenuItem) -> Bool {
-        if item.action == #selector(centerSelectionInVisibleArea(_:)) { return currentSelection?.pages.isEmpty == false }
-        let selector = #selector(NSMenuItemValidation.validateMenuItem(_:))
-        guard let inherited = class_getInstanceMethod(PDFView.self, selector) else { return true }
-        typealias Validate = @convention(c) (AnyObject, Selector, NSMenuItem) -> Bool
-        return unsafeBitCast(method_getImplementation(inherited), to: Validate.self)(self, selector, item)
     }
 
     /// Go to Source Position for the clicked point, above PDFKit's own items.

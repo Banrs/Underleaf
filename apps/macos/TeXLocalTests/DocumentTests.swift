@@ -310,6 +310,18 @@ struct PDFFindTests {
         #expect(controller.matchIndex == 1 && controller.finding && PDFFind.shared == "target")
     }
 
+    /// Jump to Selection brings a selection on a page out of view into view.
+    @Test func jumpToSelectionShowsTheSelection() throws {
+        let controller = try targets(), view = controller.view
+        view.layoutDocumentView()
+        try select("gamma", onPage: 2, in: controller)
+        let selection = try #require(view.currentSelection), page = try #require(selection.pages.first)
+        func shows() -> Bool { view.bounds.intersects(view.convert(selection.bounds(for: page), from: page)) }
+        #expect(!shows())
+        view.jumpToSelection()
+        #expect(shows() && view.currentPage === page)
+    }
+
     /// Find Next with nothing searched yet searches for the system's find text, going on from
     /// the selection; with matches it steps through them.
     @Test func findNextGoesOnFromTheSelection() async throws {

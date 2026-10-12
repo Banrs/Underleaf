@@ -142,12 +142,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        guard item.action == #selector(performFindPanelAction(_:)) else { return true }
-        return findAction(for: item) != nil
+        switch item.action {
+        case #selector(performFindPanelAction(_:)): findAction(for: item) != nil
+        // Only with a selection.
+        case #selector(centerSelectionInVisibleArea(_:)): workspace?.pdf.view.currentSelection?.pages.isEmpty == false
+        default: true
+        }
     }
 
     private func findAction(for sender: Any?) -> (() -> Void)? {
         (sender as? NSValidatedUserInterfaceItem).flatMap { workspace?.findAction($0) }
+    }
+
+    /// Edit › Find › Jump to Selection for the PDF's pages, which PDFKit leaves to text views: a
+    /// text view with the keyboard, the source or a field's editor, centres its own.
+    override func centerSelectionInVisibleArea(_ sender: Any?) {
+        workspace?.pdf.view.jumpToSelection()
+    }
+
+    /// Jump to Selection is answered here only while the PDF's pages have the keyboard, as it was
+    /// by their view. Elsewhere it stays unanswered: its menu item is off, and its key binding (⌃L)
+    /// falls off the responder chain, where NSResponder beeps (27.2) and where a controller that
+    /// always answered would take it in silence.
+    override nonisolated func responds(to selector: Selector!) -> Bool {
+        guard selector == #selector(centerSelectionInVisibleArea(_:)) else { return super.responds(to: selector) }
+        // The responder chain asks on the main thread.
+        return MainActor.assumeIsolated { workspace?.pdfPagesHaveKeyboard == true }
     }
 
     // ---------- restoration ----------

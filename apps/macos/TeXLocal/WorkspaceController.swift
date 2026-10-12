@@ -608,6 +608,12 @@ final class WorkspaceController: RestoredSplitViewController {
         return first.isDescendant(of: pdfItem.viewController.view) || first.isDescendant(of: pdfFind.view)
     }
 
+    /// The pages alone, where Jump to Selection is the PDF's (`MainWindowController`): in the
+    /// find bar the field's editor centres its own selection.
+    var pdfPagesHaveKeyboard: Bool {
+        (view.window?.firstResponder as? NSView)?.isDescendant(of: pdf.view) == true
+    }
+
     private func showPDFFind() {
         pdf.finding = true
         setHidden(pdfFind, false)
