@@ -386,8 +386,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     @objc private func back() { perform(.projectClose) }
 
-    @objc private func showFormat(_ sender: Any?) {
-        guard let item = sender as? NSToolbarItem ?? toolbar.items.first(where: { $0.itemIdentifier == .format }) else { return }
+    /// A toolbar button's action comes from its item, as `insertTemplate`'s does (27.2).
+    @objc private func showFormat(_ item: NSToolbarItem) {
         format.toggle(relativeTo: item)
     }
 

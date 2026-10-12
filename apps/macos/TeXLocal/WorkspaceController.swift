@@ -420,15 +420,15 @@ final class WorkspaceController: RestoredSplitViewController {
     /// Through AppKit's collapse animation, which brings a pane back at the size it
     /// was hidden at; instantly when the window isn't on screen or Reduce Motion is
     /// on. `done` runs once the pane is at its size.
-    private func setCollapsed(_ item: NSSplitViewItem, _ collapsed: Bool, done: (@MainActor () -> Void)? = nil) {
+    private func setCollapsed(_ item: NSSplitViewItem, _ collapsed: Bool, done: @escaping @MainActor () -> Void = {}) {
         // Repeated model notifications must not snap an animation already heading here.
-        guard item.isCollapsed != collapsed else { return done?() ?? () }
+        guard item.isCollapsed != collapsed else { return done() }
         // Unanimated, the build panel changes layout without the live resize AppKit's
         // animation starts even when instant (`setPanelShown` keeps its height).
         guard animates || item !== panelItem else {
             item.isCollapsed = collapsed
             view.layoutSubtreeIfNeeded()
-            done?()
+            done()
             return
         }
         let id = ObjectIdentifier(item)
@@ -445,12 +445,12 @@ final class WorkspaceController: RestoredSplitViewController {
             if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
-                guard let self else { return done?() ?? () }
+                guard let self else { return done() }
                 if let item = self.panes.first(where: { ObjectIdentifier($0) == id }), item.isCollapsed {
                     self.mount(item.viewController, false)
                 }
                 self.paneAnimation(false)
-                done?()
+                done()
             }
         }
     }
