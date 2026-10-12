@@ -15,9 +15,19 @@ into it and deleted on 12 October.
   PDF keep minimums of 260 and 200 pt, the sidebar Xcode's navigator's 222; it opens at 270,
   the width of AppKit's inspector. Tools without room
   go to `NSToolbar`'s own overflow menu by `visibilityPriority`, and nowhere else; Compile
-  gives up its word for its symbol first. AppKit overflows by the toolbar's whole width, so
-  between about 900 and 700 pt a pane's tools can sit over its neighbour. Sidebar and
+  gives up its word for its symbol first. AppKit overflows by the room between the sidebar's
+  and the inspector's separators, not by a pane's own, so between about 900 and 700 pt a
+  pane's tools can sit over its neighbour. Sidebar and
   inspector fold for a narrow window and are not saved as hidden for it (`sidebarFolded`).
+- **The window's title** is AppKit's, which keeps 160 pt for it whatever it says (27.2): with
+  both side columns open that sends Zoom to the overflow menu at a 1000 pt window, and with
+  both closed somewhere under 800. A trial that hid the title where it cost a tool kept every
+  tool down to the narrowest window; Daniel chose the system's title and overflow over it
+  (12 October: "HIG. appkit system over custom").
+- **Compile** is a hosted SwiftUI button in the toolbar's prominent item (`CompileButton`),
+  drawn as AppKit draws its own item, which can't show a spinner: Stop has the build's
+  spinner beside its word, or round its stop symbol where Compile is its symbol, at the width
+  Compile has there. The status bar's Compiling has none of its own.
 - **Source**: one TextKit 2 `NSTextView` (`SourceTextView`), shared across files, in an
   `NSScrollView` of its own (`EditorView`). Xcode's metrics for the font, gutter and current
   line; the completion list (`CompletionList`) is a copy of Xcode 27's, an opaque panel in a
@@ -60,7 +70,7 @@ CI: `ci.yml` runs the web tests and bundle and the Rust core's rustfmt, clippy a
 Linux; `macos-app.yml` builds the app, checks the core is linked statically, runs the native
 tests and fails a run in which none passed.
 
-- Native: 143 tests in 19 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
+- Native: 144 tests in 19 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
   `-D warnings` clean. `npm run verify:texpresso`: 25 checks against the patched engine, both
   of its programs built from the patched source.
 - Live preview, measured from 60 fps screen recordings of a Release build on a one-page
