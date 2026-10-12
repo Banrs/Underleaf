@@ -64,9 +64,12 @@ into it and deleted on 12 October.
   editors' colour lies over it: (32, 31, 30), passing a tenth of the text. Other grounds
   measured on 27.2 and left: glass under a wash (text shows sharp, or the bar is 34 in Dark),
   tinted glass (opaque white, black in Dark), AppKit's own scroll edge (passes a thirtieth),
-  a Core Image backdrop blur (not applied). The line is a point, as Xcode's, in a row of its
-  own above the bar; the File Outline header's line beside it is the system's own hairline, a
-  device pixel that ends on the same row. The accessory asks for
+  a Core Image backdrop blur (not applied). So the bar is the editors' colour only where
+  nothing is under it, and over a page of another colour (a white page in Dark) it shows that
+  page. The line is a point, as Xcode's, in a row of its
+  own above the bar (`BarMetrics.line`); the File Outline header's line beside it is the
+  system's hard-edge hairline, a device pixel, with the rest of the point drawn over it in
+  the separator's colour (`HeaderEdge`). The accessory asks for
   the soft scroll edge, which draws nothing over an `NSTextView` or a `PDFView` (27.2).
   SwiftUI's hard scroll edge draws only over a SwiftUI scroll view, and one around PDFKit's
   view takes its rubber-banding and insets (27.2), so the PDF view sits directly in its pane.

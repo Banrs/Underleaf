@@ -7,6 +7,8 @@ enum BarMetrics {
     /// A toolbar control's height, which the status bar, the build panel's bar and the folded
     /// File Outline's header share.
     static let height: CGFloat = 36
+    /// The line over a bar, a point as the window's dividers: a row of its own above the bar's height.
+    static let line: CGFloat = 1
     /// The status bar's edges: 14 pt in to its first item, and the toggle's symbol 17.5 pt from
     /// the right edge, 3.5 pt of which its target beyond the glyph makes up.
     static let leading: CGFloat = 14
@@ -57,12 +59,12 @@ struct StatusBar: View {
         .padding(.trailing, BarMetrics.trailing)
         .frame(height: Self.height)
         // The window's lines are a point, as its splits' dividers and as Xcode's (27.1); this one
-        // in a row of its own over the bar, which ends where the line over the File Outline's
-        // header beside it does.
-        .padding(.top, 1)
+        // in a row of its own over the bar, the row of the line over the File Outline's header
+        // beside it (`HeaderEdge`).
+        .padding(.top, BarMetrics.line)
         // The system's bar material: the source and the pages scroll on beneath it as a soft
-        // ghost, as under Xcode's bar, and at rest it is one surface with the editors and the
-        // build panel. Its accessory draws no scroll edge of its own (`buildArea`).
+        // ghost, as under Xcode's bar, so it is the editors' colour only where nothing is under
+        // it (`wash`). Its accessory draws no scroll edge of its own (`buildArea`).
         .background(.textSurface.opacity(wash))
         .background(.bar)
         .overlay(alignment: .top) { Divider() }

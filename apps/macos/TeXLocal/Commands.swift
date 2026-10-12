@@ -361,7 +361,10 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .sidebar) {
             item(.viewToggleSidebar)
             // The keyboard's and VoiceOver's way to the File Outline header's fold.
-            Button(app.outlineCollapsed ? "Show File Outline" : "Hide File Outline") { app.outlineCollapsed.toggle() }
+            // Named for what shows: a file with no outline has it folded (`OutlineState`).
+            Button(app.outlineCollapsed || project?.isLaTeX != true ? "Show File Outline" : "Hide File Outline") {
+                app.outlineCollapsed.toggle()
+            }
                 // Off where the header is dim or away: no outline for the file, or search results over it.
                 .disabled(project?.isLaTeX != true || project?.search.isSearching == true || !app.sidebarShown)
             items([.viewTogglePdf, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])

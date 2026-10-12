@@ -518,6 +518,7 @@ private struct HeadingRow: View, Equatable {
 struct HeaderEdge: ViewModifier {
     /// The header's; none, no edge.
     let height: CGFloat
+    @Environment(\.displayScale) private var displayScale
 
     func body(content: Content) -> some View {
         content
@@ -525,5 +526,16 @@ struct HeaderEdge: ViewModifier {
             .scrollEdgeEffectStyle(.hard, for: .bottom)
             .scrollEdgeEffectHidden(height == 0, for: .bottom)
             .ignoresSafeArea(.container, edges: .bottom)
+            // The hard edge's line is a device pixel in the separator's colour, in the row over the
+            // bar (27.2), and the window's lines are a point: the rest of the point over it, so it
+            // meets the status bar's line at its weight. The overlay ends where the bar begins.
+            .overlay(alignment: .bottom) {
+                if height > 0, displayScale > 1 {
+                    Rectangle().fill(.separator)
+                        .frame(height: BarMetrics.line - 1 / displayScale)
+                        .padding(.bottom, 1 / displayScale)
+                        .allowsHitTesting(false)
+                }
+            }
     }
 }
