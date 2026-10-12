@@ -205,7 +205,7 @@ final class WorkspaceController: RestoredSplitViewController {
         let fixed = ColumnMetrics.toolbarMinimum - ColumnMetrics.windowControls - ColumnMetrics.toggles
         let compact = toolbar.holdsDefaultItems ? room < ColumnMetrics.compile
             : trailing - leading < fixed + ColumnMetrics.compileWord
-        if toolbar.compactCompile != compact, compact || paneAnimations == 0 { toolbar.compactCompile = compact }
+        if compact || paneAnimations == 0 { toolbar.compactCompile = compact }
     }
 
     // ---------- layout ----------
