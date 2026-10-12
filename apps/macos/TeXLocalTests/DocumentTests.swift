@@ -270,6 +270,19 @@ struct PDFFitTests {
     }
 }
 
+/// A document with each page's text drawn as text, so PDFKit reads and finds it.
+@MainActor
+func textPDF(_ pages: [String], width: CGFloat = 612) throws -> PDFDocument {
+    let document = PDFDocument()
+    for text in pages {
+        let view = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 792))
+        view.string = text
+        let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
+        document.insert(page, at: document.pageCount)
+    }
+    return document
+}
+
 /// Find in PDF across a rebuild, off screen.
 @MainActor
 @Suite(.serialized)
@@ -289,7 +302,7 @@ struct PDFFindTests {
 
     /// Three pages, each with "target" once.
     private func targets() throws -> PDFController {
-        shown(try document(["alpha target", "beta target", "gamma target"]))
+        shown(try textPDF(["alpha target", "beta target", "gamma target"]))
     }
 
     private func select(_ word: String, onPage index: Int, in controller: PDFController) throws {
@@ -368,21 +381,9 @@ struct PDFFindTests {
         #expect(controller.findText == "gamma" && PDFFind.shared == "gamma")
     }
 
-    /// Each page's text drawn as text, so PDFKit finds it.
-    private func document(_ pages: [String], width: CGFloat = 612) throws -> PDFDocument {
-        let document = PDFDocument()
-        for text in pages {
-            let view = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 792))
-            view.string = text
-            let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
-            document.insert(page, at: document.pageCount)
-        }
-        return document
-    }
-
     @Test func rebuildSearchesCurrentFindText() async throws {
-        let first = try document(["old result"])
-        let second = try document(["new result"])
+        let first = try textPDF(["old result"])
+        let second = try textPDF(["new result"])
         let controller = shown(first)
         controller.finding = true
         controller.findText = "old"
@@ -404,7 +405,7 @@ struct PDFFindTests {
 
     /// Typing back to the found text while a longer one is searched ends with the field's matches.
     @Test func typingBackKeepsTheFieldsMatches() async throws {
-        let controller = shown(try document(["a ab a"]))
+        let controller = shown(try textPDF(["a ab a"]))
         controller.finding = true
         controller.findText = "a"
         controller.findTyped()
@@ -421,7 +422,7 @@ struct PDFFindTests {
 
     /// A double-click sends the word, and where in it the click fell.
     @Test func aClickSendsTheWordAndTheLetter() throws {
-        let pdf = try document(["alpha beta"]), page = try #require(pdf.page(at: 0))
+        let pdf = try textPDF(["alpha beta"]), page = try #require(pdf.page(at: 0))
         let text = try #require(page.string) as NSString
         let letter = try #require(page.selection(for: text.range(of: "e"))).bounds(for: page)
         // A page holds its document weakly; it's the view's in the app.
@@ -431,7 +432,7 @@ struct PDFFindTests {
 
     /// PDFKit's word lookup crashes on a page whose document has gone; it has no word.
     @Test func aPageWithoutItsDocumentHasNoWord() throws {
-        let page = try autoreleasepool { try #require(try document(["alpha beta"]).page(at: 0)) }
+        let page = try autoreleasepool { try #require(try textPDF(["alpha beta"]).page(at: 0)) }
         #expect(page.document == nil)
         #expect(page.syncWord(at: CGPoint(x: 10, y: 10)) == nil)
     }
@@ -439,7 +440,7 @@ struct PDFFindTests {
     /// One source line spans many PDF rows, and SyncTeX can report a middle row first.
     @Test func forwardSearchRetainsRepeatedWordsAcrossWrappedRows() throws {
         let source = String(repeating: "An echo repeats in this sentence. ", count: 8)
-        let pdf = try document([source], width: 180), page = try #require(pdf.page(at: 0))
+        let pdf = try textPDF([source], width: 180), page = try #require(pdf.page(at: 0))
         let rendered = try #require(page.string)
         let sourceRanges = source.ranges(of: "echo"), renderedRanges = rendered.ranges(of: "echo")
         #expect(sourceRanges.count == 8 && renderedRanges.count == 8)
@@ -460,7 +461,7 @@ struct PDFFindTests {
 
     @Test func forwardSearchUsesTheReportedParagraphForIdenticalText() throws {
         let paragraph = "An echo repeats. An echo repeats. An echo repeats."
-        let pdf = try document([paragraph + "\n\n" + paragraph], width: 180), page = try #require(pdf.page(at: 0))
+        let pdf = try textPDF([paragraph + "\n\n" + paragraph], width: 180), page = try #require(pdf.page(at: 0))
         let rendered = try #require(page.string), occurrences = rendered.ranges(of: "echo")
         #expect(occurrences.count == 6)
         let expected = try #require(page.selection(for: NSRange(occurrences[5], in: rendered))).bounds(for: page)
@@ -488,7 +489,7 @@ struct PDFFindTests {
     }
 
     @Test func forwardSearchKeepsTheNativeBoxWhenMacroContextIsAmbiguous() throws {
-        let pdf = try document(["echo echo"]), page = try #require(pdf.page(at: 0))
+        let pdf = try textPDF(["echo echo"]), page = try #require(pdf.page(at: 0))
         let rendered = try #require(page.string)
         let rect = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).bounds(for: page)
         let loc = ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
@@ -517,7 +518,7 @@ struct PDFFindTests {
         let view = controller.view
         view.setFrameSize(NSSize(width: 600, height: 500))
         try #require(view.subviews.compactMap { $0 as? NSScrollView }.first).scrollerStyle = scrollerStyle
-        let first = try document(["needle", "filler", "needle", "needle"])
+        let first = try textPDF(["needle", "filler", "needle", "needle"])
         controller.show(first)
         if let scale { controller.setScale(scale) }
         controller.finding = true
@@ -532,7 +533,7 @@ struct PDFFindTests {
         let place = try #require(view.documentView).visibleRect
 
         for _ in 0..<4 {
-            let rebuilt = try document(["needle", "needle", "filler", "needle", "needle"])
+            let rebuilt = try textPDF(["needle", "needle", "filler", "needle", "needle"])
             controller.show(rebuilt)
             view.layoutDocumentView()
             try await found(controller)

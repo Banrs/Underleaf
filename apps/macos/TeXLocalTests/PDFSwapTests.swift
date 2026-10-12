@@ -7,16 +7,9 @@ import Testing
 /// empty, as a new document would, and nothing on the pages leads back to the old ones.
 @MainActor
 struct PDFSwapTests {
-    /// Each page's text drawn as text, so PDFKit reads it.
+    /// Each page's text 200 times over, drawn as text, so PDFKit reads it.
     private func document(_ pages: [String]) throws -> PDFDocument {
-        let document = PDFDocument()
-        for text in pages {
-            let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
-            view.string = String(repeating: text + " ", count: 200)
-            let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
-            document.insert(page, at: document.pageCount)
-        }
-        return document
+        try textPDF(pages.map { String(repeating: $0 + " ", count: 200) })
     }
 
     /// The pane's white pixels as it shows, sampled small: none is an empty pane.
