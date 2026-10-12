@@ -136,7 +136,7 @@ CI: `ci.yml` runs the web tests and bundle and the Rust core's rustfmt, clippy a
 Linux; `macos-app.yml` builds the app, checks the core is linked statically, runs the native
 tests and fails a run in which none passed.
 
-- Native: 165 tests in 20 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
+- Native: 171 tests in 21 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
   `-D warnings` clean. `npm run verify:texpresso`: 25 checks against the patched engine, both
   of its programs built from the patched source.
 - Live preview, measured from 60 fps screen recordings of a Release build on a one-page
