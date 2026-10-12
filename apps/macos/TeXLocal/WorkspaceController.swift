@@ -282,7 +282,7 @@ final class WorkspaceController: RestoredSplitViewController {
         // does over its debug area, so nothing under it changes and it never changes its look.
         let statusBar = accessory(StatusBar(project: project))
         // Its own height, the bar's under its line's, and the folded File Outline's header is as high
-        // as the bar (`StatusBar.height`): AppKit's insets pad the bar but leave the panes' scrollers
+        // as the bar (`BarMetrics.height`): AppKit's insets pad the bar but leave the panes' scrollers
         // and safe area at the padded height (27.2).
         statusBar.automaticallyAppliesContentInsets = false
         // No scroll edge of AppKit's under the bar: the bar brings its own material and line
@@ -373,7 +373,7 @@ final class WorkspaceController: RestoredSplitViewController {
     }
 
     private func outlineBarHeight(folded: Bool) -> CGFloat {
-        folded ? StatusBar.height : OutlineHeader.openHeight
+        folded ? BarMetrics.height : OutlineHeader.openHeight
     }
 
     /// A pane bar sized to its content, inside AppKit's standard accessory insets. `hidden`, for
@@ -712,7 +712,7 @@ private final class ColumnsSplitView: NSSplitView {
     override func drawDivider(in rect: NSRect) {
         var shown = rect
         // Short of the bar and the line over it, at its foot: a split view is flipped.
-        shown.size.height -= StatusBar.height + BarMetrics.line
+        shown.size.height -= BarMetrics.height + BarMetrics.line
         super.drawDivider(in: shown)
     }
 
