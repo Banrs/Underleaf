@@ -62,9 +62,10 @@ into it and deleted on 12 October.
   in, 9 between items, 36 high; `BarMetrics`). Its ground is SwiftUI's `.bar` material, so the
   source and the pages show under it as a soft ghost, as text does under Xcode 27.1's bar
   (Daniel: "xcode has scrollthorugh"). In Light the material at rest is the editor's white.
-  In Dark it is a little lighter and warmer than the editor (38, 35, 31 over 30) and stays
-  so: 70% of the editors' colour over it matched the editor but passed a tenth of the text,
-  which Daniel saw as no scroll-through. Other grounds
+  In Dark it is lighter and warmer than the editor (38, 35, 31 over 30) and passes a third,
+  so half of the editors' colour lies over it, for the sixth that Xcode's bar passes
+  (Daniel: "use xcode's opacity"): at 70% it passed a tenth, which he saw as no
+  scroll-through, and at none the bar was plainly another colour. Other grounds
   measured on 27.2 and left: glass under a wash (text shows sharp, or the bar is 34 in Dark),
   tinted glass (opaque white, black in Dark), AppKit's own scroll edge (passes a thirtieth),
   a Core Image backdrop blur (not applied). So the bar is the editors' colour only where
