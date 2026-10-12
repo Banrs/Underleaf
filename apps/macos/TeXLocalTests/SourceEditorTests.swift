@@ -817,6 +817,9 @@ struct SourceEditorTests {
         #expect(both?.cut == true && abs((both?.width ?? 0) - width("Missing number, treated…  +2")) < 0.5)
         // One line, whatever TeX's own breaks.
         #expect(abs(IssueLabel("Missing $\n  inserted", others: 0, font: font).width - width("Missing $ inserted")) < 0.01)
+        // LaTeX's own words for an error are left to the gutter's mark.
+        #expect(abs(IssueLabel("LaTeX Error: There's no line here to end.", others: 0, font: font).width
+                    - width("There's no line here to end.")) < 0.01)
         // An undefined command's name is at its message's end, which a cut would take first: with
         // no room for all of it, fewer words and the name, and the cut is theirs.
         var undefined = IssueLabel("Undefined control sequence: \\undefinedmacro", others: 0, font: font)

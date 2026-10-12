@@ -47,6 +47,15 @@ into it and deleted on 12 October.
   a view of the editor's scroll view and not a window: glass in a borderless panel that isn't
   key draws as a flat slab, and AppKit's own completion list is still its square box (27.2).
   So it ends at the editor's edges and goes over its line where there is no room under it.
+  A build's issues are on their lines (`SourceTextView`, "the build's issues"): the build
+  panel's symbol in the gutter, a neutral band over the whole paragraph in the current line's
+  shape (`tertiarySystemFill`; Xcode 27.1's is neutral too), the message at the end of the
+  paragraph's last line in the system font, cut or left out where there is no room, with a
+  help tag and a click that opens the panel on it, and an undefined command underlined in
+  red where the message names it. The message is a small view over TextKit's own, so a
+  selection doesn't cover it; underline styles set as rendering attributes aren't drawn
+  (27.2), so the underline is drawn under the text. Xcode's boxed annotation was not copied
+  (Daniel: "Dont just blindly copy xcode").
 - **Status bar**: the source/PDF columns' bottom accessory at Xcode's measured spacing (14 pt
   in, 9 between items, 36 high; `BarMetrics`). Its ground is SwiftUI's `.bar` material, so the
   source and the pages show under it as a soft ghost, as text does under Xcode 27.1's bar
@@ -122,7 +131,7 @@ CI: `ci.yml` runs the web tests and bundle and the Rust core's rustfmt, clippy a
 Linux; `macos-app.yml` builds the app, checks the core is linked statically, runs the native
 tests and fails a run in which none passed.
 
-- Native: 159 tests in 20 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
+- Native: 164 tests in 20 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
   `-D warnings` clean. `npm run verify:texpresso`: 25 checks against the patched engine, both
   of its programs built from the patched source.
 - Live preview, measured from 60 fps screen recordings of a Release build on a one-page

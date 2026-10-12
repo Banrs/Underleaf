@@ -1489,6 +1489,8 @@ struct IssueLabel {
 
     /// The fewest of a message's characters worth showing before the ellipsis.
     static let least = 10
+    /// How LaTeX's own errors start, in the core's message as in the log.
+    private static let saysError = "LaTeX Error: "
 
     init(_ message: String, others: Int, font: NSFont) {
         func typeset(_ string: String) -> (CTLine, CGFloat) {
@@ -1496,8 +1498,10 @@ struct IssueLabel {
                 .font: font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true]))
             return (line, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
         }
-        // One line, whatever TeX's own breaks.
-        let message = message.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        // One line, whatever TeX's own breaks, and without LaTeX's words for what the gutter's mark
+        // says already: they are the first to be read and the room is short.
+        var message = message.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        if message.hasPrefix(Self.saysError) { message.removeFirst(Self.saysError.count) }
         let count = others > 0 ? "  +\(others)" : ""
         short = UndefinedCommand.named(in: message).map { typeset(String(localized: "Undefined: \($0)") + count) }
         (whole, width) = typeset(message + count)
