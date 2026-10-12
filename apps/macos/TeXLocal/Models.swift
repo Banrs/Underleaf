@@ -171,31 +171,11 @@ func remapPath(_ path: String, from: String, to: String) -> String {
     return path
 }
 
-/// A file's kind by its extension, so each list of extensions is written once.
-private nonisolated enum FileKind {
-    case text
-    case image
-    case pdf
-    case other
-
-    init(_ path: String) {
-        switch (path as NSString).pathExtension.lowercased() {
-        case "tex", "bib", "cls", "sty", "bst", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "lua",
-             "py", "r", "dat", "def", "clo", "tikz":
-            self = .text
-        case "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp": self = .image
-        case "pdf": self = .pdf
-        default: self = .other
-        }
-    }
-}
-
 /// A Move to Trash that Edit › Undo takes back, as Finder's does. The move goes through
 /// `FileManager`, which says where the Trash put the item (the core's trash doesn't). Undo
 /// puts it back and Redo trashes it again; each registers the other as its handler starts,
 /// so a stack's other entries survive the work that follows. The handlers hold the item:
 /// an undo manager doesn't retain its targets.
-@MainActor
 final class UndoableTrash {
     let original: URL
     let name: String
@@ -274,8 +254,13 @@ final class UndoableTrash {
     }
 }
 
+/// The files the editor edits, by extension in any case: the core's own list (`TEXT_EXT`). Any other is previewed.
 func isTextFile(_ path: String) -> Bool {
-    FileKind(path) == .text
+    switch (path as NSString).pathExtension.lowercased() {
+    case "tex", "bib", "cls", "sty", "bst", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "lua",
+         "py", "r", "dat", "def", "clo", "tikz": true
+    default: false
+    }
 }
 
 /// LaTeX's own tools (the outline, Set as Main File) for `.tex`, in any case, as the core reads it.
@@ -283,16 +268,13 @@ func isLaTeXFile(_ path: String) -> Bool {
     (path as NSString).pathExtension.lowercased() == "tex"
 }
 
-func fileSymbol(_ path: String, directory: Bool = false) -> String {
+func fileSymbol(_ path: String, directory: Bool) -> String {
     if directory { return "folder" }
-    switch (path as NSString).pathExtension.lowercased() {
-    case "tex": return "text.document"
-    case "bib": return "books.vertical"
-    default: break
-    }
-    return switch FileKind(path) {
-    case .image: "photo"
-    case .pdf: "richtext.page"
-    case .text, .other: "document"
+    return switch (path as NSString).pathExtension.lowercased() {
+    case "tex": "text.document"
+    case "bib": "books.vertical"
+    case "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp": "photo"
+    case "pdf": "richtext.page"
+    default: "document"
     }
 }

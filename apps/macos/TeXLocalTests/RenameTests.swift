@@ -15,6 +15,20 @@ struct RemapPathTests {
     }
 }
 
+/// A file is what its extension says, in any case: what the editor edits, and the symbol beside its name.
+@MainActor
+struct FileKindTests {
+    @Test func theExtensionSaysWhatAFileIs() {
+        #expect(isTextFile("main.tex") && isTextFile("refs.BIB") && isTextFile("ch/data.csv"))
+        #expect(!isTextFile("plot.png") && !isTextFile("paper.pdf") && !isTextFile("Makefile"))
+        #expect(isLaTeXFile("ch/Intro.TeX") && !isLaTeXFile("refs.bib"))
+        #expect(fileSymbol("main.tex", directory: false) == "text.document" && fileSymbol("refs.bib", directory: false) == "books.vertical")
+        #expect(fileSymbol("plot.PNG", directory: false) == "photo" && fileSymbol("paper.pdf", directory: false) == "richtext.page")
+        #expect(fileSymbol("notes.md", directory: false) == "document" && fileSymbol("Makefile", directory: false) == "document")
+        #expect(fileSymbol("figures.pdf", directory: true) == "folder")
+    }
+}
+
 /// The projects screen's and the sidebar's rename in place.
 @MainActor
 struct InPlaceRenameTests {

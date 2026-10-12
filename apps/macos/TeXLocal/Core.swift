@@ -105,13 +105,13 @@ final class Core {
     }
 
     /// A command the core answers at once, where it's asked: a keystroke's edit doesn't wait for a thread.
-    func now<T: Decodable>(_ command: String, _ args: [String: Any], as: T.Type = T.self) throws -> T? {
+    func now<T: Decodable>(_ command: String, _ args: [String: Any], as: T.Type) throws -> T? {
         guard let handle else { throw Self.unavailable }
         return try Self.answer(handle, command, try Self.json(args))
     }
 
     /// A command that waits, for a thread of the caller's own to block in.
-    func waiting<T: Decodable & Sendable>(_ command: String, as: T.Type = T.self) -> @Sendable ([String: any Sendable]) throws -> T {
+    func waiting<T: Decodable & Sendable>(_ command: String, as: T.Type) -> @Sendable ([String: any Sendable]) throws -> T {
         { [handle, unavailable = Self.unavailable] args in
             guard let handle else { throw unavailable }
             guard let answer: T = try Core.answer(handle, command, try Core.json(args)) else { throw Core.fault(command, "no answer") }
@@ -119,12 +119,12 @@ final class Core {
         }
     }
 
-    func call<T: Decodable & Sendable>(_ command: String, _ args: [String: Any] = [:], as: T.Type = T.self) async throws -> T {
+    func call<T: Decodable & Sendable>(_ command: String, _ args: [String: Any] = [:], as: T.Type) async throws -> T {
         guard let ok = try await result(command, args, as: T.self) else { throw Self.fault(command, "no answer") }
         return ok
     }
 
-    func perform(_ command: String, _ args: [String: Any] = [:]) async throws {
+    func perform(_ command: String, _ args: [String: Any]) async throws {
         _ = try await result(command, args, as: Ignored.self)
     }
 

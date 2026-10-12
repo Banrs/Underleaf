@@ -165,9 +165,6 @@ final class ProjectFlowTests {
 
     private func exists(_ url: URL) -> Bool { files.fileExists(atPath: url.path(percentEncoded: false)) }
 
-    /// Two opens that overlap (the project restored at launch and an Open
-    /// With import, or quick successive opens) leave the editor on the one
-    /// opened last, never on the other's text.
     /// The main file is read from disk before a Move to Trash: another editor may have
     /// changed it since the project opened (#37).
     @Test(.timeLimit(.minutes(1)))
@@ -183,6 +180,9 @@ final class ProjectFlowTests {
         #expect(project.settings?.mainFile == "second.tex")
     }
 
+    /// Two opens that overlap (the project restored at launch and an Open
+    /// With import, or quick successive opens) leave the editor on the one
+    /// opened last, never on the other's text.
     @Test(.timeLimit(.minutes(1)))
     func theLastOpenHasTheEditor() async throws {
         let first = try await project("first").info, second = try await project("second").info
@@ -679,6 +679,22 @@ final class ProjectFlowTests {
         #expect(project.result == nil && project.pdfURL == nil)
     }
 
+    /// Find in Project has a query's hits under their files, in the order of the files' names,
+    /// and none yet, nor a failure, once the query is cleared.
+    @Test(.timeLimit(.minutes(1)))
+    func aSearchListsItsHitsByFile() async throws {
+        let project = try await opened("needle\nhay\nNeedle").project
+        try await Core.shared.perform("write_file", ["id": project.id, "path": "appendix.tex", "text": "a needle"])
+        project.searchQuery = "needle"
+        await project.search()
+        #expect(project.searchHits?.count == 3 && project.searchFailure == nil)
+        #expect(project.searchGroups.map(\.file) == ["appendix.tex", "main.tex"] && project.searchGroups.map(\.hits.count) == [1, 2])
+        project.searchQuery = " "
+        await project.search()
+        #expect(project.searchHits == nil && project.searchFailure == nil && project.searchGroups.isEmpty)
+        await app.close()
+    }
+
     /// A project's open folders and folded headings come back the next time it opens.
     @Test func theSidebarsStateIsKeptForTheProject() {
         let id = "SidebarState \(UUID().uuidString.prefix(8))"
@@ -777,6 +793,16 @@ final class ProjectFlowTests {
         await project.dropFiles([outside], into: "parts")
         #expect(exists(folder.appending(path: "parts/\(outside.lastPathComponent)")) && exists(outside))
         await app.close()
+    }
+}
+
+private extension ProjectModel {
+    /// The file the PDF pane shows, a build's or live preview's: the app itself asks only which kind it is.
+    var pdfURL: URL? {
+        switch shown {
+        case .none: nil
+        case .build(let url), .live(let url): url
+        }
     }
 }
 

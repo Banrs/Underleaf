@@ -44,12 +44,6 @@ final class ProjectModel {
     /// What the PDF pane shows: nothing until one loads, the last build's PDF, or TeXpresso's live document.
     nonisolated enum ShownPDF: Equatable { case none, build(URL), live(URL) }
     var shown = ShownPDF.none
-    var pdfURL: URL? {
-        switch shown {
-        case .none: nil
-        case .build(let url), .live(let url): url
-        }
-    }
     var hasPDF: Bool { shown != .none }
     var livePDF: Bool { if case .live = shown { true } else { false } }
     /// The last build's PDF, which is the one to save or share: the live document is TeXpresso's
@@ -178,7 +172,7 @@ final class ProjectModel {
     var isSearching: Bool { !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty }
     /// The latest finished search's hits: nil until the first for a query ends,
     /// so its results pane doesn't read No Results while it runs.
-    var searchHits: [SearchHit]?
+    private(set) var searchHits: [SearchHit]?
     /// Why the latest search found nothing, when it couldn't be run.
     private(set) var searchFailure: String?
     /// `searchHits` by file, in the order of the files' names.
@@ -309,7 +303,6 @@ final class ProjectModel {
 
     /// The tree's entry at a project path.
     func node(at path: String) -> TreeNode? { tree.flattened.first { $0.path == path } }
-    var folders: [String] { tree.flattened.filter(\.isDirectory).map(\.path) }
 
     var saved: SavedWorkspace {
         SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: showLogs, pdfPage: pdf.restorePage ?? pdf.page,
@@ -320,7 +313,7 @@ final class ProjectModel {
 
     /// Opens the main file, or where `saved` left off. Stops if the project
     /// is left meanwhile, so it never writes to the editor after the next one.
-    func load(restoring saved: SavedWorkspace? = nil) async {
+    func load(restoring saved: SavedWorkspace?) async {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line, column in
             guard let self else { return }
@@ -647,7 +640,7 @@ final class ProjectModel {
     /// it shows; what it shows (not hidden files or the build's) is the core's.
     private func folderChanged(_ changes: [FolderWatcher.Change]) {
         guard let watcher = folderWatcher else { return }
-        let folders = Set(self.folders)
+        let folders = Set(tree.flattened.filter(\.isDirectory).map(\.path))
         var openFileChanged = false, treeChanged = false
         for change in changes {
             guard let path = watcher.relativePath(change.path) else {
@@ -882,7 +875,6 @@ final class ProjectModel {
         undo?.removeAllActions(withTarget: self)
         for item in trashed { undo?.removeAllActions(withTarget: item) }
         trashed = []
-        compileQueued = nil
         folderWatcher = nil
         removeExport()
         noticeTask?.cancel()
@@ -1240,15 +1232,14 @@ final class ProjectModel {
         }
     }
 
-    /// No file editing: the editor may still hold the old text, but nothing saves or analyses it.
+    /// No file editing: the editor may still hold the old text, but nothing saves or analyses it,
+    /// and with no file `analyze` leaves no outline and no counts.
     private func clearOpenFile() {
-        analysis?.cancel()
         openPath = nil
         diskText = nil
         dirty = false
         saveFailure = nil
-        outline = []
-        counts = nil
+        analyze()
     }
 
     /// The new main file's PDF, if it has one, replaces the old one's; a build of the old one
@@ -1323,23 +1314,20 @@ final class ProjectModel {
 
     // ---------- search ----------
 
-    /// Hits for the current query, unless the calling task is cancelled by a newer one.
+    /// Hits for the current query, unless the calling task is cancelled by a newer one; without a
+    /// query, none yet.
     func search() async {
-        guard isSearching else {
-            (searchHits, searchFailure, searchGroups) = (nil, nil, [])
-            return
+        var hits: [SearchHit]?, failure: String?
+        if isSearching {
+            do {
+                hits = try await core.call("search_project", ["id": id, "query": searchQuery], as: [SearchHit].self)
+            } catch {
+                (hits, failure) = ([], error.localizedDescription)
+            }
+            guard !Task.isCancelled else { return }
         }
-        do {
-            let hits = try await core.call("search_project", ["id": id, "query": searchQuery], as: [SearchHit].self)
-            if !Task.isCancelled { found(hits, failure: nil) }
-        } catch {
-            if !Task.isCancelled { found([], failure: error.localizedDescription) }
-        }
-    }
-
-    private func found(_ hits: [SearchHit], failure: String?) {
         (searchHits, searchFailure) = (hits, failure)
-        searchGroups = Dictionary(grouping: hits, by: \.file).map { SearchGroup(file: $0.key, hits: $0.value) }.sorted { $0.file < $1.file }
+        searchGroups = Dictionary(grouping: hits ?? [], by: \.file).map { SearchGroup(file: $0.key, hits: $0.value) }.sorted { $0.file < $1.file }
     }
 
     // ---------- editor commands ----------
