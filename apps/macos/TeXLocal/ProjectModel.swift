@@ -532,8 +532,7 @@ final class ProjectModel {
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: Self.autosaveDelay)
             guard !Task.isCancelled, let self else { return }
-            let saved = await self.save(reporting: false)
-            guard saved, !Task.isCancelled else { return }
+            guard await self.save(reporting: false), !Task.isCancelled else { return }
             // In a task of its own: this one is cancelled by the next key, and by the build's own save.
             if self.autoCompile { Task { await self.compile(auto: true) } }
         }
