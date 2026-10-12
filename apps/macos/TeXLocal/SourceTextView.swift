@@ -25,6 +25,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// and the completion list's rows follow Increase Contrast.
     @objc private func displayOptionsChanged() {
         needsDisplay = true
+        for issue in issueRows { issue.message?.view.needsDisplay = true }
         if offered != nil { completionList.restyle() }
     }
 
@@ -194,6 +195,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         guard font != applied else { return }
         let resized = applied?.pointSize != font.pointSize || applied?.familyName != font.familyName
         applied = font
+        // The issues are placed again once all here is the new font's and the text is laid out in it.
+        defer {
+            issuesStale = true
+            if !issueLines.isEmpty { layOutViewportOnceSettled() }
+        }
         self.font = font
         typingAttributes[.font] = font
         // The system font's weights share their metrics: an appearance change leaves the lines and gutter as they are.
@@ -476,7 +482,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             // The caret's line has the current line's fill, which is the same shape, and not both.
             if issue.line != current?.number {
                 Self.issueFill.setFill()
-                NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
+                issue.shape.fill()
             }
             // The build panel's symbol in the gutter's margin: a line's kind never rests on colour
             // alone, and shows where the line has no room for words.
@@ -484,11 +490,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
                 let size = symbol.size
                 symbol.draw(in: NSRect(x: 7 - size.width / 2, y: issue.mark.midY - size.height / 2, width: size.width, height: size.height),
                             from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-            }
-            if let message = issue.message {
-                Self.issueText.setFill()
-                context.textPosition = message.baseline
-                CTLineDraw(message.line, context)
             }
             if !issue.tokens.isEmpty {
                 NSColor.systemRed.setFill()
@@ -524,17 +525,34 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let line: Int
         let isError: Bool
         let band: NSRect
+        /// The band's shape, kept for every frame it is filled in.
+        let shape: NSBezierPath
         let mark: NSRect
-        var message: (line: CTLine, baseline: CGPoint, rect: NSRect, cut: Bool)?
+        /// The message in a view of its own, and where a click is the message's.
+        var message: (view: IssueMessageView, rect: NSRect, cut: Bool)?
         /// All that the line's issues say, where the row doesn't show it: a help tag's.
         var tip: String?
         /// The underline of each command on the line that its issues name as undefined.
         var tokens: [NSRect] = []
+        /// Where its paragraph's line break is: a selection that has it runs over the line's end,
+        /// and the message.
+        var end: Int?
+        /// What it was placed on. A scroll lays the viewport out again with the same paragraphs
+        /// where they were, and their rows are then kept as they are.
+        let fragment: NSTextLayoutFragment
+        let frame: NSRect
+        let width: CGFloat
+        let origin: NSPoint
     }
 
     /// The viewport's issues, placed when the text is laid out and not when it is drawn, which is
     /// every frame of a scroll.
     private(set) var issueRows: [IssueRow] = []
+    /// The rows there were, while the viewport's are placed.
+    private var formerRows: [IssueRow] = []
+    /// What a row has besides its paragraph changed, the issues or the font or the display's
+    /// scale: none is kept the next time they are placed.
+    private var issuesStale = false
     /// The messages as typeset, by line: for these issues and this font.
     private var issueLabels: [Int: IssueLabel] = [:]
     private var issueFont = NSFont.systemFont(ofSize: NSFont.systemFontSize - 1) {
@@ -542,6 +560,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
     /// The least between a line's text and its issue's message: three of the text's digits.
     private var issueGap: CGFloat = 0
+    /// All that each line's issues say, a line each: its help tag's words.
+    private var issueSays: [Int: String] = [:]
     /// The help tags of the rows that don't show all that their issues say, with where each is.
     private var issueTips: [(tag: NSView.ToolTipTag, rect: NSRect, text: NSString)] = []
     /// The commands each line's issues name as undefined, which the line underlines in the
@@ -559,84 +579,141 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private static let issueFill = NSColor.tertiarySystemFill
     /// The message's colour: a secondary label, raised to 4.5:1 on the band and on the current
     /// line's fill, which is greyer, and to 7:1 with Increase Contrast.
-    private static let issueText = NSColor.secondaryLabelColor.legibleAsText
+    fileprivate static let issueText = NSColor.secondaryLabelColor.legibleAsText
 
     private func issuesChanged() {
         issueLabels.removeAll()
-        undefined = issueLines.keys.reduce(into: [:]) { lines, line in
-            let commands = ([issueMessages[line]].compactMap(\.self) + (issueOthers[line] ?? [])).compactMap(UndefinedCommand.named)
-            if !commands.isEmpty { lines[line] = commands }
+        undefined.removeAll()
+        issueSays.removeAll()
+        for line in issueLines.keys {
+            guard let message = issueMessages[line] else { continue }
+            let all = [message] + (issueOthers[line] ?? [])
+            issueSays[line] = all.joined(separator: "\n")
+            let commands = all.compactMap(UndefinedCommand.named)
+            if !commands.isEmpty { undefined[line] = commands }
         }
+        issuesStale = true
         placeIssues()
         redrawLineAndGutter()
     }
 
-    /// Places the issues on the fragments laid out, and marks their rows to be drawn again, where
-    /// they were and where they are.
-    private func placeIssues() {
-        guard !issueLines.isEmpty || !issueRows.isEmpty else { return }
-        for issue in issueRows { setNeedsDisplay(issue.band.union(issue.mark)) }
-        issueRows.removeAll(keepingCapacity: true)
-        if !issueLines.isEmpty {
-            for (offset, fragment) in fragments {
-                let number = document.line(at: offset), extra = extraLine(of: fragment)
-                let lines = fragment.textLineFragments[...]
-                if let isError = issueLines[number] { place(number, isError, on: extra == nil ? lines : lines.dropLast(), of: fragment) }
-                if extra != nil, let isError = issueLines[number + 1] { place(number + 1, isError, on: lines.suffix(1), of: fragment) }
-            }
-        }
-        for issue in issueRows { setNeedsDisplay(issue.band.union(issue.mark)) }
-        updateIssueTips()
+    /// The pixels are another display's: the underlines are set to them.
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        issuesStale = true
+        placeIssues()
     }
 
-    /// The message is on the paragraph's last wrapped line, where a paragraph has room and which
-    /// is the line TeX reports, set right to the text's trailing edge on the band.
-    private func place(_ number: Int, _ isError: Bool, on lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment) {
-        guard let first = lines.first, let last = lines.last else { return }
+    /// Places the issues on the fragments laid out. A row whose paragraph is the one it was placed
+    /// on, where it was and in a view as wide, is kept as it is, which is every row through a
+    /// scroll; the others are placed and marked to be drawn again, where they were and where
+    /// they are.
+    private func placeIssues() {
+        guard !issueLines.isEmpty || !issueRows.isEmpty else { return }
+        let anew = issuesStale
+        issuesStale = false
+        swap(&issueRows, &formerRows)
+        var changed = false
+        func place(_ number: Int, on fragment: NSTextLayoutFragment, extra: Bool = false) {
+            guard let isError = issueLines[number] else { return }
+            let former = formerRows.firstIndex { $0.line == number }.map { formerRows.remove(at: $0) }
+            if let former, !anew, former.fragment === fragment, former.frame == fragment.layoutFragmentFrame,
+               former.width == bounds.width, former.origin == textContainerOrigin {
+                return issueRows.append(former)
+            }
+            changed = true
+            // The document's last empty line is the last of the lines of the paragraph before it.
+            var lines = fragment.textLineFragments[...]
+            if extra { lines = lines.suffix(1) } else if extraLine(of: fragment) != nil { lines = lines.dropLast() }
+            let placed = row(number, isError, on: lines, of: fragment, in: former?.message?.view)
+            if let former {
+                setNeedsDisplay(former.band.union(former.mark))
+                if former.message?.view !== placed?.message?.view { former.message?.view.removeFromSuperview() }
+            }
+            guard let placed else { return }
+            setNeedsDisplay(placed.band.union(placed.mark))
+            issueRows.append(placed)
+        }
+        if !issueLines.isEmpty {
+            for (offset, fragment) in fragments {
+                let number = document.line(at: offset)
+                place(number, on: fragment)
+                if issueLines[number + 1] != nil, extraLine(of: fragment) != nil { place(number + 1, on: fragment, extra: true) }
+            }
+        }
+        for former in formerRows {
+            changed = true
+            setNeedsDisplay(former.band.union(former.mark))
+            former.message?.view.removeFromSuperview()
+        }
+        formerRows.removeAll(keepingCapacity: true)
+        guard changed else { return }
+        updateIssueTips()
+        coverIssues()
+    }
+
+    /// A line's row on its paragraph's lines. The message is on the last wrapped line, where a
+    /// paragraph has room and which is the line TeX reports, set right to the text's trailing
+    /// edge on the band, in the view the line's message had if it had one.
+    private func row(_ number: Int, _ isError: Bool, on lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment,
+                     in view: IssueMessageView?) -> IssueRow? {
+        guard let first = lines.first, let last = lines.last else { return nil }
         let band = row(lines, of: fragment)
-        var issue = IssueRow(line: number, isError: isError, band: band,
-                             mark: NSRect(x: 0, y: band.minY, width: numbersEnd + 4, height: first.typographicBounds.height))
+        var issue = IssueRow(line: number, isError: isError, band: band, shape: NSBezierPath(roundedRect: band, xRadius: 4, yRadius: 4),
+                             mark: NSRect(x: 0, y: band.minY, width: numbersEnd + 4, height: first.typographicBounds.height),
+                             fragment: fragment, frame: fragment.layoutFragmentFrame, width: bounds.width, origin: textContainerOrigin)
+        // The document's last empty line has no line break, and no paragraph of its own.
+        if extraLine(of: fragment) !== last {
+            let end = offset(fragment.rangeInElement.endLocation) - 1
+            if end >= 0, end < text.length, text.character(at: end) == 0x0A { issue.end = end }
+        }
         // The fragment's lines in the view: its frame has the line fragment's padding in it.
         let left = textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = textContainerOrigin.y + fragment.layoutFragmentFrame.minY
         if let message = issueMessages[number] {
-            let others = issueOthers[number] ?? []
+            let others = issueOthers[number]?.count ?? 0
             let trailing = bounds.width - 8 - (textContainer?.lineFragmentPadding ?? 0)
-            var label = issueLabels[number] ?? IssueLabel(message, others: others.count, font: issueFont)
+            var label = issueLabels[number] ?? IssueLabel(message, others: others, font: issueFont)
             let fitted = label.line(in: trailing - (left + last.typographicBounds.maxX) - issueGap)
             issueLabels[number] = label
             if let fitted {
-                let lineTop = top + last.typographicBounds.minY
-                issue.message = (fitted.line, CGPoint(x: trailing - fitted.width, y: lineTop + last.glyphOrigin.y),
-                                 NSRect(x: trailing - fitted.width, y: lineTop + rowShift, width: fitted.width, height: last.typographicBounds.height),
-                                 fitted.cut)
+                // On the text's baseline, in the band's rows: they are `rowShift` below the lines'.
+                let rect = NSRect(x: trailing - fitted.width, y: top + last.typographicBounds.minY + rowShift,
+                                  width: fitted.width, height: last.typographicBounds.height)
+                let view = view ?? IssueMessageView()
+                view.show(fitted.line, baseline: last.glyphOrigin.y - rowShift, in: rect)
+                if view.superview !== self { addSubview(view) }
+                issue.message = (view, rect, fitted.cut)
             }
-            if fitted?.cut != false || !others.isEmpty { issue.tip = ([message] + others).joined(separator: "\n") }
+            if fitted?.cut != false || others > 0 { issue.tip = issueSays[number] }
         }
         if let commands = undefined[number], let font {
-            // As far under the baseline as the font puts an underline, to whole pixels, and a point
-            // thick at the least, as Xcode's is: the font's own is a pixel at 13 points.
+            // As far under the baseline as the font puts an underline and a point thick at the
+            // least, as Xcode's is (the font's own is a pixel at 13 points), its edges on whole
+            // pixels, the ends as the top and bottom.
             let scale = window?.backingScaleFactor ?? 1
-            let thickness = max(1, (font.underlineThickness * scale).rounded() / scale)
+            func whole(_ length: CGFloat) -> CGFloat { (length * scale).rounded() / scale }
+            let thickness = max(1, whole(font.underlineThickness))
             let paragraph = first.attributedString.string as NSString
             for range in commands.flatMap({ UndefinedCommand.ranges(of: $0, in: paragraph) }) {
                 // A command a line is too narrow for is on two.
                 for line in lines {
                     let part = NSIntersectionRange(range, line.characterRange)
                     guard part.length > 0 else { continue }
-                    let start = line.locationForCharacter(at: part.location).x, end = line.locationForCharacter(at: NSMaxRange(part)).x
+                    let lineLeft = left + line.typographicBounds.minX
+                    let start = whole(lineLeft + line.locationForCharacter(at: part.location).x)
+                    let end = whole(lineLeft + line.locationForCharacter(at: NSMaxRange(part)).x)
                     let under = top + line.typographicBounds.minY + line.glyphOrigin.y - font.underlinePosition
-                    issue.tokens.append(NSRect(x: left + line.typographicBounds.minX + start, y: (under * scale).rounded() / scale,
-                                               width: end - start, height: thickness))
+                    issue.tokens.append(NSRect(x: start, y: whole(under), width: end - start, height: thickness))
                 }
             }
         }
-        issueRows.append(issue)
+        return issue
     }
 
     /// A help tag with all that a line's issues say, on a message that is cut short or counts
     /// others, and on the gutter's mark of such a line and of one with no room for a message.
-    /// Kept as they are while the rows are where they were, as through a scroll.
+    /// Asked for when a row is placed, and kept as they are where the tags are where they were.
     private func updateIssueTips() {
         var tips: [(rect: NSRect, text: String)] = []
         for issue in issueRows {
@@ -650,6 +727,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         issueTips = tips.map { tip in
             let text = tip.text as NSString
             return (addToolTip(tip.rect, owner: text, userData: nil), tip.rect, text)
+        }
+    }
+
+    /// A selection that has a paragraph's line break is drawn to the text's trailing edge, over
+    /// the band: the message on it is then in the selected text's colour, not the band's grey.
+    private func coverIssues() {
+        guard !issueRows.isEmpty else { return }
+        let selected = selectedRanges
+        for issue in issueRows {
+            guard let view = issue.message?.view else { continue }
+            view.covered = issue.end.map { end in selected.contains { NSLocationInRange(end, $0.rangeValue) } } ?? false
         }
     }
 
@@ -730,6 +818,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let lineStart = text.lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
         closers = closers.filter { $0 >= lineStart }
         redrawLineAndGutter()
+        coverIssues()
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -1210,18 +1299,30 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// word: quietly, a word the PDF doesn't have (the preamble's, a comment's) raising no alert.
     override func mouseDown(with event: NSEvent) {
         if event.type == .leftMouseDown, inGutter(event) { return selectLines(with: event) }
-        if event.type == .leftMouseDown, let issue = issueMessage(at: event) { return showIssue(issue) }
+        if event.type == .leftMouseDown, let issue = issueMessage(at: event), clicked(issue, with: event) { return }
         super.mouseDown(with: event)
         if event.type == .leftMouseDown, event.clickCount == 2 { forwardSync(true)?() }
     }
 
     /// A click on an issue's message shows the issue, as one on its mark in the gutter does, once
-    /// the button is let go over it; the selection stays as it is.
-    private func showIssue(_ issue: IssueRow) {
-        var up: NSEvent?
-        repeat { up = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) } while up?.type == .leftMouseDragged
-        guard let up, issue.message?.rect.contains(convert(up.locationInWindow, from: nil)) == true else { return }
-        issueClicked(issue.line)
+    /// the button is let go over it; the selection stays as it is. Only a click: the message is
+    /// where a line's end is, and a drag from there selects as from any line's end, as a click
+    /// with Shift and a double-click do. False for those, which are the text view's.
+    private func clicked(_ issue: IssueRow, with down: NSEvent) -> Bool {
+        guard down.clickCount == 1, down.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]) else { return false }
+        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if next.type == .leftMouseUp {
+                if issue.message?.rect.contains(convert(next.locationInWindow, from: nil)) == true { issueClicked(issue.line) }
+                break
+            }
+            // A hand's tremor is not a drag: 3 points clear of the press is.
+            if hypot(next.locationInWindow.x - down.locationInWindow.x, next.locationInWindow.y - down.locationInWindow.y) > 3 {
+                // The text view tracks it from the press, taking this move first.
+                window?.postEvent(next, atStart: true)
+                return false
+            }
+        }
+        return true
     }
 
     /// A click in the gutter selects its line, a drag the lines it passes and Shift from the
@@ -1327,12 +1428,58 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 }
 
+/// An issue's message in a view of its own, over the text view's: TextKit draws a selection in
+/// a view above the text view's background (`_NSTextSelectionView`, the first of its subviews,
+/// 27.2), which covered a message drawn there with the band, and Select All left no words.
+/// Above the text's views it shows through a selection, in the text view's coordinates, moving
+/// with the text as it scrolls. It takes no click: the text view answers for it.
+final class IssueMessageView: NSView {
+    private var line: CTLine?
+    private var baseline: CGFloat = 0
+    /// Under a selection, which is drawn to the trailing edge where it has the line's break: in
+    /// the selected text's colour, the band's grey being 2.2:1 on Dark's selection.
+    var covered = false {
+        didSet { if covered != oldValue { needsDisplay = true } }
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// Its colours are the appearance's.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    /// The typeset line with its baseline this far under the rect's top, a point clear of the
+    /// view's sides for the glyphs' edges.
+    func show(_ line: CTLine, baseline: CGFloat, in rect: NSRect) {
+        if line !== self.line || baseline != self.baseline { needsDisplay = true }
+        (self.line, self.baseline) = (line, baseline)
+        let frame = rect.insetBy(dx: -1, dy: 0)
+        if frame != self.frame { self.frame = frame }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let line, let context = NSGraphicsContext.current?.cgContext else { return }
+        (covered ? NSColor.selectedTextColor : SourceTextView.issueText).setFill()
+        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        context.textPosition = CGPoint(x: 1, y: baseline)
+        CTLineDraw(line, context)
+    }
+}
+
 /// An issue's message set as one line for its line's end, in the context's colour: whole where
 /// there is room for it, cut at the tail with an ellipsis where there isn't, and not at all where
 /// fewer than ten of its characters would show, which say nothing. A line's other issues are
-/// counted after it ("+2"), and the count outlasts the cut.
+/// counted after it ("+2"), and the count outlasts the cut. An undefined command's message ends
+/// with the one thing it has to say, the command, and starts as every other such message does:
+/// without room for all of it, it is set in fewer words that keep the name ("Undefined: \name"),
+/// and those are what is cut.
 struct IssueLabel {
     private let whole: CTLine, ending: CTLine
+    private let short: (line: CTLine, width: CGFloat)?
     /// The whole message's width.
     let width: CGFloat
     /// What a cut one ends with, the ellipsis and the count, is this wide.
@@ -1352,18 +1499,22 @@ struct IssueLabel {
         // One line, whatever TeX's own breaks.
         let message = message.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let count = others > 0 ? "  +\(others)" : ""
+        short = UndefinedCommand.named(in: message).map { typeset(String(localized: "Undefined: \($0)") + count) }
         (whole, width) = typeset(message + count)
         (ending, endingWidth) = typeset("…" + count)
     }
 
-    /// The message for a room this wide, or nil where it has none.
+    /// The message for a room this wide, or nil where it has none; `cut` where it isn't all there.
     mutating func line(in room: CGFloat) -> (line: CTLine, width: CGFloat, cut: Bool)? {
         if let fitted, fitted.room == room { return fitted.line }
         var line: (line: CTLine, width: CGFloat, cut: Bool)?
+        let most = short ?? (whole, width)
         if width <= room {
             line = (whole, width, false)
-        } else if CTLineGetStringIndexForPosition(whole, CGPoint(x: room - endingWidth, y: 0)) >= Self.least,
-                  let cut = CTLineCreateTruncatedLine(whole, Double(room), .end, ending) {
+        } else if let short, short.width <= room {
+            line = (short.line, short.width, true)
+        } else if CTLineGetStringIndexForPosition(most.line, CGPoint(x: room - endingWidth, y: 0)) >= Self.least,
+                  let cut = CTLineCreateTruncatedLine(most.line, Double(room), .end, ending) {
             line = (cut, CGFloat(CTLineGetTypographicBounds(cut, nil, nil, nil)), true)
         }
         fitted = (room, line)

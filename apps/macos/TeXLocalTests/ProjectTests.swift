@@ -377,7 +377,7 @@ final class ProjectFlowTests {
     /// build's result is put in its place, so without TeX.
     @Test(.timeLimit(.minutes(1)))
     func aLinesIssuesAreItsFirstAndItsOthers() async throws {
-        let (project, _) = try await opened("a\nb\n")
+        let (project, folder) = try await opened("a\nb\n")
         try await Core.shared.perform("write_file", ["id": project.id, "path": "part.tex", "text": "a\nb\n"])
         func item(_ type: String, _ file: String, _ line: Int, _ message: String) -> LogItem {
             LogItem(type: type, file: file, line: line, message: message)
@@ -391,6 +391,15 @@ final class ProjectFlowTests {
         let text = project.editor.textView
         #expect(project.openPath == "part.tex" && text.issueLines == [1: false, 2: true])
         #expect(text.issueMessages == [1: "alone", 2: "first"] && text.issueOthers == [2: ["second", "third"]])
+        // Another app's change to the file is an edit of it: the build's lines were the old text's,
+        // and stay gone when the file is next shown.
+        try "c\nd\n".write(to: folder.appending(path: "part.tex"), atomically: false, encoding: .utf8)
+        try await waitUntil(timeout: .seconds(5)) { text.string == "c\nd\n" }
+        #expect(text.issueLines.isEmpty)
+        await project.open(main)
+        #expect(text.issueLines == [1: true])
+        await project.open("part.tex")
+        #expect(text.string == "c\nd\n" && text.issueLines.isEmpty)
         await app.close()
     }
 

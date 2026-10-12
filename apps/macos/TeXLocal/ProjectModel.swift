@@ -661,6 +661,11 @@ final class ProjectModel {
 
     private func showDiskText(_ text: String, of path: String) {
         let top = topLine
+        // The last build's lines were the text's it replaces: they go as on an edit, which this
+        // is to the file, and stay gone until a build has read it.
+        edits += 1
+        lastEdit[path] = edits
+        if !editor.textView.issueLines.isEmpty { editor.textView.issueLines = [:] }
         editor.open(path: path, text: text, focus: false)
         analyze()
         editor.reveal(line: top, atTop: true, focus: false)

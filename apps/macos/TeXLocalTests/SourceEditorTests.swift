@@ -793,29 +793,41 @@ struct SourceEditorTests {
     }
 
     /// An issue's message is whole where there is room for it and cut with an ellipsis where there
-    /// isn't, down to ten of its characters: with room for fewer it isn't shown.
+    /// isn't, down to ten of its characters: with room for fewer it isn't shown. An undefined
+    /// command's is set in fewer words before it is cut, so that the command's name is kept.
     @Test func anIssuesMessageFitsItsRoom() {
         let font = NSFont.systemFont(ofSize: 12)
         func width(_ string: String) -> CGFloat { (string as NSString).size(withAttributes: [.font: font]).width }
-        var label = IssueLabel("Undefined control sequence: \\undefinedmacro", others: 0, font: font)
-        #expect(abs(label.width - width("Undefined control sequence: \\undefinedmacro")) < 0.01)
+        var label = IssueLabel("Paragraph ended before \\section was complete", others: 0, font: font)
+        #expect(abs(label.width - width("Paragraph ended before \\section was complete")) < 0.01)
         let whole = label.line(in: label.width)
         #expect(whole?.cut == false && whole?.width == label.width)
         let cut = label.line(in: label.width - 1)
         #expect(cut?.cut == true && (cut?.width ?? .infinity) <= label.width - 1)
-        let twelve = label.line(in: width("Undefined co…") + 1)
-        #expect(twelve?.cut == true && abs((twelve?.width ?? 0) - width("Undefined co…")) < 0.5)
-        #expect(label.line(in: width("Undefin…") + 1) == nil && label.line(in: 0) == nil && label.line(in: -40) == nil)
+        let twelve = label.line(in: width("Paragraph en…") + 1)
+        #expect(twelve?.cut == true && abs((twelve?.width ?? 0) - width("Paragraph en…")) < 0.5)
+        #expect(label.line(in: width("Paragra…") + 1) == nil && label.line(in: 0) == nil && label.line(in: -40) == nil)
         // A short message has room or it hasn't.
         var short = IssueLabel("Bad math", others: 0, font: font)
         #expect(short.line(in: short.width)?.cut == false && short.line(in: short.width - 1) == nil)
         // The line's other issues are counted after it, and the count is kept where it is cut.
-        var counted = IssueLabel("Undefined control sequence: \\foo", others: 2, font: font)
-        #expect(abs(counted.width - width("Undefined control sequence: \\foo  +2")) < 0.01)
-        let both = counted.line(in: width("Undefined control…  +2") + 1)
-        #expect(both?.cut == true && abs((both?.width ?? 0) - width("Undefined control…  +2")) < 0.5)
+        var counted = IssueLabel("Missing number, treated as zero", others: 2, font: font)
+        #expect(abs(counted.width - width("Missing number, treated as zero  +2")) < 0.01)
+        let both = counted.line(in: width("Missing number, treated…  +2") + 1)
+        #expect(both?.cut == true && abs((both?.width ?? 0) - width("Missing number, treated…  +2")) < 0.5)
         // One line, whatever TeX's own breaks.
         #expect(abs(IssueLabel("Missing $\n  inserted", others: 0, font: font).width - width("Missing $ inserted")) < 0.01)
+        // An undefined command's name is at its message's end, which a cut would take first: with
+        // no room for all of it, fewer words and the name, and the cut is theirs.
+        var undefined = IssueLabel("Undefined control sequence: \\undefinedmacro", others: 0, font: font)
+        #expect(undefined.line(in: undefined.width)?.cut == false)
+        let named = undefined.line(in: undefined.width - 1)
+        #expect(named?.cut == true && abs((named?.width ?? 0) - width("Undefined: \\undefinedmacro")) < 0.01)
+        let part = undefined.line(in: width("Undefined: \\undefin…") + 1)
+        #expect(part?.cut == true && abs((part?.width ?? 0) - width("Undefined: \\undefin…")) < 0.5)
+        #expect(undefined.line(in: width("Undefin…") + 1) == nil)
+        var several = IssueLabel("Undefined control sequence: \\foo", others: 2, font: font)
+        #expect(abs((several.line(in: several.width - 1)?.width ?? 0) - width("Undefined: \\foo  +2")) < 0.01)
     }
 
     /// Only a message that names an undefined command gives a place on its line, and only where
@@ -863,41 +875,71 @@ struct SourceEditorTests {
         #expect(rows.map(\.line) == [1, 2, 4] && rows.map(\.isError) == [false, true, true])
         for row in rows {
             let message = try #require(row.message)
-            #expect(!message.cut && message.rect.maxX == text.bounds.width - 8 - padding)
+            #expect(!message.cut && abs(message.rect.maxX - (text.bounds.width - 8 - padding)) < 0.01)
             #expect(row.band.contains(message.rect) && row.band.minX == 14 && row.band.maxX == text.bounds.width - 8)
+            // In a view of its own over the text's, a point clear at its sides, which takes no click.
+            #expect(message.view.superview === text && message.view.frame == message.rect.insetBy(dx: -1, dy: 0))
+            #expect(text.hitTest(text.convert(NSPoint(x: message.rect.midX, y: message.rect.midY), to: text.superview)) === text)
         }
+        // Above the view TextKit draws a selection in, and in the selected text's colour under one
+        // that has the line's break: the first line's, and with all selected the second's too.
+        let selection = try #require(text.subviews.firstIndex { $0.className.contains("Selection") })
+        #expect(rows.allSatisfy { row in text.subviews.firstIndex { $0 === row.message?.view }.map { $0 > selection } == true })
+        text.setSelectedRange(NSRange(location: 1, length: 3))
+        #expect(rows.map { $0.message?.view.covered } == [true, false, false])
+        text.selectAll(nil)
+        #expect(rows.map { $0.message?.view.covered } == [true, true, false])
+        text.setSelectedRange(NSRange(location: 0, length: 0))
+        #expect(rows.map { $0.message?.view.covered } == [false, false, false])
         #expect(rows[0].band.maxY <= rows[1].band.minY && rows[1].band.maxY < rows[2].band.minY)
         #expect(rows[0].tip == nil && rows[1].tip == nil && rows[2].tip == "Emergency stop\nMissing \\begin{document}")
-        // Both places the command stands, each four characters wide, and none for the other lines.
-        #expect(rows.map(\.tokens.count) == [0, 2, 0] && rows[1].tokens.allSatisfy { abs($0.width - 4 * digit) < 0.01 })
+        // Both places the command stands, each four characters wide to the pixel, and none for the
+        // other lines.
+        let pixel = 1 / window.backingScaleFactor
+        #expect(rows.map(\.tokens.count) == [0, 2, 0] && rows[1].tokens.allSatisfy { abs($0.width - 4 * digit) <= pixel })
         let start = text.textContainerOrigin.x + padding
-        #expect(abs(rows[1].tokens[0].minX - (start + 4 * digit)) < 0.01 && abs(rows[1].tokens[1].minX - (start + 19 * digit)) < 0.01)
+        #expect(abs(rows[1].tokens[0].minX - (start + 4 * digit)) <= pixel / 2 && abs(rows[1].tokens[1].minX - (start + 19 * digit)) <= pixel / 2)
+        #expect(rows[1].tokens.allSatisfy { token in [token.minX, token.maxX, token.minY, token.maxY].allSatisfy { ($0 / pixel).rounded() == $0 / pixel } })
+        // Laid out again as it is, as a scroll does, the rows are the ones there were.
+        try layOut()
+        #expect(zip(rows, text.issueRows).allSatisfy { $0.shape === $1.shape } && text.issueRows.count == 3)
 
-        // Narrower: the second line's message is cut, three digits from its text at the nearest.
+        // Narrower: the second line's message is in fewer words, three digits from its text at the
+        // nearest, in the view it had.
         try layOut(width: 430)
+        let views = rows.map { $0.message?.view }
         rows = text.issueRows
         let cut = try #require(rows[1].message)
         #expect(cut.cut && abs(cut.rect.maxX - (text.bounds.width - 8 - padding)) < 0.01)
         #expect(cut.rect.minX >= start + 30 * digit + 3 * digit)
+        let words = ("Undefined: \\foo" as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width
+        #expect(abs(cut.rect.width - words) < 0.01 && cut.view === views[1] && cut.view.frame == cut.rect.insetBy(dx: -1, dy: 0))
         #expect(rows[1].tip == "Undefined control sequence: \\foo" && rows[0].message?.cut == false)
         // Narrower still, the line wraps, and its message is on its last line.
         try layOut(width: 300)
         rows = text.issueRows
         let wrapped = try #require(rows[1].message)
-        #expect(rows[1].band.height == 2 * rows[0].band.height && wrapped.rect.minY == rows[1].band.minY + rows[0].band.height)
+        #expect(abs(rows[1].band.height - 2 * rows[0].band.height) < 0.01)
+        #expect(abs(wrapped.rect.minY - (rows[1].band.minY + rows[0].band.height)) < 0.01)
         // No room: the band and the gutter's symbol are left, and the help tag's words.
         open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
         text.issueLines = [2: true]
+        text.issueMessages = [2: "Undefined control sequence: \\foo"]
+        text.issueOthers = [:]
         try layOut(width: 440)
         rows = text.issueRows
         #expect(rows.count == 1 && rows[0].message == nil && rows[0].tip == "Undefined control sequence: \\foo" && rows[0].tokens.count == 2)
+        #expect(!text.subviews.contains { $0 is IssueMessageView })
         // Nothing once the issues go, as on the first edit after a build.
+        try layOut(width: 600)
+        #expect(text.issueRows.first?.message?.view.superview === text)
         text.issueLines = [:]
-        #expect(text.issueRows.isEmpty)
+        #expect(text.issueRows.isEmpty && !text.subviews.contains { $0 is IssueMessageView })
     }
 
     /// A click on an issue's message asks for the issue, as one on its mark in the gutter does,
-    /// and leaves the selection as it was; let go elsewhere, it asks for nothing.
+    /// and leaves the selection as it was; let go elsewhere, it asks for nothing. A click with
+    /// Shift and a drag from it select, as from any line's end, and ask for nothing.
     @Test func aClickOnAnIssuesMessageShowsTheIssue() throws {
         let window = inWindow()
         open("one\ntwo\nthree", caret: 5)
@@ -907,8 +949,8 @@ struct SourceEditorTests {
         var asked: [Int] = []
         text.issueClicked = { asked.append($0) }
         let message = try #require(text.issueRows.first?.message).rect
-        func event(_ type: NSEvent.EventType, at point: NSPoint) throws -> NSEvent {
-            try #require(NSEvent.mouseEvent(with: type, location: text.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+        func event(_ type: NSEvent.EventType, at point: NSPoint, _ modifiers: NSEvent.ModifierFlags = []) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: type, location: text.convert(point, to: nil), modifierFlags: modifiers, timestamp: 0,
                                             windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
         }
         let inside = NSPoint(x: message.midX, y: message.midY)
@@ -919,6 +961,17 @@ struct SourceEditorTests {
         NSApp.postEvent(try event(.leftMouseUp, at: inside), atStart: false)
         text.mouseDown(with: try event(.leftMouseDown, at: inside))
         #expect(asked == [2] && text.selectedRange() == NSRange(location: 5, length: 0))
+        // With Shift the selection runs to the line's end, where the click is.
+        NSApp.postEvent(try event(.leftMouseUp, at: inside, .shift), atStart: false)
+        text.mouseDown(with: try event(.leftMouseDown, at: inside, .shift))
+        #expect(asked == [2] && text.selectedRange() == NSRange(location: 5, length: 2))
+        // A drag from it to the line above selects from the line's end back into that line.
+        text.setSelectedRange(NSRange(location: 5, length: 0))
+        let above = NSPoint(x: text.textContainerOrigin.x + 20, y: message.midY - message.height)
+        NSApp.postEvent(try event(.leftMouseDragged, at: above), atStart: false)
+        NSApp.postEvent(try event(.leftMouseUp, at: above), atStart: false)
+        text.mouseDown(with: try event(.leftMouseDown, at: inside))
+        #expect(asked == [2] && NSMaxRange(text.selectedRange()) == 7 && (1...3).contains(text.selectedRange().location))
     }
 
     /// VoiceOver's rotors step through the file's headings and the lines with build issues, either
