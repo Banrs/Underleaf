@@ -40,7 +40,7 @@ struct InspectorView: View {
                 .disabled(!app.canPreviewLive || !project.initialLoadComplete || project.texpresso.phase == .stopping)
                 if !app.canPreviewLive {
                     HStack {
-                        Link("Get TeXpresso…", destination: URL(string: "https://github.com/let-def/texpresso")!)
+                        Link("Get TeXpresso", destination: URL(string: "https://github.com/let-def/texpresso")!)
                         Spacer()
                         SettingsLink { Text("Open Settings…") }
                     }

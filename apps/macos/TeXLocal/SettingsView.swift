@@ -181,7 +181,7 @@ private struct LivePreviewSettings: View {
                             Text("Installed")
                         } else {
                             Text("Not Installed")
-                            Link("How to Install TeXpresso…",
+                            Link("How to Install TeXpresso",
                                  destination: URL(string: "https://github.com/Banrs/Underleaf/blob/main/docs/texpresso.md")!)
                         }
                     }

@@ -184,8 +184,8 @@ extension AppModel {
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
         case .viewZoomOut: project.map { $0.hasPDF && $0.pdf.canZoomOut } ?? false
         case .syncInverse: project.map { $0.hasPDF } ?? false
-        case .pdfSave: project?.buildPDF != nil
-        case .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage:
+        case .pdfSave, .filePrint: project?.buildPDF != nil
+        case .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage:
             project?.hasPDF == true
         case .syncForward: project.map { $0.hasPDF && $0.isLaTeX } ?? false
         case .issueNext, .issuePrevious: project?.issues.contains { $0.file != nil } == true

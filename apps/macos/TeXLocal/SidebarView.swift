@@ -22,7 +22,14 @@ struct FilesList: View {
             // Each search reads every file in the project; it waits for typing to pause.
             .task(id: project.searchQuery) {
                 if project.isSearching { try? await Task.sleep(for: PDFFind.debounce) }
-                if !Task.isCancelled { await project.search() }
+                guard !Task.isCancelled else { return }
+                await project.search()
+                // The list changes without a word: VoiceOver hears the count, as it does the PDF's find count.
+                guard !Task.isCancelled, let hits = project.searchHits, project.searchFailure == nil else { return }
+                var spoken = hits.isEmpty ? AttributedString(localized: "No results")
+                    : AttributedString(localized: "^[\(hits.count) result](inflect: true)")
+                spoken.accessibilitySpeechAnnouncementPriority = .low
+                AccessibilityNotification.Announcement(spoken).post()
             }
             // File › New File and New Folder, taken once.
             .onChange(of: app.newEntry, initial: true) { _, entry in

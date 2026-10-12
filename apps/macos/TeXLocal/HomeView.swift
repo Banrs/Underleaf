@@ -246,7 +246,7 @@ struct GetMacTeXButton: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        Button("Get MacTeX…") { openURL(URL(string: "https://tug.org/mactex/")!) }
+        Button("Get MacTeX") { openURL(URL(string: "https://tug.org/mactex/")!) }
     }
 }
 

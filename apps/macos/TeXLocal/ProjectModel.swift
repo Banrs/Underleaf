@@ -114,14 +114,15 @@ final class ProjectModel {
 
     /// The open file's lines with issues, for the editor's gutter.
     private func markIssues() {
-        var lines: [Int: Bool] = [:]
+        var lines: [Int: Bool] = [:], messages: [Int: String] = [:]
         if let openPath, lastEdit[openPath, default: 0] <= resultEdits {
             // Errors last: a line with both is an error's.
             for item in issues.reversed() where item.file == openPath {
-                if let line = item.line { lines[line] = item.isError }
+                if let line = item.line { lines[line] = item.isError; messages[line] = item.message }
             }
         }
         editor.textView.issueLines = lines
+        editor.textView.issueMessages = messages
     }
 
     /// The open file on disk, for the window's document icon and the preview of a file the editor doesn't edit.
@@ -229,6 +230,7 @@ final class ProjectModel {
         }
         texpresso.shownPages = { [weak self] in self?.pdf.view.document?.pageCount ?? 0 }
         pdf.onVisiblePages = { [weak self] in self?.texpresso.view($0) }
+        pdf.buildPDF = { [weak self] in self?.buildPDF }
         texpresso.onEnded = { [weak self] restartable in
             guard let self else { return }
             // TeXpresso went by itself: it starts again where it was, and the live pages stay meanwhile.
