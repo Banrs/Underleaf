@@ -38,20 +38,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         get { fit.compact }
         set { if fit.compact != newValue { fit.compact = newValue } }
     }
-    /// How much less room Compile has than its word takes, which the workspace says with it:
-    /// on its way to its symbol it is no wider than the room (`Compression`).
-    var compileShort: CGFloat {
-        get { fit.short }
-        set { if fit.short != newValue { fit.short = newValue } }
-    }
     private let fit = Fit()
-    @Observable final class Fit {
-        var compact = false
-        var short: CGFloat = 0
-    }
-    /// Whether Compile moves between its word and its symbol or is there at once: the workspace
-    /// says, as it sets which.
-    var animatesCompression = false
+    @Observable final class Fit { var compact = false }
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
@@ -166,7 +154,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.compileRun.title
             if flag {
-                item.view = CompileHost(rootView: compileButton(state))
+                item.view = NSHostingView(rootView: compileButton(state))
             } else {
                 item.title = MenuCommand.compileRun.title
             }
@@ -307,7 +295,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let canCompile: Bool
         let pdfTitle: String
         let compactCompile: Bool
-        let compileShort: CGFloat
     }
 
     private var state: State {
@@ -315,7 +302,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
               hasPDF: project.hasPDF, canShare: project.buildPDF != nil, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
               compiling: project.compiling, canCompile: canCompile,
-              pdfTitle: app.title(.viewTogglePdf, on: project), compactCompile: fit.compact, compileShort: fit.short)
+              pdfTitle: app.title(.viewTogglePdf, on: project), compactCompile: fit.compact)
     }
 
     /// Applies the state as it changes, in the same pass. A column resizing refits the PDF
@@ -363,8 +350,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                 item.backgroundTintColor = state.compiling ? .clear : nil
             }
             if changed(\.canCompile) { item.isEnabled = state.canCompile }
-            if changed(\.compiling) || changed(\.compactCompile) || changed(\.compileShort) || changed(\.canCompile) {
-                (item.view as? CompileHost)?.show(compileButton(state))
+            if changed(\.compiling) || changed(\.compactCompile) || changed(\.canCompile) {
+                (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
             }
         case .togglePDF:
             if changed(\.pdfTitle) { item.toolTip = state.pdfTitle }
@@ -423,8 +410,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     private func compileButton(_ state: State) -> CompileButton {
-        CompileButton(compiling: state.compiling, compact: state.compactCompile, short: state.compileShort,
-                      enabled: state.canCompile, animated: animatesCompression) { [weak self] in
+        CompileButton(compiling: state.compiling, compact: state.compactCompile, enabled: state.canCompile) { [weak self] in
             self?.compile()
         }
     }
@@ -491,139 +477,65 @@ private final class ZoomControl: NSSegmentedControl {
     }
 }
 
-/// Compile's button as the toolbar's item. SwiftUI moves nothing that is in no window: a button
-/// taken out of its window on its way from one form to the other would stay as wide as it was,
-/// and one AppKit took out for its width, into the overflow menu, would so stay out (27.2). It
-/// has its form at once there.
-final class CompileHost: NSHostingView<CompileButton> {
-    func show(_ button: CompileButton) {
-        var button = button
-        button.settled = rootView.settled
-        rootView = button
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        guard window == nil, rootView.animated else { return }
-        rootView.animated = false
-        rootView.settled += 1
-    }
-}
-
 /// Compile as its word, or as its symbol where the word has no room, and Stop with the build's
 /// spinner in the width Compile has there. It fills the item's glass, which doesn't pass clicks
-/// on to an undersized custom view. The word gives way to the symbol, and takes its place back,
-/// through the widths between them (`Compression`): the toolbar lays its item out at each, so
-/// its glass moves with it. AppKit changes an item's title for its image in one step (27.2).
-struct CompileButton: View {
+/// on to an undersized custom view. It changes form as AppKit's search item goes to its button
+/// and back (27.2, measured): the width in one step, the symbol fading in, or out over the word,
+/// in a fifth of a second on Core Animation's default curve.
+private struct CompileButton: View {
     let compiling: Bool
     let compact: Bool
-    /// How much less room there is than the word takes: on its way to its symbol the button is
-    /// no wider than its room, or the toolbar would send a tool beside it to the overflow menu
-    /// that the symbol leaves room for.
-    var short: CGFloat = 0
     let enabled: Bool
-    /// Whether a change of form is seen on its way, as with a resize the user is making, or is
-    /// there at once, as when a project opens.
-    var animated = false
-    /// A change of form on its way is dropped for the form itself as this changes (`CompileHost`).
-    var settled = 0
     let action: () -> Void
     @Environment(\.appearsActive) private var appearsActive
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
-            Compression(compact: compact ? 1 : 0, short: compact ? short : 0) {
-                word.opacity(compact ? 0 : 1)
-                symbol.opacity(compact ? 1 : 0)
+            ZStack {
+                idle
+                    // Faint in a window that isn't the active one, as AppKit's own prominent item.
+                    .foregroundStyle(appearsActive ? .primary : .tertiary)
+                    .opacity(compiling ? 0 : 1)
+                // The button stays a button to VoiceOver; the status bar says Compiling.
+                busy.opacity(compiling ? 1 : 0)
+                    .accessibilityHidden(true)
             }
-            // Nothing of the toolbar's clips its item's view (27.2): the word is cut to the
-            // glass's shape as it leaves.
-            .clipShape(.capsule)
+            .animation(.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2), value: compact)
+            // The item's glass as AppKit draws a titled item's and a symbol's: 36 points high (the
+            // UI kit's toolbar controls), a title 12 points in from each end, 74 points for
+            // Compile, and a circle for a symbol (27.2).
+            .padding(.horizontal, compact ? 0 : 12)
+            .frame(minWidth: 36, minHeight: 36)
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .animation(animated && !reduceMotion ? .smooth(duration: 0.25) : nil, value: compact)
         .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
-        .id(settled)
     }
 
-    /// As AppKit draws a titled item: 36 points high (the UI kit's toolbar controls), the title
-    /// 12 points in from each end, 74 points for Compile (27.2). Stop has the build's spinner
-    /// beside it, in Compile's width.
-    private var word: some View {
-        ZStack {
-            idle(Text(MenuCommand.compileRun.title))
-            // The button stays a button to VoiceOver; the status bar says Compiling.
-            HStack(spacing: 4) {
-                spinner(.small, shown: !compact)
-                Text(MenuCommand.compileStop.title)
-            }
-            .opacity(compiling ? 1 : 0)
-            .accessibilityHidden(true)
+    @ViewBuilder private var idle: some View {
+        if compact {
+            // At the size AppKit draws an item's symbol (27.2), measured.
+            Image(systemName: "play.fill").font(.system(size: 17))
+        } else {
+            Text(MenuCommand.compileRun.title).transition(.identity)
         }
-        .padding(.horizontal, 12)
-        .frame(height: 36)
     }
 
-    /// As AppKit draws an item's symbol: a circle, the symbol at 17 points (27.2). Stop has the
-    /// spinner round it: the regular one, 32 points, would touch the circle's edge, and the
-    /// small one has no room inside it.
-    private var symbol: some View {
-        ZStack {
-            idle(Image(systemName: "play.fill").font(.system(size: 17)))
+    /// The spinner beside Stop's word, or round its symbol: the regular spinner, 32 points, would
+    /// touch the circle's edge, and the small one has no room inside it.
+    @ViewBuilder private var busy: some View {
+        if compact {
             ZStack {
-                spinner(.regular, shown: compact).scaleEffect(0.8)
+                ProgressView().controlSize(.regular).scaleEffect(0.8)
                 Image(systemName: "stop.fill").font(.system(size: 7))
             }
-            .opacity(compiling ? 1 : 0)
-            .accessibilityHidden(true)
-        }
-        .frame(width: 36, height: 36)
-    }
-
-    /// Compile's label, faint in a window that isn't the active one, as AppKit's own prominent item's.
-    private func idle(_ label: some View) -> some View {
-        label.foregroundStyle(appearsActive ? .primary : .tertiary).opacity(compiling ? 0 : 1)
-    }
-
-    /// The spinner's place, and the spinner while a build runs and its form shows: out of sight
-    /// it would turn all the same.
-    private func spinner(_ size: ControlSize, shown: Bool) -> some View {
-        ProgressView().controlSize(size).hidden()
-            .overlay { if compiling && shown { ProgressView().controlSize(size) } }
-    }
-}
-
-/// As wide as its first view, as its last, or between them: `compact` is how far from the first
-/// to the last. Animated, it is every width on the way, each a layout of its own, so whatever
-/// sizes itself by the view, as a toolbar does its item, follows it there.
-struct Compression: Layout {
-    var compact: CGFloat
-    /// How much less room there is than its first view takes. It is no wider than the room on
-    /// its way, nor narrower than its last view: a room closing faster than it moves takes it
-    /// along.
-    var short: CGFloat = 0
-
-    var animatableData: CGFloat {
-        get { compact }
-        set { compact = newValue }
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        guard let first = sizes.first, let last = sizes.last else { return .zero }
-        // A spring may pass its end.
-        let compact = min(max(compact, 0), 1)
-        let width = min(first.width + (last.width - first.width) * compact, first.width - short)
-        return CGSize(width: max(width, last.width), height: max(first.height, last.height))
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        for subview in subviews {
-            subview.place(at: CGPoint(x: bounds.midX, y: bounds.midY), anchor: .center, proposal: .unspecified)
+        } else {
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.small)
+                Text(MenuCommand.compileStop.title)
+            }
+            .transition(.identity)
         }
     }
 }
