@@ -4,9 +4,12 @@ Reference values come from **Apple's macOS 27 UI Kit** (Sketch, from
 [Apple Design Resources](https://developer.apple.com/design/resources/), kept
 locally in the gitignored `design/`). App-specific adjustments are marked below.
 This is the `web/styles.css` specification for the browser client. The
-native Mac app uses the system's own controls, colours and metrics (SwiftUI,
-with AppKit for the window, toolbar, splits, text and PDF); `HANDOFF.md` records
-its design decisions.
+native Mac app uses the system's own controls, semantic colours and control
+sizes (SwiftUI, with AppKit for the window, toolbar, splits, text and PDF). Its
+literal metrics are measurements, not tokens: Xcode 27's for the status bar, the
+build panel's bar, the editor and the completion list, and AppKit's own layout
+for the toolbar's and the columns' minimums. `HANDOFF.md` records its design
+decisions.
 
 ## Typography — SF Pro
 
@@ -125,9 +128,11 @@ segmented controls, steppers, search). No mini/small controls anywhere.
 Components keeping their own kit spec: switch 54×24, scrollbar 12, menu text
 13 Medium (the row box follows this app's list density at 28).
 
-**Corner radius is `height / 4`.** Measured off the text-field set (16→4, 20→5,
-24→6, 28→7, 36→9) and confirmed by the sidebar rows (32→8, 40→10). One rule, so
-nothing needs an ad-hoc radius.
+**Corner radius is `height / 4` for fields and rows.** Measured off the
+text-field set (16→4, 20→5, 24→6, 28→7, 36→9) and confirmed by the sidebar rows
+(32→8, 40→10). The kit's exceptions: bordered buttons are capsules at Large and
+Extra Large (4, 5 and 6 at Mini, Small and Regular); a menu's row is 8 at 22 and
+at 24 high, the menu itself 12; a popover is 20; a window is 16, a dialog 26.
 
 | Element | Value |
 | --- | --- |
@@ -205,16 +210,22 @@ Sources, light / dark:
   they stay arguments' green until the tokenizer tells environments apart.
 - **System**: `systemPink`, `systemBrown`, `systemTeal`, `systemPurple`,
   `secondaryLabelColor`, `systemRed`, what the editor used before Overleaf's; they follow the
-  accent and appearance. It had eight kinds: maths' delimiters were orange, its numbers blue and
+  appearance (not the accent). It had eight kinds: maths' delimiters were orange, its numbers blue and
   its verbatim brown, now all purple.
 
 Texifier has no theme here: its themes (five, per its Preferences docs) and their values aren't
 published, and the app is closed source.
 
-Surfaces: selection `#A4CDFF`/`#515B70`, current line `#E8F2FF`/`#23252B`,
-invisibles `#CCCCCC`/`#424D5B`. The **background is deliberately not** Xcode's
-(`#FFFFFF`/`#1F1F24`) — the editor sits flush against this app's panels, so it
-follows `--bg-content` and a one-value difference can't show as a seam.
+Surfaces, in the web editor: selection `#A4CDFF`/`#515B70`, current line
+`#E8F2FF`/`#23252B`, invisibles `#CCCCCC`/`#424D5B`. The **background is
+deliberately not** Xcode's (`#FFFFFF`/`#1F1F24`) — the editor sits flush against
+this app's panels, so it follows `--bg-content` and a one-value difference can't
+show as a seam. In the Mac editor the selection is the system's and the current
+line is `secondarySystemFill`, grey in Xcode 27 whatever its theme says; the
+ground is the text background without the wallpaper's tint, which the status
+bar, the build panel and the PDF pane's bars share. Each theme's colours are
+raised to 4.5:1 against that ground and against the current line's fill (7:1
+under Increase Contrast).
 
 Gutter: no fill, no rule, dim numbers, and the current line's number brightens —
 Xcode's treatment.

@@ -11,13 +11,16 @@ into it and deleted on 12 October.
   the source|PDF divider, and a three-column `NavigationSplitView` can't hide its detail
   column. Panes, bars, sheets, popovers, Settings and Home are SwiftUI, hosting AppKit's text
   and PDF views where SwiftUI has none.
-- **Narrow windows**: the window stops at 542 pt (about 605 with source and PDF); source and
-  PDF keep minimums of 260 and 200 pt, the sidebar Xcode's navigator's 222; it opens at 270,
-  the width of AppKit's inspector. Tools without room
-  go to `NSToolbar`'s own overflow menu by `visibilityPriority`, and nowhere else; Compile
-  gives up its word for its symbol first. AppKit overflows by the room between the sidebar's
-  and the inspector's separators, not by a pane's own, so between about 900 and 700 pt a
-  pane's tools can sit over its neighbour. Sidebar and
+- **Narrow windows**: the window stops at 542 pt, the toolbar's least, with the PDF or
+  without (about 683 while the sidebar is open at its least); source and PDF keep minimums of
+  260 and 200 pt, the sidebar Xcode's navigator's 222; it opens at 270, the width of AppKit's
+  inspector. Tools without room go to `NSToolbar`'s own overflow menu by
+  `visibilityPriority`, and nowhere else; Compile gives up its word for its symbol first.
+  That is reckoned from the default tools' measured widths (`ColumnMetrics`), so it holds
+  while the toolbar has its default tools: customised, Compile keeps its word while the tools
+  that never leave have room for it (`WorkspaceToolbar.holdsDefaultItems`). AppKit overflows
+  by the room between the sidebar's and the inspector's separators, not by a pane's own, so
+  between about 900 and 700 pt a pane's tools can sit over its neighbour. Sidebar and
   inspector fold for a narrow window and are not saved as hidden for it (`sidebarFolded`).
 - **The window's title** is AppKit's, which keeps 160 pt for it whatever it says (27.2): with
   both side columns open that sends Zoom to the overflow menu at a 1000 pt window, and with
@@ -43,15 +46,25 @@ into it and deleted on 12 October.
   child window that never takes the keyboard, its chosen row raised with Xcode's shadow and
   the others fainter. Unlike Xcode's it ends at the editor's trailing edge.
 - **Status bar**: the source/PDF columns' bottom accessory at Xcode's measured spacing (14 pt
-  in, 9 between items, 36 high). Its ground is the editors' colour at 85% over AppKit's
-  accessory edge, with a device-pixel separator line in a row of its own above it, the row of
-  the File Outline header's line. SwiftUI's hard scroll edge (Xcode's look) draws only over a
-  SwiftUI scroll view, and one around PDFKit's view takes its rubber-banding and insets
-  (27.2), so the PDF view sits directly in its pane.
+  in, 9 between items, 36 high; `BarMetrics`). Its ground is the editors' colour, opaque, as
+  the bar under Xcode's editor is its editor's: bar, editor and build panel measure the same
+  in Light and in Dark, and text ends at the bar's line. The line is a device pixel in a row
+  of its own above the bar, the row of the File Outline header's line. The accessory asks for
+  the soft scroll edge, which draws nothing over an `NSTextView` or a `PDFView` (27.2).
+  SwiftUI's hard scroll edge draws only over a SwiftUI scroll view, and one around PDFKit's
+  view takes its rubber-banding and insets (27.2), so the PDF view sits directly in its pane.
+  After a save that failed, or a Cancel in an alert about the file on disk, the bar says Not
+  Saved, and that button saves.
 - **Build panel**: below the columns, so the status bar rides up as it opens, with AppKit's
   collapse animation. Its controls are a bar at its foot, as Xcode's console bar: a pop-up for
-  Issues, Build Log and Live Preview Log, then Warnings or Copy Log, then a filter. Its list
-  hides the system's wallpaper-tinted ground so it is the editors' colour.
+  Issues, Build Log and Live Preview Log, then Warnings or Copy Log, then a filter. The bar
+  is a SwiftUI safe-area bar under a device-pixel line of its own: there its filter draws as
+  the filled capsule a toolbar's search field is, and as a row of a plain stack it draws as a
+  form's outlined field (27.2). The filter is the regular 24 pt among the bar's small
+  controls, as Xcode's; SwiftUI passes its control size on to a hosted `NSSearchField`, and a
+  small one is an outlined box that drops the filter symbol. Over the logs, which are AppKit
+  scroll views, the filter is still outlined. The list hides the system's wallpaper-tinted
+  ground so it is the editors' colour.
 - **Split dividers** are a device pixel (`HairlineSplitView`); the source|PDF divider stops
   above the status bar (`ColumnsSplitView`), and a double-click on it restores the even split.
   A drag stops at the sidebar's opening width and at the even split, with the alignment
@@ -61,12 +74,22 @@ into it and deleted on 12 October.
 - **PDF**: a rebuilt document's pages replace those showing, in the same `PDFDocument`, since
   a new document flashes the pane's background for a few frames. PDFKit keeps every such
   page's objects for the document's life, so once the app has grown by 512 MB since a document
-  was last shown whole, the next one is shown whole (`PDFController.memoryAtWhole`).
+  was last shown whole, the next one is shown whole (`PDFController.memoryAtWhole`). Print
+  prints the document showing, which is whole in memory; during Live Preview it reads the
+  last build's file instead (`buildBehindLive`).
 - **Live preview**: each edit goes to the core as the text storage makes it (`texpresso_edit`);
   a thread of the session's own waits in the core (`texpresso_wait`) for the pages in view,
-  and each is drawn over PDFKit's page at once (`LiveCanvas`, an IOSurface). The whole
-  document follows 300 ms after the last key and replaces only the pages that changed. The
+  and each is drawn over PDFKit's page at once (`LiveCanvas`, an IOSurface), over the part of
+  the page in view only. The whole document follows 300 ms after the last key and replaces
+  only the pages that changed; a scroll hands a waiting live page to PDFKit sooner. The
   protocol and the engine's passes are in `docs/texpresso.md`.
+- **A file another app changed** while it has unsaved edits here is asked about in an AppKit
+  alert on the window (Save Anyway, Revert, Cancel) with no default button, which SwiftUI's
+  alert can't do: either answer loses a version, so Return typed into the source as the sheet
+  lands answers nothing. One moved or deleted is a SwiftUI alert whose default saves it
+  again. Cancel in either writes nothing and the autosave stays quiet; the status bar says Not
+  Saved, and the next save that is asked for asks again (`ProjectModel.changedFile`,
+  `goneFile`, `leaveUnsaved`).
 - **Settings**: a five-pane window (General, Editor, Compiling, PDF, Live Preview).
 - **Words**: the feature is Live Preview, and TeXpresso is named only where the program is the
   subject; the verb is Compile and a run and its result are a build.
