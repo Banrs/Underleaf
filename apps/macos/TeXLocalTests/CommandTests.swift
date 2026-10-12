@@ -22,6 +22,22 @@ struct MenuCommandTests {
         app.mainWindowIsKey = false
         #expect(!app.isEnabled(.projectSearch, on: nil))
     }
+
+    /// Format's Bold, Italic, Underline and Inline Math are LaTeX's: off in another text file, where
+    /// the commands for any text stay on, and with no file. Go to Source Position needs only a PDF.
+    @Test func theFormatCommandsAreLaTeXs() {
+        let app = AppModel()
+        let project = ProjectModel(id: "MenuCommandTests", app: app)
+        let latex = [MenuCommand.editBold, .editItalic, .editUnderline, .editMath]
+        #expect(!(latex + [.editComment, .syncInverse]).contains { app.isEnabled($0, on: project) })
+        project.openPath = "references.bib"
+        #expect(!latex.contains { app.isEnabled($0, on: project) } && app.isEnabled(.editComment, on: project))
+        project.openPath = "main.tex"
+        #expect(latex.allSatisfy { app.isEnabled($0, on: project) } && app.isEnabled(.editComment, on: project))
+        #expect(!latex.contains { app.isEnabled($0, on: nil) })
+        project.shown = .build(URL(filePath: "/dev/null"))
+        #expect(app.isEnabled(.syncInverse, on: project) && !app.isEnabled(.syncInverse, on: nil))
+    }
 }
 
 /// The running app's menu bar (HIG, The menu bar).

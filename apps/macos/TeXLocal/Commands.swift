@@ -179,15 +179,13 @@ extension AppModel {
         case .fileSave, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .viewTextBigger, .viewTextSmaller:
             project?.editsText == true
         // LaTeX's own: dim in the files the toolbar's are dim in.
-        case .editBold, .editItalic, .editUnderline, .editMath:
-            project?.editsText == true && project?.isLaTeX == true
+        case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .compileStop: project?.compiling == true
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
         case .viewZoomOut: project.map { $0.hasPDF && $0.pdf.canZoomOut } ?? false
-        case .syncInverse: project.map { $0.hasPDF } ?? false
         case .pdfSave, .filePrint: project?.buildPDF != nil
-        case .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage:
+        case .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage, .syncInverse:
             project?.hasPDF == true
         case .syncForward: project.map { $0.hasPDF && $0.isLaTeX } ?? false
         case .issueNext, .issuePrevious: project?.issues.contains { $0.file != nil } == true
@@ -272,9 +270,7 @@ extension AppModel {
         case .issuePrevious: project?.goToIssue(next: false)
         }
     }
-}
 
-extension AppModel {
     /// Live Preview runs TeXpresso, which the core found or was told where to look for.
     var canPreviewLive: Bool { tex?.texpresso != nil }
 }
@@ -384,7 +380,7 @@ struct AppCommands: Commands {
         }
         CommandMenu("Insert") {
             Group {
-                MathMenuItems(project: project, shortcut: app.shortcut(.editMath, on: project)) {
+                MathMenuItems(project: project, shortcut: MenuCommand.editMath.shortcut) {
                     app.perform(.editMath, on: project)
                 }
                 Divider()

@@ -145,6 +145,14 @@ extension View {
     func windowModals() -> some View {
         modifier(WindowModals())
     }
+
+    /// Shows an `AppAlert` while `alert` holds one.
+    func alert(_ alert: Binding<AppAlert?>) -> some View {
+        // No actions: the system adds its own OK.
+        self.alert(alert.wrappedValue?.title ?? "", item: alert) { _ in } message: { alert in
+            Text(alert.message)
+        }
+    }
 }
 
 private struct WindowModals: ViewModifier {
@@ -168,15 +176,5 @@ private struct WindowModals: ViewModifier {
             }
             .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0.id, taken: app.projects.map(\.name)) }
             .alert($app.alert)
-    }
-}
-
-extension View {
-    /// Shows an `AppAlert` while `alert` holds one.
-    func alert(_ alert: Binding<AppAlert?>) -> some View {
-        // No actions: the system adds its own OK.
-        self.alert(alert.wrappedValue?.title ?? "", item: alert) { _ in } message: { alert in
-            Text(alert.message)
-        }
     }
 }
