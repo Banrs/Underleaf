@@ -715,7 +715,13 @@ struct SourceEditorTests {
     @Test(arguments: [NSAppearance.Name.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
     func theThemesAreLegible(name: NSAppearance.Name) throws {
         let appearance = try #require(NSAppearance(named: name))
-        let background = NSColor.textBackgroundColor.resolved(in: appearance), fill = NSColor.secondarySystemFill.resolved(in: appearance)
+        // Its own reading of a colour, not the app's `resolved(in:)`, which made the colours under test.
+        func resolved(_ color: NSColor) -> NSColor {
+            var out = color
+            appearance.performAsCurrentDrawingAppearance { out = color.usingColorSpace(.sRGB) ?? color }
+            return out
+        }
+        let background = resolved(.textBackgroundColor), fill = resolved(.secondarySystemFill)
         // The fill as the window server mixes it in: 235 on white, 48 on Dark's 30.
         func under(_ component: KeyPath<NSColor, CGFloat>) -> CGFloat {
             background[keyPath: component] * (1 - fill.alphaComponent) + fill[keyPath: component] * fill.alphaComponent
@@ -731,7 +737,7 @@ struct SourceEditorTests {
             }
         }
         // Overleaf's Light commands, at 8.6:1, are its own blue.
-        if name == .aqua { #expect(SyntaxTheme.overleaf.colours.command.resolved(in: appearance) == NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)) }
+        if name == .aqua { #expect(resolved(SyntaxTheme.overleaf.colours.command) == NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)) }
     }
 
     /// A double-click selects the word, as the system's does, and goes to the PDF, quietly; a click

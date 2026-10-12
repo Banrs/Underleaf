@@ -206,11 +206,14 @@ struct ShellTests {
         let tracks = [track({ app.searchFocusToken / 2 }) { all.append($0) },
                       track({ app.searchFocusToken / 2 }, initial: false) { later.append($0) }]
         defer { tracks.forEach { $0.cancel() } }
-        for token in 1...3 {
-            try await Task.sleep(for: .milliseconds(50))
-            app.searchFocusToken = token
-        }
-        try await Task.sleep(for: .milliseconds(50))
+        // Both have read the first value before it changes: the second shows nothing of its own.
+        try await waitUntil { all == [0] }
+        try await Task.sleep(for: .milliseconds(100))
+        app.searchFocusToken = 1
+        app.searchFocusToken = 2
+        try await waitUntil { all == [0, 1] && later == [1] }
+        app.searchFocusToken = 3
+        try await Task.sleep(for: .milliseconds(100))
         #expect(all == [0, 1] && later == [1])
     }
 }
