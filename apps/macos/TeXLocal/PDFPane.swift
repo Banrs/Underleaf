@@ -113,13 +113,12 @@ struct PDFFindBar: View {
 /// Toolbar scale choices; no preset is checked between the listed scales.
 struct ScaleMenuItems: View {
     let pdf: PDFController
-    private static let presets = [50, 75, 100, 125, 150, 200]
 
     var body: some View {
         Toggle("Fit Width", isOn: choice(pdf.fit == .width) { pdf.fitWidth() })
         Toggle("Fit Page", isOn: choice(pdf.fit == .page) { pdf.fitPage() })
         Divider()
-        ForEach(Self.presets, id: \.self) { percent in
+        ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
             Toggle((Double(percent) / 100).formatted(.percent),
                    isOn: choice(pdf.fit == nil && Int((pdf.scale * 100).rounded()) == percent) {
                 pdf.setScale(CGFloat(percent) / 100)

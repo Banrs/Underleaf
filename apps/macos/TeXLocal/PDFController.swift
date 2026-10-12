@@ -373,11 +373,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// brings whole fonts, and a long document's one page a fraction of its file. So the meter is
     /// the app's own growth.
     @ObservationIgnored private var memoryAtWhole = UInt64.max
-    /// So once the app has grown by this much since, the next document is shown whole.
-    private static let memoryGrowth: UInt64 = 512 << 20
+    /// So once the app has grown by half a gigabyte since, the next document is shown whole.
     private var hasGrown: Bool {
         let now = memory()
-        return now > memoryAtWhole && now - memoryAtWhole > Self.memoryGrowth
+        return now > memoryAtWhole && now - memoryAtWhole > 512 << 20
     }
 
     /// The app's memory now; a test's own count, to grow at will.
