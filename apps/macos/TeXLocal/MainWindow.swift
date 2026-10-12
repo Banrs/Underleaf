@@ -7,9 +7,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     static let identifier = NSUserInterfaceItemIdentifier("main")
 
     private let app: AppModel
-    /// Made each time the projects show and let go when a project opens, so one
-    /// screen's alerts and sheets never wait in another's views.
-    private var home: NSHostingController<HomeRoot>?
     private(set) var workspace: WorkspaceController?
     private var restored: SavedWorkspace?
     private var watches: [Task<Void, Never>] = []
@@ -86,7 +83,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         // window took it could not yet read.
         workspace.toolbarItemsChanged()
         self.workspace = workspace
-        home = nil
         titleWatch?.cancel()
         titleWatch = track({ [project] in OpenFile(path: project.openPath, url: project.openURL) }) { [weak self, project] file in
             guard let window = self?.window else { return }
@@ -96,8 +92,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         }
     }
 
+    /// The projects' screen is made each time it shows and let go when a project opens, so one
+    /// screen's alerts and sheets never wait in another's views.
     private func showHome() {
-        guard home == nil || workspace != nil, let window else { return }
+        guard let window, !(window.contentViewController is NSHostingController<HomeRoot>) else { return }
         titleWatch?.cancel()
         workspace?.close()
         workspace = nil
@@ -109,7 +107,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         // Its SwiftUI toolbar, search field and title become the window's.
         home.sceneBridgingOptions = [.title, .toolbars]
         setContent(home)
-        self.home = home
     }
 
     /// Keeps the window's frame, which a new content view controller resets.
@@ -195,13 +192,9 @@ func track<Value: Sendable & Equatable>(_ value: @escaping @MainActor @Sendable 
                                           _ apply: @escaping @MainActor (Value) -> Void) -> Task<Void, Never> {
     Task { @MainActor in
         var last: Value?
-        var first = true
-        for await next in Observations(value) {
-            defer { first = false }
-            if let last, last == next { continue }
+        for await next in Observations(value) where next != last {
+            if last != nil || initial { apply(next) }
             last = next
-            if first, !initial { continue }
-            apply(next)
         }
     }
 }

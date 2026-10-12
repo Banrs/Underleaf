@@ -243,13 +243,12 @@ final class WorkspaceController: RestoredSplitViewController {
     private func buildArea(size: CGSize) {
         let sidebarWidth = app.sidebarVisible ? ColumnMetrics.sidebarIdeal : 0
         let inspectorWidth = app.inspectorVisible ? inspectorItem.minimumThickness : 0
-        let sourceMinimum = ColumnMetrics.sourceMinimum
-        let panes = max(size.width - sidebarWidth - inspectorWidth, sourceMinimum + ColumnMetrics.pdfMinimum)
-        let pdfWidth = min((panes * ColumnMetrics.pdfShare).rounded(), panes - sourceMinimum)
+        let panes = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
+        let pdfWidth = min((panes * ColumnMetrics.pdfShare).rounded(), panes - ColumnMetrics.sourceMinimum)
         panelHeight = max(ColumnMetrics.panelMinimum, (size.height * ColumnMetrics.panelShare).rounded())
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
-        sourceItem.minimumThickness = sourceMinimum
+        sourceItem.minimumThickness = ColumnMetrics.sourceMinimum
 
         pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project), width: pdfWidth))
         pdfItem.minimumThickness = ColumnMetrics.pdfMinimum
@@ -621,23 +620,19 @@ final class WorkspaceController: RestoredSplitViewController {
     private func performPDF(_ action: PDFAction) {
         setCollapsed(pdfItem, false) { [weak self] in
             guard let self, project.hasPDF else { return }
-            perform(action)
-        }
-    }
-
-    private func perform(_ action: PDFAction) {
-        switch action {
-        case .zoomIn: pdf.zoom(in: true)
-        case .zoomOut: pdf.zoom(in: false)
-        case .actualSize: pdf.setScale(1)
-        case .fitWidth: pdf.fitWidth()
-        case .fitPage: pdf.fitPage()
-        case .goToPage(let page): pdf.go(toPage: page)
-        case .find: showPDFFind()
-        case let .reveal(loc, word): pdf.reveal(loc, word: word)
-        case .inverseFromView:
-            if case let (page, point)? = pdf.sourcePoint() {
-                Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
+            switch action {
+            case .zoomIn: pdf.zoom(in: true)
+            case .zoomOut: pdf.zoom(in: false)
+            case .actualSize: pdf.setScale(1)
+            case .fitWidth: pdf.fitWidth()
+            case .fitPage: pdf.fitPage()
+            case .goToPage(let page): pdf.go(toPage: page)
+            case .find: showPDFFind()
+            case let .reveal(loc, word): pdf.reveal(loc, word: word)
+            case .inverseFromView:
+                if case let (page, point)? = pdf.sourcePoint() {
+                    Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
+                }
             }
         }
     }
