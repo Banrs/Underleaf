@@ -46,17 +46,12 @@ extension NSColor {
     /// plain one's unless the setting is on, so its ratio goes by the name.
     func legibleAsText(in name: NSAppearance.Name) -> NSColor {
         guard let appearance = NSAppearance(named: name) else { return self }
-        let background = NSColor.textBackground(in: appearance)
-        var color = self, fill = NSColor.secondarySystemFill
-        appearance.performAsCurrentDrawingAppearance {
-            color = usingColorSpace(.sRGB) ?? self
-            fill = fill.usingColorSpace(.sRGB) ?? fill
-        }
+        let background = NSColor.textBackgroundColor.resolved(in: appearance)
         // A translucent colour (a label's, the fill's) as it shows on the background, mixed by sRGB's
         // components as the window server does: `blended` gives its answer in the calibrated space,
         // where the fill on white comes out at 239 for the 235 on screen.
         func shown(_ color: NSColor) -> NSColor {
-            let alpha = color.alphaComponent
+            let color = color.resolved(in: appearance), alpha = color.alphaComponent
             guard alpha < 1 else { return color }
             func mixed(_ component: KeyPath<NSColor, CGFloat>) -> CGFloat {
                 background[keyPath: component] * (1 - alpha) + color[keyPath: component] * alpha
@@ -66,26 +61,20 @@ extension NSColor {
         // The current line is the fill over the background (`SourceTextView.drawBackground`), nearer
         // the text's colours than the background is: a comment at 4.8:1 on white was 4.0:1 on it.
         let ratio: CGFloat = [.aqua, .darkAqua].contains(name) ? 4.5 : 7
-        return shown(color).contrasting(with: background, by: ratio).contrasting(with: shown(fill), by: ratio)
+        return shown(self).contrasting(with: background, by: ratio).contrasting(with: shown(.secondarySystemFill), by: ratio)
     }
 
-    /// The system's text background as it is in an appearance.
-    nonisolated static func textBackground(in appearance: NSAppearance) -> NSColor {
-        var color = NSColor.white
-        appearance.performAsCurrentDrawingAppearance {
-            color = NSColor.textBackgroundColor.usingColorSpace(.sRGB) ?? color
-        }
+    /// This colour's sRGB values in an appearance.
+    nonisolated func resolved(in appearance: NSAppearance) -> NSColor {
+        var color = self
+        appearance.performAsCurrentDrawingAppearance { color = usingColorSpace(.sRGB) ?? self }
         return color
     }
 
     /// The text background, resolved for each appearance: PDFKit tints a system colour it's
     /// given with the wallpaper, as Preview's canvas, which would set it a shade apart from the editor's.
-    static let untintedTextBackground = NSColor(name: nil, dynamicProvider: textBackground(in:))
+    static let untintedTextBackground = NSColor(name: nil) { NSColor.textBackgroundColor.resolved(in: $0) }
 
     /// The under-page background likewise: the completion list's ground over the editor's.
-    static let untintedUnderPageBackground = NSColor(name: nil) { appearance in
-        var color = NSColor.underPageBackgroundColor
-        appearance.performAsCurrentDrawingAppearance { color = color.usingColorSpace(.sRGB) ?? color }
-        return color
-    }
+    static let untintedUnderPageBackground = NSColor(name: nil) { NSColor.underPageBackgroundColor.resolved(in: $0) }
 }
