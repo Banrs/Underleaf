@@ -48,11 +48,9 @@ struct StatusBar: View {
         // The window's lines are a device pixel, as its splits' dividers; this one in a row of
         // its own over the bar, the row of the line over the File Outline's header beside it.
         .padding(.top, 1 / displayScale)
-        // The editors' colour, so the bar is one surface with them and with the build panel, washed
-        // over its accessory's scroll edge (`buildArea`), which blurs what scrolls beneath: alone,
-        // AppKit's edge is a lighter strip over a dark editor (38 over 30), with no line. The wash
-        // is the hard scroll edge's own, the window's colour at 85%.
-        .background(.textSurface.opacity(0.85))
+        // The editors' colour, so the bar is one surface with them and with the build panel, as
+        // Xcode's bar is its editor's. Opaque: its accessory draws no scroll edge (`buildArea`).
+        .background(.textSurface)
         .overlay(alignment: .top) { Rectangle().fill(.separator).frame(height: 1 / displayScale) }
         .font(.subheadline)
         .monospacedDigit()

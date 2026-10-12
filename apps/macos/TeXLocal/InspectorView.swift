@@ -36,7 +36,6 @@ struct InspectorView: View {
                     Text(app.canPreviewLive ? "Experimental. Updates the preview as you type, without compiling."
                          : "Live Preview needs TeXpresso. Install it, or choose its folder in Settings.")
                 }
-                .controlSize(.mini)
                 .disabled(!app.canPreviewLive || !project.initialLoadComplete || project.texpresso.phase == .stopping)
                 if !app.canPreviewLive {
                     HStack {
@@ -55,7 +54,6 @@ struct InspectorView: View {
             Text(title)
             Text(detail)
         }
-        .controlSize(.mini)
     }
 }
 

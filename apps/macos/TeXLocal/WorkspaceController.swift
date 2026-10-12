@@ -280,13 +280,12 @@ final class WorkspaceController: RestoredSplitViewController {
         // Its own height, which the folded File Outline's header shares (`StatusBar.height`): AppKit's
         // insets pad the bar but leave the panes' scrollers and safe area at the padded height (27.2).
         statusBar.automaticallyAppliesContentInsets = false
-        // AppKit's own edge under the bar, over both panes (HIG, Scroll views: prefer the automatic
-        // style), which the bar washes in the editors' colour under its line (`StatusBar`). The PDF
-        // is PDFKit's view directly in its pane, which scrolls and rubber-bands as Preview's;
-        // SwiftUI's edge draws only over a SwiftUI scroll view, and one around PDFKit's takes its
-        // rubber-banding (27.2). `.soft` draws nothing over these panes, and glass of our own
-        // there shows the text beneath sharp, through the bar's own.
-        statusBar.preferredScrollEdgeEffectStyle = .automatic
+        // No scroll edge under the bar: it is the editors' surface under a line (`StatusBar`), as
+        // Xcode's is. `.soft` draws nothing over these panes; AppKit's automatic edge is a glass
+        // that lightens a dark editor (38 over 30, 27.2), a third grey between the editor and the
+        // build panel. SwiftUI's hard edge, which would give the line, draws only over a SwiftUI
+        // scroll view, and one around PDFKit's takes its rubber-banding.
+        statusBar.preferredScrollEdgeEffectStyle = .soft
         columnsItem.addBottomAlignedAccessoryViewController(statusBar)
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)

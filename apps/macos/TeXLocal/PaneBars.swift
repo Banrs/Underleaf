@@ -135,16 +135,7 @@ struct SearchField: NSViewRepresentable {
             cell.searchButtonCell?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         }
         handle?.field = view
-        fit(view, to: context.environment.controlSize)
         return view
-    }
-
-    /// The field's size, and its text's, as SwiftUI's `controlSize` has them: 20 pt and 11 pt
-    /// small, 24 pt and 13 pt regular (UI kit, Search Fields).
-    private func fit(_ view: NSSearchField, to controlSize: ControlSize) {
-        guard let size = NSControl.ControlSize(controlSize), view.controlSize != size else { return }
-        view.controlSize = size
-        view.font = .systemFont(ofSize: NSFont.systemFontSize(for: size))
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSearchField, context: Context) -> CGSize? {
@@ -153,7 +144,6 @@ struct SearchField: NSViewRepresentable {
 
     func updateNSView(_ view: NSSearchField, context: Context) {
         context.coordinator.field = self
-        fit(view, to: context.environment.controlSize)
         view.placeholderString = prompt
         // VoiceOver's name: the placeholder goes once there's text.
         view.setAccessibilityLabel(prompt)

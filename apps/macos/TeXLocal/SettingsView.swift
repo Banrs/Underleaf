@@ -95,19 +95,17 @@ private struct EditorSettings: View {
                     Text("Theme")
                     Text("Colors for commands, math and comments. All follow light and dark appearance.")
                 }
-                Toggle("Show Line Numbers", isOn: $lineNumbers).controlSize(.mini)
+                Toggle("Show Line Numbers", isOn: $lineNumbers)
             }
             Section("Typing") {
                 Toggle(isOn: $autoPair) {
                     Text("Close Brackets Automatically")
                     Text("Typing (, [ or { adds its partner.")
                 }
-                .controlSize(.mini)
                 Toggle(isOn: $autoComplete) {
                     Text("Suggest Completions While Typing")
                     Text("When off, press Option-Escape to see suggestions.")
                 }
-                .controlSize(.mini)
             }
         }
         .settingsPane()
@@ -133,12 +131,10 @@ private struct CompilingSettings: View {
                     Text("Compile Automatically")
                     Text("Compiles shortly after you stop typing.")
                 }
-                .controlSize(.mini)
                 Toggle(isOn: $syncAfterCompile) {
                     Text("Scroll to Cursor After Compiling")
                     Text("Scrolls the PDF to the line you are editing.")
                 }
-                .controlSize(.mini)
             }
             Section {
                 ProgramFolder(program: .tex)
