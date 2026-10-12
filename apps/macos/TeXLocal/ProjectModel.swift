@@ -175,11 +175,6 @@ final class ProjectModel {
     /// A build still running when the project closes reports nothing.
     private(set) var closed = false
 
-    /// Long enough to cover a pause between keystrokes.
-    private static let autosaveDelay = Duration.milliseconds(700)
-    /// Several saves during a typing burst need only one symbols scan.
-    private static let symbolsDelay = Duration.milliseconds(150)
-
     init(id: String, app: AppModel) {
         self.id = id
         self.app = app
@@ -342,7 +337,8 @@ final class ProjectModel {
     private func refreshSymbols(delayed: Bool = false) {
         symbolsTask?.cancel()
         symbolsTask = Task { [weak self] in
-            if delayed { try? await Task.sleep(for: Self.symbolsDelay) }
+            // Several saves during a typing burst need only one symbols scan.
+            if delayed { try? await Task.sleep(for: .milliseconds(150)) }
             guard let self, !Task.isCancelled else { return }
             if let symbols = try? await core.call("scan_symbols", ["id": id], as: Symbols.self),
                !Task.isCancelled, !closed {
@@ -459,7 +455,8 @@ final class ProjectModel {
         if let openPath { lastEdit[openPath] = edits }
         if !editor.textView.issueLines.isEmpty { editor.textView.issueLines = [:] }
         if hasPDF { pdfOutdated = true }
-        restart(&saveTask, after: Self.autosaveDelay) { [weak self] in
+        // Long enough to cover a pause between keystrokes.
+        restart(&saveTask, after: .milliseconds(700)) { [weak self] in
             guard let self, await save(reporting: false), !Task.isCancelled else { return }
             // In a task of its own: this one is cancelled by the next key, and by the build's own save.
             if autoCompile { Task { await self.compile(auto: true) } }
