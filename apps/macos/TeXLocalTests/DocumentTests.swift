@@ -254,9 +254,9 @@ struct PDFFitTests {
         controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10), word: nil)
         #expect(document.page(at: 0)?.annotations.isEmpty == true)
         controller.reveal(ForwardLoc(page: 2, h: 72, v: 300, width: 180, height: 10), word: nil)
-        #expect(controller.view.marks.count == 1)
+        #expect(controller.view.mark != nil)
         controller.show(try pages(2))
-        #expect(controller.view.marks.isEmpty)
+        #expect(controller.view.mark == nil)
     }
 
     private func pages(_ count: Int) throws -> PDFDocument {

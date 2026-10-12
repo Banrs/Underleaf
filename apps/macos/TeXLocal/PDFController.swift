@@ -406,7 +406,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let place = restorePage == nil ? shownPlace : nil
         let autoScales = view.autoScales
         let scale = view.scaleFactor
-        view.removeMarks()
+        view.removeMark()
         if view.document != nil {
             // The matches and the selection are on the pages going.
             cancelSearch()
@@ -466,7 +466,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         liveBacklog = nil
         view.removeLive()
         (finding, findText) = (false, "")
-        view.removeMarks()
+        view.removeMark()
         cancelSearch()
         view.document = nil
         (query, matches, matchIndex, limited, startFrom) = ("", [], 0, false, nil)
@@ -583,7 +583,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         guard !gone.isEmpty else { return }
         clearLiveLater()
         if view.currentSelection?.pages.contains(where: gone.contains) == true { view.clearSelection() }
-        if view.marks.contains(where: { gone.contains($0.page) }) { view.removeMarks() }
+        if let mark = view.mark, gone.contains(mark.page) { view.removeMark() }
         pageChanged()
         let kept = matches.filter { !$0.pages.contains(where: gone.contains) }
         if kept.count != matches.count {
@@ -650,7 +650,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         // A destination lands below the toolbar, a rect under it.
         view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
         if let selection = match?.selection, !finding {
-            view.removeMarks()
+            view.removeMark()
             selection.color = .findHighlightColor
             // PDFKit's bounce, which Reduce Motion leaves out.
             view.setCurrentSelection(selection, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
@@ -866,9 +866,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         liveLayers.removeAll()
     }
 
-    /// Forward search's marks, in the pages' overlays rather than on the pages: an
+    /// Forward search's mark, in its page's overlay rather than on the page: an
     /// annotation would be printed and read by VoiceOver.
-    private(set) var marks: [(page: PDFPage, rect: CGRect, view: NSView)] = []
+    private(set) var mark: (page: PDFPage, rect: CGRect, view: NSView)?
     /// The overlays PDFKit has asked for, which it keeps while their pages show.
     private let overlays = NSMapTable<PDFPage, NSView>.weakToWeakObjects()
 
@@ -885,24 +885,24 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     /// Marks `rect` on `page` for 2.2 seconds, then fades it out, as Find's indicator goes. A fade
     /// is what the HIG puts in motion's place, so Reduce Motion keeps it.
     func flash(_ rect: CGRect, on page: PDFPage) {
-        removeMarks()
+        removeMark()
         let view = MarkView(onDarkPaper: darkPaper)
-        marks.append((page, rect, view))
+        mark = (page, rect, view)
         if let overlay = overlays.object(forKey: page) { place(view, at: rect, on: page, in: overlay) }
         fading = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(2.2)) } catch { return }
             await NSAnimationContext.runAnimationGroup { _ in view.animator().alphaValue = 0 }
             guard !Task.isCancelled else { return }
-            self?.removeMarks()
+            self?.removeMark()
         }
     }
 
     /// A new search's or document's place is elsewhere: the last mark goes at once.
-    func removeMarks() {
+    func removeMark() {
         fading?.cancel()
         fading = nil
-        for mark in marks { mark.view.removeFromSuperview() }
-        marks.removeAll()
+        mark?.view.removeFromSuperview()
+        mark = nil
     }
 
     func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
@@ -926,7 +926,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     func pdfView(_ pdfView: PDFView, willDisplayOverlayView overlay: NSView, for page: PDFPage) {
-        for mark in marks where mark.page === page { place(mark.view, at: mark.rect, on: page, in: overlay) }
+        if let mark, mark.page === page { place(mark.view, at: mark.rect, on: page, in: overlay) }
     }
 
     /// An overlay spans the page's box, unrotated (PDFKit rotates the overlay itself).
