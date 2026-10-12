@@ -374,7 +374,7 @@ final class ProjectFlowTests {
         await project.compile()
         let text = project.editor.textView, issues = project.issues
         let places = issues.indices.filter { issues[$0].file != nil }
-        #expect(places.map { issues[$0].line } == [3, 5] && text.issueLines == [3: true, 5: true])
+        #expect(places.map { issues[$0].line } == [3, 5] && text.issueLines.mapValues(\.isError) == [3: true, 5: true])
         for (next, place) in [(true, 0), (true, 1), (true, 0), (false, 1)] {
             project.goToIssue(next: next)
             #expect(project.chosenIssue == places[place])
@@ -402,15 +402,15 @@ final class ProjectFlowTests {
             warnings: [item("warning", "part.tex", 2, "third"), item("warning", "part.tex", 1, "alone")], log: "")
         await project.open("part.tex")
         let text = project.editor.textView
-        #expect(project.openPath == "part.tex" && text.issueLines == [1: false, 2: true])
-        #expect(text.issueMessages == [1: "alone", 2: "first"] && text.issueOthers == [2: ["second", "third"]])
+        #expect(project.openPath == "part.tex")
+        #expect(text.issueLines == [1: .init(isError: false, message: "alone"), 2: .init(isError: true, message: "first", others: ["second", "third"])])
         // Another app's change to the file is an edit of it: the build's lines were the old text's,
         // and stay gone when the file is next shown.
         try "c\nd\n".write(to: folder.appending(path: "part.tex"), atomically: false, encoding: .utf8)
         try await waitUntil(timeout: .seconds(5)) { text.string == "c\nd\n" }
         #expect(text.issueLines.isEmpty)
         await project.open(main)
-        #expect(text.issueLines == [1: true])
+        #expect(text.issueLines.mapValues(\.isError) == [1: true])
         await project.open("part.tex")
         #expect(text.string == "c\nd\n" && text.issueLines.isEmpty)
         await app.close()

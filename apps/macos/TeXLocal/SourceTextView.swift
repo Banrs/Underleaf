@@ -249,20 +249,19 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var numbersEnd: CGFloat = 0
     /// The fragments laid out for the viewport: where each starts, its frame.
     private var fragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
-    /// The lines the last build has issues on, true for an error: each is marked in the gutter
-    /// and banded, with what its issue says at its end.
-    var issueLines: [Int: Bool] = [:] {
+    /// What the last build says of a line: whether its first issue is an error, that issue's
+    /// words, for the line's end and the Issues rotor, and what its other issues say, which are
+    /// counted after them.
+    struct LineIssue: Equatable {
+        var isError: Bool
+        var message: String
+        var others: [String] = []
+    }
+
+    /// The lines the last build has issues on: each is marked in the gutter and banded, with what
+    /// its issue says at its end.
+    var issueLines: [Int: LineIssue] = [:] {
         didSet { if issueLines != oldValue { issuesChanged() } }
-    }
-    /// What the issue on each of those lines says, for the line's end and the Issues rotor; a line
-    /// without is named by its kind alone.
-    var issueMessages: [Int: String] = [:] {
-        didSet { if issueMessages != oldValue { issuesChanged() } }
-    }
-    /// What a line's other issues say, where it has more than the one in `issueMessages`: they are
-    /// counted after its message.
-    var issueOthers: [Int: [String]] = [:] {
-        didSet { if issueOthers != oldValue { issuesChanged() } }
     }
     /// A click on a marked line's gutter or on its message: the build panel shows the issue.
     var issueClicked: (Int) -> Void = { _ in }
@@ -597,7 +596,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         issueRows.removeAll()
         var changed = false
         func place(_ number: Int, on fragment: NSTextLayoutFragment, extra: Bool = false) {
-            guard let isError = issueLines[number] else { return }
+            guard let reported = issueLines[number] else { return }
             let former = formerRows.firstIndex { $0.line == number }.map { formerRows.remove(at: $0) }
             if let former, !anew, former.fragment === fragment, former.frame == fragment.layoutFragmentFrame,
                former.width == bounds.width, former.origin == textContainerOrigin {
@@ -607,7 +606,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             // The document's last empty line is the last of the lines of the paragraph before it.
             var lines = fragment.textLineFragments[...]
             if extra { lines = lines.suffix(1) } else if extraLine(of: fragment) != nil { lines = lines.dropLast() }
-            let placed = row(number, isError, on: lines, of: fragment, in: former?.message?.view)
+            let placed = row(number, reported, on: lines, of: fragment, in: former?.message?.view)
             if let former {
                 setNeedsDisplay(former.band.union(former.mark))
                 if former.message?.view !== placed?.message?.view { former.message?.view.removeFromSuperview() }
@@ -634,11 +633,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// A line's row on its paragraph's lines. The message is on the last wrapped line, where a
     /// paragraph has room and which is the line TeX reports, set right to the text's trailing
     /// edge on the band, in the view the line's message had if it had one.
-    private func row(_ number: Int, _ isError: Bool, on lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment,
+    private func row(_ number: Int, _ reported: LineIssue, on lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment,
                      in view: IssueMessageView?) -> IssueRow? {
         guard let first = lines.first, let last = lines.last else { return nil }
         let band = row(lines, of: fragment)
-        var issue = IssueRow(line: number, isError: isError, band: band, shape: NSBezierPath(roundedRect: band, xRadius: 4, yRadius: 4),
+        var issue = IssueRow(line: number, isError: reported.isError, band: band, shape: NSBezierPath(roundedRect: band, xRadius: 4, yRadius: 4),
                              mark: NSRect(x: 0, y: band.minY, width: numbersEnd + 4, height: first.typographicBounds.height),
                              fragment: fragment, frame: fragment.layoutFragmentFrame, width: bounds.width, origin: textContainerOrigin)
         // The document's last empty line has no line break, and no paragraph of its own.
@@ -649,11 +648,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         // The fragment's lines in the view: its frame has the line fragment's padding in it.
         let left = textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = textContainerOrigin.y + fragment.layoutFragmentFrame.minY
-        guard let message = issueMessages[number] else { return issue }
         // All that the line's issues say.
-        let said = [message] + (issueOthers[number] ?? [])
+        let said = [reported.message] + reported.others
         let trailing = bounds.width - 8 - (textContainer?.lineFragmentPadding ?? 0)
-        let label = issueLabels[number] ?? IssueLabel(message, others: said.count - 1, font: issueFont)
+        let label = issueLabels[number] ?? IssueLabel(reported.message, others: reported.others.count, font: issueFont)
         issueLabels[number] = label
         let fitted = label.line(in: trailing - (left + last.typographicBounds.maxX) - issueGap)
         if let fitted {
@@ -1375,9 +1373,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// issue is named by its kind, its line and what it says, which the filter then searches.
     func rotor(_ rotor: NSAccessibilityCustomRotor,
                resultFor search: NSAccessibilityCustomRotor.SearchParameters) -> NSAccessibilityCustomRotor.ItemResult? {
-        var items = rotor.type == .heading ? headings() : issueLines.sorted { $0.key < $1.key }.map { line, error in
-            let place = error ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)")
-            return (line, issueMessages[line].map { String(localized: "\(place): \($0)") } ?? place)
+        var items = rotor.type == .heading ? headings() : issueLines.sorted { $0.key < $1.key }.map { line, issue in
+            let place = issue.isError ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)")
+            return (line, String(localized: "\(place): \(issue.message)"))
         }
         if !search.filterString.isEmpty { items = items.filter { $0.title.localizedCaseInsensitiveContains(search.filterString) } }
         let current = search.currentItem.map { document.line(at: min($0.targetRange.location, text.length)) }

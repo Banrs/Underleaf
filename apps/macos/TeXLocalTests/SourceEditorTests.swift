@@ -794,7 +794,7 @@ struct SourceEditorTests {
         let window = inWindow()
         open("one\ntwo\nthree", caret: 0)
         text.layoutSubtreeIfNeeded()
-        text.issueLines = [2: true]
+        text.issueLines = [2: .init(isError: true, message: "Missing $ inserted")]
         var asked: [Int] = []
         text.issueClicked = { asked.append($0) }
         func click(line: Int, shift: Bool = false) throws {
@@ -892,9 +892,8 @@ struct SourceEditorTests {
         let window = inWindow()
         defer { withExtendedLifetime(window) {} }
         open("one\nUse \\foo here, and \\foo there.\n\n", caret: 0)
-        text.issueLines = [1: false, 2: true, 4: true]
-        text.issueMessages = [1: "Marked", 2: "Undefined control sequence: \\foo", 4: "Emergency stop"]
-        text.issueOthers = [4: ["Missing \\begin{document}"]]
+        text.issueLines = [1: .init(isError: false, message: "Marked"), 2: .init(isError: true, message: "Undefined control sequence: \\foo"),
+                           4: .init(isError: true, message: "Emergency stop", others: ["Missing \\begin{document}"])]
         try layOut()
         let padding = try #require(text.textContainer).lineFragmentPadding
         let digit = ("0" as NSString).size(withAttributes: [.font: try #require(text.font)]).width
@@ -951,9 +950,7 @@ struct SourceEditorTests {
         #expect(abs(wrapped.rect.minY - (rows[1].band.minY + rows[0].band.height)) < 0.01)
         // No room: the band and the gutter's symbol are left, and the help tag's words.
         open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
-        text.issueLines = [2: true]
-        text.issueMessages = [2: "Undefined control sequence: \\foo"]
-        text.issueOthers = [:]
+        text.issueLines = [2: .init(isError: true, message: "Undefined control sequence: \\foo")]
         try layOut(width: 440)
         rows = text.issueRows
         #expect(rows.count == 1 && rows[0].message == nil && rows[0].tip == "Undefined control sequence: \\foo" && rows[0].tokens.count == 2)
@@ -971,8 +968,7 @@ struct SourceEditorTests {
     @Test func aClickOnAnIssuesMessageShowsTheIssue() throws {
         let window = inWindow()
         open("one\ntwo\nthree", caret: 5)
-        text.issueLines = [2: true]
-        text.issueMessages = [2: "Missing $ inserted"]
+        text.issueLines = [2: .init(isError: true, message: "Missing $ inserted")]
         try layOut()
         var asked: [Int] = []
         text.issueClicked = { asked.append($0) }
@@ -1003,12 +999,11 @@ struct SourceEditorTests {
     }
 
     /// VoiceOver's rotors step through the file's headings and the lines with build issues, either
-    /// way; an issue is named with what it says, where that's known, and found by it.
+    /// way; an issue is named with what it says, and found by it.
     @Test func theRotorsStepThroughHeadingsAndIssues() throws {
         open("a\n\\section{One}\nb\n\\section{Two}\nc", caret: 0)
         text.headings = { [(2, "One"), (4, "Two")] }
-        text.issueLines = [3: true, 5: false]
-        text.issueMessages = [3: "Undefined control sequence"]
+        text.issueLines = [3: .init(isError: true, message: "Undefined control sequence"), 5: .init(isError: false, message: "Marked")]
         let rotors = text.accessibilityCustomRotors()
         let headings = try #require(rotors.first { $0.type == .heading }), issues = try #require(rotors.first { $0.type == .custom })
         #expect(issues.label == "Issues")
@@ -1027,7 +1022,7 @@ struct SourceEditorTests {
         #expect(step(headings, from: two, next: false)?.customLabel == "One")
         let error = try #require(step(issues, from: nil))
         #expect(error.customLabel == "Error on line 3: Undefined control sequence")
-        #expect(step(issues, from: error)?.customLabel == "Warning on line 5")
+        #expect(step(issues, from: error)?.customLabel == "Warning on line 5: Marked")
         #expect(step(issues, from: nil, filter: "undefined")?.targetRange == error.targetRange && step(issues, from: nil, filter: "missing") == nil)
     }
 

@@ -91,19 +91,16 @@ final class ProjectModel {
     /// The open file's lines with issues, for the editor to mark: each line's first, and what its
     /// others say.
     private func markIssues() {
-        var lines: [Int: Bool] = [:], messages: [Int: String] = [:], others: [Int: [String]] = [:]
+        var lines: [Int: SourceTextView.LineIssue] = [:]
         if let openPath, lastEdit[openPath, default: 0] <= resultEdits {
-            // Errors last: a line with both is an error's.
+            // Errors last: a line with both is an error's, and the issue it had is the first of its others.
             for item in issues.reversed() where item.file == openPath {
                 guard let line = item.line else { continue }
-                if let message = messages[line] { others[line, default: []].insert(message, at: 0) }
-                lines[line] = item.isError
-                messages[line] = item.message
+                let others = lines[line].map { [$0.message] + $0.others } ?? []
+                lines[line] = .init(isError: item.isError, message: item.message, others: others)
             }
         }
         editor.textView.issueLines = lines
-        editor.textView.issueMessages = messages
-        editor.textView.issueOthers = others
     }
 
     /// The open file on disk, for the window's document icon and the preview of a file the editor doesn't edit.
