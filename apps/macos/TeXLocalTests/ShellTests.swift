@@ -22,6 +22,9 @@ struct ShellTests {
         window.contentViewController = workspace
         // As the app's window has them (`MainWindowController`).
         window.contentMinSize = ColumnMetrics.contentMinimum
+        // Neither loaded nor saved: this host shares the app's saved toolbar, and Compile's form
+        // goes by which tools the toolbar holds.
+        workspace.toolbar.toolbar.autosavesConfiguration = false
         window.toolbar = workspace.toolbar.toolbar
         window.orderFront(nil)
         try await resize(window, to: 1300)
@@ -55,7 +58,6 @@ struct ShellTests {
         // The least a drag of the window's edge gets to: the toolbar's, which the panes' own
         // (with their divider, at most a point) fit in, so they don't hold the window wider.
         let least = ColumnMetrics.contentMinimum.width
-        #expect(least == ColumnMetrics.toolbarMinimum)
         #expect(least >= ColumnMetrics.sourceMinimum + 1 + ColumnMetrics.pdfMinimum + ColumnMetrics.toolbarInset)
         try await resize(window, to: least)
         #expect(window.contentView?.frame.width == least)
@@ -101,29 +103,27 @@ struct ShellTests {
         }
     }
 
-    /// With the PDF hidden the window is no narrower: its toolbar holds it there, and the
-    /// workspace leaves the window's minimum as it found it.
+    /// With the PDF hidden the window is no narrower: its toolbar holds it there.
     @Test func theSourceAloneStopsAtTheToolbarsMinimum() async throws {
         let (window, workspace) = try await workspace(showPDF: false)
         defer { workspace.close(); window.close() }
         try await resize(window, to: ColumnMetrics.contentMinimum.width)
-        #expect(window.contentMinSize == ColumnMetrics.contentMinimum)
         #expect(workspace.toolbar.compactCompile)
         #expect(try item(.zoom, in: workspace).isHidden)
     }
 
     /// Compile's room is reckoned from the default tools' widths. In a toolbar customised to
     /// others it keeps its word, where the default one has it as its symbol, and AppKit's overflow
-    /// menu acts alone; with the default tools back, it is its symbol again.
+    /// menu acts alone, until the window is too narrow for the word beside the tools that never
+    /// leave. With the default tools back, it is its symbol again.
     @Test func aCustomisedToolbarKeepsCompilesWord() async throws {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
         let toolbar = workspace.toolbar.toolbar
-        // Not saved: this host may share the app's saved toolbar.
-        toolbar.autosavesConfiguration = false
         let defaults = workspace.toolbar.toolbarDefaultItemIdentifiers(toolbar)
         #expect(workspace.toolbar.holdsDefaultItems)
-        try await resize(window, to: ColumnMetrics.contentMinimum.width)
+        // Too narrow for the default tools and Compile's word, wide enough for the word alone.
+        try await resize(window, to: 700)
         #expect(workspace.toolbar.compactCompile)
 
         for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {
@@ -132,6 +132,12 @@ struct ShellTests {
         // The toolbar tells the workspace a turn later.
         try await Task.sleep(for: .milliseconds(100))
         #expect(!workspace.toolbar.holdsDefaultItems && !workspace.toolbar.compactCompile)
+        // At the window's least AppKit would take Compile itself to its menu, whatever the tools.
+        try await resize(window, to: ColumnMetrics.contentMinimum.width)
+        #expect(workspace.toolbar.compactCompile)
+        #expect(toolbar.visibleItems?.contains { $0.itemIdentifier == .compile } == true)
+        try await resize(window, to: 700)
+        #expect(!workspace.toolbar.compactCompile)
 
         toolbar.itemIdentifiers = defaults
         try await Task.sleep(for: .milliseconds(100))

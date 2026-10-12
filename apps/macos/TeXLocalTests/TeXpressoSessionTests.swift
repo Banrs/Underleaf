@@ -386,7 +386,7 @@ struct TeXpressoSessionTests {
         core.feed.send(document(1, "/tmp/gone-\(UUID().uuidString).pdf"))
         core.feed.send(document(2, whole))
         try await waitUntil { documents.count == 1 }
-        #expect(documents[0].changed == [0, 1, 2] && documents[0].document.sourceBytes > 0)
+        #expect(documents[0].changed == [0, 1, 2])
         core.feed.send(document(3, whole))
         try await waitUntil { documents.count == 2 }
         #expect(documents[1].changed == [1])

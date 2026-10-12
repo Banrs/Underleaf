@@ -230,7 +230,7 @@ final class ProjectModel {
         }
         texpresso.shownPages = { [weak self] in self?.pdf.view.document?.pageCount ?? 0 }
         pdf.onVisiblePages = { [weak self] in self?.texpresso.view($0) }
-        pdf.buildPDF = { [weak self] in self?.buildPDF }
+        pdf.buildBehindLive = { [weak self] in self.flatMap { $0.livePDF ? $0.buildPDF : nil } }
         texpresso.onEnded = { [weak self] restartable in
             guard let self else { return }
             // TeXpresso went by itself: it starts again where it was, and the live pages stay meanwhile.
@@ -631,11 +631,12 @@ final class ProjectModel {
         return true
     }
 
-    /// Restores the automatic build canceled with the pending autosave.
+    /// Restores the automatic build canceled with the pending autosave. Not `reporting`, for a
+    /// save nobody asked for, a failure stays in the status bar and a question put off stays put off.
     @discardableResult
-    func saveEdits() async -> Bool {
+    func saveEdits(reporting: Bool = true) async -> Bool {
         let edited = dirty
-        guard await flush() else { return false }
+        guard await flush(reporting: reporting) else { return false }
         if edited, autoCompile { Task { await compile(auto: true) } }
         return true
     }
@@ -1079,7 +1080,7 @@ final class ProjectModel {
         let live = livePDF, args = syncArguments(["id": id, "file": path, "line": line, "column": column])
         syncTask?.cancel()
         let task = Task {
-            guard await saveEdits(), !Task.isCancelled, !closed, openPath == path else { return }
+            guard await saveEdits(reporting: !quietly), !Task.isCancelled, !closed, openPath == path else { return }
             // Only on the pages it was found in: a rebuild may have moved it.
             let shown = pdf.shownVersion
             do {
@@ -1252,13 +1253,15 @@ final class ProjectModel {
 
     /// The new main file's PDF, if it has one, replaces the old one's; a build of the old one
     /// stops (the core reports it stopped) and a build of the new one follows, as after any
-    /// setting that changes the build, when Compile Automatically is on.
+    /// setting that changes the build, when Compile Automatically is on or a build was under way:
+    /// with it off that was one someone asked for.
     private func mainFileChanged() async {
         analyze()
+        let building = compiling
         stopCompile()
         if texpresso.active { restartTeXpresso() }
         await showPDFOnDisk()
-        if !closed, autoCompile { await compile(auto: true) }
+        if !closed, autoCompile || building { await compile(auto: autoCompile) }
     }
 
     /// Files dropped on the tree: the project's own move into `dir`, as in Finder,

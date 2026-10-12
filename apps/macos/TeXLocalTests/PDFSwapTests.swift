@@ -156,38 +156,29 @@ struct PDFSwapTests {
         try await waitUntil(timeout: .seconds(5)) { !view.hasLive(at: 0) }
     }
 
-    /// Once the document showing has taken pages from half a gigabyte of files since it was shown
-    /// whole, the next build's, or the next live document that is all there, is shown whole: only
-    /// a new document frees what the replaced pages hold. A document shown whole counts nothing,
-    /// one whose pages aren't taken neither, and a live page counts as its own file.
-    @Test func aDocumentIsShownWholeOnceItHasTakenTooMuch() throws {
-        func sized(_ pages: [String], megabytes: Int) throws -> PDFDocument {
-            let document = try document(pages)
-            document.sourceBytes = megabytes << 20
-            return document
-        }
+    /// Once the app has grown by half a gigabyte since a document was last shown whole, the next
+    /// build's, or the next live document that is all there, is shown whole: only a new document
+    /// frees what the replaced pages hold.
+    @Test func aDocumentIsShownWholeOnceTheAppHasGrown() throws {
         let controller = PDFController(), view = controller.view
         view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(try sized(["a", "b"], megabytes: 600))
+        var memory: UInt64 = 1 << 30
+        controller.memory = { memory }
+        controller.show(try document(["a", "b"]))
         let first = try #require(view.document)
-        controller.showLive(try sized(["a2", "b"], megabytes: 300), changed: [0], complete: true)
-        controller.showLive(try sized(["a2", "b"], megabytes: 300), changed: [], complete: true)
-        controller.showLive(try sized(["a3", "b"], megabytes: 212), changed: [0], complete: true)
-        #expect(view.document === first && text(view) == ["a3", "b"])
-        // Out of view, so PDFKit's document takes it at once.
-        let page = try #require(try document(["b2"]).page(at: 0))
-        page.sourceBytes = 1 << 20
-        controller.showLive(page, at: 1)
-        #expect(view.document === first && text(view) == ["a3", "b2"])
+        controller.showLive(try document(["a2", "b"]), changed: [0], complete: true)
+        #expect(view.document === first && text(view) == ["a2", "b"])
+        memory += 513 << 20
         // TeX stopped short of the end: the pages past there aren't in its document.
-        controller.showLive(try sized(["a4"], megabytes: 1), changed: [0], complete: false)
-        #expect(view.document === first && text(view) == ["a4", "b2"])
-        let whole = try sized(["a5", "b5"], megabytes: 600)
+        controller.showLive(try document(["a3"]), changed: [0], complete: false)
+        #expect(view.document === first && text(view) == ["a3", "b"])
+        let whole = try document(["a4", "b4"])
         controller.showLive(whole, changed: [0], complete: true)
-        #expect(view.document === whole && text(view) == ["a5", "b5"])
+        #expect(view.document === whole && text(view) == ["a4", "b4"])
         // Counted from there on.
-        controller.showLive(try sized(["a6", "b5"], megabytes: 513), changed: [0], complete: true)
-        #expect(view.document === whole && text(view) == ["a6", "b5"])
+        controller.showLive(try document(["a5", "b4"]), changed: [0], complete: true)
+        #expect(view.document === whole && text(view) == ["a5", "b4"])
+        memory += 513 << 20
         let build = try document(["c"])
         controller.show(build)
         #expect(view.document === build)

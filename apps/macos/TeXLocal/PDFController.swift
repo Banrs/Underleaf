@@ -8,7 +8,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// Read whole: the next build rewrites the file in place.
     @concurrent nonisolated static func loadDocument(_ url: URL) async -> sending PDFDocument? {
         guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
-        document.sourceBytes = data.count
         for index in 0..<document.pageCount { document.page(at: index)?.hideLinkBorders() }
         return document
     }
@@ -169,18 +168,22 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         view.go(to: page)
     }
 
-    /// The last build's PDF on disk, as the project has it for Save PDF and Share.
-    @ObservationIgnored var buildPDF: () -> URL? = { nil }
+    /// The last build's PDF on disk while the pane shows Live Preview's document in its place;
+    /// nil while the document showing is the build's own.
+    @ObservationIgnored var buildBehindLive: () -> URL? = { nil }
 
-    /// The build's PDF, read from its file, not the document showing: during Live Preview that
-    /// is TeXpresso's, XeTeX's whatever the project's engine, with the pages past an error left
-    /// from before. So on white paper and whether or not the pane shows, scaled down to the
-    /// sheet where its pages are larger (A4 on US Letter). The operation keeps the document (27.2).
+    /// The build's PDF: the document showing, which is whole in memory, or during Live Preview
+    /// the build's file, since the one showing is then TeXpresso's (XeTeX's whatever the
+    /// project's engine, with the pages past an error left from before). Scaled down to the sheet
+    /// where its pages are larger (A4 on US Letter). The operation keeps the document (27.2).
     func print(title: String) {
-        guard let url = buildPDF() else { return }
         Task {
-            guard let operation = await Self.loadDocument(url)?
-                .printOperation(for: .shared, scalingMode: .pageScaleDownToFit, autoRotate: true) else { return }
+            let document = if let url = buildBehindLive() { await Self.loadDocument(url) } else { view.document }
+            // The build's file can be half-written while the next build runs.
+            guard let operation = document?.printOperation(for: .shared, scalingMode: .pageScaleDownToFit, autoRotate: true) else {
+                NSSound.beep()
+                return
+            }
             operation.jobTitle = title
             if let window = view.window ?? NSApp.mainWindow {
                 operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
@@ -372,19 +375,36 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// document already showing.
     @ObservationIgnored private(set) var shownVersion = 0
 
-    /// The size of the files whose pages the document showing has taken since it was shown
-    /// whole (`sourceBytes`). PDFKit keeps the objects of every page a document takes from
-    /// another, and the file they were read from, for that document's life (27.2: some 0.12 MB
-    /// a page of a build, megabytes for a live page with its fonts): taking the page out again
-    /// frees nothing, and only a new document does.
-    @ObservationIgnored private var taken = 0
-    /// So past this much, the next document is shown whole.
-    private static let mostTaken = 512 << 20
+    /// The app's memory when a document was last shown whole. PDFKit keeps the objects of every
+    /// page a document takes from another for that document's life (27.2: some 0.12 MB a page
+    /// of a build, megabytes for a live page with its fonts), and only a new document frees them.
+    /// What they hold is not the size of their files, in either direction: a small live page
+    /// brings whole fonts, and a long document's one page a fraction of its file. So the meter is
+    /// the app's own growth.
+    @ObservationIgnored private var memoryAtWhole = UInt64.max
+    /// So once the app has grown by this much since, the next document is shown whole.
+    private static let memoryGrowth: UInt64 = 512 << 20
+    private var hasGrown: Bool {
+        let now = memory()
+        return now > memoryAtWhole && now - memoryAtWhole > Self.memoryGrowth
+    }
+
+    /// The app's memory now; a test's own count, to grow at will.
+    @ObservationIgnored var memory: () -> UInt64 = { PDFController.footprint }
+
+    /// As Activity Monitor counts it; none where it can't be read.
+    private static var footprint: UInt64 {
+        var usage = rusage_info_current()
+        let read = withUnsafeMutablePointer(to: &usage) {
+            $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_CURRENT, $0) }
+        }
+        return read == 0 ? usage.ri_phys_footprint : 0
+    }
 
     /// A rebuilt PDF at the same place and zoom. Its pages replace those showing, in the same
     /// document: a new document shows only PDFKit's background until its pages draw, a few
     /// frames later (27.2), and each build would flash the pane. One does once in a long while,
-    /// for what the replaced pages hold (`taken`).
+    /// for the memory the replaced pages hold (`memoryAtWhole`).
     func show(_ document: PDFDocument) {
         shownVersion += 1
         liveWaiting.removeAll()
@@ -401,13 +421,12 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
             view.clearSelection()
             view.highlightedSelections = nil
         }
-        if let shown = view.document, taken <= Self.mostTaken {
+        if let shown = view.document, !hasGrown {
             shown.replacePages(with: document)
-            taken += document.sourceBytes
         } else {
             view.removeLive()
             view.document = document
-            taken = 0
+            memoryAtWhole = memory()
         }
         watchScrollView()
         // A document resets the limits (27.2). Setting them turns fitting off, so before the fit below.
@@ -495,14 +514,14 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     private func settleLive() {
         guard let document = view.document, !liveWaiting.isEmpty else { return }
         var gone: Set<PDFPage> = []
-        for (index, page) in liveWaiting {
+        // Not a page a whole document is still bringing (`takeLive`), which would go in twice.
+        for (index, page) in liveWaiting where liveBacklog?.pages.contains(index) != true {
+            liveWaiting[index] = nil
             guard let old = document.page(ifAt: index) else { continue }
             document.insert(page, at: index)
             document.removePage(at: index + 1)
-            taken += page.sourceBytes
             gone.insert(old)
         }
-        liveWaiting.removeAll()
         replaced(gone)
     }
 
@@ -520,8 +539,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// long document doesn't stop the typing. Not `complete`, TeX stopped short of the end, and
     /// the pages past where it stopped stay as they were.
     func showLive(_ document: PDFDocument, changed: IndexSet?, complete: Bool) {
-        // Whole too once the pages taken hold too much (`taken`), if it is all there.
-        guard let shown = view.document, var pages = changed, !(complete && taken > Self.mostTaken) else {
+        // Whole too once the pages taken hold too much (`memoryAtWhole`), if it is all there.
+        guard let shown = view.document, var pages = changed, !(complete && hasGrown) else {
             show(document)
             return
         }
@@ -529,7 +548,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         if let liveBacklog { pages.formUnion(liveBacklog.pages) }
         if shown.pageCount < document.pageCount { pages.insert(integersIn: shown.pageCount..<document.pageCount) }
         pages.formIntersection(IndexSet(integersIn: 0..<document.pageCount))
-        if !pages.isEmpty { taken += document.sourceBytes }
         liveBacklog = (document, pages, complete)
         takeLive()
     }
@@ -1135,22 +1153,6 @@ extension PDFPage {
             selection(for: NSRange(location: range.location + i, length: 1)).map { $0.bounds(for: self).maxX > point.x } ?? false
         }
         return SyncTeXWord(text: text, offset: offset ?? 0, context: context, contextOffset: range.location)
-    }
-}
-
-/// The size of the file a document, or a page alone, was read from. It goes with the object to
-/// the controller, which counts what the document showing has taken (`PDFController.taken`):
-/// PDFKit has no word of it, and a page outlives the document it was read in.
-nonisolated protocol SourceSized: NSObject {}
-extension PDFDocument: SourceSized {}
-extension PDFPage: SourceSized {}
-
-private nonisolated(unsafe) var sourceBytesKey = 0
-
-nonisolated extension SourceSized {
-    var sourceBytes: Int {
-        get { objc_getAssociatedObject(self, &sourceBytesKey) as? Int ?? 0 }
-        set { objc_setAssociatedObject(self, &sourceBytesKey, newValue, .OBJC_ASSOCIATION_RETAIN) }
     }
 }
 

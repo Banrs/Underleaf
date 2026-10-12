@@ -28,9 +28,9 @@ struct PDFPane: View {
     private var emptyState: some View {
         if !project.texAvailable {
             ContentUnavailableView {
-                Label("TeX Isn’t Installed", systemImage: "richtext.page")
+                Label("MacTeX Isn’t Installed", systemImage: "richtext.page")
             } description: {
-                Text("Install MacTeX to compile. TeXLocal finds it once it’s installed.")
+                Text("Install it to compile; TeXLocal finds it afterwards.")
             } actions: {
                 GetMacTeXButton().buttonStyle(.borderedProminent)
             }

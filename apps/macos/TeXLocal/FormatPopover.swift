@@ -81,9 +81,9 @@ struct FormatPanel: View {
         let layout = Layout(headings)
         VStack(spacing: 0) {
             HStack {
-                toggle(.editBold, symbol: "bold", on: styles.bold != nil)
-                toggle(.editItalic, symbol: "italic", on: styles.italic != nil)
-                toggle(.editUnderline, symbol: "underline", on: styles.underline != nil)
+                toggle(.editBold, symbol: "bold", on: styles.bold != nil, help: "Make text bold")
+                toggle(.editItalic, symbol: "italic", on: styles.italic != nil, help: "Italicize text")
+                toggle(.editUnderline, symbol: "underline", on: styles.underline != nil, help: "Underline text")
             }
             .padding(.vertical, 8)
             Divider()
@@ -125,7 +125,7 @@ struct FormatPanel: View {
         }
     }
 
-    private func toggle(_ command: MenuCommand, symbol: String, on: Bool) -> some View {
+    private func toggle(_ command: MenuCommand, symbol: String, on: Bool, help: LocalizedStringKey) -> some View {
         Toggle(command.title, systemImage: symbol, isOn: Binding(get: { on }, set: { _ in
             app.perform(command, on: project)
         }))
@@ -134,7 +134,8 @@ struct FormatPanel: View {
         .labelStyle(.iconOnly)
         .controlSize(.large)
         .imageScale(.large)
-        .help(command.title)
+        // What it does, as the toolbar's own buttons for these say (HIG, Offering help).
+        .help(help)
     }
 
     private func row(_ level: HeadingLevel, marker: String?, layout: Layout) -> some View {

@@ -26,8 +26,8 @@ struct FilesList: View {
                 await project.search()
                 // The list changes without a word: VoiceOver hears the count, as it does the PDF's find count.
                 guard !Task.isCancelled, let hits = project.searchHits, project.searchFailure == nil else { return }
-                var spoken = hits.isEmpty ? AttributedString(localized: "No results")
-                    : AttributedString(localized: "^[\(hits.count) result](inflect: true)")
+                var spoken = hits.isEmpty ? AttributedString(localized: "Not found")
+                    : AttributedString(localized: "^[\(hits.count) match](inflect: true)")
                 spoken.accessibilitySpeechAnnouncementPriority = .low
                 AccessibilityNotification.Announcement(spoken).post()
             }
@@ -406,9 +406,10 @@ struct OutlineList: View {
                     HeadingRow(item: node.item).equatable().tag(node.id)
                         // The selected row (the source's heading, or the one just chosen) is
                         // shown again, as when the source has been scrolled away; a click on
-                        // any other is the selection's.
+                        // any other is the selection's, and a double-click's second the list's
+                        // primary action's, which goes into the source.
                         .simultaneousGesture(TapGesture().onEnded {
-                            guard node.id == current || node.id == chosen else { return }
+                            guard NSApp.currentEvent?.clickCount ?? 1 < 2, node.id == current || node.id == chosen else { return }
                             chosen = node.id == current ? nil : node.id
                             project.reveal(node.item)
                         })

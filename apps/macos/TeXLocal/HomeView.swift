@@ -126,7 +126,7 @@ struct HomeView: View {
                     TemplateCard(template: template)
                 }
                 .buttonStyle(TemplateButtonStyle())
-                .help("New project from the \(template.title) template")
+                .help("Start a project from the \(template.title) template")
             }
         }
     }
@@ -177,7 +177,7 @@ struct HomeView: View {
             Button("Dismiss", systemImage: "xmark") { dismissedTeXTip = true }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
-                .help("Dismiss")
+                .help("Hide this message")
         }
         .padding()
     }

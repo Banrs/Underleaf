@@ -183,8 +183,9 @@ final class WorkspaceController: RestoredSplitViewController {
     /// than Zoom and Compile, or once the source's tools have outgrown their pane and take the
     /// PDF's room. It takes the word back once no pane is moving, as a pane's animation can
     /// widen the room on its way to less. The room is reckoned from the default tools' widths
-    /// (`ColumnMetrics`): in a toolbar customised to others Compile keeps its word, and AppKit's
-    /// overflow menu alone takes what has no room.
+    /// (`ColumnMetrics`). In a toolbar customised to others their widths aren't known and AppKit's
+    /// overflow menu alone takes what has no room, so there Compile keeps its word until the tools
+    /// that never leave have no room for it: AppKit would take Compile itself next (27.2).
     private func fitToolbar() {
         func edges(_ item: NSSplitViewItem) -> NSRect {
             let view = item.viewController.view
@@ -201,7 +202,9 @@ final class WorkspaceController: RestoredSplitViewController {
             // A PDF sliding in is already at its width.
             room = min(room, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
         }
-        let compact = toolbar.holdsDefaultItems && room < ColumnMetrics.compile
+        let fixed = ColumnMetrics.toolbarMinimum - ColumnMetrics.windowControls - ColumnMetrics.toggles
+        let compact = toolbar.holdsDefaultItems ? room < ColumnMetrics.compile
+            : trailing - leading < fixed + ColumnMetrics.compileWord
         if toolbar.compactCompile != compact, compact || paneAnimations == 0 { toolbar.compactCompile = compact }
     }
 
@@ -794,6 +797,8 @@ enum ColumnMetrics {
     /// The PDF's: Zoom, and Compile as its word.
     static let zoom: CGFloat = 156
     static let compile: CGFloat = 90
+    /// What Compile's word takes over its symbol: 74 pt against 36.
+    static let compileWord: CGFloat = 38
     /// The source|PDF separator's own gap, where no divider places it: before Compile while the
     /// PDF is hidden.
     static let separator: CGFloat = 5

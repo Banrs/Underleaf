@@ -540,7 +540,6 @@ final class TeXpressoSession {
         }
         // After a document that wasn't read, any page may differ from what shows.
         if whole, changed != nil { changed = IndexSet(integersIn: 0..<document.pageCount) }
-        document.sourceBytes = data.count
         return LiveDocument(url: url, document: document, serial: pdf.serial, changed: changed, complete: pdf.run != "stopped" && pdf.run != "partial")
     }
 
@@ -548,7 +547,6 @@ final class TeXpressoSession {
     private nonisolated static func read(_ page: TeXpressoEvents.Page) -> LivePage? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: page.path), options: .alwaysMapped),
               let read = PDFDocument(data: data)?.page(at: 0) else { return nil }
-        read.sourceBytes = data.count
         return LivePage(index: page.page, serial: page.serial, page: read)
     }
 
