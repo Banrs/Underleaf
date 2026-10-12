@@ -7,8 +7,8 @@ This is the `web/styles.css` specification for the browser client. The
 native Mac app uses the system's own controls, semantic colours and control
 sizes (SwiftUI, with AppKit for the window, toolbar, splits, text and PDF). Its
 literal metrics are measurements, not tokens: Xcode 27's for the status bar, the
-build panel's bar, the editor and the completion list, and AppKit's own layout
-for the toolbar's and the columns' minimums. `HANDOFF.md` records its design
+build panel's bar and the editor, a system menu's for the completion list, and
+AppKit's own layout for the toolbar's and the columns' minimums. `HANDOFF.md` records its design
 decisions.
 
 ## Typography — SF Pro
@@ -181,14 +181,13 @@ preprocessor directive does, and having them stand out is worth more here than
 category purity.
 
 **The Mac editor's syntax colours are a choice**, Settings › Editor › Colour Theme,
-defined once as `SyntaxTheme` in `SourceTextView.swift` and shared with the completion
-badges. Overleaf is the default; each theme gives the six colours below in Light and Dark.
+defined once as `SyntaxTheme` in `SourceTextView.swift`. Overleaf is the default; each
+theme gives the five colours below in Light and Dark.
 Text, braces and brackets are plain in all of them, and none draws bold or italic.
 
 | Our token | Overleaf | TeXstudio | System |
 | --- | --- | --- | --- |
 | command (`\x`, `\begin`, `\end`, escapes, `\\`, maths' `^ _ &`) | `#0000FF` / `#8BE9FD` | `#800000` / `#60CDF2` | pink |
-| keyword (BibTeX entry type, badge only) | `#0000FF` / `#FF79C6` | `#0095FF` / `#A960F2` | brown |
 | argument (environment, package, label, reference, citation, `\importmodule`'s second argument; numbers in text) | `#318495` / `#FFB86C` | `#008000` / `#60F260` | teal |
 | maths (delimiters, letters and numbers in maths, verbatim, `\importmodule`'s first argument) | `#036A07` / `#F1FA8C` | `#509600` / `#85F218` | purple |
 | comment | `#4C886B` / `#6272A4` | `#808080` / `#667299` | secondary label |
