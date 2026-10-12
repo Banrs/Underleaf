@@ -163,8 +163,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     /// One-based, as the page shows it; clamped to the document.
     func go(toPage number: Int) {
-        guard let document = view.document, document.pageCount > 0,
-              let page = document.page(at: min(max(number, 1), document.pageCount) - 1) else { return }
+        guard let document = view.document, let page = document.page(ifAt: min(max(number, 1), document.pageCount) - 1) else { return }
         view.go(to: page)
     }
 
