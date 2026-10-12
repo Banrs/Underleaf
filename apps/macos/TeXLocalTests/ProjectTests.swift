@@ -339,6 +339,19 @@ final class ProjectFlowTests {
         #expect(app.project == nil && app.alert != nil && !app.isOpening)
     }
 
+    /// An item that can't be copied in and a rename the core refuses are each an alert that names
+    /// it: nothing is left opening, and the recents keep what they had.
+    @Test(.timeLimit(.minutes(1)))
+    func aRefusalOnHomeIsAnAlertThatNamesIt() async throws {
+        let missing = files.temporaryDirectory.appending(path: "\(UUID().uuidString).zip")
+        await app.importProject(from: missing)
+        #expect(app.alert?.title == "Couldn’t Open “\(missing.lastPathComponent)”" && app.project == nil && !app.isOpening)
+        let recents = app.recentProjects
+        let gone = ProjectInfo(id: "No Such Project \(UUID().uuidString.prefix(8))", name: "Gone", mtime: 0, mainFile: "main.tex")
+        await app.rename(gone, to: "Elsewhere")
+        #expect(app.alert?.title == "Couldn’t Rename “Gone”" && app.recentProjects == recents)
+    }
+
     /// A file of a project already in the library opens that project on the file, where it had
     /// been copied into a second project.
     @Test(.timeLimit(.minutes(1)))
