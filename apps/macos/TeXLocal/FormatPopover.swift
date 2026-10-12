@@ -82,7 +82,7 @@ struct FormatPanel: View {
         VStack(spacing: 0) {
             HStack {
                 toggle(.editBold, symbol: "bold", on: styles.bold != nil, help: "Make text bold")
-                toggle(.editItalic, symbol: "italic", on: styles.italic != nil, help: "Italicize text")
+                toggle(.editItalic, symbol: "italic", on: styles.italic != nil, help: "Make text italic")
                 toggle(.editUnderline, symbol: "underline", on: styles.underline != nil, help: "Underline text")
             }
             .padding(.vertical, 8)

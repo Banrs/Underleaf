@@ -65,7 +65,8 @@ into it and deleted on 12 October.
   Saved, and that button saves.
 - **Build panel**: below the columns, so the status bar rides up as it opens, with AppKit's
   collapse animation. Its controls are a bar at its foot, as Xcode's console bar: a pop-up for
-  Issues, Build Log and Live Preview Log, then Warnings or Copy Log, then a filter. The bar
+  Issues, Build Log and Live Preview Log (dim until Live Preview has run), then Warnings (dim
+  with none) or Copy Log, then a filter. The bar
   is a SwiftUI safe-area bar under a line of its own: there its filter draws as
   the filled capsule a toolbar's search field is, and as a row of a plain stack it draws as a
   form's outlined field (27.2). The filter is the regular 24 pt among the bar's small
@@ -100,6 +101,15 @@ into it and deleted on 12 October.
   again. Cancel in either writes nothing and the autosave stays quiet; the status bar says Not
   Saved, and the next save that is asked for asks again (`ProjectModel.changedFile`,
   `goneFile`, `leaveUnsaved`).
+- **Unavailable things are dim where they would otherwise jump** (Daniel: "sometimes greying
+  is more useful than hiding"): the File Outline's header stays at the sidebar's foot, folded
+  and dim, on a file that isn't LaTeX (it hides only for search results, which take the whole
+  sidebar); the panel's Warnings toggle with no warnings; Live Preview Log in the panel's
+  pop-up before Live Preview has run; Format › Bold, Italic, Underline and Inline Math in the
+  files the toolbar's are dim in. Zoom still leaves the toolbar with the PDF column, and the
+  status bar's Page with no PDF.
+- **Spelling** in the interface is British (Colours, Page Colour) except LaTeX's own terms
+  (Math), by Daniel's rule: American only where it is customary in research writing.
 - **Settings**: a five-pane window (General, Editor, Compiling, PDF, Live Preview).
 - **Words**: the feature is Live Preview, and TeXpresso is named only where the program is the
   subject; the verb is Compile and a run and its result are a build.

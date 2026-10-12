@@ -137,8 +137,10 @@ struct BuildPanelBar: View {
         @Bindable var panel = project.panel
         HStack {
             Picker("Show", selection: $panel.tab) {
-                // TeXpresso's only once it has been started: most never use it.
-                ForEach(PanelTab.allCases.filter { $0 != .texpresso || project.texpresso.used }, id: \.self) { Text($0.rawValue) }
+                // TeXpresso's is dim until it has been started in this window, when it has a log.
+                ForEach(PanelTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue).selectionDisabled(tab == .texpresso && !project.texpresso.used)
+                }
             }
             .pickerStyle(.menu)
             // Borderless, as Xcode's console's output pop-up.
@@ -150,13 +152,13 @@ struct BuildPanelBar: View {
             // The view's button before its filter, as Xcode's console bar's toggles before its
             // filter: no icon on its own at the bar's end.
             if panel.tab == .issues {
-                if project.warningCount > 0 {
-                    Toggle(isOn: $panel.showsWarnings) {
-                        Label("Warnings", systemImage: "exclamationmark.triangle")
-                    }
-                    .toggleStyle(.button)
-                    .help(panel.showsWarnings ? "Hide warnings" : "Show warnings")
+                // Dim with no warnings to hide, and in its place all the same.
+                Toggle(isOn: $panel.showsWarnings) {
+                    Label("Warnings", systemImage: "exclamationmark.triangle")
                 }
+                .toggleStyle(.button)
+                .help(panel.showsWarnings ? "Hide warnings" : "Show warnings")
+                .disabled(project.warningCount == 0)
                 filter($panel.issueFilter)
             } else {
                 let text = panel.tab == .texpresso ? project.texpresso.log : project.result?.log ?? ""

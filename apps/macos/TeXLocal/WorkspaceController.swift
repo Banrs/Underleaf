@@ -355,7 +355,7 @@ final class WorkspaceController: RestoredSplitViewController {
         header.sizingOptions = [.intrinsicContentSize]
         header.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(header)
-        outlineBarHeight = bar.heightAnchor.constraint(equalToConstant: outlineBarHeight(folded: app.outlineCollapsed))
+        outlineBarHeight = bar.heightAnchor.constraint(equalToConstant: outlineBarHeight(folded: OutlineState(app, project) != .open))
         NSLayoutConstraint.activate([
             outlineBarHeight,
             header.topAnchor.constraint(equalTo: bar.topAnchor),
@@ -658,13 +658,14 @@ extension AppModel {
     }
 }
 
-/// The File Outline: open in its pane, folded to its header, or hidden with its
-/// header while the sidebar shows search results or the project isn't LaTeX.
+/// The File Outline: open in its pane, folded to its header, or hidden with its header while
+/// the sidebar shows search results. A file with no outline, one that isn't LaTeX, folds it to
+/// its header, dim (`OutlineHeader`): the sidebar keeps its foot from one file to the next.
 private nonisolated enum OutlineState {
     case open, folded, hidden
 
     @MainActor init(_ app: AppModel, _ project: ProjectModel) {
-        self = project.search.isSearching || !project.isLaTeX ? .hidden : app.outlineCollapsed ? .folded : .open
+        self = project.search.isSearching ? .hidden : app.outlineCollapsed || !project.isLaTeX ? .folded : .open
     }
 }
 

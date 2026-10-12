@@ -148,7 +148,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .bold:
             item = button(id, MenuCommand.editBold.title, "bold", #selector(bold), help: "Make text bold")
         case .italic:
-            item = button(id, MenuCommand.editItalic.title, "italic", #selector(italic), help: "Italicize text")
+            item = button(id, MenuCommand.editItalic.title, "italic", #selector(italic), help: "Make text italic")
         case .underline:
             item = button(id, MenuCommand.editUnderline.title, "underline", #selector(underline), help: "Underline text")
         case .pdfSeparator:

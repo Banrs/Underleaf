@@ -176,9 +176,11 @@ extension AppModel {
         case .projectNew, .projectOpen: libraryProblem == nil
         // On Home, the search of the projects.
         case .projectSearch: project != nil || (self.project == nil && mainWindowIsKey)
-        case .fileSave, .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine,
-             .viewTextBigger, .viewTextSmaller:
+        case .fileSave, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .viewTextBigger, .viewTextSmaller:
             project?.editsText == true
+        // LaTeX's own: dim in the files the toolbar's are dim in.
+        case .editBold, .editItalic, .editUnderline, .editMath:
+            project?.editsText == true && project?.isLaTeX == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .compileStop: project?.compiling == true
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false

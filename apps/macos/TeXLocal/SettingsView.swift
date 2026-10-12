@@ -93,7 +93,7 @@ private struct EditorSettings: View {
                     ForEach(SyntaxTheme.allCases) { Text($0.title).tag($0) }
                 } label: {
                     Text("Theme")
-                    Text("Colors for commands, math and comments. All follow light and dark appearance.")
+                    Text("Colours for commands, math and comments. All follow light and dark appearance.")
                 }
                 Toggle("Show Line Numbers", isOn: $lineNumbers)
             }
@@ -156,7 +156,7 @@ private struct PDFSettings: View {
             Picker(selection: $paper) {
                 ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
             } label: {
-                Text("Page Color")
+                Text("Page Colour")
                 Text("Dark inverts the PDF’s pages for reading at night. Printing and saving are unaffected.")
             }
         }
