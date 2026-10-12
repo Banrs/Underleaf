@@ -57,8 +57,6 @@ nonisolated struct TeXpressoEdit: Decodable, Sendable {
 nonisolated struct TeXpressoFile: Sendable {
     let path: String
     let text: String
-
-    var arguments: [String: String] { ["path": path, "text": text] }
 }
 
 /// A live document read from its file. Made on the session's thread and handed to the main
@@ -258,7 +256,7 @@ final class TeXpressoSession {
             do {
                 // A patched build writes the document for the PDF pane rather than opening a window;
                 // TeXpresso's own window, which draws with MuPDF, is the fallback Settings offers.
-                var arguments: [String: Any] = ["id": session.id, "files": start.files.map(\.arguments), "pdf": session.inPane]
+                var arguments: [String: Any] = ["id": session.id, "files": start.files.map { ["path": $0.path, "text": $0.text] }, "pdf": session.inPane]
                 if let view = session.viewed { arguments["view"] = [view.lowerBound, view.upperBound] }
                 if let caret = start.caret { arguments["caret"] = ["path": caret.path, "offset": caret.offset] }
                 if replacing {

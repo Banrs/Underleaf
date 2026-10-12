@@ -299,18 +299,18 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// anchor (step 0), or the next or previous one from it, as a text view's find goes on from its selection.
     @ObservationIgnored private var startFrom: (anchor: Position, step: Int)?
 
-    /// A place in reading order, which is a tuple's own: the page, then down it, then across.
+    /// A place in reading order, as a tuple compares: the page, then down it, then across.
     private typealias Position = (page: Int, down: CGFloat, across: CGFloat)
 
     private func position(_ selection: PDFSelection) -> Position? {
         guard let document = view.document, let page = selection.pages.first else { return nil }
         let box = selection.bounds(for: page)
-        return (document.index(for: page), -box.maxY, box.minX)
+        return (page: document.index(for: page), down: -box.maxY, across: box.minX)
     }
 
     /// The selection, or the top of what shows.
     private var anchor: Position? {
-        view.currentSelection.flatMap(position) ?? shownPlace.map { ($0.index, -$0.point.y, $0.point.x) }
+        view.currentSelection.flatMap(position) ?? shownPlace.map { (page: $0.index, down: -$0.point.y, across: $0.point.x) }
     }
 
     private func index(from anchor: Position, step: Int) -> Int {
@@ -441,7 +441,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// The top of what shows, as a page's index and a point on it.
     private var shownPlace: (index: Int, point: CGPoint)? {
         guard let destination = view.shownDestination, let page = destination.page, let document = view.document else { return nil }
-        return (document.index(for: page), destination.point)
+        return (index: document.index(for: page), point: destination.point)
     }
 
     private func go(to place: (index: Int, point: CGPoint)) {
