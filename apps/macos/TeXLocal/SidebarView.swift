@@ -56,7 +56,7 @@ struct FilesList: View {
             .overlay {
                 if project.initialLoadComplete, project.tree.isEmpty {
                     ContentUnavailableView {
-                        Label("No Files", systemImage: "doc")
+                        Label("No Files", systemImage: "text.document")
                     } description: {
                         Text("Create a file, or drag files here from the Finder.")
                     } actions: {
@@ -384,7 +384,8 @@ struct OutlineList: View {
         let outline = project.outline
         let current = Outline.current(outline, file: project.openPath, line: line)
         // The current heading is the selection; choosing one, by click or arrow
-        // key, scrolls the source to it and leaves the keyboard where it was.
+        // key, scrolls the source to it and leaves the keyboard where it was. A list sends
+        // nothing for a click on the row already selected, so the rows tap for those two.
         let selection = Binding<Int?>(get: { chosen ?? current }, set: { id in
             guard let id, id != current, outline.indices.contains(id) else { return }
             chosen = id
@@ -396,6 +397,14 @@ struct OutlineList: View {
                     disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
                 }) { node in
                     HeadingRow(item: node.item).equatable().tag(node.id)
+                        // The selected row (the source's heading, or the one just chosen) is
+                        // shown again, as when the source has been scrolled away; a click on
+                        // any other is the selection's.
+                        .simultaneousGesture(TapGesture().onEnded {
+                            guard node.id == current || node.id == chosen else { return }
+                            chosen = node.id == current ? nil : node.id
+                            project.reveal(node.item)
+                        })
                 }
             }
             .listStyle(.sidebar)
@@ -428,8 +437,8 @@ struct OutlineList: View {
     }
 }
 
-/// The File Outline's header: the system's collapsible sidebar section (so it folds,
-/// shows its chevron on hover and gives VoiceOver its state), with no rows, at the
+/// The File Outline's header: the system's collapsible sidebar section (so it folds and
+/// shows its chevron on hover; its button gives VoiceOver the state), with no rows, at the
 /// files' foot so it stays put over the outline. Its whole row folds and unfolds.
 /// Folded, it lines up with the status bar; open, the first heading follows at the
 /// Files section's own spacing.
@@ -453,6 +462,9 @@ struct OutlineHeader: View {
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                // The button covers the system's disclosure, so it tells VoiceOver the state.
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
             }
         }
         .listStyle(.sidebar)
@@ -465,7 +477,6 @@ struct OutlineHeader: View {
         .offset(y: Self.top - sidebarListRoom)
         .frame(height: Self.openHeight, alignment: .top)
         .clipped()
-        .accessibilityLabel("File Outline")
     }
 }
 
