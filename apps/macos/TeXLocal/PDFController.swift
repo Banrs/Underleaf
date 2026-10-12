@@ -871,10 +871,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         pageOverlayViewProvider = self
     }
 
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        pageOverlayViewProvider = self
-    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     /// The showing mark's wait and fade.
     private var fading: Task<Void, Never>?
@@ -979,9 +976,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         return page(for: top, nearest: true).map { PDFDestination(page: $0, at: convert(top, to: $0)) }
     }
 
-    /// PDFKit follows the mouse until the button comes up. A double-click dragged on, which
-    /// selects by words, isn't one to go to the source: the keyboard would leave the selection
-    /// just made. A slip of the hand of a few points is still a click.
+    /// A double-click whose pointer has moved by the time PDFKit's own handling returns was
+    /// dragged on, to select by words, and isn't one to go to the source by: the keyboard would
+    /// leave the selection just made. A slip of the hand of a few points is still a click.
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
         guard event.clickCount == 2, let up = window?.mouseLocationOutsideOfEventStream else { return }
