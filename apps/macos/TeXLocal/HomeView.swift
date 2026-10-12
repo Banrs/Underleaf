@@ -116,19 +116,19 @@ struct HomeView: View {
                     moveToTrash: { Task { await app.delete(project) } })
     }
 
+    /// Wrapping, so no card is cut off in a narrow window; 4 pt apart, so the hover shapes of
+    /// buttons this size don't touch (HIG, Buttons).
     private var templates: some View {
-        ScrollView(.horizontal) {
-            HStack(alignment: .top, spacing: 0) {
-                ForEach(ProjectTemplate.all) { template in
-                    Button { app.newProject(template.id) } label: {
-                        TemplateCard(template: template)
-                    }
-                    .buttonStyle(TemplateButtonStyle())
-                    .help("Start a project from this template")
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: TemplateCard.width, maximum: TemplateCard.width), spacing: 4, alignment: .top)],
+                  alignment: .leading, spacing: 4) {
+            ForEach(ProjectTemplate.all) { template in
+                Button { app.newProject(template.id) } label: {
+                    TemplateCard(template: template)
                 }
+                .buttonStyle(TemplateButtonStyle())
+                .help("New project from the \(template.title) template")
             }
         }
-        .scrollIndicators(.never)
     }
 
     /// In the projects' section, not over the list, so the templates stay in view.
@@ -168,7 +168,7 @@ struct HomeView: View {
     private var texMissing: some View {
         HStack(alignment: .firstTextBaseline) {
             Label(
-                "TeX isn’t installed. Install MacTeX to compile. TeXLocal finds it once it’s installed.",
+                "MacTeX isn’t installed. Install it to compile; TeXLocal finds it afterwards.",
                 systemImage: "exclamationmark.triangle.fill"
             )
             .symbolRenderingMode(.multicolor)
@@ -177,6 +177,7 @@ struct HomeView: View {
             Button("Dismiss", systemImage: "xmark") { dismissedTeXTip = true }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
+                .help("Dismiss")
         }
         .padding()
     }
@@ -192,32 +193,13 @@ private struct ProjectRow: View {
     let commit: () -> Void
 
     var body: some View {
-        HStack {
-            label
-            if working {
-                Spacer()
-                ProgressView().controlSize(.small).accessibilityLabel("Opening")
+        ProjectLabel(detail: Text("\(Text(project.mainFile)) · \(Text(.currentDate, format: .reference(to: project.modified)))"),
+                     progress: working ? "Opening" : nil) {
+            if rename.id == project.id {
+                RenameField(text: Bindable(rename).name, ended: ended, commit: commit) { rename.cancel() }
+            } else {
+                Text(project.name).font(.headline)
             }
-        }
-    }
-
-    private var label: some View {
-        Label {
-            VStack(alignment: .leading, spacing: 2) {
-                if rename.id == project.id {
-                    RenameField(text: Bindable(rename).name, ended: ended, commit: commit) { rename.cancel() }
-                } else {
-                    Text(project.name).font(.headline)
-                }
-                Text("\(Text(project.mainFile)) · \(Text(.currentDate, format: .reference(to: project.modified)))")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-        } icon: {
-            // Grey, as the subtitle: the hierarchical style would tint it the accent.
-            Image(systemName: "text.document")
-                .font(.title2)
-                .foregroundStyle(Color.secondary)
         }
     }
 }
@@ -227,17 +209,34 @@ private struct CopyingRow: View {
     let name: String
 
     var body: some View {
+        ProjectLabel(detail: Text("Copying…"), progress: "Copying") { Text(name).font(.headline) }
+    }
+}
+
+/// What both rows share: the document's icon, a name over a detail line, and a spinner
+/// with the accessibility name `progress` at the trailing edge while there is one.
+private struct ProjectLabel<Name: View>: View {
+    let detail: Text
+    let progress: String?
+    @ViewBuilder let name: Name
+
+    var body: some View {
         HStack {
             Label {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(name).font(.headline)
-                    Text("Copying…").font(.subheadline).foregroundStyle(.secondary)
+                    name
+                    detail.font(.subheadline).foregroundStyle(.secondary)
                 }
             } icon: {
-                Image(systemName: "text.document").font(.title2).foregroundStyle(Color.secondary)
+                // Grey, as the detail: the hierarchical style would tint it the accent.
+                Image(systemName: "text.document")
+                    .font(.title2)
+                    .foregroundStyle(Color.secondary)
             }
-            Spacer()
-            ProgressView().controlSize(.small).accessibilityLabel("Copying")
+            if let progress {
+                Spacer()
+                ProgressView().controlSize(.small).accessibilityLabel(progress)
+            }
         }
     }
 }
@@ -270,12 +269,13 @@ struct ProjectTemplate: Identifiable {
 /// An image button (HIG, Buttons): no border at rest, 10 pt from the content to the
 /// clickable edge, and a fill under the pointer that deepens while pressed.
 private struct TemplateButtonStyle: ButtonStyle {
+    static let edge: CGFloat = 10
     @State private var hovered = false
 
     func makeBody(configuration: Configuration) -> some View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         configuration.label
-            .padding(10)
+            .padding(Self.edge)
             .background(.fill.opacity(configuration.isPressed ? 1 : hovered ? 0.5 : 0), in: shape)
             .contentShape(shape)
             .contentShape(.focusEffect, shape)
@@ -288,6 +288,8 @@ private struct TemplateCard: View {
     let template: ProjectTemplate
     /// A US Letter page, 120 pt wide; its corner is drawn to look like paper, not to the kit.
     private static let page = CGSize(width: 120, height: 120 * 11 / 8.5)
+    /// With the button's edge on both sides.
+    static let width = page.width + 2 * TemplateButtonStyle.edge
     private static let corner: CGFloat = 6
     @Environment(\.colorScheme) private var colorScheme
 
