@@ -122,8 +122,7 @@ struct HeadingStylesTests {
 struct FindTests {
     @Test func theMatchCountLabel() {
         #expect(FindMatches(index: 3, total: 12).label(for: "loop") == "3 of 12")
-        #expect(FindMatches(index: 0, total: 12).label(for: "loop") == "12 matches")
-        #expect(FindMatches(index: 0, total: 1).label(for: "loop") == "1 match")
+        #expect(FindMatches(index: 1, total: 1).label(for: "loop") == "1 of 1")
         #expect(FindMatches(index: 2, total: 1000, limited: true).label(for: "a") == "2 of 1,000+")
         #expect(FindMatches(index: 2290, total: 2290).label(for: "a") == "2,290 of 2,290")
         #expect(FindMatches().label(for: "loop") == "Not found")

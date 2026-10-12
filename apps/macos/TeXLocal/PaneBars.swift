@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Match index starts at 1 (0 for no selected match); `limited` means more exist.
-struct FindMatches: Equatable {
+/// The PDF find bar's count: the chosen match, from 1, of all of them; `limited` means more exist.
+struct FindMatches {
     var index = 0
     var total = 0
     var limited = false
@@ -10,9 +10,7 @@ struct FindMatches: Equatable {
         if query.isEmpty { return "" }
         if total == 0 { return String(localized: "Not found") }
         let count = "\(total.formatted())\(limited ? "+" : "")"
-        if index > 0 { return String(localized: "\(index) of \(count)") }
-        if limited { return String(localized: "\(count) matches") }
-        return String(AttributedString(localized: "^[\(total) match](inflect: true)").characters)
+        return String(localized: "\(index) of \(count)")
     }
 }
 
