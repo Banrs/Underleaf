@@ -93,13 +93,13 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func open(path: String, text: String, focus: Bool) {
         if let current = self.path { kept[current] = (textView.string, undo, textView.selectedRange(), textView.shownTop) }
         // By UTF-16, as the kept ranges count: Swift's `==` also holds for a file rewritten in
-        // another Unicode normal form, whose undo stack would then replace the wrong ranges.
+        // another Unicode normal form, whose undo stack would then replace the wrong ranges, and
+        // whose selection could end past its text.
         let prior = kept[path].flatMap { ($0.text as NSString).isEqual(to: text) ? $0 : nil }
         self.path = path
         textView.load(text)
         undo = prior?.undo ?? UndoManager()
-        let selection = prior?.selection ?? NSRange(location: 0, length: 0)
-        textView.setSelectedRange(NSMaxRange(selection) <= (text as NSString).length ? selection : NSRange(location: 0, length: 0))
+        textView.setSelectedRange(prior?.selection ?? NSRange(location: 0, length: 0))
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
         scrollView.reflectScrolledClipView(scrollView.contentView)
         if let top = prior?.top { textView.scroll(toShownTop: top) }
