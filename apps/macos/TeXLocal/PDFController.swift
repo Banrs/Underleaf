@@ -245,15 +245,20 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let query = PDFFind.normalize(value)
         // A rebuild can start this query before the field's typing delay ends.
         guard search?.document !== document || search?.query != query else { return }
-        // Cancelling posts its end at once, unheard as `search` is cleared first.
-        let superseded = search?.document
-        search = nil
-        superseded?.cancelFindString()
+        cancelSearch()
         guard !query.isEmpty else { return found(query, [], keepingPlace: keepingPlace) }
         document.delegate = self
         search = (document, query, keepingPlace, [])
         // As Safari's and Mail's Find: "Godel" finds "Gödel", as typed without the accent.
         document.beginFindString(query, withOptions: [.caseInsensitive, .diacriticInsensitive])
+    }
+
+    /// The search under way, if any, is over. Cancelling posts its end at once, unheard as
+    /// `search` is cleared first.
+    private func cancelSearch() {
+        let document = search?.document
+        search = nil
+        document?.cancelFindString()
     }
 
     // PDFKit delivers document-find delegate callbacks on the main thread.
@@ -390,12 +395,9 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let autoScales = view.autoScales
         let scale = view.scaleFactor
         view.removeMarks()
-        if let shown = view.document {
+        if view.document != nil {
             // The matches and the selection are on the pages going.
-            if search?.document === shown {
-                search = nil
-                shown.cancelFindString()
-            }
+            cancelSearch()
             view.clearSelection()
             view.highlightedSelections = nil
         }
@@ -455,10 +457,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         view.removeLive()
         (finding, findText) = (false, "")
         view.removeMarks()
-        if let document = search?.document {
-            search = nil
-            document.cancelFindString()
-        }
+        cancelSearch()
         view.document = nil
         (query, matches, matchIndex, limited) = ("", [], 0, false)
         (page, pageCount) = (0, 0)
@@ -589,10 +588,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         }
         guard finding else { return }
         // A search under way has read some of the pages that went.
-        if let document = search?.document {
-            search = nil
-            document.cancelFindString()
-        }
+        cancelSearch()
         find(findText, keepingPlace: true)
     }
 
@@ -609,7 +605,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// The pages have moved or changed size under the live layers: PDFKit's own show at once.
     private func dropLive() {
         liveSettling?.cancel()
-        liveClearing?.cancel()
         settleLive()
         liveClearing?.cancel()
         view.removeLive()
@@ -907,7 +902,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         marks.removeAll()
     }
 
-
     func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
         let overlay = PageOverlay()
         overlay.dark = darkPaper
@@ -1000,8 +994,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     override func centerSelectionInVisibleArea(_ sender: Any?) {
         guard let selection = currentSelection, let page = selection.pages.first else { return }
         let box = selection.bounds(for: page)
-        let shown = bounds.height - safeAreaInsets.top - safeAreaInsets.bottom
-        go(to: PDFDestination(page: page, at: CGPoint(x: box.minX, y: box.midY + shown / 2 / scaleFactor)))
+        go(to: PDFDestination(page: page, at: CGPoint(x: box.minX, y: box.midY + shownHeight / 2 / scaleFactor)))
     }
 
     /// Jump to Selection only with one; PDFKit's own items as PDFKit has them. Its
@@ -1188,19 +1181,14 @@ extension PDFDocument {
             if index < old { removePage(at: index + 1) }
         }
         while pageCount > pages.count { removePage(at: pageCount - 1) }
-        for page in pages { adoptLinks(of: page, from: other) }
-    }
-
-    /// A page that came from `other`: its links within that document lead to the pages here.
-    func adoptLinks(of page: PDFPage, from other: PDFDocument) {
         func here(_ destination: PDFDestination?) -> PDFDestination? {
             guard let destination, let target = destination.page, target.document === other,
-                  let page = self.page(at: other.index(for: target)) else { return nil }
+                  let page = page(ifAt: other.index(for: target)) else { return nil }
             let local = PDFDestination(page: page, at: destination.point)
             local.zoom = destination.zoom
             return local
         }
-        for link in page.annotations where link.type == "Link" {
+        for link in pages.flatMap(\.annotations) where link.type == "Link" {
             if let destination = here(link.destination) { link.destination = destination }
             if let goTo = link.action as? PDFActionGoTo, let destination = here(goTo.destination) {
                 link.action = PDFActionGoTo(destination: destination)
