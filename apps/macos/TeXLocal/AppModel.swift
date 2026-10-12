@@ -205,10 +205,8 @@ final class AppModel {
         // Settings' engine for new projects; the core's own is pdfLaTeX. The project stands if this fails,
         // and opens under the alert that says so.
         if let engine = UserDefaults.standard.string(forKey: DefaultsKey.newProjectEngine), engine != "pdflatex" {
-            do {
-                _ = try await core.call("set_settings", ["id": info.id, "patch": ["engine": engine]], as: ProjectSettings.self)
-            } catch {
-                alert = AppAlert("Couldn’t Set the Engine for “\(info.name)”", error)
+            _ = await alerting("Couldn’t Set the Engine for “\(info.name)”") {
+                try await core.call("set_settings", ["id": info.id, "patch": ["engine": engine]], as: ProjectSettings.self)
             }
         }
         await refresh()
@@ -241,13 +239,11 @@ final class AppModel {
             importing.remove(url)
             stopOpening(name)
         }
-        do {
-            let info = try await core.call("import_project", ["src": url.path], as: ProjectInfo.self)
-            await refresh()
-            if open { await self.open(info.id) }
-        } catch {
-            alert = AppAlert("Couldn’t Open “\(name)”", error)
-        }
+        guard let info = await alerting("Couldn’t Open “\(name)”", {
+            try await core.call("import_project", ["src": url.path], as: ProjectInfo.self)
+        }) else { return }
+        await refresh()
+        if open { await self.open(info.id) }
     }
 
     /// A project's folder in the library, or a file in one, opens that project, on the file. A
@@ -277,14 +273,11 @@ final class AppModel {
     /// The project as renamed, or nil once an alert has said why not. Its id is its folder's
     /// name, so the recents follow it.
     private func renameProject(_ id: String, shown: String, to name: String) async -> ProjectInfo? {
-        do {
+        await alerting("Couldn’t Rename “\(shown)”") {
             let renamed = try await core.call("rename_project", ["id": id, "name": name], as: ProjectInfo.self)
             recentProjects = recentProjects.map { $0 == id ? renamed.id : $0 }
             ProjectModel.moveSidebarState(from: id, to: renamed.id)
             return renamed
-        } catch {
-            alert = AppAlert("Couldn’t Rename “\(shown)”", error)
-            return nil
         }
     }
 
@@ -341,8 +334,13 @@ final class AppModel {
 
     /// The project's folder, or nil once an alert titled `title` has said why it can't be had.
     private func folder(of project: ProjectInfo, orAlert title: String) async -> URL? {
+        await alerting(title) { URL(fileURLWithPath: try await core.call("project_root", ["id": project.id], as: String.self)) }
+    }
+
+    /// `work`'s answer, or nil once an alert titled `title` has said why there is none.
+    private func alerting<T>(_ title: String, _ work: () async throws -> T) async -> T? {
         do {
-            return URL(fileURLWithPath: try await core.call("project_root", ["id": project.id], as: String.self))
+            return try await work()
         } catch {
             alert = AppAlert(title, error)
             return nil
