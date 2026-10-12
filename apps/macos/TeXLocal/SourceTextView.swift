@@ -901,25 +901,27 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         completionList.close()
     }
 
-    /// Under the typed text's start while its line shows, or closed. Without a
-    /// window it holds its items unseen, as the tests use it.
+    /// Under the typed text's start while its line shows, or closed: a view of its scroll view,
+    /// over the text. Without a window it holds its items unseen, as the tests use it.
     private func showCompletions(reload: Bool) {
         guard let offered else { return }
-        var start = NSRect.zero, shown = NSRect.zero, host: NSWindow?
+        var start = NSRect.zero, shown = NSRect.zero, host: NSScrollView?
         if let window, let scroll = enclosingScrollView {
-            host = window
-            start = firstRect(forCharacterRange: NSRange(location: offered.start, length: 0), actualRange: nil)
-            // Not under the status bar.
+            host = scroll
+            start = scroll.convert(window.convertFromScreen(
+                firstRect(forCharacterRange: NSRange(location: offered.start, length: 0), actualRange: nil)), from: nil)
+            // Not under the toolbar or the status bar.
             let insets = scroll.contentInsets, clip = scroll.contentView
-            shown = window.convertToScreen(clip.convert(clip.bounds, to: nil))
-            shown.origin.y += insets.bottom
-            shown.size.height -= insets.top + insets.bottom
+            var inWindow = clip.convert(clip.bounds, to: nil)
+            inWindow.origin.y += insets.bottom
+            inWindow.size.height -= insets.top + insets.bottom
+            shown = scroll.convert(inWindow, from: nil)
             guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return closeCompletions() }
             guard reload else { return completionList.place(under: start, in: shown) }
         }
         completionList.show(offered.items.map(\.label), typed: caret - offered.start, kind: offered.kind,
                             font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
-                            theme: syntaxTheme, under: start, in: shown, of: host)
+                            under: start, in: shown, of: host)
         // Out of the list's way.
         if host != nil { previewMath() }
     }
