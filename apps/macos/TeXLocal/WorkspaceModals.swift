@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Workspace sheets, alerts, and file dialogs on the always-visible source column.
@@ -52,23 +53,50 @@ struct WorkspaceModals: ViewModifier {
             } message: { clash in
                 Text(clash.message)
             }
-            .alert(project.diskConflict.map { "“\($0.fileName)” Changed on Disk" } ?? "",
-                   item: $project.diskConflict) { path in
-                // In both alerts, the button that discards the edits is never the default: Return keeps them.
-                Button("Keep Editing", role: .cancel) { project.keepEdits() }
-                Button("Revert", role: .destructive) { Task { await project.revertToDisk(path) } }
-            } message: { path in
-                Text("Another app changed \(path) while it has unsaved changes here.")
+            .onChange(of: project.diskConflict) { _, path in
+                if let path { askWhichVersion(of: path) }
             }
             .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "",
                    item: $project.missingFile) { _ in
+                // Return saves: the button that discards the edits is never the default.
                 Button("Save Again") { project.saveMissingFile() }
                 Button("Discard Changes", role: .destructive) { project.closeMissingFile() }
                 // Leaves the edits unsaved in the editor.
                 Button("Cancel", role: .cancel) {}
             } message: { path in
-                Text("Another app moved or deleted \(path), which has unsaved changes here.")
+                Text("Another app moved or deleted “\(path)”, which has unsaved changes here.")
             }
+    }
+
+    /// The Changed on Disk alert, where either answer loses a version, has no default button, so
+    /// that Return chooses neither unread (HIG, Alerts: "avoid making any button the default
+    /// button"). It is AppKit's own for that: SwiftUI's alert can move its default button
+    /// (`keyboardShortcut(.defaultAction)`) but has no way to have none. Cancel, and so Escape,
+    /// writes nothing: the edits stay unsaved, and the next save that is asked for asks again.
+    private func askWhichVersion(of path: String) {
+        let alert = NSAlert()
+        alert.messageText = String(localized: "“\(path.fileName)” Changed on Disk")
+        alert.informativeText = String(localized: """
+            Another app changed “\(path)” while it has unsaved changes here. \
+            Do you want to keep your version or revert to the one on disk?
+            """)
+        // An alert's first button has Return until it gives it up; one titled Cancel has Escape.
+        alert.addButton(withTitle: String(localized: "Save Anyway")).keyEquivalent = ""
+        alert.addButton(withTitle: String(localized: "Revert")).hasDestructiveAction = true
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        let answered = { [project] (response: NSApplication.ModalResponse) in
+            switch response {
+            case .alertFirstButtonReturn: project.keepEdits()
+            case .alertSecondButtonReturn: Task { await project.revertToDisk(path) }
+            default: project.diskConflict = nil
+            }
+        }
+        // A sheet on the editor's window, as SwiftUI's alerts are; a file with edits to ask about is in it.
+        if let window = project.editor.textView.window {
+            alert.beginSheetModal(for: window, completionHandler: answered)
+        } else {
+            answered(alert.runModal())
+        }
     }
 }
 

@@ -132,15 +132,17 @@ final class ProjectModel {
     /// The open file's path, while the alert asks what becomes of its unsaved
     /// edits now another app has moved or deleted it.
     var missingFile: String?
-    /// That path until the edits are saved again or discarded: the alert's Cancel leaves it,
-    /// and no save puts the file back unasked.
+    /// Each alert's path until its question is answered: Cancel leaves it, and no save writes
+    /// over the other app's change, or puts the file back, unasked.
+    @ObservationIgnored private var changedFile: String?
     @ObservationIgnored private var goneFile: String?
     /// Bumped when a file the editor only previews changes on disk, for its preview to read it again.
     private(set) var previewVersion = 0
     /// The text last read or written, to tell another app's change from our save.
-    private var diskText: String?
+    @ObservationIgnored private var diskText: String?
+    /// Has the project's folder too, so it is observed: the window's document icon follows `openURL`.
     private var folderWatcher: FolderWatcher?
-    private var treeReload: Task<Void, Never>?
+    @ObservationIgnored private var treeReload: Task<Void, Never>?
     /// The tree's reads, numbered as they start: the latest started, and the latest taken.
     @ObservationIgnored private var treeReads = 0
     @ObservationIgnored private var treeTaken = 0
@@ -182,21 +184,23 @@ final class ProjectModel {
     private(set) var searchGroups: [SearchGroup] = []
 
     let editor = SourceEditor()
-    private weak var app: AppModel?
+    @ObservationIgnored private weak var app: AppModel?
     private let core = Core.shared
-    private var saveTask: Task<Void, Never>?
+    @ObservationIgnored private var saveTask: Task<Void, Never>?
     /// Saves, settings, renames, deletions and disk checks finish in order, including their model updates.
-    private var lastMutation: Task<Bool, Never>?
-    private var analysis: Task<Void, Never>?
-    private var symbolsTask: Task<Void, Never>?
+    @ObservationIgnored private var lastMutation: Task<Bool, Never>?
+    @ObservationIgnored private var analysis: Task<Void, Never>?
+    @ObservationIgnored private var symbolsTask: Task<Void, Never>?
     // Each of these is cancelled by the next request of its kind, which then has the editor or viewer.
-    private var openTask: Task<Void, Never>?
-    private var syncTask: Task<Void, Never>?
-    private var pdfLoad: Task<Bool, Never>?
+    @ObservationIgnored private var openTask: Task<Void, Never>?
+    @ObservationIgnored private var syncTask: Task<Void, Never>?
+    @ObservationIgnored private var pdfLoad: Task<Bool, Never>?
     /// The build asked for while one runs: automatic unless any request wasn't.
-    private var compileQueued: Bool?
+    @ObservationIgnored private var compileQueued: Bool?
     /// Stop while the build's save runs, before the core has a build to stop.
-    private var stopRequested = false
+    @ObservationIgnored private var stopRequested = false
+    /// The files moved to the Trash from here, whose Undo and Redo go when the project closes.
+    @ObservationIgnored private var trashed: [UndoableTrash] = []
     /// A build still running when the project closes reports nothing.
     private(set) var closed = false
 
@@ -281,12 +285,15 @@ final class ProjectModel {
     @ObservationIgnored private var announced: (text: String, at: ContinuousClock.Instant)?
 
     /// Not within 0.3 s of the last announcement, nor the same one again within a few seconds:
-    /// VoiceOver would cut one short or repeat itself.
-    private func announce(_ text: String) {
+    /// VoiceOver would cut one short or repeat itself. `queued`, it waits for what VoiceOver is
+    /// saying instead of interrupting it.
+    private func announce(_ text: String, queued: Bool = false) {
         let now = ContinuousClock.now
         if let announced, now - announced.at < (text == announced.text ? .seconds(3) : .milliseconds(300)) { return }
         announced = (text, now)
-        AccessibilityNotification.Announcement(text).post()
+        var speech = AttributedString(text)
+        if queued { speech.accessibilitySpeechAnnouncementPriority = .low }
+        AccessibilityNotification.Announcement(speech).post()
     }
 
     /// A SyncTeX search that finds no match is ordinary (a comment, the preamble, a figure): a
@@ -344,8 +351,8 @@ final class ProjectModel {
         }
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
-            await reloadTree()
-            await watchFolder()
+            try await readTree()
+            try await watchFolder()
             refreshSymbols()
             guard !closed else { return }
             if let saved {
@@ -358,7 +365,8 @@ final class ProjectModel {
             // The workspace is installed only after its first outline is ready.
             await analysis?.value
         } catch {
-            // Home stays, with the alert over it: a workspace would have no files to show.
+            // Home stays, with the alert over it: a workspace would have no files to show, or none
+            // it could reveal, drag out, move to the Trash or see another app change.
             guard !closed else { return }
             report(error, "Couldn’t Open “\(id)”")
             if app?.project === self { await app?.close() }
@@ -371,13 +379,18 @@ final class ProjectModel {
         if !hasPDF, autoCompile { await compile(auto: true) }
     }
 
-    /// A failed read keeps the tree as it was, and the folder's next change reads again. A read
-    /// that started before the last one taken is dropped: a folder change's read ending after a
-    /// new file's would take away the row its name is being typed in.
+    /// A failed read keeps the tree as it was, and the folder's next change reads again.
     func reloadTree() async {
+        try? await readTree()
+    }
+
+    /// A read that started before the last one taken is dropped: a folder change's read ending
+    /// after a new file's would take away the row its name is being typed in.
+    private func readTree() async throws {
         treeReads += 1
         let read = treeReads
-        guard let files = try? await core.call("file_tree", ["id": id], as: [TreeNode].self), read > treeTaken else { return }
+        let files = try await core.call("file_tree", ["id": id], as: [TreeNode].self)
+        guard read > treeTaken else { return }
         treeTaken = read
         // A save's temporary file can trigger an unchanged tree reload.
         if files != tree, !closed, !Task.isCancelled {
@@ -457,10 +470,11 @@ final class ProjectModel {
         openTask?.cancel()
         let task = Task {
             if path != openPath {
-                guard await saveEdits(), !Task.isCancelled, !closed else { return }
                 do {
+                    // Read first and saved last, with nothing awaited between the save and the switch:
+                    // a key typed while the next file is read is still the open file's, and reaches it.
                     let text = isTextFile(path) ? try await readText(path) : nil
-                    guard !Task.isCancelled, !closed else { return }
+                    guard await saveEdits(), !Task.isCancelled, !closed else { return }
                     openPath = path
                     diskText = text
                     analyze()
@@ -523,7 +537,8 @@ final class ProjectModel {
             guard !Task.isCancelled, let self else { return }
             let saved = await self.save(reporting: false)
             guard saved, !Task.isCancelled else { return }
-            if self.autoCompile { await self.compile(auto: true) }
+            // In a task of its own: this one is cancelled by the next key, and by the build's own save.
+            if self.autoCompile { Task { await self.compile(auto: true) } }
         }
     }
 
@@ -541,9 +556,14 @@ final class ProjectModel {
         guard diskConflict == nil, missingFile == nil else { return false }
         // The editor's text, which is the open file's: they change together.
         let (path, text) = document
-        // Nor back where another app moved or deleted it from: a save someone asked for asks again.
+        // Nor after the alert's Cancel, over the change or back where the file was moved or
+        // deleted from: a save someone asked for asks again.
         if goneFile == path {
             if reporting { missingFile = path }
+            return false
+        }
+        if changedFile == path {
+            if reporting { diskConflict = path }
             return false
         }
         // An edit during the write marks it dirty again, and its own save follows.
@@ -619,8 +639,9 @@ final class ProjectModel {
     // ---------- changes on disk ----------
 
     /// Watch external edits and file-tree changes rather than saving over them.
-    private func watchFolder() async {
-        guard let root = try? await core.call("project_root", ["id": id], as: String.self), !closed else { return }
+    private func watchFolder() async throws {
+        let root = try await core.call("project_root", ["id": id], as: String.self)
+        guard !closed else { return }
         folderWatcher = FolderWatcher(folder: URL(fileURLWithPath: root)) { [weak self] in self?.folderChanged($0) }
     }
 
@@ -681,7 +702,9 @@ final class ProjectModel {
         diskText = text
         guard !dirty else {
             saveTask?.cancel()
-            diskConflict = path
+            // Asked once: after Cancel, at the next save someone asks for.
+            if changedFile != path { diskConflict = path }
+            changedFile = path
             return false
         }
         showDiskText(text, of: path)
@@ -693,6 +716,8 @@ final class ProjectModel {
     /// saved meanwhile, which would put the file back unasked.
     private func fileGone(_ path: String) {
         saveTask?.cancel()
+        // Its change, if it was asked about and left, went with it.
+        changedFile = nil
         if hasUnsavedText {
             // Asked once: after Cancel, at the next save someone asks for.
             if goneFile != path { missingFile = path }
@@ -726,7 +751,7 @@ final class ProjectModel {
     /// The disk's text of `path`, the file the alert asked about, written back in case
     /// a save under way when the change came wrote the edits over it.
     func revertToDisk(_ path: String) async {
-        diskConflict = nil
+        (diskConflict, changedFile) = (nil, nil)
         saveTask?.cancel()
         let reverted = await mutate { model in
             guard model.openPath == path, let text = model.diskText else { return false }
@@ -737,9 +762,9 @@ final class ProjectModel {
         if reverted, autoCompile { await compile(auto: true) }
     }
 
-    /// The next save writes these edits over the other app's.
+    /// Save Anyway: the edits written over the other app's change, now.
     func keepEdits() {
-        diskConflict = nil
+        (diskConflict, changedFile) = (nil, nil)
         // The autosave was cancelled while asking, or the edits were already saved
         // before the other app's change: either way they're written again.
         dirty = true
@@ -762,9 +787,13 @@ final class ProjectModel {
         compiling = true
         stopRequested = false
         // Through the mutation lane, after the settings and renames asked for before.
-        let built = edits
         let saved = await flush(reporting: !auto)
+        // Counted after the save, which has everything typed until now.
+        let built = edits
         if saved, !stopRequested, !closed, !auto || !livePreviewing {
+            // The toolbar's Stop says so to the eye only. Not through `announce`: the result of a
+            // short build isn't held back for it.
+            if !auto { AccessibilityNotification.Announcement(String(localized: "Compiling")).post() }
             let result: CompileResult
             do {
                 result = try await core.call("compile", ["id": id], as: CompileResult.self)
@@ -787,11 +816,18 @@ final class ProjectModel {
                 }
             }
             if !closed {
+                let errors = errorCount
                 self.result = result
                 resultEdits = built
                 chosenIssue = nil
                 markIssues()
-                if !auto { finishedManualBuild(result) }
+                if !auto {
+                    finishedManualBuild(result)
+                } else if errorCount != errors {
+                    // An automatic build speaks only when the errors come, go or change in number,
+                    // and after whatever VoiceOver is saying: it follows typing.
+                    announceResult(result, queued: true)
+                }
             }
         }
         compiling = false
@@ -806,13 +842,21 @@ final class ProjectModel {
             let opens = !showLogs
             showBuildPanel()
             if opens { panelOpenedByBuild = true }
-            announce(errorCount == 0 ? String(localized: "Build failed")
-                     : String(AttributedString(localized: "Build failed, ^[\(errorCount) error](inflect: true)").characters))
             // The Dock says so while another app is in front.
             if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
         } else if result.ok {
             if panelOpenedByBuild, panelTab == .issues, issues.isEmpty { showLogs = false }
-            announce(String(localized: "Build succeeded"))
+        }
+        announceResult(result)
+    }
+
+    /// A stopped build says nothing.
+    private func announceResult(_ result: CompileResult, queued: Bool = false) {
+        if result.failed {
+            announce(errorCount == 0 ? String(localized: "Build failed")
+                     : String(AttributedString(localized: "Build failed, ^[\(errorCount) error](inflect: true)").characters), queued: queued)
+        } else if result.ok {
+            announce(String(localized: "Build succeeded"), queued: queued)
         }
     }
 
@@ -827,8 +871,12 @@ final class ProjectModel {
         liveRestartTask?.cancel()
         liveDiskTask?.cancel()
         texpresso.close()
-        // Its renames can't be undone once it's closed; the window's stack outlives it.
-        app?.undoManager?.removeAllActions(withTarget: self)
+        // Its renames and its files' moves to the Trash can't be undone once it's closed: nothing
+        // would show the result. The window's stack outlives it.
+        let undo = app?.undoManager
+        undo?.removeAllActions(withTarget: self)
+        for item in trashed { undo?.removeAllActions(withTarget: item) }
+        trashed = []
         compileQueued = nil
         folderWatcher = nil
         removeExport()
@@ -1162,6 +1210,7 @@ final class ProjectModel {
             trash: { [weak self] item in await self?.trashEntry(path, item) ?? false },
             changed: { [weak self] in await self?.reloadTree() },
             failed: { [weak self] title, error in self?.report(error, title) })
+        trashed.append(item)
         await item.moveToTrash()
         if !closed { await reloadTree() }
     }
@@ -1200,14 +1249,15 @@ final class ProjectModel {
         counts = nil
     }
 
-    /// The new main file's PDF, if it has one, replaces the old one's; a build of
-    /// the old one stops (the core reports it stopped) and a build of the new one follows.
+    /// The new main file's PDF, if it has one, replaces the old one's; a build of the old one
+    /// stops (the core reports it stopped) and a build of the new one follows, as after any
+    /// setting that changes the build, when Compile Automatically is on.
     private func mainFileChanged() async {
         analyze()
         stopCompile()
         if texpresso.active { restartTeXpresso() }
         await showPDFOnDisk()
-        if !closed { await compile(auto: true) }
+        if !closed, autoCompile { await compile(auto: true) }
     }
 
     /// Files dropped on the tree: the project's own move into `dir`, as in Finder,

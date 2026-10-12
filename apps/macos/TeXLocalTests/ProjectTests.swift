@@ -96,6 +96,12 @@ struct CoreTests {
             _ = try await core.call("read_file", ["id": info.id, "path": "../../x"], as: FileText.self)
         }
         #expect(error?.message == "Path escapes project")
+
+        // An answer in another shape than was asked for is said in the app's words, without the command's name.
+        let fault = await #expect(throws: CoreError.self) {
+            _ = try await core.call("file_tree", ["id": info.id], as: FileText.self)
+        }
+        #expect(fault?.message.hasPrefix("Something went wrong inside TeXLocal.") == true && fault?.status == nil)
     }
 
     /// Every template the projects screen offers is one the core can make.
@@ -427,6 +433,8 @@ final class ProjectFlowTests {
         await project.compile()
         #expect(project.result?.ok == true && project.pdfURL?.lastPathComponent == "main.pdf")
 
+        // The build follows the main file only when Compile Automatically is on.
+        app.autoCompile = true
         let rename = Task { await project.renameEntry("main.tex", to: "renamed.tex") }
         let flag = Task { _ = await project.patchSettings(["stopOnFirstError": true]) }
         let main = Task { await project.setMainFile("second.tex") }
@@ -442,6 +450,21 @@ final class ProjectFlowTests {
         #expect(project.result?.ok == true)
         #expect(exists(folder.appending(path: "renamed.tex")) && !exists(folder.appending(path: "main.tex")))
         #expect(app.alert == nil)
+        await app.close()
+    }
+
+    /// Set as Main File starts a build only when Compile Automatically is on, as every other
+    /// setting that changes the build does. CI has no TeX.
+    @Test(.timeLimit(.minutes(1)))
+    func aNewMainFileBuildsOnlyWhenCompilingAutomatically() async throws {
+        let source = "\\documentclass{article}\\begin{document}x\\end{document}"
+        let project = try await openedWithTeX(source)
+        try await Core.shared.perform("write_file", ["id": project.id, "path": "second.tex", "text": source])
+        await project.setMainFile("second.tex")
+        #expect(project.settings?.mainFile == "second.tex" && project.result == nil && !project.compiling)
+        app.autoCompile = true
+        await project.setMainFile("main.tex")
+        #expect(project.result?.pdf == "build/main.pdf")
         await app.close()
     }
 
@@ -543,6 +566,63 @@ final class ProjectFlowTests {
         try await waitUntil(timeout: .seconds(5)) { exists(notes) }
         #expect(try String(contentsOf: notes, encoding: .utf8).contains("\\textbf{\\textit{}}"))
         await app.close()
+    }
+
+    /// Changed by another app while it has unsaved edits, the open file asks which version to
+    /// keep and saves nothing meanwhile. Cancel leaves the edits unsaved, and a save that is
+    /// asked for asks again; Save Anyway writes them, and Revert takes the disk's text.
+    @Test(.timeLimit(.minutes(1)))
+    func anOpenFileChangedElsewhere() async throws {
+        let (project, folder) = try await opened("original")
+        let main = folder.appending(path: "main.tex")
+        let onDisk = { try? String(contentsOf: main, encoding: .utf8) }
+
+        try "theirs".write(to: main, atomically: false, encoding: .utf8)
+        #expect(project.editor.perform(.bold))
+        try await waitUntil(timeout: .seconds(5)) { project.diskConflict == "main.tex" }
+        // Cancel, then past an autosave, which would have written over the other app's change.
+        project.diskConflict = nil
+        #expect(project.editor.perform(.italic))
+        try await Task.sleep(for: .seconds(1))
+        #expect(onDisk() == "theirs" && project.diskConflict == nil && project.dirty)
+        #expect(await !project.saveEdits() && project.diskConflict == "main.tex")
+        project.keepEdits()
+        try await waitUntil(timeout: .seconds(5)) { onDisk() == project.editor.textView.string }
+        #expect(project.diskConflict == nil && onDisk()?.contains("\\textbf{\\textit{}}") == true)
+        // Behind that save in the lane, so it has finished with the model before the next change.
+        #expect(await project.save() && !project.dirty)
+
+        // Answered, so the next change asks anew.
+        try "theirs again".write(to: main, atomically: false, encoding: .utf8)
+        #expect(project.editor.perform(.bold))
+        try await waitUntil(timeout: .seconds(5)) { project.diskConflict == "main.tex" }
+        await project.revertToDisk("main.tex")
+        #expect(project.editor.textView.string == "theirs again" && onDisk() == "theirs again")
+        #expect(project.diskConflict == nil && !project.dirty && app.alert == nil)
+        await app.close()
+    }
+
+    /// A file's Move to Trash can't be undone or redone once its project has closed, as its
+    /// renames can't: the window's undo stack outlives the project, and nothing would show the result.
+    @Test(.timeLimit(.minutes(1)))
+    func aClosedProjectsTrashCannotBeUndone() async throws {
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        app.undoSource = { undo }
+        let (project, folder) = try await opened()
+        let notes = folder.appending(path: "notes.tex")
+        try "notes".write(to: notes, atomically: false, encoding: .utf8)
+
+        undo.beginUndoGrouping()
+        await project.deleteEntry("notes.tex")
+        undo.endUndoGrouping()
+        #expect(!exists(notes) && undo.undoActionName == "Move to Trash")
+        // Back from the Trash, which is left as it was; the Redo is the item's too.
+        undo.undo()
+        try await waitUntil { self.exists(notes) }
+        #expect(undo.canRedo)
+        await app.close()
+        #expect(!undo.canRedo && !undo.canUndo)
     }
 
     /// A file dropped on the source opens: the project's own in the editor, but its image goes
