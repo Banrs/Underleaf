@@ -75,10 +75,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         workspace?.close()
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
         setContent(workspace)
-        // The height; the workspace sets the width its shown panes need (`fitColumns`).
         window.contentMinSize = ColumnMetrics.contentMinimum
-        // The editor's colour, untinted: the toolbar's scroll edge fades the text into the
-        // window's background, so at rest the toolbar is the editor's surface, as Xcode's.
+        // The editor's colour, untinted, behind the toolbar. In Light the toolbar over the source
+        // is then the editor's surface at rest, as Xcode's. In Dark it is not: AppKit's top scroll
+        // edge is a glass that lightens what is under it (37 over the editor's 30, and 44 over the
+        // PDF, measured on 27.2 in a window that isn't the active one), whatever this colour is.
         window.backgroundColor = .untintedTextBackground
         window.toolbar = workspace.toolbar.toolbar
         self.workspace = workspace

@@ -48,6 +48,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private(set) lazy var format = FormatPopover(app: app, project: project)
     /// What the items show; `watch` sets only what differs from it.
     private var applied: State?
+    private var customized: NSKeyValueObservation?
     private var closed = false
 
     init(app: AppModel, project: ProjectModel, workspace: WorkspaceController) {
@@ -61,11 +62,17 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         toolbar.allowsDisplayModeCustomization = false
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
+        // Customize Toolbar's changes, for Compile's form (`holdsDefaultItems`): a turn later,
+        // once AppKit has done with its items.
+        customized = toolbar.observe(\.itemIdentifiers) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.workspace?.toolbarItemsChanged() }
+        }
         watch()
     }
 
     func close() {
         closed = true
+        customized = nil
         format.popover.close()
     }
 
@@ -92,6 +99,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
          .inspectorTrackingSeparator, .togglePDF, .toggleInspector]
     }
 
+    /// Whether the toolbar holds its default tools, spaces aside: the ones whose widths the
+    /// workspace reckons Compile's room from (`fitToolbar`).
+    var holdsDefaultItems: Bool {
+        func tools(_ ids: [NSToolbarItem.Identifier]) -> [NSToolbarItem.Identifier] {
+            ids.filter { $0 != .space && $0 != .flexibleSpace }
+        }
+        return tools(toolbar.itemIdentifiers) == tools(toolbarDefaultItemIdentifiers(toolbar))
+    }
+
     /// The system's toggles go to the window's split, not the nested ones, which would answer first.
     /// They stay out of the overflow menu, as the leading and trailing edges' items do (HIG, Toolbars).
     func toolbarWillAddItem(_ notification: Notification) {
@@ -106,36 +122,33 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let item: NSToolbarItem
         switch id {
         case .back:
-            item = button(id, "Projects", "chevron.backward", #selector(back), help: "Back to Projects")
+            // Back by name, for VoiceOver and the overflow menu: where to is its help tag's to say.
+            item = button(id, "Back", "chevron.backward", #selector(back), help: "Return to Projects")
             // Back leads the title; there is no forward history.
             item.isNavigational = true
             item.visibilityPriority = .high
         case .undo:
-            item = button(id, "Undo", "arrow.uturn.backward", Selector(("undo:")))
+            item = button(id, "Undo", "arrow.uturn.backward", Selector(("undo:")), help: "Undo the last change")
             // Whatever has the keyboard, as the menu's Undo: it validates them too.
             item.target = nil
-            item.visibilityPriority = .low
         case .redo:
-            item = button(id, "Redo", "arrow.uturn.forward", Selector(("redo:")))
+            item = button(id, "Redo", "arrow.uturn.forward", Selector(("redo:")), help: "Redo the last undone change")
             item.target = nil
-            item.visibilityPriority = .low
         case .format:
             item = formatItem()
         case .math:
-            item = menuItem(id, "Math", "radicand.squareroot", mathItems)
+            item = menuItem(id, "Math", "radicand.squareroot", mathItems, help: "Insert math or a symbol")
         case .insert:
             // Notes' ellipsis, which means More (HIG, Icons), with Insert as its name for
             // VoiceOver, Customize Toolbar and the overflow menu: what it holds is the menu bar's Insert.
-            item = menuItem(id, "Insert", "ellipsis", InsertMenuItems(project: project))
+            item = menuItem(id, "Insert", "ellipsis", InsertMenuItems(project: project),
+                            help: "Insert a figure, table, list, or reference")
         case .bold:
-            item = button(id, MenuCommand.editBold.title, "bold", #selector(bold))
-            item.visibilityPriority = .low
+            item = button(id, MenuCommand.editBold.title, "bold", #selector(bold), help: "Make text bold")
         case .italic:
-            item = button(id, MenuCommand.editItalic.title, "italic", #selector(italic))
-            item.visibilityPriority = .low
+            item = button(id, MenuCommand.editItalic.title, "italic", #selector(italic), help: "Italicize text")
         case .underline:
-            item = button(id, MenuCommand.editUnderline.title, "underline", #selector(underline))
-            item.visibilityPriority = .low
+            item = button(id, MenuCommand.editUnderline.title, "underline", #selector(underline), help: "Underline text")
         case .pdfSeparator:
             guard let split = workspace?.columns.splitView else { return nil }
             return NSTrackingSeparatorToolbarItem(identifier: id, splitView: split, dividerIndex: 0)
@@ -144,7 +157,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .share:
             let share = ShareItem(itemIdentifier: id)
             share.delegate = self
-            share.toolTip = "Share PDF"
+            share.toolTip = "Share the PDF"
             share.visibilityPriority = .low
             item = share
         case .compile:
@@ -166,13 +179,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.visibilityPriority = .high
         case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
-            item = button(id, "PDF", "richtext.page", #selector(togglePDF))
+            // In the toolbar its help tag says which it will do, as the menu's title (`configure`).
+            item = button(id, "PDF", "richtext.page", #selector(togglePDF), help: "Show or hide the PDF")
             item.visibilityPriority = .high
         default:
             guard let template = Self.buttonTemplates.first(where: { .template($0) == id }),
                   let symbolName = template.symbol else { return nil }
-            item = button(id, template.title, symbolName, #selector(insertTemplate(_:)))
-            item.visibilityPriority = .low
+            // The templates with symbols are named by common nouns: Figure, Bulleted List, Link.
+            item = button(id, template.title, symbolName, #selector(insertTemplate(_:)),
+                          help: "Insert \(template.title.lowercased())")
         }
         // Plain buttons and their overflow copies validate through their targets.
         // Other controls take their state from the models (`configure`).
@@ -187,21 +202,25 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         NSImage(systemSymbolName: name, accessibilityDescription: description)
     }
 
+    /// A symbol's button. Its label is its name, for VoiceOver, Customize Toolbar and the overflow
+    /// menu; its help tag says what it does (HIG, Offering help: not the name again). Among the
+    /// first to leave for the overflow menu, unless its caller says otherwise.
     private func button(_ id: NSToolbarItem.Identifier, _ label: String, _ symbolName: String, _ action: Selector,
-                        help: String? = nil) -> NSToolbarItem {
+                        help: String) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: id)
         item.label = label
-        item.toolTip = help ?? label
+        item.toolTip = help
         item.image = symbol(symbolName, label)
         item.target = self
         item.action = action
+        item.visibilityPriority = .low
         return item
     }
 
-    /// Zoom out | scale menu | zoom in, one native capsule.
+    /// Zoom out | scale menu | zoom in, one native capsule. Its menu form is a title alone, as
+    /// Format's, Compile's and the forms AppKit makes for the plain items beside them.
     private func zoomItem() -> NSToolbarItem {
         let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
-        form.image = symbol("plus.magnifyingglass", "Zoom")
         let menu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF }) { [app, project, pdf] in
             // The menu bar's items carry the shortcuts.
             ForEach([MenuCommand.viewZoomIn, .viewZoomOut], id: \.self) { command in
@@ -223,8 +242,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         control.widestLabel = pdf.widestZoomLabel
         control.setMenu(NSHostingMenu(rootView: ScaleMenuItems(pdf: pdf)), forSegment: 1)
         control.setShowsMenuIndicator(true, forSegment: 1)
-        for (index, title) in ["Zoom Out", "Scale", "Zoom In"].enumerated() {
-            control.setToolTip(title, forSegment: index)
+        for (index, help) in ["Zoom out of the PDF", "Choose a zoom level", "Zoom in on the PDF"].enumerated() {
+            control.setToolTip(help, forSegment: index)
         }
         control.setAccessibilityLabel("Zoom")
         let item = NSToolbarItem(itemIdentifier: .zoom)
@@ -237,10 +256,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     /// An editing menu, off with its items outside LaTeX (`configure`).
     private func menuItem(_ id: NSToolbarItem.Identifier, _ title: String, _ image: String,
-                          _ items: some View) -> NSMenuToolbarItem {
+                          _ items: some View, help: String) -> NSMenuToolbarItem {
         let item = NSMenuToolbarItem(itemIdentifier: id)
         item.label = title
-        item.toolTip = title
+        item.toolTip = help
         item.image = symbol(image, title)
         item.menu = menu(items)
         // No chevrons, as Notes' tools: with them, each menu draws its own capsule (27.2).
@@ -255,14 +274,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     /// Aa opens its popover (`FormatPopover`); the overflow menu has the same as a menu.
     private func formatItem() -> NSToolbarItem {
-        let item = button(.format, "Format", "textformat", #selector(showFormat(_:)))
+        // Notes' words, from its strings (27.2).
+        let item = button(.format, "Format", "textformat", #selector(showFormat(_:)), help: "Choose a style to apply to text")
         let form = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
-        form.image = item.image
         form.submenu = menu(formatItems)
         item.menuFormRepresentation = form
         // Off outside LaTeX, as Math and Insert (`configure`).
         item.autovalidates = false
-        item.visibilityPriority = .low
         return item
     }
 
@@ -343,13 +361,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             let command = state.compiling ? MenuCommand.compileStop : .compileRun
             if changed(\.compiling) {
                 item.label = command.title
-                item.toolTip = command.title
                 item.menuFormRepresentation?.title = command.title
                 // Stop on clear glass: still prominent, whose glass stays its own, where a plain
                 // item's joins its neighbours'.
                 item.backgroundTintColor = state.compiling ? .clear : nil
             }
             if changed(\.canCompile) { item.isEnabled = state.canCompile }
+            // A help tag for the symbol alone: the word says as much itself (HIG, Buttons).
+            if changed(\.compiling) || changed(\.compactCompile) {
+                item.toolTip = !state.compactCompile ? nil : state.compiling ? "Stop the build" : "Compile the project"
+            }
             if changed(\.compiling) || changed(\.compactCompile) || changed(\.canCompile) {
                 (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
             }
@@ -492,14 +513,13 @@ private struct CompileButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                idle
-                    // Faint in a window that isn't the active one, as AppKit's own prominent item.
-                    .foregroundStyle(appearsActive ? .primary : .tertiary)
-                    .opacity(compiling ? 0 : 1)
+                idle.opacity(compiling ? 0 : 1)
                 // The button stays a button to VoiceOver; the status bar says Compiling.
                 busy.opacity(compiling ? 1 : 0)
                     .accessibilityHidden(true)
             }
+            // Faint in a window that isn't the active one, as AppKit's own items, Stop as Compile.
+            .foregroundStyle(appearsActive ? .primary : .tertiary)
             .animation(.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2), value: compact)
             // The item's glass as AppKit draws a titled item's and a symbol's: 36 points high (the
             // UI kit's toolbar controls), a title 12 points in from each end, 74 points for
