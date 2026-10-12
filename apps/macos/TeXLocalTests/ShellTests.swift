@@ -74,6 +74,11 @@ struct ShellTests {
         for id in [NSToolbarItem.Identifier.back, .compile, .togglePDF] {
             #expect(try item(id, in: workspace).visibilityPriority == .high)
         }
+        // The tools Customize Toolbar can add are among the first to go.
+        for id in [NSToolbarItem.Identifier.undo, .redo, .bold, .italic, .underline, .share] {
+            let added = workspace.toolbar.toolbar(workspace.toolbar.toolbar, itemForItemIdentifier: id, willBeInsertedIntoToolbar: false)
+            #expect(added?.visibilityPriority == .low, "\(id.rawValue)")
+        }
 
         try await resize(window, to: 1300)
         #expect(!workspace.toolbar.compactCompile)
@@ -110,6 +115,17 @@ struct ShellTests {
         try await resize(window, to: ColumnMetrics.contentMinimum.width)
         #expect(workspace.toolbar.compactCompile)
         #expect(try item(.zoom, in: workspace).isHidden)
+    }
+
+    /// The PDF toggle's help tag says which it will do, as View's item, and Zoom goes with the column.
+    @Test func thePDFTogglesHelpSaysWhichItWillDo() async throws {
+        let (window, workspace) = try await workspace(showPDF: true)
+        defer { workspace.close(); window.close() }
+        let toggle = try item(.togglePDF, in: workspace), zoom = try item(.zoom, in: workspace)
+        #expect(toggle.toolTip == "Hide PDF" && !zoom.isHidden)
+        workspace.app.showPDF = false
+        try await waitUntil { toggle.toolTip == "Show PDF" }
+        #expect(zoom.isHidden)
     }
 
     /// Compile's room is reckoned from the default tools' widths. In a toolbar customised to

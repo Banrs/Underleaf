@@ -45,7 +45,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private var pdf: PDFController { project.pdf }
     private weak var workspace: WorkspaceController?
     /// Aa's.
-    private(set) lazy var format = FormatPopover(app: app, project: project)
+    private lazy var format = FormatPopover(app: app, project: project)
     /// What the items show; `watch` sets only what differs from it.
     private var applied: State?
     private var customized: NSKeyValueObservation?
@@ -126,7 +126,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = button(id, "Back", "chevron.backward", #selector(back), help: "Return to Projects")
             // Back leads the title; there is no forward history.
             item.isNavigational = true
-            item.visibilityPriority = .high
         case .undo:
             item = button(id, "Undo", "arrow.uturn.backward", Selector(("undo:")), help: "Undo the last change")
             // Whatever has the keyboard, as the menu's Undo: it validates them too.
@@ -160,7 +159,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             let share = ShareItem(itemIdentifier: id)
             share.delegate = self
             share.toolTip = "Share the PDF"
-            share.visibilityPriority = .low
             item = share
         case .compile:
             // The window's one prominent action (HIG Toolbars), as a word: a play symbol reads as
@@ -178,12 +176,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             form.target = self
             item.menuFormRepresentation = form
             item.style = .prominent
-            item.visibilityPriority = .high
         case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
             // In the toolbar its help tag says which it will do, as the menu's title (`configure`).
             item = button(id, "PDF", "richtext.page", #selector(togglePDF), help: "Show or hide the PDF")
-            item.visibilityPriority = .high
         default:
             guard let template = Self.buttonTemplates.first(where: { .template($0) == id }),
                   let symbolName = template.symbol else { return nil }
@@ -196,6 +192,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         if (item.target !== self && ![.undo, .redo].contains(item.itemIdentifier)) || item.view != nil {
             item.autovalidates = false
         }
+        // Back, Compile and the PDF's toggle are the last to leave for the overflow menu, with the
+        // system's toggles (`toolbarWillAddItem`); the rest are the first.
+        item.visibilityPriority = [.back, .compile, .togglePDF].contains(id) ? .high : .low
         if flag { configure(item, state) }
         return item
     }
@@ -205,8 +204,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     /// A symbol's button. Its label is its name, for VoiceOver, Customize Toolbar and the overflow
-    /// menu; its help tag says what it does (HIG, Offering help: not the name again). Among the
-    /// first to leave for the overflow menu, unless its caller says otherwise.
+    /// menu; its help tag says what it does (HIG, Offering help: not the name again).
     private func button(_ id: NSToolbarItem.Identifier, _ label: String, _ symbolName: String, _ action: Selector,
                         help: String) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: id)
@@ -215,7 +213,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.image = symbol(symbolName, label)
         item.target = self
         item.action = action
-        item.visibilityPriority = .low
         return item
     }
 
@@ -252,7 +249,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.label = "Zoom"
         item.view = control
         item.menuFormRepresentation = form
-        item.visibilityPriority = .low
         return item
     }
 
@@ -266,7 +262,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.menu = menu(items)
         // No chevrons, as Notes' tools: with them, each menu draws its own capsule (27.2).
         item.showsIndicator = false
-        item.visibilityPriority = .low
         return item
     }
 
@@ -304,7 +299,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let canZoomOut: Bool
         let compiling: Bool
         let canCompile: Bool
-        let pdfTitle: String
         let compactCompile: Bool
     }
 
@@ -312,8 +306,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         State(isLaTeX: project.isLaTeX,
               hasPDF: project.hasPDF, canShare: project.buildPDF != nil, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
-              compiling: project.compiling, canCompile: canCompile,
-              pdfTitle: app.title(.viewTogglePdf, on: project), compactCompile: fit.compact)
+              compiling: project.compiling, canCompile: canCompile, compactCompile: fit.compact)
     }
 
     /// Applies the state as it changes, in the same pass. A column resizing refits the PDF
@@ -368,7 +361,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                 (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
             }
         case .togglePDF:
-            if changed(\.pdfTitle) { item.toolTip = state.pdfTitle }
+            if changed(\.showsPDF) { item.toolTip = app.title(.viewTogglePdf, on: project) }
         default:
             break
         }
