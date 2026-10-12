@@ -616,8 +616,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         // Asked for whether or not it shows: Escape's dismissal lasts while the caret is in that maths.
         let maths = loading ? nil : math(at: selectedRange().location)
         if maths?.start != dismissedMath { dismissedMath = nil }
-        guard let window, hasKeyboard, let maths, dismissedMath == nil,
-              let clip = enclosingScrollView?.contentView else {
+        guard let window, hasKeyboard, let maths, dismissedMath == nil, let scroll = enclosingScrollView else {
             mathPopover?.close()
             return
         }
@@ -626,7 +625,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         var rect = convert(window.convertFromScreen(screen), from: nil)
         rect.size.width = max(rect.width, 1)
         // Below the toolbar and the find bar, and above the scroll view's foot.
-        let insets = enclosingScrollView?.contentInsets ?? NSEdgeInsetsZero
+        let insets = scroll.contentInsets, clip = scroll.contentView
         var shown = convert(clip.bounds, from: clip)
         shown.origin.y += insets.top
         shown.size.height -= insets.top + insets.bottom
@@ -907,11 +906,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private func showCompletions(reload: Bool) {
         guard let offered else { return }
         var start = NSRect.zero, shown = NSRect.zero, host: NSWindow?
-        if let window, let clip = enclosingScrollView?.contentView {
+        if let window, let scroll = enclosingScrollView {
             host = window
             start = firstRect(forCharacterRange: NSRange(location: offered.start, length: 0), actualRange: nil)
             // Not under the status bar.
-            let insets = enclosingScrollView?.contentInsets ?? NSEdgeInsetsZero
+            let insets = scroll.contentInsets, clip = scroll.contentView
             shown = window.convertToScreen(clip.convert(clip.bounds, to: nil))
             shown.origin.y += insets.bottom
             shown.size.height -= insets.top + insets.bottom
