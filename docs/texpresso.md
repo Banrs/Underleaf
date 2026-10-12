@@ -64,9 +64,9 @@ folder chosen in the Mac app's Settings. A Finder launch does not inherit a
 terminal's environment.
 
 TeXpresso support is experimental. On Mac, choose TeXpresso's folder under
-Compiling in Settings if it isn't in /opt/homebrew/bin or /usr/local/bin, then
-turn on **TeXpresso Live Preview** in the Compile menu or the inspector; its log is
-TeXpresso in the build panel's pop-up, and files changed by other apps are rescanned on their own. In the browser workspace, use **Start TeXpresso**, and Rescan for
+Live Preview in Settings if it isn't in /opt/homebrew/bin or /usr/local/bin, then
+turn on **Live Preview** in the Compile menu or the inspector; its log is
+Live Preview Log in the build panel's pop-up, and files changed by other apps are rescanned on their own. In the browser workspace, use **Start TeXpresso**, and Rescan for
 files and assets changed externally. Edits to the open source, including
 included files, reach the live preview.
 Host validation failures, such as a file exceeding 8 MB, remain visible until
@@ -101,9 +101,12 @@ For a prebuilt server, run `node scripts/verify-texpresso.mjs` with
 - Upstream TeXpresso's editor protocol has no PDF/bitmap preview endpoint;
   Underleaf's patch adds the PDF output above. While the live document shows,
   PDF↔source navigation uses its own SyncTeX, through the client's session.
-- The live document is written after TeXpresso runs to the end, so a long
-  document updates the pane less often than TeXpresso's own window, which
-  renders only the page in view.
+- With the patch, the pages in view are drawn as they change, as in TeXpresso's
+  own window. The rest of a long document follows when typing pauses, once
+  TeXpresso has run to the end and written the whole document.
+- The live document has no links: the patch writes its pages through MuPDF's
+  PDF device, which carries their content and no annotations. `hyperref` links
+  can be clicked again in a build's PDF.
 - A normal Compile is still needed for final PDF output and bibliography
   tools. Live sessions enable TeXpresso's idle reruns for references/TOC and
   include the normal build directory for existing auxiliary files.
@@ -113,10 +116,12 @@ For a prebuilt server, run `node scripts/verify-texpresso.mjs` with
 - Starting Live in another client replaces the previous session. Its old
   editor and cleanup requests cannot modify or stop the replacement; that
   client must explicitly Start again to take over.
-- Full snapshots cross the client/core boundary; the core sends only the
-  changed UTF-8 range to TeXpresso. Pending edits coalesce while a request is
-  running, and the browser flattens its editor snapshot only when dispatching.
-  This keeps the integration small without repeatedly copying each keystroke.
+- The Mac app sends each edit as the range it replaced (`texpresso_edit`), and
+  a file's whole text (`texpresso_update`) only when the file is opened or
+  changed by another app, or an edit didn't fit the core's copy. The browser
+  sends whole texts: pending ones coalesce while a request is running, and it
+  flattens its editor snapshot only when dispatching. Either way the core sends
+  TeXpresso only the changed UTF-8 range.
 - TeXpresso's own SDL window, used without the patch and by the browser client,
   has none of the Mac app's native controls; the patched build replaces it with
   the PDF pane.
