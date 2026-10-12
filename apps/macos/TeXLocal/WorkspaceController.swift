@@ -686,7 +686,8 @@ class RestoredSplitViewController: NSSplitViewController {
         loaded()
     }
 
-    /// NSSplitViewController declares this without acting on it, so super isn't called.
+    /// NSSplitViewController declares this, as the split's delegate, without implementing it (27.2:
+    /// its instances don't respond to it), so there is no super to call.
     override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
                             ofSubviewAt dividerIndex: Int) -> CGFloat {
         guard let detent = detent(dividerIndex),

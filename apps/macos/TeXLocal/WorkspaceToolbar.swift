@@ -137,7 +137,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .format:
             item = formatItem()
         case .math:
-            item = menuItem(id, "Math", "radicand.squareroot", mathItems, help: "Insert math or a symbol")
+            item = menuItem(id, "Math", "radicand.squareroot",
+                            MathMenuItems(project: project) { [app, project] in app.perform(.editMath, on: project) },
+                            help: "Insert math or a symbol")
         case .insert:
             // Notes' ellipsis, which means More (HIG, Icons), with Insert as its name for
             // VoiceOver, Customize Toolbar and the overflow menu: what it holds is the menu bar's Insert.
@@ -277,26 +279,17 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         // Notes' words, from its strings (27.2).
         let item = button(.format, "Format", "textformat", #selector(showFormat(_:)), help: "Choose a style to apply to text")
         let form = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
-        form.submenu = menu(formatItems)
-        item.menuFormRepresentation = form
-        // Off outside LaTeX, as Math and Insert (`configure`).
-        item.autovalidates = false
-        return item
-    }
-
-    /// Format's popover as a menu, for the overflow menu.
-    private var formatItems: some View {
-        Group { [app, project] in
+        form.submenu = menu(Group { [app, project] in
             ForEach([MenuCommand.editBold, .editItalic, .editUnderline], id: \.self) { command in
                 Button(command.title) { app.perform(command, on: project) }
             }
             Divider()
             SectionLevelItems(project: project)
-        }
-    }
-
-    private var mathItems: some View {
-        MathMenuItems(project: project) { [app, project] in app.perform(.editMath, on: project) }
+        })
+        item.menuFormRepresentation = form
+        // Off outside LaTeX, as Math and Insert (`configure`).
+        item.autovalidates = false
+        return item
     }
 
     // ---------- state ----------

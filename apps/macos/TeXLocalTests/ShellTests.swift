@@ -197,4 +197,20 @@ struct ShellTests {
         app.requestPDF(.fitWidth)
         #expect(app.showPDF && asked == 2)
     }
+
+    /// A track applies each new value once, not a change that leaves the value as it was, and
+    /// the first only where it is asked for.
+    @Test func aTrackAppliesEachNewValueOnce() async throws {
+        let app = AppModel()
+        var all: [Int] = [], later: [Int] = []
+        let tracks = [track({ app.searchFocusToken / 2 }) { all.append($0) },
+                      track({ app.searchFocusToken / 2 }, initial: false) { later.append($0) }]
+        defer { tracks.forEach { $0.cancel() } }
+        for token in 1...3 {
+            try await Task.sleep(for: .milliseconds(50))
+            app.searchFocusToken = token
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(all == [0, 1] && later == [1])
+    }
 }
