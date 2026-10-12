@@ -399,6 +399,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TeXLocal/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = TeXLocal;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Underleaf contributors";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "TeXLocal asks Finder to move deleted files to the Trash, so you can put them back.";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -433,6 +434,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TeXLocal/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = TeXLocal;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Underleaf contributors";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "TeXLocal asks Finder to move deleted files to the Trash, so you can put them back.";
 				LD_RUNPATH_SEARCH_PATHS = (

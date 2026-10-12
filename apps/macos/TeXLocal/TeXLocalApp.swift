@@ -16,9 +16,9 @@ struct TeXLocalApp: App {
             ToolbarCommands()
             // The app has no help book; the default item would only say so.
             CommandGroup(replacing: .help) {
-                Link("TeXLocal on GitHub", destination: URL(string: "https://github.com/Banrs/Underleaf")!)
+                Link("Visit TeXLocal on GitHub", destination: URL(string: "https://github.com/Banrs/Underleaf")!)
                 // Where Apple's apps put their feedback: Help.
-                Link("Report an Issue…", destination: URL(string: "https://github.com/Banrs/Underleaf/issues")!)
+                Link("Report an Issue", destination: URL(string: "https://github.com/Banrs/Underleaf/issues")!)
             }
         }
     }
@@ -51,9 +51,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if app.tex?.available == false { Task { await app.refreshTeXStatus() } }
     }
 
-    /// Open With and Dock drops, as File › Open…: a project's own file opens it, anything else is copied in.
+    /// Open With and Dock drops, as File › Open…: a project's own file opens it, anything else is copied in. Several
+    /// items are all imported and none opens, as dropped on Home.
     func application(_ application: NSApplication, open urls: [URL]) {
-        if let url = urls.first(where: AppModel.canOpen) { Task { await app.importProject(from: url) } }
+        let urls = urls.filter(AppModel.canOpen)
+        Task {
+            for url in urls { await app.importProject(from: url, open: urls.count == 1) }
+        }
     }
 
     /// The Dock icon brings the window back, closed or minimised, even while Settings shows.
