@@ -705,13 +705,13 @@ final class ProjectFlowTests {
     func aSearchListsItsHitsByFile() async throws {
         let project = try await opened("needle\nhay\nNeedle").project
         try await Core.shared.perform("write_file", ["id": project.id, "path": "appendix.tex", "text": "a needle"])
-        project.searchQuery = "needle"
-        await project.search()
-        #expect(project.searchHits?.count == 3 && project.searchFailure == nil)
-        #expect(project.searchGroups.map(\.file) == ["appendix.tex", "main.tex"] && project.searchGroups.map(\.hits.count) == [1, 2])
-        project.searchQuery = " "
-        await project.search()
-        #expect(project.searchHits == nil && project.searchFailure == nil && project.searchGroups.isEmpty)
+        project.search.query = "needle"
+        await project.search.run()
+        #expect(project.search.hits?.count == 3 && project.search.failure == nil)
+        #expect(project.search.groups.map(\.file) == ["appendix.tex", "main.tex"] && project.search.groups.map(\.hits.count) == [1, 2])
+        project.search.query = " "
+        await project.search.run()
+        #expect(project.search.hits == nil && project.search.failure == nil && project.search.groups.isEmpty)
         await app.close()
     }
 

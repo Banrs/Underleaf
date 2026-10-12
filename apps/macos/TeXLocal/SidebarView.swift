@@ -16,16 +16,16 @@ struct FilesList: View {
         // follows the header's as it folds.
         GeometryReader { geometry in
             // Two lists: one list diffed from the tree to grouped hits and back keeps stale rows.
-            Group { if project.isSearching { results } else { files } }
+            Group { if project.search.isSearching { results } else { files } }
                 .modifier(HeaderEdge(height: geometry.safeAreaInsets.bottom))
         }
             // Each search reads every file in the project; it waits for typing to pause.
-            .task(id: project.searchQuery) {
-                if project.isSearching { try? await Task.sleep(for: PDFFind.debounce) }
+            .task(id: project.search.query) {
+                if project.search.isSearching { try? await Task.sleep(for: PDFFind.debounce) }
                 guard !Task.isCancelled else { return }
-                await project.search()
+                await project.search.run()
                 // The list changes without a word: VoiceOver hears the count, as it does the PDF's find count.
-                guard !Task.isCancelled, let hits = project.searchHits, project.searchFailure == nil else { return }
+                guard !Task.isCancelled, let hits = project.search.hits, project.search.failure == nil else { return }
                 var spoken = hits.isEmpty ? AttributedString(localized: "Not found")
                     : AttributedString(localized: "^[\(hits.count) match](inflect: true)")
                 spoken.accessibilitySpeechAnnouncementPriority = .low
@@ -148,7 +148,7 @@ struct FilesList: View {
     private func create(_ entry: NewEntry) {
         let folder = entry.folder ?? chosenFolder
         // The files show it, not the search's results.
-        if project.isSearching { project.searchQuery = "" }
+        if project.search.isSearching { project.search.query = "" }
         Task {
             guard let path = await project.createEntry(in: folder, directory: entry.directory) else { return }
             showRow(path)
@@ -171,28 +171,28 @@ struct FilesList: View {
             .accessibilityLabel("Search Results")
             // A new query can reuse a file/line ID. Clear the old selection so
             // the first click on that new hit opens it.
-            .onChange(of: project.searchQuery, initial: true) { hit = nil }
+            .onChange(of: project.search.query, initial: true) { hit = nil }
             .onChange(of: hit) { _, id in open(id, focus: false) }
             .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
             .overlay {
-                if let failure = project.searchFailure {
+                if let failure = project.search.failure {
                     ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",
                                            description: Text(failure))
-                } else if project.searchHits?.isEmpty == true {
-                    ContentUnavailableView.search(text: project.searchQuery)
+                } else if project.search.hits?.isEmpty == true {
+                    ContentUnavailableView.search(text: project.search.query)
                 }
             }
     }
 
     private func open(_ id: SearchHit.ID?, focus: Bool) {
-        if let found = project.searchHits?.first(where: { $0.id == id }) {
+        if let found = project.search.hits?.first(where: { $0.id == id }) {
             Task { await project.open(found.file, line: found.line, focus: focus) }
         }
     }
 
     /// Hits grouped by file, each line with its match picked out.
     private var searchResults: some View {
-        ForEach(project.searchGroups) { group in
+        ForEach(project.search.groups) { group in
             Section {
                 ForEach(group.hits) { hit in
                     HStack(alignment: .firstTextBaseline) {

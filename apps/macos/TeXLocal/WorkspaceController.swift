@@ -235,7 +235,7 @@ final class WorkspaceController: RestoredSplitViewController {
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.minimumThickness = ColumnMetrics.sidebarMinimum
         sidebarItem.isCollapsed = !app.sidebarVisible
-        sidebarSearch = accessory(SearchField(text: Bindable(project).searchQuery, prompt: "Search Project", handle: searchField))
+        sidebarSearch = accessory(SearchField(text: Bindable(project.search).query, prompt: "Search Project", handle: searchField))
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
         addSplitViewItem(sidebarItem)
     }
@@ -658,7 +658,7 @@ private nonisolated enum OutlineState {
     case open, folded, hidden
 
     @MainActor init(_ app: AppModel, _ project: ProjectModel) {
-        self = project.isSearching || !project.isLaTeX ? .hidden : app.outlineCollapsed ? .folded : .open
+        self = project.search.isSearching || !project.isLaTeX ? .hidden : app.outlineCollapsed ? .folded : .open
     }
 }
 

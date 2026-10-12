@@ -168,15 +168,8 @@ final class ProjectModel {
         for name in sidebarKeys { UserDefaults.standard.removeObject(forKey: key(name, id)) }
     }
 
-    var searchQuery = ""
-    var isSearching: Bool { !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty }
-    /// The latest finished search's hits: nil until the first for a query ends,
-    /// so its results pane doesn't read No Results while it runs.
-    private(set) var searchHits: [SearchHit]?
-    /// Why the latest search found nothing, when it couldn't be run.
-    private(set) var searchFailure: String?
-    /// `searchHits` by file, in the order of the files' names.
-    private(set) var searchGroups: [SearchGroup] = []
+    /// Find in Project, in the sidebar.
+    let search: ProjectSearch
 
     let editor = SourceEditor()
     @ObservationIgnored private weak var app: AppModel?
@@ -207,6 +200,7 @@ final class ProjectModel {
     init(id: String, app: AppModel) {
         self.id = id
         self.app = app
+        search = ProjectSearch(id: id)
         let defaults = UserDefaults.standard
         expandedFolders = Set(defaults.stringArray(forKey: Self.key("expandedFolders", id)) ?? [])
         foldedHeadings = Set(defaults.stringArray(forKey: Self.key("foldedHeadings", id)) ?? [])
@@ -1305,24 +1299,6 @@ final class ProjectModel {
     private func removeExport() {
         if let exportFolder { try? FileManager.default.removeItem(at: exportFolder) }
         exportFolder = nil
-    }
-
-    // ---------- search ----------
-
-    /// Hits for the current query, unless the calling task is cancelled by a newer one; without a
-    /// query, none yet.
-    func search() async {
-        var hits: [SearchHit]?, failure: String?
-        if isSearching {
-            do {
-                hits = try await core.call("search_project", ["id": id, "query": searchQuery], as: [SearchHit].self)
-            } catch {
-                (hits, failure) = ([], error.localizedDescription)
-            }
-            guard !Task.isCancelled else { return }
-        }
-        (searchHits, searchFailure) = (hits, failure)
-        searchGroups = Dictionary(grouping: hits ?? [], by: \.file).map { SearchGroup(file: $0.key, hits: $0.value) }.sorted { $0.file < $1.file }
     }
 
     // ---------- editor commands ----------
