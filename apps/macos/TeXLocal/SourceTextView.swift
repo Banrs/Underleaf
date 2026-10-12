@@ -18,7 +18,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.textContainer?.widthTracksTextView = true
         view.textContainer?.size = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        // Its own storage's delegate: every edit reaches the core's mirror through it.
+        view.textStorage?.delegate = view
+        NSWorkspace.shared.notificationCenter.addObserver(view, selector: #selector(displayOptionsChanged),
+                                                          name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
         return view
+    }
+
+    /// Increase Contrast, turned on or off: the line numbers and the completion list's rows follow it.
+    @objc private func displayOptionsChanged() {
+        needsDisplay = true
+        if offered != nil { completionList.restyle() }
     }
 
     /// The pointer is the split divider's by it and the arrow over the gutter, where a click
@@ -52,6 +62,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// Only active IME composition needs a snapshot; ordinary edits and undo are live.
     private var beforeMarkedText: String?
     var committedString: String { hasMarkedText() ? beforeMarkedText ?? string : string }
+    /// The storage's own UTF-16 units, for a look at them: `string` bridges the whole text to a
+    /// Swift string each time it's asked, and a caret move, a key and a draw all ask.
+    private var text: NSString { textStorage?.mutableString ?? "" }
     var symbols = Symbols(citations: [], labels: [])
     /// What dropping a file does, or nil to refuse it.
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
@@ -105,7 +118,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
                      range edited: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters), !loading else { return }
         let old = NSRange(location: edited.location, length: edited.length - delta)
-        let text = (textStorage.string as NSString).substring(with: edited)
+        let text = textStorage.mutableString.substring(with: edited)
         document.edit(old, with: text)
         textEdited(old, text)
         edits += 1
@@ -163,9 +176,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// Settings' Colour Theme.
     var syntaxTheme = SyntaxTheme.overleaf {
         didSet {
-            guard syntaxTheme != oldValue else { return }
-            colour(from: 0)
-            redrawFragments()
+            if syntaxTheme != oldValue { colour(from: 0) }
         }
     }
 
@@ -208,8 +219,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             storage.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: storage.length))
         }
         typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: style]
-        // Xcode's numbers, measured: semi-condensed SF a point under the text, tabular; never under
-        // the 10 points the HIG gives as the Mac's smallest text.
+        // Xcode's numbers as near as the system font's faces come: semi-condensed SF (a width of -0.1,
+        // between the SDK's condensed and standard) a point under the text, tabular, a digit 6.7 pt
+        // wide at 12. Xcode 27.1's own are 6.25 pt apart and a little taller (its capture,
+        // 2026-10-12), which the condensed face matches worse at every size. Never under the 10
+        // points the HIG gives as the Mac's smallest text.
         let numbers = NSFont.systemFont(ofSize: max(10, fontSize - 1), weight: .regular, width: NSFont.Width(rawValue: -0.1))
         numberFont = NSFont(descriptor: numbers.fontDescriptor.addingAttributes([.featureSettings: [[
             NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
@@ -244,12 +258,15 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var issueLines: [Int: Bool] = [:] {
         didSet { if issueLines != oldValue { redrawLineAndGutter() } }
     }
+    /// What the issue on each of those lines says, for the Issues rotor; a line without is named by its kind alone.
+    var issueMessages: [Int: String] = [:]
     /// A click on a marked line's gutter: the build panel shows what the mark is for.
     var issueClicked: (Int) -> Void = { _ in }
-    /// The build panel's symbols, an error's and a warning's, to fit the gutter's 14 pt margin.
+    /// The build panel's symbols, an error's and a warning's, at the smallest text style's 10 pt
+    /// to fit the gutter's 14 pt margin.
     private static let issueSymbols = [true: "xmark.octagon.fill", false: "exclamationmark.triangle.fill"].compactMapValues {
         NSImage(systemSymbolName: $0, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular).applying(.preferringMulticolor()))
+            .withSymbolConfiguration(.init(textStyle: .caption1).applying(.preferringMulticolor()))
     }
 
     /// Settings' Show Line Numbers. Off, the gutter is a margin that keeps the issues' marks.
@@ -354,7 +371,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     /// Back to a `shownTop`.
     func scroll(toShownTop top: (offset: Int, below: CGFloat)) {
-        guard let location = textRange(NSRange(location: min(top.offset, (string as NSString).length), length: 0))?.location else { return }
+        guard let location = textRange(NSRange(location: min(top.offset, text.length), length: 0))?.location else { return }
         scroll(location) { $0.minY - top.below }
     }
 
@@ -403,7 +420,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// The current line's highlight, as Xcode's, measured: for a caret only, its paragraph
     /// from 14 pt to 8 pt from the right edge, with 4 pt corners round the line number.
     private var currentLine: (number: Int, rect: NSRect)? {
-        let selection = selectedRange(), length = (string as NSString).length
+        let selection = selectedRange(), length = text.length
         guard let entry = fragments.last(where: { $0.offset <= selection.location }) else { return nil }
         let end = offset(entry.fragment.rangeInElement.endLocation)
         guard selection.location < end || end == length else { return nil }
@@ -442,6 +459,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return typeset
     }
 
+    /// The line numbers' colour with Increase Contrast.
+    private static let legibleNumbers = NSColor.tertiaryLabelColor.legibleAsText
+
     /// Draw the current line, and the numbers on each paragraph's first baseline.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
@@ -454,8 +474,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             NSBezierPath(roundedRect: current.rect, xRadius: 4, yRadius: 4).fill()
         }
         guard rect.minX < numbersEnd + 4, let context = NSGraphicsContext.current?.cgContext else { return }
-        // The current line's number as a label, the others tertiary, as Xcode's; the system
-        // raises both for Increase Contrast.
+        // The current line's number as a label, the others tertiary, as Xcode's: 1.9:1 in Light and
+        // 2.3:1 in Dark, which the HIG allows where Increase Contrast gives more. With that on
+        // they are raised as the syntax colours are (`displayOptionsChanged` redraws them).
+        let faint = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? Self.legibleNumbers : .tertiaryLabelColor
         context.saveGState()
         defer { context.restoreGState() }
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
@@ -478,7 +500,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             }
             guard showsLineNumbers else { continue }
             func draw(_ lineNumber: Int, on line: NSTextLineFragment) {
-                (lineNumber == current?.number || issueLines[lineNumber] != nil ? NSColor.labelColor : .tertiaryLabelColor).setFill()
+                (lineNumber == current?.number || issueLines[lineNumber] != nil ? .labelColor : faint).setFill()
                 let number = numberLine(lineNumber)
                 context.textPosition = CGPoint(x: numbersEnd - number.width, y: frame.minY + line.typographicBounds.minY + line.glyphOrigin.y)
                 CTLineDraw(number.line, context)
@@ -496,7 +518,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     /// Colours the text from an offset's line on, as an edit changes no colour before its own
     /// line. TextKit validates colours when it lays a fragment out anew, without editing the
-    /// document's attributes; the fragments already shown keep none until validated here.
+    /// document's attributes; the fragments already shown keep none until validated here, and
+    /// show none until redrawn: display maths opened on one line recolours those under it.
     private func colour(from start: Int) {
         guard let manager = textLayoutManager else { return }
         staleColours = nil
@@ -520,6 +543,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         for (_, fragment) in fragments[(fragments.lastIndex { $0.offset <= line } ?? 0)...] {
             manager.renderingAttributesValidator?(manager, fragment)
         }
+        redrawFragments()
     }
 
     /// Each shown fragment draws in a view of its own, which new rendering attributes don't
@@ -529,7 +553,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             view.needsDisplay = true
             view.subviews.forEach(redraw)
         }
-        redraw(self)
+        subviews.forEach(redraw)
     }
 
     // MARK: the selection
@@ -547,7 +571,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
         previewMath()
         if let snippet, !mirroring, !snippet.contains(selectedRange()) { self.snippet = nil }
-        let lineStart = (string as NSString).lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
+        let lineStart = text.lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
         closers = closers.filter { $0 >= lineStart }
         redrawLineAndGutter()
     }
@@ -640,7 +664,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     /// The character at a UTF-16 offset, if there's one there.
     private func character(at i: Int) -> Character? {
-        let text = string as NSString
         guard i >= 0, i < text.length else { return nil }
         return text.substring(with: text.rangeOfComposedCharacterSequence(at: i)).first
     }
@@ -648,7 +671,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// Where the bracket at `at` is matched, within 10,000 UTF-16 units. Brackets are ASCII,
     /// so code units compare exactly.
     private func partner(of at: Int) -> Int? {
-        let text = string as NSString
+        let text = self.text
         guard at >= 0, at < text.length, let c = Unicode.Scalar(text.character(at: at)).map(Character.init) else { return nil }
         let close = Self.pairs[c], open = Self.pairs.first { $0.value == c }?.key
         guard let other = (close ?? open)?.utf16.first, let unit = c.utf16.first else { return nil }
@@ -723,7 +746,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             return
         }
         let selection = selectedRange()
-        let text = self.string as NSString
         let next = character(at: selection.location)
         if selection.length == 0, closers.contains(selection.location), Self.pairs.values.contains(c) {
             if next == c {
@@ -769,7 +791,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     /// Whether the character at `at` follows an unescaped backslash, as the bracket of `\[` does.
     private func isEscaped(_ at: Int) -> Bool {
-        let text = string as NSString
         var slashes = 0
         while at - slashes > 0, text.character(at: at - slashes - 1) == 0x5C { slashes += 1 }
         return slashes % 2 == 1
@@ -791,7 +812,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             typing = wasTyping
             if completing { offerCompletions() }
         }
-        let selection = selectedRange(), text = string as NSString
+        let selection = selectedRange()
         guard selection.length == 0, selection.location > 0, selectedRanges.count == 1 else { return super.deleteBackward(sender) }
         let caret = selection.location
         // Only a closer this view put in goes with its bracket.
@@ -812,7 +833,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// Keep indentation on a new line; move an empty pair's closer down one line.
     override func insertNewline(_ sender: Any?) {
         guard selectedRanges.count == 1 else { return super.insertNewline(sender) }
-        let text = string as NSString
         var range = selectedRange()
         let line = text.lineRange(for: NSRange(location: range.location, length: 0))
         let lineText = text.substring(with: line).trimmingCharacters(in: .newlines)
@@ -1023,7 +1043,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         super.didChangeText()
         guard needsMirror, !mirroring, let snippet, let typed = snippet.typed else { return }
         needsMirror = false
-        let text = (string as NSString).substring(with: typed)
+        let text = self.text.substring(with: typed)
         let selection = selectedRange()
         mirroring = true
         for field in snippet.fields.reversed() where field.index == snippet.active && field.range != typed {
@@ -1048,7 +1068,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// A click in the gutter selects its line, a drag the lines it passes and Shift from the
     /// selection there was, as Xcode's; on an issue's mark the build panel shows the issue.
     private func selectLines(with event: NSEvent) {
-        let text = string as NSString
         func line(at event: NSEvent) -> NSRange {
             let point = NSPoint(x: textContainerOrigin.x, y: convert(event.locationInWindow, from: nil).y)
             return text.lineRange(for: NSRange(location: characterIndexForInsertion(at: point), length: 0))
@@ -1115,14 +1134,15 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func accessibilityCustomRotors() -> [NSAccessibilityCustomRotor] { rotors }
 
-    /// The next or previous heading, or line with a build issue, from the rotor's current one.
+    /// The next or previous heading, or line with a build issue, from the rotor's current one. An
+    /// issue is named by its kind, its line and what it says, which the filter then searches.
     func rotor(_ rotor: NSAccessibilityCustomRotor,
                resultFor search: NSAccessibilityCustomRotor.SearchParameters) -> NSAccessibilityCustomRotor.ItemResult? {
         var items = rotor.type == .heading ? headings() : issueLines.sorted { $0.key < $1.key }.map { line, error in
-            (line, error ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)"))
+            let place = error ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)")
+            return (line, issueMessages[line].map { String(localized: "\(place): \($0)") } ?? place)
         }
         if !search.filterString.isEmpty { items = items.filter { $0.title.localizedCaseInsensitiveContains(search.filterString) } }
-        let text = string as NSString
         let current = search.currentItem.map { document.line(at: min($0.targetRange.location, text.length)) }
         let next = search.searchDirection == .next
         guard let found = next ? items.first(where: { $0.line > current ?? 0 }) : items.last(where: { $0.line < current ?? .max })

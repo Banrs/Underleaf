@@ -65,12 +65,13 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.isAutomaticTextCompletionEnabled = false
         text.smartInsertDeleteEnabled = false
         text.inlinePredictionType = .no
+        // An answer offered after "2+3=" would be the system's sum in the LaTeX.
+        text.mathExpressionCompletionType = .no
         // Writing Tools proofread and rewrite the prose in place, as plain text, and leave the LaTeX alone (below).
         text.writingToolsBehavior = .limited
         text.allowedWritingToolsResultOptions = .plainText
         text.setAccessibilityLabel(String(localized: "Source"))
         text.delegate = self
-        text.textStorage?.delegate = text
         // Untinted, as the column's surface around it (`SourceColumn`).
         text.backgroundColor = .untintedTextBackground
         text.isHidden = true
@@ -154,7 +155,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     var currentColumn: Int { textView.selectedRange().location - textView.document.lineStart(currentLine) }
 
     /// Put the line at the top or centre; a column selects its word.
-    /// Show the system find indicator after the scroll completes.
+    /// Show the system find indicator after the scroll completes: it bounces, so not with
+    /// Reduce Motion, where the selected word or the caret's line is the mark.
     func reveal(line: Int, column: Int? = nil, atTop: Bool = false, focus: Bool = true) {
         let document = textView.document
         let start = document.lineStart(line)
@@ -166,7 +168,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         scroll(to: start, atTop: atTop)
         if focus { self.focus() }
         let shown = word ?? NSRange(location: start, length: end - start)
-        if shown.length > 0 {
+        if shown.length > 0, !textView.reducesMotion() {
             // Once the scroll's layout is done.
             Task { self.textView.showFindIndicator(for: shown) }
         }

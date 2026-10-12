@@ -56,6 +56,14 @@ struct SourceEditorTests {
         #expect(document.lineStart(3) == 6)
     }
 
+    /// A text view made on its own is its storage's delegate: its edits reach the core's mirror.
+    @Test func aTextViewOnItsOwnMirrorsItsEdits() {
+        let view = SourceTextView.plainDocument()
+        view.load("one")
+        view.insertText("x", replacementRange: NSRange(location: 0, length: 0))
+        #expect(view.string == "xone" && view.document.text == "xone")
+    }
+
     @Test func bracketsCloseAndAreSteppedOver() {
         open("")
         text.insertText("{", replacementRange: typed)
@@ -697,8 +705,9 @@ struct SourceEditorTests {
         try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.colours.command }
     }
 
-    /// Every theme colour reaches the HIG's 4.5:1 on the text's background, and 7:1 with Increase
-    /// Contrast, as little changed as that takes: one that has it already stays as it is.
+    /// Every theme colour reaches the HIG's 4.5:1 on the text's background and on the current
+    /// line's, the system's fill over it, and 7:1 with Increase Contrast, as little changed as
+    /// that takes: one that has it already stays as it is.
     @Test(arguments: [NSAppearance.Name.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
     func theThemesAreLegible(name: NSAppearance.Name) throws {
         let appearance = try #require(NSAppearance(named: name))
@@ -707,12 +716,19 @@ struct SourceEditorTests {
             appearance.performAsCurrentDrawingAppearance { out = color.usingColorSpace(.sRGB) ?? color }
             return out
         }
-        let background = resolved(.textBackgroundColor)
+        let background = resolved(.textBackgroundColor), fill = resolved(.secondarySystemFill)
+        // The fill as the window server mixes it in: 235 on white, 48 on Dark's 30.
+        func under(_ component: KeyPath<NSColor, CGFloat>) -> CGFloat {
+            background[keyPath: component] * (1 - fill.alphaComponent) + fill[keyPath: component] * fill.alphaComponent
+        }
+        let currentLine = NSColor(srgbRed: under(\.redComponent), green: under(\.greenComponent), blue: under(\.blueComponent), alpha: 1)
         for theme in SyntaxTheme.allCases {
             let c = theme.colours
             // By the name: an Increase Contrast appearance made here is the plain one, the setting being off.
             for color in [c.command, c.keyword, c.argument, c.maths, c.comment, c.invalid].map({ $0.legibleAsText(in: name) }) {
-                #expect(color.contrast(with: background) >= ([.aqua, .darkAqua].contains(name) ? 4.5 : 7), "\(theme) \(color)")
+                for ground in [background, currentLine] {
+                    #expect(color.contrast(with: ground) >= ([.aqua, .darkAqua].contains(name) ? 4.5 : 7), "\(theme) \(color) on \(ground)")
+                }
             }
         }
         // Overleaf's Light commands, at 8.6:1, are its own blue.
@@ -771,18 +787,22 @@ struct SourceEditorTests {
         #expect(text.selectedRange() == NSRange(location: 4, length: 4) && asked == [2])
     }
 
-    /// VoiceOver's rotors step through the file's headings and the lines with build issues, either way.
+    /// VoiceOver's rotors step through the file's headings and the lines with build issues, either
+    /// way; an issue is named with what it says, where that's known, and found by it.
     @Test func theRotorsStepThroughHeadingsAndIssues() throws {
         open("a\n\\section{One}\nb\n\\section{Two}\nc", caret: 0)
         text.headings = { [(2, "One"), (4, "Two")] }
         text.issueLines = [3: true, 5: false]
+        text.issueMessages = [3: "Undefined control sequence"]
         let rotors = text.accessibilityCustomRotors()
         let headings = try #require(rotors.first { $0.type == .heading }), issues = try #require(rotors.first { $0.type == .custom })
         #expect(issues.label == "Issues")
-        func step(_ rotor: NSAccessibilityCustomRotor, from: NSAccessibilityCustomRotor.ItemResult?, next: Bool = true) -> NSAccessibilityCustomRotor.ItemResult? {
+        func step(_ rotor: NSAccessibilityCustomRotor, from: NSAccessibilityCustomRotor.ItemResult?, next: Bool = true,
+                  filter: String = "") -> NSAccessibilityCustomRotor.ItemResult? {
             let search = NSAccessibilityCustomRotor.SearchParameters()
             search.currentItem = from
             search.searchDirection = next ? .next : .previous
+            search.filterString = filter
             return text.rotor(rotor, resultFor: search)
         }
         let one = try #require(step(headings, from: nil))
@@ -791,7 +811,9 @@ struct SourceEditorTests {
         #expect(two.customLabel == "Two" && step(headings, from: two) == nil)
         #expect(step(headings, from: two, next: false)?.customLabel == "One")
         let error = try #require(step(issues, from: nil))
-        #expect(error.customLabel == "Error on line 3" && step(issues, from: error)?.customLabel == "Warning on line 5")
+        #expect(error.customLabel == "Error on line 3: Undefined control sequence")
+        #expect(step(issues, from: error)?.customLabel == "Warning on line 5")
+        #expect(step(issues, from: nil, filter: "undefined")?.targetRange == error.targetRange && step(issues, from: nil, filter: "missing") == nil)
     }
 
     /// The View menu's text size steps a point at a time and stops at the ends of Settings' range.

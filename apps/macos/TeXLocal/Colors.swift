@@ -33,8 +33,9 @@ extension NSColor {
         return mixed
     }
 
-    /// This colour as text on the text's background: in each appearance raised, by `contrasting`,
-    /// to the HIG's 4.5:1 for text under 18 points, and to WCAG's enhanced 7:1 with Increase Contrast.
+    /// This colour as text on the text's background, and on the editor's current line, which is
+    /// greyer: in each appearance raised, by `contrasting`, to the HIG's 4.5:1 for text under
+    /// 18 points, and to WCAG's enhanced 7:1 with Increase Contrast.
     var legibleAsText: NSColor {
         let names: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
         let resolved = Dictionary(uniqueKeysWithValues: names.map { ($0, legibleAsText(in: $0)) })
@@ -46,13 +47,26 @@ extension NSColor {
     func legibleAsText(in name: NSAppearance.Name) -> NSColor {
         guard let appearance = NSAppearance(named: name) else { return self }
         let background = NSColor.textBackground(in: appearance)
-        var color = self
-        appearance.performAsCurrentDrawingAppearance { color = usingColorSpace(.sRGB) ?? self }
-        // A translucent colour (a label's) as it shows on the background.
-        if color.alphaComponent < 1 {
-            color = background.blended(withFraction: color.alphaComponent, of: color.withAlphaComponent(1)) ?? color
+        var color = self, fill = NSColor.secondarySystemFill
+        appearance.performAsCurrentDrawingAppearance {
+            color = usingColorSpace(.sRGB) ?? self
+            fill = fill.usingColorSpace(.sRGB) ?? fill
         }
-        return color.contrasting(with: background, by: [.aqua, .darkAqua].contains(name) ? 4.5 : 7)
+        // A translucent colour (a label's, the fill's) as it shows on the background, mixed by sRGB's
+        // components as the window server does: `blended` gives its answer in the calibrated space,
+        // where the fill on white comes out at 239 for the 235 on screen.
+        func shown(_ color: NSColor) -> NSColor {
+            let alpha = color.alphaComponent
+            guard alpha < 1 else { return color }
+            func mixed(_ component: KeyPath<NSColor, CGFloat>) -> CGFloat {
+                background[keyPath: component] * (1 - alpha) + color[keyPath: component] * alpha
+            }
+            return NSColor(srgbRed: mixed(\.redComponent), green: mixed(\.greenComponent), blue: mixed(\.blueComponent), alpha: 1)
+        }
+        // The current line is the fill over the background (`SourceTextView.drawBackground`), nearer
+        // the text's colours than the background is: a comment at 4.8:1 on white was 4.0:1 on it.
+        let ratio: CGFloat = [.aqua, .darkAqua].contains(name) ? 4.5 : 7
+        return shown(color).contrasting(with: background, by: ratio).contrasting(with: shown(fill), by: ratio)
     }
 
     /// The system's text background as it is in an appearance.

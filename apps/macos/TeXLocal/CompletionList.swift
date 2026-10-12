@@ -47,8 +47,11 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// A square symbol's side over its point size.
     private static let squareSide: CGFloat = 0.9
 
-    /// Xcode shows the rows not chosen at 85%.
-    private static let faint: CGFloat = 0.85
+    /// Xcode shows the rows not chosen at 85%, and what isn't typed of a label as secondary text:
+    /// together about 3:1 in Light. With Increase Contrast every row is whole and all of its
+    /// label the text's colour, the typed part heavier still.
+    private static var increasesContrast: Bool { NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast }
+    private static var faint: CGFloat { increasesContrast ? 1 : 0.85 }
 
     /// The rows over the chosen one's ground, which is raised as Xcode's: a control's face in
     /// Light and the fill that lightens in Dark, with a shadow that falls on the rows beside it,
@@ -94,6 +97,7 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         table.action = #selector(click)
         // A click chooses a row and leaves the keyboard in the document.
         table.refusesFirstResponder = true
+        table.setAccessibilityLabel(String(localized: "Completions"))
         scroll.documentView = table
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -125,6 +129,7 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     func show(_ labels: [String], typed: Int, kind: CompletionKind, font: NSFont, theme: SyntaxTheme, under start: NSRect,
               in editor: NSRect, of window: NSWindow?) {
         guard !labels.isEmpty else { return close() }
+        let count = self.labels.count
         self.labels = labels
         self.typed = typed
         self.font = font
@@ -139,22 +144,24 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         fit()
         place(under: start, in: editor, on: window.screen)
         if panel.parent !== window {
-            panel.appearance = window.effectiveAppearance
+            panel.appearanceSource = window
             window.addChildWindow(panel, ordered: .above)
         }
-        if opening { announce() }
+        // Typing that leaves fewer is spoken too, after the typed character.
+        if opening || labels.count != count { announce(interrupting: opening) }
     }
 
     /// The font's line, to a whole point: 16 pt at 13.
     private var lineHeight: CGFloat { (font.ascender - font.descender + font.leading).rounded(.up) }
 
     /// The list never has VoiceOver's focus, which stays in the document: the row chosen is
-    /// spoken as the list opens and as the arrows move through it, as Xcode's list speaks it.
-    private func announce() {
+    /// spoken as the list opens and as the arrows move through it, as Xcode's list speaks it,
+    /// and, without interrupting, as typing changes how many it has.
+    private func announce(interrupting: Bool = true) {
         guard labels.indices.contains(selection) else { return }
         let position = String(localized: "\(selection + 1) of \(labels.count)")
         var announcement = AttributedString([labels[selection], badge.name, position].formatted(.list(type: .and, width: .narrow)))
-        announcement.accessibilitySpeechAnnouncementPriority = .high
+        announcement.accessibilitySpeechAnnouncementPriority = interrupting ? .high : .low
         AccessibilityNotification.Announcement(announcement).post()
     }
 
@@ -165,9 +172,14 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     /// Measures its widest label, and takes the height of its rows.
     private func fit() {
-        // The editor's font is monospaced: the longest label is the widest.
-        guard let longest = labels.indices.max(by: { labels[$0].count < labels[$1].count }),
-              let cell = tableView(table, viewFor: nil, row: longest) as? NSTableCellView, let text = cell.textField else { return }
+        // The editor's font is fixed-pitch, so of the labels all in ASCII the longest is the widest.
+        // A citation key's or a label's accents and other scripts come from a fallback font of
+        // another width: each of those is measured with it.
+        let isASCII = { (row: Int) in self.labels[row].utf8.allSatisfy { $0 < 0x80 } }
+        var measured = labels.indices.filter { !isASCII($0) }
+        if let longest = labels.indices.filter(isASCII).max(by: { labels[$0].utf8.count < labels[$1].utf8.count }) { measured.append(longest) }
+        guard let widest = zip(measured, measured.map { label($0).size().width }).max(by: { $0.1 < $1.1 })?.0,
+              let cell = tableView(table, viewFor: nil, row: widest) as? NSTableCellView, let text = cell.textField else { return }
         width = max(cell.fittingSize.width.rounded(.up), Self.minimumWidth)
         cell.setFrameSize(NSSize(width: width, height: table.rowHeight))
         cell.layoutSubtreeIfNeeded()
@@ -215,6 +227,14 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         announce()
     }
 
+    /// Its rows made again with the row chosen as it is: Increase Contrast changes their colours.
+    func restyle() {
+        guard !labels.isEmpty else { return }
+        let row = selection
+        table.reloadData()
+        table.selectRowIndexes([row], byExtendingSelection: false)
+    }
+
     @objc private func click() {
         if table.clickedRow >= 0 { clicked(table.clickedRow) }
     }
@@ -229,14 +249,18 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
     }
 
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let cell = NSTableCellView(), image = NSImageView(), text = NSTextField(labelWithString: "")
-        // What's typed as the document's text and heavier, the rest of the label behind it.
+    /// A row's label: what's typed as the document's text and heavier, the rest of it behind.
+    private func label(_ row: Int) -> NSAttributedString {
         let label = NSMutableAttributedString(string: labels[row], attributes: [
-            .font: font, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: Self.oneLine])
+            .font: font, .foregroundColor: Self.increasesContrast ? NSColor.labelColor : .secondaryLabelColor, .paragraphStyle: Self.oneLine])
         label.addAttributes([.font: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask), .foregroundColor: NSColor.labelColor],
                             range: NSRange(location: 0, length: min(typed, label.length)))
-        text.attributedStringValue = label
+        return label
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let cell = NSTableCellView(), image = NSImageView(), text = NSTextField(labelWithString: "")
+        text.attributedStringValue = label(row)
         text.maximumNumberOfLines = 1
         text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         // The square as high as the label's line, Xcode's 16 pt at 13, and the letter in the text's
