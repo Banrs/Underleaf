@@ -208,12 +208,12 @@ struct FormatPanel: View {
     /// column, as wide as the widest number shown in its level's font.
     struct Layout {
         private let fonts: [HeadingLevel: NSFont]
-        private let shapes: [HeadingLevel: HeadingStyles.Shape]
+        private let headings: HeadingStyles
         let pitch: CGFloat
         let markers: CGFloat
 
         init(_ headings: HeadingStyles) {
-            var fonts: [HeadingLevel: NSFont] = [:], shapes: [HeadingLevel: HeadingStyles.Shape] = [:]
+            var fonts: [HeadingLevel: NSFont] = [:]
             for level in headings.levels {
                 let style = headings.font(level)
                 // LaTeX's sizes in Notes' range: \Huge's 2.5 times the text comes out at Notes'
@@ -224,10 +224,9 @@ struct FormatPanel: View {
                     font = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(.italic), size: 0) ?? font
                 }
                 fonts[level] = font
-                shapes[level] = style.shape
             }
             self.fonts = fonts
-            self.shapes = shapes
+            self.headings = headings
             // The rows' even pitch, as Notes': the largest line and a little, and at least the kit's 24 pt item.
             let line = fonts.values.map { $0.ascender - $0.descender + $0.leading }.max() ?? 16
             pitch = max(24, (line + 4).rounded(.up))
@@ -238,7 +237,7 @@ struct FormatPanel: View {
 
         func font(_ level: HeadingLevel) -> Font {
             let font = Font(fonts[level] ?? .systemFont(ofSize: NSFont.systemFontSize))
-            return shapes[level] == .smallCaps ? font.smallCaps() : font
+            return headings.font(level).shape == .smallCaps ? font.smallCaps() : font
         }
     }
 }

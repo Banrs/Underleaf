@@ -244,7 +244,12 @@ private struct ProgramFolder: View {
                 }
             } label: {
                 Text(title)
-                Text(folder.map { program == .tex ? Self.latexmk(tex.version, in: $0) : $0 } ?? "Not Found")
+                // "latexmk 4.87 in /Library/TeX/texbin", from latexmk's "Latexmk, John Collins, 17 Nov. 2025. Version 4.87";
+                // the folder alone when the line reads otherwise.
+                Text(folder.map { path in
+                    guard program == .tex, let number = tex.version?.firstMatch(of: /Version (\d[\w.]*)/)?.1 else { return path }
+                    return "latexmk \(number) in \(path)"
+                } ?? "Not Found")
                     .textSelection(.enabled)
             }
             .fileImporter(isPresented: $choosing, allowedContentTypes: [.folder]) { result in
@@ -261,13 +266,6 @@ private struct ProgramFolder: View {
         } else {
             LabeledContent(title) { ProgressView().controlSize(.small).accessibilityLabel("Looking for \(title)") }
         }
-    }
-
-    /// "latexmk 4.87 in /Library/TeX/texbin", from latexmk's "Latexmk, John Collins, 17 Nov. 2025. Version 4.87";
-    /// the folder alone when the line reads otherwise.
-    static func latexmk(_ version: String?, in folder: String) -> String {
-        guard let number = version?.firstMatch(of: /Version (\d[\w.]*)/)?.1 else { return folder }
-        return "latexmk \(number) in \(folder)"
     }
 
     private func setFolder(_ path: String?) {

@@ -5,7 +5,9 @@ nonisolated struct DocumentClass: Equatable {
     var name: String
     /// 10, 11 or 12 (points): LaTeX's size options, which set what `\large` and the rest are.
     var pointSize = 10
+}
 
+extension DocumentClass {
     /// The class named outside comments, if any.
     init?(in text: String) {
         // A comment runs from a % that isn't escaped to the line's end.
@@ -15,11 +17,6 @@ nonisolated struct DocumentClass: Equatable {
         let options = match.1.map { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } } ?? []
         // KOMA-Script's fontsize=11pt as well as the standard 11pt.
         pointSize = [11, 12].first { size in options.contains { $0 == "\(size)pt" || $0 == "fontsize=\(size)pt" } } ?? 10
-    }
-
-    init(name: String, pointSize: Int = 10) {
-        self.name = name
-        self.pointSize = pointSize
     }
 }
 
@@ -72,11 +69,10 @@ nonisolated struct HeadingStyles: Equatable {
         let bold = { (size: Size) in Font(scale: scale(size), bold: true, shape: .upright) }
         let plain = { (shape: Shape) in Font(scale: 1, bold: false, shape: shape) }
         // The standard classes' (article.cls, book.cls): every level bold, and so memoir's.
-        let standard: [String: Font] = [
+        var fonts: [String: Font] = [
             "part": bold(.Huge), "chapter": bold(.Huge), "section": bold(.Large),
             "subsection": bold(.large), "subsubsection": bold(.normalsize), "paragraph": bold(.normalsize),
         ]
-        var fonts = standard
         var commands = HeadingLevel.sections.map(\.command)
         (numbered, chapters, roman) = switch family {
         case .article?, .komaArticle?, .amsArticle?: (3, false, false)
