@@ -6,32 +6,38 @@ enum PanelTab: String, CaseIterable {
 }
 
 /// The build panel below the editors and their status bar: the build's issues or its whole log,
-/// which scroll on beneath `BuildPanelBar` at the panel's foot, as Xcode's console under its bar.
-/// On the editors' surface, as Xcode's console is on its editor's. No close button: the status
-/// bar's toggle and View › Hide Build Panel close it.
+/// ending above `BuildPanelBar` at the panel's foot, as Xcode's console over its bar, with a
+/// device-pixel line between. On the editors' surface, as Xcode's console is on its editor's.
+/// No close button: the status bar's toggle and View › Hide Build Panel close it.
 struct BuildPanel: View {
     let project: ProjectModel
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
-        Group {
-            switch project.panelTab {
-            case .issues: issues
-            case .log: log
-            case .texpresso:
-                if project.texpresso.log.isEmpty {
-                    ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
-                                           description: Text(project.livePDF ? "The PDF pane shows Live Preview."
-                                                             : "Live Preview shows the document in its own window. Compile to update the PDF here."))
-                } else {
-                    log(project.texpresso.log, title: "Live Preview Log")
+        // In the panel's own content, not a split-item accessory, so the bar rides the panel's edge
+        // as the panel opens: AppKit shows a bottom accessory only once the pane has its height
+        // (27.2). The bar is opaque, so nothing scrolls under it: a stack, not a safe-area bar,
+        // whose edge SwiftUI draws over a list but not over the log's NSScrollView.
+        VStack(spacing: 0) {
+            Group {
+                switch project.panelTab {
+                case .issues: issues
+                case .log: log
+                case .texpresso:
+                    if project.texpresso.log.isEmpty {
+                        ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
+                                               description: Text(project.livePDF ? "The PDF pane shows Live Preview."
+                                                                 : "Live Preview shows the document in its own window. Compile to update the PDF here."))
+                    } else {
+                        LogPane(text: project.texpresso.log, filter: project.logFilter, title: "Live Preview Log")
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Rectangle().fill(.separator).frame(height: 1 / displayScale)
+            BuildPanelBar(project: project)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.textSurface)
-        // In the panel's own content, not a split-item accessory, so it rides the panel's edge as
-        // the panel opens: AppKit shows a bottom accessory only once the pane has its height (27.2).
-        .safeAreaBar(edge: .bottom, spacing: 0) { BuildPanelBar(project: project) }
     }
 
     private func matches(_ item: LogItem) -> Bool {
@@ -62,21 +68,18 @@ struct BuildPanel: View {
     @ViewBuilder
     private var log: some View {
         if let text = project.result?.log, !text.isEmpty {
-            log(text, title: "Build Log")
+            LogPane(text: text, filter: project.logFilter)
         } else {
             ContentUnavailableView("No Log", systemImage: "text.page",
                                    description: Text("Compile to see the log here."))
         }
     }
-
-    private func log(_ text: String, title: String) -> some View {
-        LogPane(text: text, filter: project.logFilter, title: title)
-    }
 }
 
 /// The bar at the panel's foot, as Xcode's console bar: what the panel shows, chosen from a
 /// pop-up as Xcode's console chooses its output, then that view's controls and filter. The panel's
-/// content scrolls beneath it (`BuildPanel`), and it paints the panel's surface.
+/// content ends above it (`BuildPanel`), and it paints the panel's surface. Its controls are small
+/// and its text subheadline, as the status bar's above it: 8 + 20 + 8 is its 36 pt.
 struct BuildPanelBar: View {
     @Bindable var project: ProjectModel
 
@@ -117,14 +120,14 @@ struct BuildPanelBar: View {
                     .frame(maxWidth: 180)
             }
         }
+        .font(.subheadline)
+        .controlSize(.small)
         .lineLimit(1)
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
-        // The status bar's height; Xcode's console bar's edges (measured 2026-10-06): its pop-up's
-        // text 16 pt in, its last control's glyph 17 pt from the edge.
-        .frame(height: StatusBar.height)
-        .padding(.leading, 12)
-        .padding(.trailing, 17)
+        .frame(height: BarMetrics.height)
+        .padding(.leading, BarMetrics.consoleLeading)
+        .padding(.trailing, BarMetrics.consoleTrailing)
         .background(.textSurface)
     }
 }
@@ -212,32 +215,30 @@ private struct IssueRow: View {
     }
 }
 
-/// The log under the panel's bar: the text view runs on beneath the bar, inset by its height so
-/// its last line and its scroller end at the bar's top. The bar's safe area reaches SwiftUI but
-/// not an AppKit scroll view, which takes the inset itself. With the bar's filter, only the
-/// lines with it in them, as Xcode's console filters its output.
+/// The log above the panel's bar. With the bar's filter, only the lines with it in them, as
+/// Xcode's console filters its output.
 private struct LogPane: View {
     let text: String
     let filter: String
     var title = "Build Log"
     /// The filter's lines, found off the main actor when the log or the filter changes: not on
-    /// every redraw of a log that can be megabytes. Nil until the first are in.
-    @State private var filtered: String?
+    /// every redraw of a log that can be megabytes. Nil until the first are in; until the next
+    /// are, the last non-empty ones stay, and an empty result is no answer to another filter.
+    @State private var filtered: (filter: String, lines: String)?
 
     var body: some View {
-        let shown = filter.isEmpty ? text : filtered ?? text
+        let current = filtered?.filter == filter ? filtered?.lines : nil
+        let previous = filtered.flatMap { $0.lines.isEmpty ? nil : $0.lines }
+        let shown = filter.isEmpty ? text : current ?? previous ?? text
         Group {
             if shown.isEmpty {
                 ContentUnavailableView.search(text: filter)
             } else {
-                GeometryReader { geometry in
-                    LogTextView(text: shown, title: title, bottomInset: geometry.safeAreaInsets.bottom)
-                        .ignoresSafeArea(.container, edges: .bottom)
-                }
+                LogTextView(text: shown, title: title)
             }
         }
         .task(id: [text, filter]) {
-            filtered = filter.isEmpty ? nil : await Self.lines(of: text, with: filter)
+            filtered = filter.isEmpty ? nil : (filter, await Self.lines(of: text, with: filter))
         }
     }
 
@@ -252,8 +253,6 @@ private struct LogPane: View {
 struct LogTextView: NSViewRepresentable {
     let text: String
     var title = "Build Log"
-    /// The bar over the text view's foot (`LogPane`).
-    var bottomInset: CGFloat = 0
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -280,13 +279,6 @@ struct LogTextView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
         view.setAccessibilityLabel(title)
-        if scroll.contentInsets.bottom != bottomInset {
-            let atEnd = scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1
-            scroll.automaticallyAdjustsContentInsets = false
-            scroll.contentInsets.bottom = bottomInset
-            scroll.scrollerInsets.bottom = bottomInset
-            if atEnd { view.scrollToEndOfDocument(nil) }
-        }
         guard context.coordinator.shown != text else { return }
         updateText(in: scroll)
         context.coordinator.shown = text

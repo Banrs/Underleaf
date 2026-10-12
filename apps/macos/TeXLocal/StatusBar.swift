@@ -1,14 +1,36 @@
 import SwiftUI
 
+/// The bars' numbers, Xcode's, measured (2026-10-06). Most are the UI kit's too: 36 is an
+/// extra-large control and also 8 + a small control (20) + 8, 14 is the sidebar's content inset
+/// and 9 the toolbar button group's gap. 16.5, 12, 17 and 16 have no kit symbol.
+enum BarMetrics {
+    /// A toolbar control's height, which the status bar, the build panel's bar and the folded
+    /// File Outline's header share.
+    static let height: CGFloat = 36
+    /// The status bar's edges: 14 pt in to its first item, and the toggle's symbol 17.5 pt from
+    /// the right edge, 3.5 pt of which its target beyond the glyph makes up.
+    static let leading: CGFloat = 14
+    static let trailing: CGFloat = 16.5
+    /// Between a bar's items, and between its groups of them.
+    static let spacing: CGFloat = 9
+    static let groupSpacing: CGFloat = 16
+    /// The build panel's bar, as Xcode's console bar: its pop-up's text 16 pt in, its last
+    /// control's glyph 17 pt from the edge.
+    static let consoleLeading: CGFloat = 12
+    static let consoleTrailing: CGFloat = 17
+    /// The HIG's 20 × 20 pt least target for a borderless button, a small control's height.
+    static let target: CGFloat = 20
+    /// The hairline before the toggle: as tall as the toggle's symbol.
+    static let dividerHeight: CGFloat = 12
+}
+
 /// Status below source and PDF, which scroll on beneath it, the same whether the build panel
 /// shows or not. Page uses PDFKit numbering, which can differ from LaTeX; the engine appears
 /// elsewhere.
 struct StatusBar: View {
-    /// The bar's height, a toolbar control's, which the folded File Outline's header and the
-    /// build panel's bar share.
-    static let height: CGFloat = 36
+    static let height = BarMetrics.height
     @Environment(AppModel.self) private var app
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @Environment(\.displayScale) private var displayScale
     @Bindable var project: ProjectModel
 
@@ -19,10 +41,9 @@ struct StatusBar: View {
             content(.symbols).labelStyle(.iconOnly)
             content(.short).labelStyle(.iconOnly)
         }
-        // Xcode's bar, measured (2026-10-06): 36 pt under its hairline, 14 pt in to the first
-        // item, the toggle's symbol 17.5 pt from the right edge.
-        .padding(.leading, 14)
-        .padding(.trailing, 16.5)
+        // Xcode's bar: 36 pt under its hairline.
+        .padding(.leading, BarMetrics.leading)
+        .padding(.trailing, BarMetrics.trailing)
         .frame(height: Self.height)
         // The window's lines are a device pixel, as its splits' dividers; this one in a row of
         // its own over the bar, the row of the line over the File Outline's header beside it.
@@ -47,7 +68,7 @@ struct StatusBar: View {
 
     private func content(_ detail: Detail) -> some View {
         // Xcode's hairline before the toggle, 9 pt either side.
-        HStack(spacing: 9) {
+        HStack(spacing: BarMetrics.spacing) {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
             Button {
@@ -80,7 +101,7 @@ struct StatusBar: View {
             Spacer(minLength: 0)
             let counts = detail == .full && project.editsText && app.showWordCount ? project.counts : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
-            HStack(spacing: 16) {
+            HStack(spacing: BarMetrics.groupSpacing) {
                 if project.editsText {
                     // The caret's place; Go to Line from it.
                     Button { app.perform(.editGotoLine, on: project) } label: {
@@ -118,14 +139,19 @@ struct StatusBar: View {
                 }
             }
             .fixedSize()
-            // Xcode's: as tall as the toggle's symbol.
-            if project.editsText || pages { Divider().frame(height: 12) }
+            // A device pixel wide, as the window's other lines: `Divider` is a point.
+            if project.editsText || pages {
+                Rectangle().fill(.separator).frame(width: 1 / displayScale, height: BarMetrics.dividerHeight)
+            }
             Toggle(isOn: $project.showLogs) {
                 // Only as tall as the HIG's least target: its symbol sits at Xcode's gaps, at the body
                 // size, the nearest to Xcode's 12.5 pt symbol beside 11 pt text (measured 2026-10-06).
-                Label("Build Panel", systemImage: "inset.filled.bottomthird.square")
+                // Its state is the accent colour alone: with Differentiate Without Colour the off
+                // state is the plain square, without the panel's filled third.
+                Label("Build Panel", systemImage: differentiateWithoutColor && !project.showLogs
+                      ? "square" : "inset.filled.bottomthird.square")
                     .font(.body)
-                    .frame(minHeight: 20)
+                    .frame(minHeight: BarMetrics.target)
             }
             .labelStyle(.iconOnly)
             .toggleStyle(.button)
@@ -141,15 +167,15 @@ struct StatusBar: View {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill")
                     .hitTarget()
             }
-            .help("Latest build failed. Showing the last PDF that built")
+            .help("The latest build failed, so this is the last PDF that built")
         } else if project.pdfOutdated, !project.livePDF {
             Button { app.perform(.compileRun, on: project) } label: {
                 Label("PDF Out of Date", systemImage: "arrow.clockwise")
                     .hitTarget()
             }
             .help(project.texpresso.active
-                ? "Live Preview updates its own window. Compile to refresh this PDF"
-                : "The PDF is older than the source. Click to compile")
+                ? "Live Preview updates its own window; compile to refresh this PDF"
+                : "The PDF is older than the source; compile to refresh it")
             .disabled(!app.isEnabled(.compileRun, on: project))
         }
     }
@@ -179,8 +205,10 @@ struct StatusBar: View {
                 badge("\(project.warningCount)", "exclamationmark.triangle.fill", spoken: "^[\(project.warningCount) warning](inflect: true)")
             }
         }
-        // A build starting or ending crossfades its status; nothing here moves with typing.
-        .animation(reduceMotion ? nil : .snappy, value: project.compiling)
+        // A build starting or ending crossfades its status, as Compile's button changes form, and
+        // under Reduce Motion too, where the HIG has a crossfade stand for motion; nothing here
+        // moves with typing.
+        .animation(.easeInOut(duration: 0.2), value: project.compiling)
     }
 
     /// `spoken` is what the short `title` stands for, as the title itself, so VoiceOver and
@@ -200,6 +228,7 @@ struct StatusBar: View {
 }
 
 private extension View {
-    /// The HIG's 20 × 20 pt least target for a borderless button.
-    func hitTarget() -> some View { frame(minWidth: 20, minHeight: 20).contentShape(.rect) }
+    func hitTarget() -> some View {
+        frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect)
+    }
 }

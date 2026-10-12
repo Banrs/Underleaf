@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 
 /// The PDF's find bar. Its pane accessory keeps the field ready to focus.
@@ -10,27 +11,43 @@ struct FindBar: View {
     let searched: String
     let step: @MainActor (Int) -> Void
     let close: @MainActor () -> Void
+    /// The count's announcement, waiting out the typing and stepping that change it.
+    @State private var announcement: Task<Void, Never>?
 
     var body: some View {
+        let label = matches.label(for: searched)
         HStack {
             SearchField(text: $query, prompt: prompt, handle: field, step: step, close: close)
                 .frame(minWidth: 100, maxWidth: .infinity)
             ControlGroup {
                 Button("Previous Match", systemImage: "chevron.backward") { step(-1) }
-                    .help("Previous Match")
+                    .help("Go to the previous match")
                 Button("Next Match", systemImage: "chevron.forward") { step(1) }
-                    .help("Next Match")
+                    .help("Go to the next match")
             }
             .disabled(matches.total == 0)
             .fixedSize()
             // The first to give way in a narrow pane.
-            Text(matches.label(for: searched))
+            Text(label)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
                 .layoutPriority(-1)
             Button("Done") { close() }
         }
         .lineLimit(1)
+        // VoiceOver's focus stays in the field, so it hears the count, or that there is none,
+        // from here, once it has settled.
+        .onChange(of: label) { _, label in
+            announcement?.cancel()
+            guard !label.isEmpty else { return }
+            announcement = Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled else { return }
+                var spoken = AttributedString(label)
+                spoken.accessibilitySpeechAnnouncementPriority = .low
+                AccessibilityNotification.Announcement(spoken).post()
+            }
+        }
     }
 }
 
@@ -118,7 +135,16 @@ struct SearchField: NSViewRepresentable {
             cell.searchButtonCell?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         }
         handle?.field = view
+        fit(view, to: context.environment.controlSize)
         return view
+    }
+
+    /// The field's size, and its text's, as SwiftUI's `controlSize` has them: 20 pt and 11 pt
+    /// small, 24 pt and 13 pt regular (UI kit, Search Fields).
+    private func fit(_ view: NSSearchField, to controlSize: ControlSize) {
+        guard let size = NSControl.ControlSize(controlSize), view.controlSize != size else { return }
+        view.controlSize = size
+        view.font = .systemFont(ofSize: NSFont.systemFontSize(for: size))
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSearchField, context: Context) -> CGSize? {
@@ -127,6 +153,7 @@ struct SearchField: NSViewRepresentable {
 
     func updateNSView(_ view: NSSearchField, context: Context) {
         context.coordinator.field = self
+        fit(view, to: context.environment.controlSize)
         view.placeholderString = prompt
         // VoiceOver's name: the placeholder goes once there's text.
         view.setAccessibilityLabel(prompt)
@@ -244,8 +271,9 @@ struct ItemActions {
     let moveToTrash: () -> Void
 }
 
-/// The same items in File and in the context menus, dimmed with no item. Without icons: Show in
-/// Finder has no standard one, and a group has icons for all its items or none (HIG, Menus).
+/// The same items in File and in the context menus, dimmed with no item. All three have an icon,
+/// as a group has icons for all its items or none (HIG, Menus): "folder" stands for Show in
+/// Finder's file-system location, which has no icon of its own.
 struct ItemMenuItems: View {
     let actions: ItemActions?
     var trashShortcut: KeyboardShortcut?
