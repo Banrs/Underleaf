@@ -288,28 +288,24 @@ private struct TemplateCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        // The page with its name under it, as in a template chooser.
+        // As in a template chooser.
         VStack(spacing: 8) {
-            page
+            PagePreview(page: template.page)
+                .frame(width: Self.page.width, height: Self.page.height)
+                // White paper in either appearance, dimmed a little in dark mode;
+                // the drawing in light colours, which are made for paper.
+                .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1),
+                            in: .rect(cornerRadius: Self.corner, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
+                        .strokeBorder(.separator)
+                }
+                .environment(\.colorScheme, .light)
+                // The card reads as its name ("Blank", not "Add, Blank").
+                .accessibilityHidden(true)
             Text(template.title)
         }
         .accessibilityElement(children: .combine)
-    }
-
-    private var page: some View {
-        PagePreview(page: template.page)
-            .frame(width: Self.page.width, height: Self.page.height)
-            // White paper in either appearance, dimmed a little in dark mode;
-            // the drawing in light colours, which are made for paper.
-            .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1),
-                        in: .rect(cornerRadius: Self.corner, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
-                    .strokeBorder(.separator)
-            }
-            .environment(\.colorScheme, .light)
-            // The card reads as its name ("Blank", not "Add, Blank").
-            .accessibilityHidden(true)
     }
 }
 
