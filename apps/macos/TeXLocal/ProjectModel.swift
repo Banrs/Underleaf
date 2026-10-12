@@ -88,17 +88,22 @@ final class ProjectModel {
         chooseIssue(place, focus: true)
     }
 
-    /// The open file's lines with issues, for the editor's gutter.
+    /// The open file's lines with issues, for the editor to mark: each line's first, and what its
+    /// others say.
     private func markIssues() {
-        var lines: [Int: Bool] = [:], messages: [Int: String] = [:]
+        var lines: [Int: Bool] = [:], messages: [Int: String] = [:], others: [Int: [String]] = [:]
         if let openPath, lastEdit[openPath, default: 0] <= resultEdits {
             // Errors last: a line with both is an error's.
             for item in issues.reversed() where item.file == openPath {
-                if let line = item.line { lines[line] = item.isError; messages[line] = item.message }
+                guard let line = item.line else { continue }
+                if let message = messages[line] { others[line, default: []].insert(message, at: 0) }
+                lines[line] = item.isError
+                messages[line] = item.message
             }
         }
         editor.textView.issueLines = lines
         editor.textView.issueMessages = messages
+        editor.textView.issueOthers = others
     }
 
     /// The open file on disk, for the window's document icon and the preview of a file the editor doesn't edit.

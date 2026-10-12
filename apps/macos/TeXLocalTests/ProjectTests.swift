@@ -372,6 +372,28 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// A line with several issues is marked for its first, an error's before a warning's, with
+    /// what its others say in their order; another file's issues aren't the open file's. A
+    /// build's result is put in its place, so without TeX.
+    @Test(.timeLimit(.minutes(1)))
+    func aLinesIssuesAreItsFirstAndItsOthers() async throws {
+        let (project, _) = try await opened("a\nb\n")
+        try await Core.shared.perform("write_file", ["id": project.id, "path": "part.tex", "text": "a\nb\n"])
+        func item(_ type: String, _ file: String, _ line: Int, _ message: String) -> LogItem {
+            LogItem(type: type, file: file, line: line, message: message)
+        }
+        let main = try #require(project.openPath)
+        project.result = CompileResult(
+            ok: false, stopped: false, pdf: nil, pdfChanged: false, durationMs: 0,
+            errors: [item("error", "part.tex", 2, "first"), item("error", main, 1, "elsewhere"), item("error", "part.tex", 2, "second")],
+            warnings: [item("warning", "part.tex", 2, "third"), item("warning", "part.tex", 1, "alone")], log: "")
+        await project.open("part.tex")
+        let text = project.editor.textView
+        #expect(project.openPath == "part.tex" && text.issueLines == [1: false, 2: true])
+        #expect(text.issueMessages == [1: "alone", 2: "first"] && text.issueOthers == [2: ["second", "third"]])
+        await app.close()
+    }
+
     /// A TeXpresso stand-in that writes a one-page PDF where it's asked to, as Underleaf's
     /// patched build does, and reads edits until it's stopped.
     private func liveTeXpresso() throws -> URL {
