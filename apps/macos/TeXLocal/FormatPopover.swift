@@ -96,8 +96,7 @@ struct FormatPanel: View {
             .padding(.vertical, Self.menuTop)
             .onKeyPress(.downArrow) { move(by: 1, in: headings.levels) }
             .onKeyPress(.upArrow) { move(by: -1, in: headings.levels) }
-            .onKeyPress(.return) { chooseFocused() }
-            .onKeyPress(.space) { chooseFocused() }
+            .onKeyPress(keys: [.return, .space]) { _ in chooseFocused() }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Section Level")
         }
