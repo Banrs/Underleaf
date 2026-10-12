@@ -33,19 +33,15 @@ enum BarMetrics {
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let project: ProjectModel
 
-    /// How much of the editors' colour lies over the bar's material. None in Light, where the
-    /// material at rest is the editor's white and passes what Xcode 27.1's bar does, a soft ghost
-    /// of the text beneath. In Dark the material is lighter and warmer than the editor (38, 35, 31
-    /// over 30), a third grey between it and the build panel: under this much of the editor's
-    /// colour it is (32, 31, 30) and still passes a tenth of the text (27.2). All of it where
-    /// transparency is reduced, where the material is the window's tinted colour.
-    private var wash: Double {
-        if reduceTransparency { 1 } else if colorScheme == .dark { 0.7 } else { 0 }
-    }
+    /// The editors' colour over the bar's material only where transparency is reduced, where the
+    /// material is the window's tinted colour. Otherwise the material alone, as Xcode 27.1's bar:
+    /// the text beneath shows through it blurred. In Dark it is then a little lighter and warmer
+    /// than the editor (38, 35, 31 over 30, 27.2): under a wash of 0.7 it matched the editor and
+    /// passed a tenth of the text, which read as no scroll-through at all.
+    private var wash: Double { reduceTransparency ? 1 : 0 }
 
     var body: some View {
         // Under a narrower window the bar says less, then says it shorter.
