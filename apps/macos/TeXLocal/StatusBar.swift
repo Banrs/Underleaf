@@ -92,7 +92,7 @@ struct StatusBar: View {
                 }
                 .help("\(reason) Click to save again.")
             }
-            if let notice = project.notice {
+            if let notice = project.notices.current {
                 Text(notice).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)

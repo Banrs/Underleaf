@@ -318,8 +318,18 @@ final class ProjectFlowTests {
     func aSyncTeXMissIsNoAlert() async throws {
         let (project, _) = try await opened()
         await project.forwardSync()
-        #expect(project.notice == "No compiled PDF yet" && app.alert == nil)
+        #expect(project.notices.current == "No compiled PDF yet" && app.alert == nil)
         await app.close()
+    }
+
+    /// A notice is in the status bar at once, the later of two, and goes by itself.
+    @Test(.timeLimit(.minutes(1)))
+    func aNoticeGoesByItself() async throws {
+        let notices = ProjectNotices()
+        notices.note("One")
+        notices.note("Two")
+        #expect(notices.current == "Two")
+        try await waitUntil(timeout: .seconds(5)) { notices.current == nil }
     }
 
     /// A project that can't be read doesn't open on an empty workspace: the alert says why over Home.
@@ -397,7 +407,7 @@ final class ProjectFlowTests {
         }
         #expect(project.editor.textView.forwardSync(false) != nil)
         await project.forwardSync()
-        #expect(project.notice?.contains("TeXpresso") == true, "Notice: \(String(describing: project.notice))")
+        #expect(project.notices.current?.contains("TeXpresso") == true, "Notice: \(String(describing: project.notices.current))")
         project.stopTeXpresso()
         try await waitUntil(timeout: .seconds(10)) { !project.livePDF }
         #expect(!project.hasPDF && project.pdf.view.document == nil && project.pdf.pageCount == 0)

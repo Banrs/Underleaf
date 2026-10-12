@@ -207,7 +207,7 @@ final class ProjectModel {
             if restartable, !closed {
                 let start = liveStart
                 texpresso.restart(files: start.files, caret: start.caret)
-                if texpresso.active { return note(String(localized: "Live Preview Restarted")) }
+                if texpresso.active { return notices.note(String(localized: "Live Preview Restarted")) }
             }
             // The last build's PDF comes back, and automatic builds paused for it resume.
             Task { await self.endLivePDF() }
@@ -240,33 +240,8 @@ final class ProjectModel {
         app?.alert = AppAlert(title, error)
     }
 
-    /// News that interrupts nothing, in the status bar for a few seconds and spoken by VoiceOver.
-    private(set) var notice: String?
-    @ObservationIgnored private var noticeTask: Task<Void, Never>?
-
-    private func note(_ text: String) {
-        notice = text
-        announce(text)
-        noticeTask?.cancel()
-        noticeTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(3))
-            if !Task.isCancelled { self?.notice = nil }
-        }
-    }
-
-    @ObservationIgnored private var announced: (text: String, at: ContinuousClock.Instant)?
-
-    /// Not within 0.3 s of the last announcement, nor the same one again within a few seconds:
-    /// VoiceOver would cut one short or repeat itself. `queued`, it waits for what VoiceOver is
-    /// saying instead of interrupting it.
-    private func announce(_ text: String, queued: Bool = false) {
-        let now = ContinuousClock.now
-        if let announced, now - announced.at < (text == announced.text ? .seconds(3) : .milliseconds(300)) { return }
-        announced = (text, now)
-        var speech = AttributedString(text)
-        if queued { speech.accessibilitySpeechAnnouncementPriority = .low }
-        AccessibilityNotification.Announcement(speech).post()
-    }
+    /// The status bar's notice, and what VoiceOver is told.
+    let notices = ProjectNotices()
 
     /// A SyncTeX search that finds no match is ordinary (a comment, the preamble, a figure): a
     /// sound, and the core's word for what it missed in the status bar. Anything else is a
@@ -274,7 +249,7 @@ final class ProjectModel {
     private func reportSync(_ error: Error, _ title: String) {
         guard (error as? CoreError)?.status == 404 else { return report(error, title) }
         NSSound.beep()
-        note(error.localizedDescription)
+        notices.note(error.localizedDescription)
     }
 
     /// The tree's entry at a project path.
@@ -554,7 +529,7 @@ final class ProjectModel {
             if diskText == text { diskText = previous }
             dirty = true
             let title = String(localized: "“\(path.fileName)” Wasn’t Saved")
-            if saveFailure == nil { announce(title) }
+            if saveFailure == nil { notices.announce(title) }
             saveFailure = error.localizedDescription
             if reporting { report(error, title) }
             return false
@@ -764,7 +739,7 @@ final class ProjectModel {
         // Counted after the save, which has everything typed until now.
         let built = edits
         if saved, !stopRequested, !closed, !auto || !livePreviewing {
-            // The toolbar's Stop says so to the eye only. Not through `announce`: the result of a
+            // The toolbar's Stop says so to the eye only. Not through `notices.announce`: the result of a
             // short build isn't held back for it.
             if !auto { AccessibilityNotification.Announcement(String(localized: "Compiling")).post() }
             let result: CompileResult
@@ -824,10 +799,10 @@ final class ProjectModel {
     /// A stopped build says nothing.
     private func announceResult(_ result: CompileResult, queued: Bool = false) {
         if result.failed {
-            announce(errorCount == 0 ? String(localized: "Build failed")
+            notices.announce(errorCount == 0 ? String(localized: "Build failed")
                      : String(AttributedString(localized: "Build failed, ^[\(errorCount) error](inflect: true)").characters), queued: queued)
         } else if result.ok {
-            announce(String(localized: "Build succeeded"), queued: queued)
+            notices.announce(String(localized: "Build succeeded"), queued: queued)
         }
     }
 
@@ -850,7 +825,7 @@ final class ProjectModel {
         trashed = []
         folderWatcher = nil
         removeExport()
-        noticeTask?.cancel()
+        notices.cancel()
         saveTask?.cancel()
         analysis?.cancel()
         symbolsTask?.cancel()
