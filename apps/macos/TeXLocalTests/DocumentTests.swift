@@ -438,6 +438,11 @@ struct PDFFindTests {
         #expect(page.syncWord(at: CGPoint(x: 10, y: 10)) == nil)
     }
 
+    /// SyncTeX's box for `rect` on `page`, the document's first: down from the page's top to the box's foot.
+    private func loc(_ rect: CGRect, on page: PDFPage) -> ForwardLoc {
+        ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
+    }
+
     /// One source line spans many PDF rows, and SyncTeX can report a middle row first.
     @Test func forwardSearchRetainsRepeatedWordsAcrossWrappedRows() throws {
         let source = String(repeating: "An echo repeats in this sentence. ", count: 8)
@@ -446,10 +451,7 @@ struct PDFFindTests {
         let sourceRanges = source.ranges(of: "echo"), renderedRanges = rendered.ranges(of: "echo")
         #expect(sourceRanges.count == 8 && renderedRanges.count == 8)
         let lines = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).selectionsByLine()
-        let boxes = lines.map { line -> ForwardLoc in
-            let rect = line.bounds(for: page)
-            return ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
-        }
+        let boxes = lines.map { loc($0.bounds(for: page), on: page) }
         #expect(boxes.count > 3)
         let nativeOrder = Array(boxes.dropFirst(boxes.count / 2)) + Array(boxes.prefix(boxes.count / 2))
         for index in [0, 3, 7] {
@@ -466,21 +468,16 @@ struct PDFFindTests {
         let rendered = try #require(page.string), occurrences = rendered.ranges(of: "echo")
         #expect(occurrences.count == 6)
         let expected = try #require(page.selection(for: NSRange(occurrences[5], in: rendered))).bounds(for: page)
-        let loc = ForwardLoc(page: 1, h: expected.minX, v: page.bounds(for: .cropBox).maxY - expected.minY,
-                             width: expected.width, height: expected.height)
         let word = SyncTeXWord(text: "echo", offset: 0, context: paragraph,
                               contextOffset: (paragraph as NSString).range(of: "echo", options: .backwards).location)
-        let hit = try #require(pdf.match(for: word, near: [loc]))
+        let hit = try #require(pdf.match(for: word, near: [loc(expected, on: page)]))
         #expect(hit.page === page && hit.rect == expected)
         let inverse = try #require(page.syncWord(at: CGPoint(x: expected.midX, y: expected.midY)))
         #expect(inverse.text == "echo" && inverse.context == rendered)
         #expect(inverse.contextOffset == NSRange(occurrences[5], in: rendered).location)
         let start = NSRange(occurrences[3], in: rendered).location - 3 // "An " before this paragraph’s first echo.
         let lines = try #require(page.selection(for: NSRange(location: start, length: (rendered as NSString).length - start))).selectionsByLine()
-        let boxes = lines.map { line -> ForwardLoc in
-            let rect = line.bounds(for: page)
-            return ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
-        }
+        let boxes = lines.map { loc($0.bounds(for: page), on: page) }
         for index in 0..<3 {
             let word = SyncTeXWord(text: "echo", offset: 0, context: paragraph,
                                   contextOffset: NSRange(paragraph.ranges(of: "echo")[index], in: paragraph).location)
@@ -493,9 +490,8 @@ struct PDFFindTests {
         let pdf = try textPDF(["echo echo"]), page = try #require(pdf.page(at: 0))
         let rendered = try #require(page.string)
         let rect = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).bounds(for: page)
-        let loc = ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
         let word = SyncTeXWord(text: "echo", offset: 0, context: "\\LaTeX echo", contextOffset: 7)
-        #expect(pdf.match(for: word, near: [loc]) == nil)
+        #expect(pdf.match(for: word, near: [loc(rect, on: page)]) == nil)
     }
 
     /// The page is one of those showing: a rebuild's pages replace the last's.
