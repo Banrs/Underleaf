@@ -490,6 +490,31 @@ struct SourceEditorTests {
         #expect(text.offered == nil)
     }
 
+    /// In an editor too short for the list under or over its line, the list has the side with
+    /// more room and as many whole rows as that has, inside the editor.
+    @Test func theCompletionListStaysInsideAShortEditor() throws {
+        // Flipped, as the editor's scroll view: the editor from 50 to 300 down it.
+        let host = NSScrollView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
+        let editor = NSRect(x: 0, y: 50, width: 600, height: 250)
+        let list = CompletionList()
+        let labels = (0..<20).map { "\\command\($0)" }
+        let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        func frame(lineAt y: CGFloat) throws -> NSRect {
+            list.show(labels, typed: 1, kind: .command, font: font, under: NSRect(x: 90, y: y, width: 0, height: 18),
+                      in: editor, of: host)
+            return try #require(host.subviews.last { $0 is NSGlassEffectView }).frame
+        }
+        // 24 pt rows between 5 pt margins: eight of them where there is room.
+        let whole = try frame(lineAt: 60)
+        #expect(!list.isAbove && whole.minY == 78 && whole.height == 8 * 24 + 10)
+        // More room under the line than over it, and not enough: under it, to the editor's foot at most.
+        let under = try frame(lineAt: 150)
+        #expect(!list.isAbove && under.minY == 168 && under.height == 5 * 24 + 10 && under.maxY <= editor.maxY)
+        // More over it: over it, from the editor's top at the least.
+        let over = try frame(lineAt: 220)
+        #expect(list.isAbove && over.maxY == 220 && over.height == 6 * 24 + 10 && over.minY >= editor.minY)
+    }
+
     @Test func autosaveReadsOnlyCommittedTextDuringIMEComposition() {
         open("start")
         text.insertText("x", replacementRange: typed)
@@ -730,7 +755,7 @@ struct SourceEditorTests {
         for theme in SyntaxTheme.allCases {
             let c = theme.colours
             // By the name: an Increase Contrast appearance made here is the plain one, the setting being off.
-            for color in [c.command, c.keyword, c.argument, c.maths, c.comment, c.invalid].map({ $0.legibleAsText(in: name) }) {
+            for color in [c.command, c.argument, c.maths, c.comment, c.invalid].map({ $0.legibleAsText(in: name) }) {
                 for ground in [background, currentLine] {
                     #expect(color.contrast(with: ground) >= ([.aqua, .darkAqua].contains(name) ? 4.5 : 7), "\(theme) \(color) on \(ground)")
                 }

@@ -21,20 +21,20 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return view
     }
 
-    /// One of the display's accessibility options changed: the line numbers, the issues' messages
-    /// and the completion list's rows follow Increase Contrast.
+    /// One of the display's accessibility options changed: the line numbers and the issues'
+    /// messages follow Increase Contrast.
     @objc private func displayOptionsChanged() {
         needsDisplay = true
         for issue in issueRows { issue.message?.view.needsDisplay = true }
-        if offered != nil { completionList.restyle() }
     }
 
     /// The pointer is the split divider's by it and the arrow over the gutter, where a click
-    /// selects lines, and over an issue's message, where one shows the issue; elsewhere the text
-    /// view sets its own, on every move.
+    /// selects lines, over an issue's message, where one shows the issue, and over the completion
+    /// list, a menu's rows lying over the text; elsewhere the text view sets its own, on every
+    /// move, the list's own cursor rect notwithstanding.
     private func setsCursor(with event: NSEvent) -> Bool {
         if updateDividerCursor(with: event) { return true }
-        guard inGutter(event) || issueMessage(at: event) != nil else { return false }
+        guard inGutter(event) || issueMessage(at: event) != nil || completionList.contains(event.locationInWindow) else { return false }
         NSCursor.arrow.set()
         return true
     }
@@ -201,6 +201,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             if !issueLines.isEmpty { layOutViewportOnceSettled() }
         }
         self.font = font
+        // An open completion list is the old font's rows: the next key opens it in the new.
+        closeCompletions()
         typingAttributes[.font] = font
         // The system font's weights share their metrics: an appearance change leaves the lines and gutter as they are.
         guard resized else { return }
@@ -1588,8 +1590,6 @@ enum SyntaxTheme: String, CaseIterable, Identifiable {
     struct Colours {
         /// `\command`, `\begin`, `\end`, escapes.
         let command: NSColor
-        /// `\documentclass`, `\cite` and the like; for now only BibTeX's `@article` badge.
-        let keyword: NSColor
         /// Environment, label, reference, citation, file and package-option names.
         let argument: NSColor
         /// Maths' delimiters and what is in it, verbatim.
@@ -1620,28 +1620,28 @@ enum SyntaxTheme: String, CaseIterable, Identifiable {
     /// Overleaf's source editor themes (services/web/frontend/js/features/source-editor/themes/cm6/): "textmate",
     /// its default, in Light and "overleaf_dark" in Dark, with the lezer tags extensions/class-highlighter.ts and
     /// languages/latex/latex-language.ts give LaTeX's nodes. Its text is black / #F8F8F2.
-    /// command: .tok-typeName (`\command`, `\begin`, `\end`), italic in Dark here only; keyword: .tok-keyword
-    /// (`\documentclass`, `\cite`, `\ref`, `\label`, `~`, `&`, `\\`; BibTeX's `@article`); argument: .tok-attributeValue,
-    /// italic in Dark; maths: .tok-string; comment: .tok-comment; invalid: .tok-invalid, which Dark fills behind
-    /// #F8F8F0 text and Light tints behind at 10%.
+    /// command: .tok-typeName (`\command`, `\begin`, `\end`), italic in Dark here only; argument:
+    /// .tok-attributeValue, italic in Dark; maths: .tok-string; comment: .tok-comment; invalid: .tok-invalid, which
+    /// Dark fills behind #F8F8F0 text and Light tints behind at 10%. Its .tok-keyword (`\documentclass`, `\cite`,
+    /// `\ref`, `\label`, `~`, `&`, `\\`: #0000FF / #FF79C6) has no kind here.
     private static let overleafColours = Colours(
-        command: rgb(0x0000FF, 0x8BE9FD), keyword: rgb(0x0000FF, 0xFF79C6), argument: rgb(0x318495, 0xFFB86C),
+        command: rgb(0x0000FF, 0x8BE9FD), argument: rgb(0x318495, 0xFFB86C),
         maths: rgb(0x036A07, 0xF1FA8C), comment: rgb(0x4C886B, 0x6272A4), invalid: rgb(0xFF0000, 0xFF79C6))
 
     /// TeXstudio's own formats, utilities/qxs/defaultFormats.qxf (Light) and defaultFormatsDark.qxf (Dark), with
     /// which format the LaTeX highlighter gives what from utilities/qxs/tex.qnfa and samples/colortest.tex.
-    /// command: "keyword"; keyword: "extra-keyword" (bold there), TeXstudio's `\begin`, `\end` and sectioning;
+    /// command: "keyword" (its "extra-keyword", bold, for `\begin`, `\end` and sectioning has no kind here);
     /// argument: "referencePresent", "citationPresent" and "packagePresent", which are one colour (its environment
     /// names are #000080 / #60CDF2, which Dark shares with its commands); maths: "math-delimiter";
     /// comment: "comment"; invalid: "braceMismatch", which fills #C00000 behind #FFFF7F text in Light and #8D0B0B
     /// behind #F2F218 in Dark; the fill is not drawn here, so Light takes the fill and Dark the text.
     private static let texstudioColours = Colours(
-        command: rgb(0x800000, 0x60CDF2), keyword: rgb(0x0095FF, 0xA960F2), argument: rgb(0x008000, 0x60F260),
+        command: rgb(0x800000, 0x60CDF2), argument: rgb(0x008000, 0x60F260),
         maths: rgb(0x509600, 0x85F218), comment: rgb(0x808080, 0x667299), invalid: rgb(0xC00000, 0xF2F218))
 
     /// The system's colours, which follow the appearance.
     private static let systemColours = Colours(
-        command: .systemPink.legibleAsText, keyword: .systemBrown.legibleAsText, argument: .systemTeal.legibleAsText,
+        command: .systemPink.legibleAsText, argument: .systemTeal.legibleAsText,
         maths: .systemPurple.legibleAsText, comment: .secondaryLabelColor.legibleAsText, invalid: .systemRed.legibleAsText)
 }
 

@@ -46,7 +46,9 @@ into it and deleted on 12 October.
   (13 pt corners, 24 pt rows, the chosen row in the accent colour; from an `NSMenu` on 27.2),
   a view of the editor's scroll view and not a window: glass in a borderless panel that isn't
   key draws as a flat slab, and AppKit's own completion list is still its square box (27.2).
-  So it ends at the editor's edges and goes over its line where there is no room under it.
+  So it ends at the editor's edges and goes over its line where there is no room under it;
+  in an editor too short for either it takes the side with more room, with the whole rows
+  that has.
   A build's issues are on their lines (`SourceTextView`, "the build's issues"): the build
   panel's symbol in the gutter, a neutral band over the whole paragraph in the current line's
   shape (`tertiarySystemFill`; Xcode 27.1's is neutral too), the message at the end of the
@@ -134,7 +136,7 @@ CI: `ci.yml` runs the web tests and bundle and the Rust core's rustfmt, clippy a
 Linux; `macos-app.yml` builds the app, checks the core is linked statically, runs the native
 tests and fails a run in which none passed.
 
-- Native: 164 tests in 20 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
+- Native: 165 tests in 20 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
   `-D warnings` clean. `npm run verify:texpresso`: 25 checks against the patched engine, both
   of its programs built from the patched source.
 - Live preview, measured from 60 fps screen recordings of a Release build on a one-page

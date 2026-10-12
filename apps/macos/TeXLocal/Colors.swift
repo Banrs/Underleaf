@@ -74,7 +74,4 @@ extension NSColor {
     /// The text background, resolved for each appearance: PDFKit tints a system colour it's
     /// given with the wallpaper, as Preview's canvas, which would set it a shade apart from the editor's.
     static let untintedTextBackground = NSColor(name: nil) { NSColor.textBackgroundColor.resolved(in: $0) }
-
-    /// The under-page background likewise: the completion list's ground over the editor's.
-    static let untintedUnderPageBackground = NSColor(name: nil) { NSColor.underPageBackgroundColor.resolved(in: $0) }
 }

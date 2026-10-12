@@ -65,8 +65,6 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
 
         required init?(coder: NSCoder) { fatalError() }
-
-        override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
     }
 
     /// The chosen row as a menu's: the accent colour, in from the list's edges.
@@ -172,7 +170,9 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private(set) var isAbove = false
 
     /// Moves it under `start`, hard against its line, or over it when there's no room under it
-    /// down to the `editor`'s foot and there is over it. It ends at the editor's trailing edge,
+    /// down to the `editor`'s foot and there is over it. An editor too short for either has it on
+    /// the side with more room, with the whole rows that has: it is a view of the editor's, and
+    /// what ran past the foot would be under the status bar. It ends at the editor's trailing edge,
     /// its labels' ends cut, unless its least width needs more, and never past the editor's sides.
     func place(under start: NSRect, in editor: NSRect) {
         guard let host = surface.superview else { return }
@@ -180,16 +180,31 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         frame.size.width = min(size.width, max(Self.leastWidth, editor.maxX - frame.minX))
         frame.origin.x = max(editor.minX, min(frame.minX, editor.maxX - frame.width))
         // Down the screen is up a flipped view's numbers.
-        let under = host.isFlipped ? start.maxY : start.minY - frame.height
-        let over = host.isFlipped ? start.minY - frame.height : start.maxY
-        let fits = { (y: CGFloat) in y >= editor.minY && y + frame.height <= editor.maxY }
-        isAbove = !fits(under) && fits(over)
-        frame.origin.y = isAbove ? over : under
+        let flipped = host.isFlipped
+        let under = flipped ? editor.maxY - start.maxY : start.minY - editor.minY
+        let over = flipped ? start.minY - editor.minY : editor.maxY - start.maxY
+        isAbove = under < frame.height && over > under
+        let room = isAbove ? over : under
+        if room < frame.height {
+            let rows = max(1, ((room - 2 * Self.margin) / table.rowHeight).rounded(.down))
+            frame.size.height = rows * table.rowHeight + 2 * Self.margin
+        }
+        frame.origin.y = isAbove == flipped ? start.minY - frame.height : start.maxY
         // On the display's pixels: the text's start is between them, and the glass's edge would blur.
         frame = host.backingAlignedRect(frame, options: .alignAllEdgesNearest)
         guard frame != surface.frame else { return }
+        let shorter = frame.height != surface.frame.height
         surface.frame = frame
-        table.sizeLastColumnToFit()
+        // Fewer rows show: the chosen one is among them.
+        if shorter, selection >= 0 {
+            surface.layoutSubtreeIfNeeded()
+            reveal(selection)
+        }
+    }
+
+    /// Whether a point of the window is over the open list.
+    func contains(_ point: NSPoint) -> Bool {
+        surface.superview != nil && surface.bounds.contains(surface.convert(point, from: nil))
     }
 
     func close() {
@@ -215,14 +230,6 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let y = min(rect.minY, max(clip.bounds.minY, rect.maxY - clip.bounds.height))
         clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
         scroll.reflectScrolledClipView(clip)
-    }
-
-    /// Its rows made again with the row chosen as it is.
-    func restyle() {
-        guard !labels.isEmpty else { return }
-        let row = selection
-        table.reloadData()
-        table.selectRowIndexes([row], byExtendingSelection: false)
     }
 
     @objc private func click() {
