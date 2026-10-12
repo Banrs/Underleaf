@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The inspector: the project's build settings. The file's counts and the last build
+/// The inspector: the project's build settings. The file's word count and the last build
 /// show in the status bar and the build panel, so it doesn't repeat them.
 struct InspectorView: View {
     let project: ProjectModel
@@ -64,7 +64,7 @@ struct EnginePicker: View {
 
     var body: some View {
         if let project, let engine = project.settings?.engine {
-            Picker("Engine", selection: Binding(get: { engine }, set: { new in Task.immediate { await project.setEngine(new) } })) {
+            Picker("Engine", selection: Binding(get: { engine }, set: { new in Task.immediate { await project.setBuildOption(["engine": new]) } })) {
                 ForEach(TeXEngine.allCases) { Text($0.title).tag($0.id) }
                 if TeXEngine(rawValue: engine) == nil { Text(engine).tag(engine) }
             }

@@ -380,6 +380,10 @@ final class AppModel {
         defer { stopOpening(id) }
         guard await leave(generation) else { return }
         dropRequests()
+        // Home's renames and moves to the Trash can't be undone under a project, as a project's own
+        // can't once it has closed (`ProjectModel.close`): nothing would show the result, and Undo
+        // from the sidebar could rename the open project's folder under it.
+        undoManager?.removeAllActions()
         recentProjects = Array(([id] + recentProjects.filter { $0 != id })
             .prefix(NSDocumentController.shared.maximumRecentDocumentCount))
         let model = ProjectModel(id: id, app: self)

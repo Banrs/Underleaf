@@ -65,7 +65,6 @@ private final class FakeCore {
                 let path = arguments["path"] as? String ?? "", text = arguments["text"] as? String ?? ""
                 sent.append("\(path)=\(text)")
                 try await update(path, text)
-                return 1
             },
             now: { [self] command, arguments in
                 #expect(arguments["session"] as? String == "owner")
@@ -78,7 +77,6 @@ private final class FakeCore {
                 case "texpresso_caret": carets.append(arguments["offset"] as? Int ?? -1)
                 default: Issue.record("Unexpected \(command)")
                 }
-                return 1
             },
             wait: { [feed] arguments in try feed.wait(after: arguments["after"] as? Int ?? -1) }))
     }

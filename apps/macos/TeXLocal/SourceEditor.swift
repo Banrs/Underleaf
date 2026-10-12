@@ -92,7 +92,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     /// Show a file where it was left, or at its top; sidebar selection leaves keyboard focus where it is.
     func open(path: String, text: String, focus: Bool) {
         if let current = self.path { kept[current] = (textView.string, undo, textView.selectedRange(), textView.shownTop) }
-        let prior = kept[path].flatMap { $0.text == text ? $0 : nil }
+        // By UTF-16, as the kept ranges count: Swift's `==` also holds for a file rewritten in
+        // another Unicode normal form, whose undo stack would then replace the wrong ranges.
+        let prior = kept[path].flatMap { ($0.text as NSString).isEqual(to: text) ? $0 : nil }
         self.path = path
         textView.load(text)
         undo = prior?.undo ?? UndoManager()

@@ -469,7 +469,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         view.removeMarks()
         cancelSearch()
         view.document = nil
-        (query, matches, matchIndex, limited) = ("", [], 0, false)
+        (query, matches, matchIndex, limited, startFrom) = ("", [], 0, false, nil)
         (page, pageCount) = (0, 0)
     }
 

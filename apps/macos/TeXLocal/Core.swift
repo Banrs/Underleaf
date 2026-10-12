@@ -105,9 +105,9 @@ final class Core {
     }
 
     /// A command the core answers at once, where it's asked: a keystroke's edit doesn't wait for a thread.
-    func now<T: Decodable>(_ command: String, _ args: [String: Any], as: T.Type) throws -> T? {
+    func now(_ command: String, _ args: [String: Any]) throws {
         guard let handle else { throw Self.unavailable }
-        return try Self.answer(handle, command, try Self.json(args))
+        let _: Ignored? = try Self.answer(handle, command, try Self.json(args))
     }
 
     /// A command that waits, for a thread of the caller's own to block in.

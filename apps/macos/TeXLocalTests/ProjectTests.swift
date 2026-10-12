@@ -498,7 +498,7 @@ final class ProjectFlowTests {
         #expect(project.initialLoadComplete)
         #expect(project.outline.count == 2)
         #expect(project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
-        #expect(project.counts?.words == 6)
+        #expect(project.words == 6)
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
         #expect(project.headingLevel.title == "Section")
@@ -623,6 +623,26 @@ final class ProjectFlowTests {
         #expect(undo.canRedo)
         await app.close()
         #expect(!undo.canRedo && !undo.canUndo)
+    }
+
+    /// A project's rename on Home can't be undone once a project is open: the Undo, reached from
+    /// the sidebar, would rename the open project's folder under it.
+    @Test(.timeLimit(.minutes(1)))
+    func aRenameOnHomeCannotBeUndoneUnderAProject() async throws {
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        app.undoSource = { undo }
+        let info = try await project().info
+        let renamed = "Renamed \(UUID().uuidString.prefix(8))"
+        folders.append(Core.libraryFolder.appending(path: renamed))
+
+        undo.beginUndoGrouping()
+        await app.rename(info, to: renamed)
+        undo.endUndoGrouping()
+        #expect(undo.canUndo && undo.undoActionName == "Rename")
+        await app.open(renamed)
+        #expect(app.project?.id == renamed && !undo.canUndo)
+        await app.close()
     }
 
     /// A file dropped on the source opens: the project's own in the editor, but its image goes

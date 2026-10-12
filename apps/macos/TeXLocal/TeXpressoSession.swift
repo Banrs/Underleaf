@@ -49,11 +49,6 @@ nonisolated struct TeXpressoEvents: Decodable, Sendable {
     var done: RunEnd?
 }
 
-/// An edit's number in its session, which is all the core says of one; 0 when nothing was sent.
-nonisolated struct TeXpressoEdit: Decodable, Sendable {
-    let edit: Int
-}
-
 nonisolated struct TeXpressoFile: Sendable {
     let path: String
     let text: String
@@ -118,10 +113,10 @@ final class TeXpressoSession {
     struct Calls {
         /// Start, stop, rescan and status, which answer with the status.
         var status: @MainActor (String, [String: Any]) async throws -> TeXpressoStatus
-        /// A file's whole text; its edit's number.
-        var update: @MainActor ([String: Any]) async throws -> Int
-        /// An edit, the view or the caret, answered at once on the main thread; an edit's number.
-        var now: @MainActor (String, [String: Any]) throws -> Int
+        /// A file's whole text.
+        var update: @MainActor ([String: Any]) async throws -> Void
+        /// An edit, the view or the caret, answered at once on the main thread.
+        var now: @MainActor (String, [String: Any]) throws -> Void
         /// Blocks until the session has news, on the session's thread.
         var wait: @Sendable ([String: any Sendable]) throws -> TeXpressoEvents
     }
@@ -344,8 +339,8 @@ final class TeXpressoSession {
         caret = (path, range.location + (text as NSString).length)
         if phase == .running, let owner, synced.contains(path), pending[path] == nil {
             do {
-                _ = try calls.now("texpresso_edit", ["session": owner, "path": path, "start": range.location,
-                                                     "remove": range.length, "text": text])
+                try calls.now("texpresso_edit", ["session": owner, "path": path, "start": range.location,
+                                                 "remove": range.length, "text": text])
                 return
             } catch {
                 // Another window's session now: nothing more is sent.
@@ -380,7 +375,7 @@ final class TeXpressoSession {
                   let path = session.pending.keys.min(), let text = session.pending.removeValue(forKey: path) {
                 guard let owner = session.owner else { return }
                 do {
-                    _ = try await session.calls.update(["id": session.id, "session": owner, "path": path, "text": text, "brief": true])
+                    try await session.calls.update(["id": session.id, "session": owner, "path": path, "text": text, "brief": true])
                     guard session.generation == current, !session.closed else { return }
                     session.rejected[path] = nil
                     if session.pending.isEmpty { session.requestFailure = nil }
@@ -429,7 +424,7 @@ final class TeXpressoSession {
         viewed = pages
         guard phase == .running, inPane, pages != sentView, let owner else { return }
         sentView = pages
-        _ = try? calls.now("texpresso_view", ["session": owner, "first": pages.lowerBound, "last": pages.upperBound])
+        try? calls.now("texpresso_view", ["session": owner, "first": pages.lowerBound, "last": pages.upperBound])
     }
 
     /// The caret has moved. Once it rests where typing didn't take it, TeX gets ready there,
@@ -441,7 +436,7 @@ final class TeXpressoSession {
             guard (try? await Task.sleep(for: .milliseconds(150))) != nil, let self, phase == .running, let owner,
                   synced.contains(path), pending[path] == nil, caret.map({ $0 != (path, offset) }) ?? true else { return }
             caret = (path, offset)
-            _ = try? calls.now("texpresso_caret", ["session": owner, "path": path, "offset": offset])
+            try? calls.now("texpresso_caret", ["session": owner, "path": path, "offset": offset])
         }
     }
 

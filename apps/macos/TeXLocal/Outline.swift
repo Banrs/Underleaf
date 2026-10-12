@@ -31,11 +31,10 @@ nonisolated struct OutlineItem: Identifiable, Hashable, Decodable {
     var kind: String { HeadingLevel.atDepth(level)?.title ?? "Section" }
 }
 
-/// `analyze_project`'s headings, word count and open-file line count.
+/// `analyze_project`'s headings and word count.
 nonisolated struct Analysis: Decodable {
     let outline: [OutlineItem]
     let words: Int
-    let lines: Int
 }
 
 /// The outline's nesting and the heading a line is under.

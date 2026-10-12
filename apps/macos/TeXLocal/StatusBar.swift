@@ -96,7 +96,7 @@ struct StatusBar: View {
                 Text(notice).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            let counts = detail == .full && project.editsText && app.showWordCount ? project.counts : nil
+            let words = detail == .full && project.editsText && app.showWordCount ? project.words : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
             HStack(spacing: BarMetrics.groupSpacing) {
                 if project.editsText {
@@ -108,8 +108,8 @@ struct StatusBar: View {
                     }
                     .help("Go to a line")
                 }
-                if let counts {
-                    Text("^[\(counts.words) word](inflect: true)")
+                if let words {
+                    Text("^[\(words) word](inflect: true)")
                         .foregroundStyle(.secondary)
                         .layoutPriority(-1)
                 }

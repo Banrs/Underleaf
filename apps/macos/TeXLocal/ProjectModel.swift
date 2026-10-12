@@ -17,7 +17,7 @@ final class ProjectModel {
     var documentClass: DocumentClass?
     /// The main file `documentClass` was read from.
     @ObservationIgnored private var classFile: String?
-    var counts: Counts?
+    var words: Int?
     var cursorLine = 1
     /// The caret's column (UTF-16, from 0), for the status bar.
     var cursorColumn = 0
@@ -213,8 +213,8 @@ final class ProjectModel {
         let core = Core.shared
         texpresso = TeXpressoSession(id: id, calls: .init(
             status: { try await core.call($0, $1, as: TeXpressoStatus.self) },
-            update: { try await core.call("texpresso_update", $0, as: TeXpressoEdit.self).edit },
-            now: { try core.now($0, $1, as: TeXpressoEdit.self)?.edit ?? 0 },
+            update: { try await core.perform("texpresso_update", $0) },
+            now: { try core.now($0, $1) },
             wait: core.waiting("texpresso_wait", as: TeXpressoEvents.self)))
         texpresso.onFailure = { [weak self] in self?.showTeXpressoLog() }
         texpresso.onOwnershipLost = { [weak self] in self?.cancelTeXpressoWork() }
@@ -239,7 +239,7 @@ final class ProjectModel {
         }
     }
 
-    /// Only LaTeX has an outline, counts and the LaTeX tools.
+    /// Only LaTeX has an outline, a word count and the LaTeX tools.
     var isLaTeX: Bool { openPath.map(isLaTeXFile) ?? false }
     /// The levels the main file's class has, how it numbers and sets them.
     var headingStyles: HeadingStyles {
@@ -585,13 +585,13 @@ final class ProjectModel {
         }
     }
 
-    /// The project's outline and words and the open file's lines, for a .tex file
+    /// The project's outline and words, for a .tex file
     /// only. The core reads the saved files; the latest reading wins.
     private func analyze() {
         analysis?.cancel()
         guard isLaTeX, let path = openPath else {
             outline = []
-            counts = nil
+            words = nil
             return
         }
         analysis = Task {
@@ -602,7 +602,7 @@ final class ProjectModel {
                 item.id = index
                 return item
             }
-            counts = Counts(words: doc.words, lines: doc.lines)
+            words = doc.words
             // The class changes with the main file only.
             guard let main = settings?.mainFile, main == path || main != classFile,
                   let text = main == path ? editor.document?.text
@@ -933,10 +933,6 @@ final class ProjectModel {
         if await patchSettings(patch), autoCompile { await compile(auto: true) }
     }
 
-    func setEngine(_ engine: String) async {
-        await setBuildOption(["engine": engine])
-    }
-
     /// Compile › Clean Build Folder: a build under way stops, the folder goes, and the next build
     /// starts from nothing, at once when Compile Automatically is on.
     func cleanBuildFolder() async {
@@ -1232,7 +1228,7 @@ final class ProjectModel {
     }
 
     /// No file editing: the editor may still hold the old text, but nothing saves or analyses it,
-    /// and with no file `analyze` leaves no outline and no counts.
+    /// and with no file `analyze` leaves no outline and no word count.
     private func clearOpenFile() {
         openPath = nil
         diskText = nil
@@ -1337,12 +1333,6 @@ final class ProjectModel {
         guard item.file != openPath || cursorLine != item.line || topLine != item.line else { return }
         Task { await open(item.file, line: item.line, atTop: true, focus: false) }
     }
-}
-
-/// The open file's words and lines, for the status bar.
-nonisolated struct Counts: Equatable {
-    let words: Int
-    let lines: Int
 }
 
 /// Where a project was left, in the window's restorable state (`MainWindowController`).

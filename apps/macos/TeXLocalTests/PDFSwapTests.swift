@@ -222,13 +222,13 @@ struct PDFSwapTests {
         let project = ProjectModel(id: "ObservationTests", app: AppModel())
         func notifies(_ change: () -> Void) -> Bool {
             nonisolated(unsafe) var notified = false
-            withObservationTracking { _ = (project.cursorLine, project.counts, project.shown) } onChange: { notified = true }
+            withObservationTracking { _ = (project.cursorLine, project.words, project.shown) } onChange: { notified = true }
             change()
             return notified
         }
-        project.counts = Counts(words: 1, lines: 1)
+        project.words = 1
         #expect(!notifies { project.cursorLine = project.cursorLine })
-        #expect(!notifies { project.counts = Counts(words: 1, lines: 1) })
+        #expect(!notifies { project.words = 1 })
         #expect(!notifies { project.shown = .none })
         #expect(notifies { project.cursorLine += 1 })
     }
