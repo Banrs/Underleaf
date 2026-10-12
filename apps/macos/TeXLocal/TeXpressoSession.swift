@@ -105,7 +105,7 @@ nonisolated struct LiveNews: Sendable {
 /// A session belongs to one open project and never changes a saved preference. Starts, stops
 /// and whole texts share a lane, so none overtakes another; a keystroke's edit goes to the
 /// core where it is made; and a thread of the session's own waits in the core for pages.
-@MainActor @Observable
+@Observable
 final class TeXpressoSession {
     enum Phase { case stopped, starting, running, stopping }
 

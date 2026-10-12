@@ -65,8 +65,7 @@ nonisolated struct HeadingStyles: Equatable {
     init(documentClass: DocumentClass?, hasChapters: Bool) {
         let family = documentClass.flatMap { Self.families[$0.name] }
         let sizes = Self.points[documentClass?.pointSize ?? 10] ?? Self.points[10]!
-        let scale = { (size: Size) in sizes[size.rawValue] / sizes[0] }
-        let bold = { (size: Size) in Font(scale: scale(size), bold: true, shape: .upright) }
+        let bold = { (size: Size) in Font(scale: sizes[size.rawValue] / sizes[0], bold: true, shape: .upright) }
         let plain = { (shape: Shape) in Font(scale: 1, bold: false, shape: shape) }
         // The standard classes' (article.cls, book.cls): every level bold, and so memoir's.
         var fonts: [String: Font] = [
