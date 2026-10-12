@@ -42,7 +42,7 @@ private struct GeneralSettings: View {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Core.libraryFolder]) }
                 } label: {
                     Text("Projects Folder")
-                    Text((Core.libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath)
+                    Text(Core.libraryPath)
                         .textSelection(.enabled)
                 }
             } footer: {

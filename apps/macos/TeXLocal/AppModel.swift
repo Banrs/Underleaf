@@ -182,7 +182,7 @@ final class AppModel {
 
     /// Nil finds TeX, or TeXpresso, automatically. The core refuses a folder without
     /// latexmk, or texpresso. Settings turns its buttons off meanwhile.
-    func setTeXFolder(_ path: String?, texpresso: Bool = false) async throws {
+    func setTeXFolder(_ path: String?, texpresso: Bool) async throws {
         settingTeX = true
         texCheck?.cancel()
         defer { settingTeX = false }

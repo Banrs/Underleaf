@@ -36,9 +36,10 @@ final class Core {
     private var handle: Handle? = Core.open()
     var isOpen: Bool { handle != nil }
 
+    /// The library folder's path as a person reads it, their home folder a tilde: "~/TeXLocal".
+    static let libraryPath = (libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
     /// What to do about a library folder that can't be opened, in Home's words and in a call's made all the same.
-    static let libraryAdvice = "Make sure you can create and write to "
-        + "\((libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath), then try again."
+    static let libraryAdvice = "Make sure you can create and write to \(libraryPath), then try again."
     private static let unavailable = CoreError(message: "TeXLocal can’t open its projects folder. \(libraryAdvice)")
 
     private init() {}

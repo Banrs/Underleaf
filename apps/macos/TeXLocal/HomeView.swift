@@ -379,7 +379,7 @@ struct NewProjectSheet: View {
     private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
 
     var body: some View {
-        DialogSheet(title: "New Project", message: "Saved in \((Core.libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath).",
+        DialogSheet(title: "New Project", message: "Saved in \(Core.libraryPath).",
                     action: "Create", enabled: !trimmed.isEmpty, failure: { "Couldn’t Create “\(trimmed)”" }) {
             try await app.create(name: trimmed, template: template)
         } fields: {
