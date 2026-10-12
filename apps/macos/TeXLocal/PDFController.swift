@@ -490,13 +490,9 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         liveBacklog?.pages.remove(index)
         guard view.showLive(page, over: shown, at: index) else { return settleLive() }
         liveClearing?.cancel()
-        liveSettling?.cancel()
         // Only if the whole document doesn't bring this page first, as it does 300 ms after the
         // last key: the page would go into PDFKit's document twice, for the same pixels.
-        liveSettling = Task { [weak self] in
-            guard (try? await Task.sleep(for: .seconds(1))) != nil else { return }
-            self?.settleLive()
-        }
+        restart(&liveSettling, after: .seconds(1)) { [weak self] in self?.settleLive() }
     }
 
     /// PDFKit's document takes the live pages it hasn't been given.
@@ -599,10 +595,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// The layers go once PDFKit has drawn its own pages' tiles and faded them in beneath (27.2),
     /// unless a newer live page is on one by then.
     private func clearLiveLater() {
-        liveClearing?.cancel()
-        liveClearing = Task { [weak self] in
-            guard (try? await Task.sleep(for: .milliseconds(400))) != nil, let self, liveWaiting.isEmpty else { return }
-            view.removeLive()
+        restart(&liveClearing, after: .milliseconds(400)) { [weak self] in
+            if let self, liveWaiting.isEmpty { view.removeLive() }
         }
     }
 
