@@ -65,7 +65,6 @@ struct StatusBar: View {
     private nonisolated enum Detail { case full, symbols, short }
 
     private func content(_ detail: Detail) -> some View {
-        // Xcode's hairline before the toggle, 9 pt either side.
         HStack(spacing: BarMetrics.spacing) {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
@@ -103,15 +102,9 @@ struct StatusBar: View {
                 if project.editsText {
                     // The caret's place; Go to Line from it.
                     Button { app.perform(.editGotoLine, on: project) } label: {
-                        Group {
-                            if detail == .short {
-                                Text(verbatim: "\(project.cursorLine):\(project.cursorColumn + 1)")
-                                    .accessibilityLabel("Line \(project.cursorLine), Column \(project.cursorColumn + 1)")
-                            } else {
-                                Text("Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)")
-                            }
-                        }
-                        .hitTarget()
+                        place(detail, "Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)",
+                              short: "\(project.cursorLine):\(project.cursorColumn + 1)",
+                              spoken: "Line \(project.cursorLine), Column \(project.cursorColumn + 1)")
                     }
                     .help("Go to a line")
                 }
@@ -123,21 +116,16 @@ struct StatusBar: View {
                 if pages {
                     freshness
                     Button { app.perform(.pdfGotoPage, on: project) } label: {
-                        Group {
-                            if detail == .short {
-                                Text(verbatim: "\(project.pdf.page)/\(project.pdf.pageCount)")
-                                    .accessibilityLabel("Page \(project.pdf.page) of \(project.pdf.pageCount)")
-                            } else {
-                                Text("Page \(project.pdf.page) of \(project.pdf.pageCount)")
-                            }
-                        }
-                        .hitTarget()
+                        place(detail, "Page \(project.pdf.page) of \(project.pdf.pageCount)",
+                              short: "\(project.pdf.page)/\(project.pdf.pageCount)",
+                              spoken: "Page \(project.pdf.page) of \(project.pdf.pageCount)")
                     }
                     .help("Go to a page")
                 }
             }
             .fixedSize()
-            // A device pixel wide, as the window's other lines: `Divider` is a point.
+            // Xcode's hairline before the toggle, 9 pt either side, a device pixel wide as the
+            // window's other lines: `Divider` is a point.
             if project.editsText || pages {
                 Rectangle().fill(.separator).frame(width: 1 / displayScale, height: BarMetrics.dividerHeight)
             }
@@ -155,6 +143,16 @@ struct StatusBar: View {
             .toggleStyle(.button)
             .help(app.title(.viewToggleLogs, on: project))
         }
+    }
+
+    /// The caret's or the page's place, in words until the bar must shorten it to figures, which
+    /// then carry the words for VoiceOver.
+    private func place(_ detail: Detail, _ full: LocalizedStringKey, short: String,
+                       spoken: LocalizedStringKey) -> some View {
+        Group {
+            if detail == .short { Text(verbatim: short).accessibilityLabel(spoken) } else { Text(full) }
+        }
+        .hitTarget()
     }
 
     /// The PDF shown isn't the source's: edits since its build, or a failed build after it.
