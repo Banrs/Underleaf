@@ -31,7 +31,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// The pointer is the split divider's by it and the arrow over the gutter, where a click
     /// selects lines, over an issue's message, where one shows the issue, and over the completion
     /// list, a menu's rows lying over the text; elsewhere the text view sets its own, on every
-    /// move, the list's own cursor rect notwithstanding.
+    /// move, which a cursor rect of the list's own lost to.
     private func setsCursor(with event: NSEvent) -> Bool {
         if updateDividerCursor(with: event) { return true }
         guard inGutter(event) || issueMessage(at: event) != nil || completionList.contains(event.locationInWindow) else { return false }
@@ -403,8 +403,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         super.textViewportLayoutControllerDidLayout(controller)
         fragments.sort { $0.offset < $1.offset }
         if let from = staleColours { colour(from: from) }
-        // Scrolled, it follows the text.
-        if offered != nil { showCompletions(reload: false) }
+        // Scrolled, an open list follows the text.
+        showCompletions(reload: false)
         placeIssues()
         redrawLineAndGutter()
     }

@@ -35,8 +35,8 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     var selection: Int { max(table.selectedRow, 0) }
 
     private let table = NSTableView()
-    /// Sized from the start, so that its views have margins to keep as it's resized.
-    private let surface = Surface(frame: NSRect(x: 0, y: 0, width: leastWidth, height: leastWidth))
+    /// The glass. Sized from the start, so that its views have margins to keep as it's resized.
+    private let surface = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: leastWidth, height: leastWidth))
     private var labels: [String] = []
     /// How much of every label is typed, in UTF-16 units.
     private var typed = 0
@@ -48,24 +48,6 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private static let radius: CGFloat = 13, margin: CGFloat = 5, highlightRadius: CGFloat = 8, textInset: CGFloat = 10
     /// What a narrow editor leaves it at least, where its labels need as much.
     private static let leastWidth: CGFloat = 160
-
-    /// The glass, with a menu's shadow. The pointer over it is the arrow, not the text's I-beam.
-    private final class Surface: NSGlassEffectView {
-        override init(frame: NSRect) {
-            super.init(frame: frame)
-            cornerRadius = CompletionList.radius
-            wantsLayer = true
-            // A menu's, measured under an NSMenu on white (27.2): 13% at its foot, gone 27 pt out,
-            // and less at its sides.
-            let shadow = NSShadow()
-            shadow.shadowOffset = NSSize(width: 0, height: -4)
-            shadow.shadowBlurRadius = 22
-            shadow.shadowColor = .shadowColor.withAlphaComponent(0.22)
-            self.shadow = shadow
-        }
-
-        required init?(coder: NSCoder) { fatalError() }
-    }
 
     /// The chosen row as a menu's: the accent colour, in from the list's edges.
     private final class Row: NSTableRowView {
@@ -81,6 +63,15 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     override init() {
         super.init()
+        surface.cornerRadius = Self.radius
+        surface.wantsLayer = true
+        // A menu's shadow, measured under an NSMenu on white (27.2): 13% at its foot, gone 27 pt
+        // out, and less at its sides.
+        let shadow = NSShadow()
+        shadow.shadowOffset = NSSize(width: 0, height: -4)
+        shadow.shadowBlurRadius = 22
+        shadow.shadowColor = .shadowColor.withAlphaComponent(0.22)
+        surface.shadow = shadow
         table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("completion")))
         table.headerView = nil
         table.style = .plain
@@ -113,15 +104,16 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// `start`, within `editor`, the part of `host` the text shows in: both in `host`'s
     /// coordinates. Without a host it holds them unseen.
     func show(_ labels: [String], typed: Int, kind: CompletionKind, font: NSFont, under start: NSRect, in editor: NSRect,
-              of host: NSView?) {
+              of host: NSScrollView?) {
         guard !labels.isEmpty else { return close() }
         let count = self.labels.count
         self.labels = labels
         self.typed = typed
         self.kind = kind
         self.font = font
-        // A menu's 24 pt row at its 13 pt text, for the editor's font.
-        table.rowHeight = lineHeight + 8
+        // A menu's 24 pt row at its 13 pt text, for the editor's font: 8 pt and its line to a whole
+        // point, 16 pt at 13.
+        table.rowHeight = (font.ascender - font.descender + font.leading).rounded(.up) + 8
         table.reloadData()
         table.selectRowIndexes([0], byExtendingSelection: false)
         reveal(0)
@@ -133,9 +125,6 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         // Typing that leaves fewer, or more again, is spoken too, after the typed character.
         if opening || labels.count != count { announce(interrupting: opening) }
     }
-
-    /// The font's line, to a whole point: 16 pt at 13.
-    private var lineHeight: CGFloat { (font.ascender - font.descender + font.leading).rounded(.up) }
 
     /// The list never has VoiceOver's focus, which stays in the document: the row chosen is
     /// spoken as the list opens and as the arrows move through it, as Xcode's list speaks it,
@@ -179,24 +168,22 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         var frame = NSRect(origin: NSPoint(x: start.minX - Self.textStart, y: 0), size: size)
         frame.size.width = min(size.width, max(Self.leastWidth, editor.maxX - frame.minX))
         frame.origin.x = max(editor.minX, min(frame.minX, editor.maxX - frame.width))
-        // Down the screen is up a flipped view's numbers.
-        let flipped = host.isFlipped
-        let under = flipped ? editor.maxY - start.maxY : start.minY - editor.minY
-        let over = flipped ? start.minY - editor.minY : editor.maxY - start.maxY
+        // Down the screen is up a scroll view's numbers: it is flipped.
+        let under = editor.maxY - start.maxY, over = start.minY - editor.minY
         isAbove = under < frame.height && over > under
         let room = isAbove ? over : under
         if room < frame.height {
             let rows = max(1, ((room - 2 * Self.margin) / table.rowHeight).rounded(.down))
             frame.size.height = rows * table.rowHeight + 2 * Self.margin
         }
-        frame.origin.y = isAbove == flipped ? start.minY - frame.height : start.maxY
+        frame.origin.y = isAbove ? start.minY - frame.height : start.maxY
         // On the display's pixels: the text's start is between them, and the glass's edge would blur.
         frame = host.backingAlignedRect(frame, options: .alignAllEdgesNearest)
         guard frame != surface.frame else { return }
         let shorter = frame.height != surface.frame.height
         surface.frame = frame
         // Fewer rows show: the chosen one is among them.
-        if shorter, selection >= 0 {
+        if shorter {
             surface.layoutSubtreeIfNeeded()
             reveal(selection)
         }
