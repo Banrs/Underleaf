@@ -171,7 +171,7 @@ struct FilesList: View {
             .accessibilityLabel("Search Results")
             // A new query can reuse a file/line ID. Clear the old selection so
             // the first click on that new hit opens it.
-            .onChange(of: project.searchQuery, initial: true) { _, _ in hit = nil }
+            .onChange(of: project.searchQuery, initial: true) { hit = nil }
             .onChange(of: hit) { _, id in open(id, focus: false) }
             .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
             .overlay {
@@ -191,7 +191,6 @@ struct FilesList: View {
     }
 
     /// Hits grouped by file, each line with its match picked out.
-    @ViewBuilder
     private var searchResults: some View {
         ForEach(project.searchGroups) { group in
             Section {
@@ -352,7 +351,15 @@ extension View {
             let files = urls.filter { $0.isFileURL && accepts($0) }
             if !files.isEmpty { action(files) }
         }
-        .dropConfiguration { _ in fileDropConfiguration(accepts, moves) }
+        .dropConfiguration { _ in
+            // What the drop does with the dragged files `accepts` takes, and how many it takes. AppKit's
+            // drag pasteboard: a drop session names none of its items until they're dropped.
+            let urls = (NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
+                                                              options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []).filter(accepts)
+            var configuration = DropConfiguration(operation: urls.isEmpty ? .forbidden : urls.allSatisfy(moves) ? .move : .copy)
+            if !urls.isEmpty { configuration.acceptedItemCount = urls.count }
+            return configuration
+        }
     }
 
     /// Dragged out as the file itself: other apps copy it, the tree moves it.
@@ -364,16 +371,6 @@ extension View {
             self
         }
     }
-}
-
-/// What a drop does with the dragged files `accepts` takes, and how many it takes.
-/// AppKit's drag pasteboard: a drop session names none of its items until they're dropped.
-private func fileDropConfiguration(_ accepts: (URL) -> Bool, _ moves: (URL) -> Bool) -> DropConfiguration {
-    let urls = (NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
-                                                      options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []).filter(accepts)
-    var configuration = DropConfiguration(operation: urls.isEmpty ? .forbidden : urls.allSatisfy(moves) ? .move : .copy)
-    if !urls.isEmpty { configuration.acceptedItemCount = urls.count }
-    return configuration
 }
 
 /// The project's sections from its main file, in a pane under `OutlineHeader`, which
@@ -501,7 +498,7 @@ private struct HeadingRow: View, Equatable {
         Text(item.displayTitle)
             .lineLimit(1)
             .help(item.displayTitle)
-            .foregroundStyle(item.isUntitled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+            .foregroundStyle(item.isUntitled ? .secondary : .primary)
             // Its kind ("Subsection"); the list tells its depth.
             .accessibilityValue(item.kind)
             // For scrollTo, inside the row: on it, the list would take it for the row's

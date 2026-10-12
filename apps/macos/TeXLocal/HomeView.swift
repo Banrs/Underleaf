@@ -76,7 +76,10 @@ struct HomeView: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("New")
             Section {
-                ForEach(copying, id: \.self) { CopyingRow(name: $0) }
+                // An item being copied into the library, in the place its project will take.
+                ForEach(copying, id: \.self) { name in
+                    ProjectLabel(detail: Text("Copying…"), progress: "Copying") { Text(name).font(.headline) }
+                }
                 ForEach(shown) { project in
                     // Its own view, so a row redraws only when its rename starts or ends.
                     ProjectRow(project: project, working: working.contains(project.id), rename: rename,
@@ -204,16 +207,7 @@ private struct ProjectRow: View {
     }
 }
 
-/// An item being copied into the library, in the place its project will take.
-private struct CopyingRow: View {
-    let name: String
-
-    var body: some View {
-        ProjectLabel(detail: Text("Copying…"), progress: "Copying") { Text(name).font(.headline) }
-    }
-}
-
-/// What both rows share: the document's icon, a name over a detail line, and a spinner
+/// What the project rows share: the document's icon, a name over a detail line, and a spinner
 /// with the accessibility name `progress` at the trailing edge while there is one.
 private struct ProjectLabel<Name: View>: View {
     let detail: Text
