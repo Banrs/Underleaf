@@ -171,6 +171,16 @@ func remapPath(_ path: String, from: String, to: String) -> String {
     return path
 }
 
+/// `work` once `delay` has passed, in `slot` in place of what waited there, which is cancelled:
+/// the next of its kind cancels this one, and one cancelled does nothing.
+func restart(_ slot: inout Task<Void, Never>?, after delay: Duration, _ work: @escaping @MainActor () async -> Void) {
+    slot?.cancel()
+    slot = Task {
+        try? await Task.sleep(for: delay)
+        if !Task.isCancelled { await work() }
+    }
+}
+
 /// A Move to Trash that Edit › Undo takes back, as Finder's does. The move goes through
 /// `FileManager`, which says where the Trash put the item (the core's trash doesn't). Undo
 /// puts it back and Redo trashes it again; each registers the other as its handler starts,

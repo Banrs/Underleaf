@@ -465,13 +465,10 @@ final class ProjectModel {
         if let openPath { lastEdit[openPath] = edits }
         if !editor.textView.issueLines.isEmpty { editor.textView.issueLines = [:] }
         if hasPDF { pdfOutdated = true }
-        saveTask?.cancel()
-        saveTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.autosaveDelay)
-            guard !Task.isCancelled, let self else { return }
-            guard await self.save(reporting: false), !Task.isCancelled else { return }
+        restart(&saveTask, after: Self.autosaveDelay) { [weak self] in
+            guard let self, await save(reporting: false), !Task.isCancelled else { return }
             // In a task of its own: this one is cancelled by the next key, and by the build's own save.
-            if self.autoCompile { Task { await self.compile(auto: true) } }
+            if autoCompile { Task { await self.compile(auto: true) } }
         }
     }
 
@@ -948,11 +945,9 @@ final class ProjectModel {
     }
 
     private func restartTeXpresso() {
-        liveRestartTask?.cancel()
-        liveRestartTask = Task { [weak self] in
-            // Coalesce a rename's tree and main-file notifications.
-            try? await Task.sleep(for: .milliseconds(180))
-            guard let self, !closed, !Task.isCancelled else { return }
+        // Coalesce a rename's tree and main-file notifications.
+        restart(&liveRestartTask, after: .milliseconds(180)) { [weak self] in
+            guard let self, !closed else { return }
             let start = liveStart
             texpresso.restart(files: start.files, caret: start.caret)
             liveRestartTask = nil
@@ -965,9 +960,7 @@ final class ProjectModel {
     /// file's is the editor's, even while it asks about the change. A path whose read fails waits
     /// for the next change.
     private func refreshTeXpressoDisk() {
-        liveDiskTask?.cancel()
-        liveDiskTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(180))
+        restart(&liveDiskTask, after: .milliseconds(180)) { [weak self] in
             guard let self else { return }
             // Our own save of the open file isn't news to TeXpresso, which has the editor's text:
             // a rescan then, landing as it typesets the edit, stalled it (TeXpresso e8df770).

@@ -13,11 +13,7 @@ final class ProjectNotices {
     func note(_ text: String) {
         current = text
         announce(text)
-        clearing?.cancel()
-        clearing = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(3))
-            if !Task.isCancelled { self?.current = nil }
-        }
+        restart(&clearing, after: .seconds(3)) { [weak self] in self?.current = nil }
     }
 
     @ObservationIgnored private var announced: (text: String, at: ContinuousClock.Instant)?

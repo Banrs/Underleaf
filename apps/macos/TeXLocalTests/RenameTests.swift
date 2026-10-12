@@ -29,6 +29,22 @@ struct FileKindTests {
     }
 }
 
+/// Work put off in a slot: the last of its kind runs, once, after its delay.
+@MainActor
+struct RestartTests {
+    @Test(.timeLimit(.minutes(1)))
+    func theLastOfItsKindRunsAlone() async {
+        var slot: Task<Void, Never>?, ran: [Int] = []
+        restart(&slot, after: .milliseconds(50)) { ran.append(1) }
+        let first = slot
+        restart(&slot, after: .milliseconds(50)) { ran.append(2) }
+        #expect(first?.isCancelled == true && ran.isEmpty)
+        await first?.value
+        await slot?.value
+        #expect(ran == [2])
+    }
+}
+
 /// The projects screen's and the sidebar's rename in place.
 @MainActor
 struct InPlaceRenameTests {
