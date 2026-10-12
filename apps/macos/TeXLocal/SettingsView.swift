@@ -24,24 +24,19 @@ struct SettingsView: View {
     }
 }
 
-/// A pane: a grouped form as tall as its rows.
-private struct PaneForm<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        Form { content }
-            .formStyle(.grouped)
-            .scrollDisabled(true)
-            .fixedSize(horizontal: false, vertical: true)
+extension View {
+    /// A pane: a grouped form as tall as its rows.
+    fileprivate func settingsPane() -> some View {
+        formStyle(.grouped).scrollDisabled(true).fixedSize(horizontal: false, vertical: true)
     }
 }
 
 private struct GeneralSettings: View {
     @AppStorage(DefaultsKey.newProjectTemplate) private var template = "article"
-    @AppStorage(DefaultsKey.newProjectEngine) private var engine = "pdflatex"
+    @AppStorage(DefaultsKey.newProjectEngine) private var engine = TeXEngine.pdflatex
 
     var body: some View {
-        PaneForm {
+        Form {
             Section {
                 LabeledContent {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Core.libraryFolder]) }
@@ -59,13 +54,14 @@ private struct GeneralSettings: View {
                     ForEach(ProjectTemplate.all) { Text($0.title).tag($0.id) }
                 }
                 Picker(selection: $engine) {
-                    ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
+                    ForEach(TeXEngine.allCases) { Text($0.title).tag($0) }
                 } label: {
                     Text("Engine")
                     Text("Each project can change its engine in the inspector.")
                 }
             }
         }
+        .settingsPane()
     }
 }
 
@@ -83,7 +79,7 @@ private struct EditorSettings: View {
     private static let sizes = Double(EditorPrefs.fontSizes.lowerBound)...Double(EditorPrefs.fontSizes.upperBound)
 
     var body: some View {
-        PaneForm {
+        Form {
             Section("Text") {
                 Picker("Font", selection: $fontName) {
                     Text("System Monospaced").tag("")
@@ -97,21 +93,24 @@ private struct EditorSettings: View {
                     ForEach(SyntaxTheme.allCases) { Text($0.title).tag($0) }
                 } label: {
                     Text("Theme")
-                    Text("Colours for commands, maths and comments. All follow light and dark appearance.")
+                    Text("Colors for commands, math and comments. All follow light and dark appearance.")
                 }
-                Toggle("Show Line Numbers", isOn: $lineNumbers)
+                Toggle("Show Line Numbers", isOn: $lineNumbers).controlSize(.mini)
             }
             Section("Typing") {
                 Toggle(isOn: $autoPair) {
                     Text("Close Brackets Automatically")
                     Text("Typing (, [ or { adds its partner.")
                 }
+                .controlSize(.mini)
                 Toggle(isOn: $autoComplete) {
                     Text("Suggest Completions While Typing")
                     Text("When off, press Option-Escape to see suggestions.")
                 }
+                .controlSize(.mini)
             }
         }
+        .settingsPane()
     }
 
     /// Double: the stepper's formatted value takes only floating point, and the editor reads a whole number.
@@ -128,16 +127,18 @@ private struct CompilingSettings: View {
 
     var body: some View {
         @Bindable var app = app
-        PaneForm {
+        Form {
             Section {
                 Toggle(isOn: $app.autoCompile) {
                     Text("Compile Automatically")
                     Text("Compiles shortly after you stop typing.")
                 }
+                .controlSize(.mini)
                 Toggle(isOn: $syncAfterCompile) {
-                    Text("Show the Cursor’s Place After Compiling")
+                    Text("Scroll to Cursor After Compiling")
                     Text("Scrolls the PDF to the line you are editing.")
                 }
+                .controlSize(.mini)
             }
             Section {
                 ProgramFolder(program: .tex)
@@ -147,6 +148,7 @@ private struct CompilingSettings: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
+        .settingsPane()
     }
 }
 
@@ -154,14 +156,15 @@ private struct PDFSettings: View {
     @AppStorage(PDFPrefs.paperKey) private var paper = PDFPrefs.paper
 
     var body: some View {
-        PaneForm {
+        Form {
             Picker(selection: $paper) {
                 ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
             } label: {
-                Text("Page Colour")
+                Text("Page Color")
                 Text("Dark inverts the PDF’s pages for reading at night. Printing and saving are unaffected.")
             }
         }
+        .settingsPane()
     }
 }
 
@@ -170,7 +173,7 @@ private struct LivePreviewSettings: View {
     @AppStorage(LiveViewer.key) private var viewer = LiveViewer.pane
 
     var body: some View {
-        PaneForm {
+        Form {
             Section {
                 if let tex = app.tex {
                     LabeledContent("TeXpresso") {
@@ -188,7 +191,7 @@ private struct LivePreviewSettings: View {
                 Picker(selection: $viewer) {
                     ForEach(LiveViewer.allCases) { Text($0.title).tag($0) }
                 } label: {
-                    Text("Show Preview In")
+                    Text("Show Live Preview In")
                     Text("Takes effect the next time Live Preview starts.")
                 }
             } footer: {
@@ -196,6 +199,7 @@ private struct LivePreviewSettings: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .settingsPane()
     }
 }
 

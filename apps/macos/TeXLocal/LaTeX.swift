@@ -70,8 +70,21 @@ nonisolated struct HeadingLevel: Hashable {
     }
 }
 
-/// The engines a project can compile with: (the core's id, the menu title).
-let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
+/// The engines a project can compile with. The raw value is the core's id, which is what other
+/// files pass around.
+enum TeXEngine: String, CaseIterable, Identifiable {
+    case pdflatex, xelatex, lualatex
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .pdflatex: "pdfLaTeX"
+        case .xelatex: "XeLaTeX"
+        case .lualatex: "LuaLaTeX"
+        }
+    }
+}
 
 /// Symbols by kind, each inserted as its command.
 let symbolGroups: [(String, [(String, String)])] = [

@@ -54,7 +54,9 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
 /// Notes', at an even pitch, after its number as the class prints it. A style toggles and the popover
 /// stays, as Notes' does; a level is chosen and it closes, as a menu. It opens with the caret's
 /// level checked and nothing highlighted; the arrow keys start from the checked level, and the
-/// pointer highlights a level without taking the keyboard's focus to it.
+/// pointer highlights a level without taking the keyboard's focus to it. The highlight is also
+/// the keyboard's focus, which draws no ring: Tab shows where it is, and Return and Space act
+/// only on a highlighted level.
 struct FormatPanel: View {
     let app: AppModel
     let project: ProjectModel
@@ -63,6 +65,8 @@ struct FormatPanel: View {
     @FocusState private var focused: HeadingLevel?
     /// The level under the pointer or last reached by the arrow keys, as a menu's highlight.
     @State private var highlighted: HeadingLevel?
+    /// Set while the caret's level is given the keyboard on opening, which isn't a move to highlight.
+    @State private var seeding = false
     /// The selection's, read again as the text or the selection changes.
     @State private var styles = TextStyles()
 
@@ -105,8 +109,16 @@ struct FormatPanel: View {
         }
         // At the caret's level, as a pop-up menu opens at its item.
         .onAppear {
+            seeding = headings.levels.contains { $0 == project.headingLevel }
             focused = project.headingLevel
             styles = project.editor.textStyles
+        }
+        .onChange(of: focused) { _, level in
+            if seeding {
+                seeding = false
+            } else {
+                highlighted = level
+            }
         }
         .onChange(of: project.editor.changes.count) {
             styles = project.editor.textStyles
@@ -134,6 +146,7 @@ struct FormatPanel: View {
                 Image(systemName: "checkmark")
                     .font(.body.bold())
                     .opacity(project.headingLevel == level ? 1 : 0)
+                    .accessibilityHidden(true)
                 HStack(alignment: .firstTextBaseline, spacing: Self.markerGap) {
                     if layout.markers > 0 {
                         Text(verbatim: marker ?? "")
@@ -183,9 +196,9 @@ struct FormatPanel: View {
         close()
     }
 
-    /// Return and Space choose the highlighted level, or the keyboard's.
+    /// Return and Space choose the highlighted level.
     private func chooseFocused() -> KeyPress.Result {
-        guard let level = highlighted ?? focused else { return .ignored }
+        guard let level = highlighted else { return .ignored }
         choose(level)
         return .handled
     }

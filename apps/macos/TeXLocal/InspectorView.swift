@@ -28,14 +28,15 @@ struct InspectorView: View {
             }
             // Settings arrive from the core after the project opens.
             .disabled(project.settings == nil)
-            Section("Live Preview") {
+            Section {
                 // As Compile › Live Preview: on while this window's session is live.
                 Toggle(isOn: Binding(get: { project.texpresso.active },
                                      set: { $0 ? project.startTeXpresso() : project.stopTeXpresso() })) {
                     Text("Live Preview")
                     Text(app.canPreviewLive ? "Experimental. Updates the preview as you type, without compiling."
-                         : "Live Preview needs TeXpresso, which isn’t installed. If it is, choose its folder in Settings.")
+                         : "Live Preview needs TeXpresso. Install it, or choose its folder in Settings.")
                 }
+                .controlSize(.mini)
                 .disabled(!app.canPreviewLive || !project.initialLoadComplete || project.texpresso.phase == .stopping)
                 if !app.canPreviewLive {
                     HStack {
@@ -54,6 +55,7 @@ struct InspectorView: View {
             Text(title)
             Text(detail)
         }
+        .controlSize(.mini)
     }
 }
 
@@ -65,11 +67,11 @@ struct EnginePicker: View {
     var body: some View {
         if let project, let engine = project.settings?.engine {
             Picker("Engine", selection: Binding(get: { engine }, set: { new in Task.immediate { await project.setEngine(new) } })) {
-                ForEach(texEngines, id: \.0) { id, title in Text(title).tag(id) }
-                if !texEngines.contains(where: { $0.0 == engine }) { Text(engine).tag(engine) }
+                ForEach(TeXEngine.allCases) { Text($0.title).tag($0.id) }
+                if TeXEngine(rawValue: engine) == nil { Text(engine).tag(engine) }
             }
         } else {
-            Menu("Engine") { ForEach(texEngines, id: \.0) { Text($0.1) } }
+            Menu("Engine") { ForEach(TeXEngine.allCases) { Text($0.title) } }
         }
     }
 }

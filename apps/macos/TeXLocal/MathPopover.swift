@@ -18,6 +18,8 @@ final class MathPopover {
     init() {
         content = NSHostingController(rootView: MathView(page: page))
         popover.behavior = .applicationDefined
+        // It follows the caret in and out of maths as the person types: no motion each time.
+        popover.animates = false
         popover.contentViewController = content
         if let folder = Bundle.main.url(forResource: "KaTeX", withExtension: nil) {
             // A failed load leaves it unloaded: no preview.
@@ -66,6 +68,7 @@ final class MathPopover {
             guard wanted.maths == asked.maths, wanted.size == asked.size else { update(); return }
             guard let box, box.count == 2 else { return }
             rendered = (asked.maths, asked.size)
+            content.rootView.tex = asked.maths.tex
             content.rootView.size = CGSize(width: box[0], height: box[1])
             popover.contentSize = content.view.fittingSize
             present()
@@ -104,10 +107,15 @@ final class MathPopover {
 /// through; not focusable, or it takes the source's keyboard as it shows.
 struct MathView: View {
     let page: WebPage
+    /// The source, which the web view's content isn't exposed as.
+    var tex = ""
     var size = CGSize.zero
 
     var body: some View {
         WebView(page).webViewContentBackground(.hidden).allowsHitTesting(false).focusable(false)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Math Preview")
+            .accessibilityValue(tex)
             .frame(width: size.width, height: size.height)
             .frame(minWidth: size.height)
             .padding()
