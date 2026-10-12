@@ -3,7 +3,6 @@ import SwiftUI
 
 /// Aa's popover, as Notes' Aa: the styles' toggles, then the levels, the caret's checked. The
 /// menu bar's Format menu and the toolbar's overflow menu keep them as plain menu items.
-@MainActor
 final class FormatPopover: NSObject, NSPopoverDelegate {
     let popover = NSPopover()
     private let app: AppModel
