@@ -30,7 +30,6 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     var selection: Int { max(table.selectedRow, 0) }
 
     private let table = Table()
-    private let scroll = NSScrollView()
     /// Sized from the start, so that its views have margins to keep as it's resized.
     private let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: minimumWidth, height: minimumWidth),
                                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
@@ -98,6 +97,7 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         // A click chooses a row and leaves the keyboard in the document.
         table.refusesFirstResponder = true
         table.setAccessibilityLabel(String(localized: "Completions"))
+        let scroll = NSScrollView()
         scroll.documentView = table
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
