@@ -149,12 +149,21 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = share
         case .compile:
             // The window's one prominent action (HIG Toolbars), as a word: a play symbol reads as
-            // media. It stands for the word only where the word doesn't fit (`configure`).
-            item = button(id, MenuCommand.compileRun.title, "play.fill", #selector(compile))
+            // media. It stands for the word only where the word doesn't fit (`CompileButton`).
+            // Customize Toolbar gets a title, as it draws custom views without their style.
+            item = NSToolbarItem(itemIdentifier: id)
+            item.label = MenuCommand.compileRun.title
+            if flag {
+                item.view = NSHostingView(rootView: compileButton(state))
+            } else {
+                item.title = MenuCommand.compileRun.title
+            }
+            // Enabled by `validateMenuItem`, as the button by the models (`configure`).
+            let form = NSMenuItem(title: MenuCommand.compileRun.title, action: #selector(compile), keyEquivalent: "")
+            form.target = self
+            item.menuFormRepresentation = form
             item.style = .prominent
             item.visibilityPriority = .high
-            // Enabled by the models (`configure`), as its overflow copy by `validateMenuItem`.
-            item.autovalidates = false
         case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
             item = button(id, "PDF", "richtext.page", #selector(togglePDF))
@@ -333,18 +342,17 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .compile:
             let command = state.compiling ? MenuCommand.compileStop : .compileRun
             if changed(\.compiling) {
-                // The overflow menu's copy too.
                 item.label = command.title
                 item.toolTip = command.title
+                item.menuFormRepresentation?.title = command.title
                 // Stop on clear glass: still prominent, whose glass stays its own, where a plain
                 // item's joins its neighbours'.
                 item.backgroundTintColor = state.compiling ? .clear : nil
             }
-            if changed(\.compiling) || changed(\.compactCompile) {
-                item.title = state.compactCompile ? "" : command.title
-                item.image = state.compactCompile ? symbol(state.compiling ? "stop.fill" : "play.fill", command.title) : nil
-            }
             if changed(\.canCompile) { item.isEnabled = state.canCompile }
+            if changed(\.compiling) || changed(\.compactCompile) || changed(\.canCompile) {
+                (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
+            }
         case .togglePDF:
             if changed(\.pdfTitle) { item.toolTip = state.pdfTitle }
         default:
@@ -396,9 +404,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         perform(project.compiling ? .compileStop : .compileRun)
     }
 
-    /// The overflow menu's Compile, which doesn't follow the item's `isEnabled`.
+    /// The overflow menu's Compile, which the item's own view doesn't enable.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         menuItem.action != #selector(compile) || canCompile
+    }
+
+    private func compileButton(_ state: State) -> CompileButton {
+        CompileButton(compiling: state.compiling, compact: state.compactCompile, enabled: state.canCompile) { [weak self] in
+            self?.compile()
+        }
     }
 
     @objc private func togglePDF() { perform(.viewTogglePdf) }
@@ -460,6 +474,65 @@ private final class ZoomControl: NSSegmentedControl {
         let margins = intrinsicContentSize.width - widest
         setWidth(widest - margins, forSegment: 1)
         setLabel(label, forSegment: 1)
+    }
+}
+
+/// Compile as its word, or as its symbol where the word has no room, and Stop with the build's
+/// spinner in the width Compile has there. It fills the item's glass, which doesn't pass clicks
+/// on to an undersized custom view.
+private struct CompileButton: View {
+    let compiling: Bool
+    let compact: Bool
+    let enabled: Bool
+    let action: () -> Void
+    @Environment(\.appearsActive) private var appearsActive
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                idle
+                    // Faint in a window that isn't the active one, as AppKit's own prominent item.
+                    .foregroundStyle(appearsActive ? .primary : .tertiary)
+                    .opacity(compiling ? 0 : 1)
+                // The button stays a button to VoiceOver; the status bar says Compiling.
+                busy.opacity(compiling ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
+            // The item's glass as AppKit draws a titled item's and a symbol's: 36 points high (the
+            // UI kit's toolbar controls), a title 12 points in from each end, 74 points for
+            // Compile, and a circle for a symbol (27.2).
+            .padding(.horizontal, compact ? 0 : 12)
+            .frame(minWidth: 36, minHeight: 36)
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
+    }
+
+    @ViewBuilder private var idle: some View {
+        if compact {
+            // At the size AppKit draws an item's symbol (27.2), measured.
+            Image(systemName: "play.fill").font(.system(size: 17))
+        } else {
+            Text(MenuCommand.compileRun.title)
+        }
+    }
+
+    /// The spinner beside Stop's word, or round its symbol: the regular spinner, 32 points, would
+    /// touch the circle's edge, and the small one has no room inside it.
+    @ViewBuilder private var busy: some View {
+        if compact {
+            ZStack {
+                ProgressView().controlSize(.regular).scaleEffect(0.8)
+                Image(systemName: "stop.fill").font(.system(size: 7))
+            }
+        } else {
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.small)
+                Text(MenuCommand.compileStop.title)
+            }
+        }
     }
 }
 

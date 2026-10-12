@@ -42,16 +42,20 @@ struct ShellTests {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
         #expect(!workspace.toolbar.compactCompile)
-        #expect(try item(.compile, in: workspace).title == MenuCommand.compileRun.title)
+        let compile = try item(.compile, in: workspace)
+        let button = try #require(compile.view)
+        let word = button.fittingSize.width
+        #expect(word > 60)
 
         // The least a drag of the window's edge gets to.
         #expect(window.contentMinSize.width == ColumnMetrics.toolbarMinimum)
         #expect(ColumnMetrics.toolbarMinimum >= ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
         try await resize(window, to: window.contentMinSize.width)
-        // Compile as its symbol, still Compile to the overflow menu and VoiceOver.
-        let compile = try item(.compile, in: workspace)
+        // Compile as its symbol, a circle, still Compile to the overflow menu and VoiceOver.
         #expect(workspace.toolbar.compactCompile)
-        #expect(compile.title.isEmpty && compile.image != nil && compile.label == MenuCommand.compileRun.title)
+        #expect(button.fittingSize == NSSize(width: 36, height: 36))
+        #expect(compile.label == MenuCommand.compileRun.title)
+        #expect(compile.menuFormRepresentation?.title == MenuCommand.compileRun.title)
         for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {
             let item = try item(id, in: workspace)
             #expect(!item.isHidden && item.visibilityPriority == .low)
@@ -63,6 +67,30 @@ struct ShellTests {
 
         try await resize(window, to: 1300)
         #expect(!workspace.toolbar.compactCompile)
+        #expect(button.fittingSize.width == word)
+    }
+
+    /// Stop, with the build's spinner, is as wide as Compile was, as its word and as its symbol:
+    /// the tools beside it stay where they are as a build starts and ends. The overflow menu and
+    /// VoiceOver have Stop by name.
+    @Test func stopIsAsWideAsCompile() async throws {
+        let (window, workspace) = try await workspace(showPDF: true)
+        defer { workspace.close(); window.close() }
+        let compile = try item(.compile, in: workspace)
+        let button = try #require(compile.view)
+        for width in [1300, window.contentMinSize.width] {
+            try await resize(window, to: width)
+            let idle = button.fittingSize
+            workspace.project.compiling = true
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(button.fittingSize == idle)
+            #expect(compile.label == MenuCommand.compileStop.title)
+            #expect(compile.menuFormRepresentation?.title == MenuCommand.compileStop.title)
+            #expect(compile.backgroundTintColor == .clear)
+            workspace.project.compiling = false
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(button.fittingSize == idle && compile.backgroundTintColor == nil)
+        }
     }
 
     /// With the PDF hidden the window is no narrower: its toolbar holds it there.
