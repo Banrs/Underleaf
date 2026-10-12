@@ -25,7 +25,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return view
     }
 
-    /// Increase Contrast, turned on or off: the line numbers and the completion list's rows follow it.
+    /// One of the display's accessibility options changed: the line numbers and the completion
+    /// list's rows follow Increase Contrast.
     @objc private func displayOptionsChanged() {
         needsDisplay = true
         if offered != nil { completionList.restyle() }
@@ -62,8 +63,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// Only active IME composition needs a snapshot; ordinary edits and undo are live.
     private var beforeMarkedText: String?
     var committedString: String { hasMarkedText() ? beforeMarkedText ?? string : string }
-    /// The storage's own UTF-16 units, for a look at them: `string` bridges the whole text to a
-    /// Swift string each time it's asked, and a caret move, a key and a draw all ask.
+    /// The storage's own UTF-16 units, read in place: `string` bridges the whole text to a Swift
+    /// string each time it's asked, and a caret move, a key and a draw all ask.
     private var text: NSString { textStorage?.mutableString ?? "" }
     var symbols = Symbols(citations: [], labels: [])
     /// What dropping a file does, or nil to refuse it.
@@ -171,15 +172,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return position + shift
     }
 
-    // MARK: the colours
-
-    /// Settings' Colour Theme.
-    var syntaxTheme = SyntaxTheme.overleaf {
-        didSet {
-            if syntaxTheme != oldValue { colour(from: 0) }
-        }
-    }
-
     // MARK: the font
 
     /// Settings' size; the weight follows the appearance.
@@ -243,13 +235,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var gutterWidth: CGFloat = 0
     private var lineCountDigits = 0
     private var numberFont = NSFont.systemFont(ofSize: NSFont.systemFontSize) {
-        didSet {
-            numberLines.removeAll()
-            digitWidth = Self.digitWidth(numberFont)
-        }
+        didSet { numberLines.removeAll() }
     }
-    private lazy var digitWidth = Self.digitWidth(numberFont)
-    private static func digitWidth(_ font: NSFont) -> CGFloat { ("0" as NSString).size(withAttributes: [.font: font]).width }
+    /// The numbers are tabular: every digit is this wide.
+    private var digitWidth: CGFloat { ("0" as NSString).size(withAttributes: [.font: numberFont]).width }
     /// Where the line numbers end.
     private var numbersEnd: CGFloat = 0
     /// The fragments laid out for the viewport: where each starts, its frame.
@@ -510,7 +499,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
     }
 
-    // MARK: colours
+    // MARK: the colours
+
+    /// Settings' Colour Theme.
+    var syntaxTheme = SyntaxTheme.overleaf {
+        didSet { if syntaxTheme != oldValue { colour(from: 0) } }
+    }
 
     /// Where the text first changed since it was last coloured, or 0 for all of it: coloured
     /// again once it's laid out, which every edit leads to, an undone one too.

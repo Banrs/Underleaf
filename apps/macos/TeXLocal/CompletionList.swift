@@ -147,7 +147,7 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
             panel.appearanceSource = window
             window.addChildWindow(panel, ordered: .above)
         }
-        // Typing that leaves fewer is spoken too, after the typed character.
+        // Typing that leaves fewer, or more again, is spoken too, after the typed character.
         if opening || labels.count != count { announce(interrupting: opening) }
     }
 

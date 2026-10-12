@@ -388,7 +388,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         textView.apply([edit], named: name,
                        select: NSRange(location: selection.location + (prefix as NSString).length, length: selection.length))
     }
-
 }
 
 /// The editor's scroll view and text view, reused across SwiftUI updates.
