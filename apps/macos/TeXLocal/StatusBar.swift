@@ -20,7 +20,7 @@ enum BarMetrics {
     static let consoleTrailing: CGFloat = 17
     /// The HIG's 20 × 20 pt least target for a borderless button, a small control's height.
     static let target: CGFloat = 20
-    /// The hairline before the toggle: as tall as the toggle's symbol.
+    /// The line before the toggle: as tall as the toggle's symbol.
     static let dividerHeight: CGFloat = 12
 }
 
@@ -31,8 +31,19 @@ struct StatusBar: View {
     static let height = BarMetrics.height
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
-    @Environment(\.displayScale) private var displayScale
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let project: ProjectModel
+
+    /// How much of the editors' colour lies over the bar's material. None in Light, where the
+    /// material at rest is the editor's white and passes what Xcode 27.1's bar does, a soft ghost
+    /// of the text beneath. In Dark the material is lighter and warmer than the editor (38, 35, 31
+    /// over 30), a third grey between it and the build panel: under this much of the editor's
+    /// colour it is (32, 31, 30) and still passes a tenth of the text (27.2). All of it where
+    /// transparency is reduced, where the material is the window's tinted colour.
+    private var wash: Double {
+        if reduceTransparency { 1 } else if colorScheme == .dark { 0.7 } else { 0 }
+    }
 
     var body: some View {
         // Under a narrower window the bar says less, then says it shorter.
@@ -41,17 +52,20 @@ struct StatusBar: View {
             content(.symbols).labelStyle(.iconOnly)
             content(.short).labelStyle(.iconOnly)
         }
-        // Xcode's bar: 36 pt under its hairline.
+        // Xcode's bar: 36 pt under its line.
         .padding(.leading, BarMetrics.leading)
         .padding(.trailing, BarMetrics.trailing)
         .frame(height: Self.height)
-        // The window's lines are a device pixel, as its splits' dividers; this one in a row of
-        // its own over the bar, the row of the line over the File Outline's header beside it.
-        .padding(.top, 1 / displayScale)
-        // The editors' colour, so the bar is one surface with them and with the build panel, as
-        // Xcode's bar is its editor's. Opaque: its accessory draws no scroll edge (`buildArea`).
-        .background(.textSurface)
-        .overlay(alignment: .top) { Rectangle().fill(.separator).frame(height: 1 / displayScale) }
+        // The window's lines are a point, as its splits' dividers and as Xcode's (27.1); this one
+        // in a row of its own over the bar, which ends where the line over the File Outline's
+        // header beside it does.
+        .padding(.top, 1)
+        // The system's bar material: the source and the pages scroll on beneath it as a soft
+        // ghost, as under Xcode's bar, and at rest it is one surface with the editors and the
+        // build panel. Its accessory draws no scroll edge of its own (`buildArea`).
+        .background(.textSurface.opacity(wash))
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
         .font(.subheadline)
         .monospacedDigit()
         .controlSize(.small)
@@ -124,10 +138,9 @@ struct StatusBar: View {
                 }
             }
             .fixedSize()
-            // Xcode's hairline before the toggle, 9 pt either side, a device pixel wide as the
-            // window's other lines: `Divider` is a point.
+            // Xcode's line before the toggle, 9 pt either side.
             if project.editsText || pages {
-                Rectangle().fill(.separator).frame(width: 1 / displayScale, height: BarMetrics.dividerHeight)
+                Divider().frame(height: BarMetrics.dividerHeight)
             }
             Toggle(isOn: Bindable(project.panel).shown) {
                 // Only as tall as the HIG's least target: its symbol sits at Xcode's gaps, at the body

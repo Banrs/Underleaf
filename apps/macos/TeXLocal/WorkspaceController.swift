@@ -282,11 +282,11 @@ final class WorkspaceController: RestoredSplitViewController {
         // Its own height, which the folded File Outline's header shares (`StatusBar.height`): AppKit's
         // insets pad the bar but leave the panes' scrollers and safe area at the padded height (27.2).
         statusBar.automaticallyAppliesContentInsets = false
-        // No scroll edge under the bar: it is the editors' surface under a line (`StatusBar`), as
-        // Xcode's is. `.soft` draws nothing over these panes; AppKit's automatic edge is a glass
-        // that lightens a dark editor (38 over 30, 27.2), a third grey between the editor and the
-        // build panel. SwiftUI's hard edge, which would give the line, draws only over a SwiftUI
-        // scroll view, and one around PDFKit's takes its rubber-banding.
+        // No scroll edge of AppKit's under the bar: the bar brings its own material and line
+        // (`StatusBar`). `.soft` draws nothing over these panes; AppKit's automatic edge is a glass
+        // that passes a thirtieth of the text under it and lightens a dark editor (38 over 30,
+        // 27.2). SwiftUI's hard edge, which is Xcode's bar, draws only over a SwiftUI scroll view,
+        // and one around PDFKit's takes its rubber-banding.
         statusBar.preferredScrollEdgeEffectStyle = .soft
         columnsItem.addBottomAlignedAccessoryViewController(statusBar)
         area.addSplitViewItem(columnsItem)
@@ -678,7 +678,7 @@ class RestoredSplitViewController: NSSplitViewController {
     var detent: (_ divider: Int) -> CGFloat? = { _ in nil }
 
     /// NSSplitViewController's own: side by side, with the thin divider.
-    init(splitView: NSSplitView = HairlineSplitView()) {
+    init(splitView: NSSplitView = NSSplitView()) {
         super.init(nibName: nil, bundle: nil)
         splitView.isVertical = true
         splitView.dividerStyle = .thin
@@ -707,28 +707,11 @@ class RestoredSplitViewController: NSSplitViewController {
     }
 }
 
-/// The thin divider at a device pixel: the weight of the window's other system lines, the
-/// scroll-edge lines under the sidebar's search and over the status bar and the outline's header,
-/// where AppKit's is a point, twice theirs on a Retina display. Drawn by AppKit in its colour;
-/// NSSplitView's thickness is there to override.
-class HairlineSplitView: NSSplitView {
-    override var dividerThickness: CGFloat {
-        guard dividerStyle == .thin else { return super.dividerThickness }
-        return 1 / (window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1)
-    }
-
-    /// Moved to a display of another scale, the divider keeps its pixel.
-    override func viewDidChangeBackingProperties() {
-        super.viewDidChangeBackingProperties()
-        needsLayout = true
-    }
-}
-
 /// Source | PDF. The status bar spans both panes as one bar, so their divider stops at its top.
-private final class ColumnsSplitView: HairlineSplitView {
+private final class ColumnsSplitView: NSSplitView {
     override func drawDivider(in rect: NSRect) {
         // The bar and the line over it.
-        let bar = StatusBar.height + 1 / (window?.backingScaleFactor ?? 2)
+        let bar = StatusBar.height + 1
         var shown = rect
         shown.size.height -= bar
         if isFlipped == false { shown.origin.y += bar }
@@ -758,7 +741,7 @@ private final class ColumnsSplitView: HairlineSplitView {
 private final class SidebarSplitViewController: RestoredSplitViewController {
     weak var header: NSSplitViewItemAccessoryViewController?
 
-    private final class SplitView: HairlineSplitView {
+    private final class SplitView: NSSplitView {
         override func drawDivider(in rect: NSRect) {}
     }
 

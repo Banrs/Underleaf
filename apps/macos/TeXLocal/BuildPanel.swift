@@ -53,11 +53,10 @@ final class BuildPanelModel {
 
 /// The build panel below the editors and their status bar: the build's issues or its whole log,
 /// ending at `BuildPanelBar` at the panel's foot, as Xcode's console at its bar, with a
-/// device-pixel line between. On the editors' surface, as Xcode's console is on its editor's.
+/// line between. On the editors' surface, as Xcode's console is on its editor's.
 /// No close button: the status bar's toggle and View › Hide Build Panel close it.
 struct BuildPanel: View {
     let project: ProjectModel
-    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         Group {
@@ -85,7 +84,7 @@ struct BuildPanel: View {
         // as Xcode's console filter; in a plain stack it is a form's outlined field (27.2).
         .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
-                Rectangle().fill(.separator).frame(height: 1 / displayScale)
+                Divider()
                 BuildPanelBar(project: project)
             }
         }

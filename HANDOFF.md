@@ -42,14 +42,22 @@ into it and deleted on 12 October.
   normal, leave as is").
 - **Source**: one TextKit 2 `NSTextView` (`SourceTextView`), shared across files, in an
   `NSScrollView` of its own (`EditorView`). Xcode's metrics for the font, gutter and current
-  line; the completion list (`CompletionList`) is a copy of Xcode 27's, an opaque panel in a
-  child window that never takes the keyboard, its chosen row raised with Xcode's shadow and
-  the others fainter. Unlike Xcode's it ends at the editor's trailing edge.
+  line. The completion list (`CompletionList`) is Liquid Glass in a system menu's measures
+  (13 pt corners, 24 pt rows, the chosen row in the accent colour; from an `NSMenu` on 27.2),
+  a view of the editor's scroll view and not a window: glass in a borderless panel that isn't
+  key draws as a flat slab, and AppKit's own completion list is still its square box (27.2).
+  So it ends at the editor's edges and goes over its line where there is no room under it.
 - **Status bar**: the source/PDF columns' bottom accessory at Xcode's measured spacing (14 pt
-  in, 9 between items, 36 high; `BarMetrics`). Its ground is the editors' colour, opaque, as
-  the bar under Xcode's editor is its editor's: bar, editor and build panel measure the same
-  in Light and in Dark, and text ends at the bar's line. The line is a device pixel in a row
-  of its own above the bar, the row of the File Outline header's line. The accessory asks for
+  in, 9 between items, 36 high; `BarMetrics`). Its ground is SwiftUI's `.bar` material, so the
+  source and the pages show under it as a soft ghost, as text does under Xcode 27.1's bar
+  (Daniel: "xcode has scrollthorugh"). In Light the material at rest is the editor's white.
+  In Dark it is lighter and warmer than the editor (38, 35, 31 over 30), so 70% of the
+  editors' colour lies over it: (32, 31, 30), passing a tenth of the text. Other grounds
+  measured on 27.2 and left: glass under a wash (text shows sharp, or the bar is 34 in Dark),
+  tinted glass (opaque white, black in Dark), AppKit's own scroll edge (passes a thirtieth),
+  a Core Image backdrop blur (not applied). The line is a point, as Xcode's, in a row of its
+  own above the bar; the File Outline header's line beside it is the system's own hairline, a
+  device pixel that ends on the same row. The accessory asks for
   the soft scroll edge, which draws nothing over an `NSTextView` or a `PDFView` (27.2).
   SwiftUI's hard scroll edge draws only over a SwiftUI scroll view, and one around PDFKit's
   view takes its rubber-banding and insets (27.2), so the PDF view sits directly in its pane.
@@ -58,14 +66,16 @@ into it and deleted on 12 October.
 - **Build panel**: below the columns, so the status bar rides up as it opens, with AppKit's
   collapse animation. Its controls are a bar at its foot, as Xcode's console bar: a pop-up for
   Issues, Build Log and Live Preview Log, then Warnings or Copy Log, then a filter. The bar
-  is a SwiftUI safe-area bar under a device-pixel line of its own: there its filter draws as
+  is a SwiftUI safe-area bar under a line of its own: there its filter draws as
   the filled capsule a toolbar's search field is, and as a row of a plain stack it draws as a
   form's outlined field (27.2). The filter is the regular 24 pt among the bar's small
   controls, as Xcode's; SwiftUI passes its control size on to a hosted `NSSearchField`, and a
   small one is an outlined box that drops the filter symbol. Over the logs, which are AppKit
   scroll views, the filter is still outlined. The list hides the system's wallpaper-tinted
   ground so it is the editors' colour.
-- **Split dividers** are a device pixel (`HairlineSplitView`); the source|PDF divider stops
+- **Split dividers** are AppKit's thin divider as it comes, a point in the separator colour,
+  the thickness of Xcode's (27.1; Xcode's are darker, 215 where the separator gives 230, a
+  colour with no system name). The source|PDF divider stops
   above the status bar (`ColumnsSplitView`), and a double-click on it restores the even split.
   A drag stops at the sidebar's opening width and at the even split, with the alignment
   haptic as it arrives (`RestoredSplitViewController.detent`).
@@ -102,7 +112,7 @@ CI: `ci.yml` runs the web tests and bundle and the Rust core's rustfmt, clippy a
 Linux; `macos-app.yml` builds the app, checks the core is linked statically, runs the native
 tests and fails a run in which none passed.
 
-- Native: 144 tests in 19 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
+- Native: 159 tests in 20 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
   `-D warnings` clean. `npm run verify:texpresso`: 25 checks against the patched engine, both
   of its programs built from the patched source.
 - Live preview, measured from 60 fps screen recordings of a Release build on a one-page
