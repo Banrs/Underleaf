@@ -57,12 +57,14 @@ struct WorkspaceModals: ViewModifier {
                 if let path { askWhichVersion(of: path) }
             }
             .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "",
-                   item: $project.missingFile) { _ in
+                   item: $project.missingFile) { path in
                 // Return saves: the button that discards the edits is never the default.
                 Button("Save Again") { project.saveMissingFile() }
                 Button("Discard Changes", role: .destructive) { project.closeMissingFile() }
-                // Leaves the edits unsaved in the editor.
-                Button("Cancel", role: .cancel) {}
+                // Leaves the edits unsaved in the editor, and the status bar saying so.
+                Button("Cancel", role: .cancel) {
+                    project.leaveUnsaved(String(localized: "Another app moved or deleted “\(path.fileName)”."))
+                }
             } message: { path in
                 Text("Another app moved or deleted “\(path)”, which has unsaved changes here.")
             }
@@ -88,7 +90,7 @@ struct WorkspaceModals: ViewModifier {
             switch response {
             case .alertFirstButtonReturn: project.keepEdits()
             case .alertSecondButtonReturn: Task { await project.revertToDisk(path) }
-            default: project.diskConflict = nil
+            default: project.leaveUnsaved(String(localized: "Another app changed “\(path.fileName)”."))
             }
         }
         // A sheet on the editor's window, as SwiftUI's alerts are; a file with edits to ask about is in it.

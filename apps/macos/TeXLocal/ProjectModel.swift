@@ -759,6 +759,13 @@ final class ProjectModel {
         if reverted, autoCompile { await compile(auto: true) }
     }
 
+    /// Cancel in either alert about another app's change: the edits stay unsaved, and the status
+    /// bar says so, as after a save that failed. Its button saves, and so asks again.
+    func leaveUnsaved(_ reason: String) {
+        (diskConflict, missingFile) = (nil, nil)
+        saveFailure = reason
+    }
+
     /// Save Anyway: the edits written over the other app's change, now.
     func keepEdits() {
         (diskConflict, changedFile) = (nil, nil)
