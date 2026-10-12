@@ -119,7 +119,7 @@ struct ShellTests {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
         let toolbar = workspace.toolbar.toolbar
-        // Not into the defaults, which this host may share with the app.
+        // Not saved: this host may share the app's saved toolbar.
         toolbar.autosavesConfiguration = false
         let defaults = workspace.toolbar.toolbarDefaultItemIdentifiers(toolbar)
         #expect(workspace.toolbar.holdsDefaultItems)
