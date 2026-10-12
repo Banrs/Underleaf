@@ -224,6 +224,21 @@ struct PDFFitTests {
         #expect(project.saved.pdfPage == 2)
     }
 
+    /// Go to Page keeps to the document: a number past its end is its last page, one under 1 its
+    /// first, and with no document there is nowhere to go.
+    @Test func goToPageKeepsToTheDocument() throws {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.go(toPage: 2)
+        #expect(controller.page == 0)
+        controller.show(try pages(3))
+        controller.view.layoutDocumentView()
+        controller.go(toPage: 9)
+        #expect(controller.page == 3)
+        controller.go(toPage: 0)
+        #expect(controller.page == 1)
+    }
+
     /// A reopened project's PDF opens at the fit or scale it was left at, once it has a size,
     /// and a workspace saved before zooms were kept still opens.
     @Test(arguments: [PDFController.Zoom.fitPage, .scale(1.5), .fitWidth])
