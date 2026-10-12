@@ -33,20 +33,13 @@ enum BarMetrics {
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let project: ProjectModel
 
-    /// How much of the editors' colour lies over the bar's material, so that the text beneath
-    /// shows through as much as under Xcode 27.1's bar, about a sixth of its contrast (measured
-    /// from a capture). None in Light, where the material alone passes that and rests at the
-    /// editor's white. Half in Dark, where the material alone passes a third and is lighter and
-    /// warmer than the editor (38, 35, 31 over 30, 27.2): at 0.7 it passed a tenth, which read
-    /// as no scroll-through; at none the bar was plainly not the editor's colour. All of it
-    /// where transparency is reduced, where the material is the window's tinted colour.
-    private var wash: Double {
-        if reduceTransparency { 1 } else if colorScheme == .dark { 0.5 } else { 0 }
-    }
+    /// How much of the editors' colour lies over the blur of what is under the bar: what is left
+    /// passes about a sixth of the text's contrast, as Xcode 27.1's bar does (measured from a
+    /// capture). All of it where transparency is reduced.
+    private var wash: Double { reduceTransparency ? 1 : 0.83 }
 
     var body: some View {
         // Under a narrower window the bar says less, then says it shorter.
@@ -58,11 +51,10 @@ struct StatusBar: View {
         .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
         // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`).
         .padding(.top, BarMetrics.line)
-        // The system's bar material: the source and the pages scroll on beneath it as a soft
-        // ghost, as under Xcode's bar, so it is the editors' colour only where nothing is under
-        // it (`wash`). Its accessory draws no scroll edge of its own (`buildArea`).
+        // The editors' colour over a blur of what scrolls beneath, as under Xcode's bar: exactly
+        // the editors' colour where nothing is under it, in a key window and any other. The blur
+        // is a view of the workspace's under this one (`blurBackdrop`, `buildArea`).
         .background(.textSurface.opacity(wash))
-        .background(.bar)
         .overlay(alignment: .top) { Divider() }
         .monospacedDigit()
         .buttonStyle(.borderless)
@@ -241,5 +233,21 @@ extension View {
 
     fileprivate func hitTarget() -> some View {
         frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect)
+    }
+}
+
+extension NSView {
+    /// A blur of whatever the window draws behind this view, with no colour of its own: Core
+    /// Image's Gaussian as the layer's background filter. Every material of `NSVisualEffectView`
+    /// and SwiftUI, and Liquid Glass, tints what it blurs (in Dark the bar material rests at
+    /// 38, 35, 31 over a 30 editor, with the wallpaper's tint), so none can rest at the editors'
+    /// colour and still pass the text; this rests at whatever is behind it (27.2, measured in a
+    /// window that was not key, where the materials go opaque and this does not). The radius is
+    /// wide enough that no letter can be made out, as under Xcode's bar.
+    func blurBackdrop(radius: Double = 12) {
+        wantsLayer = true
+        layerUsesCoreImageFilters = true
+        layer?.masksToBounds = true
+        layer?.backgroundFilters = CIFilter(name: "CIGaussianBlur", parameters: [kCIInputRadiusKey: radius]).map { [$0] }
     }
 }

@@ -309,11 +309,24 @@ final class WorkspaceController: RestoredSplitViewController {
         // and their scrollers end at its top. It rides up with them as the panel opens, as Xcode's
         // does over its debug area, so nothing under it changes and it never changes its look.
         let statusBar = accessory(StatusBar(project: project))
+        // The blur of what scrolls beneath the bar is a plain view over the panes, under the
+        // accessory: a background filter on the accessory's own view, or on a view inside it,
+        // draws nothing (27.2), and AppKit lays an accessory over its item's view.
+        let ground = NSView()
+        ground.blurBackdrop()
+        ground.translatesAutoresizingMaskIntoConstraints = false
+        columns.view.addSubview(ground)
+        NSLayoutConstraint.activate([
+            ground.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
+            ground.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
+            ground.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
+            ground.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line),
+        ])
         // Its own height, the bar's under its line's, and the folded File Outline's header is as high
         // as the bar (`BarMetrics.height`): AppKit's insets pad the bar but leave the panes' scrollers
         // and safe area at the padded height (27.2).
         statusBar.automaticallyAppliesContentInsets = false
-        // No scroll edge of AppKit's under the bar: the bar brings its own material and line
+        // No scroll edge of AppKit's under the bar: the bar brings its own ground and line
         // (`StatusBar`). `.soft` draws nothing over these panes; AppKit's automatic edge is a glass
         // that passes a thirtieth of the text under it and lightens a dark editor (38 over 30,
         // 27.2). SwiftUI's hard edge, which is Xcode's bar, draws only over a SwiftUI scroll view,

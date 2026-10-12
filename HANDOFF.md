@@ -64,16 +64,20 @@ into it and deleted on 12 October.
   (27.2), so the underline is drawn under the text. Xcode's boxed annotation was not copied
   (Daniel: "Dont just blindly copy xcode").
 - **Status bar**: the source/PDF columns' bottom accessory at Xcode's measured spacing (14 pt
-  in, 9 between items, 36 high; `BarMetrics`). Its ground is SwiftUI's `.bar` material, so the
-  source and the pages show under it as a soft ghost, as text does under Xcode 27.1's bar
-  (Daniel: "xcode has scrollthorugh"). In Light the material at rest is the editor's white.
-  In Dark it is lighter and warmer than the editor (38, 35, 31 over 30) and passes a third,
-  so half of the editors' colour lies over it, for the sixth that Xcode's bar passes
-  (Daniel: "use xcode's opacity"): at 70% it passed a tenth, which he saw as no
-  scroll-through, and at none the bar was plainly another colour. Other grounds
-  measured on 27.2 and left: glass under a wash (text shows sharp, or the bar is 34 in Dark),
-  tinted glass (opaque white, black in Dark), AppKit's own scroll edge (passes a thirtieth),
-  a Core Image backdrop blur (not applied). So the bar is the editors' colour only where
+  in, 9 between items, 36 high; `BarMetrics`). Its ground is the editors' colour at 83% over a blur of what scrolls beneath, so the
+  source and the pages show under it as a soft ghost at about a sixth of their contrast, as
+  text does under Xcode 27.1's bar (Daniel: "xcode has scrollthorugh", "use xcode's opacity"),
+  and it is exactly the editors' colour where nothing is under it (30 in Dark, 255 in
+  Light, in a key window or not). The blur is Core Image's Gaussian as the background filter
+  of a plain view the workspace lays over the panes under the accessory (`blurBackdrop`,
+  `buildArea`): on the accessory's own view, a view inside it or a hosting view the filter
+  draws nothing (27.2). Every system ground brings a colour of its own and was left: the
+  `.bar` material (38, 35, 31 over a 30 editor in Dark, wallpaper-tinted, opaque in a window
+  that is not key), each `NSVisualEffectView` material (36 to 60 at rest in Dark), glass
+  under a wash (text shows sharp, or the bar is 34), tinted glass (opaque), AppKit's own
+  scroll edge (passes a thirtieth, 46 in Dark). Not measured: what the filter costs a frame
+  of live preview or a scroll.
+  So the bar is the editors' colour only where
   nothing is under it, and over a page of another colour (a white page in Dark) it shows that
   page. The line is a point, as Xcode's, in a row of its
   own above the bar (`BarMetrics.line`); the File Outline header's line beside it is the
