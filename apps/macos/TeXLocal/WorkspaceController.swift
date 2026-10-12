@@ -166,11 +166,39 @@ final class WorkspaceController: RestoredSplitViewController {
     /// than the panes' whichever of them show. AppKit folds the side columns on the way there, by
     /// the area's own minimum; with the sidebar open the window controls are over it.
     @objc private func fitColumns() {
-        let pdf = pdfItem.isCollapsed ? 0 : columns.splitView.dividerThickness + pdfItem.minimumThickness
+        let pdf = pdfItem.isCollapsed ? 0 : columns.splitView.dividerThickness + ColumnMetrics.pdfRoom
         let panes = sourceItem.minimumThickness + pdf + ColumnMetrics.toolbarInset
         let area = max(panes, ColumnMetrics.toolbarMinimum - ColumnMetrics.windowControls)
         if areaItem.minimumThickness != area { areaItem.minimumThickness = area }
         fitToolbar()
+        joinDividerSoon()
+    }
+
+    private var joining = false
+
+    /// A turn on, once the toolbar has laid its sections out for the panes as they now are.
+    private func joinDividerSoon() {
+        guard appeared, !joining else { return }
+        joining = true
+        Task { @MainActor [weak self] in
+            self?.joining = false
+            self?.joinDivider()
+        }
+    }
+
+    /// The source|PDF divider goes to the toolbar's separator where the two have parted. AppKit's
+    /// separator follows the divider only as far as each section's tools leave it room: under a
+    /// source narrower than Back, the title and its tools, or a PDF narrower than its own, it
+    /// stops and the tools stand over the neighbouring pane (27.2), and it sends tools to its
+    /// overflow menu by the whole toolbar's room, not a section's. So the divider keeps to where
+    /// the separator can be, which the toolbar alone knows: its line is found by its class, and
+    /// without it nothing moves.
+    private func joinDivider() {
+        guard paneAnimations == 0, !pdfItem.isCollapsed, let frame = view.window?.contentView?.superview else { return }
+        let split = columns.splitView, divider = split.arrangedSubviews[0].frame.maxX
+        let lines = frame.descendants(named: "NSSeparatorToolbarItemView").map { split.convert($0.bounds, from: $0).minX }
+        guard let line = lines.min(by: { abs($0 - divider) < abs($1 - divider) }), abs(line - divider) >= 0.5 else { return }
+        split.setPosition(line, ofDividerAt: 0)
     }
 
     /// Customize Toolbar has put a tool in or taken one out, and Compile's form goes by which
@@ -791,8 +819,14 @@ enum ColumnMetrics {
     /// narrowest title, the menu's chevron, Compile as its symbol and the toggles. In a narrower
     /// window AppKit takes Compile and then Back there too (27.2), measured.
     static let toolbarMinimum: CGFloat = 542
-    /// A page readable at Fit Width, and room for Compile and the toggles.
-    static let pdfMinimum: CGFloat = 200
+    /// A page readable at Fit Width, and room for Compile and the toggles: what the narrowest
+    /// window leaves beside the source's section of the toolbar (542 less 352 and the divider),
+    /// so the divider can stay under the toolbar's separator there (`joinDivider`).
+    static let pdfMinimum: CGFloat = 188
+    /// What the area keeps for the PDF beside the source at its least: with the sidebar open the
+    /// PDF's tools need more than its minimum (27.2), and a window that stopped any narrower left
+    /// the separator short of the divider.
+    static let pdfRoom: CGFloat = 200
     static let pdfShare: CGFloat = 0.5
     /// Source and PDF over the build panel: a find bar and a few lines.
     static let columnsMinimum: CGFloat = 200
@@ -826,5 +860,12 @@ private struct Mounted<Content: View>: View {
 
     var body: some View {
         if mount?.shown ?? true { content }
+    }
+}
+
+private extension NSView {
+    /// Every view under this one whose class has the name.
+    func descendants(named name: String) -> [NSView] {
+        subviews.flatMap { ($0.className == name ? [$0] : []) + $0.descendants(named: name) }
     }
 }

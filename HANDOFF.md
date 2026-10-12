@@ -13,14 +13,19 @@ into it and deleted on 12 October.
   and PDF views where SwiftUI has none.
 - **Narrow windows**: the window stops at 542 pt, the toolbar's least, with the PDF or
   without (about 683 while the sidebar is open at its least); source and PDF keep minimums of
-  260 and 200 pt, the sidebar Xcode's navigator's 222; it opens at 270, the width of AppKit's
+  260 and 188 pt, the sidebar Xcode's navigator's 222; it opens at 270, the width of AppKit's
   inspector. Tools without room go to `NSToolbar`'s own overflow menu by
   `visibilityPriority`, and nowhere else; Compile gives up its word for its symbol first.
   That is reckoned from the default tools' measured widths (`ColumnMetrics`), so it holds
   while the toolbar has its default tools: customised, Compile keeps its word while the tools
   that never leave have room for it (`WorkspaceToolbar.holdsDefaultItems`). AppKit overflows
-  by the room between the sidebar's and the inspector's separators, not by a pane's own, so
-  between about 900 and 700 pt a pane's tools can sit over its neighbour. Sidebar and
+  by the room between the sidebar's and the inspector's separators, not by a pane's own, and
+  its source|PDF separator stops where a section's tools need the room, so a narrower pane
+  left the separator apart from the divider and the tools over the neighbouring pane. The
+  divider therefore goes to the separator a turn after any layout that parts them
+  (`WorkspaceController.joinDivider`, which finds the toolbar's line by its class,
+  `NSSeparatorToolbarItemView`, 27.2): the two met at every width from 542 to 1100 pt with
+  the sidebar open and shut. Sidebar and
   inspector fold for a narrow window and are not saved as hidden for it (`sidebarFolded`).
 - **The window's title** is AppKit's, which keeps 160 pt for it whatever it says (27.2): with
   both side columns open that sends Zoom to the overflow menu at a 1000 pt window, and with
