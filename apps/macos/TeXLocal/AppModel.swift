@@ -58,9 +58,8 @@ final class AppModel {
     var project: ProjectModel?
     var alert: AppAlert?
     /// Why the library can't be listed, for Home to say in place of its list: no alert as the app starts.
-    private(set) var libraryProblem: AppAlert? = Core.shared.isOpen ? nil : AppAlert(
-        "Couldn’t Open the Projects Folder",
-        "Make sure you can create and write to \((Core.libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath), then try again.")
+    private(set) var libraryProblem: AppAlert? = Core.shared.isOpen ? nil
+        : AppAlert("Couldn’t Open the Projects Folder", Core.libraryAdvice)
 
     // Requests from menu commands to the views that own the UI.
     var newProjectTemplate: ProjectTemplate?
@@ -203,9 +202,14 @@ final class AppModel {
 
     func create(name: String, template: String) async throws {
         let info = try await core.call("create_project", ["name": name, "template": template], as: ProjectInfo.self)
-        // Settings' engine for new projects; the core's own is pdfLaTeX. The project stands if this fails.
+        // Settings' engine for new projects; the core's own is pdfLaTeX. The project stands if this fails,
+        // and opens under the alert that says so.
         if let engine = UserDefaults.standard.string(forKey: DefaultsKey.newProjectEngine), engine != "pdflatex" {
-            _ = try? await core.call("set_settings", ["id": info.id, "patch": ["engine": engine]], as: ProjectSettings.self)
+            do {
+                _ = try await core.call("set_settings", ["id": info.id, "patch": ["engine": engine]], as: ProjectSettings.self)
+            } catch {
+                alert = AppAlert("Couldn’t Set the Engine for “\(info.name)”", error)
+            }
         }
         await refresh()
         // Not awaited: the sheet goes as the project opens, not after its first build.
@@ -307,13 +311,7 @@ final class AppModel {
 
     /// Without asking, as in Finder: Edit › Undo and the Trash give the item back (HIG, Alerts).
     func delete(_ project: ProjectInfo) async {
-        let root: URL
-        do {
-            root = URL(fileURLWithPath: try await core.call("project_root", ["id": project.id], as: String.self))
-        } catch {
-            alert = AppAlert("Couldn’t Move “\(project.name)” to the Trash", error)
-            return
-        }
+        guard let root = await folder(of: project, orAlert: "Couldn’t Move “\(project.name)” to the Trash") else { return }
         let item = UndoableTrash(
             original: root, name: project.name, undoManager: undoManager,
             trash: { [weak self] item in
@@ -335,8 +333,18 @@ final class AppModel {
 
     func revealProject(_ project: ProjectInfo) {
         Task {
-            guard let root = try? await core.call("project_root", ["id": project.id], as: String.self) else { return }
-            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: root)])
+            guard let root = await folder(of: project, orAlert: "Couldn’t Show “\(project.name)” in Finder") else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([root])
+        }
+    }
+
+    /// The project's folder, or nil once an alert titled `title` has said why it can't be had.
+    private func folder(of project: ProjectInfo, orAlert title: String) async -> URL? {
+        do {
+            return URL(fileURLWithPath: try await core.call("project_root", ["id": project.id], as: String.self))
+        } catch {
+            alert = AppAlert(title, error)
+            return nil
         }
     }
 

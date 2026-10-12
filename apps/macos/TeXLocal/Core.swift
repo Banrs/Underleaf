@@ -1,4 +1,5 @@
 import Foundation
+import os
 import TeXLocalCore
 
 nonisolated struct CoreError: LocalizedError {
@@ -35,6 +36,11 @@ final class Core {
     private var handle: Handle? = Core.open()
     var isOpen: Bool { handle != nil }
 
+    /// What to do about a library folder that can't be opened, in Home's words and in a call's made all the same.
+    static let libraryAdvice = "Make sure you can create and write to "
+        + "\((libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath), then try again."
+    private static let unavailable = CoreError(message: "TeXLocal can’t open its projects folder. \(libraryAdvice)")
+
     private init() {}
 
     private static func open() -> Handle? {
@@ -66,9 +72,22 @@ final class Core {
 
     /// On the calling thread, for as long as the command runs.
     private nonisolated static func answer<T: Decodable>(_ handle: Handle, _ command: String, _ json: String) throws -> T? {
-        let envelope = try JSONDecoder().decode(Envelope<T>.self, from: run(handle, command, json))
-        if let error = envelope.error { throw CoreError(message: error, status: envelope.status) }
-        return envelope.ok
+        do {
+            let envelope = try JSONDecoder().decode(Envelope<T>.self, from: run(handle, command, json))
+            if let error = envelope.error { throw CoreError(message: error, status: envelope.status) }
+            return envelope.ok
+        } catch let error as DecodingError {
+            throw fault(command, String(describing: error))
+        }
+    }
+
+    private nonisolated static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "core")
+
+    /// No answer, or one in another shape than was asked for, is a fault of the app's own or the
+    /// core's: the log has the command and what was wrong with its answer, and an alert has neither.
+    private nonisolated static func fault(_ command: String, _ problem: String) -> CoreError {
+        log.error("\(command, privacy: .public): \(problem, privacy: .public)")
+        return CoreError(message: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
     }
 
     private nonisolated static func json(_ args: [String: Any]) throws -> String {
@@ -77,9 +96,7 @@ final class Core {
 
     private func result<T: Decodable & Sendable>(_ command: String, _ args: [String: Any], as: T.Type) async throws -> T? {
         let json = try Self.json(args)
-        guard let handle else {
-            throw CoreError(message: "TeXLocal can’t open its projects folder.")
-        }
+        guard let handle else { throw Self.unavailable }
         return try await withCheckedThrowingContinuation { done in
             DispatchQueue.global(qos: .userInitiated).async {
                 done.resume(with: Result { try Core.answer(handle, command, json) })
@@ -89,24 +106,21 @@ final class Core {
 
     /// A command the core answers at once, where it's asked: a keystroke's edit doesn't wait for a thread.
     func now<T: Decodable>(_ command: String, _ args: [String: Any], as: T.Type = T.self) throws -> T? {
-        guard let handle else { throw CoreError(message: "TeXLocal can’t open its library folder.") }
+        guard let handle else { throw Self.unavailable }
         return try Self.answer(handle, command, try Self.json(args))
     }
 
     /// A command that waits, for a thread of the caller's own to block in.
     func waiting<T: Decodable & Sendable>(_ command: String, as: T.Type = T.self) -> @Sendable ([String: any Sendable]) throws -> T {
-        { [handle] args in
-            guard let handle, let answer: T = try Core.answer(handle, command, try Core.json(args)) else {
-                throw CoreError(message: "The core returned nothing for \(command)")
-            }
+        { [handle, unavailable = Self.unavailable] args in
+            guard let handle else { throw unavailable }
+            guard let answer: T = try Core.answer(handle, command, try Core.json(args)) else { throw Core.fault(command, "no answer") }
             return answer
         }
     }
 
     func call<T: Decodable & Sendable>(_ command: String, _ args: [String: Any] = [:], as: T.Type = T.self) async throws -> T {
-        guard let ok = try await result(command, args, as: T.self) else {
-            throw CoreError(message: "The core returned nothing for \(command)")
-        }
+        guard let ok = try await result(command, args, as: T.self) else { throw Self.fault(command, "no answer") }
         return ok
     }
 
