@@ -18,6 +18,8 @@ nonisolated struct TeXpressoStatus: Decodable, Sendable, Equatable {
 nonisolated struct TeXpressoEvents: Decodable, Sendable {
     struct Document: Decodable, Sendable {
         let path: String
+        /// Rises by one with each document the session writes: a gap is one the core replaced unread.
+        let version: Int
         let serial: Int
         let pages: Int
         /// `complete`, `stopped` at an error before the end, or `partial` while the first is typeset; nil from an older build.
@@ -367,6 +369,9 @@ final class TeXpressoSession {
     /// A file's whole text: one just opened, or changed by another app.
     func update(_ file: TeXpressoFile) {
         guard active, !closed else { return }
+        // Not edit by edit until it is there: a key's edit sent meanwhile could reach the core
+        // first, and this older text would then replace it.
+        synced.remove(file.path)
         pending[file.path] = file.text
         flushEdits()
     }
@@ -485,7 +490,7 @@ final class TeXpressoSession {
         self.inbox = inbox
         let (id, wait) = (id, calls.wait)
         let thread = Thread { [weak self] in
-            var after = 0, missed = false
+            var after = 0, version = 0, missed = false
             while !inbox.cancelled {
                 var news = LiveNews()
                 do {
@@ -493,9 +498,15 @@ final class TeXpressoSession {
                     after = events.seq
                     (news.running, news.error, news.revision) = (events.running, events.error, events.revision)
                     news.stopped = (events.done?.run ?? events.pdf?.run).flatMap { $0 == "partial" ? nil : $0 == "stopped" }
-                    if let pdf = events.pdf, pdf.pages > 0 {
-                        news.document = Self.read(pdf, whole: missed)
-                        missed = news.document == nil
+                    if let pdf = events.pdf {
+                        // The core keeps the latest document only: one it replaced before this
+                        // thread asked again took its list of changed pages with it.
+                        let skipped = pdf.version != version + 1
+                        version = pdf.version
+                        if pdf.pages > 0 {
+                            news.document = Self.read(pdf, whole: missed || skipped)
+                            missed = news.document == nil
+                        }
                     }
                     for page in events.pages {
                         news.pages[page.page] = Self.read(page)
@@ -515,7 +526,9 @@ final class TeXpressoSession {
     }
 
     /// The file is complete when it is named, and replaced by another of its name, never rewritten:
-    /// mapped, it is read as its pages are drawn and stays whole when its name goes.
+    /// mapped, it is read as its pages are drawn and stays whole when its name goes. It has no
+    /// links to see to, as a build's has: the engine writes its pages through MuPDF's PDF
+    /// device, which carries content and no annotations.
     private nonisolated static func read(_ pdf: TeXpressoEvents.Document, whole: Bool) -> LiveDocument? {
         let url = URL(fileURLWithPath: pdf.path)
         guard let data = try? Data(contentsOf: url, options: .alwaysMapped), let document = PDFDocument(data: data),
@@ -525,11 +538,9 @@ final class TeXpressoSession {
                 if range.count == 2, range[0] <= range[1] { set.insert(integersIn: range[0]...range[1]) }
             }
         }
-        // After a document that couldn't be read, any page may differ from what shows.
+        // After a document that wasn't read, any page may differ from what shows.
         if whole, changed != nil { changed = IndexSet(integersIn: 0..<document.pageCount) }
-        for index in changed ?? IndexSet(integersIn: 0..<document.pageCount) {
-            document.page(at: index)?.hideLinkBorders()
-        }
+        document.sourceBytes = data.count
         return LiveDocument(url: url, document: document, serial: pdf.serial, changed: changed, complete: pdf.run != "stopped" && pdf.run != "partial")
     }
 
@@ -537,6 +548,7 @@ final class TeXpressoSession {
     private nonisolated static func read(_ page: TeXpressoEvents.Page) -> LivePage? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: page.path), options: .alwaysMapped),
               let read = PDFDocument(data: data)?.page(at: 0) else { return nil }
+        read.sourceBytes = data.count
         return LivePage(index: page.page, serial: page.serial, page: read)
     }
 

@@ -227,6 +227,30 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
+    /// A whole text sent again for a file the core has, as when the file is opened again, is on
+    /// its way when a key is typed: the key follows it whole. Sent as an edit it could reach the
+    /// core first, and the older text would then replace it.
+    @Test func anEditWhileAWholeTextIsOnItsWayFollowsItWhole() async throws {
+        let core = FakeCore(), session = core.session()
+        var sending: CheckedContinuation<Void, Never>?
+        core.update = { _, text in
+            if text == "reopened" { await withCheckedContinuation { sending = $0 } }
+        }
+        session.start(files: [main])
+        await session.waitForPendingCalls()
+        session.update(TeXpressoFile(path: "main.tex", text: "reopened"))
+        try await until { sending != nil }
+        session.edit("main.tex", NSRange(location: 8, length: 0), "!") { "reopened!" }
+        #expect(core.sent == ["main.tex=reopened"])
+        sending?.resume()
+        await session.waitForPendingCalls()
+        #expect(core.sent == ["main.tex=reopened", "main.tex=reopened!"])
+        session.edit("main.tex", NSRange(location: 9, length: 0), "?") { "" }
+        #expect(core.sent.last == "main.tex 9 0 ?")
+        session.stop()
+        await session.waitForPendingCalls()
+    }
+
     // ---------- the view and the caret ----------
 
     /// The engine has the pane's pages and the caret from the start, the pages again as they
@@ -301,7 +325,7 @@ struct TeXpressoSessionTests {
         try await Task.sleep(for: .milliseconds(100))
         #expect(shown.isEmpty)
         core.feed.send(TeXpressoEvents(seq: 4, running: true,
-                                       pdf: .init(path: two.path, serial: 2, pages: 2, run: "partial", changed: [[0, 1]]),
+                                       pdf: .init(path: two.path, version: 1, serial: 2, pages: 2, run: "partial", changed: [[0, 1]]),
                                        pages: [page(1, second, 4)]))
         try await waitUntil { shown.count == 2 }
         #expect(shown == ["document 2 [0, 1] false", "page 1 second"])
@@ -311,7 +335,7 @@ struct TeXpressoSessionTests {
         try await waitUntil { shown.count == 3 }
         #expect(shown.last == "page 0 first")
         core.feed.send(TeXpressoEvents(seq: 8, running: true,
-                                       pdf: .init(path: three.path, serial: 8, pages: 3, run: "complete", changed: [[2, 2]])))
+                                       pdf: .init(path: three.path, version: 2, serial: 8, pages: 3, run: "complete", changed: [[2, 2]])))
         try await waitUntil { shown.count == 4 }
         // The page was sent before the document, which has it.
         #expect(shown.last == "document 3 [2] true")
@@ -332,12 +356,12 @@ struct TeXpressoSessionTests {
         session.shownPages = { documents.last?.document.pageCount ?? 0 }
         session.start(files: [main])
         await session.waitForPendingCalls()
-        core.feed.send(TeXpressoEvents(seq: 1, running: true, pdf: .init(path: try writePDF(["a", "b"]).path, serial: 1, pages: 2),
+        core.feed.send(TeXpressoEvents(seq: 1, running: true, pdf: .init(path: try writePDF(["a", "b"]).path, version: 1, serial: 1, pages: 2),
                                        pages: [.init(page: 0, path: "/tmp/gone-\(UUID().uuidString).pdf", serial: 2)]))
         try await waitUntil { documents.count == 1 }
         #expect(documents[0].changed == nil && documents[0].complete && pages == 0)
         // No pages, as TeX leaves the document when it stops in the preamble: what shows stays.
-        core.feed.send(TeXpressoEvents(seq: 3, running: true, pdf: .init(path: "/tmp/none.pdf", serial: 3, pages: 0, run: "stopped", changed: [])))
+        core.feed.send(TeXpressoEvents(seq: 3, running: true, pdf: .init(path: "/tmp/none.pdf", version: 2, serial: 3, pages: 0, run: "stopped", changed: [])))
         core.feed.send(TeXpressoEvents(seq: 4, running: true, revision: 7))
         try await waitUntil { core.feed.asked.last == 4 }
         #expect(documents.count == 1)
@@ -346,17 +370,33 @@ struct TeXpressoSessionTests {
     }
 
     /// A document that couldn't be read leaves the next one's list of changes short: all of
-    /// that one's pages are taken.
+    /// that one's pages are taken. So does one the core replaced before it was asked for, which
+    /// the gap in the documents' numbers tells; one with no pages has its number all the same.
     @Test func aDocumentMissedMakesTheNextOneWhole() async throws {
         let core = FakeCore(), session = core.session()
         var documents: [LiveDocument] = []
         session.showDocument = { documents.append($0) }
         session.start(files: [main])
         await session.waitForPendingCalls()
-        core.feed.send(TeXpressoEvents(seq: 1, running: true, pdf: .init(path: "/tmp/gone-\(UUID().uuidString).pdf", serial: 1, pages: 3, run: "complete", changed: [[0, 2]])))
-        core.feed.send(TeXpressoEvents(seq: 2, running: true, pdf: .init(path: try writePDF(["a", "b", "c"]).path, serial: 2, pages: 3, run: "complete", changed: [[1, 1]])))
+        func document(_ version: Int, _ path: String, pages: Int = 3) -> TeXpressoEvents {
+            TeXpressoEvents(seq: version, running: true,
+                            pdf: .init(path: path, version: version, serial: version, pages: pages, run: "complete", changed: [[1, 1]]))
+        }
+        let whole = try writePDF(["a", "b", "c"]).path
+        core.feed.send(document(1, "/tmp/gone-\(UUID().uuidString).pdf"))
+        core.feed.send(document(2, whole))
         try await waitUntil { documents.count == 1 }
-        #expect(documents[0].changed == [0, 1, 2])
+        #expect(documents[0].changed == [0, 1, 2] && documents[0].document.sourceBytes > 0)
+        core.feed.send(document(3, whole))
+        try await waitUntil { documents.count == 2 }
+        #expect(documents[1].changed == [1])
+        core.feed.send(document(5, whole))
+        try await waitUntil { documents.count == 3 }
+        #expect(documents[2].changed == [0, 1, 2])
+        core.feed.send(document(6, "/tmp/none.pdf", pages: 0))
+        core.feed.send(document(7, whole))
+        try await waitUntil { documents.count == 4 }
+        #expect(documents[3].changed == [1])
         session.stop()
         await session.waitForPendingCalls()
     }
