@@ -56,14 +56,14 @@ final class WorkspaceController: RestoredSplitViewController {
     private(set) var toolbar: WorkspaceToolbar!
 
     let columns = RestoredSplitViewController(splitView: ColumnsSplitView())
-    let area = RestoredSplitViewController()
+    private let area = RestoredSplitViewController()
     private let sidebar = SidebarSplitViewController()
     private(set) var sidebarItem: NSSplitViewItem!
-    private(set) var outlineItem: NSSplitViewItem!
-    private(set) var sourceItem: NSSplitViewItem!
-    private(set) var pdfItem: NSSplitViewItem!
-    private(set) var panelItem: NSSplitViewItem!
-    private(set) var inspectorItem: NSSplitViewItem!
+    private var outlineItem: NSSplitViewItem!
+    private var sourceItem: NSSplitViewItem!
+    private var pdfItem: NSSplitViewItem!
+    private var panelItem: NSSplitViewItem!
+    private var inspectorItem: NSSplitViewItem!
     /// Source and PDF, with their status bar, over the build panel.
     private var areaItem: NSSplitViewItem!
     private var sidebarSearch: NSSplitViewItemAccessoryViewController!
@@ -218,9 +218,11 @@ final class WorkspaceController: RestoredSplitViewController {
         let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
         filesItem.minimumThickness = ColumnMetrics.filesMinimum
         // The outline's header stays at the files' foot, over the outline's pane or, folded,
-        // at the sidebar's: one view, which the pane's collapse carries down and back.
+        // at the sidebar's: one view, which the pane's collapse carries down and back. Only search
+        // results hide it, and a workspace opens with none: hidden before its first layout, a
+        // bottom accessory still insets its pane (27.2).
         buildOutlineBar()
-        if OutlineState(app, project) != .hidden { filesItem.addBottomAlignedAccessoryViewController(outlineBar) }
+        filesItem.addBottomAlignedAccessoryViewController(outlineBar)
         outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project),
                                                             height: (height * ColumnMetrics.outlineShare).rounded()))
         outlineItem.minimumThickness = ColumnMetrics.outlineMinimum
@@ -252,7 +254,7 @@ final class WorkspaceController: RestoredSplitViewController {
 
         pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project), width: pdfWidth))
         pdfItem.minimumThickness = ColumnMetrics.pdfMinimum
-        pdfFind = accessory(PDFFindBar(controller: pdf), hidden: true, mounts: true)
+        pdfFind = accessory(PDFFindBar(controller: pdf), hidden: true)
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
 
         columns.splitView.autosaveName = "Columns"
@@ -374,11 +376,12 @@ final class WorkspaceController: RestoredSplitViewController {
         folded ? StatusBar.height : OutlineHeader.openHeight
     }
 
-    /// A pane bar sized to its content, inside AppKit's standard accessory insets.
-    private func accessory(_ content: some View, hidden: Bool = false, mounts: Bool = false) -> NSSplitViewItemAccessoryViewController {
+    /// A pane bar sized to its content, inside AppKit's standard accessory insets. `hidden`, for
+    /// one that comes and goes: its content there only while it shows.
+    private func accessory(_ content: some View, hidden: Bool = false) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
-        let mount = mounts ? Mount(!hidden) : nil
-        if let mount { self.mounts[ObjectIdentifier(accessory)] = mount }
+        let mount = hidden ? Mount(false) : nil
+        if let mount { mounts[ObjectIdentifier(accessory)] = mount }
         let host = NSHostingView(rootView: Mounted(mount: mount, content: content.environment(app)))
         host.sizingOptions = [.intrinsicContentSize]
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -476,11 +479,6 @@ final class WorkspaceController: RestoredSplitViewController {
 
     /// The pane folds down under its header to the sidebar's foot, and opens up from there.
     private func setOutline(_ state: OutlineState) {
-        let files = sidebar.splitViewItems[0]
-        // Hidden before its first layout, a bottom accessory still insets its pane (27.2).
-        if state != .hidden, !files.bottomAlignedAccessoryViewControllers.contains(outlineBar) {
-            files.addBottomAlignedAccessoryViewController(outlineBar)
-        }
         setHidden(outlineBar, state == .hidden)
         setCollapsed(outlineItem, state != .open)
     }
@@ -712,11 +710,9 @@ class RestoredSplitViewController: NSSplitViewController {
 /// Source | PDF. The status bar spans both panes as one bar, so their divider stops at its top.
 private final class ColumnsSplitView: NSSplitView {
     override func drawDivider(in rect: NSRect) {
-        // The bar and the line over it.
-        let bar = StatusBar.height + BarMetrics.line
         var shown = rect
-        shown.size.height -= bar
-        if isFlipped == false { shown.origin.y += bar }
+        // Short of the bar and the line over it, at its foot: a split view is flipped.
+        shown.size.height -= StatusBar.height + BarMetrics.line
         super.drawDivider(in: shown)
     }
 
@@ -759,8 +755,8 @@ private final class SidebarSplitViewController: RestoredSplitViewController {
                                    ofDividerAt: dividerIndex)
         // Folded, the outline opens only from its header.
         guard let header, !header.isHidden, splitViewItems.last?.isCollapsed == false else { return .zero }
-        let frame = header.view.convert(header.view.bounds, to: splitView)
-        let line = splitView.isFlipped ? frame.minY : frame.maxY
+        // The header's top, in the split view's flipped coordinates.
+        let line = header.view.convert(header.view.bounds, to: splitView).minY
         return rect.offsetBy(dx: 0, dy: line - drawnRect.minY)
     }
 }
