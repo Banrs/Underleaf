@@ -64,6 +64,14 @@ struct SourceEditorTests {
         #expect(view.string == "xone" && view.document.text == "xone")
     }
 
+    /// `plainDocument()` sets only what a new text view isn't already: the rest is as a scroll view's plain document needs it too.
+    @Test func aPlainDocumentIsSetUpForAScrollView() {
+        let view = SourceTextView.plainDocument()
+        #expect(!view.isRichText && !view.importsGraphics && !view.allowsImageEditing && !view.usesRuler)
+        #expect(view.isVerticallyResizable && !view.isHorizontallyResizable && view.minSize == .zero)
+        #expect(view.textContainer?.widthTracksTextView == true)
+    }
+
     @Test func bracketsCloseAndAreSteppedOver() {
         open("")
         text.insertText("{", replacementRange: typed)
@@ -601,15 +609,11 @@ struct SourceEditorTests {
 
     /// The editor's scroll view in a window.
     private func inWindow() -> NSWindow {
-        let window = Self.window()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         editor.scrollView.frame = window.contentView!.bounds
         window.contentView!.addSubview(editor.scrollView)
         editor.shown = true
         return window
-    }
-
-    private static func window() -> NSWindow {
-        NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
     }
 
     /// The colour the editor draws `word` in, once laid out.
@@ -711,12 +715,7 @@ struct SourceEditorTests {
     @Test(arguments: [NSAppearance.Name.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
     func theThemesAreLegible(name: NSAppearance.Name) throws {
         let appearance = try #require(NSAppearance(named: name))
-        func resolved(_ color: NSColor) -> NSColor {
-            var out = color
-            appearance.performAsCurrentDrawingAppearance { out = color.usingColorSpace(.sRGB) ?? color }
-            return out
-        }
-        let background = resolved(.textBackgroundColor), fill = resolved(.secondarySystemFill)
+        let background = NSColor.textBackgroundColor.resolved(in: appearance), fill = NSColor.secondarySystemFill.resolved(in: appearance)
         // The fill as the window server mixes it in: 235 on white, 48 on Dark's 30.
         func under(_ component: KeyPath<NSColor, CGFloat>) -> CGFloat {
             background[keyPath: component] * (1 - fill.alphaComponent) + fill[keyPath: component] * fill.alphaComponent
@@ -732,7 +731,7 @@ struct SourceEditorTests {
             }
         }
         // Overleaf's Light commands, at 8.6:1, are its own blue.
-        if name == .aqua { #expect(resolved(SyntaxTheme.overleaf.colours.command) == NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)) }
+        if name == .aqua { #expect(SyntaxTheme.overleaf.colours.command.resolved(in: appearance) == NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)) }
     }
 
     /// A double-click selects the word, as the system's does, and goes to the PDF, quietly; a click

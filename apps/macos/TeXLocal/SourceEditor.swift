@@ -38,6 +38,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
     private var focusWhenShown = false
 
+    /// The clip view's scrolling, watched for as long as its token is held.
     private var scrolling: NotificationCenter.ObservationToken?
     /// Counts edits and selection changes, for views that follow the selection's styles.
     let changes = EditorChanges()
@@ -84,16 +85,12 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         scrolling = NotificationCenter.default.addObserver(of: clip, for: .boundsDidChange) { [weak self] _ in self?.scrolled() }
     }
 
-    deinit {
-        if let scrolling { NotificationCenter.default.removeObserver(scrolling) }
-    }
-
     func undoManager(for view: NSTextView) -> UndoManager? { undo }
 
     // ---------- files ----------
 
     /// Show a file where it was left, or at its top; sidebar selection leaves keyboard focus where it is.
-    func open(path: String, text: String, focus: Bool = true) {
+    func open(path: String, text: String, focus: Bool) {
         if let current = self.path { kept[current] = (textView.string, undo, textView.selectedRange(), textView.shownTop) }
         let prior = kept[path].flatMap { $0.text == text ? $0 : nil }
         self.path = path
@@ -323,10 +320,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         // Each selection's whole lines; one ending at a line's start doesn't take that line.
         var runs: [NSRange] = []
         for selection in selections {
-            let end = selection.length > 0 && NSMaxRange(selection) > 0 ? NSMaxRange(selection) - 1 : NSMaxRange(selection)
-            let first = text.lineRange(for: NSRange(location: selection.location, length: 0))
-            let last = text.lineRange(for: NSRange(location: max(end, selection.location), length: 0))
-            let run = NSUnionRange(first, last)
+            let run = text.lineRange(for: selection)
             if let previous = runs.last, run.location <= NSMaxRange(previous) {
                 runs[runs.count - 1] = NSUnionRange(previous, run)
             } else {
@@ -342,13 +336,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             // The lines' text trades places; the line ends stay where they were, so a last line
             // without one keeps none.
             var lines: [(text: String, end: String)] = []
-            var start = whole.location
-            while start < NSMaxRange(whole) {
-                var lineEnd = 0, contentsEnd = 0
-                text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: start, length: 0))
-                lines.append((text.substring(with: NSRange(location: start, length: contentsEnd - start)),
-                              text.substring(with: NSRange(location: contentsEnd, length: lineEnd - contentsEnd))))
-                start = lineEnd
+            text.enumerateSubstrings(in: whole, options: [.byLines, .substringNotRequired]) { _, line, withEnd, _ in
+                let end = NSRange(location: NSMaxRange(line), length: NSMaxRange(withEnd) - NSMaxRange(line))
+                lines.append((text.substring(with: line), text.substring(with: end)))
             }
             // The neighbour is one line, first going up and last going down.
             let moved = up ? Array(lines.dropFirst() + lines.prefix(1)) : Array(lines.suffix(1) + lines.dropLast())

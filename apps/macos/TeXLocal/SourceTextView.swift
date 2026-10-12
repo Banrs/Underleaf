@@ -5,18 +5,14 @@ import AppKit
 /// brackets and indentation, with core edits grouped into undo steps.
 final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCustomRotorItemSearchDelegate {
     /// A plain-text document view for a scroll view, as `scrollablePlainDocumentContentTextView` sets one up.
+    /// A new text view already takes no graphics, grows downwards only, has no least size and a container
+    /// that follows its width (27.2), which `aPlainDocumentIsSetUpForAScrollView` checks.
     static func plainDocument() -> SourceTextView {
         let view = SourceTextView(usingTextLayoutManager: true)
         view.isRichText = false
-        view.importsGraphics = false
         view.usesRuler = false
-        view.allowsImageEditing = false
-        view.isVerticallyResizable = true
-        view.isHorizontallyResizable = false
         view.autoresizingMask = [.width]
-        view.minSize = .zero
         view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        view.textContainer?.widthTracksTextView = true
         view.textContainer?.size = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         // Its own storage's delegate: every edit reaches the core's mirror through it.
         view.textStorage?.delegate = view
@@ -150,10 +146,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if let select {
             setSelectedRange(select)
         } else {
-            let map = { (p: Int) in Self.map(p, through: edits) }
             setSelectedRanges(selections.map { r in
-                let start = map(r.location)
-                return NSValue(range: NSRange(location: start, length: max(0, map(NSMaxRange(r)) - start)))
+                let start = Self.map(r.location, through: edits)
+                return NSValue(range: NSRange(location: start, length: max(0, Self.map(NSMaxRange(r), through: edits) - start)))
             }, affinity: .downstream, stillSelecting: false)
         }
         scrollRangeToVisible(selectedRange())
@@ -207,9 +202,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         style.minimumLineHeight = (natural * 1.1).rounded()
         rowShift = (style.minimumLineHeight - natural) / 2
         defaultParagraphStyle = style
-        if let storage = textStorage {
-            storage.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: storage.length))
-        }
+        textStorage?.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
         typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: style]
         // Xcode's numbers as near as the system font's faces come: semi-condensed SF (a width of -0.1,
         // between the SDK's condensed and standard) a point under the text, tabular, a digit 6.7 pt
@@ -287,11 +280,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     // The top paragraph stays put: TextKit 2 keeps the offset, over heights a new width re-estimates (27.2).
     override func setFrameSize(_ size: NSSize) {
         guard size.width != frame.width else { return super.setFrameSize(size) }
-        keepingTopLine {
-            super.setFrameSize(size)
-            // As it goes: scrolled down, AppKit's tracking waits for a live resize's end (27.2).
-            textContainer?.size.width = max(0, size.width - 2 * textContainerInset.width)
-        }
+        let top = shownTop
+        super.setFrameSize(size)
+        // As it goes: scrolled down, AppKit's tracking waits for a live resize's end (27.2).
+        textContainer?.size.width = max(0, size.width - 2 * textContainerInset.width)
+        top.map(scroll(toShownTop:))
         layOutViewportOnceSettled()
     }
 
@@ -307,12 +300,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             self?.viewportPending = false
             self?.textLayoutManager?.textViewportLayoutController.layoutViewport()
         }
-    }
-
-    private func keepingTopLine(_ change: () -> Void) {
-        let top = shownTop
-        change()
-        top.map(scroll(toShownTop:))
     }
 
     /// The first paragraph showing below the bars, and how far its top is below the clip's.
@@ -584,22 +571,18 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return super.resignFirstResponder()
     }
 
-    /// Its window's key changes (`keyChanged`).
+    /// Its window's key changes (`keyChanged`), watched for as long as their tokens are held.
     private var keyWatches: [NotificationCenter.ObservationToken] = []
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        keyWatches.forEach { NotificationCenter.default.removeObserver($0) }
+        // The window it left, before the one it joins.
         keyWatches = []
         guard let window else { return }
         keyWatches = [
             NotificationCenter.default.addObserver(of: window, for: .didBecomeKey) { [weak self] _ in self?.keyChanged() },
             NotificationCenter.default.addObserver(of: window, for: .didResignKey) { [weak self] _ in self?.keyChanged() },
         ]
-    }
-
-    deinit {
-        keyWatches.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
     /// The background draws the same with and without the keyboard: only these follow it.
@@ -849,19 +832,15 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         setSelectedRange(NSRange(location: range.location + 1 + (indent as NSString).length, length: 0))
     }
 
-    override func insertTab(_ sender: Any?) {
-        if snippet != nil { return moveField(1) }
-        indent(by: 1)
-    }
+    override func insertTab(_ sender: Any?) { tab(1) }
 
-    override func insertBacktab(_ sender: Any?) {
-        if snippet != nil { return moveField(-1) }
-        indent(by: -1)
-    }
+    override func insertBacktab(_ sender: Any?) { tab(-1) }
 
-    private func indent(by direction: Int) {
-        let edits = document.indent(selectedRanges.map(\.rangeValue), more: direction > 0)
-        apply(edits, named: direction > 0 ? String(localized: "Indent") : String(localized: "Outdent"))
+    /// Tab and Shift-Tab go to a snippet's next field and the one before it; with no snippet they indent and outdent.
+    private func tab(_ step: Int) {
+        if snippet != nil { return moveField(step) }
+        let edits = document.indent(selectedRanges.map(\.rangeValue), more: step > 0)
+        apply(edits, named: step > 0 ? String(localized: "Indent") : String(localized: "Outdent"))
     }
 
     /// Kept for the next file and launch, as a setting.
