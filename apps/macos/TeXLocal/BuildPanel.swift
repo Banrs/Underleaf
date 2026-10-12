@@ -39,9 +39,8 @@ final class BuildPanelModel {
 
     /// A build the person asked for failed: the panel opens on its issues.
     func openForFailedBuild() {
-        let opens = !shown
+        if !shown { openedByBuild = true }
         show(.issues)
-        if opens { openedByBuild = true }
     }
 
     /// A build the person asked for came out clean: the panel a failure opened closes, unless
@@ -324,8 +323,6 @@ struct LogTextView: NSViewRepresentable {
         view.isIncrementalSearchingEnabled = true
         view.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize,
                                           weight: .regular)
-        // A text view has no title of its own for VoiceOver.
-        view.setAccessibilityLabel(title)
         return scroll
     }
 
@@ -339,6 +336,7 @@ struct LogTextView: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
+        // A text view has no title of its own for VoiceOver.
         view.setAccessibilityLabel(title)
         if scroll.contentInsets.bottom != bottomInset {
             let atEnd = scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1
