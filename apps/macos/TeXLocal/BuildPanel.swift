@@ -128,8 +128,8 @@ struct BuildPanel: View {
 
 /// The bar at the panel's foot, as Xcode's console bar: what the panel shows, chosen from a
 /// pop-up as Xcode's console chooses its output, then that view's controls and filter. The panel's
-/// content ends at the line over it (`BuildPanel`), and it paints the panel's surface. Its controls are small
-/// and its text subheadline, as the status bar's above it: 8 + 20 + 8 is its 36 pt.
+/// content ends at the line over it (`BuildPanel`), and it paints the panel's surface. Its row is
+/// the status bar's above it (`barRow`).
 struct BuildPanelBar: View {
     let project: ProjectModel
 
@@ -171,14 +171,9 @@ struct BuildPanelBar: View {
                 filter($panel.logFilter)
             }
         }
-        .font(.subheadline)
-        .controlSize(.small)
-        .lineLimit(1)
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
-        .frame(height: BarMetrics.height)
-        .padding(.leading, BarMetrics.consoleLeading)
-        .padding(.trailing, BarMetrics.consoleTrailing)
+        .barRow(leading: BarMetrics.consoleLeading, trailing: BarMetrics.consoleTrailing)
         .background(.textSurface)
     }
 

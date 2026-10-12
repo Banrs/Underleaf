@@ -54,10 +54,7 @@ struct StatusBar: View {
             content(.symbols).labelStyle(.iconOnly)
             content(.short).labelStyle(.iconOnly)
         }
-        // Xcode's bar: 36 pt under its line.
-        .padding(.leading, BarMetrics.leading)
-        .padding(.trailing, BarMetrics.trailing)
-        .frame(height: Self.height)
+        .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
         // The window's lines are a point, as its splits' dividers and as Xcode's (27.1); this one
         // in a row of its own over the bar, the row of the line over the File Outline's header
         // beside it (`HeaderEdge`).
@@ -68,10 +65,7 @@ struct StatusBar: View {
         .background(.textSurface.opacity(wash))
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
-        .font(.subheadline)
         .monospacedDigit()
-        .controlSize(.small)
-        .lineLimit(1)
         .buttonStyle(.borderless)
         .contextMenu {
             Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
@@ -238,8 +232,15 @@ struct StatusBar: View {
     }
 }
 
-private extension View {
-    func hitTarget() -> some View {
+extension View {
+    /// A bar's row, as Xcode's: small controls and subheadline text on one line, in from the
+    /// bar's edges, 36 pt high under its line (8 + a small control + 8).
+    func barRow(leading: CGFloat, trailing: CGFloat) -> some View {
+        font(.subheadline).controlSize(.small).lineLimit(1)
+            .padding(.leading, leading).padding(.trailing, trailing).frame(height: BarMetrics.height)
+    }
+
+    fileprivate func hitTarget() -> some View {
         frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect)
     }
 }
