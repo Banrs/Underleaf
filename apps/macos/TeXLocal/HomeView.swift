@@ -277,7 +277,7 @@ private struct TemplateButtonStyle: ButtonStyle {
     }
 }
 
-/// A template's card: a drawing of its first page, then its name.
+/// A template's card: a drawing of its first page with its name under it, as in a template chooser.
 private struct TemplateCard: View {
     let template: ProjectTemplate
     /// A US Letter page, 120 pt wide; its corner is drawn to look like paper, not to the kit.
@@ -288,7 +288,6 @@ private struct TemplateCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        // As in a template chooser.
         VStack(spacing: 8) {
             PagePreview(page: template.page)
                 .frame(width: Self.page.width, height: Self.page.height)
