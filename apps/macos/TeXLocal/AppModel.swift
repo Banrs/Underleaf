@@ -311,7 +311,8 @@ final class AppModel {
 
     /// Without asking, as in Finder: Edit › Undo and the Trash give the item back (HIG, Alerts).
     func delete(_ project: ProjectInfo) async {
-        guard let root = await folder(of: project, orAlert: "Couldn’t Move “\(project.name)” to the Trash") else { return }
+        let failure = "Couldn’t Move “\(project.name)” to the Trash"
+        guard let root = await folder(of: project, orAlert: failure) else { return }
         let item = UndoableTrash(
             original: root, name: project.name, undoManager: undoManager,
             trash: { [weak self] item in
@@ -321,7 +322,7 @@ final class AppModel {
                     ProjectModel.forgetSidebarState(of: project.id)
                     return true
                 } catch {
-                    self?.alert = AppAlert("Couldn’t Move “\(project.name)” to the Trash", error)
+                    self?.alert = AppAlert(failure, error)
                     return false
                 }
             },

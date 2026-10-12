@@ -352,9 +352,11 @@ final class ProjectModel {
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             try await readTree()
-            try await watchFolder()
-            refreshSymbols()
+            let root = try await core.call("project_root", ["id": id], as: String.self)
             guard !closed else { return }
+            // Watched for other apps' edits and files, rather than saving over them.
+            folderWatcher = FolderWatcher(folder: URL(fileURLWithPath: root)) { [weak self] in self?.folderChanged($0) }
+            refreshSymbols()
             if let saved {
                 showLogs = saved.buildPanel
                 pdf.restorePage = saved.pdfPage
@@ -380,7 +382,7 @@ final class ProjectModel {
     }
 
     /// A failed read keeps the tree as it was, and the folder's next change reads again.
-    func reloadTree() async {
+    private func reloadTree() async {
         try? await readTree()
     }
 
@@ -637,13 +639,6 @@ final class ProjectModel {
     }
 
     // ---------- changes on disk ----------
-
-    /// Watch external edits and file-tree changes rather than saving over them.
-    private func watchFolder() async throws {
-        let root = try await core.call("project_root", ["id": id], as: String.self)
-        guard !closed else { return }
-        folderWatcher = FolderWatcher(folder: URL(fileURLWithPath: root)) { [weak self] in self?.folderChanged($0) }
-    }
 
     /// The tree is read again when something comes, goes or moves in a folder
     /// it shows; what it shows (not hidden files or the build's) is the core's.
@@ -1056,9 +1051,8 @@ final class ProjectModel {
                 guard !closed, !Task.isCancelled, texpresso.active else { return }
                 if path != openPath { others = true }
                 if path != openPath, isTextFile(path) {
-                    guard let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self) else { continue }
-                    guard !Task.isCancelled, path != openPath else { continue }
-                    texpresso.update(TeXpressoFile(path: path, text: file.text))
+                    guard let text = try? await readText(path), !Task.isCancelled, path != openPath else { continue }
+                    texpresso.update(TeXpressoFile(path: path, text: text))
                 }
                 liveDiskPaths.remove(path)
             }
@@ -1109,9 +1103,7 @@ final class ProjectModel {
                 guard !Task.isCancelled, !closed else { return }
                 await open(loc.file, line: loc.line, column: loc.column)
             } catch {
-                if !Task.isCancelled, !closed {
-                    reportSync(error, "Couldn’t Find This Spot in the Source")
-                }
+                if !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Spot in the Source") }
             }
         }
         syncTask = task
