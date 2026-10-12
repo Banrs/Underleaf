@@ -703,9 +703,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var onResize: () -> Void = {}
     private let pagesDark = Atomic(false)
 
+    /// Set only to the other paper (`PDFController.setDarkPaper`).
     var darkPaper = false {
         didSet {
-            guard darkPaper != oldValue else { return }
             pagesDark.store(darkPaper, ordering: .relaxed)
             pageShadowsEnabled = !darkPaper
             matchScroller()
@@ -866,9 +866,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         liveLayers.removeAll()
     }
 
-    /// Forward search's mark, in its page's overlay rather than on the page: an
-    /// annotation would be printed and read by VoiceOver.
-    private(set) var mark: (page: PDFPage, rect: CGRect, view: NSView)?
+    /// Forward search's mark with its wait and fade, in its page's overlay rather than on the
+    /// page: an annotation would be printed and read by VoiceOver.
+    private(set) var mark: (page: PDFPage, rect: CGRect, view: NSView, fading: Task<Void, Never>)?
     /// The overlays PDFKit has asked for, which it keeps while their pages show.
     private let overlays = NSMapTable<PDFPage, NSView>.weakToWeakObjects()
 
@@ -879,28 +879,24 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    /// The showing mark's wait and fade.
-    private var fading: Task<Void, Never>?
-
     /// Marks `rect` on `page` for 2.2 seconds, then fades it out, as Find's indicator goes. A fade
     /// is what the HIG puts in motion's place, so Reduce Motion keeps it.
     func flash(_ rect: CGRect, on page: PDFPage) {
         removeMark()
         let view = MarkView(onDarkPaper: darkPaper)
-        mark = (page, rect, view)
-        if let overlay = overlays.object(forKey: page) { place(view, at: rect, on: page, in: overlay) }
-        fading = Task { [weak self] in
+        let fading = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(2.2)) } catch { return }
             await NSAnimationContext.runAnimationGroup { _ in view.animator().alphaValue = 0 }
             guard !Task.isCancelled else { return }
             self?.removeMark()
         }
+        mark = (page, rect, view, fading)
+        if let overlay = overlays.object(forKey: page) { place(view, at: rect, on: page, in: overlay) }
     }
 
     /// A new search's or document's place is elsewhere: the last mark goes at once.
     func removeMark() {
-        fading?.cancel()
-        fading = nil
+        mark?.fading.cancel()
         mark?.view.removeFromSuperview()
         mark = nil
     }
@@ -1129,6 +1125,15 @@ extension PDFPage {
         }
         return SyncTeXWord(text: text, offset: offset ?? 0, context: context, contextOffset: range.location)
     }
+
+    /// Hyperlinks stay active without hyperref's visible annotation boxes.
+    nonisolated func hideLinkBorders() {
+        for annotation in annotations where annotation.type == "Link" {
+            let border = PDFBorder()
+            border.lineWidth = 0
+            annotation.border = border
+        }
+    }
 }
 
 extension PDFDocument {
@@ -1169,20 +1174,7 @@ extension PDFDocument {
             }
         }
     }
-}
 
-extension PDFPage {
-    /// Hyperlinks stay active without hyperref's visible annotation boxes.
-    nonisolated func hideLinkBorders() {
-        for annotation in annotations where annotation.type == "Link" {
-            let border = PDFBorder()
-            border.lineWidth = 0
-            annotation.border = border
-        }
-    }
-}
-
-extension PDFDocument {
     typealias SyncMatch = (page: PDFPage, rect: CGRect, selection: PDFSelection)
 
     /// Align the source line with rendered text first, so equal words retain their occurrence.
