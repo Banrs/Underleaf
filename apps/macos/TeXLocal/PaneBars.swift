@@ -1,55 +1,4 @@
-import Accessibility
 import SwiftUI
-
-/// The PDF's find bar. Its pane accessory keeps the field ready to focus.
-struct FindBar: View {
-    @Binding var query: String
-    let prompt: String
-    let field: FieldHandle
-    let matches: FindMatches
-    /// The query the matches are for, which the count reads.
-    let searched: String
-    let step: @MainActor (Int) -> Void
-    let close: @MainActor () -> Void
-    /// The count's announcement, waiting out the typing and stepping that change it.
-    @State private var announcement: Task<Void, Never>?
-
-    var body: some View {
-        let label = matches.label(for: searched)
-        HStack {
-            SearchField(text: $query, prompt: prompt, handle: field, step: step, close: close)
-                .frame(minWidth: 100, maxWidth: .infinity)
-            ControlGroup {
-                Button("Previous Match", systemImage: "chevron.backward") { step(-1) }
-                    .help("Go to the previous match")
-                Button("Next Match", systemImage: "chevron.forward") { step(1) }
-                    .help("Go to the next match")
-            }
-            .disabled(matches.total == 0)
-            .fixedSize()
-            // The first to give way in a narrow pane.
-            Text(label)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                .layoutPriority(-1)
-            Button("Done") { close() }
-        }
-        .lineLimit(1)
-        // VoiceOver's focus stays in the field, so it hears the count, or that there is none,
-        // from here, once it has settled.
-        .onChange(of: label) { _, label in
-            announcement?.cancel()
-            guard !label.isEmpty else { return }
-            announcement = Task {
-                try? await Task.sleep(for: .milliseconds(500))
-                guard !Task.isCancelled else { return }
-                var spoken = AttributedString(label)
-                spoken.accessibilitySpeechAnnouncementPriority = .low
-                AccessibilityNotification.Announcement(spoken).post()
-            }
-        }
-    }
-}
 
 /// Match index starts at 1 (0 for no selected match); `limited` means more exist.
 struct FindMatches: Equatable {
@@ -346,11 +295,4 @@ extension TextSelection {
         let dot = name.lastIndex(of: ".").flatMap { $0 > name.startIndex ? $0 : nil }
         return TextSelection(range: name.startIndex..<(dot ?? name.endIndex))
     }
-}
-
-#Preview("Find bar") {
-    @Previewable @State var query = "theorem"
-    FindBar(query: $query, prompt: "Find", field: FieldHandle(), matches: FindMatches(index: 3, total: 12),
-            searched: query, step: { _ in }, close: {})
-        .frame(width: 480)
 }

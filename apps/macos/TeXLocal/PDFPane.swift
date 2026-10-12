@@ -1,3 +1,4 @@
+import Accessibility
 import AppKit
 import SwiftUI
 
@@ -62,18 +63,53 @@ struct PDFPane: View {
     }
 }
 
+/// The PDF's find bar. Its pane accessory keeps the field ready to focus.
 struct PDFFindBar: View {
     @Bindable var controller: PDFController
+    /// The count's announcement, waiting out the typing and stepping that change it.
+    @State private var announcement: Task<Void, Never>?
 
     var body: some View {
-        FindBar(query: $controller.findText, prompt: "Find in PDF", field: controller.findField,
-                matches: FindMatches(index: controller.matchIndex + 1, total: controller.matches.count,
-                                     limited: controller.limited),
-                searched: controller.query, step: controller.findNext, close: controller.closeFind)
-            .task(id: controller.findText) {
-                try? await Task.sleep(for: PDFFind.debounce)
-                if !Task.isCancelled { controller.findTyped() }
+        let matches = FindMatches(index: controller.matchIndex + 1, total: controller.matches.count, limited: controller.limited)
+        // For the query the matches are for, which the field can be ahead of.
+        let label = matches.label(for: controller.query)
+        HStack {
+            SearchField(text: $controller.findText, prompt: "Find in PDF", handle: controller.findField,
+                        step: controller.findNext, close: controller.closeFind)
+                .frame(minWidth: 100, maxWidth: .infinity)
+            ControlGroup {
+                Button("Previous Match", systemImage: "chevron.backward") { controller.findNext(-1) }
+                    .help("Go to the previous match")
+                Button("Next Match", systemImage: "chevron.forward") { controller.findNext(1) }
+                    .help("Go to the next match")
             }
+            .disabled(matches.total == 0)
+            .fixedSize()
+            // The first to give way in a narrow pane.
+            Text(label)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .layoutPriority(-1)
+            Button("Done") { controller.closeFind() }
+        }
+        .lineLimit(1)
+        // VoiceOver's focus stays in the field, so it hears the count, or that there is none,
+        // from here, once it has settled.
+        .onChange(of: label) { _, label in
+            announcement?.cancel()
+            guard !label.isEmpty else { return }
+            announcement = Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled else { return }
+                var spoken = AttributedString(label)
+                spoken.accessibilitySpeechAnnouncementPriority = .low
+                AccessibilityNotification.Announcement(spoken).post()
+            }
+        }
+        .task(id: controller.findText) {
+            try? await Task.sleep(for: PDFFind.debounce)
+            if !Task.isCancelled { controller.findTyped() }
+        }
     }
 }
 
@@ -141,4 +177,9 @@ enum PDFPaper: String, CaseIterable, Identifiable {
 enum PDFPrefs {
     static let paperKey = "pdfPaper"
     static let paper = PDFPaper.white
+}
+
+#Preview("Find bar") {
+    PDFFindBar(controller: PDFController())
+        .frame(width: 480)
 }
