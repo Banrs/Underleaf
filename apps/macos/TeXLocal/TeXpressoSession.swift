@@ -147,6 +147,9 @@ final class TeXpressoSession {
 
     @ObservationIgnored private let id: String
     @ObservationIgnored private let calls: Calls
+    /// How long TeX stays stopped at an error before the session says so (`runEnded`): a
+    /// second, shorter in a test.
+    @ObservationIgnored private let haltsAfter: Duration
     @ObservationIgnored private var lane: Task<Void, Never>?
     @ObservationIgnored private var flushing: Int?
     @ObservationIgnored private var retry: Task<Void, Never>?
@@ -179,9 +182,10 @@ final class TeXpressoSession {
 
     private typealias Start = (files: [TeXpressoFile], caret: (path: String, offset: Int)?)
 
-    init(id: String, calls: Calls) {
+    init(id: String, haltsAfter: Duration = .seconds(1), calls: Calls) {
         self.id = id
         self.calls = calls
+        self.haltsAfter = haltsAfter
     }
 
     var active: Bool { phase == .starting || phase == .running }
@@ -585,7 +589,7 @@ final class TeXpressoSession {
             halting?.cancel()
             (halting, halted) = (nil, false)
         } else if !halted, halting == nil {
-            TeXLocal.restart(&halting, after: .seconds(1)) { [weak self] in
+            TeXLocal.restart(&halting, after: haltsAfter) { [weak self] in
                 guard let self else { return }
                 (halting, halted) = (nil, true)
             }

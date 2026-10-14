@@ -49,8 +49,8 @@ private final class FakeCore {
         TeXpressoStatus(running: running, log: "", output: "", error: error, session: running ? "owner" : nil)
     }
 
-    func session() -> TeXpressoSession {
-        TeXpressoSession(id: "project", calls: .init(
+    func session(haltsAfter: Duration = .seconds(1)) -> TeXpressoSession {
+        TeXpressoSession(id: "project", haltsAfter: haltsAfter, calls: .init(
             status: { [self] command, arguments in
                 commands.append(command)
                 #expect(arguments["id"] as? String == "project")
@@ -403,16 +403,17 @@ struct TeXpressoSessionTests {
 
     /// TeX stopped at an error is said so once it has lasted, and not for a brace half typed.
     @Test func aRunStoppedAtAnErrorIsSaidOnceItLasts() async throws {
-        let core = FakeCore(), session = core.session()
+        // A tenth of a second for the app's second.
+        let core = FakeCore(), session = core.session(haltsAfter: .milliseconds(100))
         session.start(files: [main])
         await session.waitForPendingCalls()
         core.feed.send(TeXpressoEvents(seq: 1, running: true, done: .init(run: "stopped")))
         core.feed.send(TeXpressoEvents(seq: 2, running: true, done: .init(run: "complete")))
         try await waitUntil { core.feed.asked.last == 2 }
-        try await Task.sleep(for: .milliseconds(1_200))
+        try await Task.sleep(for: .milliseconds(300))
         #expect(!session.halted && session.title == "Live Preview On")
         core.feed.send(TeXpressoEvents(seq: 3, running: true, done: .init(run: "stopped")))
-        try await waitUntil(timeout: .seconds(5)) { session.halted }
+        try await waitUntil { session.halted }
         #expect(session.needsAttention && session.title == "Live Preview Paused at an Error")
         core.feed.send(TeXpressoEvents(seq: 4, running: true, done: .init(run: "complete")))
         try await waitUntil { !session.halted }
