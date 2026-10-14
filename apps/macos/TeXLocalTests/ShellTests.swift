@@ -147,8 +147,7 @@ struct ShellTests {
             toolbar.removeItem(identifier: id)
         }
         // The toolbar tells the workspace a turn later.
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(!workspace.toolbar.holdsDefaultItems && !workspace.toolbar.compactCompile)
+        try await waitUntil { !workspace.toolbar.holdsDefaultItems && !workspace.toolbar.compactCompile }
         // At the window's least AppKit would take Compile itself to its menu, whatever the tools.
         try await resize(window, to: ColumnMetrics.contentMinimum.width)
         #expect(workspace.toolbar.compactCompile)
@@ -157,8 +156,7 @@ struct ShellTests {
         #expect(!workspace.toolbar.compactCompile)
 
         toolbar.itemIdentifiers = defaults
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(workspace.toolbar.holdsDefaultItems && workspace.toolbar.compactCompile)
+        try await waitUntil { workspace.toolbar.holdsDefaultItems && workspace.toolbar.compactCompile }
         // Spaces are not tools: without them the toolbar still holds its default ones.
         toolbar.removeItem(identifier: .flexibleSpace)
         #expect(workspace.toolbar.holdsDefaultItems)

@@ -272,7 +272,8 @@ struct TeXpressoSessionTests {
         session.caretMoved("main.tex", 0)
         session.caretMoved("main.tex", 1)
         try await waitUntil { !core.carets.isEmpty }
-        try await Task.sleep(for: .milliseconds(200))
+        // The first click's settling, had it not been cancelled, would be due with the second's.
+        try await Task.sleep(for: .milliseconds(50))
         #expect(core.carets == [1])
         session.stop()
         await session.waitForPendingCalls()
