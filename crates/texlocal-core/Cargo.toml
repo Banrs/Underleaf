@@ -13,7 +13,7 @@ trash = "5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
-tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 # zip's own `deflate` feature brings zopfli as well, which it uses only for
 # levels past 9: the export writes at the default level, so flate2 alone
 # does, with the backend `deflate` would have chosen for it.

@@ -2,7 +2,8 @@
 // ranges) and raw project files (image previews) for the browser server.
 // The route table and the sandbox rule live here.
 
-use std::io::{Read, Seek, SeekFrom};
+use std::fs::{self, File};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::service::Service;
@@ -102,6 +103,17 @@ pub struct Served {
 /// A sandboxed response carries its CSP whatever the status, so no answer
 /// about a project file can run as a document.
 pub async fn respond(path: &Path, range: Option<&str>, sandboxed: bool) -> Served {
+    // One trip to the blocking pool per request. tokio::fs makes one per
+    // operation (metadata, open, seek, each read) and copies through its own
+    // buffer; pdf.js fetches a large PDF as many small ranges.
+    let (path, range) = (path.to_owned(), range.map(str::to_owned));
+    tokio::task::spawn_blocking(move || serve_file(&path, range.as_deref(), sandboxed))
+        .await
+        .unwrap_or_else(|_| text(404, "Not found", csp(sandboxed)))
+}
+
+/// The headers every answer starts with: a sandboxed one's CSP.
+fn csp(sandboxed: bool) -> Vec<(&'static str, String)> {
     let mut headers = Vec::new();
     if sandboxed {
         headers.push((
@@ -109,15 +121,21 @@ pub async fn respond(path: &Path, range: Option<&str>, sandboxed: bool) -> Serve
             "sandbox; default-src 'none'".into(),
         ));
     }
-    let text = |status, message: &str, mut headers: Vec<_>| {
-        headers.push(("Content-Type", "text/plain; charset=utf-8".into()));
-        Served {
-            status,
-            headers,
-            body: message.into(),
-        }
-    };
-    let len = match tokio::fs::metadata(path).await {
+    headers
+}
+
+fn text(status: u16, message: &str, mut headers: Vec<(&'static str, String)>) -> Served {
+    headers.push(("Content-Type", "text/plain; charset=utf-8".into()));
+    Served {
+        status,
+        headers,
+        body: message.into(),
+    }
+}
+
+fn serve_file(path: &Path, range: Option<&str>, sandboxed: bool) -> Served {
+    let mut headers = csp(sandboxed);
+    let len = match fs::metadata(path) {
         Ok(meta) if meta.is_file() => meta.len(),
         _ => return text(404, "Not found", headers),
     };
@@ -128,7 +146,7 @@ pub async fn respond(path: &Path, range: Option<&str>, sandboxed: bool) -> Serve
             return text(416, "Range not satisfiable", headers);
         }
     };
-    let Ok(body) = read_file_range(path, range).await else {
+    let Ok(body) = read_file_range(path, range) else {
         return text(404, "Not found", headers);
     };
     headers.extend([
@@ -147,25 +165,17 @@ pub async fn respond(path: &Path, range: Option<&str>, sandboxed: bool) -> Serve
     }
 }
 
-async fn read_file_range(path: &Path, range: Option<(u64, u64)>) -> std::io::Result<Vec<u8>> {
-    // One trip to the blocking pool per request. tokio::fs::File makes one per
-    // operation (open, seek, each read) and copies through its own buffer;
-    // pdf.js fetches a large PDF as many small ranges.
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        let Some((start, end)) = range else {
-            return std::fs::read(path);
-        };
-        let size = usize::try_from(end - start + 1)
-            .map_err(|_| std::io::Error::other("requested range is too large"))?;
-        let mut file = std::fs::File::open(path)?;
-        file.seek(SeekFrom::Start(start))?;
-        let mut bytes = vec![0; size];
-        file.read_exact(&mut bytes)?;
-        Ok(bytes)
-    })
-    .await
-    .map_err(std::io::Error::other)?
+fn read_file_range(path: &Path, range: Option<(u64, u64)>) -> io::Result<Vec<u8>> {
+    let Some((start, end)) = range else {
+        return fs::read(path);
+    };
+    let size = usize::try_from(end - start + 1)
+        .map_err(|_| io::Error::other("requested range is too large"))?;
+    let mut file = File::open(path)?;
+    file.seek(SeekFrom::Start(start))?;
+    let mut bytes = vec![0; size];
+    file.read_exact(&mut bytes)?;
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -198,18 +208,16 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn reads_whole_files_and_ranges() {
+    #[test]
+    fn reads_whole_files_and_ranges() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("file");
         let data: Vec<u8> = (0..=255).cycle().take(100_000).collect();
         std::fs::write(&path, &data).unwrap();
-        let whole = read_file_range(&path, None).await.unwrap();
-        let part = read_file_range(&path, Some((10, 19))).await.unwrap();
-        let last = read_file_range(&path, Some((99_999, 99_999)))
-            .await
-            .unwrap();
-        let past_end = read_file_range(&path, Some((99_990, 100_009))).await;
+        let whole = read_file_range(&path, None).unwrap();
+        let part = read_file_range(&path, Some((10, 19))).unwrap();
+        let last = read_file_range(&path, Some((99_999, 99_999))).unwrap();
+        let past_end = read_file_range(&path, Some((99_990, 100_009)));
         assert_eq!(whole, data);
         assert_eq!(part, data[10..20]);
         assert_eq!(last, data[99_999..]);
