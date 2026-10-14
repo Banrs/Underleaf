@@ -5,7 +5,7 @@
 import { isMac } from './bridge.js';
 import { menuUnder } from './dom.js';
 
-// Every command's accelerator. The Mac reads this table too.
+// Every command's accelerator.
 import SHORTCUTS from './shortcuts.json' with { type: 'json' };
 
 export { SHORTCUTS };
