@@ -18,7 +18,7 @@ function inProjectOrder(id, task) {
 }
 
 export function createTexPressoSession({ projectId, api, onChange = () => {}, debounceMs = 100, pollMs = 1000 }) {
-  let status = { available: null, running: false, executable: null, log: '', output: '', error: null, revision: 0 };
+  let status = { available: null, running: false, log: '', output: '', error: null, revision: 0 };
   let enabled = false;
   let disposed = false;
   let owned = false;

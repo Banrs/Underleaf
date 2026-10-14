@@ -68,7 +68,6 @@ pub struct Pane {
 pub struct Status {
     pub available: bool,
     pub running: bool,
-    pub executable: Option<String>,
     pub log: String,
     pub output: String,
     pub error: Option<String>,
@@ -424,7 +423,6 @@ impl Session {
         Status {
             available: executable_file(&self.executable),
             running: state.pid.is_some(),
-            executable: Some(self.executable.to_string_lossy().into_owned()),
             output: state.output.text(),
             log,
             error: state.error.clone(),
@@ -576,11 +574,9 @@ impl Manager {
         Ok(())
     }
     fn idle(&self, path_env: &str) -> Status {
-        let executable = discover(path_env);
         Status {
-            available: executable.is_some(),
+            available: discover(path_env).is_some(),
             running: false,
-            executable: executable.map(|p| p.to_string_lossy().into_owned()),
             log: String::new(),
             output: String::new(),
             error: None,

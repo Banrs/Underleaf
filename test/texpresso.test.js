@@ -4,8 +4,8 @@ import { createTexPressoSession, unsavedTexPressoFiles } from '../web/src/texpre
 
 const turn = () => new Promise(setImmediate);
 const status = (running = true, extra = {}) => ({
-  available: true, running, executable: '/tools/texpresso',
-  log: '', output: '', error: null, revision: 1, session: running ? 'owner' : null, ...extra,
+  available: true, running, log: '', output: '', error: null, revision: 1,
+  session: running ? 'owner' : null, ...extra,
 });
 
 function fixture(projectId, overrides = {}, options = {}) {
