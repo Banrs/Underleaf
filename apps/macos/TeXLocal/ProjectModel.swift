@@ -337,15 +337,11 @@ final class ProjectModel {
     }
 
     private func refreshSymbols(delayed: Bool = false) {
-        symbolsTask?.cancel()
-        symbolsTask = Task { [weak self] in
-            // Several saves during a typing burst need only one symbols scan.
-            if delayed { try? await Task.sleep(for: .milliseconds(150)) }
-            guard let self, !Task.isCancelled else { return }
-            if let symbols = try? await core.call("scan_symbols", ["id": id], as: Symbols.self),
-               !Task.isCancelled, !closed {
-                editor.textView.symbols = symbols
-            }
+        // Several saves during a typing burst need only one symbols scan.
+        restart(&symbolsTask, after: delayed ? .milliseconds(150) : .zero) { [weak self] in
+            guard let self, let symbols = try? await core.call("scan_symbols", ["id": id], as: Symbols.self),
+                  !Task.isCancelled, !closed else { return }
+            editor.textView.symbols = symbols
         }
     }
 
