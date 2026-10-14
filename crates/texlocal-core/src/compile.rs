@@ -5,7 +5,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -130,20 +129,20 @@ fn base_command(
                 format!("{program} is not on the PATH"),
             )
         })?;
-    let mut std_cmd = std::process::Command::new(program);
+    let mut cmd = tokio::process::Command::new(program);
     // TeX Live's engines read texmf.cnf's variables from the environment
     // first. Unwrapped, the log keeps each message and path on one line;
     // wrapped at the default 79 columns, words and paths split mid-way.
-    std_cmd.env("PATH", path_env).env("max_print_line", "10000");
-    if let Some(dir) = cwd {
-        std_cmd.current_dir(dir);
-    }
-    std_cmd.process_group(0);
-    let mut cmd = tokio::process::Command::from(std_cmd);
-    cmd.stdin(Stdio::null())
+    cmd.env("PATH", path_env)
+        .env("max_print_line", "10000")
+        .process_group(0)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
     Ok(cmd)
 }
 
