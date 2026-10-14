@@ -855,7 +855,7 @@ final class ProjectModel {
     func cleanBuildFolder() async {
         guard !closed else { return }
         stopCompile()
-        while compiling { try? await Task.sleep(for: .milliseconds(20)) }
+        for await building in Observations({ self.compiling }) where !building { break }
         let cleaned = await keepingLive {
             do {
                 try await core.perform("clean_build", ["id": id])

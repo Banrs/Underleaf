@@ -786,6 +786,20 @@ final class ProjectFlowTests {
         #expect(project.result == nil && project.pdfURL == nil)
     }
 
+    /// Clean Build Folder during a build stops it and waits for it to end, so the stopped build
+    /// neither writes into the folder after it goes nor reports after the clean. CI has no TeX.
+    @Test(.timeLimit(.minutes(1)))
+    func cleanBuildFolderWaitsForTheBuildItStops() async throws {
+        let project = try await openedWithTeX("\\documentclass{article}\\begin{document}x\\end{document}")
+        let build = Task.immediate { await project.compile() }
+        #expect(project.compiling)
+        await project.cleanBuildFolder()
+        #expect(!project.compiling && project.result == nil && project.pdfURL == nil)
+        await build.value
+        #expect(project.result == nil && !exists(Core.libraryFolder.appending(path: "\(project.id)/build")))
+        await app.close()
+    }
+
     /// Find in Project has a query's hits under their files, in the order of the files' names,
     /// and none yet, nor a failure, once the query is cleared.
     @Test(.timeLimit(.minutes(1)))
