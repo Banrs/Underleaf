@@ -393,10 +393,7 @@ final class TeXpressoSession {
                     session.fail(error)
                     guard session.phase == .running else { return }
                     if session.pending[path] == nil { session.pending[path] = text }
-                    session.retry = Task { [weak session] in
-                        guard (try? await Task.sleep(for: .milliseconds(750))) != nil else { return }
-                        session?.flushEdits()
-                    }
+                    TeXLocal.restart(&session.retry, after: .milliseconds(750)) { [weak session] in session?.flushEdits() }
                     return
                 }
             }
@@ -431,10 +428,9 @@ final class TeXpressoSession {
     /// and the first key costs what the ones after it do.
     func caretMoved(_ path: String, _ offset: Int) {
         guard phase == .running, inPane, caret.map({ $0 != (path, offset) }) ?? true else { return }
-        settling?.cancel()
-        settling = Task { [weak self] in
-            guard (try? await Task.sleep(for: .milliseconds(150))) != nil, let self, phase == .running, let owner,
-                  synced.contains(path), pending[path] == nil, caret.map({ $0 != (path, offset) }) ?? true else { return }
+        TeXLocal.restart(&settling, after: .milliseconds(150)) { [weak self] in
+            guard let self, phase == .running, let owner, synced.contains(path), pending[path] == nil,
+                  caret.map({ $0 != (path, offset) }) ?? true else { return }
             caret = (path, offset)
             try? calls.now("texpresso_caret", ["session": owner, "path": path, "offset": offset])
         }
@@ -589,8 +585,8 @@ final class TeXpressoSession {
             halting?.cancel()
             (halting, halted) = (nil, false)
         } else if !halted, halting == nil {
-            halting = Task { [weak self] in
-                guard (try? await Task.sleep(for: .seconds(1))) != nil, let self else { return }
+            TeXLocal.restart(&halting, after: .seconds(1)) { [weak self] in
+                guard let self else { return }
                 (halting, halted) = (nil, true)
             }
         }
