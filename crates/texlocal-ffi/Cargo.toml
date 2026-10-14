@@ -1,14 +1,14 @@
 [package]
 name = "texlocal-ffi"
-description = "C ABI over texlocal-core's command service and texlocal-syntax's editor logic, for the native apps"
+description = "C ABI over texlocal-core's command service and texlocal-syntax's editor logic, for the macOS app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
 name = "texlocal_ffi"
-# staticlib links into the Swift app, cdylib loads into .NET, rlib is for tests.
-crate-type = ["staticlib", "cdylib", "rlib"]
+# staticlib links into the macOS app; rlib is for tests/ffi.rs.
+crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

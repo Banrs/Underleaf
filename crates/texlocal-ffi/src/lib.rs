@@ -1,4 +1,4 @@
-//! The C ABI the native apps link: one JSON-in, JSON-out call over
+//! The C ABI the macOS app links: one JSON-in, JSON-out call over
 //! `texlocal_core::service`, the same command names and arguments the browser
 //! server uses. See `include/texlocal.h`.
 //!
@@ -6,7 +6,7 @@
 //! so hosts call it off their UI thread. Concurrent calls from several threads
 //! are fine: each drives the handle's runtime on its own thread.
 //!
-//! `tl_source_*` are the native editors' own: `texlocal_syntax`'s mirror of
+//! `tl_source_*` are the macOS editor's own: `texlocal_syntax`'s mirror of
 //! a file's text, answering in UTF-16 offsets, on the editor's thread.
 
 use std::borrow::Cow;
