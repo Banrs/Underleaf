@@ -180,7 +180,7 @@ Math delimiters get the preprocessor colour because they switch mode the way a
 preprocessor directive does, and having them stand out is worth more here than
 category purity.
 
-**The Mac editor's syntax colours are a choice**, Settings › Editor › Colour Theme,
+**The Mac editor's syntax colours are a choice**, Settings › Editor › Theme,
 defined once as `SyntaxTheme` in `SourceTextView.swift`. Overleaf is the default; each
 theme gives the five colours below in Light and Dark.
 Text, braces and brackets are plain in all of them, and none draws bold or italic.
