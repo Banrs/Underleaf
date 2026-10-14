@@ -718,6 +718,7 @@ async function doSave({ triggerCompile = true, keepalive = false } = {}) {
   const path = state.openPath;
   const editor = state.editor;
   const content = editor.getContent();
+  const current = () => state.projectId === projectId && state.openPath === path && state.editor === editor;
   state.saving = true;
   state.dirty = false;
   setSaveState('Saving…');
@@ -725,25 +726,24 @@ async function doSave({ triggerCompile = true, keepalive = false } = {}) {
     const outlive = keepalive
       && new TextEncoder().encode(JSON.stringify({ id: projectId, path, text: content })).length <= KEEPALIVE_MAX;
     await api.writeFile(projectId, path, content, outlive ? { keepalive: true } : undefined);
-    const current = state.projectId === projectId && state.openPath === path && state.editor === editor;
-    if (current && !state.dirty) {
-      setSaveState('Saved');
-      if (triggerCompile && prefs.autoCompile) compile({ auto: true });
-    }
-    if (current) {
+    if (current()) {
+      if (!state.dirty) {
+        setSaveState('Saved');
+        if (triggerCompile && prefs.autoCompile) compile({ auto: true });
+      }
       refreshSymbols();
       refreshAnalysis();
     }
   } catch (err) {
     err.saveFailed = true;
-    if (state.projectId === projectId && state.openPath === path && state.editor === editor) {
+    if (current()) {
       state.dirty = true;
       setSaveState('Unsaved');
       toast(`Save failed: ${err.message}`, 'error');
     }
     throw err;
   } finally {
-    if (state.projectId === projectId && state.openPath === path && state.editor === editor) state.saving = false;
+    if (current()) state.saving = false;
   }
 }
 
