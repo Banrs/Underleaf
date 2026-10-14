@@ -69,7 +69,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var committedString: String { hasMarkedText() ? beforeMarkedText ?? string : string }
     /// The storage's own UTF-16 units, read in place: `string` bridges the whole text to a Swift
     /// string each time it's asked, and a caret move, a key and a draw all ask.
-    private var text: NSString { textStorage?.mutableString ?? "" }
+    var text: NSString { textStorage?.mutableString ?? "" }
     /// The project's labels and citations, which completion offers from the mirror.
     var symbols = Symbols(citations: [], labels: []) {
         didSet { document.setSymbols(symbols) }

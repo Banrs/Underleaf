@@ -138,7 +138,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     /// SyncTeX needs the occurrence within the source line, not just its spelling.
     var currentSyncWord: SyncTeXWord? {
-        let source = textView.string as NSString
+        let source = textView.text
         let position = textView.selectedRange().location
         let caret = NSRange(location: position, length: 0)
         let range = textView.selectionRange(forProposedRange: caret, granularity: .selectByWord)
@@ -159,7 +159,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func reveal(line: Int, column: Int? = nil, atTop: Bool = false, focus: Bool = true) {
         let document = textView.document
         let start = document.lineStart(line)
-        let end = line < document.lineCount ? document.lineStart(line + 1) - 1 : (textView.string as NSString).length
+        let end = line < document.lineCount ? document.lineStart(line + 1) - 1 : textView.text.length
         let word = column.map {
             textView.selectionRange(forProposedRange: NSRange(location: min(start + $0, end), length: 0), granularity: .selectByWord)
         }
@@ -220,9 +220,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
     }
 
-    /// What isn't prose in a range: the runs the highlighter gives those kinds, and the names
-    /// commands take. The highlighter also colours words inside \text{…} as maths; the prose
-    /// scan owns those boundaries, so spelling asks for the syntax's names only.
+    /// What isn't prose in a range: the runs the highlighter gives those kinds, and the core's
+    /// not-prose ranges (maths, literal code and the names commands take). The highlighter also
+    /// colours words inside \text{…} as maths, while the core keeps those as prose, so spelling
+    /// leaves the maths kinds out of `kinds`.
     private func code(in range: NSRange, kinds: Set<HighlightKind>) -> [NSRange] {
         let document = textView.document
         return document.highlights(in: range).filter { kinds.contains($0.kind) }.map(\.range) + document.notProse(in: range)
@@ -317,7 +318,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     /// undo step, the selections going with them, as Xcode's Move Line Up and Down; nothing
     /// moves when a run is already at the file's start or end.
     private func moveLines(up: Bool) -> Bool {
-        let text = textView.string as NSString
+        let text = textView.text, length = text.length
         let selections = textView.selectedRanges.map(\.rangeValue)
         // Each selection's whole lines; one ending at a line's start doesn't take that line.
         var runs: [NSRange] = []
@@ -332,7 +333,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         var edits: [TextEdit] = [], shifts: [(run: NSRange, by: Int)] = []
         for run in runs.sorted(by: { $0.location < $1.location }) {
             // The empty line after a final line break has nothing to move.
-            guard run.length > 0, up ? run.location > 0 : NSMaxRange(run) < text.length else { return false }
+            guard run.length > 0, up ? run.location > 0 : NSMaxRange(run) < length else { return false }
             let neighbour = text.lineRange(for: NSRange(location: up ? run.location - 1 : NSMaxRange(run), length: 0))
             let whole = NSUnionRange(run, neighbour)
             // The lines' text trades places; the line ends stay where they were, so a last line
@@ -350,7 +351,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
         textView.apply(edits, named: up ? String(localized: "Move Line Up") : String(localized: "Move Line Down"))
         textView.setSelectedRanges(selections.map { selection in
-            let by = shifts.first { NSLocationInRange(selection.location, $0.run) || selection.location == NSMaxRange($0.run) && selection.length == 0 && NSMaxRange($0.run) == text.length }?.by ?? 0
+            let by = shifts.first { NSLocationInRange(selection.location, $0.run) || selection.location == NSMaxRange($0.run) && selection.length == 0 && NSMaxRange($0.run) == length }?.by ?? 0
             return NSValue(range: NSRange(location: selection.location + by, length: selection.length))
         }, affinity: .downstream, stillSelecting: false)
         textView.scrollRangeToVisible(textView.selectedRange())
@@ -375,7 +376,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     /// Round the selection, which stays selected (or the caret, between them).
     private func wrap(_ prefix: String, _ suffix: String, named name: String) {
         let selection = textView.selectedRange()
-        let selected = (textView.string as NSString).substring(with: selection)
+        let selected = textView.text.substring(with: selection)
         let edit = TextEdit(selection, prefix + selected + suffix)
         textView.apply([edit], named: name,
                        select: NSRange(location: selection.location + (prefix as NSString).length, length: selection.length))
