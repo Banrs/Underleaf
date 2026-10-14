@@ -121,6 +121,14 @@ struct HeadingStylesTests {
             == DocumentClass(name: "report", pointSize: 12))
         #expect(DocumentClass(in: "\\begin{document}\n\\documentclass{book}") == DocumentClass(name: "book"))
     }
+
+    /// A comment ends at a CRLF or a CR as at a line feed: Swift's regex reads "\r\n" as one
+    /// Character, which a comment once ran on through to the file's end.
+    @Test func aCommentEndsAtAnyLineBreak() {
+        #expect(DocumentClass(in: "\\documentclass[11pt, % size\r\n a4paper]{report}\r\n") == DocumentClass(name: "report", pointSize: 11))
+        #expect(DocumentClass(in: "% \\documentclass{book}\r\n\\documentclass[12pt]{report}\r\n") == DocumentClass(name: "report", pointSize: 12))
+        #expect(DocumentClass(in: "% \\documentclass{book}\r\\documentclass{article}\r") == DocumentClass(name: "article"))
+    }
 }
 
 @MainActor

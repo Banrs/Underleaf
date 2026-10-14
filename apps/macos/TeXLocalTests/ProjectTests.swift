@@ -342,11 +342,11 @@ final class ProjectFlowTests {
     /// A notice is in the status bar at once, the later of two, and goes by itself.
     @Test(.timeLimit(.minutes(1)))
     func aNoticeGoesByItself() async throws {
-        let notices = ProjectNotices()
+        let notices = ProjectNotices(lasting: .milliseconds(100))
         notices.note("One")
         notices.note("Two")
         #expect(notices.current == "Two")
-        try await waitUntil(timeout: .seconds(5)) { notices.current == nil }
+        try await waitUntil { notices.current == nil }
     }
 
     /// A project that can't be read doesn't open on an empty workspace: the alert says why over Home.
@@ -542,13 +542,9 @@ final class ProjectFlowTests {
     /// Overlapping rename/settings requests leave the build and disk settings in agreement.
     @Test(.timeLimit(.minutes(2)))
     func aRenameAndSettingsChangesKeepTheLatestMainFile() async throws {
-        await app.refresh()
-        if app.tex?.available != true { try Test.cancel("No TeX") }
         let source = "\\documentclass{article}\\begin{document}x\\end{document}"
-        let (info, folder) = try await project(source)
-        try await Core.shared.perform("write_file", ["id": info.id, "path": "second.tex", "text": source])
-        await app.open(info.id)
-        let project = try #require(app.project)
+        let project = try await openedWithTeX(source), folder = Core.libraryFolder.appending(path: project.id)
+        try await Core.shared.perform("write_file", ["id": project.id, "path": "second.tex", "text": source])
         await project.compile()
         #expect(project.result?.ok == true && project.pdfURL?.lastPathComponent == "main.pdf")
 
@@ -563,7 +559,7 @@ final class ProjectFlowTests {
                 && project.pdfURL?.lastPathComponent == "second.pdf"
         }
 
-        let persisted = try await Core.shared.call("get_settings", ["id": info.id], as: ProjectSettings.self)
+        let persisted = try await Core.shared.call("get_settings", ["id": project.id], as: ProjectSettings.self)
         #expect(project.settings?.mainFile == "second.tex" && persisted.mainFile == "second.tex")
         #expect(project.settings?.stopOnFirstError == true && persisted.stopOnFirstError)
         #expect(project.result?.ok == true)
@@ -590,9 +586,7 @@ final class ProjectFlowTests {
     /// The outline hears of a scroll only as another heading reaches the top, not on every line.
     @Test(.timeLimit(.minutes(1)))
     func theOutlineFollowsTheTopHeadingOnly() async throws {
-        let info = try await project("\\section{A}\n1\n2\n\\section{B}\n3").info
-        await app.open(info.id)
-        let project = try #require(app.project)
+        let project = try await opened("\\section{A}\n1\n2\n\\section{B}\n3").project
         try await waitUntil { project.outline.count == 2 }
         let scrolled = project.editor.onScroll
         scrolled(2)
@@ -675,13 +669,13 @@ final class ProjectFlowTests {
         try files.removeItem(at: notes)
         #expect(project.editor.perform(.bold))
         try await waitUntil(timeout: .seconds(5)) { project.missingFile == "notes.tex" }
-        // Past the autosave, which would have made the file again.
-        try await Task.sleep(for: .seconds(1))
+        // After the autosave, which would have made the file again.
+        await project.saveTask?.value
         #expect(!exists(notes))
         // Cancel leaves the edits unsaved: an autosave doesn't make the file, and a save asks again.
         project.missingFile = nil
         #expect(project.editor.perform(.italic))
-        try await Task.sleep(for: .seconds(1))
+        await project.saveTask?.value
         #expect(!exists(notes) && project.missingFile == nil)
         #expect(await !project.saveEdits() && project.missingFile == "notes.tex")
         project.saveMissingFile()
@@ -702,10 +696,10 @@ final class ProjectFlowTests {
         try "theirs".write(to: main, atomically: false, encoding: .utf8)
         #expect(project.editor.perform(.bold))
         try await waitUntil(timeout: .seconds(5)) { project.diskConflict == "main.tex" }
-        // Cancel, then past an autosave, which would have written over the other app's change.
+        // Cancel, then after an autosave, which would have written over the other app's change.
         project.diskConflict = nil
         #expect(project.editor.perform(.italic))
-        try await Task.sleep(for: .seconds(1))
+        await project.saveTask?.value
         #expect(onDisk() == "theirs" && project.diskConflict == nil && project.dirty)
         #expect(await !project.saveEdits() && project.diskConflict == "main.tex")
         project.keepEdits()

@@ -49,8 +49,8 @@ private final class FakeCore {
         TeXpressoStatus(running: running, log: "", output: "", error: error, session: running ? "owner" : nil)
     }
 
-    func session() -> TeXpressoSession {
-        TeXpressoSession(id: "project", calls: .init(
+    func session(haltsAfter: Duration = .seconds(1)) -> TeXpressoSession {
+        TeXpressoSession(id: "project", haltsAfter: haltsAfter, calls: .init(
             status: { [self] command, arguments in
                 commands.append(command)
                 #expect(arguments["id"] as? String == "project")
@@ -82,16 +82,10 @@ private final class FakeCore {
     }
 }
 
-/// A PDF on disk, each page's text drawn as text, as TeXpresso leaves its documents and pages.
+/// A PDF on disk, each page's text 50 times over drawn as text, as TeXpresso leaves its documents and pages.
 @MainActor
 private func writePDF(_ pages: [String]) throws -> URL {
-    let document = PDFDocument()
-    for text in pages {
-        let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
-        view.string = String(repeating: text + " ", count: 50)
-        let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
-        document.insert(page, at: document.pageCount)
-    }
+    let document = try textPDF(pages.map { String(repeating: $0 + " ", count: 50) })
     let url = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).pdf")
     try #require(document.dataRepresentation()).write(to: url)
     return url
@@ -109,15 +103,21 @@ struct TeXpressoSessionTests {
         throw NSError(domain: "TeXpressoSessionTests", code: 1)
     }
 
+    /// A fake core's session, started with `files`.
+    private func started(_ files: [TeXpressoFile], haltsAfter: Duration = .seconds(1)) async -> (FakeCore, TeXpressoSession) {
+        let core = FakeCore(), session = core.session(haltsAfter: haltsAfter)
+        session.start(files: files)
+        await session.waitForPendingCalls()
+        return (core, session)
+    }
+
     private func word(_ page: PDFPage?) -> String { page?.string?.components(separatedBy: " ").first ?? "" }
 
     // ---------- edits ----------
 
     /// A key is one call, made where the edit is: the range in the old text and what replaced it.
     @Test func eachEditOfAFileSentGoesAtOnceAndInOrder() async {
-        let core = FakeCore(), session = core.session()
-        session.start(files: [main])
-        await session.waitForPendingCalls()
+        let (core, session) = await started([main])
         session.edit("main.tex", NSRange(location: 3, length: 0), "é") { Issue.record("The whole text isn't needed"); return "" }
         session.edit("main.tex", NSRange(location: 1, length: 2), "🦆") { "" }
         #expect(core.sent == ["main.tex 3 0 é", "main.tex 1 2 🦆"])
@@ -128,10 +128,8 @@ struct TeXpressoSessionTests {
     /// An edit the core's copy doesn't fit is put right by the whole text, once; the edits
     /// before it aren't sent again, and the ones after it are edits again.
     @Test func anEditThatDoesNotFitSendsTheWholeTextAndCarriesOn() async {
-        let core = FakeCore(), session = core.session()
+        let (core, session) = await started([main])
         core.edit = { _ in throw CoreError(message: "The edit doesn't fit the text TeXpresso has.", status: 412) }
-        session.start(files: [main])
-        await session.waitForPendingCalls()
         session.edit("main.tex", NSRange(location: 9, length: 0), "a") { "whole a" }
         // Typed while the whole text is on its way: it goes whole too, the latest only.
         session.edit("main.tex", NSRange(location: 10, length: 0), "b") { "whole ab" }
@@ -147,9 +145,7 @@ struct TeXpressoSessionTests {
 
     /// A file the session wasn't started with has no copy in the core until its whole text is sent.
     @Test func aFileNotSentYetGoesWholeFirst() async {
-        let core = FakeCore(), session = core.session()
-        session.start(files: [main])
-        await session.waitForPendingCalls()
+        let (core, session) = await started([main])
         session.edit("parts/a.tex", NSRange(location: 0, length: 0), "x") { "x include" }
         await session.waitForPendingCalls()
         session.edit("parts/a.tex", NSRange(location: 1, length: 0), "y") { "" }
@@ -184,14 +180,12 @@ struct TeXpressoSessionTests {
 
     /// A text the core can't take keeps its error and doesn't hold other files back.
     @Test func aRejectedTextDoesNotBlockOtherFiles() async {
-        let core = FakeCore(), session = core.session()
+        let (core, session) = await started([])
         var failures = 0
         core.update = { path, text in
             if path == "a.tex", text != "fixed" { throw CoreError(message: "TeXpresso takes files of up to 8 MB.", status: 400) }
         }
         session.onFailure = { failures += 1 }
-        session.start(files: [])
-        await session.waitForPendingCalls()
         session.update(TeXpressoFile(path: "a.tex", text: "rejected"))
         session.update(TeXpressoFile(path: "z.tex", text: "valid"))
         await session.waitForPendingCalls()
@@ -208,14 +202,12 @@ struct TeXpressoSessionTests {
 
     /// A whole text that fails for another reason is tried again without more typing.
     @Test func anUnsentTextIsTriedAgain() async throws {
-        let core = FakeCore(), session = core.session()
+        let (core, session) = await started([])
         var attempts = 0
         core.update = { _, _ in
             attempts += 1
             if attempts == 1 { throw NSError(domain: "transport", code: 1) }
         }
-        session.start(files: [])
-        await session.waitForPendingCalls()
         session.update(TeXpressoFile(path: "main.tex", text: "unsent $"))
         await session.waitForPendingCalls()
         #expect(attempts == 1 && session.failure != nil)
@@ -229,13 +221,11 @@ struct TeXpressoSessionTests {
     /// its way when a key is typed: the key follows it whole. Sent as an edit it could reach the
     /// core first, and the older text would then replace it.
     @Test func anEditWhileAWholeTextIsOnItsWayFollowsItWhole() async throws {
-        let core = FakeCore(), session = core.session()
+        let (core, session) = await started([main])
         var sending: CheckedContinuation<Void, Never>?
         core.update = { _, text in
             if text == "reopened" { await withCheckedContinuation { sending = $0 } }
         }
-        session.start(files: [main])
-        await session.waitForPendingCalls()
         session.update(TeXpressoFile(path: "main.tex", text: "reopened"))
         try await until { sending != nil }
         session.edit("main.tex", NSRange(location: 8, length: 0), "!") { "reopened!" }
@@ -272,7 +262,8 @@ struct TeXpressoSessionTests {
         session.caretMoved("main.tex", 0)
         session.caretMoved("main.tex", 1)
         try await waitUntil { !core.carets.isEmpty }
-        try await Task.sleep(for: .milliseconds(200))
+        // The first click's settling, had it not been cancelled, would be due with the second's.
+        try await Task.sleep(for: .milliseconds(50))
         #expect(core.carets == [1])
         session.stop()
         await session.waitForPendingCalls()
@@ -305,7 +296,7 @@ struct TeXpressoSessionTests {
     /// In one answer the document comes before the pages; a page past the end of what shows
     /// waits for the document that makes room for it; and the wait goes on from the last answer.
     @Test func theDocumentIsShownBeforeItsPagesAndMakesRoomForThem() async throws {
-        let core = FakeCore(), session = core.session()
+        let (core, session) = await started([main])
         var shown: [String] = [], count = 0
         session.showDocument = { live in
             shown.append("document \(live.document.pageCount) \(live.changed.map(Array.init) ?? [-1]) \(live.complete)")
@@ -313,8 +304,6 @@ struct TeXpressoSessionTests {
         }
         session.showPage = { page, index in shown.append("page \(index) \(word(page))") }
         session.shownPages = { count }
-        session.start(files: [main])
-        await session.waitForPendingCalls()
         let two = try writePDF(["a", "b"]), three = try writePDF(["a", "b", "c"])
         let first = try writePDF(["first"]), second = try writePDF(["second"]), third = try writePDF(["third"])
         func page(_ index: Int, _ url: URL, _ serial: Int) -> TeXpressoEvents.Page { .init(page: index, path: url.path, serial: serial) }
@@ -347,13 +336,11 @@ struct TeXpressoSessionTests {
     /// A build that never says which pages changed, or how its run ended, has its documents
     /// shown whole; and a page whose file has gone by the time it is read is passed over.
     @Test func anOlderBuildsDocumentIsShownWhole() async throws {
-        let core = FakeCore(), session = core.session()
+        let (core, session) = await started([main])
         var documents: [LiveDocument] = [], pages = 0
         session.showDocument = { documents.append($0) }
         session.showPage = { _, _ in pages += 1 }
         session.shownPages = { documents.last?.document.pageCount ?? 0 }
-        session.start(files: [main])
-        await session.waitForPendingCalls()
         core.feed.send(TeXpressoEvents(seq: 1, running: true, pdf: .init(path: try writePDF(["a", "b"]).path, version: 1, serial: 1, pages: 2),
                                        pages: [.init(page: 0, path: "/tmp/gone-\(UUID().uuidString).pdf", serial: 2)]))
         try await waitUntil { documents.count == 1 }
@@ -371,11 +358,9 @@ struct TeXpressoSessionTests {
     /// that one's pages are taken. So does one the core replaced before it was asked for, which
     /// the gap in the documents' numbers tells; one with no pages has its number all the same.
     @Test func aDocumentMissedMakesTheNextOneWhole() async throws {
-        let core = FakeCore(), session = core.session()
+        let (core, session) = await started([main])
         var documents: [LiveDocument] = []
         session.showDocument = { documents.append($0) }
-        session.start(files: [main])
-        await session.waitForPendingCalls()
         func document(_ version: Int, _ path: String, pages: Int = 3) -> TeXpressoEvents {
             TeXpressoEvents(seq: version, running: true,
                             pdf: .init(path: path, version: version, serial: version, pages: pages, run: "complete", changed: [[1, 1]]))
@@ -403,16 +388,15 @@ struct TeXpressoSessionTests {
 
     /// TeX stopped at an error is said so once it has lasted, and not for a brace half typed.
     @Test func aRunStoppedAtAnErrorIsSaidOnceItLasts() async throws {
-        let core = FakeCore(), session = core.session()
-        session.start(files: [main])
-        await session.waitForPendingCalls()
+        // A tenth of a second for the app's second.
+        let (core, session) = await started([main], haltsAfter: .milliseconds(100))
         core.feed.send(TeXpressoEvents(seq: 1, running: true, done: .init(run: "stopped")))
         core.feed.send(TeXpressoEvents(seq: 2, running: true, done: .init(run: "complete")))
         try await waitUntil { core.feed.asked.last == 2 }
-        try await Task.sleep(for: .milliseconds(1_200))
+        try await Task.sleep(for: .milliseconds(300))
         #expect(!session.halted && session.title == "Live Preview On")
         core.feed.send(TeXpressoEvents(seq: 3, running: true, done: .init(run: "stopped")))
-        try await waitUntil(timeout: .seconds(5)) { session.halted }
+        try await waitUntil { session.halted }
         #expect(session.needsAttention && session.title == "Live Preview Paused at an Error")
         core.feed.send(TeXpressoEvents(seq: 4, running: true, done: .init(run: "complete")))
         try await waitUntil { !session.halted }
@@ -445,9 +429,7 @@ struct TeXpressoSessionTests {
 
     /// The log is asked for while it shows and has changed, not at every answer.
     @Test func theLogIsReadOnlyWhileItShows() async throws {
-        let core = FakeCore(), session = core.session()
-        session.start(files: [main])
-        await session.waitForPendingCalls()
+        let (core, session) = await started([main])
         core.feed.send(TeXpressoEvents(seq: 1, running: true, revision: 5))
         core.feed.send(TeXpressoEvents(seq: 2, running: true, revision: 6))
         try await waitUntil { core.feed.asked.last == 2 }
