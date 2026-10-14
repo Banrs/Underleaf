@@ -15,7 +15,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use texlocal_core::service::{arg, string_arg, Service};
 use texlocal_core::{import, zipexport, CoreError};
 use texlocal_syntax::{SourceDocument, TextRange};
@@ -154,7 +154,8 @@ pub unsafe extern "C" fn tl_call(
     })
     .unwrap_or_else(|| Err(CoreError::internal("The command panicked")));
     json_string(match result {
-        Ok(value) => json!({ "ok": value }),
+        // Moved into its envelope: `json!` would copy the whole result first.
+        Ok(value) => Value::Object(Map::from_iter([("ok".to_owned(), value)])),
         Err(err) => json!({ "error": err.message, "status": err.status }),
     })
 }
