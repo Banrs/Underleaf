@@ -7,7 +7,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use regex::Regex;
 use serde::Serialize;
@@ -42,7 +42,6 @@ pub struct TreeNode {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameResult {
-    pub ok: bool,
     pub from: String,
     pub to: String,
     pub main_file: String,
@@ -64,12 +63,11 @@ pub struct Symbols {
     pub labels: Vec<String>,
 }
 
-fn since_epoch(meta: &fs::Metadata) -> Option<Duration> {
-    meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()
-}
-
 fn mtime_ms(meta: &fs::Metadata) -> u64 {
-    since_epoch(meta).map_or(0, |d| d.as_millis() as u64)
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_millis() as u64)
 }
 
 /// A vanished or unreadable entry is skipped without failing a project scan.
@@ -478,7 +476,6 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
     }
 
     Ok(RenameResult {
-        ok: true,
         from: from_rel,
         to: to_rel,
         main_file: moved_main.unwrap_or(main_file),

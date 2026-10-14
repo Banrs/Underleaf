@@ -19,9 +19,25 @@
   },
   {
     "name": "CR LF, CR and LF each end a line",
-    "text": "one\r\ntwo\rthree\nfour\r\r\nfive",
+    "text": "one\r\n\\section{Two}\r\\section{Three}\nfour\r\r\n\\section{Five}",
     "expected": {
-      "outline": [],
+      "outline": [
+        {
+          "depth": 2,
+          "title": "Two",
+          "line": 2
+        },
+        {
+          "depth": 2,
+          "title": "Three",
+          "line": 3
+        },
+        {
+          "depth": 2,
+          "title": "Five",
+          "line": 6
+        }
+      ],
       "words": 5,
       "lines": 6
     }
