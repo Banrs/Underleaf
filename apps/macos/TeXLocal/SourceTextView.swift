@@ -16,14 +16,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         view.textContainer?.size = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         // Its own storage's delegate: every edit reaches the core's mirror through it.
         view.textStorage?.delegate = view
-        NSWorkspace.shared.notificationCenter.addObserver(view, selector: #selector(displayOptionsChanged),
-                                                          name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+        view.displayOptionsWatch = NSWorkspace.shared.notificationCenter.addObserver(
+            of: NSWorkspace.self, for: .accessibilityDisplayOptionsDidChange) { [weak view] _ in view?.displayOptionsChanged() }
         return view
     }
 
+    /// The display's accessibility options (`displayOptionsChanged`), watched for as long as its token is held.
+    private var displayOptionsWatch: NotificationCenter.ObservationToken?
+
     /// One of the display's accessibility options changed: the line numbers and the issues'
     /// messages follow Increase Contrast.
-    @objc private func displayOptionsChanged() {
+    private func displayOptionsChanged() {
         needsDisplay = true
         for issue in issueRows { issue.message?.view.needsDisplay = true }
     }
