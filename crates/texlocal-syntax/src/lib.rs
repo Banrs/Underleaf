@@ -1,8 +1,8 @@
-//! LaTeX editing logic every editor can share: highlighting, completion and
-//! the editing commands, as ranges and edits for the editor to apply. The
-//! editor owns the text, its undo and its drawing; a `SourceDocument` mirrors
-//! the text through the editor's edits and answers in UTF-16 offsets, which
-//! NSString, .NET strings and JavaScript all count in.
+//! LaTeX editing logic for the Mac's editor, as the web's editor has it:
+//! highlighting, completion and the editing commands, as ranges and edits for
+//! the editor to apply. The editor owns the text, its undo and its drawing; a
+//! `SourceDocument` mirrors the text through the editor's edits and answers in
+//! UTF-16 offsets, which NSString and JavaScript both count in.
 
 mod catalog;
 mod complete;
@@ -12,8 +12,6 @@ mod maths;
 mod prose;
 mod stack;
 mod style;
-
-use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
@@ -122,9 +120,8 @@ impl Text {
 pub struct SourceDocument {
     text: Text,
     highlighter: highlight::Cache,
-    /// Kept for the questions that read the text from its start; behind a
-    /// lock as they ask through `&self`.
-    scans: Mutex<maths::Scans>,
+    /// Kept for the questions that read the text from its start.
+    scans: maths::Scans,
 }
 
 impl SourceDocument {
@@ -132,7 +129,7 @@ impl SourceDocument {
         SourceDocument {
             text: Text::new(text),
             highlighter: highlight::Cache::default(),
-            scans: Mutex::default(),
+            scans: maths::Scans::default(),
         }
     }
 
@@ -144,14 +141,7 @@ impl SourceDocument {
         let units: Vec<u16> = text.encode_utf16().collect();
         let first = self.text.replace(start, length, &units);
         self.highlighter.forget_from(first);
-        self.scans
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner)
-            .forget_from(start as usize);
-    }
-
-    fn scans(&self) -> MutexGuard<'_, maths::Scans> {
-        self.scans.lock().unwrap_or_else(PoisonError::into_inner)
+        self.scans.forget_from(start as usize);
     }
 
     pub fn text(&self) -> String {
@@ -179,12 +169,12 @@ impl SourceDocument {
         self.highlighter.highlights(&self.text, start.min(end), end)
     }
 
-    /// The names in the paragraphs a range touches that commands take
-    /// (packages, citations, labels, files), for a spelling checker to pass
-    /// over, as it passes over what's highlighted but comments.
-    pub fn not_prose(&self, start: u32, length: u32) -> Vec<TextRange> {
+    /// What a spelling checker passes over where a range is: maths, literal
+    /// code, and the names commands take (packages, citations, labels,
+    /// files), each from its start, however far before the range.
+    pub fn not_prose(&mut self, start: u32, length: u32) -> Vec<TextRange> {
         let end = start.saturating_add(length).min(self.text.len());
-        prose::not_prose(&self.text, &mut self.scans(), start.min(end), end)
+        prose::not_prose(&self.text, &mut self.scans, start.min(end), end)
     }
 
     /// What to offer at the caret, if anything: commands after a backslash
@@ -224,9 +214,9 @@ impl SourceDocument {
 
     /// The bold, italic and underline the whole selection is in, each as the
     /// edits that unwrap the command giving it, in order.
-    pub fn text_styles(&self, selection: TextRange) -> TextStyles {
+    pub fn text_styles(&mut self, selection: TextRange) -> TextStyles {
         let selection = clamp(selection, self.text.len());
-        style::text_styles(&self.text, &mut self.scans(), selection)
+        style::text_styles(&self.text, &mut self.scans, selection)
     }
 
     /// The maths to preview at the caret, if it's in some.
@@ -244,10 +234,10 @@ impl SourceDocument {
     /// A maths symbol's command in place of the selection: as it is in
     /// maths, and between dollars in text, where the bare command would stop
     /// the build.
-    pub fn insert_symbol(&self, command: &str, selection: TextRange) -> Insertion {
+    pub fn insert_symbol(&mut self, command: &str, selection: TextRange) -> Insertion {
         let selection = clamp(selection, self.text.len());
         let at = selection.start as usize;
-        let mut scanner = self.scans().resume(&self.text, at, at).scanner;
+        let mut scanner = self.scans.resume(&self.text, at, at).scanner;
         scanner.run(&self.text.units[..at], at, &[], &mut ());
         let text = if scanner.in_math() {
             command.to_string()
@@ -287,7 +277,7 @@ fn letter(u: u16) -> bool {
     u < 128 && (u as u8).is_ascii_alphabetic()
 }
 
-/// JavaScript's \s and the no-break space.
+/// JavaScript's \s.
 fn space(u: u16) -> bool {
     matches!(u, 0x09..=0x0d | 0x20 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
 }

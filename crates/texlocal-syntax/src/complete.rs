@@ -127,10 +127,23 @@ fn words(names: Vec<&String>, prefix: &str) -> Vec<Completion> {
 
 /// The items whose names start with what's typed, those with its case first.
 fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) -> Vec<&'a T> {
-    let lower = typed.to_lowercase();
+    let (lower, ascii) = (typed.to_lowercase(), typed.is_ascii());
+    // ASCII names, as the catalog's and most keys are, are compared in
+    // place: lowercasing a copy of each, at every key typed, was most of a
+    // citation's offer. Others are lowercased whole, as JavaScript's
+    // toLowerCase does, which may lower a character to ASCII (the kelvin
+    // sign to k).
+    let starts = |n: &str| {
+        if ascii && n.is_ascii() {
+            let head = n.as_bytes().get(..typed.len());
+            head.is_some_and(|head| head.eq_ignore_ascii_case(typed.as_bytes()))
+        } else {
+            n.to_lowercase().starts_with(&lower)
+        }
+    };
     let (mut exact, folded): (Vec<_>, Vec<_>) = items
         .iter()
-        .filter(|i| name(i).to_lowercase().starts_with(&lower))
+        .filter(|i| starts(name(i)))
         .partition(|i| name(i).starts_with(typed));
     exact.extend(folded);
     exact
@@ -154,7 +167,7 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
     let mut names = Vec::new();
     let mut fields = Vec::new();
     let text = FIELD.replace_all(&snippet, |c: &regex::Captures| {
-        let (whole, name) = (c.get(0).unwrap(), c.get(1).unwrap().as_str());
+        let (whole, name) = (c.get_match(), &c[1]);
         // Unnamed fields are each their own.
         let index = names
             .iter()
@@ -252,5 +265,26 @@ mod tests {
             .collect();
         let upper = names.iter().position(|n| n == "\\Sigma").unwrap();
         assert!(names[..upper].iter().all(|n| n.starts_with("\\s")));
+    }
+
+    #[test]
+    fn keys_match_as_javascript_lowercases_them() {
+        let keys = ["Knuth84", "knuth86", "Émile", "émile2", "Kn"].map(String::from);
+        let offered = |typed: &str| -> Vec<String> {
+            let before = format!("\\cite{{{typed}");
+            let caret = before.encode_utf16().count() as u32;
+            SourceDocument::new(&before)
+                .completions(caret, false, &[], &keys)
+                .map_or(vec![], |offer| {
+                    offer.items.into_iter().map(|i| i.label).collect()
+                })
+        };
+        assert_eq!(offered("kn"), ["knuth86", "Knuth84", "Kn"]);
+        assert_eq!(offered("KNUTH"), ["Knuth84", "knuth86"]);
+        assert_eq!(offered("knu"), ["knuth86", "Knuth84"]);
+        assert_eq!(offered("é"), ["émile2", "Émile"]);
+        assert_eq!(offered("ÉMILE"), ["Émile", "émile2"]);
+        // The kelvin sign lowers to an ASCII k.
+        assert_eq!(offered("\u{212a}n"), ["Knuth84", "knuth86", "Kn"]);
     }
 }

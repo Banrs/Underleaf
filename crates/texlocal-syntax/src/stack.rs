@@ -83,9 +83,7 @@ impl<T> Drop for Stack<T> {
     fn drop(&mut self) {
         let mut next = self.0.take();
         while let Some(frame) = next {
-            next = Arc::try_unwrap(frame)
-                .ok()
-                .and_then(|mut f| f.below.0.take());
+            next = Arc::into_inner(frame).and_then(|mut f| f.below.0.take());
         }
     }
 }

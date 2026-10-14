@@ -442,13 +442,13 @@ pub fn math_at(text: &Text, caret: u32) -> Option<MathPreview> {
     for (re, is_environment) in [(&*BEGIN, true), (&*DOLLARS, false), (&*BRACKETS, false)] {
         let mut offset = 0;
         while let Some(c) = re.captures_at(&window, offset) {
-            let whole = c.get(0).unwrap();
+            let whole = c.get_match();
             if whole.start() > at {
                 break;
             }
             offset = whole.end();
             let (environment, body) = if is_environment {
-                let name = c.get(1).unwrap().as_str();
+                let name = &c[1];
                 let end = format!("\\end{{{name}{}}}", &c[2]);
                 let Some(close) = window[offset..].find(&end) else {
                     continue;
@@ -457,7 +457,7 @@ pub fn math_at(text: &Text, caret: u32) -> Option<MathPreview> {
                 offset += close + end.len();
                 (Some(name), body)
             } else {
-                (None, c.get(1).unwrap().as_str())
+                (None, &c[1])
             };
             if at <= offset {
                 return preview(
@@ -530,7 +530,7 @@ mod tests {
 
         // A spelling checker skips the code on its line, and no more.
         let text = "\\verb|Speling\nprose \\cite{key}";
-        let doc = SourceDocument::new(text);
+        let mut doc = SourceDocument::new(text);
         let ranges = doc.not_prose(0, text.len() as u32);
         let covered = |needle: &str| {
             let at = text.find(needle).unwrap() as u32;
