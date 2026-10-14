@@ -1,8 +1,8 @@
-//! LaTeX editing logic every editor can share: highlighting, completion and
-//! the editing commands, as ranges and edits for the editor to apply. The
-//! editor owns the text, its undo and its drawing; a `SourceDocument` mirrors
-//! the text through the editor's edits and answers in UTF-16 offsets, which
-//! NSString, .NET strings and JavaScript all count in.
+//! LaTeX editing logic for the Mac's editor, as the web's editor has it:
+//! highlighting, completion and the editing commands, as ranges and edits for
+//! the editor to apply. The editor owns the text, its undo and its drawing; a
+//! `SourceDocument` mirrors the text through the editor's edits and answers in
+//! UTF-16 offsets, which NSString and JavaScript both count in.
 
 mod catalog;
 mod complete;
@@ -169,9 +169,9 @@ impl SourceDocument {
         self.highlighter.highlights(&self.text, start.min(end), end)
     }
 
-    /// The names in the paragraphs a range touches that commands take
-    /// (packages, citations, labels, files), for a spelling checker to pass
-    /// over, as it passes over what's highlighted but comments.
+    /// What a spelling checker passes over where a range is: maths, literal
+    /// code, and the names commands take (packages, citations, labels,
+    /// files), each from its start, however far before the range.
     pub fn not_prose(&mut self, start: u32, length: u32) -> Vec<TextRange> {
         let end = start.saturating_add(length).min(self.text.len());
         prose::not_prose(&self.text, &mut self.scans, start.min(end), end)
@@ -277,7 +277,7 @@ fn letter(u: u16) -> bool {
     u < 128 && (u as u8).is_ascii_alphabetic()
 }
 
-/// JavaScript's \s and the no-break space.
+/// JavaScript's \s.
 fn space(u: u16) -> bool {
     matches!(u, 0x09..=0x0d | 0x20 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
 }

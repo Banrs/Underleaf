@@ -1,6 +1,6 @@
 [package]
 name = "texlocal-syntax"
-description = "LaTeX editing logic every editor shares: highlighting, completion and the editing commands"
+description = "LaTeX editing logic for the Mac's editor: highlighting, completion and the editing commands"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
