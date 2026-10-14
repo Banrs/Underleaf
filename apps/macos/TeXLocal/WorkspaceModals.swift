@@ -78,10 +78,8 @@ struct WorkspaceModals: ViewModifier {
     private func askWhichVersion(of path: String) {
         let alert = NSAlert()
         alert.messageText = String(localized: "“\(path.fileName)” Changed on Disk")
-        alert.informativeText = String(localized: """
-            Another app changed “\(path)” while it has unsaved changes here. \
-            Do you want to keep your version or revert to the one on disk?
-            """)
+        // The buttons say what each does, so the text doesn't ask (HIG, Alerts).
+        alert.informativeText = String(localized: "Another app changed “\(path)” while it has unsaved changes here.")
         // An alert's first button has Return until it gives it up; one titled Cancel has Escape.
         alert.addButton(withTitle: String(localized: "Save Anyway")).keyEquivalent = ""
         alert.addButton(withTitle: String(localized: "Revert")).hasDestructiveAction = true

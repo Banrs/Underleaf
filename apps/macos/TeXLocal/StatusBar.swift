@@ -33,13 +33,7 @@ enum BarMetrics {
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let project: ProjectModel
-
-    /// How much of the editors' colour lies over the blur of what is under the bar: what is left
-    /// passes about a sixth of the text's contrast, as Xcode 27.1's bar does (measured from a
-    /// capture). All of it where transparency is reduced.
-    private var wash: Double { reduceTransparency ? 1 : 0.83 }
 
     var body: some View {
         // Under a narrower window the bar says less, then says it shorter.
@@ -51,10 +45,8 @@ struct StatusBar: View {
         .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
         // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`).
         .padding(.top, BarMetrics.line)
-        // The editors' colour over a blur of what scrolls beneath, as under Xcode's bar: exactly
-        // the editors' colour where nothing is under it, in a key window and any other. The blur
-        // is a view of the workspace's under this one (`blurBackdrop`, `buildArea`).
-        .background(.textSurface.opacity(wash))
+        // No ground of its own: AppKit's scroll edge lies under the bar (`buildArea`), and draws
+        // no line, so the bar has its own.
         .overlay(alignment: .top) { Divider() }
         .monospacedDigit()
         .buttonStyle(.borderless)
@@ -91,7 +83,8 @@ struct StatusBar: View {
                         .symbolRenderingMode(.multicolor)
                         .hitTarget()
                 }
-                .help("\(reason) Click to save again.")
+                // A fragment, as the bar's other help tags: the reason without its full stop.
+                .help("\(reason.hasSuffix(".") ? String(reason.dropLast()) : reason); save again")
             }
             if let notice = project.notices.current {
                 Text(notice).foregroundStyle(.secondary)
@@ -233,21 +226,5 @@ extension View {
 
     fileprivate func hitTarget() -> some View {
         frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect)
-    }
-}
-
-extension NSView {
-    /// A blur of whatever the window draws behind this view, with no colour of its own: Core
-    /// Image's Gaussian as the layer's background filter. Every material of `NSVisualEffectView`
-    /// and SwiftUI, and Liquid Glass, tints what it blurs (in Dark the bar material rests at
-    /// 38, 35, 31 over a 30 editor, with the wallpaper's tint), so none can rest at the editors'
-    /// colour and still pass the text; this rests at whatever is behind it (27.2, measured in a
-    /// window that was not key, where the materials go opaque and this does not). The radius is
-    /// wide enough that no letter can be made out, as under Xcode's bar.
-    func blurBackdrop(radius: Double = 12) {
-        wantsLayer = true
-        layerUsesCoreImageFilters = true
-        layer?.masksToBounds = true
-        layer?.backgroundFilters = CIFilter(name: "CIGaussianBlur", parameters: [kCIInputRadiusKey: radius]).map { [$0] }
     }
 }

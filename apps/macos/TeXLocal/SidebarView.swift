@@ -179,7 +179,7 @@ struct FilesList: View {
                     ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",
                                            description: Text(failure))
                 } else if project.search.hits?.isEmpty == true {
-                    ContentUnavailableView.search(text: project.search.query)
+                    ContentUnavailableView.search(text: project.search.searched)
                 }
             }
     }
@@ -377,16 +377,28 @@ extension View {
 /// folds it away. Takes no drops: files go into the list above.
 struct OutlineList: View {
     let project: ProjectModel
-    @Environment(\.sidebarRowSize) private var rowSize
     /// The line the selection follows: the caret's or the top line, whichever
     /// changed last; the caret's when both do, as its `onChange` runs second.
     @State private var line = 1
+
+    var body: some View {
+        // The rows only when the current heading changes, not at each line the caret moves to.
+        OutlineRows(project: project, current: Outline.current(project.outline, file: project.openPath, line: line))
+            .onChange(of: project.topHeading) { line = project.topLine }
+            .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
+    }
+}
+
+/// The outline's list, with `current` its source's heading.
+private struct OutlineRows: View {
+    let project: ProjectModel
+    let current: Int?
+    @Environment(\.sidebarRowSize) private var rowSize
     /// A heading chosen in the list, shown selected until the source reaches it.
     @State private var chosen: Int?
 
     var body: some View {
         let outline = project.outline
-        let current = Outline.current(outline, file: project.openPath, line: line)
         // The current heading is the selection; choosing one, by click or arrow
         // key, scrolls the source to it and leaves the keyboard where it was. A list sends
         // nothing for a click on the row already selected, so the rows tap for those two.
@@ -430,8 +442,6 @@ struct OutlineList: View {
                 let item = outline[id]
                 Task { await project.open(item.file, line: item.line, atTop: true, focus: true) }
             }
-            .onChange(of: project.topHeading) { line = project.topLine }
-            .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
             // The current heading's row comes into view if it shows.
             .onChange(of: current, initial: true) { _, id in
                 chosen = nil
