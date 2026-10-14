@@ -199,7 +199,7 @@ function buildChrome(id) {
   const titlebar = el('header', { class: 'titlebar' },
     sidebarToggleFallback,
     iconButton('project.close', 'chevron-left'),
-    menuBar(menuUnder),
+    menuBar(),
     el('span', { class: 'window-title' }, state.settings?.title || id),
     el('span', { class: 'spacer' }),
     saveState,

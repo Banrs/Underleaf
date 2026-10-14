@@ -19,6 +19,8 @@ Object.assign(globalThis, {
   ResizeObserver: window.ResizeObserver,
   MutationObserver: window.MutationObserver,
   CSS: window.CSS,
+  innerWidth: 1024,
+  innerHeight: 768,
   requestAnimationFrame: (f) => setTimeout(f, 0),
   cancelAnimationFrame: clearTimeout,
 });
