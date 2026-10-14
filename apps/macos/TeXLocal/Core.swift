@@ -95,12 +95,20 @@ final class Core {
         String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
     }
 
+    /// A command's arguments, taken to the GCD thread to be encoded there: escaping a whole
+    /// document's text for an autosave took 3 ms of the main actor's time per megabyte. Unchecked,
+    /// as a dictionary of `Any` can't be proved Sendable: it is a value nothing changes once it is
+    /// handed over, and what it holds is JSON's, strings, numbers, booleans, null and collections of them.
+    private nonisolated struct Arguments: @unchecked Sendable {
+        let value: [String: Any]
+    }
+
     private func result<T: Decodable & Sendable>(_ command: String, _ args: [String: Any], as: T.Type) async throws -> T? {
-        let json = try Self.json(args)
         guard let handle else { throw Self.unavailable }
+        let args = Arguments(value: args)
         return try await withCheckedThrowingContinuation { done in
             DispatchQueue.global(qos: .userInitiated).async {
-                done.resume(with: Result { try Core.answer(handle, command, json) })
+                done.resume(with: Result { try Core.answer(handle, command, Core.json(args.value)) })
             }
         }
     }
