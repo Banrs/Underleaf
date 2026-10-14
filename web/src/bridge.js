@@ -81,9 +81,9 @@ export function httpBridge(fetchImpl = (...a) => fetch(...a), token = takeToken(
 }
 
 const inBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+// Null without a host (the unit tests).
 export const bridge = inBrowser ? httpBridge() : null;
 
-// Null without a host (the unit tests).
 export const platform = agentPlatform();
 export const isMac = platform === 'darwin';
 // Deletes go to the platform bin (trash::delete in the core), named its way.
