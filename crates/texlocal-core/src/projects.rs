@@ -42,7 +42,6 @@ pub struct TreeNode {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameResult {
-    pub ok: bool,
     pub from: String,
     pub to: String,
     pub main_file: String,
@@ -478,7 +477,6 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
     }
 
     Ok(RenameResult {
-        ok: true,
         from: from_rel,
         to: to_rel,
         main_file: moved_main.unwrap_or(main_file),
