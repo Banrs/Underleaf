@@ -232,10 +232,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         numberFont = NSFont(descriptor: numbers.fontDescriptor.addingAttributes([.featureSettings: [[
             NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
             .selectorIdentifier: kMonospacedNumbersSelector]]]), size: 0) ?? numbers
-        // An issue's message in the system font at the text's size, and its symbol two points under
-        // it, small: 13 and 11 at 13, Xcode 27.1's (a capture, 2026-10-14).
+        // An issue's message and symbol at the text's size, the symbol small, as beside text.
         issueFont = .systemFont(ofSize: fontSize)
-        let size = NSImage.SymbolConfiguration(pointSize: max(9, fontSize - 2), weight: .regular, scale: .small)
+        let size = NSImage.SymbolConfiguration(pointSize: fontSize, weight: .regular, scale: .small)
         issueSymbols = [true: ("exclamationmark.octagon", NSColor.systemRed), false: ("exclamationmark.triangle", .systemYellow)].compactMapValues {
             NSImage(systemSymbolName: $0.0, accessibilityDescription: nil)?.withSymbolConfiguration(size.applying(.init(paletteColors: [$0.1])))
         }
@@ -1391,10 +1390,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 }
 
-/// An issue's symbol and message in a box at its line's end, as Xcode 27.1 sets them: as tall as
-/// the line, in the text's background, edged with a point of the separators' colour, the symbol
-/// in a segment of its own before a divider and the message after it, or the symbol alone where
-/// the line has no room for words. A view of its own over the text view's: TextKit draws a
+/// An issue's symbol and message in a box at its line's end, as Xcode sets them: as tall as the
+/// line, in the text's background, edged in the separators' colour, the symbol in a segment of
+/// its own before a divider and the message after it, or the symbol alone where the line has no
+/// room for words. A view of its own over the text view's: TextKit draws a
 /// selection in a view above the text view's background (`_NSTextSelectionView`, the first of
 /// its subviews, 27.2), which would cover a box drawn there; above the text's views it stays over
 /// a selection, as Xcode's does, in the text view's coordinates, moving with the text as it
@@ -1405,19 +1404,17 @@ final class IssueMessageView: NSView {
     private var baseline: CGFloat = 0
     private var font = NSFont.systemFont(ofSize: 13)
 
-    /// Xcode 27.1's box at 13 pt (a capture, 2026-10-14), which follows the text's size in whole
-    /// points: the symbol's segment 26 pt to its divider, the message 7 pt after the divider and
-    /// 21 pt from the box's end, and a box of the symbol alone ending 13 pt after the divider.
-    private static func measures(_ font: NSFont) -> (segment: CGFloat, leading: CGFloat, trailing: CGFloat, alone: CGFloat) {
-        func scaled(_ points: CGFloat) -> CGFloat { (points * font.pointSize / 13).rounded() }
-        return (scaled(26), scaled(7), scaled(21), scaled(13))
+    /// The symbol's segment, twice the text's size, and the room either side of the message, half
+    /// of it, in whole points.
+    private static func measures(_ font: NSFont) -> (segment: CGFloat, padding: CGFloat) {
+        ((2 * font.pointSize).rounded(), (font.pointSize / 2).rounded())
     }
 
     /// The box's width for a message this wide, or for the symbol alone: whole points, so its
     /// edges are on the pixels the band's are.
     static func width(ofText text: CGFloat?, font: NSFont) -> CGFloat {
         let measures = measures(font)
-        return measures.segment + 1 + (text.map { (measures.leading + $0 + measures.trailing).rounded(.up) } ?? measures.alone)
+        return measures.segment + (text.map { 1 + (2 * measures.padding + $0).rounded(.up) } ?? 0)
     }
 
     override var isFlipped: Bool { true }
@@ -1440,19 +1437,12 @@ final class IssueMessageView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let measures = Self.measures(font)
-        // Xcode's: the separators' colour over the band, its corners inside the band's, and the
-        // text's own ground over that a point in from the edge on either side of the divider, so
-        // the edge and the divider are the separators' colour over the band.
-        NSColor.separatorColor.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 3, yRadius: 3).fill()
-        NSGraphicsContext.saveGraphicsState()
-        let besideDivider = NSBezierPath(rect: bounds)
-        besideDivider.append(NSBezierPath(rect: NSRect(x: measures.segment, y: 0, width: 1, height: bounds.height)))
-        besideDivider.windingRule = .evenOdd
-        besideDivider.addClip()
+        let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 3, yRadius: 3)
         ((superview as? NSTextView)?.backgroundColor ?? .textBackgroundColor).setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 2, yRadius: 2).fill()
-        NSGraphicsContext.restoreGraphicsState()
+        box.fill()
+        NSColor.separatorColor.set()
+        box.stroke()
+        if line != nil { NSRect(x: measures.segment, y: 0, width: 1, height: bounds.height).fill() }
         if let symbol {
             let size = symbol.size
             symbol.draw(in: NSRect(x: (measures.segment - size.width) / 2, y: (bounds.height - size.height) / 2, width: size.width, height: size.height),
@@ -1461,7 +1451,7 @@ final class IssueMessageView: NSView {
         guard let line else { return }
         NSColor.labelColor.setFill()
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        context.textPosition = CGPoint(x: measures.segment + 1 + measures.leading, y: baseline)
+        context.textPosition = CGPoint(x: measures.segment + 1 + measures.padding, y: baseline)
         CTLineDraw(line, context)
     }
 }
