@@ -647,9 +647,7 @@ impl Manager {
         fs::create_dir_all(&build)?;
         let build = fs::canonicalize(build)?;
         self.stop(&root)?;
-        let mut token = [0u8; 16];
-        getrandom::fill(&mut token).map_err(|err| CoreError::internal(err.to_string()))?;
-        let token: String = token.iter().map(|byte| format!("{byte:02x}")).collect();
+        let token = crate::random_hex(16)?;
         // The session's own folder: no build output or other session shares it.
         let pdf = match pane {
             Some(_) => {

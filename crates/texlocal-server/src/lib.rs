@@ -37,9 +37,7 @@ pub struct App {
 
 /// 32 random bytes as hex.
 pub fn new_token() -> String {
-    let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).expect("the OS random source is available");
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    texlocal_core::random_hex(32).expect("the OS random source is available")
 }
 
 fn same(a: &str, b: &str) -> bool {

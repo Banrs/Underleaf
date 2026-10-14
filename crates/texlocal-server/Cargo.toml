@@ -6,7 +6,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-getrandom = "0.4"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
