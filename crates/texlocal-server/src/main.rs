@@ -57,9 +57,7 @@ async fn main() -> std::io::Result<()> {
     println!("TeXLocal is serving {}", data_dir.display());
     println!("Open http://127.0.0.1:{port}/?token={token}");
 
-    serve(app.clone(), listener, MAX_BODY, stopped()).await;
-    // Compiles run in their own process groups, so nothing else stops them.
-    app.service.compile.kill_all();
+    serve(app, listener, MAX_BODY, stopped()).await;
     Ok(())
 }
 

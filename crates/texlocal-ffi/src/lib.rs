@@ -1,4 +1,4 @@
-//! The C ABI the native apps link: one JSON-in, JSON-out call over
+//! The C ABI the macOS app links: one JSON-in, JSON-out call over
 //! `texlocal_core::service`, the same command names and arguments the browser
 //! server uses. See `include/texlocal.h`.
 //!
@@ -6,7 +6,7 @@
 //! so hosts call it off their UI thread. Concurrent calls from several threads
 //! are fine: each drives the handle's runtime on its own thread.
 //!
-//! `tl_source_*` are the native editors' own: `texlocal_syntax`'s mirror of
+//! `tl_source_*` are the macOS editor's own: `texlocal_syntax`'s mirror of
 //! a file's text, answering in UTF-16 offsets, on the editor's thread.
 
 use std::borrow::Cow;
@@ -15,7 +15,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use texlocal_core::service::{arg, string_arg, Service};
 use texlocal_core::{import, zipexport, CoreError};
 use texlocal_syntax::{SourceDocument, TextRange};
@@ -45,8 +45,7 @@ impl TlHandle {
             // out tl_close — stop the latexmk trees that would otherwise outlive
             // the app.
             "kill_all" => {
-                service.compile.kill_all();
-                service.texpresso.kill_all();
+                service.kill_all();
                 Ok(Value::Null)
             }
             "import_files" => Ok(json!(import::import_files(
@@ -155,7 +154,8 @@ pub unsafe extern "C" fn tl_call(
     })
     .unwrap_or_else(|| Err(CoreError::internal("The command panicked")));
     json_string(match result {
-        Ok(value) => json!({ "ok": value }),
+        // Moved into its envelope: `json!` would copy the whole result first.
+        Ok(value) => Value::Object(Map::from_iter([("ok".to_owned(), value)])),
         Err(err) => json!({ "error": err.message, "status": err.status }),
     })
 }
@@ -182,11 +182,9 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
         return;
     }
     let handle = Box::from_raw(handle);
-    // Compiles run in their own process groups, so nothing else stops them.
     // Dropping the runtime and the service is guarded too.
     caught(move || {
-        handle.service.compile.kill_all();
-        handle.service.texpresso.kill_all();
+        handle.service.kill_all();
         drop(handle);
     });
 }

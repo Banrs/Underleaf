@@ -29,7 +29,7 @@ use tokio::net::TcpListener;
 pub const MAX_BODY: usize = UPLOAD_MAX_BYTES + 1024 * 1024;
 
 pub struct App {
-    pub service: Arc<Service>,
+    service: Arc<Service>,
     web_dir: Arc<Path>,
     token: String,
     hosts: [String; 2],
@@ -66,7 +66,8 @@ fn error(err: CoreError) -> Response {
 }
 
 /// Serve `app` on `listener` until `shutdown` resolves, running its guard on
-/// each request head before any body is read.
+/// each request head before any body is read, then stop its compiles and
+/// live previews.
 pub async fn serve(
     app: Arc<App>,
     listener: TcpListener,
@@ -84,7 +85,7 @@ pub async fn serve(
         async move { app.route(req, route).await }
     });
     http::serve(listener, handler, guard, max_body, shutdown).await;
-    service.texpresso.kill_all();
+    service.kill_all();
 }
 
 impl App {
