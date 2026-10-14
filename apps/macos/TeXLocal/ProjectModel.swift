@@ -205,8 +205,7 @@ final class ProjectModel {
             guard let self else { return }
             // TeXpresso went by itself: it starts again where it was, and the live pages stay meanwhile.
             if restartable, !closed {
-                let start = liveStart
-                texpresso.restart(files: start.files, caret: start.caret)
+                texpresso.restart(liveStart)
                 if texpresso.active { return notices.note(String(localized: "Live Preview Restarted")) }
             }
             // The last build's PDF comes back, and automatic builds paused for it resume.
@@ -925,9 +924,10 @@ final class ProjectModel {
     }
 
     /// The editor's text as its storage has it, which the edits that follow are edits of, and the caret in it.
-    private var liveStart: (files: [TeXpressoFile], caret: (path: String, offset: Int)?) {
-        guard editsText, let path = editor.path, path == openPath else { return ([], nil) }
-        return ([TeXpressoFile(path: path, text: editor.textView.string)], (path, editor.textView.selectedRange().location))
+    private var liveStart: TeXpressoSession.Start {
+        guard editsText, let path = editor.path, path == openPath else { return .init(files: []) }
+        return .init(files: [TeXpressoFile(path: path, text: editor.textView.string)],
+                     caret: TeXpressoCaret(path: path, offset: editor.textView.selectedRange().location))
     }
 
     func startTeXpresso() {
@@ -935,8 +935,7 @@ final class ProjectModel {
         liveIntent += 1
         if let pages = pdf.visiblePages { texpresso.view(pages) }
         // The preview is the feedback; the log opens only on a failure.
-        let start = liveStart
-        texpresso.start(files: start.files, caret: start.caret)
+        texpresso.start(liveStart)
     }
 
     func stopTeXpresso() {
@@ -958,8 +957,7 @@ final class ProjectModel {
         // Coalesce a rename's tree and main-file notifications.
         restart(&liveRestartTask, after: .milliseconds(180)) { [weak self] in
             guard let self, !closed else { return }
-            let start = liveStart
-            texpresso.restart(files: start.files, caret: start.caret)
+            texpresso.restart(liveStart)
             liveRestartTask = nil
             // Not started after all: another window has the project's session.
             if !texpresso.active { await endLivePDF() }

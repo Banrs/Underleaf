@@ -106,7 +106,7 @@ struct TeXpressoSessionTests {
     /// A fake core's session, started with `files`.
     private func started(_ files: [TeXpressoFile], haltsAfter: Duration = .seconds(1)) async -> (FakeCore, TeXpressoSession) {
         let core = FakeCore(), session = core.session(haltsAfter: haltsAfter)
-        session.start(files: files)
+        session.start(.init(files: files))
         await session.waitForPendingCalls()
         return (core, session)
     }
@@ -163,7 +163,7 @@ struct TeXpressoSessionTests {
             if command == "texpresso_start" { return await withCheckedContinuation { start = $0 } }
             return FakeCore.status(running: command != "texpresso_stop")
         }
-        session.start(files: [main])
+        session.start(.init(files: [main]))
         try await until { start != nil }
         session.edit("main.tex", NSRange(location: 3, length: 0), "e") { "olde" }
         session.edit("main.tex", NSRange(location: 4, length: 0), "r") { "older" }
@@ -246,7 +246,7 @@ struct TeXpressoSessionTests {
     @Test func theViewAndTheCaretAreToldWhenTheyChange() async throws {
         let core = FakeCore(), session = core.session()
         session.view(3...4)
-        session.start(files: [main], caret: ("main.tex", 2))
+        session.start(.init(files: [main], caret: TeXpressoCaret(path: "main.tex", offset: 2)))
         await session.waitForPendingCalls()
         #expect(core.starts.first?["view"] as? [Int] == [3, 4])
         #expect((core.starts.first?["caret"] as? [String: Any])?["offset"] as? Int == 2)
@@ -413,7 +413,7 @@ struct TeXpressoSessionTests {
         core.status = { command, _ in
             FakeCore.status(running: command == "texpresso_start", error: command == "texpresso_status" ? "TeXpresso exited (signal 11)." : nil)
         }
-        session.start(files: [main])
+        session.start(.init(files: [main]))
         await session.waitForPendingCalls()
         core.feed.send(TeXpressoEvents(seq: 1, running: false, error: "TeXpresso exited (signal 11)."))
         try await waitUntil { !ended.isEmpty }
@@ -455,7 +455,7 @@ struct TeXpressoSessionTests {
             return FakeCore.status(running: false)
         }
         session.onEnded = { _ in ended += 1 }
-        session.start(files: [])
+        session.start(.init(files: []))
         try await until { start != nil }
         session.update(TeXpressoFile(path: "main.tex", text: "pending"))
         session.close()
@@ -476,11 +476,11 @@ struct TeXpressoSessionTests {
         }
         session.onFailure = { failures += 1 }
         session.onEnded = { _ in ended += 1 }
-        session.start(files: [])
+        session.start(.init(files: []))
         await session.waitForPendingCalls()
         #expect(session.canStart && session.log == "Executable unavailable")
         #expect(failures == 1 && ended == 1)
-        session.start(files: [])
+        session.start(.init(files: []))
         await session.waitForPendingCalls()
         #expect(session.active && session.log.isEmpty)
         session.stop()
@@ -500,10 +500,10 @@ struct TeXpressoSessionTests {
         core.edit = { _ in throw replaced }
         session.onOwnershipLost = { ownershipLosses += 1 }
         session.onEnded = { _ in ended += 1 }
-        session.start(files: [main])
+        session.start(.init(files: [main]))
         await session.waitForPendingCalls()
         switch failed {
-        case "texpresso_start": session.restart(files: [])
+        case "texpresso_start": session.restart(.init(files: []))
         case "texpresso_edit": session.edit("main.tex", NSRange(location: 0, length: 0), "x") { "" }
         case "texpresso_update": session.update(TeXpressoFile(path: "main.tex", text: "old owner"))
         default: core.feed.fail(replaced)
@@ -511,7 +511,7 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
         try await waitUntil { ended == 1 }
         #expect(!session.active && session.failure != nil && ownershipLosses == 1)
-        session.restart(files: [])
+        session.restart(.init(files: []))
         session.close()
         await session.waitForPendingCalls()
         #expect(core.commands == ["texpresso_start"] + (failed == "texpresso_edit" || failed == "texpresso_wait" ? [] : [failed]))
@@ -526,9 +526,9 @@ struct TeXpressoSessionTests {
             if command == "texpresso_start", core.starts.count == 1 { return await withCheckedContinuation { first = $0 } }
             return FakeCore.status(running: command != "texpresso_stop")
         }
-        session.start(files: [])
+        session.start(.init(files: []))
         try await until { first != nil }
-        session.restart(files: [TeXpressoFile(path: "main.tex", text: "changed main")])
+        session.restart(.init(files: [TeXpressoFile(path: "main.tex", text: "changed main")]))
         first?.resume(returning: FakeCore.status(running: started))
         await session.waitForPendingCalls()
         #expect(core.starts.map { $0["session"] as? String } == (started ? [nil, "owner"] : [nil]))
@@ -539,8 +539,8 @@ struct TeXpressoSessionTests {
 
     @Test func restartCoalescesIntoAnUndispatchedExplicitStart() async {
         let core = FakeCore(), session = core.session()
-        session.start(files: [TeXpressoFile(path: "old.tex", text: "old")])
-        session.restart(files: [TeXpressoFile(path: "main.tex", text: "latest")])
+        session.start(.init(files: [TeXpressoFile(path: "old.tex", text: "old")]))
+        session.restart(.init(files: [TeXpressoFile(path: "main.tex", text: "latest")]))
         await session.waitForPendingCalls()
         #expect(core.starts.count == 1 && session.active)
         #expect(core.starts[0]["session"] == nil)
