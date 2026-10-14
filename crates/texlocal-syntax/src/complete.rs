@@ -154,7 +154,7 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
     let mut names = Vec::new();
     let mut fields = Vec::new();
     let text = FIELD.replace_all(&snippet, |c: &regex::Captures| {
-        let (whole, name) = (c.get(0).unwrap(), c.get(1).unwrap().as_str());
+        let (whole, name) = (c.get_match(), &c[1]);
         // Unnamed fields are each their own.
         let index = names
             .iter()

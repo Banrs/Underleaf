@@ -101,7 +101,7 @@ pub fn set_heading(text: &Text, caret: u32, command: &str) -> Insertion {
     let line = line.as_str();
     let (before, title, rest, marks) = match HEADING.captures(line) {
         Some(c) => {
-            let open = c.get(0).unwrap();
+            let open = c.get_match();
             let body = &line[open.end()..];
             // The title runs to the brace that closes the command's.
             let mut depth = 1;
