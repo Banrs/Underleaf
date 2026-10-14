@@ -7,13 +7,19 @@ version = "0.2.0"
 edition = "2021"
 license = "MIT"
 
+# LTO reaches the browser server's binary but not the app's core: Cargo runs
+# it for no crate type of a unit unless it can for all, and texlocal-ffi's
+# rlib, which its tests link, cannot. Measured in October 2026 through the C
+# ABI, an LTO archive was no faster on the editor's calls, and left a
+# stripped binary that linked it 1.5 MB smaller.
 [profile.release]
 codegen-units = 1
 lto = true
 strip = true
 
-# Proc macros and build scripts only run on the build machine. Stripped for
-# a macOS 26.0 target by the macOS 27 toolchain, their dylibs fail to load
-# ("mis-aligned LINKEDIT string pool"), which breaks the app's release build.
+# Proc macros and build scripts only run on the build machine. Stripped by
+# the macOS 27 toolchain for a deployment target, as Xcode hands cargo the
+# app's 27.0, their dylibs fail to load ("mis-aligned LINKEDIT string pool"),
+# which breaks the app's release build.
 [profile.release.build-override]
 strip = false
