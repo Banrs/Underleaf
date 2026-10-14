@@ -717,7 +717,7 @@ version = "0.2.0"
 dependencies = [
  "chrono",
  "flate2",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "libc",
  "regex",
  "serde",
