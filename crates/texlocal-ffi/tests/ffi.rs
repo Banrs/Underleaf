@@ -90,7 +90,7 @@ fn commands_round_trip_through_the_c_abi() {
             "analyze_project",
             Some(json!({ "id": "P", "file": "main.tex" }))
         )["ok"],
-        json!({ "outline": [{ "depth": 2, "title": "Intro", "line": 1, "file": "main.tex" }], "words": 3, "lines": 2 })
+        json!({ "outline": [{ "depth": 2, "title": "Intro", "line": 1, "file": "main.tex" }], "words": 3 })
     );
 
     // Errors come back as an envelope with the core's status, never a crash.

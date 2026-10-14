@@ -78,14 +78,13 @@ pub struct Heading {
 pub struct Analysis {
     pub outline: Vec<Heading>,
     pub words: usize,
-    pub lines: usize,
 }
 
 /// The document LaTeX reads from the main file, into the files its \input,
 /// \include and \subfile name (each once, so a loop ends): the headings in
 /// reading order, each with its file, and the words of them all. `open` is the
-/// editor's file, whose lines it counts; when the main file doesn't reach it,
-/// the document is that file alone.
+/// editor's file: when the main file doesn't reach it, the document is that
+/// file alone.
 pub fn analyze_project(root: &Path, main: &str, open: &str) -> Analysis {
     let Ok(open) = paths::rel_key(open) else {
         return Analysis::default();
@@ -93,21 +92,19 @@ pub fn analyze_project(root: &Path, main: &str, open: &str) -> Analysis {
     let key = paths::fold_case(&open);
     let mut analysis = Analysis::default();
     let mut seen = HashSet::new();
-    read(root, main, &key, &mut seen, &mut analysis);
+    read(root, main, &mut seen, &mut analysis);
     if !seen.contains(&key) {
         analysis = Analysis::default();
-        read(root, &open, &key, &mut HashSet::new(), &mut analysis);
+        read(root, &open, &mut HashSet::new(), &mut analysis);
     }
     analysis
 }
 
-fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &mut Analysis) {
+fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis) {
     let Ok(file) = paths::rel_key(file) else {
         return;
     };
-    let key = paths::fold_case(&file);
-    let is_open = key == open;
-    if !seen.insert(key) {
+    if !seen.insert(paths::fold_case(&file)) {
         return;
     }
     let Some(text) = paths::safe_path(root, &file)
@@ -117,14 +114,13 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
         return;
     };
     let text = crate::lossy_string(text);
-    let mut lines = 0;
     let mut literal: Option<String> = None;
     // CodeMirror breaks lines at CR LF, CR or LF, including a trailing break.
-    for line in text
+    for (index, line) in text
         .split('\n')
         .flat_map(|l| l.strip_suffix('\r').unwrap_or(l).split('\r'))
+        .enumerate()
     {
-        lines += 1;
         if !COMMENT_LINE.is_match(line) {
             into.words += words(line);
         }
@@ -156,7 +152,7 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
                                 .position(|l| *l == heading.as_str())
                                 .unwrap_or(2),
                             title: plain_title(title),
-                            line: lines,
+                            line: index + 1,
                             file: Some(file.clone()),
                         });
                     }
@@ -169,7 +165,7 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
                     .into_iter()
                     .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
                 {
-                    read(root, &input, open, seen, into);
+                    read(root, &input, seen, into);
                 }
             } else if let Some(environment) = m.name("literal") {
                 literal = Some(format!("\\end{{{}}}", environment.as_str()));
@@ -180,9 +176,6 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
                 code = rest;
             }
         }
-    }
-    if is_open {
-        into.lines = lines;
     }
 }
 
@@ -302,9 +295,9 @@ mod tests {
                 at("End", "main.tex", 6)
             ]
         );
-        assert_eq!((project.words, project.lines), (12, 3));
+        assert_eq!(project.words, 12);
         let loose = analyze_project(dir.path(), "main.tex", "loose.tex");
         assert_eq!(headings(&loose), [at("Loose", "loose.tex", 1)]);
-        assert_eq!((loose.words, loose.lines), (2, 2));
+        assert_eq!(loose.words, 2);
     }
 }
