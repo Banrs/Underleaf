@@ -47,7 +47,6 @@ export function chooseTexFolder() {
       pathText.textContent = listing.path;
       pathText.title = listing.path;
       badge.hidden = !listing.hasLatexmk;
-      path.classList.toggle('has-tex', listing.hasLatexmk);
       use.disabled = false;
       // The server's system has one root.
       roots.replaceChildren(el('button', {
