@@ -16,22 +16,42 @@ const HOST: &str = "127.0.0.1:7878";
 struct Fixture {
     _data: TempDir,
     _web: TempDir,
-    app: App,
+    app: Arc<App>,
+}
+
+impl Fixture {
+    /// A request with no body from the browser tab that holds the token.
+    async fn signed(&self, method: &str, target: &str) -> Response {
+        self.app.handle(authed(method, target, &[], b"")).await
+    }
+
+    /// A request with no body and no token, to this server's own name.
+    async fn bare(&self, method: &str, target: &str) -> Response {
+        self.app
+            .handle(request(method, target, &[("host", HOST)], b""))
+            .await
+    }
 }
 
 fn fixture() -> Fixture {
+    fixture_on(PORT)
+}
+
+/// A library holding the blank project P with an image, and the web UI's
+/// page, served as the app on `port`.
+fn fixture_on(port: u16) -> Fixture {
     let data = tempfile::tempdir().unwrap();
     let web = tempfile::tempdir().unwrap();
     std::fs::write(web.path().join("index.html"), "<!doctype html>").unwrap();
     texlocal_core::projects::create_project(data.path(), "P", "blank").unwrap();
     std::fs::create_dir_all(data.path().join("P/img")).unwrap();
     std::fs::write(data.path().join("P/img/a.svg"), "0123456789").unwrap();
-    let app = App::new(
+    let app = Arc::new(App::new(
         Service::new(data.path().to_path_buf()),
         web.path().to_path_buf(),
-        PORT,
+        port,
         TOKEN.into(),
-    );
+    ));
     Fixture {
         _data: data,
         _web: web,
@@ -74,8 +94,7 @@ async fn project_routes_need_the_token_header() {
         ("GET", "/__download/pdf/P"),
         ("GET", "/__download/zip/P"),
     ] {
-        let bare = request(method, target, &[("host", HOST)], b"");
-        assert_eq!(f.app.handle(bare).await.status, 401, "{target}");
+        assert_eq!(f.bare(method, target).await.status, 401, "{target}");
         let wrong = request(
             method,
             target,
@@ -93,18 +112,10 @@ async fn project_routes_need_the_token_header() {
     );
     assert_eq!(f.app.handle(cookie).await.status, 401);
     // Nor is the token in the URL: only the page reads that.
-    let query = request(
-        "POST",
-        "/api/list_projects?token=secret",
-        &[("host", HOST)],
-        b"",
-    );
-    assert_eq!(f.app.handle(query).await.status, 401);
+    let query = f.bare("POST", "/api/list_projects?token=secret").await;
+    assert_eq!(query.status, 401);
 
-    let signed = f
-        .app
-        .handle(authed("POST", "/api/list_projects", &[], b""))
-        .await;
+    let signed = f.signed("POST", "/api/list_projects").await;
     assert_eq!(signed.status, 200);
 }
 
@@ -126,24 +137,23 @@ async fn only_the_web_ui_s_own_files_go_without_the_token() {
         ("DELETE", "/__raw/P/img/a.svg"),
         ("OPTIONS", "/api/list_projects"),
     ] {
-        let bare = request(method, target, &[("host", HOST)], b"");
-        assert_eq!(f.app.handle(bare).await.status, 401, "{method} {target}");
+        assert_eq!(
+            f.bare(method, target).await.status,
+            401,
+            "{method} {target}"
+        );
     }
     // With it, a path is its decoded route however it's spelt, and a write
     // to a web file is not allowed.
-    let decoded = f
-        .app
-        .handle(authed("GET", "/%5F%5Fraw/P/img/a.svg", &[], b""))
-        .await;
+    let decoded = f.signed("GET", "/%5F%5Fraw/P/img/a.svg").await;
     assert_eq!(decoded.body, b"0123456789");
-    let put = f.app.handle(authed("PUT", "/index.html", &[], b"")).await;
+    let put = f.signed("PUT", "/index.html").await;
     assert_eq!(put.status, 405);
     // The web UI's files, wherever they are, need none.
     std::fs::create_dir(f._web.path().join("dist")).unwrap();
     std::fs::write(f._web.path().join("dist/bundle.js"), "1").unwrap();
     for target in ["/", "/index.html", "/dist/bundle.js", "/dist/%62undle.js"] {
-        let bare = request("GET", target, &[("host", HOST)], b"");
-        assert_eq!(f.app.handle(bare).await.status, 200, "{target}");
+        assert_eq!(f.bare("GET", target).await.status, 200, "{target}");
     }
 }
 
@@ -200,15 +210,11 @@ async fn nothing_from_a_project_is_served_without_the_token() {
 async fn the_web_ui_loads_without_the_token_and_keeps_its_url_to_itself() {
     let f = fixture();
     // The printed URL: the page loads, and its script takes the token.
-    let first = f
-        .app
-        .handle(request("GET", "/?token=secret", &[("host", HOST)], b""))
-        .await;
+    let first = f.bare("GET", "/?token=secret").await;
     assert_eq!(first.status, 200);
     assert!(first.header("set-cookie").is_none());
     assert_eq!(first.header("referrer-policy"), Some("no-referrer"));
-    let bare = request("GET", "/", &[("host", HOST)], b"");
-    assert_eq!(f.app.handle(bare).await.status, 200);
+    assert_eq!(f.bare("GET", "/").await.status, 200);
     // A web file is still only served to this server's own names.
     let rebound = request("GET", "/", &[("host", "evil.example:7878")], b"");
     assert_eq!(f.app.handle(rebound).await.status, 403);
@@ -255,17 +261,14 @@ async fn foreign_hosts_and_origins_are_refused_even_with_the_token() {
 #[tokio::test]
 async fn no_page_may_frame_the_app() {
     let f = fixture();
-    let index = f.app.handle(authed("GET", "/", &[], b"")).await;
+    let index = f.signed("GET", "/").await;
     assert_eq!(
         index.header("content-security-policy"),
         Some("frame-ancestors 'none'")
     );
     assert_eq!(index.header("x-frame-options"), Some("DENY"));
     // A project file keeps its sandbox, the stricter policy.
-    let raw = f
-        .app
-        .handle(authed("GET", "/__raw/P/img/a.svg", &[], b""))
-        .await;
+    let raw = f.signed("GET", "/__raw/P/img/a.svg").await;
     assert_eq!(
         raw.header("content-security-policy"),
         Some("sandbox; default-src 'none'")
@@ -289,10 +292,7 @@ async fn no_page_may_frame_the_app() {
 #[tokio::test]
 async fn commands_dispatch_to_the_service_with_json_errors() {
     let f = fixture();
-    let listed = f
-        .app
-        .handle(authed("POST", "/api/list_projects", &[], b""))
-        .await;
+    let listed = f.signed("POST", "/api/list_projects").await;
     assert_eq!(listed.status, 200);
     assert_eq!(json_body(&listed)[0]["id"], "P");
 
@@ -347,10 +347,7 @@ async fn a_blocked_command_does_not_stall_other_requests() {
         f.app
             .handle(authed("POST", "/api/read_file", &[], body.as_bytes())),
         async {
-            let listed = f
-                .app
-                .handle(authed("POST", "/api/list_projects", &[], b""))
-                .await;
+            let listed = f.signed("POST", "/api/list_projects").await;
             let _ = tx.send(());
             listed
         },
@@ -389,10 +386,7 @@ async fn uploads_arrive_raw_with_percent_encoded_metadata() {
 #[tokio::test]
 async fn project_files_are_sandboxed_and_support_ranges() {
     let f = fixture();
-    let whole = f
-        .app
-        .handle(authed("GET", "/__raw/P/img/a.svg", &[], b""))
-        .await;
+    let whole = f.signed("GET", "/__raw/P/img/a.svg").await;
     assert_eq!(whole.status, 200);
     assert_eq!(whole.body, b"0123456789");
     assert_eq!(whole.header("content-type"), Some("image/svg+xml"));
@@ -437,10 +431,7 @@ async fn project_files_are_sandboxed_and_support_ranges() {
         .await;
     assert_eq!((unknown.status, unknown.body.len()), (200, 10));
 
-    let escape = f
-        .app
-        .handle(authed("GET", "/__raw/P/..%2F..%2Fsecret", &[], b""))
-        .await;
+    let escape = f.signed("GET", "/__raw/P/..%2F..%2Fsecret").await;
     assert_ne!(escape.status, 200);
 }
 
@@ -448,7 +439,7 @@ async fn project_files_are_sandboxed_and_support_ranges() {
 async fn only_regular_files_are_served() {
     let f = fixture();
     for target in ["/__raw/P/img", "/__raw/P/img/missing.png"] {
-        let response = f.app.handle(authed("GET", target, &[], b"")).await;
+        let response = f.signed("GET", target).await;
         assert_eq!(response.status, 404, "{target}");
         assert_eq!(
             response.header("content-security-policy"),
@@ -456,17 +447,17 @@ async fn only_regular_files_are_served() {
             "{target}"
         );
     }
-    let no_pdf = f.app.handle(authed("GET", "/__pdf/P", &[], b"")).await;
+    let no_pdf = f.signed("GET", "/__pdf/P").await;
     assert_eq!(no_pdf.status, 404);
-    let no_project = f.app.handle(authed("GET", "/__pdf/Q", &[], b"")).await;
+    let no_project = f.signed("GET", "/__pdf/Q").await;
     assert_eq!(no_project.status, 404);
 
     std::fs::create_dir(f._web.path().join("dist")).unwrap();
     for target in ["/dist", "/missing.js"] {
-        let response = f.app.handle(authed("GET", target, &[], b"")).await;
+        let response = f.signed("GET", target).await;
         assert_eq!(response.status, 404, "{target}");
     }
-    let head = f.app.handle(authed("HEAD", "/index.html", &[], b"")).await;
+    let head = f.signed("HEAD", "/index.html").await;
     assert_eq!(head.status, 200);
 }
 
@@ -492,12 +483,12 @@ async fn the_compiled_pdf_is_served_in_ranges_without_the_sandbox() {
 #[tokio::test]
 async fn web_assets_stay_inside_the_web_directory() {
     let f = fixture();
-    let index = f.app.handle(authed("GET", "/", &[], b"")).await;
+    let index = f.signed("GET", "/").await;
     assert_eq!(index.status, 200);
     assert_eq!(index.header("content-type"), Some("text/html"));
 
     for target in ["/../Cargo.toml", "/%2E%2E/Cargo.toml", "/..%2FCargo.toml"] {
-        let escaped = f.app.handle(authed("GET", target, &[], b"")).await;
+        let escaped = f.signed("GET", target).await;
         assert_eq!(escaped.status, 404, "{target}");
     }
 }
@@ -505,10 +496,7 @@ async fn web_assets_stay_inside_the_web_directory() {
 #[tokio::test]
 async fn exports_download_as_attachments() {
     let f = fixture();
-    let zip = f
-        .app
-        .handle(authed("GET", "/__download/zip/P", &[], b""))
-        .await;
+    let zip = f.signed("GET", "/__download/zip/P").await;
     assert_eq!(zip.status, 200);
     assert_eq!(zip.header("content-type"), Some("application/zip"));
     assert_eq!(
@@ -517,10 +505,7 @@ async fn exports_download_as_attachments() {
     );
     assert_eq!(&zip.body[..2], b"PK");
 
-    let pdf = f
-        .app
-        .handle(authed("GET", "/__download/pdf/P", &[], b""))
-        .await;
+    let pdf = f.signed("GET", "/__download/pdf/P").await;
     assert_eq!(pdf.status, 404);
 }
 
@@ -531,14 +516,12 @@ async fn start() -> (Fixture, u16) {
 }
 
 async fn start_with(max_body: usize) -> (Fixture, u16) {
-    let f = fixture();
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
     let port = listener.local_addr().unwrap().port();
-    let data = f._data.path().to_path_buf();
-    let web = f._web.path().to_path_buf();
-    let app = Arc::new(App::new(Service::new(data), web, port, TOKEN.into()));
+    let f = fixture_on(port);
+    let app = Arc::clone(&f.app);
     tokio::spawn(serve(app, listener, max_body, std::future::pending()));
     (f, port)
 }
