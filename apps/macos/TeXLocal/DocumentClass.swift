@@ -11,8 +11,9 @@ extension DocumentClass {
     /// The class named outside comments, if any.
     init?(in text: String) {
         let named = { (text: Substring) in
-            // A comment runs from a % that isn't escaped to the line's end.
-            text.replacing(/(^|[^\\])%[^\n]*/.anchorsMatchLineEndings()) { $0.1 }
+            // A comment runs from a % that isn't escaped to the line's end, however the line ends:
+            // `.` stops at a line break, where `[^\n]` took a CRLF, one Character, for the comment's.
+            text.replacing(/(^|[^\\])%.*/.anchorsMatchLineEndings()) { $0.1 }
                 .firstMatch(of: /\\documentclass\s*(?:\[([^\]]*)\])?\s*\{\s*([^}\s]+)\s*\}/)
         }
         // LaTeX takes the class in the preamble, so the text up to the first \begin{document}
