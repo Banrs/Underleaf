@@ -27,29 +27,22 @@ copyInto('web/dist/fonts-jbm', 'node_modules/@fontsource/jetbrains-mono/files', 
   'jetbrains-mono-latin-700-normal.woff2',
 ]);
 
-const common = {
-  bundle: true,
-  format: 'esm',
-  outdir: at('web/dist'),
-  minify: !watch,
-  // Sourcemap only in dev/watch — the production map is ~5MB of dead weight.
-  sourcemap: watch,
-  logLevel: 'info',
-};
 // Splitting puts each dynamic import in chunks/: the workspace (CodeMirror)
 // on the first project open, pdf.js with the first PDF and KaTeX (whose
 // katex.min.css editor.js links then) with the first equation preview, so
 // the home screen parses none of them. Hashed names: clear the previous build's.
 fs.rmSync(at('web/dist/chunks'), { recursive: true, force: true });
-// Remove bundles from the retired WinUI embedded pages in existing checkouts.
-for (const name of ['embed-editor.js', 'embed-pdf.js']) {
-  fs.rmSync(at('web/dist', name), { force: true });
-}
 const bundle = {
-  ...common,
   entryPoints: { bundle: at('web/src/main.js') },
+  bundle: true,
+  format: 'esm',
+  outdir: at('web/dist'),
   splitting: true,
   chunkNames: 'chunks/[name]-[hash]',
+  minify: !watch,
+  // Sourcemap only in dev/watch — the production map is ~5MB of dead weight.
+  sourcemap: watch,
+  logLevel: 'info',
 };
 
 if (watch) {

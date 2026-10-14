@@ -36,7 +36,6 @@
   --fill-2: rgba(0, 0, 0, 0.08);
   --fill-3: rgba(0, 0, 0, 0.05);
   --fill-4: rgba(0, 0, 0, 0.03);
-  --fill-5: rgba(0, 0, 0, 0.02);
   --separator: rgba(60, 60, 67, 0.29);
 
   --bg-window: #ffffff;
@@ -54,7 +53,6 @@
   --orange: #ff8d28;
   --yellow: #ffcc00;
   --green: #34c759;
-  --gray: #8e8e93;
   /* The hues above are for fills and icons; status text uses these darker
      ones (4.5:1 on white and on their own 16% tint), and white labels sit on
      --red-fill. */
@@ -126,7 +124,6 @@
   --fill-2: rgba(255, 255, 255, 0.08);
   --fill-3: rgba(255, 255, 255, 0.05);
   --fill-4: rgba(255, 255, 255, 0.03);
-  --fill-5: rgba(255, 255, 255, 0.02);
   --separator: rgba(255, 255, 255, 0.15);
 
   --bg-window: #1e1e1e;
@@ -139,7 +136,6 @@
   --orange: #ff9230;
   --yellow: #ffd600;
   --green: #30d158;
-  --gray: #98989d;
   --red-text: #ff6961;   /* --red is 4.1:1 on its own tint here */
   --orange-text: var(--orange);
   --green-text: var(--green);
@@ -441,7 +437,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .notice-icon { color: var(--orange); }
 .notice-icon svg { width: 15px; height: 15px; }
-.notice code { font-family: var(--mono); font-size: var(--fs-small); background: var(--fill-3); padding: 1px 4px; border-radius: 4px; }
 .notice-link { padding: 0; color: var(--accent); font-weight: 500; cursor: pointer; }
 .notice-link:hover { text-decoration: underline; }
 
@@ -538,7 +533,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   position: relative;
   overflow: hidden;
   background: var(--bg-recessed);
-  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.16s ease;
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Section headers share the existing 4px rhythm and 28px action targets. */
@@ -644,7 +639,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   /* Nesting rails are per-row background gradients set in sidebar.js, so hover
      uses background-COLOR to layer over them rather than erase them. */
   background-repeat: no-repeat;
-  display: flex;
 }
 .outline-row .row-label { min-width: 0; }
 .outline-row:hover { background-color: var(--fill-4); }
@@ -809,10 +803,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .location-crumb { display: inline-flex; align-items: center; gap: var(--sp-1); min-width: 0; height: 22px; padding: 0 var(--sp-1); border-radius: var(--r-small); }
 .location-crumb .icon svg { width: 14px; height: 14px; }
 .location-text { overflow: hidden; text-overflow: ellipsis; }
-.location-menu { color: var(--label); flex: 0 1 auto; }
+.location-menu { color: var(--label); }
 .location-menu.secondary { color: var(--label-2); }
 .location-menu:hover, .location-menu[aria-expanded="true"] { background: var(--fill-2); }
-.location-project, .location-folder { flex: 0 1 auto; }
 .location-chevron { display: inline-flex; flex: none; color: var(--label-3); }
 .location-chevron svg { width: 12px; height: 12px; }
 
@@ -831,6 +824,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .page-indicator:empty { display: none; }
 .pdf-pane .toolbar-separator:has(+ .pdf-freshness[hidden] + .page-indicator:empty) { display: none; }
 .page-indicator { padding: 0 var(--sp-2); font-size: var(--fs-control); color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pdf-freshness {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--orange-text);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
 .zoom-btn { min-width: 68px; }
 .zoom-value { font-variant-numeric: tabular-nums; }
 [data-command="view.toggleLogs"] { position: relative; }
@@ -947,13 +949,24 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .pdf-text-layer mark.current { background: color-mix(in srgb, var(--accent) 70%, transparent); }
 
 .pdf-find {
+  position: absolute;
+  top: var(--preview-toolbar-height, var(--h-toolbar));
+  left: 0;
+  right: 0;
+  z-index: 4;
   display: flex;
   align-items: center;
   gap: var(--sp-1);
-  flex: none;
+  min-height: 36px;
   padding: var(--sp-1) var(--sp-2);
   background: var(--bg-content);
   box-shadow: inset 0 -1px 0 var(--separator);
+}
+/* The scroller normally reserves only the toolbar. When Find is open, reserve
+   its row as well so page content and hit targets never sit underneath it. */
+.pdf-pane:has(> .pdf-find:not([hidden])) .pdf-scroll,
+.pdf-pane:has(> .pdf-find:not([hidden])) .logs {
+  padding-top: calc(var(--preview-toolbar-height, var(--h-toolbar)) + 36px + var(--sp-3));
 }
 .pdf-find input {
   flex: 1;
@@ -1274,7 +1287,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .workspace-switcher .btn { flex: 1; }
 .workspace-switcher [aria-pressed="true"] { background: var(--fill-2); color: var(--label); }
 .sidebar-backdrop { position: absolute; inset: 0; z-index: 20; background: rgb(0 0 0 / 20%); }
-.layout-overlay > .sidebar { overflow-y: auto; position: absolute; inset: 0 auto 0 0; z-index: 21; max-width: calc(100% - 32px); background: var(--bg-recessed); box-shadow: var(--shadow-pane); }
+.layout-overlay > .sidebar { overflow-y: auto; position: absolute; inset: 0 auto 0 0; z-index: 21; max-width: calc(100% - 32px); box-shadow: var(--shadow-pane); }
 .floating .layout-overlay > .sidebar { margin: var(--sp-2); bottom: var(--sp-2); }
 .layout-overlay .icon-btn.sidebar-toggle-fallback { display: inline-flex; }
 .layout-overlay > .main-column { width: 100%; }
@@ -1284,7 +1297,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .layout-compact .titlebar > .icon-btn { flex: none; }
 .layout-compact .titlebar { flex-wrap: wrap; height: auto; min-height: var(--h-titlebar); padding-block: var(--sp-1); }
 .layout-compact .window-title { flex: 1; min-width: 120px; }
-.pdf-pane > .toolbar { flex-wrap: wrap; height: auto; min-height: var(--h-toolbar); row-gap: var(--sp-1); padding-block: var(--sp-2); }
+.pdf-pane > .toolbar { flex-wrap: wrap; row-gap: var(--sp-1); padding-block: var(--sp-2); }
 .layout-compact .pdf-pane .toolbar .spacer { display: none; }
 .divider:focus-visible, .pane-resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; z-index: 2; }
 .pane-resize-handle { position: absolute; inset: 0 -4px; cursor: col-resize; }
