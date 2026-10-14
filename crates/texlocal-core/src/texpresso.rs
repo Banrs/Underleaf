@@ -73,13 +73,6 @@ pub struct Status {
     pub error: Option<String>,
     pub revision: u64,
     pub session: Option<String>,
-    /// The whole document as TeXpresso last wrote it, when its build writes one
-    /// (TEXPRESSO_PDF_OUTPUT), and how many times it has.
-    pub pdf: Option<String>,
-    #[serde(rename = "pdfVersion")]
-    pub pdf_version: u64,
-    /// The page protocol the build speaks (`Events::live`).
-    pub live: Option<u32>,
 }
 
 /// A page typeset again, alone in a PDF that is complete on disk.
@@ -98,7 +91,7 @@ pub struct PageUpdate {
 #[derive(Debug, Clone, Serialize)]
 pub struct Document {
     pub path: String,
-    /// `Status::pdf_version` with this document.
+    /// Rises by one with each document the session writes.
     pub version: u64,
     pub serial: u64,
     pub pages: u32,
@@ -136,7 +129,7 @@ pub struct Events {
     pub running: bool,
     pub error: Option<String>,
     /// 1 from a build that sends pages as they change; None from one that only writes the
-    /// whole document, known once `Status::pdf_version` is above 0.
+    /// whole document, known once the first document has come.
     pub live: Option<u32>,
     /// `Status::revision`: when it has risen, the log or output may have changed.
     pub revision: u64,
@@ -376,10 +369,6 @@ struct Session {
     revision: Arc<AtomicU64>,
 }
 impl Session {
-    /// Where the document is, once TeXpresso has written it.
-    fn written_pdf(&self, state: &State) -> Option<&Path> {
-        self.pdf.as_deref().filter(|_| state.pdf_version > 0)
-    }
     fn bump(&self, state: &mut State) {
         state.revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
     }
@@ -440,11 +429,6 @@ impl Session {
             error: state.error.clone(),
             revision: state.revision,
             session: Some(self.token.clone()),
-            pdf: self
-                .written_pdf(&state)
-                .map(|pdf| pdf.to_string_lossy().into_owned()),
-            pdf_version: state.pdf_version,
-            live: state.live,
         }
     }
     fn events(&self, state: &State, after: u64) -> Events {
@@ -552,8 +536,9 @@ impl Manager {
         let session = self.owned(&fs::canonicalize(root)?, token)?;
         let state = lock(&session.state);
         session
-            .written_pdf(&state)
-            .filter(|pdf| pdf.with_extension("synctex").is_file())
+            .pdf
+            .as_deref()
+            .filter(|pdf| state.pdf_version > 0 && pdf.with_extension("synctex").is_file())
             .map(Path::to_path_buf)
             .ok_or_else(|| {
                 CoreError::not_found("TeXpresso hasn't written a document to sync with yet")
@@ -600,9 +585,6 @@ impl Manager {
             error: None,
             revision: self.revision.load(Ordering::Relaxed),
             session: None,
-            pdf: None,
-            pdf_version: 0,
-            live: None,
         }
     }
     /// Inspection does not acquire ownership or renew the viewer's lease.
@@ -1317,6 +1299,14 @@ mod tests {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
     }
+    /// The first document the session hands its client.
+    async fn first_document(manager: &Manager, root: &Path, token: &str) -> Document {
+        let mut events = manager.wait(root, token, 0, SOON).await.unwrap();
+        while events.pdf.is_none() {
+            events = manager.wait(root, token, events.seq, SOON).await.unwrap();
+        }
+        events.pdf.unwrap()
+    }
     #[tokio::test]
     async fn persistent_vfs_protocol_validates_paths_and_reconstructs_unicode() {
         let (tmp, root, path_env) = setup();
@@ -1345,10 +1335,8 @@ mod tests {
             .unwrap();
         assert!(first.running && first.available);
         let token = first.session.as_deref().unwrap();
-        let live = || manager.status(&root, None, &path_env).unwrap();
-        until(|| live().pdf_version == 1).await;
         // The session's own, outside the project: never a build's output.
-        let pdf = PathBuf::from(live().pdf.unwrap());
+        let pdf = PathBuf::from(first_document(&manager, &root, token).await.path);
         assert!(pdf.ends_with("live.pdf") && !pdf.starts_with(fs::canonicalize(&root).unwrap()));
         assert_eq!(
             fs::read(root.join(BUILD_DIR).join("texpresso-live.pdf")).unwrap(),
@@ -1455,14 +1443,14 @@ mod tests {
             .start(&root, &[], None, &path_env, Some(&Pane::default()))
             .await
             .unwrap();
-        until(|| manager.status(&root, None, &path_env).unwrap().pdf_version == 1).await;
-        let pdf = PathBuf::from(manager.status(&root, None, &path_env).unwrap().pdf.unwrap());
+        let token = live.session.as_deref().unwrap();
+        let pdf = PathBuf::from(first_document(&manager, &root, token).await.path);
         let folder = pdf.parent().unwrap().to_owned();
         // In a shared temporary folder, for its owner alone.
         let mode = fs::metadata(&folder).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
         manager
-            .stop_request(&root, live.session.as_deref(), &path_env)
+            .stop_request(&root, Some(token), &path_env)
             .await
             .unwrap();
         assert!(!folder.exists());
@@ -1537,21 +1525,17 @@ mod tests {
             .trim()
             .parse()
             .unwrap();
+        let token = owner.session.as_deref().unwrap();
         manager
-            .update(
-                &root,
-                "main.tex",
-                "EXIT_STUB",
-                owner.session.as_deref().unwrap(),
-                false,
-            )
+            .update(&root, "main.tex", "EXIT_STUB", token, false)
             .await
             .unwrap();
         until(|| !manager.status(&root, None, &path_env).unwrap().running).await;
         let status = manager.status(&root, None, &path_env).unwrap();
         assert_eq!(status.output, "ready");
         // Not asked for, the stub's document isn't offered.
-        assert!(status.pdf.is_none() && status.pdf_version == 0);
+        let events = manager.wait(&root, token, 0, Duration::ZERO).await.unwrap();
+        assert!(events.pdf.is_none() && !events.running);
         assert!(status.error.unwrap().contains("exited"));
         // Killed descendants can remain zombies briefly while init reaps them.
         until(|| {
@@ -1993,8 +1977,6 @@ mod tests {
         assert!(events.pages.is_empty());
         let done = events.done.unwrap();
         assert_eq!((done.pages, done.run.as_str()), (4, "complete"));
-        let status = manager.status(&root, Some(&token), &path_env).unwrap();
-        assert_eq!((status.live, status.pdf_version), (Some(1), 2));
 
         // A page file from outside the session's folder is nobody's page.
         let session = manager.held(&token).unwrap();
