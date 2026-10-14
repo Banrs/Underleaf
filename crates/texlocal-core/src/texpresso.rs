@@ -8,7 +8,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -397,9 +396,7 @@ impl Session {
         let mut state = lock(&self.state);
         if let Some(pid) = state.pid.take() {
             // The viewer starts an engine: stopping just its parent leaks it.
-            unsafe {
-                libc::kill(-(pid as i32), libc::SIGKILL);
-            }
+            crate::compile::kill_pid_tree(pid);
             remove_pdf_folder(self.pdf.as_deref());
             state.error = error;
             self.event(&mut state);
@@ -662,7 +659,7 @@ impl Manager {
             }
             None => None,
         };
-        let mut command = std::process::Command::new(&executable);
+        let mut command = tokio::process::Command::new(&executable);
         command
             .args(["-json", "-texlive", "-I"])
             .arg(&build)
@@ -672,7 +669,8 @@ impl Manager {
             .process_group(0)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
         if let Some(pdf) = &pdf {
             command.env("TEXPRESSO_PDF_OUTPUT", pdf);
         }
@@ -691,8 +689,6 @@ impl Manager {
                 Ok(())
             });
         }
-        let mut command = tokio::process::Command::from(command);
-        command.kill_on_drop(true);
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(err) => {

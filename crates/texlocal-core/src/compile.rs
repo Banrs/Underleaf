@@ -106,9 +106,10 @@ pub fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
 
 // ---------- process plumbing ----------
 
-/// Kill the process group, including the engines latexmk started. Each tool
-/// leads a group of its own (base_command), so its pid names the group.
-fn kill_pid_tree(pid: u32) {
+/// Kill the process group, including the engines latexmk or TeXpresso
+/// started. Each tool leads a group of its own (base_command, and TeXpresso's
+/// start), so its pid names the group.
+pub(crate) fn kill_pid_tree(pid: u32) {
     unsafe {
         libc::killpg(pid as i32, libc::SIGKILL);
     }
