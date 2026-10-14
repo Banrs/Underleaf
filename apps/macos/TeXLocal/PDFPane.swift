@@ -66,8 +66,6 @@ struct PDFPane: View {
 /// The PDF's find bar. Its pane accessory keeps the field ready to focus.
 struct PDFFindBar: View {
     @Bindable var controller: PDFController
-    /// The count's announcement, waiting out the typing and stepping that change it.
-    @State private var announcement: Task<Void, Never>?
 
     var body: some View {
         // For the query the matches are for, which the field can be ahead of.
@@ -93,15 +91,12 @@ struct PDFFindBar: View {
         }
         .lineLimit(1)
         // VoiceOver's focus stays in the field, so it hears the count, or that there is none,
-        // from here, once it has settled.
-        .onChange(of: label) { _, label in
-            announcement?.cancel()
-            guard !label.isEmpty else { return }
-            restart(&announcement, after: .milliseconds(500)) {
-                var spoken = AttributedString(label)
-                spoken.accessibilitySpeechAnnouncementPriority = .low
-                AccessibilityNotification.Announcement(spoken).post()
-            }
+        // from here, once it has settled: the typing and stepping that change it cancel the wait.
+        .task(id: label) {
+            guard !label.isEmpty, (try? await Task.sleep(for: .milliseconds(500))) != nil else { return }
+            var spoken = AttributedString(label)
+            spoken.accessibilitySpeechAnnouncementPriority = .low
+            AccessibilityNotification.Announcement(spoken).post()
         }
         .task(id: controller.findText) {
             try? await Task.sleep(for: PDFFind.debounce)
