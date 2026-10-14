@@ -510,13 +510,9 @@ final class ProjectFlowTests {
     /// Overlapping rename/settings requests leave the build and disk settings in agreement.
     @Test(.timeLimit(.minutes(2)))
     func aRenameAndSettingsChangesKeepTheLatestMainFile() async throws {
-        await app.refresh()
-        if app.tex?.available != true { try Test.cancel("No TeX") }
         let source = "\\documentclass{article}\\begin{document}x\\end{document}"
-        let (info, folder) = try await project(source)
-        try await Core.shared.perform("write_file", ["id": info.id, "path": "second.tex", "text": source])
-        await app.open(info.id)
-        let project = try #require(app.project)
+        let project = try await openedWithTeX(source), folder = Core.libraryFolder.appending(path: project.id)
+        try await Core.shared.perform("write_file", ["id": project.id, "path": "second.tex", "text": source])
         await project.compile()
         #expect(project.result?.ok == true && project.pdfURL?.lastPathComponent == "main.pdf")
 
@@ -531,7 +527,7 @@ final class ProjectFlowTests {
                 && project.pdfURL?.lastPathComponent == "second.pdf"
         }
 
-        let persisted = try await Core.shared.call("get_settings", ["id": info.id], as: ProjectSettings.self)
+        let persisted = try await Core.shared.call("get_settings", ["id": project.id], as: ProjectSettings.self)
         #expect(project.settings?.mainFile == "second.tex" && persisted.mainFile == "second.tex")
         #expect(project.settings?.stopOnFirstError == true && persisted.stopOnFirstError)
         #expect(project.result?.ok == true)
@@ -558,9 +554,7 @@ final class ProjectFlowTests {
     /// The outline hears of a scroll only as another heading reaches the top, not on every line.
     @Test(.timeLimit(.minutes(1)))
     func theOutlineFollowsTheTopHeadingOnly() async throws {
-        let info = try await project("\\section{A}\n1\n2\n\\section{B}\n3").info
-        await app.open(info.id)
-        let project = try #require(app.project)
+        let project = try await opened("\\section{A}\n1\n2\n\\section{B}\n3").project
         try await waitUntil { project.outline.count == 2 }
         let scrolled = project.editor.onScroll
         scrolled(2)
