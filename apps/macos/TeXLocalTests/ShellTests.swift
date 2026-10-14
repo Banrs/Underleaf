@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import TeXLocal
 
@@ -247,5 +248,36 @@ struct ShellTests {
         app.searchFocusToken = 3
         try await Task.sleep(for: .milliseconds(100))
         #expect(all == [0, 1] && later == [1])
+    }
+
+    /// A space typed at the end of a new project's name moves the name at once, and a name
+    /// longer than its row scrolls in the row, beside its label and inside the sheet.
+    @Test func aNewProjectsNameShowsASpaceTypedAtItsEnd() async throws {
+        let sheet = NSHostingView(rootView: NewProjectSheet(template: "article", taken: []).environment(AppModel()))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: sheet.fittingSize), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = sheet
+        func field(_ view: NSView) -> NSTextField? {
+            (view as? NSTextField).flatMap { $0.isEditable ? $0 : nil } ?? view.subviews.lazy.compactMap(field).first
+        }
+        try await waitUntil { field(sheet) != nil }
+        let name = try #require(field(sheet))
+        window.makeFirstResponder(name)
+        let editor = try #require(name.currentEditor() as? NSTextView)
+        /// Where the name starts, in the window.
+        func start() -> CGFloat {
+            sheet.layoutSubtreeIfNeeded()
+            return window.convertFromScreen(editor.firstRect(forCharacterRange: NSRange(location: 0, length: 1), actualRange: nil)).minX
+        }
+        let untitled = start()
+        editor.insertText(" ", replacementRange: NSRange(location: 8, length: 0))
+        try await waitUntil { start() < untitled - 2 }
+        editor.insertText(String(repeating: "m", count: 80), replacementRange: editor.selectedRange())
+        try await waitUntil { name.frame.width > 150 }
+        // Under its label, the field would start at the row's leading edge.
+        let long = name.convert(name.bounds, to: sheet)
+        #expect(sheet.bounds.contains(long) && long.minX > sheet.bounds.width / 3)
     }
 }

@@ -383,13 +383,36 @@ struct NewProjectSheet: View {
                     action: "Create", enabled: !trimmed.isEmpty, failure: { "Couldn’t Create “\(trimmed)”" }) {
             try await app.create(name: trimmed, template: template)
         } fields: {
-            TextField("Name", text: $name)
-                .focused($nameFocused)
+            // At a grouped form's trailing edge AppKit shows a space typed last only once a letter
+            // follows (27.2), so the text leads in a field as wide as the name: the row keeps it
+            // at its trailing edge, and each space moves the name as it is typed.
+            LabeledContent("Name") {
+                NameWidth {
+                    TextField("Name", text: $name, prompt: Text("Required"))
+                        .labelsHidden()
+                        .multilineTextAlignment(.leading)
+                        .focused($nameFocused)
+                }
+            }
             Picker("Template", selection: $template) {
                 ForEach(ProjectTemplate.all) { Text($0.title).tag($0.id) }
             }
         }
         .defaultFocus($nameFocused, true)
+    }
+}
+
+/// A field as wide as its text, up to the room the row offers, where a field takes all it is
+/// offered. Asked for its ideal it claims none, so a long name scrolls in its row and the form
+/// never moves it under its label as it is typed.
+private struct NameWidth: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let text = subviews[0].sizeThatFits(.unspecified).width
+        return subviews[0].sizeThatFits(ProposedViewSize(width: min(text, proposal.width ?? 0), height: proposal.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }
 
