@@ -555,7 +555,8 @@ impl Service {
                 Ok(json!({ "text": crate::lossy_string(bytes) }))
             }
             // `text` is required: a call that lost it must fail, not empty
-            // the file.
+            // the file. The answer is the file's stamp, for the Mac app to
+            // know its own save's change event without reading the file.
             "write_file" => {
                 let (path, text) = (s("path")?, s("text")?);
                 out(self.with_project(s("id")?, |root| {

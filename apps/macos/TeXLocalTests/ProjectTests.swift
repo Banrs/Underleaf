@@ -1,5 +1,6 @@
 import AppKit
 import os
+import PDFKit
 import Testing
 @testable import TeXLocal
 
@@ -55,6 +56,22 @@ final class FolderWatcherTests {
         try "two".write(to: url, atomically: false, encoding: .utf8)
         try await waitUntil { changes().count > deleted }
         _ = watcher
+    }
+
+    /// What a save leaves is a file at its path, spelt as the disk spells it; a link, a folder,
+    /// another spelling or nothing is not.
+    @Test func aFileIsARegularFileAtItsOwnSpelling() throws {
+        let watcher = FolderWatcher(folder: folder) { _ in }
+        try "text".write(to: folder.appending(path: "main.tex"), atomically: false, encoding: .utf8)
+        try FileManager.default.createDirectory(at: folder.appending(path: "chapters"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: folder.appending(path: "link.tex"),
+                                                   withDestinationURL: folder.appending(path: "main.tex"))
+        #expect(watcher.hasFile("main.tex"))
+        #expect(!watcher.hasFile("link.tex") && !watcher.hasFile("chapters") && !watcher.hasFile("gone.tex"))
+        // A volume that ignores case finds the file by this name too.
+        if FileManager.default.fileExists(atPath: folder.appending(path: "MAIN.tex").path(percentEncoded: false)) {
+            #expect(!watcher.hasFile("MAIN.tex"))
+        }
     }
 
     @Test func anItemAddedInASubfolderIsStructural() async throws {
@@ -339,6 +356,21 @@ final class ProjectFlowTests {
         #expect(app.project == nil && app.alert != nil && !app.isOpening)
     }
 
+    /// A project whose PDF is built opens with it shown, and with the build panel as it was left:
+    /// the PDF loads as the main file is read, and is there when the workspace appears.
+    @Test(.timeLimit(.minutes(1)))
+    func aProjectOpensOnItsBuiltPDF() async throws {
+        let (info, folder) = try await project()
+        try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
+        #expect(try textPDF(["one", "two", "three"]).write(to: folder.appending(path: "build/main.pdf")))
+        let saved = SavedWorkspace(project: info.id, file: nil, line: 1, buildPanel: true, pdfPage: 2, pdfZoom: nil)
+        await app.open(info.id, restoring: saved)
+        let project = try #require(app.project)
+        #expect(project.initialLoadComplete && project.openPath == info.mainFile && project.panel.shown)
+        #expect(project.hasPDF && project.pdf.view.document?.pageCount == 3)
+        await app.close()
+    }
+
     /// An item that can't be copied in and a rename the core refuses are each an alert that names
     /// it: nothing is left opening, and the recents keep what they had.
     @Test(.timeLimit(.minutes(1)))
@@ -617,6 +649,9 @@ final class ProjectFlowTests {
         try files.createDirectory(at: folder.appending(path: "parts"), withIntermediateDirectories: false)
         try files.moveItem(at: folder.appending(path: "notes.tex"), to: folder.appending(path: "parts/notes.tex"))
         try await waitUntil(timeout: .seconds(5)) { paths().contains("parts/notes.tex") && !paths().contains("notes.tex") }
+        // Only the spelling changes, which a volume that ignores case finds under either.
+        try files.moveItem(at: folder.appending(path: "parts/notes.tex"), to: folder.appending(path: "parts/Notes.tex"))
+        try await waitUntil(timeout: .seconds(5)) { paths().contains("parts/Notes.tex") && !paths().contains("parts/notes.tex") }
         try files.removeItem(at: folder.appending(path: "parts"))
         try await waitUntil(timeout: .seconds(5)) { !paths().contains("parts") }
         await app.close()
@@ -686,6 +721,23 @@ final class ProjectFlowTests {
         await project.revertToDisk("main.tex")
         #expect(project.editor.textView.string == "theirs again" && onDisk() == "theirs again")
         #expect(project.diskConflict == nil && !project.dirty && app.alert == nil)
+        await app.close()
+    }
+
+    /// After a save here, another app's change of the same length, in place, still reaches the
+    /// editor: the save's own change is known by the file's stamp, which a later write alters.
+    @Test(.timeLimit(.minutes(1)))
+    func aChangeOfTheSameLengthAfterASaveIsTaken() async throws {
+        let (project, folder) = try await opened("original")
+        #expect(project.editor.perform(.bold))
+        #expect(await project.save() && !project.dirty)
+        let saved = project.editor.textView.string
+        // Past the save's own change, which leaves the editor as it is.
+        try await Task.sleep(for: .seconds(1))
+        #expect(project.editor.textView.string == saved && project.diskConflict == nil)
+        let theirs = String(saved.reversed())
+        try theirs.write(to: folder.appending(path: "main.tex"), atomically: false, encoding: .utf8)
+        try await waitUntil(timeout: .seconds(5)) { project.editor.textView.string == theirs }
         await app.close()
     }
 

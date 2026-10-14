@@ -402,13 +402,14 @@ pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
         return Err(CoreError::conflict("Already exists"));
     }
     if dir {
-        Ok(fs::create_dir_all(&abs)?)
+        fs::create_dir_all(&abs)?;
     } else {
-        write_creating(&abs, b"")
+        write_creating(&abs, b"")?;
     }
+    Ok(())
 }
 
-pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<(), CoreError> {
+pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<atomic::Stamp, CoreError> {
     if let Some(parent) = abs.parent() {
         fs::create_dir_all(parent)?;
     }

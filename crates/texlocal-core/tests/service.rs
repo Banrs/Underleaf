@@ -79,6 +79,21 @@ async fn dispatch_round_trips_project_and_file_commands() {
     assert!(tree.as_array().unwrap().iter().any(|n| n["name"] == "sec"));
 }
 
+/// The Mac app keeps it to know its own save's change event by a stat.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_write_answers_the_stamp_of_the_file_it_wrote() {
+    use std::os::unix::fs::MetadataExt;
+    let (dir, service) = with_project();
+    let args = json!({ "id": "P", "path": "main.tex", "text": "saved" });
+    let stamp = call(&service, "write_file", args).await;
+    let meta = std::fs::metadata(dir.path().join("P/main.tex")).unwrap();
+    assert_eq!(
+        stamp,
+        json!({ "inode": meta.ino(), "size": 5, "seconds": meta.mtime(), "nanoseconds": meta.mtime_nsec() })
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn settings_patches_and_main_file_renames_preserve_both_changes() {
     let (_dir, service) = with_project();
