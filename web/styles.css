@@ -831,6 +831,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .page-indicator:empty { display: none; }
 .pdf-pane .toolbar-separator:has(+ .pdf-freshness[hidden] + .page-indicator:empty) { display: none; }
 .page-indicator { padding: 0 var(--sp-2); font-size: var(--fs-control); color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pdf-freshness {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--orange-text);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
 .zoom-btn { min-width: 68px; }
 .zoom-value { font-variant-numeric: tabular-nums; }
 [data-command="view.toggleLogs"] { position: relative; }
@@ -947,13 +956,24 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .pdf-text-layer mark.current { background: color-mix(in srgb, var(--accent) 70%, transparent); }
 
 .pdf-find {
+  position: absolute;
+  top: var(--preview-toolbar-height, var(--h-toolbar));
+  left: 0;
+  right: 0;
+  z-index: 4;
   display: flex;
   align-items: center;
   gap: var(--sp-1);
-  flex: none;
+  min-height: 36px;
   padding: var(--sp-1) var(--sp-2);
   background: var(--bg-content);
   box-shadow: inset 0 -1px 0 var(--separator);
+}
+/* The scroller normally reserves only the toolbar. When Find is open, reserve
+   its row as well so page content and hit targets never sit underneath it. */
+.pdf-pane:has(> .pdf-find:not([hidden])) .pdf-scroll,
+.pdf-pane:has(> .pdf-find:not([hidden])) .logs {
+  padding-top: calc(var(--preview-toolbar-height, var(--h-toolbar)) + 36px + var(--sp-3));
 }
 .pdf-find input {
   flex: 1;
