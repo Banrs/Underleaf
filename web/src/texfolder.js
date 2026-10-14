@@ -8,10 +8,9 @@ import { icon } from './icons.js';
 
 export const texInstallHint = 'Install a TeX distribution, or choose an existing installation to enable compilation.';
 
-// A subfolder's path, joined with the separator the listed path already uses.
+// A subfolder's path, with no second slash after the root.
 export function childPath(base, name) {
-  const sep = base.includes('\\') ? '\\' : '/';
-  return base.endsWith(sep) ? base + name : base + sep + name;
+  return base.endsWith('/') ? base + name : `${base}/${name}`;
 }
 
 // Resolves with the new TeX status once a folder is saved, or null.
