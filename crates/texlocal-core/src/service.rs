@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::analyze;
-use crate::compile::{self, CompileManager, CompileOverrides, CompileResult, TexStatus};
+use crate::compile::{self, CompileManager, CompileOverrides, TexStatus};
 use crate::paths::fold_case;
-use crate::projects::{self, Symbols};
+use crate::projects;
 use crate::settings;
 use crate::synctex;
 use crate::{atomic, lock, paths, CoreError};
@@ -196,11 +196,6 @@ impl Service {
         self.app_folders().0
     }
 
-    /// The folder with TeXpresso the user chose, searched before the TeX path.
-    pub fn texpresso_dir(&self) -> Option<PathBuf> {
-        self.app_folders().1
-    }
-
     fn app_settings(&self) -> serde_json::Map<String, Value> {
         settings::read_object(&self.data_dir.join(APP_SETTINGS_FILE))
     }
@@ -298,13 +293,6 @@ impl Service {
     }
 
     // ---------- files ----------
-
-    /// Without the project's lock: every write replaces a file in one
-    /// rename, so a scan reads each file whole, old or new, and an autosave
-    /// need not wait for it.
-    pub fn scan_symbols(&self, id: &str) -> Result<Symbols, CoreError> {
-        projects::scan_symbols(&self.project_root(id)?)
-    }
 
     /// Validate the whole batch before writing, so a late unsafe or oversize
     /// entry cannot cause a predictable partial import. Return clashes and free Keep Both
@@ -404,22 +392,6 @@ impl Service {
     /// A project file's location, through the path boundary.
     pub fn raw_path(&self, id: &str, rel: &str) -> Result<PathBuf, CoreError> {
         paths::safe_path(&self.project_root(id)?, rel)
-    }
-
-    // ---------- compile ----------
-
-    pub async fn compile(
-        &self,
-        id: &str,
-        overrides: &CompileOverrides,
-    ) -> Result<CompileResult, CoreError> {
-        self.compile
-            .compile(
-                &self.project_root(id)?,
-                overrides,
-                self.tex_dir().as_deref(),
-            )
-            .await
     }
 
     // ---------- dispatch ----------
@@ -542,7 +514,7 @@ impl Service {
             }
             "delete_project" => out(self.with_project(s("id")?, |root| {
                 self.stop_runs(root)?;
-                projects::delete_project(&self.data_dir, s("id")?)
+                projects::discard(root)
             })?),
             "get_settings" => out(settings::read_settings(&root()?)),
             // A rename also rewrites mainFile; serialize read/modify/write.
@@ -556,7 +528,10 @@ impl Service {
                 Ok(updated)
             })?),
             "file_tree" => out(projects::file_tree(&root()?)?),
-            "scan_symbols" => out(self.scan_symbols(s("id")?)?),
+            // Without the project's lock: every write replaces a file in one
+            // rename, so a scan reads each file whole, old or new, and an
+            // autosave need not wait for it.
+            "scan_symbols" => out(projects::scan_symbols(&root()?)?),
             "analyze_project" => {
                 let root = root()?;
                 let main = settings::read_settings(&root).main_file;
@@ -609,12 +584,17 @@ impl Service {
                 &arg::<Option<String>>(args, "dir")?.unwrap_or_default(),
                 &arg::<Vec<UploadSpec>>(args, "files")?,
             )?),
-            "compile" => out(self
-                .compile(
-                    s("id")?,
-                    &arg::<Option<CompileOverrides>>(args, "options")?.unwrap_or_default(),
-                )
-                .await?),
+            "compile" => {
+                let (id, options) = (s("id")?, arg::<Option<CompileOverrides>>(args, "options")?);
+                out(self
+                    .compile
+                    .compile(
+                        &self.project_root(id)?,
+                        &options.unwrap_or_default(),
+                        self.tex_dir().as_deref(),
+                    )
+                    .await?)
+            }
             // Reports whether a build was running.
             "stop_compile" => out(self.compile.stop(&root()?)),
             // Stops a running build first; the next build starts from nothing.

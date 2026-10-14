@@ -355,13 +355,9 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 /// Delete to the platform's trash, so a mis-click is recoverable. A trash
 /// failure is reported and the original is left in place; it must never become
 /// an implicit permanent-delete request.
-fn discard(path: &Path) -> Result<(), CoreError> {
+pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
     trash::delete(path)
         .map_err(|err| CoreError::internal(format!("Could not move the item to Trash: {err}")))
-}
-
-pub fn delete_project(data_dir: &Path, id: &str) -> Result<(), CoreError> {
-    discard(&project_root(data_dir, id)?)
 }
 
 // ---------- files ----------
