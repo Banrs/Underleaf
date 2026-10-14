@@ -61,7 +61,6 @@ observations remain listed alongside them; reproduce UI issues before changing b
 - Esc or Cancel on a dialog opened from a menu item sends focus to body.
 - The sidebar divider's grab zone right of its line is covered by the editor
   pane.
-- `prefs.js` `migratePrefs` still migrates pre-1.0 keys.
 - The outline has no per-section folding.
 - Profile before changing: long-document text-layer rendering, re-renders
   while resizing, and whole-body CSS zoom for the interface scale. Also each

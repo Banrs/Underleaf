@@ -46,7 +46,7 @@ function getRaw(key) {
 function setRaw(key, raw) {
   const store = storage();
   cache.set(key, raw);
-  try { if (raw === null) store?.removeItem(key); else store?.setItem(key, raw); } catch { /* memory keeps it */ }
+  try { store?.setItem(key, raw); } catch { /* memory keeps it */ }
 }
 
 // Another tab's change applies here too, as when every read went to storage.
@@ -81,28 +81,6 @@ export const prefs = Object.defineProperties({}, Object.fromEntries(
     set: (v) => write(name, v),
   }]),
 ));
-
-// One-time migration off the pre-1.0 key names, so existing installs keep their
-// settings instead of silently resetting to defaults.
-export function migratePrefs() {
-  const k = (name) => KEY + DEFS[name].key;
-  const moves = [
-    ['texlocal-theme', k('themeMode')],
-    ['texlocal-sidebar', k('sidebarCollapsed'), (v) => (v === 'collapsed' ? '1' : '0')],
-    ['texlocal-pdf', k('pdfCollapsed'), (v) => (v === 'collapsed' ? '1' : '0')],
-  ];
-  for (const [from, to, map] of moves) {
-    const v = getRaw(from);
-    if (v !== null && getRaw(to) === null) setRaw(to, map ? map(v) : v);
-    if (v !== null) setRaw(from, null);
-  }
-  // The old `pdfdark` carries over only an explicit "on"; its default (auto) becomes white.
-  const old = getRaw('texlocal-pdfdark');
-  if (old !== null && getRaw(k('pdfPaper')) === null) {
-    setRaw(k('pdfPaper'), old === 'on' ? 'dark' : 'white');
-  }
-  if (old !== null) setRaw('texlocal-pdfdark', null);
-}
 
 // ---------- appearance ----------
 

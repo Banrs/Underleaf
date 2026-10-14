@@ -7,6 +7,7 @@ export const clampPaneWidth = (value, min, max, fallback = min) =>
 
 export function paneResizer(handle, pane, { bounds, value, resize, commit, direction = 1, zoom = () => 1, onStart, onMove, onEnd }) {
   let finishDrag;
+  const listening = new AbortController();
   const sync = () => {
     const [min, max] = bounds();
     handle.setAttribute('aria-valuemin', String(Math.round(min)));
@@ -33,6 +34,8 @@ export function paneResizer(handle, pane, { bounds, value, resize, commit, direc
     handle.classList.add('dragging');
     handle.setPointerCapture(event.pointerId);
     onStart?.();
+    const drag = new AbortController();
+    const { signal } = drag;
     const move = (e) => {
       if (e.pointerId === event.pointerId) apply(startWidth + direction * (e.clientX - startX) / zoom());
     };
@@ -40,27 +43,23 @@ export function paneResizer(handle, pane, { bounds, value, resize, commit, direc
     const cancel = (e) => { if (e.pointerId === event.pointerId) finishDrag?.(true); };
     finishDrag = (cancelled) => {
       finishDrag = null;
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', up);
-      handle.removeEventListener('pointercancel', cancel);
-      handle.removeEventListener('lostpointercapture', cancel);
+      drag.abort();
       if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
       if (cancelled) apply(startWidth); else commit(value());
       pane.style.transition = transition;
       handle.classList.remove('dragging');
       onEnd?.();
     };
-    handle.addEventListener('pointermove', move);
-    handle.addEventListener('pointerup', up);
-    handle.addEventListener('pointercancel', cancel);
-    handle.addEventListener('lostpointercapture', cancel);
+    handle.addEventListener('pointermove', move, { signal });
+    handle.addEventListener('pointerup', up, { signal });
+    handle.addEventListener('pointercancel', cancel, { signal });
+    handle.addEventListener('lostpointercapture', cancel, { signal });
   };
-  handle.addEventListener('keydown', keydown);
-  handle.addEventListener('pointerdown', pointerdown);
+  handle.addEventListener('keydown', keydown, { signal: listening.signal });
+  handle.addEventListener('pointerdown', pointerdown, { signal: listening.signal });
   return { sync, cancel: () => finishDrag?.(true), destroy: () => {
     finishDrag?.(true);
-    handle.removeEventListener('keydown', keydown);
-    handle.removeEventListener('pointerdown', pointerdown);
+    listening.abort();
   } };
 }
 
@@ -151,6 +150,8 @@ export function createWorkspaceLayout({ shell, sidebar, sidebarDivider, sidebarT
     refresh();
   }
   const closeSidebar = () => showSidebar(false);
+  const listening = new AbortController();
+  const { signal } = listening;
   const onKey = (e) => {
     if (mode === 'wide' || !overlayOpen || !sidebar.contains(e.target)) return;
     if (e.key === 'Escape') { e.preventDefault(); closeSidebar(); }
@@ -162,12 +163,10 @@ export function createWorkspaceLayout({ shell, sidebar, sidebarDivider, sidebarT
       else if (!e.shiftKey && e.target === last) { e.preventDefault(); first?.focus(); }
     }
   };
-  const showEditor = () => showSurface('editor');
-  const showPreview = () => showSurface('preview');
-  backdrop.addEventListener('click', closeSidebar);
-  shell.addEventListener('keydown', onKey);
-  editorButton.addEventListener('click', showEditor);
-  previewButton.addEventListener('click', showPreview);
+  backdrop.addEventListener('click', closeSidebar, { signal });
+  shell.addEventListener('keydown', onKey, { signal });
+  editorButton.addEventListener('click', () => showSurface('editor'), { signal });
+  previewButton.addEventListener('click', () => showSurface('preview'), { signal });
   const observer = new ResizeObserver(refresh);
   observer.observe(shell);
   observer.observe(workspace);
@@ -184,10 +183,7 @@ export function createWorkspaceLayout({ shell, sidebar, sidebarDivider, sidebarT
     destroy: () => {
       observer.disconnect();
       resizers.forEach((r) => r.destroy());
-      backdrop.removeEventListener('click', closeSidebar);
-      shell.removeEventListener('keydown', onKey);
-      editorButton.removeEventListener('click', showEditor);
-      previewButton.removeEventListener('click', showPreview);
+      listening.abort();
     },
   };
 }
