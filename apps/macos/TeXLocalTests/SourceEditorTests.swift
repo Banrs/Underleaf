@@ -468,6 +468,25 @@ struct SourceEditorTests {
         #expect(text.document.text == text.string)
     }
 
+    /// The project's citations and labels are kept with the mirror, not sent with each key's
+    /// completions: a file loaded after they were set, which has a new mirror, offers them too.
+    @Test func completionsOfferTheSymbolsInAFileLoadedAfterThem() throws {
+        text.symbols = Symbols(citations: ["smith2020", "jones"], labels: ["fig:one", "sec:two"])
+        open("\\cite{sm", path: "a.tex")
+        text.complete(nil)
+        #expect(try #require(text.offered).items.map(\.label) == ["smith2020"])
+        let first = text.document
+        open("See \\ref{fig", path: "b.tex")
+        #expect(text.document !== first)
+        text.complete(nil)
+        #expect(try #require(text.offered).items.map(\.label) == ["fig:one"])
+        // Set again, they replace the ones there were.
+        text.symbols = Symbols(citations: ["smyth"], labels: [])
+        open("\\cite{sm", path: "a.tex")
+        text.complete(nil)
+        #expect(try #require(text.offered).items.map(\.label) == ["smyth"])
+    }
+
     /// The list follows typing; arrows choose, Escape and a move away close it
     /// with nothing put in, and typed keys only go into the document.
     @Test func theCompletionListTakesOnlyItsKeys() throws {

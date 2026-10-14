@@ -81,10 +81,10 @@ fn caught<T>(body: impl FnOnce() -> T) -> Option<T> {
 unsafe fn on_source<T>(
     source: *const TlSource,
     none: T,
-    body: impl FnOnce(&mut SourceDocument) -> T,
+    body: impl FnOnce(&mut TlSource) -> T,
 ) -> T {
     match source.cast_mut().as_mut() {
-        Some(source) => caught(|| body(&mut source.0)).unwrap_or(none),
+        Some(source) => caught(|| body(source)).unwrap_or(none),
         None => none,
     }
 }
@@ -189,8 +189,16 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
     });
 }
 
-/// A file's text as the editor has it (`texlocal_syntax::SourceDocument`).
-pub struct TlSource(SourceDocument);
+/// A file's text as the editor has it (`texlocal_syntax::SourceDocument`),
+/// with the project's labels and citations, which its completions offer in
+/// `\ref{` and `\cite{`. The host sets them when they change, rather than
+/// sending them with every key's completions: a thesis's bibliography is
+/// thousands of keys.
+pub struct TlSource {
+    doc: SourceDocument,
+    labels: Vec<String>,
+    citations: Vec<String>,
+}
 
 /// UTF-8 text by its byte count, so a U+0000 in the editor's text reaches
 /// the mirror. Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes
@@ -208,9 +216,11 @@ unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
 /// `text` is null (empty) or `len` bytes of UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSource {
-    Box::into_raw(Box::new(TlSource(SourceDocument::new(&text_arg(
-        text, len,
-    )))))
+    Box::into_raw(Box::new(TlSource {
+        doc: SourceDocument::new(&text_arg(text, len)),
+        labels: Vec::new(),
+        citations: Vec::new(),
+    }))
 }
 
 /// The editor replaced `length` units at `start` with `text`. Each call on
@@ -228,8 +238,8 @@ pub unsafe extern "C" fn tl_source_edit(
     text: *const u8,
     len: usize,
 ) {
-    on_source(source, (), |doc| {
-        doc.edit(start, length, &text_arg(text, len))
+    on_source(source, (), |source| {
+        source.doc.edit(start, length, &text_arg(text, len))
     });
 }
 
@@ -237,21 +247,21 @@ pub unsafe extern "C" fn tl_source_edit(
 /// As `tl_source_edit`.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_line_at(source: *const TlSource, offset: u32) -> u32 {
-    on_source(source, 0, |doc| doc.line_at(offset))
+    on_source(source, 0, |source| source.doc.line_at(offset))
 }
 
 /// # Safety
 /// As `tl_source_edit`.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_line_start(source: *const TlSource, line: u32) -> u32 {
-    on_source(source, 0, |doc| doc.line_start(line))
+    on_source(source, 0, |source| source.doc.line_start(line))
 }
 
 /// # Safety
 /// As `tl_source_edit`.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_line_count(source: *const TlSource) -> u32 {
-    on_source(source, 0, |doc| doc.line_count())
+    on_source(source, 0, |source| source.doc.line_count())
 }
 
 /// The highlighted runs of the lines a range touches, as start, length and
@@ -271,8 +281,8 @@ pub unsafe extern "C" fn tl_source_highlights(
     let Some(count) = count.as_mut() else {
         return std::ptr::null_mut();
     };
-    let runs: Box<[u32]> = on_source(source, Box::default(), |doc| {
-        let runs = doc.highlights(start, length).into_iter();
+    let runs: Box<[u32]> = on_source(source, Box::default(), |source| {
+        let runs = source.doc.highlights(start, length).into_iter();
         runs.flat_map(|h| [h.start, h.length, h.kind as u32])
             .collect()
     });
@@ -310,8 +320,10 @@ struct SourceArgs {
 /// The editing commands, as `texlocal_syntax::SourceDocument` has them:
 /// "completions", "toggle_comment", "indent", "set_heading", "insert_block",
 /// "insert_symbol", "math_at", "text_styles", "not_prose" (the
-/// `selection`'s) and "text". Returns the result's JSON (free it with
-/// `tl_free`), or null for an unknown command or arguments.
+/// `selection`'s) and "text"; and "set_symbols", whose `labels` and
+/// `citations` "completions" offers until they are set again (it answers
+/// null). Returns the result's JSON (free it with `tl_free`), or null for an
+/// unknown command or arguments.
 ///
 /// # Safety
 /// As `tl_source_edit`; the strings are null or NUL-terminated.
@@ -321,11 +333,12 @@ pub unsafe extern "C" fn tl_source_call(
     command: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {
-    let call = |doc: &mut SourceDocument| {
+    let call = |source: &mut TlSource| {
         let a: SourceArgs = serde_json::from_str(str_arg(args_json)?).ok()?;
+        let doc = &mut source.doc;
         Some(match str_arg(command)? {
             "completions" => {
-                json_string(doc.completions(a.caret, a.explicit, &a.labels, &a.citations))
+                json_string(doc.completions(a.caret, a.explicit, &source.labels, &source.citations))
             }
             "toggle_comment" => json_string(doc.toggle_comment(&a.selections)),
             "indent" => json_string(doc.indent(&a.selections, a.more)),
@@ -336,6 +349,10 @@ pub unsafe extern "C" fn tl_source_call(
             "text_styles" => json_string(doc.text_styles(a.selection)),
             "not_prose" => json_string(doc.not_prose(a.selection.start, a.selection.length)),
             "text" => json_string(doc.text()),
+            "set_symbols" => {
+                (source.labels, source.citations) = (a.labels, a.citations);
+                json_string(())
+            }
             _ => return None,
         })
     };
