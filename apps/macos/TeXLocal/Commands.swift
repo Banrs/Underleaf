@@ -283,15 +283,7 @@ struct AppCommands: Commands {
     private var project: ProjectModel? { app.commandProject }
 
     private func item(_ command: MenuCommand) -> some View {
-        Button { app.perform(command, on: project) } label: {
-            let title = app.title(command, on: project)
-            // macOS 27 shows a menu item's image only with this style.
-            if let symbol = command.symbol { Label(title, systemImage: symbol) } else { Text(title) }
-        }
-        .labelStyle(.titleAndIcon)
-        // ⌘N follows whether a project is open, not which window is key.
-        .keyboardShortcut(app.shortcut(command, on: app.project))
-        .disabled(!app.isEnabled(command, on: project))
+        CommandItem(app: app, command: command)
     }
 
     private func items(_ commands: [MenuCommand]) -> some View {
@@ -395,18 +387,56 @@ struct AppCommands: Commands {
             items([.compileRun, .compileStop, .compileClean])
             Divider()
             Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
-            // A mode, like the one above: checked while its window is live. Disk changes rescan on their own.
-            Toggle("Live Preview", isOn: Binding(
-                get: { project?.texpresso.active == true },
-                set: { $0 ? project?.startTeXpresso() : project?.stopTeXpresso() }))
-                .disabled(!app.canPreviewLive || project.map { !$0.initialLoadComplete || $0.texpresso.phase == .stopping } ?? true)
+            LivePreviewItem(app: app)
             Divider()
             EnginePicker(project: project)
-            // The open file; the files' context menu has it for any .tex file.
-            Button("Set as Main File") {
-                if let project, let path = project.openPath { Task { await project.setMainFile(path) } }
-            }
-            .disabled(project?.isLaTeX != true || project?.openPath == project?.settings?.mainFile)
+            SetMainFileItem(app: app)
         }
+    }
+}
+
+/// A menu item of its own, so a change to what it shows re-evaluates it and not the whole menu bar
+/// (Observation tracks what a body reads).
+private struct CommandItem: View {
+    let app: AppModel
+    let command: MenuCommand
+
+    var body: some View {
+        let project = app.commandProject
+        Button { app.perform(command, on: project) } label: {
+            let title = app.title(command, on: project)
+            // macOS 27 shows a menu item's image only with this style.
+            if let symbol = command.symbol { Label(title, systemImage: symbol) } else { Text(title) }
+        }
+        .labelStyle(.titleAndIcon)
+        // ⌘N follows whether a project is open, not which window is key.
+        .keyboardShortcut(app.shortcut(command, on: app.project))
+        .disabled(!app.isEnabled(command, on: project))
+    }
+}
+
+/// A mode, like Compile Automatically: checked while its window is live. Disk changes rescan on their own.
+private struct LivePreviewItem: View {
+    let app: AppModel
+
+    var body: some View {
+        let project = app.commandProject
+        Toggle("Live Preview", isOn: Binding(
+            get: { project?.texpresso.active == true },
+            set: { $0 ? project?.startTeXpresso() : project?.stopTeXpresso() }))
+            .disabled(!app.canPreviewLive || project.map { !$0.initialLoadComplete || $0.texpresso.phase == .stopping } ?? true)
+    }
+}
+
+/// The open file; the files' context menu has it for any .tex file.
+private struct SetMainFileItem: View {
+    let app: AppModel
+
+    var body: some View {
+        let project = app.commandProject
+        Button("Set as Main File") {
+            if let project, let path = project.openPath { Task { await project.setMainFile(path) } }
+        }
+        .disabled(project?.isLaTeX != true || project?.openPath == project?.settings?.mainFile)
     }
 }
