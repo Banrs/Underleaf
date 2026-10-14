@@ -959,7 +959,6 @@ function setCompileButton(btn, busy) {
   if (!btn) return;
   if (busy) delete btn.dataset.command; else btn.dataset.command = 'compile.run';
   btn.disabled = !busy && !state.tex.available;
-  btn.classList.toggle('busy', busy);
   if (busy) btn.setAttribute('aria-busy', 'true'); else btn.removeAttribute('aria-busy');
   btn.title = busy ? 'Stop the build' : tooltip('compile.run');
   btn.replaceChildren(...(busy ? [el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Stop'] : ['Compile']));

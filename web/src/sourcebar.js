@@ -147,7 +147,7 @@ export function buildSourceBar({ commandButton, openFile, reveal, afterHeading }
 
   // The caret line's level, a pop-up as wide as its widest value (a hidden
   // twin holds the room) so the bar doesn't shift as the caret moves.
-  const headingValue = el('span', { class: 'heading-value' });
+  const headingValue = el('span');
   const headingButton = el('button', {
     class: 'btn small heading-menu', title: 'Section Level', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
   }, el('span', { class: 'heading-label' }, headingValue, el('span', { class: 'heading-twin', 'aria-hidden': 'true' }, 'Subsubsection')), icon('chevron-down'));
@@ -164,7 +164,7 @@ export function buildSourceBar({ commandButton, openFile, reveal, afterHeading }
     groups.map((g) => g.element),
     el('span', { class: 'toolbar-separator' }), moreButton,
   );
-  const toolbar = el('div', { class: 'toolbar source-bar', role: 'toolbar', 'aria-label': 'Editing' },
+  const toolbar = el('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Editing' },
     commandButton('edit.undo', 'undo'),
     commandButton('edit.redo', 'redo'),
     latexTools,
@@ -224,7 +224,7 @@ function openSymbols(anchor) {
   };
   const content = SYMBOL_GROUPS.map(([title, symbols]) => {
     const id = `symbols-${title.replace(/\W+/g, '-').toLowerCase()}`;
-    return el('div', { class: 'symbol-group' },
+    return el('div', {},
       el('div', { class: 'symbol-group-title', id }, title),
       el('div', { class: 'symbol-grid', role: 'group', 'aria-labelledby': id },
         symbols.map(([glyph, command]) => {

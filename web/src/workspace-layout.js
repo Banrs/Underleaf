@@ -104,7 +104,6 @@ export function createWorkspaceLayout({ shell, sidebar, sidebarDivider, sidebarT
     if (mode === 'compact' || !pdfVisible()) resizers[1].cancel();
     shell.classList.toggle('layout-overlay', mode !== 'wide');
     shell.classList.toggle('layout-compact', mode === 'compact');
-    shell.classList.toggle('sidebar-open', sideVisible());
     sidebar.classList.toggle('collapsed', !sideVisible());
     main.inert = mode !== 'wide' && overlayOpen;
     sidebar.setAttribute('role', mode !== 'wide' && overlayOpen ? 'dialog' : 'complementary');
