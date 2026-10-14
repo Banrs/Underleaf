@@ -244,6 +244,18 @@ struct GetMacTeXButton: View {
     }
 }
 
+/// The guide to installing TeXpresso, which has to be built against the app's engine. A button,
+/// as Get MacTeX is, wherever TeXpresso is missing.
+struct TeXpressoGuideButton: View {
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button("Install Guide") {
+            openURL(URL(string: "https://github.com/Banrs/Underleaf/blob/main/docs/texpresso.md")!)
+        }
+    }
+}
+
 /// A template the core makes projects from (crates/texlocal-core templates.rs). The raw value is
 /// the core's id, which is what Settings stores.
 enum ProjectTemplate: String, CaseIterable, Identifiable {
