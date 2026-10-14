@@ -83,7 +83,8 @@ struct StatusBar: View {
                         .symbolRenderingMode(.multicolor)
                         .hitTarget()
                 }
-                .help("\(reason) Click to save again.")
+                // A fragment, as the bar's other help tags: the reason without its full stop.
+                .help("\(reason.hasSuffix(".") ? String(reason.dropLast()) : reason); save again")
             }
             if let notice = project.notices.current {
                 Text(notice).foregroundStyle(.secondary)
