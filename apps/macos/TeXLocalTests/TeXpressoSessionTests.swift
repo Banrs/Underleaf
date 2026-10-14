@@ -309,7 +309,8 @@ struct TeXpressoSessionTests {
         func page(_ index: Int, _ url: URL, _ serial: Int) -> TeXpressoEvents.Page { .init(page: index, path: url.path, serial: serial) }
         // A page before the session's first document waits for it.
         core.feed.send(TeXpressoEvents(seq: 1, running: true, pages: [page(0, first, 1)]))
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitUntil { core.feed.asked.last == 1 }
+        await settle()
         #expect(shown.isEmpty)
         core.feed.send(TeXpressoEvents(seq: 4, running: true,
                                        pdf: .init(path: two.path, version: 1, serial: 2, pages: 2, run: "partial", changed: [[0, 1]]),
@@ -433,12 +434,13 @@ struct TeXpressoSessionTests {
         core.feed.send(TeXpressoEvents(seq: 1, running: true, revision: 5))
         core.feed.send(TeXpressoEvents(seq: 2, running: true, revision: 6))
         try await waitUntil { core.feed.asked.last == 2 }
-        try await Task.sleep(for: .milliseconds(400))
+        // The log is fetched 250 ms after the news that it changed: the wait is for that to have been missed.
+        try await Task.sleep(for: .milliseconds(300))
         #expect(core.commands == ["texpresso_start"])
         core.status = { _, _ in TeXpressoStatus(running: true, log: "log", output: "", error: nil, session: "owner", revision: 6) }
         session.showsLog = true
         try await waitUntil { session.log == "log" }
-        try await Task.sleep(for: .milliseconds(400))
+        try await Task.sleep(for: .milliseconds(300))
         #expect(core.commands == ["texpresso_start", "texpresso_status"])
         core.status = { command, _ in FakeCore.status(running: command != "texpresso_stop") }
         session.stop()
