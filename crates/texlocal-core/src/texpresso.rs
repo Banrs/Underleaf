@@ -1704,14 +1704,19 @@ mod tests {
 
     #[test]
     fn edits_in_utf16_units_change_the_same_bytes_as_in_a_plain_string() {
-        // What the editor has: UTF-16 units. What TeXpresso takes: bytes.
+        // What the editor has: UTF-16 units. What TeXpresso takes: bytes. Counted
+        // byte by byte, as decoding each character took most of the test's time: a
+        // character starts at each byte that doesn't continue one, and is two units
+        // where it takes four bytes.
         let bytes_at = |text: &str, units: usize| {
             let mut seen = 0;
-            for (at, c) in text.char_indices() {
-                if seen == units {
-                    return Some(at);
+            for (at, &byte) in text.as_bytes().iter().enumerate() {
+                if byte & 0xC0 != 0x80 {
+                    if seen == units {
+                        return Some(at);
+                    }
+                    seen += 1 + usize::from(byte >= 0xF0);
                 }
-                seen += c.len_utf16();
             }
             (seen == units).then_some(text.len())
         };
@@ -1724,8 +1729,8 @@ mod tests {
                 .wrapping_add(1442695040888963407);
             (seed >> 33) as usize % below.max(1)
         };
+        let mut units = utf16_len(&plain);
         for round in 0..4000 {
-            let units = utf16_len(&plain);
             let start = next(units + 1);
             let remove = match round % 7 {
                 0 => next(5000),
@@ -1747,6 +1752,7 @@ mod tests {
             assert_eq!(changed, fits.map(|(from, to)| (from, to - from)), "{round}");
             if let Some((from, to)) = fits {
                 plain.replace_range(from..to, &inserted);
+                units = units - remove + utf16_len(&inserted);
             }
             assert_eq!(text.bytes, plain.len());
             assert_eq!(text.byte_offset(start), bytes_at(&plain, start));
