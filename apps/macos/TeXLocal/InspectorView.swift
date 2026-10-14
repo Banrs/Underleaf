@@ -57,19 +57,19 @@ struct InspectorView: View {
     }
 }
 
-/// The engine, in the inspector and the Compile menu: the current one is always a choice, as a
-/// selection no tag matches is a SwiftUI fault. A menu with no choice marked before the settings come.
+/// The engine, in the inspector and the Compile menu: the current one is always a choice, before
+/// the settings come (nil) too, as a selection no tag matches is a SwiftUI fault. Dimmed until they come.
 struct EnginePicker: View {
     let project: ProjectModel?
 
     var body: some View {
-        if let project, let engine = project.settings?.engine {
-            Picker("Engine", selection: Binding(get: { engine }, set: { new in Task.immediate { await project.setBuildOption(.engine(new)) } })) {
-                ForEach(TeXEngine.allCases) { Text($0.title).tag($0.id) }
-                if TeXEngine(rawValue: engine) == nil { Text(engine).tag(engine) }
-            }
-        } else {
-            Menu("Engine") { ForEach(TeXEngine.allCases) { Text($0.title) } }
+        let engine = project?.settings?.engine
+        Picker("Engine", selection: Binding(get: { engine }, set: { new in
+            if let project, let new { Task.immediate { await project.setBuildOption(.engine(new)) } }
+        })) {
+            ForEach(TeXEngine.allCases) { Text($0.title).tag(Optional($0.id)) }
+            if engine.flatMap(TeXEngine.init) == nil { Text(engine ?? "").tag(engine) }
         }
+        .disabled(engine == nil)
     }
 }
