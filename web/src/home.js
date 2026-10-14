@@ -118,7 +118,7 @@ export async function renderHome() {
   app.replaceChildren(
     el('div', { class: 'home' },
       el('header', { class: 'titlebar home-titlebar' },
-        menuBar(menuUnder),
+        menuBar(),
         el('span', { class: 'spacer' }),
         el('button', {
           class: 'icon-btn', title: tooltip('app.settings'), 'aria-label': 'Settings', onclick: settings,

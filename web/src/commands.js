@@ -3,6 +3,7 @@
 // everywhere and a shortcut can't drift from its menu item.
 
 import { isMac } from './bridge.js';
+import { menuUnder } from './dom.js';
 
 // Every command's accelerator. The Mac reads this table too.
 import SHORTCUTS from './shortcuts.json' with { type: 'json' };
@@ -262,8 +263,7 @@ export function matchesAccel(accel, e, mac) {
     && codesFor(key).includes(e.code);
 }
 
-// `openMenu` is dom.js's menuUnder, which also closes a trigger's open menu.
-export function menuBar(openMenu) {
+export function menuBar() {
   const itemsOf = (group) => {
     const items = [];
     for (const it of group.items) {
@@ -294,7 +294,7 @@ export function menuBar(openMenu) {
     b.setAttribute('aria-haspopup', 'menu');
     b.setAttribute('aria-expanded', 'false');
     // ←/→ walk the bar the way a desktop menu bar does.
-    const open = (focus) => openMenu(b, itemsOf(group), {
+    const open = (focus) => menuUnder(b, itemsOf(group), {
       focus,
       onArrow: (dir) => opens.at((i + dir) % opens.length)(true),
     });
