@@ -15,12 +15,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::ChildStdin;
 use tokio::sync::mpsc;
 
-use crate::{lock, paths, settings, tail, CoreError, BUILD_DIR, SETTINGS_FILE};
+use crate::{BUILD_DIR, CoreError, SETTINGS_FILE, lock, paths, settings, tail};
 
 const MAX_FILE: usize = 8 * 1024 * 1024;
 const MAX_FILES: usize = 256;
@@ -1365,18 +1365,24 @@ mod tests {
             fs::read_to_string(root.join("main.tex")).unwrap(),
             "disk text"
         );
-        assert!(manager
-            .update(&root, "../escape.tex", "bad", token, false)
-            .await
-            .is_err());
-        assert!(manager
-            .update(&root, "build/out.tex", "bad", token, false)
-            .await
-            .is_err());
-        assert!(manager
-            .update(&root, "main.tex", &"x".repeat(MAX_FILE + 1), token, true)
-            .await
-            .is_err());
+        assert!(
+            manager
+                .update(&root, "../escape.tex", "bad", token, false)
+                .await
+                .is_err()
+        );
+        assert!(
+            manager
+                .update(&root, "build/out.tex", "bad", token, false)
+                .await
+                .is_err()
+        );
+        assert!(
+            manager
+                .update(&root, "main.tex", &"x".repeat(MAX_FILE + 1), token, true)
+                .await
+                .is_err()
+        );
         manager.rescan(&root, token).await.unwrap();
         until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
         assert!(
@@ -1410,11 +1416,13 @@ mod tests {
             .await
             .unwrap();
         until(|| !manager.status(&root, None, || &path_env).unwrap().running).await;
-        assert!(manager
-            .status(&root, None, || &path_env)
-            .unwrap()
-            .error
-            .is_none());
+        assert!(
+            manager
+                .status(&root, None, || &path_env)
+                .unwrap()
+                .error
+                .is_none()
+        );
         manager
             .start(&root, &[], None, &path_env, None)
             .await
@@ -1735,10 +1743,11 @@ mod tests {
             assert_eq!(text.byte_offset(start), bytes_at(&plain, start));
         }
         assert_eq!(text.string(), plain);
-        assert!(text
-            .pieces
-            .iter()
-            .all(|p| p.units == utf16_len(&p.text) && p.text.len() <= PIECE + 3));
+        assert!(
+            text.pieces
+                .iter()
+                .all(|p| p.units == utf16_len(&p.text) && p.text.len() <= PIECE + 3)
+        );
         // Typing leaves no crumbs behind: the pieces stay a few kilobytes each.
         assert!(text.pieces.len() <= plain.len() / (PIECE / 8) + 2);
         let units = utf16_len(&plain);

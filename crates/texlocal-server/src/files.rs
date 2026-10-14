@@ -143,7 +143,7 @@ fn read_file_range(path: &Path, range: Option<(u64, u64)>) -> io::Result<Vec<u8>
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_range, read_file_range, Unsatisfiable};
+    use super::{Unsatisfiable, parse_range, read_file_range};
 
     #[test]
     fn parses_closed_open_and_suffix_ranges() {

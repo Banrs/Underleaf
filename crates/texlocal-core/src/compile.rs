@@ -15,10 +15,10 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::OwnedMutexGuard;
 
 use crate::error::CoreError;
-use crate::logparse::{latexmk_errors, parse_blg, parse_log, LogItem};
+use crate::logparse::{LogItem, latexmk_errors, parse_blg, parse_log};
 use crate::paths::safe_rel_file;
 use crate::settings::{main_base_name, read_settings};
-use crate::{lock, BUILD_DIR};
+use crate::{BUILD_DIR, lock};
 
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -741,7 +741,7 @@ fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{absolute_dirs, joined_log, read_tail, user_latexmkrc, version_line, LOG_TAIL};
+    use super::{LOG_TAIL, absolute_dirs, joined_log, read_tail, user_latexmkrc, version_line};
     use crate::tail;
     use std::ffi::OsString;
     use std::path::Path;

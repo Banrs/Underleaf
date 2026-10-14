@@ -3,7 +3,7 @@
 //! options come first, as in `\usepackage[utf8]{inputenc}`.
 
 use crate::maths::{Point, Scans, Visit};
-use crate::{blank, catalog::CATALOG, Text, TextRange};
+use crate::{Text, TextRange, blank, catalog::CATALOG};
 
 /// Absolute UTF-16 ranges to skip in `start..end`: math and literal code from
 /// the shared math scan, plus name arguments. The scan resumes from a kept
@@ -313,9 +313,11 @@ mod tests {
         let inside_code = SourceDocument::new(text).not_prose(code_start, 1);
         let verbatim_start = text.find("\\begin{verbatim}").unwrap();
         let verbatim_start = text[..verbatim_start].encode_utf16().count() as u32;
-        assert!(inside_code
-            .iter()
-            .any(|r| r.start == verbatim_start && r.start + r.length == code_start + 1));
+        assert!(
+            inside_code
+                .iter()
+                .any(|r| r.start == verbatim_start && r.start + r.length == code_start + 1)
+        );
     }
 
     #[test]
@@ -326,9 +328,11 @@ mod tests {
         let ranges = doc.not_prose(0, units);
         let prose = text.find("Speling").unwrap();
         let prose = text[..prose].encode_utf16().count() as u32;
-        assert!(!ranges
-            .iter()
-            .any(|r| r.start <= prose && r.start + r.length > prose));
+        assert!(
+            !ranges
+                .iter()
+                .any(|r| r.start <= prose && r.start + r.length > prose)
+        );
 
         let checked = doc.not_prose(prose, 1);
         assert!(checked.is_empty());

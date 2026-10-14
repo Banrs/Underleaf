@@ -10,15 +10,15 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::TempDir;
-use texlocal_core::compile::{tex_available, CompileManager, CompileResult};
+use texlocal_core::compile::{CompileManager, CompileResult, tex_available};
 use texlocal_core::error::CoreError;
 use texlocal_core::paths::project_root;
 use texlocal_core::projects::create_project;
 use texlocal_core::service::Service;
 use texlocal_core::settings::write_settings;
-use texlocal_core::synctex::{synctex_inverse_with_context, InverseLoc};
+use texlocal_core::synctex::{InverseLoc, synctex_inverse_with_context};
 use tokio::task::JoinHandle;
 
 fn executable(path: &Path, script: &str) {
@@ -718,8 +718,10 @@ async fn tools_start_by_posix_spawn_never_a_fork() {
     let mut missing = CompileManager::default();
     missing.path_env = Some("/nonexistent-dir-for-test".into());
     let result = compile(&missing, &root).await;
-    assert!(result.errors[0]
-        .message
-        .starts_with("Couldn't start latexmk"));
+    assert!(
+        result.errors[0]
+            .message
+            .starts_with("Couldn't start latexmk")
+    );
     assert_eq!(FORKS.load(std::sync::atomic::Ordering::SeqCst), before);
 }

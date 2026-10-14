@@ -13,12 +13,12 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
 
+use crate::BUILD_DIR;
 use crate::atomic;
 use crate::error::CoreError;
 use crate::paths::{fold_case, project_root, rel_key, safe_path, safe_write_path, sanitize_name};
 use crate::settings::{read_settings, write_settings};
 use crate::templates;
-use crate::BUILD_DIR;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -661,9 +661,9 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
 #[cfg(test)]
 mod tests {
     use super::{after_entry, create_file, create_project, delete_entry_using};
+    use crate::CoreError;
     use crate::paths::project_root;
     use crate::settings::write_settings;
-    use crate::CoreError;
     use serde_json::json;
     use std::path::PathBuf;
 

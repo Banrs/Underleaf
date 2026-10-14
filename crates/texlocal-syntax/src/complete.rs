@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::{catalog, is, utf16, Text};
+use crate::{Text, catalog, is, utf16};
 
 /// A place to type in a completion's text. Fields with the same `index`
 /// are one field in several places: what's typed in one goes in all.

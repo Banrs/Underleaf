@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-use serde::{de::IgnoredAny, Deserialize};
+use serde::{Deserialize, de::IgnoredAny};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

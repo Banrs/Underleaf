@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::prose::Names;
 use crate::stack::Stack;
-use crate::{ascii, catalog, is, letter, space, utf16, Text, TextRange, NAME};
+use crate::{NAME, Text, TextRange, ascii, catalog, is, letter, space, utf16};
 
 fn find(src: &[u16], from: usize, needle: &[u16]) -> Option<usize> {
     (from..=src.len().checked_sub(needle.len())?).find(|&i| src[i..].starts_with(needle))

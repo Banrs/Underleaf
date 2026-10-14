@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
 
@@ -276,9 +276,11 @@ fn uploads_are_validated_as_a_batch_before_any_write() {
         size,
     };
 
-    assert!(service
-        .validate_uploads("P", "img", &[spec("a.png", 1), spec("b.png", 1)])
-        .is_ok());
+    assert!(
+        service
+            .validate_uploads("P", "img", &[spec("a.png", 1), spec("b.png", 1)])
+            .is_ok()
+    );
     for batch in [
         [spec("a.png", 1), spec("a.png", 1)],
         [spec("notes", 1), spec("notes/ch.tex", 1)],

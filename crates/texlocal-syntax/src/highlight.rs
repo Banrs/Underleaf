@@ -5,7 +5,7 @@
 //! line, and only as far as asked.
 
 use crate::stack::Stack;
-use crate::{ascii, letter, space, Text, NAME};
+use crate::{NAME, Text, ascii, letter, space};
 
 /// What a run of text is, by the stex mode's token names. Plain text and
 /// brackets have none. The C ABI numbers them in this order, from 0.
@@ -365,7 +365,7 @@ fn command_letter(u: u16) -> bool {
 mod tests {
     use super::Highlight;
     use super::HighlightKind::*;
-    use crate::{utf16, SourceDocument};
+    use crate::{SourceDocument, utf16};
 
     /// The runs as "text Kind" pairs.
     fn runs(source: &str) -> Vec<String> {

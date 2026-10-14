@@ -420,8 +420,7 @@ mod tests {
 
     #[test]
     fn lines_wrapped_at_79_columns_run_on() {
-        let log =
-            "LaTeX Warning: Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on in\n\
+        let log = "LaTeX Warning: Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on in\n\
                    put line 3.\n\
                    \n\
                    ./main.tex:9: Missing number, treated as zero.\n\

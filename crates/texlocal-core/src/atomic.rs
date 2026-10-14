@@ -82,7 +82,7 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
 
 #[cfg(test)]
 mod tests {
-    use super::{write, Stamp};
+    use super::{Stamp, write};
     use std::fs;
 
     fn names(dir: &std::path::Path) -> Vec<String> {
@@ -142,10 +142,12 @@ mod tests {
         fs::set_permissions(&target, fs::Permissions::from_mode(0o640)).unwrap();
         std::os::unix::fs::symlink(&target, &link).unwrap();
         write(&link, b"new").unwrap();
-        assert!(fs::symlink_metadata(&link)
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
         let mode = fs::metadata(&target).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o640);

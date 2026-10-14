@@ -5,14 +5,14 @@ use std::path::Path;
 
 use serde_json::json;
 use tempfile::TempDir;
+use texlocal_core::CoreError;
 use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file, safe_write_path};
 use texlocal_core::projects::{
     create_file, create_project, file_tree, list_projects, rename_entry, rename_project,
     scan_symbols, search_project,
 };
-use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings, Settings};
+use texlocal_core::settings::{Settings, compiled_pdf_path, read_settings, write_settings};
 use texlocal_core::zipexport::export_zip;
-use texlocal_core::CoreError;
 
 fn data_dir() -> TempDir {
     tempfile::Builder::new()
@@ -245,10 +245,12 @@ fn implicit_project_scans_skip_external_symlink_files() {
 
     assert!(search_project(&root, "needle", 50).unwrap().is_empty());
     assert!(scan_symbols(&root).unwrap().labels.is_empty());
-    assert!(file_tree(&root)
-        .unwrap()
-        .iter()
-        .all(|node| node.path != "external.tex"));
+    assert!(
+        file_tree(&root)
+            .unwrap()
+            .iter()
+            .all(|node| node.path != "external.tex")
+    );
 }
 
 // Not gated: the settings name's case aliases are reserved on every platform
@@ -532,10 +534,12 @@ fn scans_reach_a_nested_build_directory_the_tree_and_zip_both_keep() {
         hits.iter().map(|h| h.file.as_str()).collect::<Vec<_>>(),
         vec!["chapters/build/notes.tex"],
     );
-    assert!(scan_symbols(&root)
-        .unwrap()
-        .labels
-        .contains(&"deep:one".to_string()));
+    assert!(
+        scan_symbols(&root)
+            .unwrap()
+            .labels
+            .contains(&"deep:one".to_string())
+    );
 }
 
 #[test]
@@ -546,10 +550,12 @@ fn top_level_build_output_stays_out_of_every_scan() {
     fs::write(root.join("build/main.tex"), "needle \\label{gen:one}\n").unwrap();
 
     assert!(search_project(&root, "needle", 10).unwrap().is_empty());
-    assert!(!scan_symbols(&root)
-        .unwrap()
-        .labels
-        .contains(&"gen:one".to_string()));
+    assert!(
+        !scan_symbols(&root)
+            .unwrap()
+            .labels
+            .contains(&"gen:one".to_string())
+    );
 }
 
 #[test]
@@ -758,9 +764,11 @@ fn a_new_project_holds_its_template_and_default_settings() {
         names_in(&root),
         [".texlocal.json", "main.tex", "references.bib"]
     );
-    assert!(fs::read_to_string(root.join("main.tex"))
-        .unwrap()
-        .contains("{report}"));
+    assert!(
+        fs::read_to_string(root.join("main.tex"))
+            .unwrap()
+            .contains("{report}")
+    );
 }
 
 #[cfg(unix)]

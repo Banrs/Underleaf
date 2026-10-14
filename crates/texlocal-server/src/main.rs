@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use texlocal_core::service::Service;
-use texlocal_server::{new_token, serve, App, MAX_BODY};
+use texlocal_server::{App, MAX_BODY, new_token, serve};
 
 const DEFAULT_PORT: u16 = 7878;
 

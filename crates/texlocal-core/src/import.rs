@@ -16,9 +16,9 @@ use zip::ZipArchive;
 
 use crate::paths::{normalize_segments, rel_key, sanitize_name};
 use crate::projects::{self, ProjectInfo};
-use crate::service::{keep_both, too_large, Clash, Service, UploadSpec, UPLOAD_MAX_BYTES};
+use crate::service::{Clash, Service, UPLOAD_MAX_BYTES, UploadSpec, keep_both, too_large};
 use crate::settings::write_settings;
-use crate::{templates, CoreError, BUILD_DIR};
+use crate::{BUILD_DIR, CoreError, templates};
 
 /// What to do with incoming files that land on existing entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

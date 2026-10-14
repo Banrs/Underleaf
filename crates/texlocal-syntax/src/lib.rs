@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 pub use complete::{Completion, CompletionKind, Completions, SnippetField};
 pub use highlight::{Highlight, HighlightKind};
-pub use maths::{math_mode_at, MathPreview};
+pub use maths::{MathPreview, math_mode_at};
 pub use style::TextStyles;
 
 /// A range of the text, in UTF-16 units.

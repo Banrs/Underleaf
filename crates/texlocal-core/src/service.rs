@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze;
 use crate::compile::{self, CompileManager, TexStatus};
@@ -16,7 +16,7 @@ use crate::paths::fold_case;
 use crate::projects;
 use crate::settings;
 use crate::synctex;
-use crate::{atomic, lock, paths, CoreError};
+use crate::{CoreError, atomic, lock, paths};
 
 pub const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
 const SEARCH_LIMIT: usize = 100;

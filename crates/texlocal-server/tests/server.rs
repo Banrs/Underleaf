@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
-use texlocal_server::{serve, App, Bytes, Request, Response};
+use texlocal_server::{App, Bytes, Request, Response, serve};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 const PORT: u16 = 7878;
@@ -330,11 +330,13 @@ async fn a_blocked_command_does_not_stall_other_requests() {
     // Opening a FIFO blocks until a writer arrives, like a read of a file on
     // a slow disk or a walk of a huge project.
     let fifo = f._data.path().join("P/pipe.tex");
-    assert!(std::process::Command::new("mkfifo")
-        .arg(&fifo)
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
     let (tx, rx) = std::sync::mpsc::channel::<()>();
     let writer = std::thread::spawn(move || {
         let waited_out = rx.recv_timeout(std::time::Duration::from_secs(5)).is_err();

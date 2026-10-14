@@ -2,7 +2,7 @@
 //! (fixtures/editing.json; test/mathmode.test.js and test/editor.test.js).
 
 use serde::Deserialize;
-use texlocal_syntax::{math_mode_at, SourceDocument, TextEdit, TextRange};
+use texlocal_syntax::{SourceDocument, TextEdit, TextRange, math_mode_at};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,9 +107,11 @@ fn blocks_match_the_web() {
         );
         assert_eq!(block.caret, end + block.fields[0].start, "{id}");
     }
-    assert!(SourceDocument::new("")
-        .insert_block("nothing", range(0, 0))
-        .is_none());
+    assert!(
+        SourceDocument::new("")
+            .insert_block("nothing", range(0, 0))
+            .is_none()
+    );
 }
 
 #[test]

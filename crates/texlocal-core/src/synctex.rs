@@ -6,11 +6,11 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::compile::{run, PROBE_TIMEOUT};
+use crate::BUILD_DIR;
+use crate::compile::{PROBE_TIMEOUT, run};
 use crate::error::CoreError;
 use crate::paths::{rel_to_root, safe_rel_file};
 use crate::settings::compiled_pdf_path;
-use crate::BUILD_DIR;
 
 // Consume commands, control symbols and comments before matching printed
 // characters. Escaped specials print; ordinary grouping braces do not.

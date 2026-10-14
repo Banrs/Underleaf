@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use texlocal_syntax::{math_mode_at, SourceDocument, TextRange};
+use texlocal_syntax::{SourceDocument, TextRange, math_mode_at};
 
 const PIECES: &[&str] = &[
     "\\cite{",
@@ -65,10 +65,12 @@ fn answers_after_edits_are_a_fresh_reading_s() {
     for document in 0..12 {
         // Several kept points' worth; every third with no blank line at all.
         let source: String = (0..3_000)
-            .map(|_| loop {
-                let piece = PIECES[seed.next(PIECES.len())];
-                if document % 3 != 0 || !piece.contains("\n\n") {
-                    break piece;
+            .map(|_| {
+                loop {
+                    let piece = PIECES[seed.next(PIECES.len())];
+                    if document % 3 != 0 || !piece.contains("\n\n") {
+                        break piece;
+                    }
                 }
             })
             .collect();

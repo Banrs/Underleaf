@@ -1,14 +1,14 @@
 // Round trips through the C ABI exactly as a native host drives it.
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::path::{Path, PathBuf};
 use std::ptr;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use texlocal_ffi::{
-    tl_call, tl_close, tl_free, tl_open, tl_source_call, tl_source_edit, tl_source_free,
-    tl_source_free_runs, tl_source_highlights, tl_source_line_at, tl_source_line_count,
-    tl_source_line_start, tl_source_new, TlHandle, TlSource,
+    TlHandle, TlSource, tl_call, tl_close, tl_free, tl_open, tl_source_call, tl_source_edit,
+    tl_source_free, tl_source_free_runs, tl_source_highlights, tl_source_line_at,
+    tl_source_line_count, tl_source_line_start, tl_source_new,
 };
 
 /// The JSON a call answered, read and handed back to the library to free; None

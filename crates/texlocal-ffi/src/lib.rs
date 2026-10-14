@@ -10,14 +10,14 @@
 //! a file's text, answering in UTF-16 offsets, on the editor's thread.
 
 use std::borrow::Cow;
-use std::ffi::{c_char, CStr, CString};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::ffi::{CStr, CString, c_char};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
-use texlocal_core::service::{arg, string_arg, Service};
-use texlocal_core::{import, zipexport, CoreError};
+use serde_json::{Map, Value, json};
+use texlocal_core::service::{Service, arg, string_arg};
+use texlocal_core::{CoreError, import, zipexport};
 use texlocal_syntax::{SourceDocument, TextRange};
 
 pub struct TlHandle {

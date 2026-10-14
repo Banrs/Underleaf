@@ -18,10 +18,10 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
-use serde_json::{json, Value};
+use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
+use serde_json::{Value, json};
 use texlocal_core::service::{Service, UPLOAD_MAX_BYTES};
-use texlocal_core::{paths, zipexport, CoreError};
+use texlocal_core::{CoreError, paths, zipexport};
 
 pub use http::{Bytes, Request, Response};
 use tokio::net::TcpListener;
