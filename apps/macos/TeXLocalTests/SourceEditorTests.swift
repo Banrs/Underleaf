@@ -64,6 +64,15 @@ struct SourceEditorTests {
         #expect(view.string == "xone" && view.document.text == "xone")
     }
 
+    /// A change of the display's accessibility options draws the view again, whose line numbers follow Increase Contrast.
+    @Test func aChangeOfDisplayOptionsRedraws() {
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
+        text.needsDisplay = false
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: NSWorkspace.shared)
+        #expect(text.needsDisplay)
+    }
+
     /// `plainDocument()` sets only what a new text view isn't already: the rest is as a scroll view's plain document needs it too.
     @Test func aPlainDocumentIsSetUpForAScrollView() {
         let view = SourceTextView.plainDocument()
