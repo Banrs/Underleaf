@@ -870,7 +870,7 @@ struct SourceEditorTests {
         #expect(both?.cut == true && abs((both?.width ?? 0) - width("Missing number, treated…  +2")) < 0.5)
         // One line, whatever TeX's own breaks.
         #expect(abs(IssueLabel("Missing $\n  inserted", others: 0, font: font).width - width("Missing $ inserted")) < 0.01)
-        // LaTeX's own words for an error are left to the gutter's mark.
+        // LaTeX's own words for an error are left to the symbol beside the message.
         #expect(abs(IssueLabel("LaTeX Error: There's no line here to end.", others: 0, font: font).width
                     - width("There's no line here to end.")) < 0.01)
         // An undefined command's name is at its message's end, which a cut would take first: with
@@ -913,9 +913,10 @@ struct SourceEditorTests {
         try #require(text.textLayoutManager).textViewportLayoutController.layoutViewport()
     }
 
-    /// A line with an issue has what the issue says at the end of its last wrapped line, set right
-    /// to the text's edge; a narrower pane cuts it short and then leaves it out, with a help tag's
-    /// words for what isn't shown. An undefined command is underlined where it stands.
+    /// A line with an issue has its symbol and what it says in a box at the end of its first
+    /// wrapped line, a point inside its band's end, as Xcode's; a narrower pane cuts the words
+    /// short, then leaves the symbol alone, then nothing, with a help tag's words for what isn't
+    /// shown. An undefined command is underlined where it stands.
     @Test func anIssuesMessageIsAtItsLinesEnd() throws {
         let window = inWindow()
         defer { withExtendedLifetime(window) {} }
@@ -930,22 +931,15 @@ struct SourceEditorTests {
         #expect(rows.map(\.line) == [1, 2, 4] && rows.map(\.isError) == [false, true, true])
         for row in rows {
             let message = try #require(row.message)
-            #expect(!message.cut && abs(message.rect.maxX - (text.bounds.width - 8 - padding)) < 0.01)
+            #expect(!message.cut && message.rect.maxX == row.band.maxX - 1 && message.rect.minY == row.band.minY)
             #expect(row.band.contains(message.rect) && row.band.minX == 14 && row.band.maxX == text.bounds.width - 8)
-            // In a view of its own over the text's, a point clear at its sides, which takes no click.
-            #expect(message.view.superview === text && message.view.frame == message.rect.insetBy(dx: -1, dy: 0))
+            // In a view of its own over the text's, which takes no click.
+            #expect(message.view.superview === text && message.view.frame == message.rect)
             #expect(text.hitTest(text.convert(NSPoint(x: message.rect.midX, y: message.rect.midY), to: text.superview)) === text)
         }
-        // Above the view TextKit draws a selection in, and in the selected text's colour under one
-        // that has the line's break: the first line's, and with all selected the second's too.
+        // Above the view TextKit draws a selection in, so the boxes stay over a selection.
         let selection = try #require(text.subviews.firstIndex { $0.className.contains("Selection") })
         #expect(rows.allSatisfy { row in text.subviews.firstIndex { $0 === row.message?.view }.map { $0 > selection } == true })
-        text.setSelectedRange(NSRange(location: 1, length: 3))
-        #expect(rows.map { $0.message?.view.covered } == [true, false, false])
-        text.selectAll(nil)
-        #expect(rows.map { $0.message?.view.covered } == [true, true, false])
-        text.setSelectedRange(NSRange(location: 0, length: 0))
-        #expect(rows.map { $0.message?.view.covered } == [false, false, false])
         #expect(rows[0].band.maxY <= rows[1].band.minY && rows[1].band.maxY < rows[2].band.minY)
         #expect(rows[0].tip == nil && rows[1].tip == nil && rows[2].tip == "Emergency stop\nMissing \\begin{document}")
         // Both places the command stands, each four characters wide to the pixel, and none for the
@@ -959,24 +953,30 @@ struct SourceEditorTests {
         try layOut()
         #expect(zip(rows, text.issueRows).allSatisfy { $0.shape === $1.shape } && text.issueRows.count == 3)
 
-        // Narrower: the second line's message is in fewer words, three digits from its text at the
-        // nearest, in the view it had.
-        try layOut(width: 430)
+        // Narrower: the second line's message is in fewer words, its box three digits from its
+        // text at the nearest, in the view it had.
+        try layOut(width: 520)
         let views = rows.map { $0.message?.view }
         rows = text.issueRows
         let cut = try #require(rows[1].message)
-        #expect(cut.cut && abs(cut.rect.maxX - (text.bounds.width - 8 - padding)) < 0.01)
+        #expect(cut.cut && cut.rect.maxX == rows[1].band.maxX - 1)
         #expect(cut.rect.minX >= start + 30 * digit + 3 * digit)
-        let words = ("Undefined: \\foo" as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width
-        #expect(abs(cut.rect.width - words) < 0.01 && cut.view === views[1] && cut.view.frame == cut.rect.insetBy(dx: -1, dy: 0))
+        let font = NSFont.systemFont(ofSize: 13)
+        let words = ("Undefined: \\foo" as NSString).size(withAttributes: [.font: font]).width
+        #expect(abs(cut.rect.width - IssueMessageView.width(ofText: words, font: font)) < 0.01 && cut.view === views[1] && cut.view.frame == cut.rect)
         #expect(rows[1].tip == "Undefined control sequence: \\foo" && rows[0].message?.cut == false)
-        // Narrower still, the line wraps, and its message is on its last line.
+        // Narrower still, the line wraps, and its box is on its first line, the one its number is on.
         try layOut(width: 300)
         rows = text.issueRows
-        let wrapped = try #require(rows[1].message)
         #expect(abs(rows[1].band.height - 2 * rows[0].band.height) < 0.01)
-        #expect(abs(wrapped.rect.minY - (rows[1].band.minY + rows[0].band.height)) < 0.01)
-        // No room: the band and the gutter's symbol are left, and the help tag's words.
+        #expect(rows[1].message.map { $0.rect.minY == rows[1].band.minY && $0.rect.height == rows[0].band.height } != false)
+        // Room for the symbol and not for words: the symbol alone, and the help tag's words.
+        open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
+        text.issueLines = [2: .init(isError: true, message: "Undefined control sequence: \\foo")]
+        try layOut(width: 480)
+        let alone = try #require(text.issueRows.first?.message)
+        #expect(alone.cut && alone.rect.width == IssueMessageView.width(ofText: nil, font: font) && text.issueRows.first?.tip != nil)
+        // No room: the band is left, and the help tag's words.
         open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
         text.issueLines = [2: .init(isError: true, message: "Undefined control sequence: \\foo")]
         try layOut(width: 440)
@@ -990,7 +990,7 @@ struct SourceEditorTests {
         #expect(text.issueRows.isEmpty && !text.subviews.contains { $0 is IssueMessageView })
     }
 
-    /// A click on an issue's message asks for the issue, as one on its mark in the gutter does,
+    /// A click on an issue's box asks for the issue, as one on its line's number does,
     /// and leaves the selection as it was; let go elsewhere, it asks for nothing. A click with
     /// Shift and a drag from it select, as from any line's end, and ask for nothing.
     @Test func aClickOnAnIssuesMessageShowsTheIssue() throws {
