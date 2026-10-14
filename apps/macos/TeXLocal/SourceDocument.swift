@@ -43,8 +43,9 @@ final class SourceDocument {
         }
     }
 
-    /// The names commands take (packages, citations, labels, files) in the
-    /// paragraphs a range touches, which aren't prose.
+    /// What a spelling checker passes over where a range is: maths, literal code, and the names
+    /// commands take (packages, citations, labels, files), each from its start, however far
+    /// before the range.
     func notProse(in range: NSRange) -> [NSRange] {
         let ranges: [[String: Int]] = call("not_prose", ["selection": Self.json(range)]) ?? []
         return ranges.map { NSRange(location: $0["start"] ?? 0, length: $0["length"] ?? 0) }
