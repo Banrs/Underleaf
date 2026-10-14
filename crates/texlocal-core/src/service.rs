@@ -440,7 +440,6 @@ impl Service {
                 arg::<Option<String>>(args, "session")?.as_deref(),
                 &self.tool_paths().1,
             )?),
-            "texpresso_pdf" => out(self.texpresso.pdf_state(&root()?, s("session")?)?),
             "texpresso_start" => out(self
                 .texpresso
                 .start(

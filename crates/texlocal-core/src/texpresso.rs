@@ -63,15 +63,6 @@ pub struct Pane {
     pub caret: Option<Caret>,
 }
 
-/// `Status`'s document fields alone (`Manager::pdf_state`).
-#[derive(Debug, Clone, Serialize)]
-pub struct PdfState {
-    pub running: bool,
-    pub pdf: Option<String>,
-    #[serde(rename = "pdfVersion")]
-    pub pdf_version: u64,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct Status {
     pub available: bool,
@@ -555,20 +546,6 @@ impl Manager {
         // uses stop(root), retaining identity for a conditional restart.
         lock(&self.sessions).remove(&root);
         Ok(session.status())
-    }
-    /// The session's document alone, for a client waiting on it after an edit: no log, and
-    /// no settings read, so it can ask often.
-    pub fn pdf_state(&self, root: &Path, token: &str) -> Result<PdfState, CoreError> {
-        let session = self.owned(&fs::canonicalize(root)?, token)?;
-        let mut state = lock(&session.state);
-        state.last_used = Instant::now();
-        Ok(PdfState {
-            running: state.pid.is_some(),
-            pdf: session
-                .written_pdf(&state)
-                .map(|pdf| pdf.to_string_lossy().into_owned()),
-            pdf_version: state.pdf_version,
-        })
     }
     /// The live document the client's session last wrote, which has its SyncTeX beside it.
     pub fn live_pdf(&self, root: &Path, token: &str) -> Result<PathBuf, CoreError> {
