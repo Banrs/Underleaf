@@ -1538,18 +1538,15 @@ mod tests {
     async fn abandoned_session_lease_expires_without_polling() {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
-        manager
+        let started = manager
             .start(&root, &[], None, &path_env, None)
             .await
             .unwrap();
-        let session = manager
-            .sessions
-            .lock()
-            .unwrap()
-            .get(&fs::canonicalize(&root).unwrap())
-            .cloned()
-            .unwrap();
+        let session = manager.held(&started.session.unwrap()).unwrap();
         session.state.lock().unwrap().last_used = Instant::now() - LEASE;
+        // The session looks at its lease every five seconds of tokio's clock, which
+        // goes straight to its next look once nothing else has work.
+        tokio::time::pause();
         tokio::time::sleep(Duration::from_millis(5100)).await;
         let status = manager.status(&root, None, || &path_env).unwrap();
         assert!(!status.running);
