@@ -40,6 +40,7 @@ const REPLACED: &str =
 const TOO_MANY: &str = "Too many files for TeXpresso (limit 256 files / 64 MB).";
 const TOO_LARGE: &str = "TeXpresso takes files of up to 8 MB.";
 const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
+const INVALID: &str = "A file sent to TeXpresso has an invalid path or text.";
 
 #[derive(Debug, Deserialize)]
 pub struct FileBuffer {
@@ -868,9 +869,7 @@ impl Manager {
     ) -> Result<u64, CoreError> {
         let session = self.held(token)?;
         if text.contains('\0') {
-            return Err(CoreError::bad_request(
-                "A file sent to TeXpresso has an invalid path or text.",
-            ));
+            return Err(CoreError::bad_request(INVALID));
         }
         let mut files = lock(&session.files);
         let files = &mut *files;
@@ -1000,9 +999,7 @@ fn validate_buffer(
         return Err(CoreError::bad_request(TOO_LARGE));
     }
     if path.len() > 4096 || path.contains('\0') || text.contains('\0') {
-        return Err(CoreError::bad_request(
-            "A file sent to TeXpresso has an invalid path or text.",
-        ));
+        return Err(CoreError::bad_request(INVALID));
     }
     if let Some(known) = known.get(path) {
         return Ok(known.clone());
@@ -1029,13 +1026,11 @@ fn check_limits(files: usize, bytes: usize) -> Result<(), CoreError> {
     }
     Ok(())
 }
-fn unsent(err: std::io::Error) -> String {
-    format!("Couldn't send changes to TeXpresso: {err}. Start TeXpresso again.")
-}
-/// How many bytes two texts share at their start, a block at a time.
-fn common(a: impl Iterator<Item = u8> + Clone, b: impl Iterator<Item = u8> + Clone) -> usize {
+/// How many bytes two runs share at their start, one at a time.
+fn common(a: impl Iterator<Item = u8>, b: impl Iterator<Item = u8>) -> usize {
     a.zip(b).take_while(|(a, b)| a == b).count()
 }
+/// How many bytes two texts share at their start, a block at a time.
 fn common_prefix(a: &[u8], b: &[u8]) -> usize {
     const BLOCK: usize = 256;
     let blocks = a
@@ -1099,7 +1094,9 @@ async fn write_lines(
             });
         if let Err(err) = written {
             if let Some(session) = session.upgrade() {
-                session.stop(Some(unsent(err)));
+                session.stop(Some(format!(
+                    "Couldn't send changes to TeXpresso: {err}. Start TeXpresso again."
+                )));
             }
             break;
         }
