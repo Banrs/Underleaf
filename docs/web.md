@@ -11,8 +11,8 @@ abstractions that only add lines.
   Google Docs, Overleaf and VS Code for the web are. One design language in
   `web/styles.css`, from the kit values in `design-tokens.md`.
 - **Browser styling** (`web/src/main.js`): a browser tab gets `html.browser`
-  (14 px type, opaque menus, toasts and dialogs with a neutral hover, no
-  Interface Size, since the browser zooms the page). Floating panels
+  (14 px type, opaque menus, toasts and dialogs with a neutral hover; no
+  interface size of its own, since the browser zooms the page). Floating panels
   (`prefs.floating`) are a preference, not a
   second design system.
 - **Shortcut labels are platform-correct:** ⌘ glyphs on the Mac, Ctrl+Enter
@@ -62,11 +62,10 @@ observations remain listed alongside them; reproduce UI issues before changing b
 - The sidebar divider's grab zone right of its line is covered by the editor
   pane.
 - The outline has no per-section folding.
-- Profile before changing: long-document text-layer rendering, re-renders
-  while resizing, and whole-body CSS zoom for the interface scale. Also each
-  rebuilt PDF fetching every page proxy up front and building all page
-  shells (`PdfViewer.load`, `#renderPass`), and the find cache keeping every
-  searched page's text.
+- Profile before changing: long-document text-layer rendering and re-renders
+  while resizing. Also each rebuilt PDF fetching every page proxy up front and
+  building all page shells (`PdfViewer.load`, `#renderPass`), and the find
+  cache keeping every searched page's text.
 - A light variant of One Dark for Syntax Colors.
 - The editor turns the browser's spellcheck on (`web/src/editor.js`), and in
   WebKit that also lets the system's smart dashes and quotes rewrite LaTeX

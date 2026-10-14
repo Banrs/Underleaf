@@ -1,11 +1,8 @@
-import { bodyZoom } from './dom.js';
-
-// Pane dimensions are CSS pixels, including the desktop interface-scale zoom.
 export const workspaceMode = (width) => width < 720 ? 'compact' : width < 1024 ? 'overlay' : 'wide';
 export const clampPaneWidth = (value, min, max, fallback = min) =>
   Math.round(Math.max(min, Math.min(Math.max(min, max), Number.isFinite(value) && value > 0 ? value : fallback)));
 
-export function paneResizer(handle, pane, { bounds, value, resize, commit, direction = 1, zoom = () => 1, onStart, onMove, onEnd }) {
+export function paneResizer(handle, pane, { bounds, value, resize, commit, direction = 1, onStart, onMove, onEnd }) {
   let finishDrag;
   const listening = new AbortController();
   const sync = () => {
@@ -37,7 +34,7 @@ export function paneResizer(handle, pane, { bounds, value, resize, commit, direc
     const drag = new AbortController();
     const { signal } = drag;
     const move = (e) => {
-      if (e.pointerId === event.pointerId) apply(startWidth + direction * (e.clientX - startX) / zoom());
+      if (e.pointerId === event.pointerId) apply(startWidth + direction * (e.clientX - startX));
     };
     const up = (e) => { if (e.pointerId === event.pointerId) finishDrag?.(false); };
     const cancel = (e) => { if (e.pointerId === event.pointerId) finishDrag?.(true); };
@@ -85,11 +82,11 @@ export function createWorkspaceLayout({ shell, sidebar, sidebarDivider, sidebarT
   const setPdfWidth = (width) => { pdfWidth = width; pdfPane.style.width = `${width}px`; pdfPane.style.flex = 'none'; };
   const resizers = [
     paneResizer(sidebarDivider, sidebar, { bounds: sideBounds, value: () => sideWidth, resize: setSideWidth,
-      commit: (w) => { prefs.sidebarWidth = w; refresh(); }, zoom: bodyZoom,
+      commit: (w) => { prefs.sidebarWidth = w; refresh(); },
       onStart: () => { dragging = 'sidebar'; pdf()?.beginLiveResize(); }, onMove: () => pdf()?.liveResize(),
       onEnd: () => { dragging = null; pdf()?.endLiveResize(); } }),
     paneResizer(paneHandle, pdfPane, { bounds: pdfBounds, value: () => pdfWidth, resize: setPdfWidth,
-      commit: (w) => { prefs.pdfWidth = w; }, direction: -1, zoom: bodyZoom,
+      commit: (w) => { prefs.pdfWidth = w; }, direction: -1,
       onStart: () => { dragging = 'pdf'; pdf()?.beginLiveResize(); }, onMove: () => pdf()?.liveResize(),
       onEnd: () => { dragging = null; pdf()?.endLiveResize(); } }),
   ];

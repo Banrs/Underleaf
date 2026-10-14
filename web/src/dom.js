@@ -4,9 +4,6 @@
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
-// The body's interface-scale `zoom`, which window pixels leave out.
-export const bodyZoom = () => parseFloat(getComputedStyle(document.body).zoom) || 1;
-
 // Unique DOM ids for label/control wiring.
 let uid = 0;
 export const nextId = (prefix) => `${prefix}-${++uid}`;
@@ -149,22 +146,19 @@ export function confirmModal({ title, body, confirm = 'Delete', destructive = tr
 // keyboard open), and `onArrow(±1)` handles ←/→ (the menu bar's neighbours).
 let openMenu = null;
 
-// Pointer/anchor rects use window pixels, while a fixed menu's lengths use
-// the body's interface zoom. Measure offset sizes so the pop-in transform
-// cannot shift the placement, and bound both menus and popovers before sizing.
+// Measure offset sizes so the pop-in transform cannot shift the placement, and
+// bound both menus and popovers before sizing.
 function placeMenu(menu, x, y) {
-  const zoom = bodyZoom();
-  const width = Math.max(0, innerWidth - 16) / zoom;
+  const width = Math.max(0, innerWidth - 16);
   menu.style.minWidth = `${Math.min(160, width)}px`;
   menu.style.maxWidth = `${width}px`;
-  menu.style.maxHeight = `${Math.max(0, innerHeight - 16) / zoom}px`;
+  menu.style.maxHeight = `${Math.max(0, innerHeight - 16)}px`;
   // An old right-edge position must not constrain shrink-to-fit width when
   // a resize gives the menu more room again.
   menu.style.left = '0px';
   menu.style.top = '0px';
-  const [w, h] = [menu.offsetWidth * zoom, menu.offsetHeight * zoom];
-  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - w - 8)) / zoom}px`;
-  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - h - 8)) / zoom}px`;
+  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
 }
 
 // The life a menu and a popover share. `box` goes in #modal-root, placed at

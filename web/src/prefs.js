@@ -16,7 +16,6 @@ const DEFS = {
   editorFontSize: { key: 'fontsize', def: 14, type: 'num' },
   editorFont: { key: 'editorfont', def: 'system', values: ['system', 'jetbrains'] },
   editorTheme: { key: 'editortheme', def: 'onedark', values: ['onedark', 'xcode'] },
-  uiScale: { key: 'uiscale', def: 100, type: 'num' },
   sidebarWidth: { key: 'w-side', def: 0, type: 'num' },
   pdfWidth: { key: 'w-pdf', def: 0, type: 'num' },
   outlineHeight: { key: 'h-outline', def: 0, type: 'num' },
@@ -85,7 +84,6 @@ export const prefs = Object.defineProperties({}, Object.fromEntries(
 // ---------- appearance ----------
 
 export const FONT_SIZES = [12, 13, 14, 15, 16, 17, 18];
-export const UI_SCALES = [80, 90, 100, 110, 120, 130];
 
 function resolveTheme() {
   const mode = prefs.themeMode;
@@ -117,6 +115,5 @@ export function applyAppearance() {
   root.classList.toggle('floating', prefs.floating);
   root.style.setProperty('--editor-fs', `${prefs.editorFontSize}px`);
   root.style.setProperty('--editor-font', prefs.editorFont === 'jetbrains' ? 'var(--mono-jetbrains)' : 'var(--mono)');
-  document.body.style.zoom = prefs.uiScale / 100;
   onThemeChange(root.dataset.theme);
 }

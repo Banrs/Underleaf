@@ -7,7 +7,7 @@
 // otherwise deadlock pdf.js). Canvases paint first for responsiveness; the
 // transparent text layer is a second pass built from each page's text items.
 
-import { el, bodyZoom } from './dom.js';
+import { el } from './dom.js';
 import { pageText, matchRanges } from './pdftext.js';
 import { FindSession, MAX_FIND_MATCHES, indexMatchesBySpan } from './findsession.js';
 
@@ -42,9 +42,6 @@ const SYNC_FLASH = { lineHeight: 12, minimumWidth: 24, margin: 2 };
 const PENDING_HIGHLIGHT_MS = 2000;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-// devicePixelRatio leaves out the interface zoom, so alone it renders soft.
-const pixelRatio = () => (window.devicePixelRatio || 1) * bodyZoom();
 
 // A text-layer span's natural width, measured on a canvas rather than read back
 // from the DOM: no layout per span, and it works while the pane is hidden (the
@@ -320,10 +317,8 @@ export class PdfViewer {
       const wrap = el('div', { class: 'pdf-page-wrap', dataset: { page: n } }, canvas, textLayer);
 
       wrap.addEventListener('dblclick', (e) => {
-        // The rect is in on-screen units, which include the interface-scale
-        // zoom; the click offset is too. Going through the rect's own size
-        // cancels it, where dividing the raw offset by `scale` would land the
-        // inverse search `zoom` times too far down the page.
+        // The rect and the click are both on-screen units: the click's place
+        // as a fraction of the canvas as shown, then in PDF points.
         const rect = canvas.getBoundingClientRect();
         const fx = (e.clientX - rect.left) / rect.width;
         const fy = (e.clientY - rect.top) / rect.height;
@@ -459,7 +454,7 @@ export class PdfViewer {
       p.textLayer.replaceChildren();
     }
 
-    const dpr = pixelRatio();
+    const dpr = window.devicePixelRatio || 1;
     for (const p of near) {
       if (seq !== this.seq || pass !== this._paintPass) return;
       // `_failed` stops a page that genuinely can't render from being retried on
@@ -949,7 +944,7 @@ export class PdfViewer {
     // scrolled to may not have one yet. Build it on demand rather than dropping to
     // the geometric fallback below, which usually lands on whitespace and 404s.
     if (!p.textLayer.childElementCount) {
-      if (!await this.#paintCanvas(p, pixelRatio())) return null;
+      if (!await this.#paintCanvas(p, window.devicePixelRatio || 1)) return null;
       if (seq !== this.seq || !this.pages.includes(p)) return null;
       if (!await this.#buildTextLayer(p, seq)) return null;
     }
