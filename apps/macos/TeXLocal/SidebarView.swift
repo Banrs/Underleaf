@@ -179,7 +179,7 @@ struct FilesList: View {
                     ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",
                                            description: Text(failure))
                 } else if project.search.hits?.isEmpty == true {
-                    ContentUnavailableView.search(text: project.search.query)
+                    ContentUnavailableView.search(text: project.search.searched)
                 }
             }
     }

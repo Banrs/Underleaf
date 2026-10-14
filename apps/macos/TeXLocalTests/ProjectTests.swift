@@ -847,7 +847,8 @@ final class ProjectFlowTests {
     }
 
     /// Find in Project has a query's hits under their files, in the order of the files' names,
-    /// and none yet, nor a failure, once the query is cleared.
+    /// with the query they are for until the next search ends, and none yet, nor a failure, once
+    /// the query is cleared.
     @Test(.timeLimit(.minutes(1)))
     func aSearchListsItsHitsByFile() async throws {
         let project = try await opened("needle\nhay\nNeedle").project
@@ -856,6 +857,10 @@ final class ProjectFlowTests {
         await project.search.run()
         #expect(project.search.hits?.count == 3 && project.search.failure == nil)
         #expect(project.search.groups.map(\.file) == ["appendix.tex", "main.tex"] && project.search.groups.map(\.hits.count) == [1, 2])
+        project.search.query = "needles"
+        #expect(project.search.searched == "needle")
+        await project.search.run()
+        #expect(project.search.hits?.isEmpty == true && project.search.searched == "needles")
         project.search.query = " "
         await project.search.run()
         #expect(project.search.hits == nil && project.search.failure == nil && project.search.groups.isEmpty)
