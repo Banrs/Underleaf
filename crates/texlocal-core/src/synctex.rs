@@ -376,15 +376,12 @@ fn find_word(
         };
         let before = matching_context_chars(
             printed[..k].iter().rev().map(|c| c.1),
-            context[..*start]
-                .iter()
-                .rev()
-                .map(|&(c, optional)| (c, optional)),
+            context[..*start].iter().rev().copied(),
         );
         let end = start + letters.len();
         let after = matching_context_chars(
             printed[k + letters.len()..].iter().map(|c| c.1),
-            context[end..].iter().map(|&(c, optional)| (c, optional)),
+            context[end..].iter().copied(),
         );
         before + after
     };
