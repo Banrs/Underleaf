@@ -40,7 +40,6 @@ let anchor;
 
 beforeEach(() => {
   document.body.innerHTML = '<button id="anchor">Menu</button><div id="modal-root"></div><div id="toast-root" popover="manual"></div>';
-  document.body.style.zoom = '1';
   globalThis.innerWidth = 800;
   globalThis.innerHeight = 600;
   anchor = document.querySelector('#anchor');
@@ -107,51 +106,45 @@ test('the section crumb follows an outline that comes or goes below the caret', 
   assert.equal(bar.location.querySelector('.location-section'), null, 'no heading left: no crumb');
 });
 
-test('context menu coordinates and viewport bounds use the body zoom', () => {
-  for (const zoom of [0.8, 1, 1.3]) {
-    document.body.style.zoom = String(zoom);
-    const handle = contextMenu(100, 80, items());
-    const menu = document.querySelector('.menu');
-    px(menu.style.left, 100 / zoom);
-    px(menu.style.top, 80 / zoom);
-    px(menu.style.maxWidth, 784 / zoom);
-    px(menu.style.maxHeight, 584 / zoom);
-    handle.dismiss();
+test('context menu coordinates and viewport bounds', () => {
+  const handle = contextMenu(100, 80, items());
+  const menu = document.querySelector('.menu');
+  px(menu.style.left, 100);
+  px(menu.style.top, 80);
+  px(menu.style.maxWidth, 784);
+  px(menu.style.maxHeight, 584);
+  handle.dismiss();
 
-    const edge = contextMenu(799, 599, items());
-    const edgeMenu = document.querySelector('.menu');
-    px(edgeMenu.style.left, (800 - 200 * zoom - 8) / zoom);
-    px(edgeMenu.style.top, (600 - 120 * zoom - 8) / zoom);
-    edge.dismiss();
-  }
+  contextMenu(799, 599, items());
+  const edgeMenu = document.querySelector('.menu');
+  px(edgeMenu.style.left, 800 - 200 - 8);
+  px(edgeMenu.style.top, 600 - 120 - 8);
 });
 
 test('a small viewport constrains menu width and height before positioning', () => {
   innerWidth = 150;
   innerHeight = 100;
-  document.body.style.zoom = '1.3';
   contextMenu(149, 99, items());
   const menu = document.querySelector('.menu');
-  px(menu.style.minWidth, 134 / 1.3);
-  px(menu.style.maxWidth, 134 / 1.3);
-  px(menu.style.maxHeight, 84 / 1.3);
-  px(menu.style.left, 8 / 1.3);
-  px(menu.style.top, 8 / 1.3);
+  px(menu.style.minWidth, 134);
+  px(menu.style.maxWidth, 134);
+  px(menu.style.maxHeight, 84);
+  px(menu.style.left, 8);
+  px(menu.style.top, 8);
 });
 
 test('anchored menus reposition on resize, toggle closed, and remove resize handlers', () => {
-  document.body.style.zoom = '1.3';
   menuUnder(anchor, items());
   const menu = document.querySelector('.menu');
-  px(menu.style.left, 100 / 1.3);
-  px(menu.style.top, 64 / 1.3);
+  px(menu.style.left, 100);
+  px(menu.style.top, 64);
   assert.equal(anchor.getAttribute('aria-expanded'), 'true');
   anchor.getBoundingClientRect = () => ({ left: 700, bottom: 500 });
   innerWidth = 400;
   innerHeight = 240;
   resize();
-  px(menu.style.left, (400 - 260 - 8) / 1.3);
-  px(menu.style.top, (240 - 156 - 8) / 1.3);
+  px(menu.style.left, 400 - 200 - 8);
+  px(menu.style.top, 240 - 120 - 8);
   assert.equal(menuUnder(anchor, items()), null);
   assert.equal(menu.isConnected, false);
   assert.equal(anchor.getAttribute('aria-expanded'), 'false');
@@ -179,16 +172,15 @@ test('menu keyboard navigation skips disabled rows and Escape/Tab restore the tr
 });
 
 test('popovers use menu bounds and can be resized, toggled, and dismissed outside', () => {
-  document.body.style.zoom = '0.8';
   popoverUnder(anchor, el('button', {}, 'Symbol'), { label: 'Symbols' });
   const popover = document.querySelector('.popover');
   assert.equal(popover.getAttribute('aria-label'), 'Symbols');
-  px(popover.style.left, 100 / 0.8);
-  px(popover.style.top, 64 / 0.8);
+  px(popover.style.left, 100);
+  px(popover.style.top, 64);
   innerHeight = 80;
   resize();
-  px(popover.style.maxHeight, 64 / 0.8);
-  px(popover.style.top, 8 / 0.8);
+  px(popover.style.maxHeight, 64);
+  px(popover.style.top, 8);
   assert.equal(popoverUnder(anchor, el('button', {}, 'Other')), null);
   assert.equal(popover.isConnected, false);
   popoverUnder(anchor, el('button', {}, 'Other'));

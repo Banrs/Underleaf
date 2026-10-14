@@ -58,7 +58,7 @@ export function renderLogs({ pdfScroll, logsButton }) {
     }, 'Raw log') : null,
   );
 
-  const body = el('div', { class: 'logs-body' });
+  const body = el('div');
   if (r) {
     if (state.logShowRaw) {
       body.appendChild(el('pre', { class: 'logs-raw' }, r.log || '(empty)'));

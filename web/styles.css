@@ -1113,7 +1113,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .settings-control { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); flex: none; max-width: 100%; color: var(--label-2); }
 .settings-control .btn:not(:disabled) { color: var(--label); }
 
-/* Follow the dialog's available width, including interface/browser zoom. */
+/* Follow the dialog's available width, including the browser's zoom. */
 @container settings (max-width: 400px) {
   .settings-row { flex-direction: column; align-items: flex-start; gap: var(--sp-2); padding-block: var(--sp-3); }
   .settings-row > :last-child { max-width: 100%; }
@@ -1282,7 +1282,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 
 /* Responsive workspace: preserve the desktop preferences while space is tight.
-   Classes use the shell's CSS width, so interface zoom follows the same rules. */
+   Classes use the shell's CSS width, so the browser's zoom follows the same rules. */
 .workspace-switcher { display: flex; flex: none; gap: var(--sp-1); padding: var(--sp-2); background: var(--bg-content); border-bottom: 1px solid var(--separator); }
 .workspace-switcher .btn { flex: 1; }
 .workspace-switcher [aria-pressed="true"] { background: var(--fill-2); color: var(--label); }

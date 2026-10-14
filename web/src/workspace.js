@@ -7,7 +7,7 @@ import { icon } from './icons.js';
 import { createEditor } from './editor.js';
 import { PdfViewer } from './pdfview.js';
 import { state, resetProjectState, analyzeDoc, IMAGE_FILE, TEXT_FILE, TEX_FILE } from './state.js';
-import { prefs, UI_SCALES, applyAppearance, setAppearanceHandler } from './prefs.js';
+import { prefs, setAppearanceHandler } from './prefs.js';
 import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle, menuBar, SHORTCUTS } from './commands.js';
 import { openSettings } from './settings.js';
 import { newProjectFlow } from './home.js';
@@ -118,19 +118,12 @@ export async function renderWorkspace(id) {
   } });
   disposeCommands = registerCommands(commandDefs());
   texpresso.inspect().catch(() => {});
-  // No ResizeObserver reports the body's `zoom` (an element's CSS box is
-  // unchanged by it), so a scale change re-renders the PDF, or it stays soft.
-  let lastScale = prefs.uiScale;
   const previousHandler = setAppearanceHandler((theme) => {
     state.editor?.setTheme(theme === 'dark');
     updateDocMeta();
     refreshSidebarChrome();
     ui.layout?.refresh();
     refreshCommands();
-    if (prefs.uiScale !== lastScale) {
-      lastScale = prefs.uiScale;
-      state.pdf?.render();
-    }
   });
   restoreAppearanceHandler = () => setAppearanceHandler(previousHandler);
 
@@ -444,8 +437,6 @@ function commandDefs() {
     { id: 'view.zoomOut', scope: 'pdf', run: () => state.pdf?.zoomBy(1 / 1.15), enabled: hasPdf },
     { id: 'view.fitWidth', scope: 'pdf', run: () => state.pdf?.fitWidth(), enabled: hasPdf },
     { id: 'view.fitHeight', scope: 'pdf', run: () => state.pdf?.fitHeight(), enabled: hasPdf },
-    { id: 'view.uiScaleUp', run: () => stepUiScale(1) },
-    { id: 'view.uiScaleDown', run: () => stepUiScale(-1) },
 
     { id: 'compile.run', run: () => compile(), enabled: () => state.tex.available && !state.compiling },
     { id: 'compile.toggleAuto', run: () => { prefs.autoCompile = !prefs.autoCompile; refreshCommands(); }, checked: () => prefs.autoCompile },
@@ -610,8 +601,8 @@ async function openFile(path) {
       const img = el('img', { alt: path });
       host.replaceChildren(el('div', { class: 'image-preview' }, img));
       api.rawFileUrl(projectId, path).then((src) => {
-        // The <img> keeps the decoded image, so a blob: URL can go once read.
-        if (src.startsWith('blob:')) img.onload = img.onerror = () => URL.revokeObjectURL(src);
+        // The <img> keeps the decoded image, so the blob: URL can go once read.
+        img.onload = img.onerror = () => URL.revokeObjectURL(src);
         img.src = src;
       }, (err) => { if (stillCurrent()) toast(err.message, 'error'); });
     } else {
@@ -959,7 +950,6 @@ function setCompileButton(btn, busy) {
   if (!btn) return;
   if (busy) delete btn.dataset.command; else btn.dataset.command = 'compile.run';
   btn.disabled = !busy && !state.tex.available;
-  btn.classList.toggle('busy', busy);
   if (busy) btn.setAttribute('aria-busy', 'true'); else btn.removeAttribute('aria-busy');
   btn.title = busy ? 'Stop the build' : tooltip('compile.run');
   btn.replaceChildren(...(busy ? [el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Stop'] : ['Compile']));
@@ -1093,13 +1083,4 @@ async function inverseSync() {
     if (!loc) { toast(doc ? failure : 'Compile first to produce a PDF'); return; }
     await inverseJump(projectId, viewer, generation, doc, loc, failure);
   } catch { if (current()) toast(failure); }
-}
-
-// ---------- panes ----------
-
-function stepUiScale(dir) {
-  const i = UI_SCALES.indexOf(prefs.uiScale) + dir;
-  if (i < 0 || i >= UI_SCALES.length) return;
-  prefs.uiScale = UI_SCALES[i];
-  applyAppearance();
 }

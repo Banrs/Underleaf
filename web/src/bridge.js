@@ -51,7 +51,6 @@ export function httpBridge(fetchImpl = (...a) => fetch(...a), token = takeToken(
     return res;
   };
   return {
-    kind: 'browser',
     invoke: async (command, args, options) => {
       const raw = args instanceof ArrayBuffer;
       const res = await fetchImpl(`/api/${command}`, {

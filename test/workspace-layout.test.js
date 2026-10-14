@@ -26,7 +26,6 @@ beforeEach(() => {
   style.textContent = stylesheet;
   document.head.append(style);
   document.body.innerHTML = '';
-  document.body.style.zoom = '1';
   ResizeObserverStub.instances.length = 0;
 });
 afterEach(() => { while (disposers.length) disposers.pop()(); });
@@ -59,8 +58,7 @@ function pointer(target, type, x, options = {}) {
   target.dispatchEvent(event);
   return event;
 }
-function fixture({ width = 1360, preferences = {}, zoom = 1 } = {}) {
-  document.body.style.zoom = String(zoom);
+function fixture({ width = 1360, preferences = {} } = {}) {
   document.body.innerHTML = `<div class="shell">
     <aside id="workspace-sidebar" class="sidebar"><button id="side-first" data-command="view.toggleSidebar">Files</button>
       <button disabled>Unavailable</button><input id="side-search"><button id="side-last">Settings</button></aside>
@@ -100,14 +98,14 @@ function fixture({ width = 1360, preferences = {}, zoom = 1 } = {}) {
     setWidth(next) { width = next; this.observer.deliver(nodes.shell); },
     setToolbarHeight(next) { toolbarHeight = next; this.observer.deliver(toolbar); } };
 }
-function isolatedResizer({ width = 300, direction = 1, zoom = 1 } = {}) {
+function isolatedResizer({ width = 300, direction = 1 } = {}) {
   const pane = document.createElement('div'), handle = document.createElement('div');
   handle.tabIndex = 0;
   pane.style.transition = 'width 0.2s ease';
   document.body.append(pane, handle); capture(handle);
   const commits = [], live = [];
   const resizer = paneResizer(handle, pane, { bounds: () => [180, 600], value: () => width, resize: (next) => { width = next; },
-    commit: (next) => commits.push(next), direction, zoom: () => zoom,
+    commit: (next) => commits.push(next), direction,
     onStart: () => live.push('begin'), onMove: () => live.push('move'), onEnd: () => live.push('end') });
   disposers.push(() => resizer.destroy());
   return { pane, handle, commits, live, resizer, get width() { return width; } };
@@ -250,12 +248,12 @@ test('layout keyboard resize persists only user changes and reverses the preview
   assert.deepEqual(f.writes, [['sidebarWidth', 266], ['pdfWidth', 540]]);
 });
 
-test('pointer resize uses CSS pixels at every interface scale and commits once on release', () => {
-  for (const zoom of [0.8, 1, 1.3]) for (const direction of [1, -1]) {
-    const f = isolatedResizer({ zoom, direction }); pointer(f.handle, 'pointerdown', 100);
+test('pointer resize moves with the pointer and commits once on release', () => {
+  for (const direction of [1, -1]) {
+    const f = isolatedResizer({ direction }); pointer(f.handle, 'pointerdown', 100);
     assert.equal(document.activeElement, f.handle); assert.equal(f.handle.hasPointerCapture(1), true); assert.equal(f.pane.style.transition, 'none');
-    pointer(f.handle, 'pointermove', 100 + 50 * zoom); assert.equal(f.width, 300 + 50 * direction); assert.deepEqual(f.commits, []);
-    pointer(f.handle, 'pointerup', 100 + 50 * zoom);
+    pointer(f.handle, 'pointermove', 150); assert.equal(f.width, 300 + 50 * direction); assert.deepEqual(f.commits, []);
+    pointer(f.handle, 'pointerup', 150);
     assert.deepEqual(f.commits, [300 + 50 * direction]); assert.deepEqual(f.live, ['begin', 'move', 'end']);
     assert.equal(f.pane.style.transition, 'width 0.2s ease'); assert.equal(f.handle.hasPointerCapture(1), false); assert.equal(f.handle.classList.contains('dragging'), false);
     pointer(f.handle, 'pointermove', 1000); assert.equal(f.width, 300 + 50 * direction); f.resizer.destroy();
@@ -296,11 +294,11 @@ test('events from a different pointer cannot move or finish a captured gesture',
 });
 
 test('observer delivery during sidebar drag does not restore its old persisted width', () => {
-  const f = fixture({ zoom: 1.3 }); pointer(f.sidebarDivider, 'pointerdown', 100); pointer(f.sidebarDivider, 'pointermove', 165);
+  const f = fixture(); pointer(f.sidebarDivider, 'pointerdown', 100); pointer(f.sidebarDivider, 'pointermove', 150);
   assert.equal(f.sidebar.style.width, '306px'); assert.equal(f.prefs.sidebarWidth, 256);
   f.observer.deliver(f.workspace); assert.equal(f.sidebar.style.width, '306px');
-  pointer(f.sidebarDivider, 'pointermove', 191); f.observer.deliver(f.workspace); assert.equal(f.sidebar.style.width, '326px');
-  pointer(f.sidebarDivider, 'pointerup', 191); assert.equal(f.prefs.sidebarWidth, 326); assert.equal(f.sidebar.style.width, '326px');
+  pointer(f.sidebarDivider, 'pointermove', 170); f.observer.deliver(f.workspace); assert.equal(f.sidebar.style.width, '326px');
+  pointer(f.sidebarDivider, 'pointerup', 170); assert.equal(f.prefs.sidebarWidth, 326); assert.equal(f.sidebar.style.width, '326px');
   assert.deepEqual(f.writes, [['sidebarWidth', 326]]);
 });
 

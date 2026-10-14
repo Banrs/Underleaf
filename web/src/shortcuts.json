@@ -23,8 +23,6 @@
   "view.zoomOut": "CmdOrCtrl+Minus",
   "view.fitWidth": "CmdOrCtrl+0",
   "view.fitHeight": "CmdOrCtrl+Alt+0",
-  "view.uiScaleUp": "CmdOrCtrl+Alt+Plus",
-  "view.uiScaleDown": "CmdOrCtrl+Alt+Minus",
   "compile.run": "CmdOrCtrl+Return",
   "sync.forward": "Ctrl+Return",
   "sync.inverse": "Ctrl+Shift+Return",

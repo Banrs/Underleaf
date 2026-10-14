@@ -6,9 +6,8 @@ import { api } from './api.js';
 import { $, el, toast, showModal, nextId } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
-import { prefs, FONT_SIZES, UI_SCALES, applyAppearance } from './prefs.js';
+import { prefs, FONT_SIZES, applyAppearance } from './prefs.js';
 import { chooseTexFolder, texInstallHint } from './texfolder.js';
-import { bridge } from './bridge.js';
 
 // A labelled row: title, optional hint, trailing control. The control is given
 // its accessible name from the title, so a switch or radio group reads with it.
@@ -202,9 +201,6 @@ export function openSettings(options = {}) {
           segmented([['system', 'System'], ['jetbrains', 'JetBrains']], () => prefs.editorFont, (v) => { prefs.editorFont = v; })),
         row('Editor font size', null,
           stepper(FONT_SIZES, () => prefs.editorFontSize, (v) => { prefs.editorFontSize = v; }, (v) => `${v} pt`)),
-        // A browser has its own zoom, which this would only duplicate.
-        bridge?.kind === 'browser' ? null : row('Interface scale', null,
-          stepper(UI_SCALES, () => prefs.uiScale, (v) => { prefs.uiScale = v; }, (v) => `${v}%`)),
       ),
       texGroup(options, close),
     ];

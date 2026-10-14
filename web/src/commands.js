@@ -5,7 +5,7 @@
 import { isMac } from './bridge.js';
 import { menuUnder } from './dom.js';
 
-// Every command's accelerator. The Mac reads this table too.
+// Every command's accelerator.
 import SHORTCUTS from './shortcuts.json' with { type: 'json' };
 
 export { SHORTCUTS };
@@ -36,8 +36,7 @@ const MENU = [
     label: 'View',
     items: [
       { id: 'view.toggleSidebar' }, { id: 'view.togglePdf' }, { id: 'view.toggleLogs' }, '-',
-      { id: 'view.zoomIn' }, { id: 'view.zoomOut' }, { id: 'view.fitWidth' }, { id: 'view.fitHeight' }, '-',
-      { id: 'view.uiScaleUp' }, { id: 'view.uiScaleDown' },
+      { id: 'view.zoomIn' }, { id: 'view.zoomOut' }, { id: 'view.fitWidth' }, { id: 'view.fitHeight' },
     ],
   },
   {
@@ -80,8 +79,6 @@ const TITLES = {
   'view.zoomOut': 'Zoom Out',
   'view.fitWidth': 'Fit Width',
   'view.fitHeight': 'Fit Height',
-  'view.uiScaleUp': 'Increase Interface Size',
-  'view.uiScaleDown': 'Decrease Interface Size',
   'compile.run': 'Compile',
   'compile.toggleAuto': 'Compile Automatically',
   'compile.texpresso': 'Start TeXpresso (Experimental)',
@@ -192,9 +189,6 @@ export function tooltip(id) {
 
 // ---------- menu events ----------
 
-// Browsers own page zoom, so a separate interface size would stack on it.
-const BROWSER_OWNS = new Set(['view.uiScaleUp', 'view.uiScaleDown']);
-
 const TEXT_FIELD = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
 
 // Whether a chord pressed at `target` reaches command `c`: never past a modal
@@ -214,7 +208,7 @@ export function chordApplies(c, target, doc = document) {
 export function installMenuBridge() {
   addEventListener('keydown', (e) => {
     for (const [id, c] of registry) {
-      const accel = !c.nativeOnly && !BROWSER_OWNS.has(id) && accelOf(id);
+      const accel = !c.nativeOnly && accelOf(id);
       if (accel && matchesAccel(accel, e, isMac) && chordApplies(c, e.target) && runCommand(id)) {
         e.preventDefault();
         e.stopPropagation();
@@ -267,7 +261,6 @@ export function menuBar() {
   const itemsOf = (group) => {
     const items = [];
     for (const it of group.items) {
-      if (BROWSER_OWNS.has(it.id)) continue;
       if (it === '-') {
         if (items.length && items.at(-1) !== '-') items.push('-');
         continue;
