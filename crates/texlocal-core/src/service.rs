@@ -417,7 +417,7 @@ impl Service {
             "texpresso_status" => out(self.texpresso.status(
                 &root()?,
                 arg::<Option<String>>(args, "session")?.as_deref(),
-                &self.tool_paths().1,
+                || self.tool_paths().1,
             )?),
             "texpresso_start" => out(self
                 .texpresso

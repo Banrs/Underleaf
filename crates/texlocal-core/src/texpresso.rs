@@ -588,16 +588,18 @@ impl Manager {
             session: None,
         }
     }
-    /// Inspection does not acquire ownership or renew the viewer's lease.
-    pub fn status(
+    /// Inspection does not acquire ownership or renew the viewer's lease. The
+    /// PATH is built only when no session answers: a client polls this while
+    /// its session runs, and the PATH reads the app's settings and TeX's folders.
+    pub fn status<P: AsRef<str>>(
         &self,
         root: &Path,
         token: Option<&str>,
-        path_env: &str,
+        path_env: impl FnOnce() -> P,
     ) -> Result<Status, CoreError> {
         let root = fs::canonicalize(root)?;
         let Some(session) = self.session(&root, token)? else {
-            return Ok(self.idle(path_env));
+            return Ok(self.idle(path_env().as_ref()));
         };
         if token.is_some() {
             session.renew(&root);
@@ -1419,9 +1421,9 @@ mod tests {
             )
             .await
             .unwrap();
-        until(|| !manager.status(&root, None, &path_env).unwrap().running).await;
+        until(|| !manager.status(&root, None, || &path_env).unwrap().running).await;
         assert!(manager
-            .status(&root, None, &path_env)
+            .status(&root, None, || &path_env)
             .unwrap()
             .error
             .is_none());
@@ -1430,7 +1432,7 @@ mod tests {
             .await
             .unwrap();
         manager.kill_all();
-        assert!(!manager.status(&root, None, &path_env).unwrap().running);
+        assert!(!manager.status(&root, None, || &path_env).unwrap().running);
     }
     #[tokio::test]
     async fn the_live_pdf_folder_goes_with_its_session() {
@@ -1514,7 +1516,7 @@ mod tests {
             .unwrap();
         until(|| {
             fs::read_to_string(tmp.path().join("engine.pid")).is_ok()
-                && manager.status(&root, None, &path_env).unwrap().output == "ready"
+                && manager.status(&root, None, || &path_env).unwrap().output == "ready"
         })
         .await;
         let child_pid: i32 = fs::read_to_string(tmp.path().join("engine.pid"))
@@ -1527,8 +1529,8 @@ mod tests {
             .update(&root, "main.tex", "EXIT_STUB", token, false)
             .await
             .unwrap();
-        until(|| !manager.status(&root, None, &path_env).unwrap().running).await;
-        let status = manager.status(&root, None, &path_env).unwrap();
+        until(|| !manager.status(&root, None, || &path_env).unwrap().running).await;
+        let status = manager.status(&root, None, || &path_env).unwrap();
         assert_eq!(status.output, "ready");
         // Not asked for, the stub's document isn't offered.
         let events = manager.wait(&root, token, 0, Duration::ZERO).await.unwrap();
@@ -1559,7 +1561,7 @@ mod tests {
             .unwrap();
         session.state.lock().unwrap().last_used = Instant::now() - LEASE;
         tokio::time::sleep(Duration::from_millis(5100)).await;
-        let status = manager.status(&root, None, &path_env).unwrap();
+        let status = manager.status(&root, None, || &path_env).unwrap();
         assert!(!status.running);
         assert!(status.error.unwrap().contains("expired"));
     }
@@ -1596,7 +1598,7 @@ mod tests {
     async fn replacement_rejects_queued_stale_edits_cleanup_and_lease_renewal() {
         let (_tmp, root, path_env) = setup();
         let manager = Arc::new(Manager::default());
-        assert!(!manager.status(&root, None, &path_env).unwrap().running);
+        assert!(!manager.status(&root, None, || &path_env).unwrap().running);
         let old = manager
             .start(&root, &[], None, &path_env, None)
             .await
@@ -1643,7 +1645,7 @@ mod tests {
         session.state.lock().unwrap().last_used = before;
         assert_eq!(
             manager
-                .status(&root, Some(&old), &path_env)
+                .status(&root, Some(&old), || &path_env)
                 .unwrap_err()
                 .status,
             409
@@ -1660,7 +1662,7 @@ mod tests {
         // An idle tab can inspect B, but neither inspection nor A extends its lease.
         assert_eq!(
             manager
-                .status(&root, None, &path_env)
+                .status(&root, None, || &path_env)
                 .unwrap()
                 .session
                 .as_deref(),
@@ -1669,7 +1671,7 @@ mod tests {
         assert_eq!(session.state.lock().unwrap().last_used, before);
         assert!(
             manager
-                .status(&root, Some(&current), &path_env)
+                .status(&root, Some(&current), || &path_env)
                 .unwrap()
                 .running
         );
@@ -1688,7 +1690,7 @@ mod tests {
             409
         );
         manager.stop(&root).unwrap();
-        assert!(!manager.status(&root, None, &path_env).unwrap().running);
+        assert!(!manager.status(&root, None, || &path_env).unwrap().running);
         let restarted = manager
             .start(&root, &[], Some(&current), &path_env, None)
             .await
