@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::paths;
 
@@ -65,7 +65,8 @@ static WORD_BREAK: LazyLock<Regex> =
 /// A sectioning command: its depth (0 for \part to 5 for \paragraph), its
 /// title as plain text ("(untitled)" when empty), its 1-based line and, in a
 /// project's analysis, its file.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize)]
+#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct Heading {
     pub depth: usize,
     pub title: String,
@@ -74,7 +75,9 @@ pub struct Heading {
     pub file: Option<String>,
 }
 
-#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Serialize)]
+// Read back only by the tests, from the fixtures the web version shares.
+#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct Analysis {
     pub outline: Vec<Heading>,
     pub words: usize,
@@ -234,6 +237,7 @@ fn words(line: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
 
     /// The cases web/src/state.js is held to as well (test/analyze.test.js).
     #[test]
