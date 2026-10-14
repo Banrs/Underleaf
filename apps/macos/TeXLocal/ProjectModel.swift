@@ -573,7 +573,13 @@ final class ProjectModel {
         // Read once for the batch: a checkout changes every file at once.
         let entries = tree.nodes.flattened
         let folders = Set(entries.filter(\.isDirectory).map(\.path))
+        let files = Set(entries.filter { !$0.isDirectory }.map(\.path))
         let previewed = texpresso.active ? Set(entries.map(\.path)) : []
+        // A save, ours or another app's, renames a new file over a listed one, which leaves the tree
+        // as it was; nor does the core list a hidden file, such as the save's temporary one.
+        func listedAsBefore(_ path: String) -> Bool {
+            path.fileName.hasPrefix(".") || files.contains(path) && watcher.hasFile(path)
+        }
         var openFileChanged = false, treeChanged = false
         for change in changes {
             guard let path = watcher.relativePath(change.path) else {
@@ -588,7 +594,7 @@ final class ProjectModel {
             openFileChanged = openFileChanged || path == openPath
                 || change.structural && openPath?.hasPrefix(path + "/") == true
             let parent = path.parentFolder
-            treeChanged = treeChanged || change.structural && (parent.isEmpty || folders.contains(parent))
+            treeChanged = treeChanged || change.structural && (parent.isEmpty || folders.contains(parent)) && !listedAsBefore(path)
             if previewed.contains(path) { liveDiskPaths.insert(path) }
         }
         if openFileChanged {

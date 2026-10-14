@@ -67,6 +67,14 @@ final class FolderWatcher {
         return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : nil
     }
 
+    /// A regular file at `path` from the folder, with no link on the way and spelt as the disk
+    /// spells it (`realpath` gives the disk's case): what a save leaves, renaming a new file over the old.
+    func hasFile(_ path: String) -> Bool {
+        let full = folder + "/" + path
+        var info = stat()
+        return lstat(full, &info) == 0 && info.st_mode & S_IFMT == S_IFREG && Self.realPath(URL(filePath: full)) == full
+    }
+
     /// Resolved as FSEvents resolves it. `resolvingSymlinksInPath` would take
     /// /private off /private/var and /private/tmp, which FSEvents keeps.
     static func realPath(_ url: URL) -> String {

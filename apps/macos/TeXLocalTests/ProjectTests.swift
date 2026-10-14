@@ -57,6 +57,22 @@ final class FolderWatcherTests {
         _ = watcher
     }
 
+    /// What a save leaves is a file at its path, spelt as the disk spells it; a link, a folder,
+    /// another spelling or nothing is not.
+    @Test func aFileIsARegularFileAtItsOwnSpelling() throws {
+        let watcher = FolderWatcher(folder: folder) { _ in }
+        try "text".write(to: folder.appending(path: "main.tex"), atomically: false, encoding: .utf8)
+        try FileManager.default.createDirectory(at: folder.appending(path: "chapters"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: folder.appending(path: "link.tex"),
+                                                   withDestinationURL: folder.appending(path: "main.tex"))
+        #expect(watcher.hasFile("main.tex"))
+        #expect(!watcher.hasFile("link.tex") && !watcher.hasFile("chapters") && !watcher.hasFile("gone.tex"))
+        // A volume that ignores case finds the file by this name too.
+        if FileManager.default.fileExists(atPath: folder.appending(path: "MAIN.tex").path(percentEncoded: false)) {
+            #expect(!watcher.hasFile("MAIN.tex"))
+        }
+    }
+
     @Test func anItemAddedInASubfolderIsStructural() async throws {
         try FileManager.default.createDirectory(at: folder.appending(path: "chapters"), withIntermediateDirectories: true)
         let (watcher, changes) = watch("chapters/one.tex")
@@ -617,6 +633,9 @@ final class ProjectFlowTests {
         try files.createDirectory(at: folder.appending(path: "parts"), withIntermediateDirectories: false)
         try files.moveItem(at: folder.appending(path: "notes.tex"), to: folder.appending(path: "parts/notes.tex"))
         try await waitUntil(timeout: .seconds(5)) { paths().contains("parts/notes.tex") && !paths().contains("notes.tex") }
+        // Only the spelling changes, which a volume that ignores case finds under either.
+        try files.moveItem(at: folder.appending(path: "parts/notes.tex"), to: folder.appending(path: "parts/Notes.tex"))
+        try await waitUntil(timeout: .seconds(5)) { paths().contains("parts/Notes.tex") && !paths().contains("parts/notes.tex") }
         try files.removeItem(at: folder.appending(path: "parts"))
         try await waitUntil(timeout: .seconds(5)) { !paths().contains("parts") }
         await app.close()

@@ -32,7 +32,7 @@ final class FileTree {
         let files = try await core.call("file_tree", ["id": id], as: [TreeNode].self)
         guard read > taken else { return }
         taken = read
-        // A save's temporary file can trigger an unchanged tree reload.
+        // A change in a folder can leave its files as they were.
         if files != nodes, !closed, !Task.isCancelled {
             nodes = files
             onChange()
