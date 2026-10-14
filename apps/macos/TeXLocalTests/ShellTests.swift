@@ -32,12 +32,23 @@ struct ShellTests {
         return (window, workspace)
     }
 
-    /// The models reach the panes a turn later, and the panes' frames the toolbar at layout.
+    /// The models reach the panes a turn later, and the panes' frames the toolbar at layout: it
+    /// waits, a turn at a time, until no view in the window has moved for a few.
     private func resize(_ window: NSWindow, to width: CGFloat) async throws {
+        func frames(_ view: NSView) -> String {
+            "\(view.frame)" + view.subviews.map(frames).joined()
+        }
+        let root = try #require(window.contentView?.superview)
         window.setContentSize(NSSize(width: width, height: 600))
-        window.layoutIfNeeded()
-        try await Task.sleep(for: .milliseconds(100))
-        window.layoutIfNeeded()
+        var last = "", quiet = 0
+        for _ in 0..<1_000 where quiet < 5 {
+            window.layoutIfNeeded()
+            let now = frames(root)
+            quiet = now == last ? quiet + 1 : 0
+            last = now
+            await Task.yield()
+        }
+        guard quiet == 5 else { throw TimedOut(state: "the window's views were still moving at width \(width)") }
     }
 
     private func item(_ id: NSToolbarItem.Identifier, in workspace: WorkspaceController) throws -> NSToolbarItem {
@@ -98,13 +109,13 @@ struct ShellTests {
             try await resize(window, to: width)
             let idle = button.fittingSize
             workspace.project.compiling = true
-            try await Task.sleep(for: .milliseconds(50))
+            try await waitUntil { compile.label == MenuCommand.compileStop.title }
             #expect(button.fittingSize == idle)
             #expect(compile.label == MenuCommand.compileStop.title)
             #expect(compile.menuFormRepresentation?.title == MenuCommand.compileStop.title)
             #expect(compile.backgroundTintColor == .clear)
             workspace.project.compiling = false
-            try await Task.sleep(for: .milliseconds(50))
+            try await waitUntil { compile.label == MenuCommand.compileRun.title }
             #expect(button.fittingSize == idle && compile.backgroundTintColor == nil)
         }
     }
@@ -188,22 +199,21 @@ struct ShellTests {
     /// The source|PDF divider stands under the toolbar's separator from the widest window to the
     /// narrowest, sidebar open or shut: where a section's tools stop the separator, the divider
     /// goes to it (`joinDivider`).
-    @Test func theDividerStaysUnderTheToolbarsSeparator() async throws {
-        for sidebar in [false, true] {
-            let (window, workspace) = try await workspace(showPDF: true, sidebar: sidebar)
-            defer { workspace.close(); window.close() }
-            let split = workspace.columns.splitView
-            func separators(_ view: NSView) -> [NSView] {
-                view.subviews.flatMap { ($0.className == "NSSeparatorToolbarItemView" ? [$0] : []) + separators($0) }
-            }
-            let frame = try #require(window.contentView?.superview)
-            func lines() -> [CGFloat] { separators(frame).map { split.convert($0.bounds, from: $0).minX } }
-            func divider() -> CGFloat { split.arrangedSubviews[0].frame.maxX }
-            for width in [1300, 900, 700, ColumnMetrics.contentMinimum.width] {
-                try await resize(window, to: width)
-                try await waitUntil({ lines().contains { isClose($0, divider()) } }) {
-                    "sidebar \(sidebar), width \(width): divider at \(divider()), lines at \(lines())"
-                }
+    @Test(arguments: [false, true])
+    func theDividerStaysUnderTheToolbarsSeparator(sidebar: Bool) async throws {
+        let (window, workspace) = try await workspace(showPDF: true, sidebar: sidebar)
+        defer { workspace.close(); window.close() }
+        let split = workspace.columns.splitView
+        func separators(_ view: NSView) -> [NSView] {
+            view.subviews.flatMap { ($0.className == "NSSeparatorToolbarItemView" ? [$0] : []) + separators($0) }
+        }
+        let frame = try #require(window.contentView?.superview)
+        func lines() -> [CGFloat] { separators(frame).map { split.convert($0.bounds, from: $0).minX } }
+        func divider() -> CGFloat { split.arrangedSubviews[0].frame.maxX }
+        for width in [1300, 900, 700, ColumnMetrics.contentMinimum.width] {
+            try await resize(window, to: width)
+            try await waitUntil({ lines().contains { isClose($0, divider()) } }) {
+                "width \(width): divider at \(divider()), lines at \(lines())"
             }
         }
     }
@@ -262,12 +272,12 @@ struct ShellTests {
         defer { tracks.forEach { $0.cancel() } }
         // Both have read the first value before it changes: the second shows nothing of its own.
         try await waitUntil { all == [0] }
-        try await Task.sleep(for: .milliseconds(100))
+        await settle()
         app.searchFocusToken = 1
         app.searchFocusToken = 2
         try await waitUntil { all == [0, 1] && later == [1] }
         app.searchFocusToken = 3
-        try await Task.sleep(for: .milliseconds(100))
+        await settle()
         #expect(all == [0, 1] && later == [1])
     }
 

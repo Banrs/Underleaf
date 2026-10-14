@@ -69,14 +69,13 @@ struct InPlaceRenameTests {
         #expect(rename.end("ch/intro.tex", from: "intro.tex") == nil)
     }
 
-    @Test func anEmptyOrUnchangedNameRenamesNothing() {
+    @Test(arguments: ["   ", "intro.tex"])
+    func anEmptyOrUnchangedNameRenamesNothing(name: String) {
         let rename = InPlaceRename<String>()
-        for name in ["   ", "intro.tex"] {
-            rename.begin("intro.tex", name: "intro.tex")
-            rename.name = name
-            #expect(rename.end("intro.tex", from: "intro.tex") == nil)
-            #expect(rename.id == nil)
-        }
+        rename.begin("intro.tex", name: "intro.tex")
+        rename.name = name
+        #expect(rename.end("intro.tex", from: "intro.tex") == nil)
+        #expect(rename.id == nil)
     }
 
     @Test func anotherRowLeavesTheRenameOpen() {

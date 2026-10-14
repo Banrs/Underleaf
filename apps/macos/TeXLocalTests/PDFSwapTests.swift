@@ -1,5 +1,6 @@
 import AppKit
 import PDFKit
+import Synchronization
 import Testing
 @testable import TeXLocal
 
@@ -214,10 +215,12 @@ struct PDFSwapTests {
     @Test func anEqualSetNotifiesNoObserver() {
         let project = ProjectModel(id: "ObservationTests", app: AppModel())
         func notifies(_ change: () -> Void) -> Bool {
-            nonisolated(unsafe) var notified = false
-            withObservationTracking { _ = (project.cursorLine, project.words, project.shown) } onChange: { notified = true }
+            let notified = Atomic(false)
+            withObservationTracking { _ = (project.cursorLine, project.words, project.shown) } onChange: {
+                notified.store(true, ordering: .relaxed)
+            }
             change()
-            return notified
+            return notified.load(ordering: .relaxed)
         }
         project.words = 1
         #expect(!notifies { project.cursorLine = project.cursorLine })

@@ -4,9 +4,8 @@ import Testing
 
 @MainActor
 struct LogTextViewTests {
-    @Test func liveOutputKeepsTheSelectedErrorAndReadingPosition() {
-        let scroll = logScroll()
-        let view = scroll.documentView as! NSTextView
+    @Test func liveOutputKeepsTheSelectedErrorAndReadingPosition() throws {
+        let (scroll, view) = try logScroll()
         let initial = view.string
         let selection = NSRange(location: 12, length: 8)
         view.setSelectedRange(selection)
@@ -27,9 +26,8 @@ struct LogTextViewTests {
         #expect(view.string.utf16.elementsEqual("e\u{301}\nnext\n".utf16))
     }
 
-    @Test func findStopsFollowingTheLiveTail() {
-        let scroll = logScroll()
-        let view = scroll.documentView as! NSTextView
+    @Test func findStopsFollowingTheLiveTail() throws {
+        let (scroll, view) = try logScroll()
         scroll.findBarView = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 24))
         scroll.isFindBarVisible = true
         view.scrollToEndOfDocument(nil)
@@ -45,14 +43,14 @@ struct LogTextViewTests {
         #expect(scroll.contentView.bounds.origin.y > end)
     }
 
-    private func logScroll() -> NSScrollView {
+    private func logScroll() throws -> (NSScrollView, NSTextView) {
         let scroll = NSTextView.scrollableTextView()
         scroll.setFrameSize(NSSize(width: 400, height: 160))
-        let view = scroll.documentView as! NSTextView
+        let view = try #require(scroll.documentView as? NSTextView)
         view.isEditable = false
         view.string = String(repeating: "error on line 42\n", count: 200)
-        view.layoutManager?.ensureLayout(for: view.textContainer!)
+        view.layoutManager?.ensureLayout(for: try #require(view.textContainer))
         view.scrollToBeginningOfDocument(nil)
-        return scroll
+        return (scroll, view)
     }
 }
