@@ -726,7 +726,6 @@ dependencies = [
 name = "texlocal-server"
 version = "0.2.0"
 dependencies = [
- "getrandom",
  "http-body-util",
  "hyper",
  "hyper-util",

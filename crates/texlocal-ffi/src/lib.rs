@@ -102,17 +102,17 @@ unsafe fn str_arg<'a>(ptr: *const c_char) -> Option<&'a str> {
     (!ptr.is_null()).then(|| CStr::from_ptr(ptr).to_str().ok())?
 }
 
-/// Open the service over `data_dir` (null for the default library). Returns
-/// null if the directory cannot be created or the runtime cannot start.
+/// Open the service over the library folder `data_dir`, which the host
+/// chooses (the Mac app by `default_data_dir`'s rule, in Swift). Returns null
+/// if `data_dir` is null or not UTF-8, the directory cannot be created or the
+/// runtime cannot start.
 ///
 /// # Safety
-/// `data_dir` is null or a NUL-terminated UTF-8 string.
+/// `data_dir` is null or a NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
-    let dir = match str_arg(data_dir) {
-        Some(d) => PathBuf::from(d),
-        None if data_dir.is_null() => texlocal_core::default_data_dir(),
-        None => return std::ptr::null_mut(),
+    let Some(dir) = str_arg(data_dir).map(PathBuf::from) else {
+        return std::ptr::null_mut();
     };
     caught(|| {
         std::fs::create_dir_all(&dir).ok()?;
@@ -171,7 +171,8 @@ pub unsafe extern "C" fn tl_free(text: *mut c_char) {
     }
 }
 
-/// Stop every running compile and release the handle. Null is ignored.
+/// Stop every running compile and live preview and release the handle. Null
+/// is ignored.
 ///
 /// # Safety
 /// `handle` came from `tl_open`, no call on it is in flight, and it is closed

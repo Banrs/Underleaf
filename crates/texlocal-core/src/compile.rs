@@ -10,7 +10,7 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::io::AsyncReadExt;
 use tokio::sync::OwnedMutexGuard;
 
@@ -106,9 +106,10 @@ pub fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
 
 // ---------- process plumbing ----------
 
-/// Kill the process group, including the engines latexmk started. Each tool
-/// leads a group of its own (base_command), so its pid names the group.
-fn kill_pid_tree(pid: u32) {
+/// Kill the process group, including the engines latexmk or TeXpresso
+/// started. Each tool leads a group of its own (base_command, and TeXpresso's
+/// start), so its pid names the group.
+pub(crate) fn kill_pid_tree(pid: u32) {
     unsafe {
         libc::killpg(pid as i32, libc::SIGKILL);
     }
@@ -262,14 +263,6 @@ fn version_line(stdout: &str) -> String {
 }
 
 // ---------- compile ----------
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompileOverrides {
-    pub engine: Option<String>,
-    pub main_file: Option<String>,
-    pub shell_escape: Option<bool>,
-}
 
 /// A build's outcome. `ok`: latexmk finished cleanly and the PDF exists.
 /// `pdf`: the successful build's PDF, or one a failed build wrote while
@@ -516,27 +509,19 @@ impl CompileManager {
         }
     }
 
+    /// Build with the project's settings, as they are when the build is asked for.
     pub async fn compile(
         &self,
         root: &Path,
-        overrides: &CompileOverrides,
         tex_dir: Option<&Path>,
     ) -> Result<CompileResult, CoreError> {
         let request_started = Instant::now();
         let settings = read_settings(root);
-        let engine = overrides
-            .engine
-            .as_deref()
-            .unwrap_or(settings.engine.as_str());
-        let main_file = overrides
-            .main_file
-            .as_deref()
-            .unwrap_or(settings.main_file.as_str());
-        let shell_escape = overrides.shell_escape.unwrap_or(settings.shell_escape);
+        let (engine, shell_escape) = (settings.engine.as_str(), settings.shell_escape);
 
         let flags = engine_flags(engine)
             .ok_or_else(|| CoreError::bad_request(format!("Unknown engine: {engine}")))?;
-        let main_rel = safe_rel_file(root, main_file)?;
+        let main_rel = safe_rel_file(root, &settings.main_file)?;
         if !root.join(&main_rel).exists() {
             return Err(CoreError::bad_request(format!(
                 "Main file not found: {main_rel}"

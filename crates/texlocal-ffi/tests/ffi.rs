@@ -141,6 +141,8 @@ fn native_only_commands_resolve_absolute_paths() {
 fn null_and_malformed_inputs_are_rejected_safely() {
     let out = call(ptr::null(), "list_projects", None);
     assert_eq!(out["status"], 400);
+    // The host names its library folder: there is no default.
+    assert!(unsafe { tl_open(ptr::null()) }.is_null());
 
     let dir = tempfile::tempdir().unwrap();
     let handle = open(dir.path());

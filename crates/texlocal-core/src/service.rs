@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::analyze;
-use crate::compile::{self, CompileManager, CompileOverrides, TexStatus};
+use crate::compile::{self, CompileManager, TexStatus};
 use crate::paths::fold_case;
 use crate::projects;
 use crate::settings;
@@ -35,7 +35,6 @@ pub struct DirListing {
     pub parent: Option<String>,
     pub dirs: Vec<String>,
     pub has_latexmk: bool,
-    pub roots: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -295,7 +294,6 @@ impl Service {
             parent: dir.parent().map(|p| p.to_string_lossy().into_owned()),
             dirs,
             has_latexmk: compile::has_latexmk(&dir),
-            roots: vec!["/".into()],
         })
     }
 
@@ -591,17 +589,10 @@ impl Service {
                 &arg::<Option<String>>(args, "dir")?.unwrap_or_default(),
                 &arg::<Vec<UploadSpec>>(args, "files")?,
             )?),
-            "compile" => {
-                let (id, options) = (s("id")?, arg::<Option<CompileOverrides>>(args, "options")?);
-                out(self
-                    .compile
-                    .compile(
-                        &self.project_root(id)?,
-                        &options.unwrap_or_default(),
-                        self.tex_dir().as_deref(),
-                    )
-                    .await?)
-            }
+            "compile" => out(self
+                .compile
+                .compile(&root()?, self.tex_dir().as_deref())
+                .await?),
             // Reports whether a build was running.
             "stop_compile" => out(self.compile.stop(&root()?)),
             // Stops a running build first; the next build starts from nothing.

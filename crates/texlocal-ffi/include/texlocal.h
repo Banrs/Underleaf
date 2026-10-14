@@ -1,4 +1,4 @@
-/* TeXLocal core, for the native apps. The service's calls are JSON in, JSON
+/* TeXLocal core, for the macOS app. The service's calls are JSON in, JSON
  * out, with the command names and arguments the browser server uses. See
  * crates/texlocal-ffi/src/lib.rs for the contract. */
 #ifndef TEXLOCAL_H
@@ -13,8 +13,8 @@ extern "C" {
 
 typedef struct TlHandle TlHandle;
 
-/* Open the service over data_dir (NULL: TEXLOCAL_DATA, else ~/TeXLocal).
- * Returns NULL on failure. */
+/* Open the service over the library folder data_dir, a UTF-8 path the host
+ * chooses. Returns NULL for a NULL data_dir, or on failure. */
 TlHandle *tl_open(const char *data_dir);
 
 /* Blocking; call off the UI thread. args_json may be NULL. Returns
@@ -23,7 +23,7 @@ char *tl_call(const TlHandle *handle, const char *command, const char *args_json
 
 void tl_free(char *text);
 
-/* Stops running compiles. No call may be in flight. */
+/* Stops running compiles and live previews. No call may be in flight. */
 void tl_close(TlHandle *handle);
 
 /* The source editor's mirror of a file's text (crates/texlocal-syntax).

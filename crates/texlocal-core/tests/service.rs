@@ -5,7 +5,6 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
-use texlocal_core::serve;
 use texlocal_core::service::Service;
 
 fn service() -> (TempDir, Service) {
@@ -392,26 +391,12 @@ fn a_link_to_a_folder_in_the_project_is_a_folder_an_upload_goes_into() {
 }
 
 #[test]
-fn serve_routes_resolve_through_the_project_boundary() {
+fn served_files_are_found_through_the_project_boundary() {
     let (_dir, service) = with_project();
-    let seg = |parts: &[&str]| parts.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-
-    let raw = serve::resolve(&service, &seg(&["__raw", "P", "img", "a.png"])).unwrap();
-    assert!(raw.sandboxed);
-    assert!(raw.path.ends_with("P/img/a.png"));
-
-    let pdf = serve::resolve(&service, &seg(&["__pdf", "P"])).unwrap();
-    assert!(!pdf.sandboxed);
-    assert_eq!(pdf.path.extension().unwrap(), "pdf");
-
-    assert!(serve::resolve(&service, &seg(&["__raw", "P", "..", "..", "secret"])).is_err());
-    assert_eq!(
-        serve::resolve(&service, &seg(&["elsewhere"]))
-            .err()
-            .unwrap()
-            .status,
-        404
-    );
+    let raw = service.raw_path("P", "img/a.png").unwrap();
+    assert!(raw.ends_with("P/img/a.png"));
+    assert_eq!(service.pdf_path("P").unwrap().extension().unwrap(), "pdf");
+    assert!(service.raw_path("P", "../../secret").is_err());
 }
 
 /// A folder holding a stand-in `latexmk` that prints a version.
@@ -571,7 +556,6 @@ async fn list_dirs_lists_visible_subfolders_by_name() {
     );
     assert_eq!(listing["dirs"], json!(["Alpha", "beta"]));
     assert_eq!(listing["hasLatexmk"], false);
-    assert!(!listing["roots"].as_array().unwrap().is_empty());
 
     let bin = fake_tex(&tmp.path().join("beta"));
     let tex = call(&service, "list_dirs", json!({ "path": bin })).await;

@@ -8,10 +8,9 @@ import { icon } from './icons.js';
 
 export const texInstallHint = 'Install a TeX distribution, or choose an existing installation to enable compilation.';
 
-// A subfolder's path, joined with the separator the listed path already uses.
+// A subfolder's path, with no second slash after the root.
 export function childPath(base, name) {
-  const sep = base.includes('\\') ? '\\' : '/';
-  return base.endsWith(sep) ? base + name : base + sep + name;
+  return base.endsWith('/') ? base + name : `${base}/${name}`;
 }
 
 // Resolves with the new TeX status once a folder is saved, or null.
@@ -48,13 +47,13 @@ export function chooseTexFolder() {
       pathText.textContent = listing.path;
       pathText.title = listing.path;
       badge.hidden = !listing.hasLatexmk;
-      path.classList.toggle('has-tex', listing.hasLatexmk);
       use.disabled = false;
-      roots.replaceChildren(...listing.roots.map((root) => el('button', {
+      // The server's system has one root.
+      roots.replaceChildren(el('button', {
         class: 'folder-root',
-        'aria-current': root === listing.path ? 'true' : null,
-        onclick: () => load(root),
-      }, root)));
+        'aria-current': listing.path === '/' ? 'true' : null,
+        onclick: () => load('/'),
+      }, '/'));
       // Keep keyboard focus in the list as its rows are replaced.
       const hadFocus = list.contains(document.activeElement);
       list.replaceChildren(

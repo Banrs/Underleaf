@@ -8,7 +8,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -68,7 +67,6 @@ pub struct Pane {
 pub struct Status {
     pub available: bool,
     pub running: bool,
-    pub executable: Option<String>,
     pub log: String,
     pub output: String,
     pub error: Option<String>,
@@ -398,9 +396,7 @@ impl Session {
         let mut state = lock(&self.state);
         if let Some(pid) = state.pid.take() {
             // The viewer starts an engine: stopping just its parent leaks it.
-            unsafe {
-                libc::kill(-(pid as i32), libc::SIGKILL);
-            }
+            crate::compile::kill_pid_tree(pid);
             remove_pdf_folder(self.pdf.as_deref());
             state.error = error;
             self.event(&mut state);
@@ -424,7 +420,6 @@ impl Session {
         Status {
             available: executable_file(&self.executable),
             running: state.pid.is_some(),
-            executable: Some(self.executable.to_string_lossy().into_owned()),
             output: state.output.text(),
             log,
             error: state.error.clone(),
@@ -576,11 +571,9 @@ impl Manager {
         Ok(())
     }
     fn idle(&self, path_env: &str) -> Status {
-        let executable = discover(path_env);
         Status {
-            available: executable.is_some(),
+            available: discover(path_env).is_some(),
             running: false,
-            executable: executable.map(|p| p.to_string_lossy().into_owned()),
             log: String::new(),
             output: String::new(),
             error: None,
@@ -656,9 +649,7 @@ impl Manager {
         fs::create_dir_all(&build)?;
         let build = fs::canonicalize(build)?;
         self.stop(&root)?;
-        let mut token = [0u8; 16];
-        getrandom::fill(&mut token).map_err(|err| CoreError::internal(err.to_string()))?;
-        let token: String = token.iter().map(|byte| format!("{byte:02x}")).collect();
+        let token = crate::random_hex(16)?;
         // The session's own folder: no build output or other session shares it.
         let pdf = match pane {
             Some(_) => {
@@ -668,7 +659,7 @@ impl Manager {
             }
             None => None,
         };
-        let mut command = std::process::Command::new(&executable);
+        let mut command = tokio::process::Command::new(&executable);
         command
             .args(["-json", "-texlive", "-I"])
             .arg(&build)
@@ -678,7 +669,8 @@ impl Manager {
             .process_group(0)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
         if let Some(pdf) = &pdf {
             command.env("TEXPRESSO_PDF_OUTPUT", pdf);
         }
@@ -697,8 +689,6 @@ impl Manager {
                 Ok(())
             });
         }
-        let mut command = tokio::process::Command::from(command);
-        command.kill_on_drop(true);
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(err) => {
