@@ -1272,8 +1272,9 @@ mod tests {
         fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
         (tmp, root, bin.to_string_lossy().into_owned())
     }
+    const SOON: Duration = Duration::from_secs(3);
     async fn until(mut check: impl FnMut() -> bool) {
-        tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::time::timeout(SOON, async {
             while !check() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -1312,10 +1313,7 @@ mod tests {
         let first = manager
             .start(
                 &root,
-                &[FileBuffer {
-                    path: "main.tex".into(),
-                    text: original.into(),
-                }],
+                &main_buffer(original),
                 None,
                 &path_env,
                 Some(&Pane::default()),
@@ -1448,14 +1446,8 @@ mod tests {
     async fn edits_follow_one_another_and_a_new_main_file_stops_the_session() {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
-        let buffer = |text: &str| {
-            vec![FileBuffer {
-                path: "main.tex".into(),
-                text: text.into(),
-            }]
-        };
         let started = manager
-            .start(&root, &buffer("abc"), None, &path_env, None)
+            .start(&root, &main_buffer("abc"), None, &path_env, None)
             .await
             .unwrap();
         let token = started.session.as_deref().unwrap();
@@ -1556,17 +1548,11 @@ mod tests {
     async fn backtracked_tex_log_excludes_historical_process_stderr() {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
-        manager
+        let started = manager
             .start(&root, &[], None, &path_env, None)
             .await
             .unwrap();
-        let session = manager
-            .sessions
-            .lock()
-            .unwrap()
-            .get(&fs::canonicalize(&root).unwrap())
-            .cloned()
-            .unwrap();
+        let session = manager.held(&started.session.unwrap()).unwrap();
         let diagnostic = "Undefined control sequence";
         session
             .state
@@ -1598,16 +1584,7 @@ mod tests {
             let (manager, root, path_env) = (Arc::clone(&manager), root.clone(), path_env.clone());
             async move {
                 manager
-                    .start(
-                        &root,
-                        &[FileBuffer {
-                            path: "main.tex".into(),
-                            text: "owner B".into(),
-                        }],
-                        None,
-                        &path_env,
-                        None,
-                    )
+                    .start(&root, &main_buffer("owner B"), None, &path_env, None)
                     .await
                     .unwrap()
             }
@@ -1808,7 +1785,6 @@ mod tests {
             text: text.into(),
         }]
     }
-    const SOON: Duration = Duration::from_secs(3);
 
     #[tokio::test]
     async fn a_keystroke_goes_as_bytes_at_once_and_one_that_does_not_fit_is_refused() {
