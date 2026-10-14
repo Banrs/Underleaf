@@ -855,11 +855,11 @@ final class ProjectModel {
 
     /// The change shows at once, from a call made as the control is set: the core's answer replaces
     /// it, and a refusal puts back what was there.
-    func patchSettings(_ patch: [String: any Sendable]) async -> Bool {
+    func patchSettings(_ change: SettingsChange) async -> Bool {
         let before = settings
-        settings?.apply(patch)
+        settings?.apply(change)
         let done = await mutate("Couldn’t Change the Project’s Settings") { model in
-            let updated = try await model.core.call("set_settings", ["id": model.id, "patch": patch], as: ProjectSettings.self)
+            let updated = try await model.core.call("set_settings", ["id": model.id, "patch": change.patch], as: ProjectSettings.self)
             guard !model.closed else { return false }
             model.settings = updated
             return true
@@ -869,8 +869,8 @@ final class ProjectModel {
     }
 
     /// A setting that changes the build: the build follows it when Compile Automatically is on.
-    func setBuildOption(_ patch: [String: any Sendable]) async {
-        if await patchSettings(patch), autoCompile { await compile(auto: true) }
+    func setBuildOption(_ change: SettingsChange) async {
+        if await patchSettings(change), autoCompile { await compile(auto: true) }
     }
 
     /// Compile › Clean Build Folder: a build under way stops, the folder goes, and the next build
@@ -903,7 +903,7 @@ final class ProjectModel {
     }
 
     func setMainFile(_ path: String) async {
-        if await keepingLive({ await patchSettings(["mainFile": path]) }), !closed { await mainFileChanged() }
+        if await keepingLive({ await patchSettings(.mainFile(path)) }), !closed { await mainFileChanged() }
     }
 
     // ---------- TeXpresso live preview ----------

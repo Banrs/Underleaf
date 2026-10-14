@@ -551,7 +551,7 @@ final class ProjectFlowTests {
         // The build follows the main file only when Compile Automatically is on.
         app.autoCompile = true
         let rename = Task { await project.renameEntry("main.tex", to: "renamed.tex") }
-        let flag = Task { _ = await project.patchSettings(["stopOnFirstError": true]) }
+        let flag = Task { _ = await project.patchSettings(.stopOnFirstError(true)) }
         let main = Task { await project.setMainFile("second.tex") }
         for change in [rename, flag, main] { await change.value }
         try await waitUntil(timeout: .seconds(30)) {
@@ -811,10 +811,10 @@ final class ProjectFlowTests {
     @Test(.timeLimit(.minutes(1)))
     func aSettingShowsAtOnceAndARefusedOneIsPutBack() async throws {
         let (project, _) = try await opened()
-        let on = Task.immediate { await project.patchSettings(["shellEscape": true]) }
+        let on = Task.immediate { await project.patchSettings(.shellEscape(true)) }
         #expect(project.settings?.shellEscape == true)
         #expect(await on.value)
-        let refused = Task.immediate { await project.patchSettings(["engine": "nonsense"]) }
+        let refused = Task.immediate { await project.patchSettings(.engine("nonsense")) }
         #expect(project.settings?.engine == "nonsense")
         #expect(await refused.value == false)
         #expect(project.settings?.engine == "pdflatex" && project.settings?.shellEscape == true)

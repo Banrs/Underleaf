@@ -20,9 +20,9 @@ struct InspectorView: View {
                     if !texFiles.contains(where: { $0 == main }) { Text(main ?? "").tag(main) }
                 }
                 EnginePicker(project: project)
-                toggle("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.", "shellEscape",
+                toggle("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.", SettingsChange.shellEscape,
                        project.settings?.shellEscape ?? false)
-                toggle("Stop on First Error", "Ends the build at its first error, rather than showing them all.", "stopOnFirstError",
+                toggle("Stop on First Error", "Ends the build at its first error, rather than showing them all.", SettingsChange.stopOnFirstError,
                        project.settings?.stopOnFirstError ?? false)
                 Button("Clean Build Folder") { Task { await project.cleanBuildFolder() } }
             }
@@ -49,8 +49,8 @@ struct InspectorView: View {
         .formStyle(.grouped)
     }
 
-    private func toggle(_ title: String, _ detail: String, _ key: String, _ isOn: Bool) -> some View {
-        Toggle(isOn: Binding(get: { isOn }, set: { on in Task.immediate { await project.setBuildOption([key: on]) } })) {
+    private func toggle(_ title: String, _ detail: String, _ change: @escaping (Bool) -> SettingsChange, _ isOn: Bool) -> some View {
+        Toggle(isOn: Binding(get: { isOn }, set: { on in Task.immediate { await project.setBuildOption(change(on)) } })) {
             Text(title)
             Text(detail)
         }
@@ -64,7 +64,7 @@ struct EnginePicker: View {
 
     var body: some View {
         if let project, let engine = project.settings?.engine {
-            Picker("Engine", selection: Binding(get: { engine }, set: { new in Task.immediate { await project.setBuildOption(["engine": new]) } })) {
+            Picker("Engine", selection: Binding(get: { engine }, set: { new in Task.immediate { await project.setBuildOption(.engine(new)) } })) {
                 ForEach(TeXEngine.allCases) { Text($0.title).tag($0.id) }
                 if TeXEngine(rawValue: engine) == nil { Text(engine).tag(engine) }
             }
