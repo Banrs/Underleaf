@@ -560,7 +560,10 @@ final class ProjectModel {
     /// it shows; what it shows (not hidden files or the build's) is the core's.
     private func folderChanged(_ changes: [FolderWatcher.Change]) {
         guard let watcher = folderWatcher else { return }
-        let folders = Set(tree.nodes.flattened.filter(\.isDirectory).map(\.path))
+        // Read once for the batch: a checkout changes every file at once.
+        let entries = tree.nodes.flattened
+        let folders = Set(entries.filter(\.isDirectory).map(\.path))
+        let previewed = texpresso.active ? Set(entries.map(\.path)) : []
         var openFileChanged = false, treeChanged = false
         for change in changes {
             guard let path = watcher.relativePath(change.path) else {
@@ -576,7 +579,7 @@ final class ProjectModel {
                 || change.structural && openPath?.hasPrefix(path + "/") == true
             let parent = path.parentFolder
             treeChanged = treeChanged || change.structural && (parent.isEmpty || folders.contains(parent))
-            if texpresso.active, tree.node(at: path) != nil { liveDiskPaths.insert(path) }
+            if previewed.contains(path) { liveDiskPaths.insert(path) }
         }
         if openFileChanged {
             // In the mutation lane, so our own rename or write is never read as another app's change.
