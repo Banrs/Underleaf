@@ -531,19 +531,27 @@ fn delete_entry_using(
 // ---------- search ----------
 
 // Keep one folded character per original character so snippet offsets agree.
-fn lower_into(s: &str, out: &mut Vec<char>) {
+// ASCII, most of a TeX file, folds without Unicode's tables.
+fn lower_into(s: &str, out: &mut String) {
     out.clear();
-    out.extend(s.chars().map(|c| c.to_lowercase().next().unwrap_or(c)));
+    out.extend(s.chars().map(|c| {
+        if c.is_ascii() {
+            c.to_ascii_lowercase()
+        } else {
+            c.to_lowercase().next().unwrap_or(c)
+        }
+    }));
 }
 
 pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
-    let mut q = Vec::new();
+    let mut q = String::new();
     lower_into(query, &mut q);
     if q.is_empty() {
         return Ok(Vec::new());
     }
+    let q_len = q.chars().count();
     let mut hits: Vec<SearchHit> = Vec::new();
-    let mut lower = Vec::new();
+    let mut lower = String::new();
     visit_files(root, &mut |abs, rel| {
         if !TEXT_EXT.contains(&ext_of(rel).as_str()) {
             return Ok(true);
@@ -557,16 +565,17 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
                 break;
             }
             lower_into(line, &mut lower);
-            let Some(col) = lower.windows(q.len()).position(|w| w == q) else {
+            let Some(at) = lower.find(&q) else {
                 continue;
             };
+            let col = lower[..at].chars().count();
             let chars: Vec<char> = line.chars().collect();
             let start = col.saturating_sub(24);
             let ellipsis = if start > 0 { "…" } else { "" };
             let before: String = chars[start..col].iter().collect();
-            let matched: String = chars[col..col + q.len()].iter().collect();
-            let after_end = (col + q.len() + 60).min(chars.len());
-            let after: String = chars[col + q.len()..after_end].iter().collect();
+            let matched: String = chars[col..col + q_len].iter().collect();
+            let after_end = (col + q_len + 60).min(chars.len());
+            let after: String = chars[col + q_len..after_end].iter().collect();
             hits.push(SearchHit {
                 file: rel.to_owned(),
                 line: (i + 1) as u32,

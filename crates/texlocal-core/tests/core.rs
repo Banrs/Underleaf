@@ -492,6 +492,13 @@ fn search_is_case_insensitive_for_ascii_and_unicode() {
     assert_eq!(hits[0].line, 2);
     assert_eq!(hits[0].before, "see ");
     assert_eq!(hits[0].matched, "Lemma");
+    // After characters of several bytes, and one whose lowercase is two
+    // characters, the snippet still cuts at the match.
+    fs::write(root.join("wide.tex"), "Çà İstanbul, GRÖSSE und Größe\n").unwrap();
+    let hits = search_project(&root, "größe", 50).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].before, "Çà İstanbul, GRÖSSE und ");
+    assert_eq!(hits[0].matched, "Größe");
 }
 
 #[test]
