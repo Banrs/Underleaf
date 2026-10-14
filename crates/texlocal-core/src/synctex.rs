@@ -152,18 +152,6 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
 
 /// PDF location (page, x, y in TeX points from top-left) -> source file:line,
 /// and the column of `word`, the word clicked `offset` in, as `find_word` finds it.
-pub async fn synctex_inverse(
-    root: &Path,
-    page: f64,
-    x: f64,
-    y: f64,
-    word: Option<&str>,
-    offset: Option<usize>,
-    path_env: &str,
-) -> Result<InverseLoc, CoreError> {
-    synctex_inverse_with_context(root, page, x, y, word, offset, None, None, None, path_env).await
-}
-
 /// PDF context identifies a repeated word by the text on either side of the
 /// clicked occurrence. Missing context preserves the line-based lookup.
 #[allow(clippy::too_many_arguments)]
@@ -376,15 +364,12 @@ fn find_word(
         };
         let before = matching_context_chars(
             printed[..k].iter().rev().map(|c| c.1),
-            context[..*start]
-                .iter()
-                .rev()
-                .map(|&(c, optional)| (c, optional)),
+            context[..*start].iter().rev().copied(),
         );
         let end = start + letters.len();
         let after = matching_context_chars(
             printed[k + letters.len()..].iter().map(|c| c.1),
-            context[end..].iter().map(|&(c, optional)| (c, optional)),
+            context[end..].iter().copied(),
         );
         before + after
     };

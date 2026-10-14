@@ -12,11 +12,12 @@ use std::time::{Duration, Instant, SystemTime};
 use serde_json::json;
 use tempfile::TempDir;
 use texlocal_core::compile::{tex_available, CompileManager, CompileOverrides, CompileResult};
+use texlocal_core::error::CoreError;
 use texlocal_core::paths::project_root;
 use texlocal_core::projects::create_project;
 use texlocal_core::service::Service;
 use texlocal_core::settings::write_settings;
-use texlocal_core::synctex::synctex_inverse;
+use texlocal_core::synctex::{synctex_inverse_with_context, InverseLoc};
 
 fn stub_env(bin: &Path, script: &str) -> String {
     fs::create_dir_all(bin).unwrap();
@@ -619,6 +620,17 @@ async fn tex_available_reports_the_stub_version() {
     assert_eq!(none.version, None);
 }
 
+/// An inverse sync from a spot the stub synctex answers for, without the
+/// PDF's text round the word.
+async fn inverse(
+    root: &Path,
+    word: Option<&str>,
+    offset: Option<usize>,
+    path: &str,
+) -> Result<InverseLoc, CoreError> {
+    synctex_inverse_with_context(root, 1.0, 10.0, 20.0, word, offset, None, None, None, path).await
+}
+
 #[tokio::test]
 async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
     // TeX names inputs by the physical working directory, so a library
@@ -643,9 +655,7 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
     .unwrap();
     fs::set_permissions(&synctex, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let loc = synctex_inverse(&root, 1.0, 10.0, 20.0, None, None, &path)
-        .await
-        .unwrap();
+    let loc = inverse(&root, None, None, &path).await.unwrap();
     assert_eq!(loc.file, "chapter.tex");
     assert_eq!((loc.line, loc.column), (7, None));
 
@@ -663,7 +673,7 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
         ("ﬁnal", 1, 7, Some(2)),
         ("absent", 0, 7, None),
     ] {
-        let loc = synctex_inverse(&root, 1.0, 10.0, 20.0, Some(word), Some(offset), &path)
+        let loc = inverse(&root, Some(word), Some(offset), &path)
             .await
             .unwrap();
         assert_eq!((loc.line, loc.column), (line, column), "{word}");
@@ -675,9 +685,7 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
         "#!/bin/sh\nprintf 'Input:/old/Paper/./chapter.tex\\nLine:7\\n'\n",
     )
     .unwrap();
-    let loc = synctex_inverse(&root, 1.0, 10.0, 20.0, None, None, &path)
-        .await
-        .unwrap();
+    let loc = inverse(&root, None, None, &path).await.unwrap();
     assert_eq!((loc.file.as_str(), loc.line), ("chapter.tex", 7));
 }
 
@@ -716,9 +724,7 @@ async fn inverse_sync_rejects_unsafe_sources_before_reading_words() {
             format!("#!/bin/sh\nprintf 'Input:{input}\\nLine:1\\n'\n"),
         )
         .unwrap();
-        if let Ok(loc) =
-            synctex_inverse(&root, 1.0, 10.0, 20.0, Some("secret"), Some(2), &path).await
-        {
+        if let Ok(loc) = inverse(&root, Some("secret"), Some(2), &path).await {
             accepted.push((input, loc.file, loc.column));
         }
     }
