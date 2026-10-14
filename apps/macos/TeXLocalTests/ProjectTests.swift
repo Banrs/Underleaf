@@ -689,6 +689,23 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// After a save here, another app's change of the same length, in place, still reaches the
+    /// editor: the save's own change is known by the file's stamp, which a later write alters.
+    @Test(.timeLimit(.minutes(1)))
+    func aChangeOfTheSameLengthAfterASaveIsTaken() async throws {
+        let (project, folder) = try await opened("original")
+        #expect(project.editor.perform(.bold))
+        #expect(await project.save() && !project.dirty)
+        let saved = project.editor.textView.string
+        // Past the save's own change, which leaves the editor as it is.
+        try await Task.sleep(for: .seconds(1))
+        #expect(project.editor.textView.string == saved && project.diskConflict == nil)
+        let theirs = String(saved.reversed())
+        try theirs.write(to: folder.appending(path: "main.tex"), atomically: false, encoding: .utf8)
+        try await waitUntil(timeout: .seconds(5)) { project.editor.textView.string == theirs }
+        await app.close()
+    }
+
     /// A file's Move to Trash can't be undone or redone once its project has closed, as its
     /// renames can't: the window's undo stack outlives the project, and nothing would show the result.
     @Test(.timeLimit(.minutes(1)))

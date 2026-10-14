@@ -119,6 +119,9 @@ final class ProjectModel {
     private(set) var previewVersion = 0
     /// The text last read or written, to tell another app's change from our save.
     @ObservationIgnored private var diskText: String?
+    /// The file as it was when `diskText` was read or written. While a stat still gives it, a
+    /// change told of the file is our own save's, or no change, and the file isn't read again.
+    @ObservationIgnored private var diskStamp: FileStamp?
     /// Has the project's folder too, so it is observed: the window's document icon follows `openURL`.
     private var folderWatcher: FolderWatcher?
 
@@ -396,12 +399,12 @@ final class ProjectModel {
                 do {
                     // Read first and saved last, with nothing awaited between the save and the switch:
                     // a key typed while the next file is read is still the open file's, and reaches it.
-                    let text = isTextFile(path) ? try await readText(path) : nil
+                    let read = isTextFile(path) ? try await readDisk(path) : nil
                     guard await saveEdits(), !Task.isCancelled, !closed else { return }
                     openPath = path
-                    diskText = text
+                    (diskText, diskStamp) = (read?.text, read?.stamp)
                     analyze()
-                    if let text {
+                    if let text = read?.text {
                         editor.open(path: path, text: text, focus: focus)
                         cursorLine = editor.currentLine
                         markIssues()
@@ -419,6 +422,13 @@ final class ProjectModel {
 
     private func readText(_ path: String) async throws -> String {
         try await core.call("read_file", ["id": id, "path": path], as: FileText.self).text
+    }
+
+    /// The file's text, and its stamp from before the read: one changed meanwhile has another
+    /// stamp by the next check, which reads it again rather than take it for this text.
+    private func readDisk(_ path: String) async throws -> (text: String, stamp: FileStamp?) {
+        let stamp = url(path).flatMap(FileStamp.init(of:))
+        return (try await readText(path), stamp)
     }
 
     /// A file of the project on disk, to drag out; nil until its folder is watched.
@@ -489,7 +499,7 @@ final class ProjectModel {
         do {
             // Before the write, so its own change event matches.
             diskText = text
-            try await core.perform("write_file", ["id": id, "path": path, "text": text])
+            diskStamp = try await core.call("write_file", ["id": id, "path": path, "text": text], as: FileStamp.self)
             saveFailure = nil
             analyze()
             refreshSymbols(delayed: true)
@@ -605,7 +615,11 @@ final class ProjectModel {
             previewVersion += 1
             return false
         }
-        guard let text = try? await readText(path), path == openPath, !closed, text != diskText else { return false }
+        // Our own save's change, or the folder's, leaves the file as it was read or written.
+        if let diskStamp, diskStamp.exact, openURL.flatMap(FileStamp.init(of:)) == diskStamp { return false }
+        guard let (text, stamp) = try? await readDisk(path), path == openPath, !closed else { return false }
+        diskStamp = stamp
+        guard text != diskText else { return false }
         diskText = text
         guard !dirty else {
             saveTask?.cancel()
@@ -1133,7 +1147,7 @@ final class ProjectModel {
     /// and with no file `analyze` leaves no outline and no word count.
     private func clearOpenFile() {
         openPath = nil
-        diskText = nil
+        (diskText, diskStamp) = (nil, nil)
         dirty = false
         saveFailure = nil
         analyze()
@@ -1229,6 +1243,26 @@ nonisolated struct SavedWorkspace: Codable, Equatable {
     var pdfPage: Int
     /// Nil in what an earlier version saved.
     var pdfZoom: PDFController.Zoom?
+}
+
+/// A file's identity, length and last write to the nanosecond, as the core's `write_file` answers
+/// it (`atomic::Stamp`): a stat that gives the same is of the same file, not written since.
+nonisolated struct FileStamp: Decodable, Equatable {
+    let inode: UInt64
+    let size: Int64
+    let seconds: Int
+    let nanoseconds: Int
+
+    /// The file at `url`, through a link as the core writes through one; nil when it can't be had.
+    init?(of url: URL) {
+        var info = stat()
+        guard stat(url.path(percentEncoded: false), &info) == 0 else { return nil }
+        (inode, size, seconds, nanoseconds) = (info.st_ino, info.st_size, info.st_mtimespec.tv_sec, info.st_mtimespec.tv_nsec)
+    }
+
+    /// A volume that keeps whole seconds only (HFS+, FAT) could see another app's write of the same
+    /// length in the same second as ours, in place, give the same stamp: there, every change is read.
+    var exact: Bool { nanoseconds != 0 }
 }
 
 /// An import whose names are already taken where it goes.

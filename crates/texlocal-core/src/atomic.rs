@@ -3,11 +3,35 @@
 //! or a crash part-way leaves the old file as it was, where writing in place
 //! would leave it empty or cut short.
 
-use std::fs::{self, File, Permissions};
+use serde::Serialize;
+use std::fs::{self, File, Metadata, Permissions};
 use std::io::{self, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use tempfile::TempPath;
+
+/// A file as written: which file it is, its length, and when it was last
+/// written, to the nanosecond. A client that keeps it knows a change it is
+/// told of for the file is its own write's while a stat still gives the same,
+/// without reading the file back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Stamp {
+    pub inode: u64,
+    pub size: u64,
+    pub seconds: i64,
+    pub nanoseconds: i64,
+}
+
+impl Stamp {
+    pub fn of(meta: &Metadata) -> Self {
+        Stamp {
+            inode: meta.ino(),
+            size: meta.size(),
+            seconds: meta.mtime(),
+            nanoseconds: meta.mtime_nsec(),
+        }
+    }
+}
 
 /// A new, empty temporary file beside `path`, removed if it is not persisted,
 /// with the mode it should have once it takes `path`'s place: `existing`, a
@@ -37,7 +61,9 @@ pub(crate) fn create_temp(
 /// Replace `path`'s contents with `bytes`, or create it. A symlinked file is
 /// written through, so the link stays a link, and the file keeps its
 /// permissions; a read-only file is refused, as writing it in place would be.
-pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+/// The stamp is the temporary file's, which the rename keeps: one taken
+/// after it could be another app's write landing in between.
+pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     let target = match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => fs::canonicalize(path)?,
         _ => path.to_path_buf(),
@@ -49,12 +75,14 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let (temp, mut file) = create_temp(&target, permissions)?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    temp.persist(&target).map_err(|err| err.error)
+    let stamp = Stamp::of(&file.metadata()?);
+    temp.persist(&target).map_err(|err| err.error)?;
+    Ok(stamp)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::write;
+    use super::{write, Stamp};
     use std::fs;
 
     fn names(dir: &std::path::Path) -> Vec<String> {
@@ -74,6 +102,17 @@ mod tests {
         write(&file, b"two").unwrap();
         assert_eq!(fs::read(&file).unwrap(), b"two");
         assert_eq!(names(dir.path()), ["main.tex"]);
+    }
+
+    #[test]
+    fn a_save_answers_the_stamp_the_file_then_has() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("main.tex");
+        let written = write(&file, b"one").unwrap();
+        assert_eq!(written, Stamp::of(&fs::metadata(&file).unwrap()));
+        // Another app's write in place keeps the file but not the stamp.
+        fs::write(&file, b"two").unwrap();
+        assert_ne!(written, Stamp::of(&fs::metadata(&file).unwrap()));
     }
 
     #[cfg(unix)]
