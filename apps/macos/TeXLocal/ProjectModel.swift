@@ -305,7 +305,7 @@ final class ProjectModel {
             let root = try await core.call("project_root", ["id": id], as: String.self)
             guard !closed else { return }
             // Watched for other apps' edits and files, rather than saving over them.
-            folderWatcher = FolderWatcher(folder: URL(fileURLWithPath: root)) { [weak self] in self?.folderChanged($0) }
+            folderWatcher = FolderWatcher(folder: URL(filePath: root, directoryHint: .isDirectory)) { [weak self] in self?.folderChanged($0) }
             refreshSymbols()
             let restored = saved?.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
@@ -357,7 +357,7 @@ final class ProjectModel {
         await restart(&pdfLoad) { [self] in
             guard !closed, let path = try? await core.call("pdf_path", ["id": id], as: String.self),
                   !Task.isCancelled, !closed else { return false }
-            let url = URL(fileURLWithPath: path)
+            let url = URL(filePath: path)
             var live: Bool { replacingLive ? livePreviewing : livePDF }
             if live {
                 buildPDF = FileManager.default.fileExists(atPath: path) ? url : nil
@@ -1190,7 +1190,7 @@ final class ProjectModel {
     /// Taken names are asked about first (`importClash`), then copied again
     /// with the answer: "replace" (old ones to the Trash) or "keepBoth".
     func importFiles(_ urls: [URL], into dir: String = "", conflict: String? = nil) async {
-        var args: [String: any Sendable] = ["id": id, "dir": dir, "paths": urls.map(\.path)]
+        var args: [String: any Sendable] = ["id": id, "dir": dir, "paths": urls.map { $0.path(percentEncoded: false) }]
         args["conflict"] = conflict
         do {
             let clashes = try await core.call("import_files", args, as: Imported.self).existing.map(\.path)
@@ -1215,11 +1215,11 @@ final class ProjectModel {
             ])
         }
         removeExport()
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         exportFolder = folder
-        let url = folder.appendingPathComponent("\(id).zip")
-        try await core.perform("export_zip", ["id": id, "dest": url.path])
+        let url = folder.appending(path: "\(id).zip")
+        try await core.perform("export_zip", ["id": id, "dest": url.path(percentEncoded: false)])
         return url
     }
 

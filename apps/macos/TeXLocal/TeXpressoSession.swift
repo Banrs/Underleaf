@@ -528,7 +528,7 @@ final class TeXpressoSession {
     /// links to see to, as a build's has: the engine writes its pages through MuPDF's PDF
     /// device, which carries content and no annotations.
     private nonisolated static func read(_ pdf: TeXpressoEvents.Document, whole: Bool) -> LiveDocument? {
-        let url = URL(fileURLWithPath: pdf.path)
+        let url = URL(filePath: pdf.path)
         guard let data = try? Data(contentsOf: url, options: .alwaysMapped), let document = PDFDocument(data: data),
               document.pageCount > 0 else { return nil }
         var changed = pdf.changed.map { ranges in
@@ -543,7 +543,7 @@ final class TeXpressoSession {
 
     /// Nil for a file already gone: TeXpresso keeps a page's last two, and a newer one is coming.
     private nonisolated static func read(_ page: TeXpressoEvents.Page) -> LivePage? {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: page.path), options: .alwaysMapped),
+        guard let data = try? Data(contentsOf: URL(filePath: page.path), options: .alwaysMapped),
               let read = PDFDocument(data: data)?.page(at: 0) else { return nil }
         return LivePage(index: page.page, serial: page.serial, page: read)
     }
