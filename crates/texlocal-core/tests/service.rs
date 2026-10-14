@@ -446,7 +446,7 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
         .await
         .unwrap_err();
     assert_eq!(refused.status, 400);
-    assert_eq!(service.texpresso_dir(), None);
+    assert!(call(&service, "status", json!({})).await["texpressoDir"].is_null());
 
     let exe = empty.path().join("texpresso");
     std::fs::write(&exe, "#!/bin/sh\n").unwrap();
