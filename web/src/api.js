@@ -66,7 +66,7 @@ export const api = ipc && {
     }
   },
 
-  compile: (id, opts = {}) => ipc.invoke('compile', { id, options: opts }),
+  compile: (id) => ipc.invoke('compile', { id }),
   // Stops this project's build, which then reports itself stopped.
   stopCompile: (id) => ipc.invoke('stop_compile', { id }),
   texpressoStatus: (id, session) => ipc.invoke('texpresso_status', { id, session }),

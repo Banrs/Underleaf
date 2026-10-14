@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::json;
 use tempfile::TempDir;
-use texlocal_core::compile::{tex_available, CompileManager, CompileOverrides, CompileResult};
+use texlocal_core::compile::{tex_available, CompileManager, CompileResult};
 use texlocal_core::error::CoreError;
 use texlocal_core::paths::project_root;
 use texlocal_core::projects::create_project;
@@ -48,9 +48,7 @@ fn setup(script: &str) -> (TempDir, PathBuf, CompileManager) {
 }
 
 async fn compile(mgr: &CompileManager, root: &Path) -> CompileResult {
-    mgr.compile(root, &CompileOverrides::default(), None)
-        .await
-        .unwrap()
+    mgr.compile(root, None).await.unwrap()
 }
 
 #[tokio::test]
@@ -319,11 +317,10 @@ esac
     })
     .await
     .expect("first latexmk did not start");
-    let options = CompileOverrides {
-        engine: Some("xelatex".into()),
-        ..CompileOverrides::default()
-    };
-    let mut second = Box::pin(mgr.compile(&root, &options, None));
+    // Each build reads the engine as it is asked for, which tells the three apart.
+    let engine = |engine: &str| write_settings(&root, &json!({ "engine": engine })).unwrap();
+    engine("xelatex");
+    let mut second = Box::pin(mgr.compile(&root, None));
     // Poll just until it waits on the first build, then register the third
     // without letting the first release the build directory in between.
     std::future::poll_fn(|cx| match second.as_mut().poll(cx) {
@@ -331,14 +328,10 @@ esac
         std::task::Poll::Ready(_) => panic!("replacement did not wait for the first build"),
     })
     .await;
-    let third_options = CompileOverrides {
-        engine: Some("lualatex".into()),
-        ..CompileOverrides::default()
-    };
+    engine("lualatex");
 
     let (third, second, first) = tokio::time::timeout(Duration::from_secs(5), async {
-        let (third, second, first) =
-            tokio::join!(mgr.compile(&root, &third_options, None), second, first,);
+        let (third, second, first) = tokio::join!(mgr.compile(&root, None), second, first,);
         (third.unwrap(), second.unwrap(), first.unwrap())
     })
     .await
@@ -372,8 +365,7 @@ async fn a_cancelled_waiting_replacement_does_not_let_the_next_build_overtake_it
     .await
     .expect("first latexmk did not start");
 
-    let options = CompileOverrides::default();
-    let mut replacement = Box::pin(mgr.compile(&root, &options, None));
+    let mut replacement = Box::pin(mgr.compile(&root, None));
     std::future::poll_fn(|cx| match replacement.as_mut().poll(cx) {
         std::task::Poll::Pending => std::task::Poll::Ready(()),
         std::task::Poll::Ready(_) => panic!("replacement did not wait for the first build"),
@@ -403,7 +395,7 @@ async fn a_cancelled_compile_takes_its_whole_tree_down() {
     let task = tokio::spawn({
         let mgr = Arc::clone(&mgr);
         let root = root.clone();
-        async move { mgr.compile(&root, &CompileOverrides::default(), None).await }
+        async move { mgr.compile(&root, None).await }
     });
     tokio::time::timeout(Duration::from_secs(5), async {
         while !root.join("started").exists() {
