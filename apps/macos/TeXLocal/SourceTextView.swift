@@ -25,7 +25,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var displayOptionsWatch: NotificationCenter.ObservationToken?
 
     /// One of the display's accessibility options changed: the line numbers and the issues'
-    /// messages follow Increase Contrast.
+    /// boxes follow Increase Contrast.
     private func displayOptionsChanged() {
         needsDisplay = true
         for issue in issueRows { issue.message?.view.needsDisplay = true }
@@ -232,8 +232,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         numberFont = NSFont(descriptor: numbers.fontDescriptor.addingAttributes([.featureSettings: [[
             NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
             .selectorIdentifier: kMonospacedNumbersSelector]]]), size: 0) ?? numbers
-        // An issue's message in the system font, as Xcode's, a point under the text as the numbers are.
-        issueFont = .systemFont(ofSize: max(10, fontSize - 1))
+        // An issue's message and symbol at the text's size, the symbol small, as beside text.
+        issueFont = .systemFont(ofSize: fontSize)
+        let size = NSImage.SymbolConfiguration(pointSize: fontSize, weight: .regular, scale: .small)
+        issueSymbols = [true: ("exclamationmark.octagon", NSColor.systemRed), false: ("exclamationmark.triangle", .systemYellow)].compactMapValues {
+            NSImage(systemSymbolName: $0.0, accessibilityDescription: nil)?.withSymbolConfiguration(size.applying(.init(paletteColors: [$0.1])))
+        }
         issueGap = 3 * ("0" as NSString).size(withAttributes: [.font: font]).width
         gutterWidth = 0
         updateGutterWidth()
@@ -272,16 +276,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var issueLines: [Int: LineIssue] = [:] {
         didSet { if issueLines != oldValue { issuesChanged() } }
     }
-    /// A click on a marked line's gutter or on its message: the build panel shows the issue.
+    /// A click on an issue's message, or on the number of a line with one: the build panel shows
+    /// the issue.
     var issueClicked: (Int) -> Void = { _ in }
-    /// The build panel's symbols, an error's and a warning's, at the smallest text style's 10 pt
-    /// to fit the gutter's 14 pt margin.
-    private static let issueSymbols = [true: "xmark.octagon.fill", false: "exclamationmark.triangle.fill"].compactMapValues {
-        NSImage(systemSymbolName: $0, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(textStyle: .caption1).applying(.preferringMulticolor()))
-    }
+    /// Xcode's symbols at an issue's message, an error's and a warning's, for the message's size.
+    private var issueSymbols: [Bool: NSImage] = [:]
 
-    /// Settings' Show Line Numbers. Off, the gutter is a margin that keeps the issues' marks.
+    /// Settings' Show Line Numbers. Off, the gutter is a margin.
     var showsLineNumbers = true {
         didSet { if showsLineNumbers != oldValue { updateGutterWidth() } }
     }
@@ -437,12 +438,20 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return (document.line(at: selection.location), row(lines, of: entry.fragment))
     }
 
-    /// The highlight's place for a paragraph's lines: the current line's, and an issue's.
+    /// The highlight's place for a paragraph's lines: the current line's, and an issue's. Its top
+    /// and bottom on the display's pixels, as Xcode's are: `rowShift`, which centres the glyphs
+    /// in the line, can leave them between two.
     private func row(_ lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment) -> NSRect {
         let frame = fragment.layoutFragmentFrame
-        let top = frame.minY + (lines.first?.typographicBounds.minY ?? 0)
-        let bottom = frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height)
-        return NSRect(x: 14, y: textContainerOrigin.y + top + rowShift, width: bounds.width - 22, height: bottom - top)
+        let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) + rowShift)
+        let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + rowShift)
+        return NSRect(x: 14, y: top, width: bounds.width - 22, height: bottom - top)
+    }
+
+    /// The nearest edge between two of the display's pixels.
+    private func onPixels(_ y: CGFloat) -> CGFloat {
+        let scale = window?.backingScaleFactor ?? 2
+        return (y * scale).rounded() / scale
     }
     /// Where the highlight was last drawn.
     private var drawnLine: NSRect?
@@ -491,20 +500,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
                 Self.issueFill.setFill()
                 issue.shape.fill()
             }
-            // The build panel's symbol in the gutter's margin: a line's kind never rests on colour
-            // alone, and shows where the line has no room for words.
-            if let symbol = Self.issueSymbols[issue.isError] {
-                let size = symbol.size
-                symbol.draw(in: NSRect(x: 7 - size.width / 2, y: issue.mark.midY - size.height / 2, width: size.width, height: size.height),
-                            from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-            }
             if !issue.tokens.isEmpty {
                 NSColor.systemRed.setFill()
                 issue.tokens.forEach { $0.fill() }
             }
         }
         guard rect.minX < numbersEnd + 4, showsLineNumbers else { return }
-        // The current line's number as a label, as an issue's, the others tertiary, as Xcode's:
+        // The current line's number as a label, the others tertiary, an issue's too, as Xcode's:
         // 1.9:1 in Light and 2.3:1 in Dark, which the HIG allows where Increase Contrast gives more.
         // With that on they are raised as the syntax colours are (`displayOptionsChanged` redraws them).
         let faint = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? Self.legibleNumbers : .tertiaryLabelColor
@@ -513,7 +515,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             guard frame.maxY >= rect.minY, frame.minY <= rect.maxY, let line = fragment.textLineFragments.first else { continue }
             let lineNumber = document.line(at: offset)
             func draw(_ lineNumber: Int, on line: NSTextLineFragment) {
-                (lineNumber == current?.number || issueLines[lineNumber] != nil ? .labelColor : faint).setFill()
+                (lineNumber == current?.number ? .labelColor : faint).setFill()
                 let number = numberLine(lineNumber)
                 context.textPosition = CGPoint(x: numbersEnd - number.width, y: frame.minY + line.typographicBounds.minY + line.glyphOrigin.y)
                 CTLineDraw(number.line, context)
@@ -526,24 +528,20 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     // MARK: the build's issues
 
     /// A line of the viewport with an issue, as it is drawn: its band, which is the current line's
-    /// highlight for its paragraph; the first of its wrapped lines in the gutter, which the symbol
-    /// is beside; and what the issue says, where the last of them has room after its text.
+    /// highlight for its paragraph, and at the end of its first wrapped line the issue's symbol
+    /// and what it says, as Xcode's, in a box of their own.
     struct IssueRow {
         let line: Int
         let isError: Bool
         let band: NSRect
         /// The band's shape, kept for every frame it is filled in.
         let shape: NSBezierPath
-        let mark: NSRect
         /// The message in a view of its own, and where a click is the message's.
         var message: (view: IssueMessageView, rect: NSRect, cut: Bool)?
         /// All that the line's issues say, where the row doesn't show it: a help tag's.
         var tip: String?
         /// The underline of each command on the line that its issues name as undefined.
         var tokens: [NSRect] = []
-        /// Where its paragraph's line break is: a selection that has it runs over the line's end,
-        /// and the message.
-        var end: Int?
         /// What it was placed on. A scroll lays the viewport out again with the same paragraphs
         /// where they were, and their rows are then kept as they are.
         let fragment: NSTextLayoutFragment
@@ -574,9 +572,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// 235; in Dark, over the text background's 30, they give 41, 36 and 48. Neutral for an error
     /// and a warning alike: the symbol says which, and a dozen tinted lines in view are noise.
     private static let issueFill = NSColor.tertiarySystemFill
-    /// The message's colour: a secondary label, raised to 4.5:1 on the band and on the current
-    /// line's fill, which is greyer, and to 7:1 with Increase Contrast.
-    fileprivate static let issueText = NSColor.secondaryLabelColor.legibleAsText
 
     private func issuesChanged() {
         issueLabels.removeAll()
@@ -617,11 +612,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             if extra { lines = lines.suffix(1) } else if extraLine(of: fragment) != nil { lines = lines.dropLast() }
             let placed = row(number, reported, on: lines, of: fragment, in: former?.message?.view)
             if let former {
-                setNeedsDisplay(former.band.union(former.mark))
+                setNeedsDisplay(former.band)
                 if former.message?.view !== placed?.message?.view { former.message?.view.removeFromSuperview() }
             }
             guard let placed else { return }
-            setNeedsDisplay(placed.band.union(placed.mark))
+            setNeedsDisplay(placed.band)
             issueRows.append(placed)
         }
         for (offset, fragment) in fragments {
@@ -631,48 +626,44 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
         for former in formerRows {
             changed = true
-            setNeedsDisplay(former.band.union(former.mark))
+            setNeedsDisplay(former.band)
             former.message?.view.removeFromSuperview()
         }
         guard changed else { return }
         updateIssueTips()
-        coverIssues()
     }
 
-    /// A line's row on its paragraph's lines. The message is on the last wrapped line, where a
-    /// paragraph has room and which is the line TeX reports, set right to the text's trailing
-    /// edge on the band, in the view the line's message had if it had one.
+    /// A line's row on its paragraph's lines. The issue's symbol and message are at the end of
+    /// its first wrapped line, the one its number is on, as Xcode sets them: a box as tall as the
+    /// line, a point inside the band's end, in the view the line's message had if it had one.
     private func row(_ number: Int, _ reported: LineIssue, on lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment,
                      in view: IssueMessageView?) -> IssueRow? {
-        guard let first = lines.first, let last = lines.last else { return nil }
+        guard let first = lines.first else { return nil }
         let band = row(lines, of: fragment)
         var issue = IssueRow(line: number, isError: reported.isError, band: band, shape: NSBezierPath(roundedRect: band, xRadius: 4, yRadius: 4),
-                             mark: NSRect(x: 0, y: band.minY, width: numbersEnd + 4, height: first.typographicBounds.height),
                              fragment: fragment, frame: fragment.layoutFragmentFrame, width: bounds.width, origin: textContainerOrigin)
-        // The document's last empty line has no line break, and no paragraph of its own.
-        if extraLine(of: fragment) !== last {
-            let end = offset(fragment.rangeInElement.endLocation) - 1
-            if end >= 0, end < text.length, text.character(at: end) == 0x0A { issue.end = end }
-        }
         // The fragment's lines in the view: its frame has the line fragment's padding in it.
         let left = textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = textContainerOrigin.y + fragment.layoutFragmentFrame.minY
         // All that the line's issues say.
         let said = [reported.message] + reported.others
-        let trailing = bounds.width - 8 - (textContainer?.lineFragmentPadding ?? 0)
         let label = issueLabels[number] ?? IssueLabel(reported.message, others: reported.others.count, font: issueFont)
         issueLabels[number] = label
-        let fitted = label.line(in: trailing - (left + last.typographicBounds.maxX) - issueGap)
-        if let fitted {
-            // On the text's baseline, in the band's rows: they are `rowShift` below the lines'.
-            let rect = NSRect(x: trailing - fitted.width, y: top + last.typographicBounds.minY + rowShift,
-                              width: fitted.width, height: last.typographicBounds.height)
+        let end = band.maxX - 1
+        let room = end - (left + first.typographicBounds.maxX) - issueGap
+        let fitted = label.line(in: room - IssueMessageView.width(ofText: 0, font: issueFont))
+        let width = IssueMessageView.width(ofText: fitted?.width, font: issueFont)
+        if width <= room {
+            let rect = NSRect(x: end - width, y: band.minY, width: width,
+                              height: onPixels(top + first.typographicBounds.maxY + rowShift) - band.minY)
             let view = view ?? IssueMessageView()
-            view.show(fitted.line, baseline: last.glyphOrigin.y - rowShift, in: rect)
+            // On the text's baseline.
+            let baseline = top + first.typographicBounds.minY + first.glyphOrigin.y - rect.minY
+            view.show(fitted?.line, symbol: issueSymbols[reported.isError], font: issueFont, baseline: baseline, in: rect)
             if view.superview !== self { addSubview(view) }
-            issue.message = (view, rect, fitted.cut)
+            issue.message = (view, rect, fitted?.cut ?? true)
         }
-        if fitted?.cut != false || said.count > 1 { issue.tip = said.joined(separator: "\n") }
+        if issue.message?.cut != false || said.count > 1 { issue.tip = said.joined(separator: "\n") }
         // The commands the issues name as undefined are underlined in the system's red, as Xcode
         // does an issue's token. Drawn here, under the text: TextKit 2 draws no underline it is
         // given as a rendering attribute, as the syntax colours are given (27.2: of an underline, a
@@ -703,15 +694,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return issue
     }
 
-    /// A help tag with all that a line's issues say, on a message that is cut short or counts
-    /// others, and on the gutter's mark of such a line and of one with no room for a message.
+    /// A help tag with all that a line's issues say, on a message that is cut short, left to its
+    /// symbol, or counts others.
     /// Asked for when a row is placed, and kept as they are where the tags are where they were.
     private func updateIssueTips() {
         var tips: [(rect: NSRect, text: String)] = []
         for issue in issueRows {
-            guard let tip = issue.tip else { continue }
-            tips.append((issue.mark, tip))
-            if let message = issue.message { tips.append((message.rect, tip)) }
+            if let tip = issue.tip, let message = issue.message { tips.append((message.rect, tip)) }
         }
         guard !tips.elementsEqual(issueTips, by: { $0.rect == $1.rect && $1.text.isEqual(to: $0.text) }) else { return }
         for tip in issueTips { removeToolTip(tip.tag) }
@@ -719,16 +708,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         issueTips = tips.map { tip in
             let text = tip.text as NSString
             return (addToolTip(tip.rect, owner: text, userData: nil), tip.rect, text)
-        }
-    }
-
-    /// A selection that has a paragraph's line break is drawn to the text's trailing edge, over
-    /// the band: the message on it is then in the selected text's colour, not the band's grey.
-    private func coverIssues() {
-        guard !issueRows.isEmpty else { return }
-        let selected = selectedRanges
-        for issue in issueRows {
-            issue.message?.view.covered = issue.end.map { end in selected.contains { NSLocationInRange(end, $0.rangeValue) } } ?? false
         }
     }
 
@@ -809,7 +788,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let lineStart = text.lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
         closers = closers.filter { $0 >= lineStart }
         redrawLineAndGutter()
-        coverIssues()
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -1288,7 +1266,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if event.type == .leftMouseDown, event.clickCount == 2 { forwardSync(true)?() }
     }
 
-    /// A click on an issue's message shows the issue, as one on its mark in the gutter does, once
+    /// A click on an issue's box shows the issue, as one on its line's number does, once
     /// the button is let go over it; the selection stays as it is. Only a click: the message is
     /// where a line's end is, and a drag from there selects as from any line's end, as a click
     /// with Shift and a double-click do. False for those, which are the text view's.
@@ -1310,7 +1288,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     /// A click in the gutter selects its line, a drag the lines it passes and Shift from the
-    /// selection there was, as Xcode's; on an issue's mark the build panel shows the issue.
+    /// selection there was, as Xcode's; on a line with an issue the build panel shows the issue.
     private func selectLines(with event: NSEvent) {
         func line(at event: NSEvent) -> NSRange {
             let point = NSPoint(x: textContainerOrigin.x, y: convert(event.locationInWindow, from: nil).y)
@@ -1412,18 +1390,31 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 }
 
-/// An issue's message in a view of its own, over the text view's: TextKit draws a selection in
-/// a view above the text view's background (`_NSTextSelectionView`, the first of its subviews,
-/// 27.2), which covered a message drawn there with the band, and Select All left no words.
-/// Above the text's views it shows through a selection, in the text view's coordinates, moving
-/// with the text as it scrolls. It takes no click: the text view answers for it.
+/// An issue's symbol and message in a box at its line's end, as Xcode sets them: as tall as the
+/// line, in the text's background, edged in the separators' colour, the symbol in a segment of
+/// its own before a divider and the message after it, or the symbol alone where the line has no
+/// room for words. A view of its own over the text view's: TextKit draws a
+/// selection in a view above the text view's background (`_NSTextSelectionView`, the first of
+/// its subviews, 27.2), which would cover a box drawn there; above the text's views it stays over
+/// a selection, as Xcode's does, in the text view's coordinates, moving with the text as it
+/// scrolls. It takes no click: the text view answers for it.
 final class IssueMessageView: NSView {
     private var line: CTLine?
+    private var symbol: NSImage?
     private var baseline: CGFloat = 0
-    /// Under a selection, which is drawn to the trailing edge where it has the line's break: in
-    /// the selected text's colour, the band's grey being 2.2:1 on Dark's selection.
-    var covered = false {
-        didSet { if covered != oldValue { needsDisplay = true } }
+    private var font = NSFont.systemFont(ofSize: 13)
+
+    /// The symbol's segment, twice the text's size, and the room either side of the message, half
+    /// of it, in whole points.
+    private static func measures(_ font: NSFont) -> (segment: CGFloat, padding: CGFloat) {
+        ((2 * font.pointSize).rounded(), (font.pointSize / 2).rounded())
+    }
+
+    /// The box's width for a message this wide, or for the symbol alone: whole points, so its
+    /// edges are on the pixels the band's are.
+    static func width(ofText text: CGFloat?, font: NSFont) -> CGFloat {
+        let measures = measures(font)
+        return measures.segment + (text.map { 1 + (2 * measures.padding + $0).rounded(.up) } ?? 0)
     }
 
     override var isFlipped: Bool { true }
@@ -1436,20 +1427,31 @@ final class IssueMessageView: NSView {
         needsDisplay = true
     }
 
-    /// The typeset line with its baseline this far under the rect's top, a point clear of the
-    /// view's sides for the glyphs' edges.
-    func show(_ line: CTLine, baseline: CGFloat, in rect: NSRect) {
-        if line !== self.line || baseline != self.baseline { needsDisplay = true }
-        (self.line, self.baseline) = (line, baseline)
-        let frame = rect.insetBy(dx: -1, dy: 0)
-        if frame != self.frame { self.frame = frame }
+    /// The message typeset in `font`, if it has room, with its baseline this far under the box's top.
+    func show(_ line: CTLine?, symbol: NSImage?, font: NSFont, baseline: CGFloat, in rect: NSRect) {
+        if line !== self.line || symbol !== self.symbol || font != self.font || baseline != self.baseline { needsDisplay = true }
+        (self.line, self.symbol, self.font, self.baseline) = (line, symbol, font, baseline)
+        if rect != frame { frame = rect }
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let line, let context = NSGraphicsContext.current?.cgContext else { return }
-        (covered ? NSColor.selectedTextColor : SourceTextView.issueText).setFill()
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        let measures = Self.measures(font)
+        let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 3, yRadius: 3)
+        ((superview as? NSTextView)?.backgroundColor ?? .textBackgroundColor).setFill()
+        box.fill()
+        NSColor.separatorColor.set()
+        box.stroke()
+        if line != nil { NSRect(x: measures.segment, y: 0, width: 1, height: bounds.height).fill() }
+        if let symbol {
+            let size = symbol.size
+            symbol.draw(in: NSRect(x: (measures.segment - size.width) / 2, y: (bounds.height - size.height) / 2, width: size.width, height: size.height),
+                        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+        guard let line else { return }
+        NSColor.labelColor.setFill()
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        context.textPosition = CGPoint(x: 1, y: baseline)
+        context.textPosition = CGPoint(x: measures.segment + 1 + measures.padding, y: baseline)
         CTLineDraw(line, context)
     }
 }
@@ -1475,8 +1477,8 @@ struct IssueLabel {
     private static let saysError = "LaTeX Error: "
 
     init(_ message: String, others: Int, font: NSFont) {
-        // One line, whatever TeX's own breaks, and without LaTeX's words for what the gutter's mark
-        // says already: they are the first to be read and the room is short.
+        // One line, whatever TeX's own breaks, and without LaTeX's words for what the symbol beside
+        // it says already: they are the first to be read and the room is short.
         var message = message.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         if message.hasPrefix(Self.saysError) { message.removeFirst(Self.saysError.count) }
         let count = others > 0 ? "  +\(others)" : ""
