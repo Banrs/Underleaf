@@ -192,9 +192,9 @@ final class WorkspaceController: RestoredSplitViewController {
     /// separator follows the divider only as far as each section's tools leave it room: under a
     /// source narrower than Back, the title and its tools, or a PDF narrower than its own, it
     /// stops and the tools stand over the neighbouring pane (27.2), and it sends tools to its
-    /// overflow menu by the whole toolbar's room, not a section's. So the divider keeps to where
-    /// the separator can be, which the toolbar alone knows: its line is found by its class, and
-    /// without it nothing moves.
+    /// overflow menu by the room between the side columns' separators, not a section's. So the
+    /// divider keeps to where the separator can be, which the toolbar alone knows: its line is
+    /// found by its class, and without it nothing moves.
     private func joinDivider() {
         guard paneAnimations == 0, !pdfItem.isCollapsed, let frame = view.window?.contentView?.superview else { return }
         let split = columns.splitView, divider = split.arrangedSubviews[0].frame.maxX
