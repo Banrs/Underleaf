@@ -187,6 +187,29 @@ struct ShellTests {
         #expect(divider(even - 5) == even && divider(even + 40) == even + 40)
     }
 
+    /// The source|PDF divider stands under the toolbar's separator from the widest window to the
+    /// narrowest, sidebar open or shut: where a section's tools stop the separator, the divider
+    /// goes to it (`joinDivider`).
+    @Test func theDividerStaysUnderTheToolbarsSeparator() async throws {
+        for sidebar in [false, true] {
+            let (window, workspace) = try await workspace(showPDF: true, sidebar: sidebar)
+            defer { workspace.close(); window.close() }
+            let split = workspace.columns.splitView
+            func separators(_ view: NSView) -> [NSView] {
+                view.subviews.flatMap { ($0.className == "NSSeparatorToolbarItemView" ? [$0] : []) + separators($0) }
+            }
+            let frame = try #require(window.contentView?.superview)
+            func lines() -> [CGFloat] { separators(frame).map { split.convert($0.bounds, from: $0).minX } }
+            func divider() -> CGFloat { split.arrangedSubviews[0].frame.maxX }
+            for width in [1300, 900, 700, ColumnMetrics.contentMinimum.width] {
+                try await resize(window, to: width)
+                try await waitUntil({ lines().contains { isClose($0, divider()) } }) {
+                    "sidebar \(sidebar), width \(width): divider at \(divider()), lines at \(lines())"
+                }
+            }
+        }
+    }
+
     /// The File Outline's header is at the files' foot from the first, over an outline folded for
     /// a file that has none, and away only while search results have the sidebar.
     @Test func theOutlineHeaderGoesOnlyForSearchResults() async throws {

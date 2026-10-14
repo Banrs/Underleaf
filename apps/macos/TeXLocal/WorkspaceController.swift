@@ -84,6 +84,8 @@ final class WorkspaceController: RestoredSplitViewController {
     private var paneFrames: CADisplayLink?
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
+    /// The panes' frames (`fitColumns`), watched for as long as their tokens are held.
+    private var resizes: [NotificationCenter.ObservationToken] = []
 
     init(app: AppModel, project: ProjectModel, size: CGSize) {
         self.app = app
@@ -129,10 +131,10 @@ final class WorkspaceController: RestoredSplitViewController {
             follow(pdfItem) { [unowned self] _ in fitColumns() },
         ]
         // The panes' own frames: the splits tell of a resize before the nested panes have theirs.
-        for pane in [sourceItem, pdfItem] {
+        resizes = [sourceItem, pdfItem].map { pane in
             let view = pane!.viewController.view
             view.postsFrameChangedNotifications = true
-            NotificationCenter.default.addObserver(self, selector: #selector(fitColumns), name: NSView.frameDidChangeNotification, object: view)
+            return NotificationCenter.default.addObserver(of: view, for: .frameDidChange) { [weak self] _ in self?.fitColumns() }
         }
     }
 
@@ -165,7 +167,7 @@ final class WorkspaceController: RestoredSplitViewController {
     /// The window stops at the toolbar's least (`ColumnMetrics.contentMinimum`), which is wider
     /// than the panes' whichever of them show. AppKit folds the side columns on the way there, by
     /// the area's own minimum; with the sidebar open the window controls are over it.
-    @objc private func fitColumns() {
+    private func fitColumns() {
         let pdf = pdfItem.isCollapsed ? 0 : columns.splitView.dividerThickness + ColumnMetrics.pdfRoom
         let panes = sourceItem.minimumThickness + pdf + ColumnMetrics.toolbarInset
         let area = max(panes, ColumnMetrics.toolbarMinimum - ColumnMetrics.windowControls)
@@ -190,13 +192,17 @@ final class WorkspaceController: RestoredSplitViewController {
     /// separator follows the divider only as far as each section's tools leave it room: under a
     /// source narrower than Back, the title and its tools, or a PDF narrower than its own, it
     /// stops and the tools stand over the neighbouring pane (27.2), and it sends tools to its
-    /// overflow menu by the whole toolbar's room, not a section's. So the divider keeps to where
-    /// the separator can be, which the toolbar alone knows: its line is found by its class, and
-    /// without it nothing moves.
+    /// overflow menu by the room between the side columns' separators, not a section's. So the
+    /// divider keeps to where the separator can be, which the toolbar alone knows: its line is
+    /// found by its class, and without it nothing moves. It is among the toolbar's views beside
+    /// the content view, under the window's frame view (27.2), so the search runs at each layout
+    /// without the panes' views: 245 of the window's 341 in an empty workspace, more as they fill.
     private func joinDivider() {
-        guard paneAnimations == 0, !pdfItem.isCollapsed, let frame = view.window?.contentView?.superview else { return }
+        guard paneAnimations == 0, !pdfItem.isCollapsed, let content = view.window?.contentView,
+              let frame = content.superview else { return }
         let split = columns.splitView, divider = split.arrangedSubviews[0].frame.maxX
-        let lines = frame.descendants(named: "NSSeparatorToolbarItemView").map { split.convert($0.bounds, from: $0).minX }
+        let lines = frame.subviews.filter { $0 !== content }.flatMap { $0.descendants(named: "NSSeparatorToolbarItemView") }
+            .map { split.convert($0.bounds, from: $0).minX }
         guard let line = lines.min(by: { abs($0 - divider) < abs($1 - divider) }), abs(line - divider) >= 0.5 else { return }
         split.setPosition(line, ofDividerAt: 0)
     }
@@ -605,7 +611,7 @@ final class WorkspaceController: RestoredSplitViewController {
         // The next workspace's columns are AppKit's to fold afresh: it brings back only what it folded.
         (app.sidebarFolded, app.inspectorFolded) = (false, false)
         collapses = []
-        NotificationCenter.default.removeObserver(self)
+        resizes = []
         toolbar.close()
     }
 
