@@ -11,6 +11,7 @@
 //! URL in sessionStorage, which is per origin and so per port. The web UI's
 //! own files hold no data and stay open, so that page can load to read it.
 
+mod files;
 pub mod http;
 
 use std::future::Future;
@@ -20,7 +21,7 @@ use std::sync::Arc;
 use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 use serde_json::{json, Value};
 use texlocal_core::service::{Service, UPLOAD_MAX_BYTES};
-use texlocal_core::{paths, serve, zipexport, CoreError};
+use texlocal_core::{paths, zipexport, CoreError};
 
 pub use http::{Bytes, Request, Response};
 use tokio::net::TcpListener;
@@ -112,7 +113,14 @@ impl App {
         match route {
             Route::Upload => self.upload(req).await,
             Route::Command(command) => self.api(command, req.body).await,
-            Route::File(segments) => self.file(segments, req.header("range")).await,
+            Route::Pdf(id) => {
+                let pdf = move |service: &Service| service.pdf_path(&id);
+                self.file(pdf, req.header("range"), false).await
+            }
+            Route::Raw(id, rel) => {
+                let raw = move |service: &Service| service.raw_path(&id, &rel);
+                self.file(raw, req.header("range"), true).await
+            }
             Route::Download(id, zip) => self.download(id, zip).await,
             Route::Asset(rel) => self.asset(rel).await,
             Route::NotFound => Response::text(404, "Not found"),
@@ -205,31 +213,33 @@ impl App {
         .map_or_else(error, |rel| Response::json(200, &json!({ "saved": [rel] })))
     }
 
-    /// Path resolution runs on the blocking pool with everything else that
-    /// touches the disk.
-    async fn file(&self, segments: Vec<String>, range: Option<&str>) -> Response {
-        match self
-            .blocking(move |service| serve::resolve(service, &segments))
+    /// A project file, found through the project's boundary and served in
+    /// one trip to the blocking pool, the range pdf.js asks for included.
+    /// `sandboxed` is for untrusted project content (files::serve).
+    async fn file(
+        &self,
+        find: impl FnOnce(&Service) -> Result<PathBuf, CoreError> + Send + 'static,
+        range: Option<&str>,
+        sandboxed: bool,
+    ) -> Response {
+        let range = range.map(str::to_owned);
+        self.blocking(move |service| Ok(files::serve(&find(service)?, range.as_deref(), sandboxed)))
             .await
-        {
-            Ok(resolved) => served(serve::respond(&resolved.path, range, resolved.sandboxed).await),
-            Err(e) => Response::text(e.status, &e.message),
-        }
+            .unwrap_or_else(|e| Response::text(e.status, &e.message))
     }
 
     /// The web UI. Its files go through the same lexical boundary as project
     /// files, so a crafted path cannot leave the web directory.
     async fn asset(&self, rel: String) -> Response {
         let web_dir = Arc::clone(&self.web_dir);
-        match self
-            .blocking(move |_| {
-                paths::safe_path(&web_dir, if rel.is_empty() { "index.html" } else { &rel })
-            })
-            .await
-        {
-            Ok(abs) => served(serve::respond(&abs, None, false).await),
-            Err(_) => Response::text(404, "Not found"),
-        }
+        self.blocking(move |_| {
+            let rel = if rel.is_empty() { "index.html" } else { &rel };
+            let abs =
+                paths::safe_path(&web_dir, rel).map_err(|_| CoreError::not_found("Not found"))?;
+            Ok(files::serve(&abs, None, false))
+        })
+        .await
+        .unwrap_or_else(|e| Response::text(e.status, &e.message))
     }
 
     async fn download(&self, id: String, zip: bool) -> Response {
@@ -267,8 +277,10 @@ impl App {
 pub enum Route {
     Upload,
     Command(String),
-    /// `__pdf/<id>` or `__raw/<id>/<rel…>`.
-    File(Vec<String>),
+    /// `__pdf/<id>`: the project's compiled PDF.
+    Pdf(String),
+    /// `__raw/<id>/<rel…>`: a file in the project, by its path there.
+    Raw(String, String),
     /// A project's id, and whether it's the zip (else the PDF).
     Download(String, bool),
     /// One of the web UI's files, by its path in the web directory.
@@ -286,7 +298,10 @@ impl Route {
         match (named(0), named(1), segments.len()) {
             (Some("api"), Some("upload_file"), 2) if post => Route::Upload,
             (Some("api"), Some(_), _) if post => Route::Command(segments[1..].join("/")),
-            (Some("__pdf" | "__raw"), Some(_), _) if read => Route::File(segments),
+            (Some("__pdf"), Some(id), _) if read => Route::Pdf(id.to_owned()),
+            (Some("__raw"), Some(id), _) if read => {
+                Route::Raw(id.to_owned(), segments[2..].join("/"))
+            }
             (Some("__download"), Some(kind @ ("pdf" | "zip")), 3) if read => {
                 Route::Download(segments[2].clone(), kind == "zip")
             }
@@ -295,13 +310,5 @@ impl Route {
             (Some(first), _, _) if first == "api" || first.starts_with("__") => Route::NotFound,
             _ => Route::Asset(segments.join("/")),
         }
-    }
-}
-
-fn served(file: serve::Served) -> Response {
-    Response {
-        status: file.status,
-        headers: file.headers,
-        body: file.body,
     }
 }

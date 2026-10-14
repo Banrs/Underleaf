@@ -471,6 +471,25 @@ async fn only_regular_files_are_served() {
 }
 
 #[tokio::test]
+async fn the_compiled_pdf_is_served_in_ranges_without_the_sandbox() {
+    let f = fixture();
+    std::fs::create_dir(f._data.path().join("P/build")).unwrap();
+    std::fs::write(f._data.path().join("P/build/main.pdf"), "%PDF-1.7 x").unwrap();
+    let part = f
+        .app
+        .handle(authed("GET", "/__pdf/P", &[("range", "bytes=0-7")], b""))
+        .await;
+    assert_eq!(part.status, 206);
+    assert_eq!(part.body, b"%PDF-1.7");
+    assert_eq!(part.header("content-type"), Some("application/pdf"));
+    // The app's own build, shown by pdf.js on the app's page.
+    assert_eq!(
+        part.header("content-security-policy"),
+        Some("frame-ancestors 'none'")
+    );
+}
+
+#[tokio::test]
 async fn web_assets_stay_inside_the_web_directory() {
     let f = fixture();
     let index = f.app.handle(authed("GET", "/", &[], b"")).await;

@@ -1,36 +1,12 @@
-// Serving project files as URLs: the compiled PDF (pdf.js fetches it in
-// ranges) and raw project files (image previews) for the browser server.
-// The route table and the sandbox rule live here.
+//! Files as HTTP answers: the compiled PDF (pdf.js fetches it in ranges), raw
+//! project files (image previews) and the web UI's own files. The sandbox
+//! rule for project files lives here; `App` finds the file.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::service::Service;
-use crate::CoreError;
-
-/// A file to serve, and whether it is untrusted project content that must be
-/// sent with a sandboxing CSP and `nosniff`.
-pub struct Resolved {
-    pub path: PathBuf,
-    pub sandboxed: bool,
-}
-
-/// Route percent-decoded path segments: `__pdf/<id>` or `__raw/<id>/<rel…>`.
-pub fn resolve(service: &Service, segments: &[String]) -> Result<Resolved, CoreError> {
-    let id = segments.get(1).map(String::as_str).unwrap_or_default();
-    match segments.first().map(String::as_str) {
-        Some("__pdf") => Ok(Resolved {
-            path: service.pdf_path(id)?,
-            sandboxed: false,
-        }),
-        Some("__raw") => Ok(Resolved {
-            path: service.raw_path(id, &segments.get(2..).unwrap_or_default().join("/"))?,
-            sandboxed: true,
-        }),
-        _ => Err(CoreError::not_found("Not found")),
-    }
-}
+use crate::Response;
 
 fn mime_for(path: &Path) -> &'static str {
     match path
@@ -62,7 +38,7 @@ struct Unsatisfiable;
 
 /// The one byte range a `Range` header asks for, or None to send the whole
 /// file. pdf.js fetches large PDFs in ranges; the suffix and open-ended forms
-/// are here because WebView engines may choose either. RFC 9110 §14.2 has a
+/// are here because browsers may choose either. RFC 9110 §14.2 has a
 /// server ignore a unit it doesn't know and lets it ignore several ranges
 /// (which would need multipart/byteranges), so those, and a header that
 /// doesn't parse, get the whole file. Only a well-formed range that starts
@@ -92,26 +68,6 @@ fn parse_range(header: &str, len: u64) -> Result<Option<(u64, u64)>, Unsatisfiab
     Ok(Some((first, last.min(len - 1))))
 }
 
-/// A file as an HTTP response, for a host to wrap in its own type.
-pub struct Served {
-    pub status: u16,
-    pub headers: Vec<(&'static str, String)>,
-    pub body: Vec<u8>,
-}
-
-/// `path` as an HTTP response, whole or the part a `Range` header asks for.
-/// A sandboxed response carries its CSP whatever the status, so no answer
-/// about a project file can run as a document.
-pub async fn respond(path: &Path, range: Option<&str>, sandboxed: bool) -> Served {
-    // One trip to the blocking pool per request. tokio::fs makes one per
-    // operation (metadata, open, seek, each read) and copies through its own
-    // buffer; pdf.js fetches a large PDF as many small ranges.
-    let (path, range) = (path.to_owned(), range.map(str::to_owned));
-    tokio::task::spawn_blocking(move || serve_file(&path, range.as_deref(), sandboxed))
-        .await
-        .unwrap_or_else(|_| text(404, "Not found", csp(sandboxed)))
-}
-
 /// The headers every answer starts with: a sandboxed one's CSP.
 fn csp(sandboxed: bool) -> Vec<(&'static str, String)> {
     let mut headers = Vec::new();
@@ -124,16 +80,21 @@ fn csp(sandboxed: bool) -> Vec<(&'static str, String)> {
     headers
 }
 
-fn text(status: u16, message: &str, mut headers: Vec<(&'static str, String)>) -> Served {
+fn text(status: u16, message: &str, mut headers: Vec<(&'static str, String)>) -> Response {
     headers.push(("Content-Type", "text/plain; charset=utf-8".into()));
-    Served {
+    Response {
         status,
         headers,
         body: message.into(),
     }
 }
 
-fn serve_file(path: &Path, range: Option<&str>, sandboxed: bool) -> Served {
+/// `path` as an HTTP response, whole or the part a `Range` header asks for:
+/// its length, the range and the bytes, all read in the one trip to the
+/// blocking pool its caller makes. A sandboxed response carries its CSP
+/// whatever the status, so no answer about a project file can run as a
+/// document.
+pub fn serve(path: &Path, range: Option<&str>, sandboxed: bool) -> Response {
     let mut headers = csp(sandboxed);
     let len = match fs::metadata(path) {
         Ok(meta) if meta.is_file() => meta.len(),
@@ -158,7 +119,7 @@ fn serve_file(path: &Path, range: Option<&str>, sandboxed: bool) -> Served {
         headers.push(("Content-Range", format!("bytes {start}-{end}/{len}")));
     }
     let status = if range.is_some() { 206 } else { 200 };
-    Served {
+    Response {
         status,
         headers,
         body,
