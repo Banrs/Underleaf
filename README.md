@@ -58,9 +58,8 @@ You also need a TeX distribution — see [Requirements](#requirements).
 
 ## Requirements
 
-A TeX distribution providing `latexmk`, `pdflatex` and `synctex`:
-
-On macOS, `brew install --cask mactex-no-gui`.
+A TeX distribution providing `latexmk`, `pdflatex` and `synctex`. On macOS,
+`brew install --cask mactex-no-gui` installs one.
 
 TeXLocal finds TeX on your `PATH` and in the usual install locations
 (`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`), or in a folder
