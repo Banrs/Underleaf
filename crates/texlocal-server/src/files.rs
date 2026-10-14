@@ -91,9 +91,11 @@ fn text(status: u16, message: &str, mut headers: Vec<(&'static str, String)>) ->
 
 /// `path` as an HTTP response, whole or the part a `Range` header asks for:
 /// its length, the range and the bytes, all read in the one trip to the
-/// blocking pool its caller makes. A sandboxed response carries its CSP
-/// whatever the status, so no answer about a project file can run as a
-/// document.
+/// blocking pool its caller makes. tokio::fs would make one per operation
+/// (metadata, open, seek, each read) and copy through its own buffer, and
+/// pdf.js fetches a large PDF as many small ranges. A sandboxed response
+/// carries its CSP whatever the status, so no answer about a project file can
+/// run as a document.
 pub fn serve(path: &Path, range: Option<&str>, sandboxed: bool) -> Response {
     let mut headers = csp(sandboxed);
     let len = match fs::metadata(path) {
