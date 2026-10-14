@@ -36,7 +36,7 @@ struct HomeView: View {
                     .help("Open a folder, .tex file or .zip as a project")
                     .disabled(app.libraryProblem != nil)
                 Button("New Project", systemImage: "plus") { app.newProject() }
-                    .help("Start a new project")
+                    .help("Name a project and choose its template")
                     .disabled(app.libraryProblem != nil)
             }
         }
@@ -274,7 +274,9 @@ private struct TemplateButtonStyle: ButtonStyle {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         configuration.label
             .padding(Self.edge)
-            .background(.fill.opacity(configuration.isPressed ? 1 : hovered ? 0.5 : 0), in: shape)
+            .background {
+                if configuration.isPressed { shape.fill(.fill.secondary) } else if hovered { shape.fill(.fill.tertiary) }
+            }
             .contentShape(shape)
             .contentShape(.focusEffect, shape)
             .onHover { hovered = $0 }
@@ -350,7 +352,7 @@ private struct PagePreview: View {
             VStack(spacing: 0) {
                 Spacer()
                 VStack(spacing: 6) {
-                    Rectangle().fill(.tint.opacity(0.6)).frame(height: 14)
+                    Rectangle().fill(.tint.secondary).frame(height: 14)
                     bar(60, 4)
                     bar(40, 3)
                     Spacer()
