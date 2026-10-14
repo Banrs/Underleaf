@@ -48,7 +48,6 @@ const PATHS = {
   // Summation drawn as geometry, not the ∑ character — a text glyph sits
   // optically high because of font baseline metrics.
   sigma: '<path d="M17 5H7l6 7-6 7h10"/>',
-  comment: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M7 9h10"/><path d="M7 13h6"/>',
   // The source bar's LaTeX tools, after the macOS app's symbols.
   radical: '<path d="M3 12h3l3 8 5-16h7"/>',
   pi: '<path d="M9 5v14"/><path d="M4 8a3 3 0 0 1 3-3h13"/><path d="M15 5v11a3 3 0 0 0 3 3h1"/>',
