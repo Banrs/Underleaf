@@ -464,16 +464,16 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
     let main_file = read_settings(root).main_file;
     let moved_main = after_entry(&main_file, &from_rel).map(|rest| format!("{to_rel}{rest}"));
     fs::rename(&src, &dest)?;
-    if let Some(main_file) = &moved_main {
-        if let Err(settings_err) = write_settings(root, &json!({ "mainFile": main_file })) {
-            if let Err(rollback_err) = fs::rename(&dest, &src) {
-                return Err(CoreError::internal(format!(
-                    "{}; rename rollback failed: {}",
-                    settings_err.message, rollback_err
-                )));
-            }
-            return Err(settings_err);
+    if let Some(main_file) = &moved_main
+        && let Err(settings_err) = write_settings(root, &json!({ "mainFile": main_file }))
+    {
+        if let Err(rollback_err) = fs::rename(&dest, &src) {
+            return Err(CoreError::internal(format!(
+                "{}; rename rollback failed: {}",
+                settings_err.message, rollback_err
+            )));
         }
+        return Err(settings_err);
     }
 
     Ok(RenameResult {
@@ -636,10 +636,10 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
     let mut files = BTreeMap::new();
     visit_files(root, &mut |abs, rel| {
         let ext = ext_of(rel);
-        if ext == "bib" || ext == "tex" {
-            if let Some(bytes) = skip_unreadable(fs::read(abs))? {
-                files.insert(rel.to_owned(), parse_symbols(&bytes, &ext));
-            }
+        if (ext == "bib" || ext == "tex")
+            && let Some(bytes) = skip_unreadable(fs::read(abs))?
+        {
+            files.insert(rel.to_owned(), parse_symbols(&bytes, &ext));
         }
         Ok(true)
     })?;

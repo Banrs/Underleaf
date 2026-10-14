@@ -241,10 +241,10 @@ impl Service {
     /// Choose TeXpresso's folder; None or empty goes back to the TeX path.
     pub async fn set_texpresso_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
         let chosen = dir.map(str::trim).filter(|d| !d.is_empty()).map(Path::new);
-        if let Some(dir) = chosen {
-            if !dir.is_absolute() || !crate::texpresso::executable_file(&dir.join("texpresso")) {
-                return Err(CoreError::bad_request(NO_TEXPRESSO));
-            }
+        if let Some(dir) = chosen
+            && (!dir.is_absolute() || !crate::texpresso::executable_file(&dir.join("texpresso")))
+        {
+            return Err(CoreError::bad_request(NO_TEXPRESSO));
         }
         self.set_app_folder("texpressoDir", chosen)?;
         Ok(self.status().await)
