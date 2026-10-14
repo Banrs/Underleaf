@@ -41,7 +41,7 @@ when complete) with its SyncTeX beside it (`live.synctex`) and reported with the
 changed and whether TeX reached the document's end or stopped on an error
 (`["pdf", path, pages, run, changed, edit]`). References and contents are brought up to date
 by finishing passes in a second TeX, which takes the first one's place when it is done and
-is dropped by a keystroke. The Mac app asks for this unless Settings › Live Preview › Show Preview In is
+is dropped by a keystroke. The Mac app asks for this unless Settings › Live Preview › Show Live Preview In is
 TeXpresso’s Window; the browser client doesn't. The core hands the pages on through
 `texpresso_wait` and takes keystrokes through `texpresso_edit`; in TeXpresso's own window
 a finishing pass runs only when asked for (`texpresso_rerun`).
@@ -87,7 +87,9 @@ This builds the browser server, starts it on an OS-assigned loopback port with a
 temporary project library, and uses SDL's dummy display driver. It exercises
 the real HTTP API and TeXpresso engine, including unsaved Unicode and included
 file changes, incomplete LaTeX with pauses between edits, error recovery,
-nested main files, stopping, and a normal PDF build during live preview.
+nested main files, stopping, and a normal PDF build during live preview. With
+Underleaf's patch it also checks the pages in view, edits sent as ranges, and the
+whole document with its SyncTeX.
 The printed result includes a temporary directory with the evidence and logs.
 No personal project, app preference or desktop window is used.
 

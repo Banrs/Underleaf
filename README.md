@@ -53,19 +53,17 @@ You also need a TeX distribution — see [Requirements](#requirements).
 - **PDF preview**: pinch or ⌘-scroll zoom, fit width/height, page tracking, and **Find in PDF**
 - **SyncTeX both ways**
 - **One command model** for menus, shortcuts and toolbar buttons (titles, accelerators, enabled state). The Mac app's main shortcuts: ⇧⌘N new project, ⌘N new file, ⌘S save, ⌘Return compile, ⌘. stop, ⇧⌘K clean build folder, ⇧⌘F find in the project, ⌘L go to line, ⌥⌘G go to page, ⌥⌘J go to PDF position, ⌘' and ⌘" next and previous issue, ⌃⌘S sidebar, ⌥⌘P PDF, ⌥⌘I inspector, ⇧⌘L build panel
-- **Deletes go to the Trash** (Recycle Bin on Windows)
+- **Deletes go to the Trash**
 - **Settings** (`⌘,`): the Mac app's window has five panes. General has the projects folder and the template and engine for new projects; Editor has the font, syntax colours, line numbers, closing brackets and completions; Compiling has Compile Automatically, jumping to the cursor's place after compiling and the TeX folder; PDF has the page colour; Live Preview has the TeXpresso (experimental) folder and where the preview shows (word count is in View). The browser version has interface appearance and scaling, editor font size, syntax colours, PDF paper and auto-compile. Per project, the TeX engine and Stop on first error
 
 ## Requirements
 
-A TeX distribution providing `latexmk`, `pdflatex` and `synctex`:
-
-- **macOS** — `brew install --cask mactex-no-gui`
-- **Windows** — [MiKTeX](https://miktex.org) or [TeX Live](https://tug.org/texlive)
+A TeX distribution providing `latexmk`, `pdflatex` and `synctex`. On macOS,
+`brew install --cask mactex-no-gui` installs one.
 
 TeXLocal finds TeX on your `PATH` and in the usual install locations
-(`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`,
-`C:\texlive\<year>`, MiKTeX), or in a folder you choose in Settings.
+(`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`), or in a folder
+you choose in Settings.
 
 **To build from source:** Node.js ≥ 22.12 and Rust (stable); the macOS app
 also needs Xcode.
@@ -78,14 +76,17 @@ Projects are plain folders in `~/TeXLocal` — override with
 ```
 crates/texlocal-core/    Projects, path safety, latexmk/SyncTeX, log parsing, ZIP
                          export, and the JSON command service every host shares.
+crates/texlocal-syntax/  Highlighting, completion and editing commands: the Mac
+                         editor's mirror of a file's text.
 crates/texlocal-ffi/     C ABI the macOS app links (header in include/).
 crates/texlocal-server/  The browser version's local HTTP host.
 apps/macos/              AppKit and SwiftUI app.
 web/src/                 Frontend modules, bundled by esbuild into web/dist.
 docs/                    design-tokens.md (extracted Apple UI-kit values) ·
-                         web.md
+                         texpresso.md (live preview) · web.md
+tools/texpresso/         Builds and installs TeXpresso with Underleaf's patch.
 build.mjs                esbuild bundler and shared asset copy
-scripts/                 Version check
+scripts/                 Version check, and the live preview's end-to-end check
 ```
 
 ## Development
