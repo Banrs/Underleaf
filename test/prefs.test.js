@@ -26,8 +26,7 @@ function useStorage(t, value) {
 
 test('blocked site data leaves the preferences working for the page', async (t) => {
   let touched = 0;
-  const { prefs, migratePrefs } = await useStorage(t, () => { touched++; throw new Error('SecurityError: access is denied'); });
-  assert.doesNotThrow(() => migratePrefs());
+  const { prefs } = await useStorage(t, () => { touched++; throw new Error('SecurityError: access is denied'); });
   assert.equal(prefs.autoCompile, true);
   prefs.autoCompile = false;
   prefs.openDirs = { paper: ['figs'] };
@@ -54,15 +53,4 @@ test('each preference is read from storage once, and writes go through', async (
   assert.equal(store.data.get('texlocal-w-side'), '320');
   assert.equal(prefs.sidebarWidth, 320);
   assert.equal(store.reads, 1);
-});
-
-test('pre-1.0 keys still migrate', async (t) => {
-  const store = memoryStorage({ 'texlocal-sidebar': 'collapsed', 'texlocal-pdfdark': 'on' });
-  const { prefs, migratePrefs } = await useStorage(t, () => store);
-  migratePrefs();
-  assert.equal(store.data.get('texlocal-sidebar-collapsed'), '1');
-  assert.equal(store.data.has('texlocal-sidebar'), false);
-  assert.equal(store.data.get('texlocal-pdfpaper'), 'dark');
-  assert.equal(prefs.sidebarCollapsed, true);
-  assert.equal(prefs.pdfPaper, 'dark');
 });

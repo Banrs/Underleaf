@@ -1,7 +1,7 @@
 // Bootstrap: platform detection, appearance, routing. Everything else lives in
 // the view modules.
 
-import { prefs, migratePrefs, applyAppearance, setAppearanceHandler } from './prefs.js';
+import { prefs, applyAppearance, setAppearanceHandler } from './prefs.js';
 import { onCommandsChanged, installMenuBridge } from './commands.js';
 import { state } from './state.js';
 import { renderHome, destroyHome } from './home.js';
@@ -23,7 +23,6 @@ addEventListener('contextmenu', (e) => {
 
 // ---------- appearance ----------
 
-migratePrefs();
 setAppearanceHandler((theme) => state.editor?.setTheme(theme === 'dark'));
 applyAppearance();
 
