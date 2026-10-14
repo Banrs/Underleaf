@@ -45,8 +45,7 @@ impl TlHandle {
             // out tl_close — stop the latexmk trees that would otherwise outlive
             // the app.
             "kill_all" => {
-                service.compile.kill_all();
-                service.texpresso.kill_all();
+                service.kill_all();
                 Ok(Value::Null)
             }
             "import_files" => Ok(json!(import::import_files(
@@ -182,11 +181,9 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
         return;
     }
     let handle = Box::from_raw(handle);
-    // Compiles run in their own process groups, so nothing else stops them.
     // Dropping the runtime and the service is guarded too.
     caught(move || {
-        handle.service.compile.kill_all();
-        handle.service.texpresso.kill_all();
+        handle.service.kill_all();
         drop(handle);
     });
 }

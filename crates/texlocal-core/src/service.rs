@@ -124,6 +124,13 @@ impl Service {
         }
     }
 
+    /// Stop every compile and live preview, as a host does when it quits.
+    /// Compiles run in their own process groups, so nothing else stops them.
+    pub fn kill_all(&self) {
+        self.compile.kill_all();
+        self.texpresso.kill_all();
+    }
+
     pub fn project_root(&self, id: &str) -> Result<PathBuf, CoreError> {
         paths::project_root(&self.data_dir, id)
     }
