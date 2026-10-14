@@ -805,8 +805,9 @@ async fn a_head_of_endless_blank_lines_is_cut_off() {
     let (_f, port) = start().await;
     let stream = connect(port).await;
     let (mut reader, mut writer) = stream.into_split();
-    // Empty lines before a request are dropped, never growing the head
-    // towards its size limit, so only the head's time limit ends them.
+    // Empty lines before a request never make one. Hyper keeps them in the
+    // head it reads, so the head's size limit ends them with a 431 within
+    // tens of milliseconds (measured); were they dropped, its time limit would.
     let feed = tokio::spawn(async move {
         let blank = b"\r\n".repeat(4096);
         let until = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
