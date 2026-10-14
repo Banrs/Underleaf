@@ -10,6 +10,7 @@ import { state, resetProjectState, analyzeDoc, IMAGE_FILE, TEXT_FILE, TEX_FILE }
 import { prefs, UI_SCALES, applyAppearance, setAppearanceHandler } from './prefs.js';
 import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle, menuBar, SHORTCUTS } from './commands.js';
 import { openSettings } from './settings.js';
+import { newProjectFlow } from './home.js';
 import { chooseTexFolder, texInstallHint } from './texfolder.js';
 import { createSaveQueue, flushUntilStable } from './savequeue.js';
 import {
@@ -412,9 +413,9 @@ function findAgain(delta) {
 // (commands.js chordApplies), not menus or buttons.
 function commandDefs() {
   return [
-    { id: 'project.new', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
+    { id: 'project.new', run: newProjectFlow },
     { id: 'project.close', run: () => { location.hash = '#/'; }, enabled: hasProject },
-    { id: 'project.export', run: () => Promise.resolve(api.exportProject(state.projectId)).catch((e) => toast(e.message, 'error')), enabled: hasProject },
+    { id: 'project.export', run: () => api.exportProject(state.projectId).catch((e) => toast(e.message, 'error')), enabled: hasProject },
     { id: 'project.search', run: () => { ui.layout?.showSidebar(); focusSearch(); }, enabled: hasProject },
 
     { id: 'file.new', run: newFileFlow, enabled: hasProject },
@@ -436,8 +437,8 @@ function commandDefs() {
     { id: 'pdf.find', run: openPdfFind, enabled: hasPdf },
 
     // Titles flip like native View-menu items; no checkmark, matching macOS.
-    { id: 'view.toggleSidebar', title: () => (ui.layout?.sidebarVisible() ? 'Hide Sidebar' : 'Show Sidebar'), run: toggleSidebar },
-    { id: 'view.togglePdf', title: () => (ui.layout?.pdfVisible() ? 'Hide PDF' : 'Show PDF'), run: togglePdf, enabled: hasProject },
+    { id: 'view.toggleSidebar', title: () => (ui.layout?.sidebarVisible() ? 'Hide Sidebar' : 'Show Sidebar'), run: () => ui.layout?.toggleSidebar() },
+    { id: 'view.togglePdf', title: () => (ui.layout?.pdfVisible() ? 'Hide PDF' : 'Show PDF'), run: () => ui.layout?.togglePdf(), enabled: hasProject },
     { id: 'view.toggleLogs', run: toggleLogs, checked: () => state.logOpen, enabled: hasProject },
     { id: 'view.zoomIn', scope: 'pdf', run: () => state.pdf?.zoomBy(1.15), enabled: hasPdf },
     { id: 'view.zoomOut', scope: 'pdf', run: () => state.pdf?.zoomBy(1 / 1.15), enabled: hasPdf },
@@ -833,10 +834,6 @@ async function toggleTexPresso() {
   return startTexPresso();
 }
 
-export async function stopTexPresso() {
-  if (texpresso?.state.enabled || texpresso?.state.running) await texpresso.stop();
-}
-
 export function leaveTexPressoPage(options) { return texpresso?.leavePage(options); }
 
 function renderTexPresso() {
@@ -1056,7 +1053,7 @@ function showPdfEmpty() {
 
 function savePdf() {
   if (!state.pdf?.doc && !state.lastResult?.pdf) { toast('Compile first to produce a PDF'); return; }
-  Promise.resolve(api.downloadPdf(state.projectId)).catch((e) => toast(e.message, 'error'));
+  api.downloadPdf(state.projectId).catch((e) => toast(e.message, 'error'));
 }
 
 async function forwardSync() {
@@ -1099,10 +1096,6 @@ async function inverseSync() {
 }
 
 // ---------- panes ----------
-
-function toggleSidebar() { ui.layout?.toggleSidebar(); }
-
-function togglePdf() { ui.layout?.togglePdf(); }
 
 function stepUiScale(dir) {
   const i = UI_SCALES.indexOf(prefs.uiScale) + dir;
