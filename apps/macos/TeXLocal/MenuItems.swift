@@ -98,7 +98,6 @@ struct InsertMenuItems: View {
 /// The symbols as TeX draws them, in the KaTeX fonts the maths preview has (Resources/KaTeX):
 /// lowercase Greek in math italic, the big operators at their text size, the rest upright;
 /// what those lack from KaTeX's AMS font, then STIX Two Math.
-@MainActor
 enum MathGlyphs {
     private static let side: CGFloat = 24
     private static let size: CGFloat = 19
