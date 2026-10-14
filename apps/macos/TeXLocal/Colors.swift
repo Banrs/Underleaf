@@ -39,7 +39,9 @@ extension NSColor {
     var legibleAsText: NSColor {
         let names: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
         let resolved = Dictionary(uniqueKeysWithValues: names.map { ($0, legibleAsText(in: $0)) })
-        return NSColor(name: nil) { [resolved] in $0.bestMatch(from: names).flatMap { resolved[$0] } ?? self }
+        // `@Sendable`, so a colour resolved off the main thread (NSColor is Sendable) doesn't trap on the
+        // main-actor check this property's context would give the closure.
+        return NSColor(name: nil) { @Sendable [resolved] in $0.bestMatch(from: names).flatMap { resolved[$0] } ?? self }
     }
 
     /// `legibleAsText` in one appearance. An Increase Contrast appearance asked for by name is the

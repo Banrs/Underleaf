@@ -78,6 +78,8 @@ struct FormatPanel: View {
     var body: some View {
         let headings = project.headingStyles
         let layout = Layout(headings)
+        // Read once: it searches the outline.
+        let current = project.headingLevel
         VStack(spacing: 0) {
             HStack {
                 toggle(.editBold, symbol: "bold", on: styles.bold != nil, help: "Make text bold")
@@ -89,7 +91,7 @@ struct FormatPanel: View {
                 .padding(.horizontal, Self.contentInset)
             VStack(spacing: 0) {
                 ForEach(headings.levels, id: \.self) { level in
-                    row(level, marker: headings.marker(level), layout: layout)
+                    row(level, marker: headings.marker(level), layout: layout, checked: level == current)
                 }
             }
             .padding(.horizontal, Self.highlightInset)
@@ -109,7 +111,6 @@ struct FormatPanel: View {
         .onAppear {
             seeding = headings.levels.contains { $0 == project.headingLevel }
             focused = project.headingLevel
-            styles = project.editor.textStyles
         }
         .onChange(of: focused) { _, level in
             if seeding {
@@ -118,7 +119,7 @@ struct FormatPanel: View {
                 highlighted = level
             }
         }
-        .onChange(of: project.editor.changes.count) {
+        .onChange(of: project.editor.changes.count, initial: true) {
             styles = project.editor.textStyles
         }
     }
@@ -136,7 +137,7 @@ struct FormatPanel: View {
         .help(help)
     }
 
-    private func row(_ level: HeadingLevel, marker: String?, layout: Layout) -> some View {
+    private func row(_ level: HeadingLevel, marker: String?, layout: Layout, checked: Bool) -> some View {
         let lit = highlighted == level
         let font = layout.font(level)
         return Button { choose(level) } label: {
@@ -144,7 +145,7 @@ struct FormatPanel: View {
                 // The kit's checkmark: bold at the menu's size.
                 Image(systemName: "checkmark")
                     .font(.body.bold())
-                    .opacity(project.headingLevel == level ? 1 : 0)
+                    .opacity(checked ? 1 : 0)
                     .accessibilityHidden(true)
                 HStack(alignment: .firstTextBaseline, spacing: Self.markerGap) {
                     if layout.markers > 0 {
@@ -179,7 +180,7 @@ struct FormatPanel: View {
         }
         // The level alone: the marker is the document's numbering, not the level's name.
         .accessibilityLabel(level.title)
-        .accessibilityAddTraits(project.headingLevel == level ? .isSelected : [])
+        .accessibilityAddTraits(checked ? .isSelected : [])
     }
 
     private func move(by step: Int, in levels: [HeadingLevel]) -> KeyPress.Result {
