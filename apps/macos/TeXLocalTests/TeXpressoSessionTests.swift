@@ -100,7 +100,7 @@ struct TeXpressoSessionTests {
             if ready() { return }
             await Task.yield()
         }
-        throw NSError(domain: "TeXpressoSessionTests", code: 1)
+        throw TimedOut()
     }
 
     /// A fake core's session, started with `files`.
