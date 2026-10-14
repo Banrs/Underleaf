@@ -154,7 +154,8 @@ final class ProjectModel {
     let editor = SourceEditor()
     @ObservationIgnored private weak var app: AppModel?
     private let core = Core.shared
-    @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// The autosave that waits for a pause in typing, or runs; a test waits for it.
+    @ObservationIgnored private(set) var saveTask: Task<Void, Never>?
     /// Saves, settings, renames, deletions and disk checks finish in order, including their model updates.
     @ObservationIgnored private var lastMutation: Task<Bool, Never>?
     @ObservationIgnored private var analysis: Task<Void, Never>?

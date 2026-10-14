@@ -634,13 +634,13 @@ final class ProjectFlowTests {
         try files.removeItem(at: notes)
         #expect(project.editor.perform(.bold))
         try await waitUntil(timeout: .seconds(5)) { project.missingFile == "notes.tex" }
-        // Past the autosave, which would have made the file again.
-        try await Task.sleep(for: .seconds(1))
+        // After the autosave, which would have made the file again.
+        await project.saveTask?.value
         #expect(!exists(notes))
         // Cancel leaves the edits unsaved: an autosave doesn't make the file, and a save asks again.
         project.missingFile = nil
         #expect(project.editor.perform(.italic))
-        try await Task.sleep(for: .seconds(1))
+        await project.saveTask?.value
         #expect(!exists(notes) && project.missingFile == nil)
         #expect(await !project.saveEdits() && project.missingFile == "notes.tex")
         project.saveMissingFile()
@@ -661,10 +661,10 @@ final class ProjectFlowTests {
         try "theirs".write(to: main, atomically: false, encoding: .utf8)
         #expect(project.editor.perform(.bold))
         try await waitUntil(timeout: .seconds(5)) { project.diskConflict == "main.tex" }
-        // Cancel, then past an autosave, which would have written over the other app's change.
+        // Cancel, then after an autosave, which would have written over the other app's change.
         project.diskConflict = nil
         #expect(project.editor.perform(.italic))
-        try await Task.sleep(for: .seconds(1))
+        await project.saveTask?.value
         #expect(onDisk() == "theirs" && project.diskConflict == nil && project.dirty)
         #expect(await !project.saveEdits() && project.diskConflict == "main.tex")
         project.keepEdits()
