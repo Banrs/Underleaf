@@ -10,9 +10,19 @@ nonisolated struct DocumentClass: Equatable {
 extension DocumentClass {
     /// The class named outside comments, if any.
     init?(in text: String) {
-        // A comment runs from a % that isn't escaped to the line's end.
-        let code = text.replacing(/(^|[^\\])%[^\n]*/.anchorsMatchLineEndings()) { $0.1 }
-        guard let match = code.firstMatch(of: /\\documentclass\s*(?:\[([^\]]*)\])?\s*\{\s*([^}\s]+)\s*\}/) else { return nil }
+        let named = { (text: Substring) in
+            // A comment runs from a % that isn't escaped to the line's end.
+            text.replacing(/(^|[^\\])%[^\n]*/.anchorsMatchLineEndings()) { $0.1 }
+                .firstMatch(of: /\\documentclass\s*(?:\[([^\]]*)\])?\s*\{\s*([^}\s]+)\s*\}/)
+        }
+        // LaTeX takes the class in the preamble, so the text up to the first \begin{document}
+        // after a class is named is read first, and the whole only when that has none (a
+        // \begin{document} in a comment, say). Each save of the main file reads it on the main
+        // actor: a 470 KB file's comments took 37 ms to take out, its preamble's 0.3 ms.
+        let preamble = text.firstRange(of: "\\documentclass")
+            .flatMap { text[$0.upperBound...].firstRange(of: "\\begin{document}") }
+            .map { text[..<$0.upperBound] }
+        guard let match = preamble.flatMap(named) ?? named(text[...]) else { return nil }
         name = String(match.2)
         let options = match.1.map { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } } ?? []
         // KOMA-Script's fontsize=11pt as well as the standard 11pt.

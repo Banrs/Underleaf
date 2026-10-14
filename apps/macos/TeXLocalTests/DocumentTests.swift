@@ -115,6 +115,11 @@ struct HeadingStylesTests {
         #expect(DocumentClass(in: "50\\% \\documentclass{book}") == DocumentClass(name: "book"))
         #expect(DocumentClass(in: "\\documentclass[fontsize=12pt]{scrartcl}")?.pointSize == 12)
         #expect(DocumentClass(in: "\\section{A}") == nil)
+        // Read in the preamble first, then in the whole text.
+        #expect(DocumentClass(in: "\\documentclass{article}\n\\begin{document}\n\\documentclass{book}") == DocumentClass(name: "article"))
+        #expect(DocumentClass(in: "% \\documentclass{book} and \\begin{document}\n\\documentclass[12pt]{report}")
+            == DocumentClass(name: "report", pointSize: 12))
+        #expect(DocumentClass(in: "\\begin{document}\n\\documentclass{book}") == DocumentClass(name: "book"))
     }
 }
 
