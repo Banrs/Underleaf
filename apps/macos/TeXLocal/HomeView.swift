@@ -124,8 +124,8 @@ struct HomeView: View {
     private var templates: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: TemplateCard.width, maximum: TemplateCard.width), spacing: 4, alignment: .top)],
                   alignment: .leading, spacing: 4) {
-            ForEach(ProjectTemplate.all) { template in
-                Button { app.newProject(template.id) } label: {
+            ForEach(ProjectTemplate.allCases) { template in
+                Button { app.newProject(template) } label: {
                     TemplateCard(template: template)
                 }
                 .buttonStyle(TemplateButtonStyle())
@@ -244,20 +244,24 @@ struct GetMacTeXButton: View {
     }
 }
 
-/// A template the core makes projects from (crates/texlocal-core templates.rs).
-struct ProjectTemplate: Identifiable {
-    enum Page { case blank, article, report, slides }
+/// A template the core makes projects from (crates/texlocal-core templates.rs). The raw value is
+/// the core's id, which is what Settings stores.
+enum ProjectTemplate: String, CaseIterable, Identifiable {
+    case blank, article, report, beamer
 
-    let id: String
-    let title: String
-    let page: Page
+    /// What a new project is made from until Settings says otherwise.
+    static let standard = ProjectTemplate.article
 
-    static let all = [
-        ProjectTemplate(id: "blank", title: "Blank", page: .blank),
-        ProjectTemplate(id: "article", title: "Article", page: .article),
-        ProjectTemplate(id: "report", title: "Report", page: .report),
-        ProjectTemplate(id: "beamer", title: "Presentation", page: .slides),
-    ]
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .blank: "Blank"
+        case .article: "Article"
+        case .report: "Report"
+        case .beamer: "Presentation"
+        }
+    }
 }
 
 /// An image button (HIG, Buttons): no border at rest, 10 pt from the content to the
@@ -289,7 +293,7 @@ private struct TemplateCard: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            PagePreview(page: template.page)
+            PagePreview(template: template)
                 .frame(width: Self.page.width, height: Self.page.height)
                 // White paper in either appearance, dimmed a little in dark mode;
                 // the drawing in light colours, which are made for paper.
@@ -311,10 +315,10 @@ private struct TemplateCard: View {
 /// Bars where the text would be, laid out like the template's first page.
 /// Its numbers are the drawing's, in points of the 120 pt page, not layout.
 private struct PagePreview: View {
-    let page: ProjectTemplate.Page
+    let template: ProjectTemplate
 
     var body: some View {
-        switch page {
+        switch template {
         case .blank:
             Image(systemName: "plus")
                 .font(.largeTitle)
@@ -342,7 +346,7 @@ private struct PagePreview: View {
                 Spacer()
                 bar(30, 2).padding(.bottom, 18)
             }
-        case .slides:
+        case .beamer:
             VStack(spacing: 0) {
                 Spacer()
                 VStack(spacing: 6) {
@@ -367,10 +371,10 @@ private struct PagePreview: View {
 struct NewProjectSheet: View {
     @Environment(AppModel.self) private var app
     @State private var name: String
-    @State private var template: String
+    @State private var template: ProjectTemplate
     @FocusState private var nameFocused: Bool
 
-    init(template: String, taken: [String]) {
+    init(template: ProjectTemplate, taken: [String]) {
         _template = State(initialValue: template)
         let names = Set(taken.map { $0.lowercased() })
         _name = State(initialValue: (1...).lazy.map { $0 == 1 ? "Untitled" : "Untitled".numbered($0) }.first { !names.contains($0.lowercased()) } ?? "Untitled")
@@ -395,7 +399,7 @@ struct NewProjectSheet: View {
                 }
             }
             Picker("Template", selection: $template) {
-                ForEach(ProjectTemplate.all) { Text($0.title).tag($0.id) }
+                ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) }
             }
         }
         .defaultFocus($nameFocused, true)
@@ -418,7 +422,7 @@ private struct NameWidth: Layout {
 
 #Preview("Template cards") {
     HStack(alignment: .top) {
-        ForEach(ProjectTemplate.all) { TemplateCard(template: $0) }
+        ForEach(ProjectTemplate.allCases) { TemplateCard(template: $0) }
     }
     .padding()
 }

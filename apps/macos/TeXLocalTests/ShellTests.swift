@@ -274,7 +274,7 @@ struct ShellTests {
     /// A space typed at the end of a new project's name moves the name at once, and a name
     /// longer than its row scrolls in the row, beside its label and inside the sheet.
     @Test func aNewProjectsNameShowsASpaceTypedAtItsEnd() async throws {
-        let sheet = NSHostingView(rootView: NewProjectSheet(template: "article", taken: []).environment(AppModel()))
+        let sheet = NSHostingView(rootView: NewProjectSheet(template: .article, taken: []).environment(AppModel()))
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: sheet.fittingSize), styleMask: [.titled],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false

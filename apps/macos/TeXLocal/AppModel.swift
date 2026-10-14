@@ -130,10 +130,10 @@ final class AppModel {
     }
 
     /// Without a template, the one Settings names for new projects.
-    func newProject(_ template: String? = nil) {
+    func newProject(_ template: ProjectTemplate? = nil) {
         guard libraryProblem == nil else { return }
-        let template = template ?? UserDefaults.standard.string(forKey: DefaultsKey.newProjectTemplate)
-        newProjectTemplate = ProjectTemplate.all.first { $0.id == template } ?? ProjectTemplate.all.first { $0.id == "article" }
+        newProjectTemplate = template ?? UserDefaults.standard.string(forKey: DefaultsKey.newProjectTemplate)
+            .flatMap(ProjectTemplate.init(rawValue:)) ?? .standard
     }
 
     func togglePDF() {
@@ -197,13 +197,14 @@ final class AppModel {
         }
     }
 
-    func create(name: String, template: String) async throws {
-        let info = try await core.call("create_project", ["name": name, "template": template], as: ProjectInfo.self)
+    func create(name: String, template: ProjectTemplate) async throws {
+        let info = try await core.call("create_project", ["name": name, "template": template.rawValue], as: ProjectInfo.self)
         // Settings' engine for new projects; the core's own is pdfLaTeX. The project stands if this fails,
         // and opens under the alert that says so.
-        if let engine = UserDefaults.standard.string(forKey: DefaultsKey.newProjectEngine), engine != "pdflatex" {
+        if let engine = UserDefaults.standard.string(forKey: DefaultsKey.newProjectEngine).flatMap(TeXEngine.init(rawValue:)),
+           engine != .pdflatex {
             _ = await alerting("Couldn’t Set the Engine for “\(info.name)”") {
-                try await core.call("set_settings", ["id": info.id, "patch": ["engine": engine]], as: ProjectSettings.self)
+                try await core.call("set_settings", ["id": info.id, "patch": ["engine": engine.rawValue]], as: ProjectSettings.self)
             }
         }
         await refresh()

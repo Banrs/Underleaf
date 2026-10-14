@@ -123,9 +123,9 @@ struct CoreTests {
 
     /// Every template the projects screen offers is one the core can make.
     @Test func everyTemplateMakesAProject() async throws {
-        for template in ProjectTemplate.all {
+        for template in ProjectTemplate.allCases {
             let name = "Test \(template.id) \(UUID().uuidString.prefix(8))"
-            let info = try await Core.shared.call("create_project", ["name": name, "template": template.id],
+            let info = try await Core.shared.call("create_project", ["name": name, "template": template.rawValue],
                                                   as: ProjectInfo.self)
             try FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id))
         }

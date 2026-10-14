@@ -32,7 +32,7 @@ extension View {
 }
 
 private struct GeneralSettings: View {
-    @AppStorage(DefaultsKey.newProjectTemplate) private var template = "article"
+    @AppStorage(DefaultsKey.newProjectTemplate) private var template = ProjectTemplate.standard
     @AppStorage(DefaultsKey.newProjectEngine) private var engine = TeXEngine.pdflatex
 
     var body: some View {
@@ -51,7 +51,7 @@ private struct GeneralSettings: View {
             }
             Section("New Projects") {
                 Picker("Template", selection: $template) {
-                    ForEach(ProjectTemplate.all) { Text($0.title).tag($0.id) }
+                    ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) }
                 }
                 Picker(selection: $engine) {
                     ForEach(TeXEngine.allCases) { Text($0.title).tag($0) }
