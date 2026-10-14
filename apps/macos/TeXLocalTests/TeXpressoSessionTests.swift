@@ -82,16 +82,10 @@ private final class FakeCore {
     }
 }
 
-/// A PDF on disk, each page's text drawn as text, as TeXpresso leaves its documents and pages.
+/// A PDF on disk, each page's text 50 times over drawn as text, as TeXpresso leaves its documents and pages.
 @MainActor
 private func writePDF(_ pages: [String]) throws -> URL {
-    let document = PDFDocument()
-    for text in pages {
-        let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
-        view.string = String(repeating: text + " ", count: 50)
-        let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
-        document.insert(page, at: document.pageCount)
-    }
+    let document = try textPDF(pages.map { String(repeating: $0 + " ", count: 50) })
     let url = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).pdf")
     try #require(document.dataRepresentation()).write(to: url)
     return url
