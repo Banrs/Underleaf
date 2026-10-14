@@ -18,7 +18,7 @@ struct TeXLocalApp: App {
             CommandGroup(replacing: .help) {
                 Link("Visit TeXLocal on GitHub", destination: URL(string: "https://github.com/Banrs/Underleaf")!)
                 // Where Apple's apps put their feedback: Help.
-                Link("Report an Issue", destination: URL(string: "https://github.com/Banrs/Underleaf/issues")!)
+                Link("Report Issue", destination: URL(string: "https://github.com/Banrs/Underleaf/issues")!)
             }
         }
     }

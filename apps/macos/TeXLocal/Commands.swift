@@ -128,14 +128,13 @@ enum MenuCommand: CaseIterable {
         case .viewToggleSidebar: KeyboardShortcut("s", modifiers: [.command, .control])
         case .viewTogglePdf: KeyboardShortcut("p", modifiers: [.command, .option])
         case .viewToggleInspector: KeyboardShortcut("i", modifiers: [.command, .option])
-        case .viewToggleLogs: KeyboardShortcut("l", modifiers: [.command, .shift])
+        // Xcode's Show/Hide Debug Area.
+        case .viewToggleLogs: KeyboardShortcut("y", modifiers: [.command, .shift])
         case .viewZoomIn: KeyboardShortcut("=")
         case .viewZoomOut: KeyboardShortcut("-")
         case .viewActualSize: KeyboardShortcut("0")
         case .viewFitWidth: KeyboardShortcut("9")
         case .viewFitPage: KeyboardShortcut("9", modifiers: [.command, .option])
-        case .viewTextBigger: KeyboardShortcut("=", modifiers: [.command, .option])
-        case .viewTextSmaller: KeyboardShortcut("-", modifiers: [.command, .option])
         case .compileRun: KeyboardShortcut(.return)
         case .compileStop: KeyboardShortcut(".")
         // Xcode's Product › Clean Build Folder.
@@ -145,7 +144,9 @@ enum MenuCommand: CaseIterable {
         // Xcode's Navigate › Jump to Next Issue.
         case .issueNext: KeyboardShortcut("'")
         case .issuePrevious: KeyboardShortcut("\"")
-        case .pdfSave, .projectExport, .fileUpload, .pdfFind, .viewToggleWordCount, .syncInverse: nil
+        // ⌥⌘= and ⌥⌘− are the system's own screen zoom.
+        case .pdfSave, .projectExport, .fileUpload, .pdfFind, .viewToggleWordCount, .viewTextBigger, .viewTextSmaller,
+             .syncInverse: nil
         }
     }
 }
@@ -299,7 +300,7 @@ struct AppCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            item(.projectNew)
+            items([.projectNew, .fileNew, .fileNewFolder])
             item(.projectOpen)
             Menu("Open Recent") {
                 ForEach(app.recents) { recent in
@@ -316,7 +317,7 @@ struct AppCommands: Commands {
                     .disabled(app.recents.isEmpty)
             }
             Divider()
-            items([.fileNew, .fileNewFolder, .fileUpload])
+            item(.fileUpload)
         }
         // After the system's Close (⌘W).
         CommandGroup(after: .saveItem) {
@@ -346,13 +347,15 @@ struct AppCommands: Commands {
         CommandGroup(before: .textEditing) {
             items([.projectSearch, .pdfFind])
         }
+        CommandGroup(after: .pasteboard) {
+            Divider()
+            items([.editComment, .editMoveLineUp, .editMoveLineDown])
+        }
         CommandGroup(replacing: .textFormatting) {
             items([.editBold, .editItalic, .editUnderline])
             Divider()
             Menu("Section Level") { SectionLevelItems(project: project) }
                 .disabled(project?.isLaTeX != true)
-            Divider()
-            items([.editComment, .editMoveLineUp, .editMoveLineDown])
         }
         CommandGroup(replacing: .sidebar) {
             item(.viewToggleSidebar)

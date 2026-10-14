@@ -52,7 +52,7 @@ You also need a TeX distribution — see [Requirements](#requirements).
 - **Issues and log**: parsed errors and warnings click through to the source; raw log view
 - **PDF preview**: pinch or ⌘-scroll zoom, fit width/height, page tracking, and **Find in PDF**
 - **SyncTeX both ways**
-- **One command model** for menus, shortcuts and toolbar buttons (titles, accelerators, enabled state). The Mac app's main shortcuts: ⇧⌘N new project, ⌘N new file, ⌘S save, ⌘Return compile, ⌘. stop, ⇧⌘K clean build folder, ⇧⌘F find in the project, ⌘L go to line, ⌥⌘G go to page, ⌥⌘J go to PDF position, ⌘' and ⌘" next and previous issue, ⌃⌘S sidebar, ⌥⌘P PDF, ⌥⌘I inspector, ⇧⌘L build panel
+- **One command model** for menus, shortcuts and toolbar buttons (titles, accelerators, enabled state). The Mac app's main shortcuts: ⇧⌘N new project, ⌘N new file, ⌘S save, ⌘Return compile, ⌘. stop, ⇧⌘K clean build folder, ⇧⌘F find in the project, ⌘L go to line, ⌥⌘G go to page, ⌥⌘J go to PDF position, ⌘' and ⌘" next and previous issue, ⌃⌘S sidebar, ⌥⌘P PDF, ⌥⌘I inspector, ⇧⌘Y build panel
 - **Deletes go to the Trash**
 - **Settings** (`⌘,`): the Mac app's window has five panes. General has the projects folder and the template and engine for new projects; Editor has the font, syntax colours, line numbers, closing brackets and completions; Compiling has Compile Automatically, jumping to the cursor's place after compiling and the TeX folder; PDF has the page colour; Live Preview has the TeXpresso (experimental) folder and where the preview shows (word count is in View). The browser version has interface appearance and scaling, editor font size, syntax colours, PDF paper and auto-compile. Per project, the TeX engine and Stop on first error
 
