@@ -205,8 +205,7 @@ final class ProjectModel {
             guard let self else { return }
             // TeXpresso went by itself: it starts again where it was, and the live pages stay meanwhile.
             if restartable, !closed {
-                let start = liveStart
-                texpresso.restart(files: start.files, caret: start.caret)
+                texpresso.restart(liveStart)
                 if texpresso.active { return notices.note(String(localized: "Live Preview Restarted")) }
             }
             // The last build's PDF comes back, and automatic builds paused for it resume.
@@ -306,7 +305,7 @@ final class ProjectModel {
             let root = try await core.call("project_root", ["id": id], as: String.self)
             guard !closed else { return }
             // Watched for other apps' edits and files, rather than saving over them.
-            folderWatcher = FolderWatcher(folder: URL(fileURLWithPath: root)) { [weak self] in self?.folderChanged($0) }
+            folderWatcher = FolderWatcher(folder: URL(filePath: root, directoryHint: .isDirectory)) { [weak self] in self?.folderChanged($0) }
             refreshSymbols()
             let restored = saved?.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
@@ -338,15 +337,11 @@ final class ProjectModel {
     }
 
     private func refreshSymbols(delayed: Bool = false) {
-        symbolsTask?.cancel()
-        symbolsTask = Task { [weak self] in
-            // Several saves during a typing burst need only one symbols scan.
-            if delayed { try? await Task.sleep(for: .milliseconds(150)) }
-            guard let self, !Task.isCancelled else { return }
-            if let symbols = try? await core.call("scan_symbols", ["id": id], as: Symbols.self),
-               !Task.isCancelled, !closed {
-                editor.textView.symbols = symbols
-            }
+        // Several saves during a typing burst need only one symbols scan.
+        restart(&symbolsTask, after: delayed ? .milliseconds(150) : .zero) { [weak self] in
+            guard let self, let symbols = try? await core.call("scan_symbols", ["id": id], as: Symbols.self),
+                  !Task.isCancelled, !closed else { return }
+            editor.textView.symbols = symbols
         }
     }
 
@@ -358,7 +353,7 @@ final class ProjectModel {
         await restart(&pdfLoad) { [self] in
             guard !closed, let path = try? await core.call("pdf_path", ["id": id], as: String.self),
                   !Task.isCancelled, !closed else { return false }
-            let url = URL(fileURLWithPath: path)
+            let url = URL(filePath: path)
             var live: Bool { replacingLive ? livePreviewing : livePDF }
             if live {
                 buildPDF = FileManager.default.fileExists(atPath: path) ? url : nil
@@ -855,11 +850,11 @@ final class ProjectModel {
 
     /// The change shows at once, from a call made as the control is set: the core's answer replaces
     /// it, and a refusal puts back what was there.
-    func patchSettings(_ patch: [String: Any]) async -> Bool {
+    func patchSettings(_ change: SettingsChange) async -> Bool {
         let before = settings
-        settings?.apply(patch)
+        settings?.apply(change)
         let done = await mutate("Couldn’t Change the Project’s Settings") { model in
-            let updated = try await model.core.call("set_settings", ["id": model.id, "patch": patch], as: ProjectSettings.self)
+            let updated = try await model.core.call("set_settings", ["id": model.id, "patch": change.patch], as: ProjectSettings.self)
             guard !model.closed else { return false }
             model.settings = updated
             return true
@@ -869,8 +864,8 @@ final class ProjectModel {
     }
 
     /// A setting that changes the build: the build follows it when Compile Automatically is on.
-    func setBuildOption(_ patch: [String: Any]) async {
-        if await patchSettings(patch), autoCompile { await compile(auto: true) }
+    func setBuildOption(_ change: SettingsChange) async {
+        if await patchSettings(change), autoCompile { await compile(auto: true) }
     }
 
     /// Compile › Clean Build Folder: a build under way stops, the folder goes, and the next build
@@ -903,7 +898,7 @@ final class ProjectModel {
     }
 
     func setMainFile(_ path: String) async {
-        if await keepingLive({ await patchSettings(["mainFile": path]) }), !closed { await mainFileChanged() }
+        if await keepingLive({ await patchSettings(.mainFile(path)) }), !closed { await mainFileChanged() }
     }
 
     // ---------- TeXpresso live preview ----------
@@ -925,9 +920,10 @@ final class ProjectModel {
     }
 
     /// The editor's text as its storage has it, which the edits that follow are edits of, and the caret in it.
-    private var liveStart: (files: [TeXpressoFile], caret: (path: String, offset: Int)?) {
-        guard editsText, let path = editor.path, path == openPath else { return ([], nil) }
-        return ([TeXpressoFile(path: path, text: editor.textView.string)], (path, editor.textView.selectedRange().location))
+    private var liveStart: TeXpressoSession.Start {
+        guard editsText, let path = editor.path, path == openPath else { return .init(files: []) }
+        return .init(files: [TeXpressoFile(path: path, text: editor.textView.string)],
+                     caret: TeXpressoCaret(path: path, offset: editor.textView.selectedRange().location))
     }
 
     func startTeXpresso() {
@@ -935,8 +931,7 @@ final class ProjectModel {
         liveIntent += 1
         if let pages = pdf.visiblePages { texpresso.view(pages) }
         // The preview is the feedback; the log opens only on a failure.
-        let start = liveStart
-        texpresso.start(files: start.files, caret: start.caret)
+        texpresso.start(liveStart)
     }
 
     func stopTeXpresso() {
@@ -958,8 +953,7 @@ final class ProjectModel {
         // Coalesce a rename's tree and main-file notifications.
         restart(&liveRestartTask, after: .milliseconds(180)) { [weak self] in
             guard let self, !closed else { return }
-            let start = liveStart
-            texpresso.restart(files: start.files, caret: start.caret)
+            texpresso.restart(liveStart)
             liveRestartTask = nil
             // Not started after all: another window has the project's session.
             if !texpresso.active { await endLivePDF() }
@@ -1011,7 +1005,7 @@ final class ProjectModel {
     }
 
     /// SyncTeX for the pages shown: TeXpresso's, through its session, or the last build's.
-    private func syncArguments(_ arguments: [String: Any]) -> [String: Any] {
+    private func syncArguments(_ arguments: [String: any Sendable]) -> [String: any Sendable] {
         guard livePDF, let owner = texpresso.owner else { return arguments }
         return arguments.merging(["live": true, "session": owner]) { $1 }
     }
@@ -1021,8 +1015,8 @@ final class ProjectModel {
         await restart(&syncTask) { [self] in
             do {
                 // A nil word bridges as null, which the core reads as none.
-                let args = syncArguments(["id": id, "page": page, "x": x, "y": y, "word": word?.text as Any, "offset": word?.offset as Any,
-                                          "context": word?.context as Any, "contextOffset": word?.contextOffset as Any])
+                let args = syncArguments(["id": id, "page": page, "x": x, "y": y, "word": word?.text, "offset": word?.offset,
+                                          "context": word?.context, "contextOffset": word?.contextOffset])
                 let loc = try await core.call("synctex_inverse", args, as: InverseLoc.self)
                 guard !Task.isCancelled, !closed else { return }
                 await open(loc.file, line: loc.line, column: loc.column)
@@ -1192,7 +1186,7 @@ final class ProjectModel {
     /// Taken names are asked about first (`importClash`), then copied again
     /// with the answer: "replace" (old ones to the Trash) or "keepBoth".
     func importFiles(_ urls: [URL], into dir: String = "", conflict: String? = nil) async {
-        var args: [String: Any] = ["id": id, "dir": dir, "paths": urls.map(\.path)]
+        var args: [String: any Sendable] = ["id": id, "dir": dir, "paths": urls.map { $0.path(percentEncoded: false) }]
         args["conflict"] = conflict
         do {
             let clashes = try await core.call("import_files", args, as: Imported.self).existing.map(\.path)
@@ -1217,11 +1211,11 @@ final class ProjectModel {
             ])
         }
         removeExport()
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         exportFolder = folder
-        let url = folder.appendingPathComponent("\(id).zip")
-        try await core.perform("export_zip", ["id": id, "dest": url.path])
+        let url = folder.appending(path: "\(id).zip")
+        try await core.perform("export_zip", ["id": id, "dest": url.path(percentEncoded: false)])
         return url
     }
 

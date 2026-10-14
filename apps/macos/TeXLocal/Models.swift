@@ -60,12 +60,29 @@ nonisolated struct ProjectSettings: Decodable {
     var shellEscape: Bool
     var stopOnFirstError: Bool
 
-    /// What `set_settings` does with `patch`, so a change can show before the core answers.
-    mutating func apply(_ patch: [String: Any]) {
-        mainFile = patch["mainFile"] as? String ?? mainFile
-        engine = patch["engine"] as? String ?? engine
-        shellEscape = patch["shellEscape"] as? Bool ?? shellEscape
-        stopOnFirstError = patch["stopOnFirstError"] as? Bool ?? stopOnFirstError
+    /// What `set_settings` does with a change, so it can show before the core answers.
+    mutating func apply(_ change: SettingsChange) {
+        switch change {
+        case .mainFile(let path): mainFile = path
+        case .engine(let name): engine = name
+        case .shellEscape(let on): shellEscape = on
+        case .stopOnFirstError(let on): stopOnFirstError = on
+        }
+    }
+}
+
+/// One of a project's settings, changed.
+nonisolated enum SettingsChange {
+    case mainFile(String), engine(String), shellEscape(Bool), stopOnFirstError(Bool)
+
+    /// `set_settings`' patch.
+    var patch: [String: any Sendable] {
+        switch self {
+        case .mainFile(let path): ["mainFile": path]
+        case .engine(let name): ["engine": name]
+        case .shellEscape(let on): ["shellEscape": on]
+        case .stopOnFirstError(let on): ["stopOnFirstError": on]
+        }
     }
 }
 
@@ -101,7 +118,7 @@ nonisolated struct CompileResult: Decodable {
     }
 }
 
-nonisolated struct Symbols: Decodable {
+nonisolated struct Symbols: Decodable, Equatable {
     let citations: [String]
     let labels: [String]
 }

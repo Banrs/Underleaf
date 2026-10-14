@@ -54,6 +54,12 @@ nonisolated struct TeXpressoFile: Sendable {
     let text: String
 }
 
+/// Where the caret is, in UTF-16 units of a file's text.
+nonisolated struct TeXpressoCaret: Equatable, Sendable {
+    let path: String
+    let offset: Int
+}
+
 /// A live document read from its file. Made on the session's thread and handed to the main
 /// actor, which alone uses it from then on.
 nonisolated struct LiveDocument: @unchecked Sendable {
@@ -112,11 +118,11 @@ final class TeXpressoSession {
     /// The core, as the session calls it.
     struct Calls {
         /// Start, stop, rescan and status, which answer with the status.
-        var status: @MainActor (String, [String: Any]) async throws -> TeXpressoStatus
+        var status: @MainActor (String, [String: any Sendable]) async throws -> TeXpressoStatus
         /// A file's whole text.
-        var update: @MainActor ([String: Any]) async throws -> Void
+        var update: @MainActor ([String: any Sendable]) async throws -> Void
         /// An edit, the view or the caret, answered at once on the main thread.
-        var now: @MainActor (String, [String: Any]) throws -> Void
+        var now: @MainActor (String, [String: any Sendable]) throws -> Void
         /// Blocks until the session has news, on the session's thread.
         var wait: @Sendable ([String: any Sendable]) throws -> TeXpressoEvents
     }
@@ -175,12 +181,17 @@ final class TeXpressoSession {
     /// The pages the pane shows and where the caret is, as the engine was last told.
     @ObservationIgnored private var viewed: ClosedRange<Int>?
     @ObservationIgnored private var sentView: ClosedRange<Int>?
-    @ObservationIgnored private var caret: (path: String, offset: Int)?
+    @ObservationIgnored private var caret: TeXpressoCaret?
     @ObservationIgnored private var settling: Task<Void, Never>?
     /// The document goes to the PDF pane, not TeXpresso's own window.
     @ObservationIgnored private var inPane = true
 
-    private typealias Start = (files: [TeXpressoFile], caret: (path: String, offset: Int)?)
+    /// What a session starts with: the files it is sent, and where the first key will land, in
+    /// one of them: TeX is ready there.
+    struct Start {
+        var files: [TeXpressoFile]
+        var caret: TeXpressoCaret?
+    }
 
     init(id: String, haltsAfter: Duration = .seconds(1), calls: Calls) {
         self.id = id
@@ -222,20 +233,19 @@ final class TeXpressoSession {
 
     // ---------- starting and stopping ----------
 
-    /// `caret` is where the first key will land, in one of `files`: TeX is ready there.
-    func start(files: [TeXpressoFile], caret: (path: String, offset: Int)? = nil) {
+    func start(_ start: Start) {
         guard canStart else { return }
-        beginStart((files, caret), replacing: false)
+        beginStart(start, replacing: false)
     }
 
-    func restart(files: [TeXpressoFile], caret: (path: String, offset: Int)? = nil) {
+    func restart(_ start: Start) {
         guard !closed, phase != .stopping, owner != nil || phase == .starting else { return }
         if phase == .starting, queued != nil {
-            queued = (files, caret)
-            for file in files { pending[file.path] = nil }
+            queued = start
+            for file in start.files { pending[file.path] = nil }
             return
         }
-        beginStart((files, caret), replacing: true)
+        beginStart(start, replacing: true)
     }
 
     private func beginStart(_ start: Start, replacing: Bool) {
@@ -255,9 +265,9 @@ final class TeXpressoSession {
             do {
                 // A patched build writes the document for the PDF pane rather than opening a window;
                 // TeXpresso's own window, which draws with MuPDF, is the fallback Settings offers.
-                var arguments: [String: Any] = ["id": session.id, "files": start.files.map { ["path": $0.path, "text": $0.text] }, "pdf": session.inPane]
+                var arguments: [String: any Sendable] = ["id": session.id, "files": start.files.map { ["path": $0.path, "text": $0.text] }, "pdf": session.inPane]
                 if let view = session.viewed { arguments["view"] = [view.lowerBound, view.upperBound] }
-                if let caret = start.caret { arguments["caret"] = ["path": caret.path, "offset": caret.offset] }
+                if let caret = start.caret { arguments["caret"] = ["path": caret.path, "offset": caret.offset] as [String: any Sendable] }
                 if replacing {
                     guard let owner = session.owner else { session.ended(); return }
                     arguments["session"] = owner
@@ -340,7 +350,7 @@ final class TeXpressoSession {
     func edit(_ path: String, _ range: NSRange, _ text: String, whole: () -> String) {
         guard active, !closed else { return }
         // Typing takes the engine's snapshot along: the caret there is no news.
-        caret = (path, range.location + (text as NSString).length)
+        caret = TeXpressoCaret(path: path, offset: range.location + (text as NSString).length)
         if phase == .running, let owner, synced.contains(path), pending[path] == nil {
             do {
                 try calls.now("texpresso_edit", ["session": owner, "path": path, "start": range.location,
@@ -431,11 +441,12 @@ final class TeXpressoSession {
     /// The caret has moved. Once it rests where typing didn't take it, TeX gets ready there,
     /// and the first key costs what the ones after it do.
     func caretMoved(_ path: String, _ offset: Int) {
-        guard phase == .running, inPane, caret.map({ $0 != (path, offset) }) ?? true else { return }
+        let moved = TeXpressoCaret(path: path, offset: offset)
+        guard phase == .running, inPane, caret != moved else { return }
         TeXLocal.restart(&settling, after: .milliseconds(150)) { [weak self] in
             guard let self, phase == .running, let owner, synced.contains(path), pending[path] == nil,
-                  caret.map({ $0 != (path, offset) }) ?? true else { return }
-            caret = (path, offset)
+                  caret != moved else { return }
+            caret = moved
             try? calls.now("texpresso_caret", ["session": owner, "path": path, "offset": offset])
         }
     }
@@ -517,7 +528,7 @@ final class TeXpressoSession {
     /// links to see to, as a build's has: the engine writes its pages through MuPDF's PDF
     /// device, which carries content and no annotations.
     private nonisolated static func read(_ pdf: TeXpressoEvents.Document, whole: Bool) -> LiveDocument? {
-        let url = URL(fileURLWithPath: pdf.path)
+        let url = URL(filePath: pdf.path)
         guard let data = try? Data(contentsOf: url, options: .alwaysMapped), let document = PDFDocument(data: data),
               document.pageCount > 0 else { return nil }
         var changed = pdf.changed.map { ranges in
@@ -532,7 +543,7 @@ final class TeXpressoSession {
 
     /// Nil for a file already gone: TeXpresso keeps a page's last two, and a newer one is coming.
     private nonisolated static func read(_ page: TeXpressoEvents.Page) -> LivePage? {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: page.path), options: .alwaysMapped),
+        guard let data = try? Data(contentsOf: URL(filePath: page.path), options: .alwaysMapped),
               let read = PDFDocument(data: data)?.page(at: 0) else { return nil }
         return LivePage(index: page.page, serial: page.serial, page: read)
     }

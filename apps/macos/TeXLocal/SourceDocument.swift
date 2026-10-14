@@ -1,4 +1,5 @@
 import Foundation
+import os
 import TeXLocalCore
 
 /// Rust's syntax mirror through `tl_source_*`; offsets count UTF-16 units.
@@ -114,10 +115,22 @@ final class SourceDocument {
         return tl_source_call(raw, command, String(decoding: json, as: UTF8.self))
     }
 
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "source")
+
+    /// Nil for a null answer, which some commands give for none. No answer, or one in another shape
+    /// than was asked for, is a fault of the app's own or the core's, logged as Core logs one.
     private func call<T: Decodable>(_ command: String, _ args: [String: Any]) -> T? {
-        guard let out = send(command, args) else { return nil }
+        guard let out = send(command, args) else {
+            Self.log.error("\(command, privacy: .public): no answer")
+            return nil
+        }
         defer { tl_free(out) }
-        return try? JSONDecoder().decode(T.self, from: Data(bytes: out, count: strlen(out)))
+        do {
+            return try JSONDecoder().decode(T?.self, from: Data(bytes: out, count: strlen(out)))
+        } catch {
+            Self.log.error("\(command, privacy: .public): \(String(describing: error), privacy: .public)")
+            return nil
+        }
     }
 }
 

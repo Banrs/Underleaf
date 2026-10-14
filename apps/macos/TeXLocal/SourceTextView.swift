@@ -70,9 +70,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// The storage's own UTF-16 units, read in place: `string` bridges the whole text to a Swift
     /// string each time it's asked, and a caret move, a key and a draw all ask.
     var text: NSString { textStorage?.mutableString ?? "" }
-    /// The project's labels and citations, which completion offers from the mirror.
+    /// The project's labels and citations, which completion offers from the mirror. A save's scan
+    /// that finds the same ones isn't sent again.
     var symbols = Symbols(citations: [], labels: []) {
-        didSet { document.setSymbols(symbols) }
+        didSet { if symbols != oldValue { document.setSymbols(symbols) } }
     }
     /// What dropping a file does, or nil to refuse it.
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
