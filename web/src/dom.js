@@ -167,23 +167,44 @@ function placeMenu(menu, x, y) {
   menu.style.top = `${Math.max(8, Math.min(y, innerHeight - h - 8)) / zoom}px`;
 }
 
-export function contextMenu(x, y, items, { anchor, focus = false, onArrow } = {}) {
-  openMenu?.dismiss({ restore: false });
-  const root = $('#modal-root');
-  const restoreTo = anchor ?? document.activeElement;
+// The life a menu and a popover share. `box` goes in #modal-root, placed at
+// (x, y) or below its `anchor`, and follows a resize; it closes on Escape, Tab
+// or a press outside it and its anchor, and focus returns to `restoreTo`.
+// `onKey` takes the other keys. A press on the anchor is left to its click,
+// which closes the box, so the press doesn't close it only for the click to
+// reopen it.
+function openPopup(box, { anchor, restoreTo = anchor, x, y, onKey }) {
   const dismiss = ({ restore = true } = {}) => {
     if (openMenu?.dismiss === dismiss) openMenu = null;
-    menu.remove();
+    box.remove();
     anchor?.setAttribute('aria-expanded', 'false');
     removeEventListener('pointerdown', onAway, true);
-    removeEventListener('keydown', onKey, true);
+    removeEventListener('keydown', onKeydown, true);
     removeEventListener('resize', position);
     if (restore && restoreTo?.isConnected) restoreTo.focus();
   };
-  // A press on the anchor is left to its click, which closes the menu, so the
-  // press doesn't close it only for the click to reopen it.
-  const onAway = (e) => { if (!menu.contains(e.target) && !anchor?.contains(e.target)) dismiss(); };
+  const onAway = (e) => { if (!box.contains(e.target) && !anchor?.contains(e.target)) dismiss(); };
+  const onKeydown = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); dismiss(); }
+    else if (e.key === 'Tab') dismiss();   // Tab then moves on from the control
+    else onKey?.(e);
+  };
+  const position = () => {
+    const r = anchor?.getBoundingClientRect();
+    placeMenu(box, r?.left ?? x, r ? r.bottom + 4 : y);
+  };
+  $('#modal-root').appendChild(box);
+  position();
+  addEventListener('pointerdown', onAway, true);
+  addEventListener('keydown', onKeydown, true);
+  addEventListener('resize', position);
+  anchor?.setAttribute('aria-expanded', 'true');
+  openMenu = { dismiss, anchor };
+  return { dismiss };
+}
 
+export function contextMenu(x, y, items, { anchor, focus = false, onArrow } = {}) {
+  openMenu?.dismiss({ restore: false });
   const buttons = [];
   const menu = el('div', { class: 'menu', role: 'menu' },
     items.map((it) => {
@@ -194,7 +215,7 @@ export function contextMenu(x, y, items, { anchor, focus = false, onArrow } = {}
         role: checkable ? 'menuitemcheckbox' : 'menuitem',
         'aria-checked': checkable ? String(!!it.checked) : null,
         disabled: it.disabled ? '' : null,
-        onclick: () => { dismiss(); it.action(); },
+        onclick: () => { popup.dismiss(); it.action(); },
       },
       el('span', { class: 'menu-check', 'aria-hidden': 'true' }, it.checked ? '✓' : ''),
       el('span', { class: 'menu-label' }, it.label),
@@ -205,8 +226,6 @@ export function contextMenu(x, y, items, { anchor, focus = false, onArrow } = {}
   );
 
   const onKey = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); dismiss(); return; }
-    if (e.key === 'Tab') { dismiss(); return; }
     if (onArrow && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault();
       onArrow(e.key === 'ArrowRight' ? 1 : -1);
@@ -221,19 +240,9 @@ export function contextMenu(x, y, items, { anchor, focus = false, onArrow } = {}
     buttons[(next + buttons.length) % buttons.length]?.focus();
   };
 
-  const position = () => {
-    const r = anchor?.getBoundingClientRect();
-    placeMenu(menu, r?.left ?? x, r ? r.bottom + 4 : y);
-  };
-  root.appendChild(menu);
-  position();
-  addEventListener('pointerdown', onAway, true);
-  addEventListener('keydown', onKey, true);
-  addEventListener('resize', position);
-  anchor?.setAttribute('aria-expanded', 'true');
-  openMenu = { dismiss, anchor };
+  const popup = openPopup(menu, { anchor, restoreTo: anchor ?? document.activeElement, x, y, onKey });
   if (focus) buttons[0]?.focus();
-  return { dismiss };
+  return popup;
 }
 
 // Open a menu below a control, aligned to its leading edge — the macOS
@@ -251,31 +260,6 @@ export function menuUnder(target, items, options) {
 export function popoverUnder(target, content, { label } = {}) {
   if (openMenu?.anchor === target) { openMenu.dismiss(); return null; }
   openMenu?.dismiss({ restore: false });
-  const dismiss = ({ restore = true } = {}) => {
-    if (openMenu?.dismiss === dismiss) openMenu = null;
-    box.remove();
-    target.setAttribute('aria-expanded', 'false');
-    removeEventListener('pointerdown', onAway, true);
-    removeEventListener('keydown', onKey, true);
-    removeEventListener('resize', position);
-    if (restore && target.isConnected) target.focus();
-  };
-  const onAway = (e) => { if (!box.contains(e.target) && !target.contains(e.target)) dismiss(); };
-  const onKey = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); dismiss(); }
-    else if (e.key === 'Tab') dismiss();   // Tab then moves on from the control
-  };
   const box = el('div', { class: 'menu popover', role: 'dialog', 'aria-label': label }, content);
-  const position = () => {
-    const r = target.getBoundingClientRect();
-    placeMenu(box, r.left, r.bottom + 4);
-  };
-  $('#modal-root').appendChild(box);
-  position();
-  addEventListener('pointerdown', onAway, true);
-  addEventListener('keydown', onKey, true);
-  addEventListener('resize', position);
-  target.setAttribute('aria-expanded', 'true');
-  openMenu = { dismiss, anchor: target };
-  return { dismiss };
+  return openPopup(box, { anchor: target });
 }
