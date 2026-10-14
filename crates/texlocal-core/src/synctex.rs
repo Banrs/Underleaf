@@ -25,10 +25,6 @@ static PRINTED: LazyLock<Regex> = LazyLock::new(|| {
 pub struct ForwardLoc {
     pub page: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub x: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub y: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub h: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub v: Option<f64>,
@@ -99,16 +95,16 @@ pub async fn synctex_forward_at(
 }
 
 fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
-    const KEYS: [&str; 7] = ["Page", "x", "y", "h", "v", "W", "H"];
+    // The box the clients draw. synctex also prints x: and y:, a point no
+    // client uses.
+    const KEYS: [&str; 5] = ["Page", "h", "v", "W", "H"];
     let mut matches = Vec::new();
-    let mut values = [None; 7];
-    let finish = |values: [Option<f64>; 7], matches: &mut Vec<ForwardLoc>| {
-        let [page, x, y, h, v, width, height] = values;
+    let mut values = [None; 5];
+    let finish = |values: [Option<f64>; 5], matches: &mut Vec<ForwardLoc>| {
+        let [page, h, v, width, height] = values;
         if let Some(page) = page.filter(|page| *page >= 1.0) {
             matches.push(ForwardLoc {
                 page,
-                x,
-                y,
                 h,
                 v,
                 width,
