@@ -175,7 +175,7 @@ final class ProjectFlowTests {
     }
 
     private func openedWithTeX(_ text: String) async throws -> ProjectModel {
-        await app.refresh()
+        await app.refreshTeXStatus()
         if app.tex?.available != true { try Test.cancel("No TeX") }
         return try await opened(text).project
     }

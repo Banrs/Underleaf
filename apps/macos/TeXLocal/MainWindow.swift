@@ -53,7 +53,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         showWindow(nil)
         guard Core.shared.isOpen else { return }
         Task {
+            // Beside the listing, and before a project opens: its first build needs to know of TeX.
+            async let tex: Void = app.refreshTeXStatus()
             await app.refresh()
+            await tex
             let saved = restored.flatMap { saved in app.projects.contains { $0.id == saved.project } ? saved : nil }
             restored = nil
             if let id = app.takeLaunchProject() ?? saved?.project, app.project == nil, !app.isOpening {

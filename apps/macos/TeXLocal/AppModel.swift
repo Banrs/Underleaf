@@ -157,8 +157,10 @@ final class AppModel {
         core.reopen()
         if core.isOpen { libraryProblem = nil }
         await refresh()
+        await refreshTeXStatus()
     }
 
+    /// Lists the projects. TeX is read apart (`refreshTeXStatus`), as the probe starts a process.
     func refresh() async {
         guard core.isOpen else { return }
         do {
@@ -168,10 +170,11 @@ final class AppModel {
             libraryProblem = AppAlert("Couldn’t Load Projects", error)
         }
         projectsLoaded = true
-        await refreshTeXStatus()
     }
 
-    /// `status` searches the disk for latexmk. Not while a TeX folder is being chosen.
+    /// `status` searches the disk for latexmk. Not while a TeX folder is being chosen. Read at launch,
+    /// when the app comes back to the front without TeX and when Settings changes the folder: TeX
+    /// changes through another app or through Settings.
     func refreshTeXStatus() async {
         guard !settingTeX else { return }
         await restart(&texCheck) { [self] in
