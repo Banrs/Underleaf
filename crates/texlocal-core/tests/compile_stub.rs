@@ -217,10 +217,13 @@ async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
 
 #[tokio::test]
 async fn a_timed_out_compile_keeps_the_output_it_wrote() {
-    let (_tmp, root, mut mgr) = setup("#!/bin/sh\necho 'Running pdflatex'\nsleep 20\n");
-    // Long enough for the stub to print on a busy machine.
-    mgr.timeout = Some(Duration::from_secs(3));
-    let result = compile(&mgr, &root).await;
+    let (_tmp, root, mgr) = setup("#!/bin/sh\necho 'Running pdflatex'\ntouch printed\nsleep 20\n");
+    // Once the stub has printed, tokio's clock goes straight to the build's
+    // time limit, however long the stub took to print.
+    let (result, ()) = tokio::join!(compile(&mgr, &root), async {
+        appears(&root.join("printed"), "latexmk did not print").await;
+        tokio::time::pause();
+    });
 
     assert!(!result.ok);
     assert!(result.log.contains("Running pdflatex"), "{:?}", result.log);
