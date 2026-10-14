@@ -15,6 +15,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     @ObservationIgnored let view = SyncPDFView()
     @ObservationIgnored private var magnification: NSKeyValueObservation?
     @ObservationIgnored private weak var watched: NSScrollView?
+    /// Its clip view's scrolling, watched for as long as the token is held.
+    @ObservationIgnored private var scrolling: NotificationCenter.ObservationToken?
     /// One-based, as the status bar shows it.
     private(set) var page = 0
     /// The page a reopened project's first PDF opens at.
@@ -96,9 +98,9 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         magnification = scrollView.observe(\.magnification, options: .initial) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.scaleChanged() }
         }
-        scrollView.contentView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification,
-                                               object: scrollView.contentView)
+        let clip = scrollView.contentView
+        clip.postsBoundsChangedNotifications = true
+        scrolling = NotificationCenter.default.addObserver(of: clip, for: .boundsDidChange) { [weak self] _ in self?.scrolled() }
     }
 
     @objc private func pageChanged() {
@@ -513,9 +515,9 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// The pane has scrolled. A live page is drawn only where its page showed, so PDFKit's
     /// document takes the waiting ones now, for what comes into view: once the scroll's own
     /// event is over, as PDFKit scrolls too while its document takes a page.
-    @objc private func scrolled() {
+    private func scrolled() {
         guard !liveWaiting.isEmpty else { return }
-        DispatchQueue.main.async { [weak self] in self?.settleLive() }
+        Task { [weak self] in self?.settleLive() }
     }
 
     /// A whole live document, in which only the pages in `changed` differ from the one before
@@ -556,7 +558,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         }
         if backlog.pages.first.map({ $0 <= shown.pageCount }) == true {
             liveBacklog = backlog
-            DispatchQueue.main.async { [weak self] in self?.takeLive() }
+            Task { [weak self] in self?.takeLive() }
         } else if backlog.complete {
             while shown.pageCount > backlog.document.pageCount, let last = shown.page(at: shown.pageCount - 1) {
                 liveWaiting[shown.pageCount - 1] = nil
