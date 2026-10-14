@@ -21,7 +21,7 @@ export function el(tag, attrs = {}, ...children) {
   }
   for (const c of children.flat(Infinity)) {
     if (c == null) continue;
-    node.append(c.nodeType ? c : document.createTextNode(c));
+    node.append(c);
   }
   return node;
 }
