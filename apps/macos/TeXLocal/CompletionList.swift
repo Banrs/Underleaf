@@ -41,7 +41,11 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// How much of every label is typed, in UTF-16 units.
     private var typed = 0
     private var kind = CompletionKind.command
-    private var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    /// The labels' font, and what's typed of each in its bold, worked out once for all rows.
+    private var fonts = CompletionList.fonts(for: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
+    private static func fonts(for font: NSFont) -> (regular: NSFont, bold: NSFont) {
+        (font, NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask))
+    }
     /// At most this many rows show; the rest scroll.
     private static let shownRows = 8
 
@@ -110,7 +114,7 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         self.labels = labels
         self.typed = typed
         self.kind = kind
-        self.font = font
+        fonts = Self.fonts(for: font)
         // A menu's 24 pt row at its 13 pt text, for the editor's font: 8 pt and its line to a whole
         // point, 16 pt at 13.
         table.rowHeight = (font.ascender - font.descender + font.leading).rounded(.up) + 8
@@ -237,14 +241,19 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// A row's label in the editor's font, what's typed of it heavier.
     private func label(_ row: Int) -> NSAttributedString {
         let colour: NSColor = row == table.selectedRow ? .alternateSelectedControlTextColor : .labelColor
-        let label = NSMutableAttributedString(string: labels[row], attributes: [.font: font, .foregroundColor: colour, .paragraphStyle: Self.oneLine])
-        label.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask),
+        let label = NSMutableAttributedString(string: labels[row], attributes: [.font: fonts.regular, .foregroundColor: colour, .paragraphStyle: Self.oneLine])
+        label.addAttribute(.font, value: fonts.bold,
                            range: NSRange(location: 0, length: min(typed, label.length)))
         return label
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if let cell = tableView.makeView(withIdentifier: Self.cellID, owner: self) as? NSTableCellView {
+            cell.textField?.attributedStringValue = label(row)
+            return cell
+        }
         let cell = NSTableCellView(), text = NSTextField(labelWithAttributedString: label(row))
+        cell.identifier = Self.cellID
         text.maximumNumberOfLines = 1
         text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         text.translatesAutoresizingMaskIntoConstraints = false
@@ -257,6 +266,8 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         ])
         return cell
     }
+
+    private static let cellID = NSUserInterfaceItemIdentifier("completion")
 
     /// An attributed label wraps unless its own style says otherwise.
     private static let oneLine: NSParagraphStyle = {
