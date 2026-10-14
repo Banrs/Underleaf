@@ -194,11 +194,15 @@ final class WorkspaceController: RestoredSplitViewController {
     /// stops and the tools stand over the neighbouring pane (27.2), and it sends tools to its
     /// overflow menu by the room between the side columns' separators, not a section's. So the
     /// divider keeps to where the separator can be, which the toolbar alone knows: its line is
-    /// found by its class, and without it nothing moves.
+    /// found by its class, and without it nothing moves. It is among the toolbar's views beside
+    /// the content view, under the window's frame view (27.2), so the search runs at each layout
+    /// without the panes' views: 245 of the window's 341 in an empty workspace, more as they fill.
     private func joinDivider() {
-        guard paneAnimations == 0, !pdfItem.isCollapsed, let frame = view.window?.contentView?.superview else { return }
+        guard paneAnimations == 0, !pdfItem.isCollapsed, let content = view.window?.contentView,
+              let frame = content.superview else { return }
         let split = columns.splitView, divider = split.arrangedSubviews[0].frame.maxX
-        let lines = frame.descendants(named: "NSSeparatorToolbarItemView").map { split.convert($0.bounds, from: $0).minX }
+        let lines = frame.subviews.filter { $0 !== content }.flatMap { $0.descendants(named: "NSSeparatorToolbarItemView") }
+            .map { split.convert($0.bounds, from: $0).minX }
         guard let line = lines.min(by: { abs($0 - divider) < abs($1 - divider) }), abs(line - divider) >= 0.5 else { return }
         split.setPosition(line, ofDividerAt: 0)
     }
