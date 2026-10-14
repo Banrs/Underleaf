@@ -325,11 +325,11 @@ final class ProjectFlowTests {
     /// A notice is in the status bar at once, the later of two, and goes by itself.
     @Test(.timeLimit(.minutes(1)))
     func aNoticeGoesByItself() async throws {
-        let notices = ProjectNotices()
+        let notices = ProjectNotices(lasting: .milliseconds(100))
         notices.note("One")
         notices.note("Two")
         #expect(notices.current == "Two")
-        try await waitUntil(timeout: .seconds(5)) { notices.current == nil }
+        try await waitUntil { notices.current == nil }
     }
 
     /// A project that can't be read doesn't open on an empty workspace: the alert says why over Home.

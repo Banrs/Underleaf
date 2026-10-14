@@ -9,11 +9,17 @@ final class ProjectNotices {
     /// News that interrupts nothing, in the status bar for a few seconds and spoken by VoiceOver.
     private(set) var current: String?
     @ObservationIgnored private var clearing: Task<Void, Never>?
+    /// How long a notice stays: three seconds, shorter in a test.
+    @ObservationIgnored private let lasting: Duration
+
+    init(lasting: Duration = .seconds(3)) {
+        self.lasting = lasting
+    }
 
     func note(_ text: String) {
         current = text
         announce(text)
-        restart(&clearing, after: .seconds(3)) { [weak self] in self?.current = nil }
+        restart(&clearing, after: lasting) { [weak self] in self?.current = nil }
     }
 
     @ObservationIgnored private var announced: (text: String, at: ContinuousClock.Instant)?
