@@ -530,7 +530,7 @@ mod tests {
 
         // A spelling checker skips the code on its line, and no more.
         let text = "\\verb|Speling\nprose \\cite{key}";
-        let doc = SourceDocument::new(text);
+        let mut doc = SourceDocument::new(text);
         let ranges = doc.not_prose(0, text.len() as u32);
         let covered = |needle: &str| {
             let at = text.find(needle).unwrap() as u32;

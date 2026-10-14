@@ -86,7 +86,7 @@ fn answers_after_edits_are_a_fresh_reading_s() {
             let length = [0, 1, seed.next(400)][seed.next(3)].min(len - start);
             let selection = range(start as u32, length as u32);
             let text = doc.text();
-            let fresh = SourceDocument::new(&text);
+            let mut fresh = SourceDocument::new(&text);
             let at = format!("document {document}, round {round}, {start}+{length}");
             assert_eq!(
                 doc.not_prose(selection.start, selection.length),
@@ -257,7 +257,7 @@ fn a_kept_point_s_names_follow_an_edit_past_it() {
     let mut doc = SourceDocument::new(&source);
     assert!(doc.not_prose(9_000, 10).is_empty()); // keeps the points at 4096 and 8192
     doc.edit(5_000, 1, ""); // the closing brace goes: the argument runs on
-    let fresh = SourceDocument::new(&doc.text());
+    let mut fresh = SourceDocument::new(&doc.text());
     assert_eq!(doc.not_prose(9_000, 10), fresh.not_prose(9_000, 10));
     assert_eq!(doc.not_prose(9_000, 10), [range(6, 9_004)]);
 
@@ -271,7 +271,7 @@ fn a_kept_point_s_names_follow_an_edit_past_it() {
     let mut doc = SourceDocument::new(&source);
     doc.not_prose(9_000, 10);
     doc.edit(5_000, 0, "}");
-    let fresh = SourceDocument::new(&doc.text());
+    let mut fresh = SourceDocument::new(&doc.text());
     assert_eq!(doc.not_prose(9_000, 10), fresh.not_prose(9_000, 10));
 }
 
@@ -281,7 +281,7 @@ fn a_point_that_read_past_the_question_is_not_resumed_from() {
     // it a blank line and closed the $: but the text before 4096 alone
     // leaves the $ open, as the caret there sees it.
     let source = format!("${}\n\n", "a".repeat(4094));
-    let doc = SourceDocument::new(&source);
+    let mut doc = SourceDocument::new(&source);
     doc.not_prose(4096, 0); // keeps the points up to 4096
     let symbol = doc.insert_symbol("\\alpha", range(4096, 0));
     assert_eq!(symbol.edit.text, "\\alpha");
@@ -301,7 +301,7 @@ fn what_runs_over_a_kept_point_keeps_its_start() {
     // A name argument, the same: and what's in it is no command.
     let names = "key, \\label{inside} ".repeat(500);
     let source = format!("See \\cite{{{names}}} and \\ref{{fig}}.");
-    let doc = SourceDocument::new(&source);
+    let mut doc = SourceDocument::new(&source);
     let found = doc.not_prose(9_000, 5);
     assert_eq!(
         found,

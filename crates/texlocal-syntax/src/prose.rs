@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn from_the_paragraph_start() {
         let source = "\\usepackage{amsmath,\n  amssymb}\n\nText";
-        let doc = SourceDocument::new(source);
+        let mut doc = SourceDocument::new(source);
         let found = doc.not_prose(25, 1); // in "amssymb"
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].start, 12);
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn ranges_started_before_the_checked_slice_remain_absolute() {
         let text = "first\n\\begin{equation}\n𐐀 + x";
-        let doc = SourceDocument::new(text);
+        let mut doc = SourceDocument::new(text);
         let word = text.find("𐐀").unwrap();
         let start = text[..word].encode_utf16().count() as u32;
         let found = doc.not_prose(start, 1);
@@ -322,7 +322,7 @@ mod tests {
     fn commands_inside_literal_code_do_not_suppress_following_prose() {
         let text = "\\begin{verbatim}\n\\input{raw\n\\end{verbatim}\nSpeling prose";
         let units = text.encode_utf16().count() as u32;
-        let doc = SourceDocument::new(text);
+        let mut doc = SourceDocument::new(text);
         let ranges = doc.not_prose(0, units);
         let prose = text.find("Speling").unwrap();
         let prose = text[..prose].encode_utf16().count() as u32;

@@ -143,7 +143,7 @@ fn comments_and_indentation_go_by_line() {
 
 #[test]
 fn symbols_go_in_as_maths() {
-    let doc = SourceDocument::new("text $x$ and $");
+    let mut doc = SourceDocument::new("text $x$ and $");
     let in_text = doc.insert_symbol("\\alpha", range(5, 0));
     assert_eq!(
         (in_text.edit.text.as_str(), in_text.caret),
