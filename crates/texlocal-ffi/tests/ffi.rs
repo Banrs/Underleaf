@@ -17,8 +17,8 @@ unsafe fn take_json(out: *mut c_char) -> Option<Value> {
     if out.is_null() {
         return None;
     }
-    let value = serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
-    tl_free(out);
+    let value = serde_json::from_str(unsafe { CStr::from_ptr(out) }.to_str().unwrap()).unwrap();
+    unsafe { tl_free(out) };
     Some(value)
 }
 
@@ -26,7 +26,7 @@ unsafe fn take_json(out: *mut c_char) -> Option<Value> {
 unsafe fn source_call(source: *mut TlSource, command: &str, args: Value) -> Option<Value> {
     let command = CString::new(command).unwrap();
     let args = CString::new(args.to_string()).unwrap();
-    take_json(tl_source_call(source, command.as_ptr(), args.as_ptr()))
+    unsafe { take_json(tl_source_call(source, command.as_ptr(), args.as_ptr())) }
 }
 
 fn call(handle: *const TlHandle, command: &str, args: Option<Value>) -> Value {

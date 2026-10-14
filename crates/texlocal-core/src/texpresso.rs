@@ -694,8 +694,8 @@ impl Manager {
             Err(err) => {
                 remove_pdf_folder(pdf.as_deref());
                 return failed(format!(
-                "Couldn't start TeXpresso: {err}. Check TEXLOCAL_TEXPRESSO and its dependencies."
-            ));
+                    "Couldn't start TeXpresso: {err}. Check TEXLOCAL_TEXPRESSO and its dependencies."
+                ));
             }
         };
         let stdout = child.stdout.take().unwrap();

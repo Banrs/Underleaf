@@ -68,7 +68,7 @@ impl Text {
                 units
                     .iter()
                     .enumerate()
-                    .filter(|(_, &u)| u == NEWLINE)
+                    .filter(|&(_, &u)| u == NEWLINE)
                     .map(|(i, _)| i as u32 + 1),
             )
             .collect();
@@ -107,7 +107,7 @@ impl Text {
         let added = text
             .iter()
             .enumerate()
-            .filter(|(_, &u)| u == NEWLINE)
+            .filter(|&(_, &u)| u == NEWLINE)
             .map(|(i, _)| start + i as u32 + 1);
         self.lines.splice(first..last, added);
         self.units

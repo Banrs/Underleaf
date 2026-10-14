@@ -82,7 +82,7 @@ pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError>
         // A string's contents, not its JSON encoding: quotes would otherwise
         // reach the user's toast.
         Some(Value::String(e)) => {
-            return Err(CoreError::bad_request(format!("Unknown engine: {e}")))
+            return Err(CoreError::bad_request(format!("Unknown engine: {e}")));
         }
         Some(other) => return Err(CoreError::bad_request(format!("Unknown engine: {other}"))),
     }

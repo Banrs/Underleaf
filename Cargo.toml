@@ -1,10 +1,10 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["crates/texlocal-core", "crates/texlocal-ffi", "crates/texlocal-server", "crates/texlocal-syntax"]
 
 [workspace.package]
 version = "0.2.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 
 # LTO reaches the browser server's binary but not the app's core: Cargo runs
