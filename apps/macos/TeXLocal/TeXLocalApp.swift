@@ -18,7 +18,7 @@ struct TeXLocalApp: App {
             CommandGroup(replacing: .help) {
                 Link("Visit TeXLocal on GitHub", destination: URL(string: "https://github.com/Banrs/Underleaf")!)
                 // Where Apple's apps put their feedback: Help.
-                Link("Report an Issue", destination: URL(string: "https://github.com/Banrs/Underleaf/issues")!)
+                Link("Report Issue", destination: URL(string: "https://github.com/Banrs/Underleaf/issues")!)
             }
         }
     }
@@ -174,7 +174,7 @@ private struct WindowModals: ViewModifier {
                     .fileDialogConfirmationLabel("Open")
                     .fileDialogMessage("Choose a project folder, a .tex file or a .zip. TeXLocal copies it into the projects folder.")
             }
-            .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0.id, taken: app.projects.map(\.name)) }
+            .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0, taken: app.projects.map(\.name)) }
             .alert($app.alert)
     }
 }

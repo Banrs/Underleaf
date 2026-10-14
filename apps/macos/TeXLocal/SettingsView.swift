@@ -32,7 +32,7 @@ extension View {
 }
 
 private struct GeneralSettings: View {
-    @AppStorage(DefaultsKey.newProjectTemplate) private var template = "article"
+    @AppStorage(DefaultsKey.newProjectTemplate) private var template = ProjectTemplate.standard
     @AppStorage(DefaultsKey.newProjectEngine) private var engine = TeXEngine.pdflatex
 
     var body: some View {
@@ -51,7 +51,7 @@ private struct GeneralSettings: View {
             }
             Section("New Projects") {
                 Picker("Template", selection: $template) {
-                    ForEach(ProjectTemplate.all) { Text($0.title).tag($0.id) }
+                    ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) }
                 }
                 Picker(selection: $engine) {
                     ForEach(TeXEngine.allCases) { Text($0.title).tag($0) }
@@ -177,8 +177,7 @@ private struct LivePreviewSettings: View {
                             Text("Installed")
                         } else {
                             Text("Not Installed")
-                            Link("How to Install TeXpresso",
-                                 destination: URL(string: "https://github.com/Banrs/Underleaf/blob/main/docs/texpresso.md")!)
+                            TeXpressoGuideButton()
                         }
                     }
                 }
@@ -203,7 +202,54 @@ private struct LivePreviewSettings: View {
 /// Automatic, the folder chosen and Other…, with the folder in use underneath (HIG, Pop-up buttons).
 /// Each row has its own file dialog and alert, so neither can act for the other program.
 private struct ProgramFolder: View {
-    enum Program { case tex, texpresso }
+    enum Program {
+        case tex, texpresso
+
+        var title: String {
+            switch self {
+            case .tex: "TeX Distribution"
+            case .texpresso: "TeXpresso Location"
+            }
+        }
+
+        var dialogMessage: String {
+            switch self {
+            case .tex: "Choose the folder latexmk is in, such as a TeX distribution’s bin folder."
+            case .texpresso: "Choose the folder the texpresso program is in."
+            }
+        }
+
+        var automaticFailure: String {
+            switch self {
+            case .tex: "Couldn’t Find TeX Automatically"
+            case .texpresso: "Couldn’t Find TeXpresso Automatically"
+            }
+        }
+
+        /// The folder the user chose, if any.
+        func chosen(in tex: TexStatus) -> String? {
+            switch self {
+            case .tex: tex.texDir
+            case .texpresso: tex.texpressoDir
+            }
+        }
+
+        /// The folder in use, if the program is found.
+        func folder(in tex: TexStatus) -> String? {
+            switch self {
+            case .tex: tex.available ? tex.found ?? tex.texDir : nil
+            case .texpresso: tex.texpresso.map { URL(filePath: $0).deletingLastPathComponent().path }
+            }
+        }
+
+        /// "latexmk 4.87 in /Library/TeX/texbin", from latexmk's "Latexmk, John Collins, 17 Nov. 2025. Version 4.87";
+        /// the folder alone when the line reads otherwise.
+        func detail(in tex: TexStatus) -> String {
+            guard let path = folder(in: tex) else { return "Not Found" }
+            guard self == .tex, let number = tex.version?.firstMatch(of: /Version (\d[\w.]*)/)?.1 else { return path }
+            return "latexmk \(number) in \(path)"
+        }
+    }
     let program: Program
 
     @Environment(AppModel.self) private var app
@@ -212,19 +258,15 @@ private struct ProgramFolder: View {
 
     private enum Choice: Hashable { case automatic, chosen, other }
 
-    private var title: String { program == .tex ? "TeX Distribution" : "TeXpresso Location" }
-
     var body: some View {
         // A spinner until the status is in, rather than a flash of "Not Found" at launch.
         if let tex = app.tex {
-            let chosen = program == .tex ? tex.texDir : tex.texpressoDir
-            let folder = program == .tex ? (tex.available ? tex.found ?? tex.texDir : nil)
-                : tex.texpresso.map { URL(filePath: $0).deletingLastPathComponent().path }
+            let chosen = program.chosen(in: tex)
             LabeledContent {
                 HStack {
                     if program == .tex, !tex.available { GetMacTeXButton() }
-                    if app.settingTeX { ProgressView().controlSize(.small).accessibilityLabel("Checking \(title)") }
-                    Picker(title, selection: Binding<Choice>(get: { chosen == nil ? .automatic : .chosen }, set: {
+                    if app.settingTeX { ProgressView().controlSize(.small).accessibilityLabel("Checking \(program.title)") }
+                    Picker(program.title, selection: Binding<Choice>(get: { chosen == nil ? .automatic : .chosen }, set: {
                         switch $0 {
                         case .automatic: if chosen != nil { setFolder(nil) }
                         case .chosen: break
@@ -243,28 +285,22 @@ private struct ProgramFolder: View {
                     .disabled(app.settingTeX)
                 }
             } label: {
-                Text(title)
-                // "latexmk 4.87 in /Library/TeX/texbin", from latexmk's "Latexmk, John Collins, 17 Nov. 2025. Version 4.87";
-                // the folder alone when the line reads otherwise.
-                Text(folder.map { path in
-                    guard program == .tex, let number = tex.version?.firstMatch(of: /Version (\d[\w.]*)/)?.1 else { return path }
-                    return "latexmk \(number) in \(path)"
-                } ?? "Not Found")
+                Text(program.title)
+                Text(program.detail(in: tex))
                     .textSelection(.enabled)
             }
             .fileImporter(isPresented: $choosing, allowedContentTypes: [.folder]) { result in
                 if case .success(let url) = result { setFolder(url.path) }
             }
             .fileDialogConfirmationLabel("Choose")
-            .fileDialogMessage(program == .tex ? "Choose the folder latexmk is in, such as a TeX distribution’s bin folder."
-                                   : "Choose the folder the texpresso program is in.")
+            .fileDialogMessage(program.dialogMessage)
             // TeX lives under folders the dialog hides (/usr/local, /opt, /Library/TeX): open at the one in use, and show them.
             .fileDialogBrowserOptions(.includeHiddenFiles)
-            .fileDialogDefaultDirectory(URL(filePath: folder ?? "/usr/local", directoryHint: .isDirectory))
+            .fileDialogDefaultDirectory(URL(filePath: program.folder(in: tex) ?? "/usr/local", directoryHint: .isDirectory))
             // Here, not in the project window, which Settings may cover.
             .alert($alert)
         } else {
-            LabeledContent(title) { ProgressView().controlSize(.small).accessibilityLabel("Looking for \(title)") }
+            LabeledContent(program.title) { ProgressView().controlSize(.small).accessibilityLabel("Looking for \(program.title)") }
         }
     }
 
@@ -273,8 +309,7 @@ private struct ProgramFolder: View {
             do {
                 try await app.setTeXFolder(path, texpresso: program == .texpresso)
             } catch {
-                alert = AppAlert(path.map { "Couldn’t Use “\(URL(filePath: $0).lastPathComponent)”" }
-                                     ?? (program == .tex ? "Couldn’t Find TeX Automatically" : "Couldn’t Find TeXpresso Automatically"), error)
+                alert = AppAlert(path.map { "Couldn’t Use “\(URL(filePath: $0).lastPathComponent)”" } ?? program.automaticFailure, error)
             }
         }
     }

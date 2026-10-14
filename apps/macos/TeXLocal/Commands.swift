@@ -128,14 +128,13 @@ enum MenuCommand: CaseIterable {
         case .viewToggleSidebar: KeyboardShortcut("s", modifiers: [.command, .control])
         case .viewTogglePdf: KeyboardShortcut("p", modifiers: [.command, .option])
         case .viewToggleInspector: KeyboardShortcut("i", modifiers: [.command, .option])
-        case .viewToggleLogs: KeyboardShortcut("l", modifiers: [.command, .shift])
+        // Xcode's Show/Hide Debug Area.
+        case .viewToggleLogs: KeyboardShortcut("y", modifiers: [.command, .shift])
         case .viewZoomIn: KeyboardShortcut("=")
         case .viewZoomOut: KeyboardShortcut("-")
         case .viewActualSize: KeyboardShortcut("0")
         case .viewFitWidth: KeyboardShortcut("9")
         case .viewFitPage: KeyboardShortcut("9", modifiers: [.command, .option])
-        case .viewTextBigger: KeyboardShortcut("=", modifiers: [.command, .option])
-        case .viewTextSmaller: KeyboardShortcut("-", modifiers: [.command, .option])
         case .compileRun: KeyboardShortcut(.return)
         case .compileStop: KeyboardShortcut(".")
         // Xcode's Product › Clean Build Folder.
@@ -145,7 +144,9 @@ enum MenuCommand: CaseIterable {
         // Xcode's Navigate › Jump to Next Issue.
         case .issueNext: KeyboardShortcut("'")
         case .issuePrevious: KeyboardShortcut("\"")
-        case .pdfSave, .projectExport, .fileUpload, .pdfFind, .viewToggleWordCount, .syncInverse: nil
+        // ⌥⌘= and ⌥⌘− are the system's own screen zoom.
+        case .pdfSave, .projectExport, .fileUpload, .pdfFind, .viewToggleWordCount, .viewTextBigger, .viewTextSmaller,
+             .syncInverse: nil
         }
     }
 }
@@ -282,15 +283,7 @@ struct AppCommands: Commands {
     private var project: ProjectModel? { app.commandProject }
 
     private func item(_ command: MenuCommand) -> some View {
-        Button { app.perform(command, on: project) } label: {
-            let title = app.title(command, on: project)
-            // macOS 27 shows a menu item's image only with this style.
-            if let symbol = command.symbol { Label(title, systemImage: symbol) } else { Text(title) }
-        }
-        .labelStyle(.titleAndIcon)
-        // ⌘N follows whether a project is open, not which window is key.
-        .keyboardShortcut(app.shortcut(command, on: app.project))
-        .disabled(!app.isEnabled(command, on: project))
+        CommandItem(app: app, command: command)
     }
 
     private func items(_ commands: [MenuCommand]) -> some View {
@@ -299,7 +292,7 @@ struct AppCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            item(.projectNew)
+            items([.projectNew, .fileNew, .fileNewFolder])
             item(.projectOpen)
             Menu("Open Recent") {
                 ForEach(app.recents) { recent in
@@ -316,7 +309,7 @@ struct AppCommands: Commands {
                     .disabled(app.recents.isEmpty)
             }
             Divider()
-            items([.fileNew, .fileNewFolder, .fileUpload])
+            item(.fileUpload)
         }
         // After the system's Close (⌘W).
         CommandGroup(after: .saveItem) {
@@ -346,13 +339,15 @@ struct AppCommands: Commands {
         CommandGroup(before: .textEditing) {
             items([.projectSearch, .pdfFind])
         }
+        CommandGroup(after: .pasteboard) {
+            Divider()
+            items([.editComment, .editMoveLineUp, .editMoveLineDown])
+        }
         CommandGroup(replacing: .textFormatting) {
             items([.editBold, .editItalic, .editUnderline])
             Divider()
             Menu("Section Level") { SectionLevelItems(project: project) }
                 .disabled(project?.isLaTeX != true)
-            Divider()
-            items([.editComment, .editMoveLineUp, .editMoveLineDown])
         }
         CommandGroup(replacing: .sidebar) {
             item(.viewToggleSidebar)
@@ -392,18 +387,56 @@ struct AppCommands: Commands {
             items([.compileRun, .compileStop, .compileClean])
             Divider()
             Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
-            // A mode, like the one above: checked while its window is live. Disk changes rescan on their own.
-            Toggle("Live Preview", isOn: Binding(
-                get: { project?.texpresso.active == true },
-                set: { $0 ? project?.startTeXpresso() : project?.stopTeXpresso() }))
-                .disabled(!app.canPreviewLive || project.map { !$0.initialLoadComplete || $0.texpresso.phase == .stopping } ?? true)
+            LivePreviewItem(app: app)
             Divider()
             EnginePicker(project: project)
-            // The open file; the files' context menu has it for any .tex file.
-            Button("Set as Main File") {
-                if let project, let path = project.openPath { Task { await project.setMainFile(path) } }
-            }
-            .disabled(project?.isLaTeX != true || project?.openPath == project?.settings?.mainFile)
+            SetMainFileItem(app: app)
         }
+    }
+}
+
+/// A menu item of its own, so a change to what it shows re-evaluates it and not the whole menu bar
+/// (Observation tracks what a body reads).
+private struct CommandItem: View {
+    let app: AppModel
+    let command: MenuCommand
+
+    var body: some View {
+        let project = app.commandProject
+        Button { app.perform(command, on: project) } label: {
+            let title = app.title(command, on: project)
+            // macOS 27 shows a menu item's image only with this style.
+            if let symbol = command.symbol { Label(title, systemImage: symbol) } else { Text(title) }
+        }
+        .labelStyle(.titleAndIcon)
+        // ⌘N follows whether a project is open, not which window is key.
+        .keyboardShortcut(app.shortcut(command, on: app.project))
+        .disabled(!app.isEnabled(command, on: project))
+    }
+}
+
+/// A mode, like Compile Automatically: checked while its window is live. Disk changes rescan on their own.
+private struct LivePreviewItem: View {
+    let app: AppModel
+
+    var body: some View {
+        let project = app.commandProject
+        Toggle("Live Preview", isOn: Binding(
+            get: { project?.texpresso.active == true },
+            set: { $0 ? project?.startTeXpresso() : project?.stopTeXpresso() }))
+            .disabled(!app.canPreviewLive || project.map { !$0.initialLoadComplete || $0.texpresso.phase == .stopping } ?? true)
+    }
+}
+
+/// The open file; the files' context menu has it for any .tex file.
+private struct SetMainFileItem: View {
+    let app: AppModel
+
+    var body: some View {
+        let project = app.commandProject
+        Button("Set as Main File") {
+            if let project, let path = project.openPath { Task { await project.setMainFile(path) } }
+        }
+        .disabled(project?.isLaTeX != true || project?.openPath == project?.settings?.mainFile)
     }
 }
