@@ -118,7 +118,7 @@ nonisolated struct CompileResult: Decodable {
     }
 }
 
-nonisolated struct Symbols: Decodable {
+nonisolated struct Symbols: Decodable, Equatable {
     let citations: [String]
     let labels: [String]
 }
