@@ -601,8 +601,8 @@ async function openFile(path) {
       const img = el('img', { alt: path });
       host.replaceChildren(el('div', { class: 'image-preview' }, img));
       api.rawFileUrl(projectId, path).then((src) => {
-        // The <img> keeps the decoded image, so a blob: URL can go once read.
-        if (src.startsWith('blob:')) img.onload = img.onerror = () => URL.revokeObjectURL(src);
+        // The <img> keeps the decoded image, so the blob: URL can go once read.
+        img.onload = img.onerror = () => URL.revokeObjectURL(src);
         img.src = src;
       }, (err) => { if (stillCurrent()) toast(err.message, 'error'); });
     } else {
