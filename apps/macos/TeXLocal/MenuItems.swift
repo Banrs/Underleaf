@@ -24,14 +24,14 @@ struct SymbolItems: View {
     }
 
     var body: some View {
-        ForEach(symbolGroups, id: \.0) { title, symbols in
+        ForEach(symbolGroups, id: \.title) { title, symbols in
             let columns = Self.columns(symbols.count)
             Menu(title) {
                 ForEach(Array(stride(from: 0, to: symbols.count, by: columns)), id: \.self) { start in
                     // A palette row, which shows its items' images: text alone draws blank (27.2).
                     // The title is what VoiceOver says.
                     ControlGroup {
-                        ForEach(symbols[start..<min(start + columns, symbols.count)], id: \.1) { glyph, command in
+                        ForEach(symbols[start..<min(start + columns, symbols.count)], id: \.command) { glyph, command in
                             Button { project?.editor.perform(.symbol, command) } label: {
                                 Label {
                                     Text(verbatim: MathGlyphs.spokenName(glyph, command))

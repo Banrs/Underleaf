@@ -87,7 +87,7 @@ enum TeXEngine: String, CaseIterable, Identifiable {
 }
 
 /// Symbols by kind, each inserted as its command.
-let symbolGroups: [(String, [(String, String)])] = [
+let symbolGroups: [(title: String, symbols: [(glyph: String, command: String)])] = [
     ("Greek", [("α", "\\alpha"), ("β", "\\beta"), ("γ", "\\gamma"), ("δ", "\\delta"), ("ϵ", "\\epsilon"),
                ("ζ", "\\zeta"), ("η", "\\eta"), ("θ", "\\theta"), ("κ", "\\kappa"), ("λ", "\\lambda"),
                ("μ", "\\mu"), ("ν", "\\nu"), ("ξ", "\\xi"), ("π", "\\pi"), ("ρ", "\\rho"), ("σ", "\\sigma"),
