@@ -4,7 +4,7 @@ import SwiftUI
 /// query.
 struct FilesList: View {
     @Environment(AppModel.self) private var app
-    @Bindable var project: ProjectModel
+    let project: ProjectModel
     @State private var selection: String?
     @State private var hit: SearchHit.ID?
     @State private var rename = InPlaceRename<String>()
