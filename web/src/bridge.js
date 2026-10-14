@@ -52,7 +52,6 @@ export function httpBridge(fetchImpl = (...a) => fetch(...a), token = takeToken(
   };
   return {
     kind: 'browser',
-    platform: agentPlatform(),
     invoke: async (command, args, options) => {
       const raw = args instanceof ArrayBuffer;
       const res = await fetchImpl(`/api/${command}`, {
@@ -84,9 +83,8 @@ export function httpBridge(fetchImpl = (...a) => fetch(...a), token = takeToken(
 const inBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
 export const bridge = inBrowser ? httpBridge() : null;
 
-// Null without a host (the unit tests); platform then falls back to the same
-// user-agent read.
-export const platform = bridge?.platform ?? agentPlatform();
+// Null without a host (the unit tests).
+export const platform = agentPlatform();
 export const isMac = platform === 'darwin';
 // Deletes go to the platform bin (trash::delete in the core), named its way.
 export const trashName = platform === 'win32' ? 'Recycle Bin' : 'Trash';
