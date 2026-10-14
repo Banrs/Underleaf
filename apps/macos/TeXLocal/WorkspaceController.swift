@@ -603,7 +603,7 @@ final class WorkspaceController: RestoredSplitViewController {
     /// Edit › Find's items when the source text, which answers them itself, doesn't
     /// have the keyboard: the PDF's while its pages or its find bar have it, else
     /// the source's find bar, or the PDF's over a preview. Nil turns an item off.
-    func findAction(_ item: NSValidatedUserInterfaceItem) -> (() -> Void)? {
+    func findAction(_ item: any NSValidatedUserInterfaceItem) -> (() -> Void)? {
         guard let action = NSTextFinder.Action(rawValue: item.tag) else { return nil }
         guard pdfHasKeyboard else {
             guard project.editsText else {

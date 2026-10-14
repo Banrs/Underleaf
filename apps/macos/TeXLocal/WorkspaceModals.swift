@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Workspace sheets, alerts, and file dialogs on the always-visible source column.
 struct WorkspaceModals: ViewModifier {

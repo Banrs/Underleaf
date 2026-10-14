@@ -902,7 +902,7 @@ final class ProjectFlowTests {
         menu.performActionForItem(at: 1)
         try await waitUntil(timeout: .seconds(5)) { app.project?.id == first.id && app.project?.initialLoadComplete == true }
         #expect(shown == 2 && app.recentProjects.first == first.id)
-        #expect(NSApp.delegate?.responds(to: #selector(NSApplicationDelegate.applicationDockMenu(_:))) == true)
+        #expect(NSApp.delegate?.responds(to: #selector((any NSApplicationDelegate).applicationDockMenu(_:))) == true)
         await app.close()
     }
 

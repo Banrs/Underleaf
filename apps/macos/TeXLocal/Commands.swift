@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The app's commands and their key equivalents.
 enum MenuCommand: CaseIterable {

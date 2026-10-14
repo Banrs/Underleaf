@@ -104,7 +104,7 @@ final class FindPassingTextView: NSTextView {
             sequence(first: first, next: \.nextResponder).first { $0.responds(to: action) }
         }
         guard let target else { return false }
-        return (target as? NSMenuItemValidation)?.validateMenuItem(item) ?? true
+        return (target as? any NSMenuItemValidation)?.validateMenuItem(item) ?? true
     }
 }
 

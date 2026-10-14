@@ -27,7 +27,7 @@ struct AppAlert: Sendable {
         self.message = message
     }
 
-    init(_ title: String, _ error: Error) {
+    init(_ title: String, _ error: any Error) {
         self.init(title, error.localizedDescription)
     }
 }

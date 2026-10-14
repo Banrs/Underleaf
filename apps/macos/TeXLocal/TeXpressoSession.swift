@@ -638,7 +638,7 @@ final class TeXpressoSession {
         }
     }
 
-    private func fail(_ error: Error) {
+    private func fail(_ error: any Error) {
         requestFailure = error.localizedDescription
         if (error as? CoreError)?.status == 409 {
             generation += 1

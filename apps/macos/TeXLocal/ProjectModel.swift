@@ -1,6 +1,7 @@
 import Accessibility
 import AppKit
 import Observation
+import PDFKit
 import UniformTypeIdentifiers
 
 /// One open project: its files, the document in the editor, and its builds.
@@ -235,7 +236,7 @@ final class ProjectModel {
     var texAvailable: Bool { app?.tex?.available ?? false }
     var autoCompile: Bool { app?.autoCompile ?? false }
 
-    private func report(_ error: Error, _ title: String) {
+    private func report(_ error: any Error, _ title: String) {
         app?.alert = AppAlert(title, error)
     }
 
@@ -245,7 +246,7 @@ final class ProjectModel {
     /// A SyncTeX search that finds no match is ordinary (a comment, the preamble, a figure): a
     /// sound, and the core's word for what it missed in the status bar. Anything else is a
     /// failure to explain.
-    private func reportSync(_ error: Error, _ title: String) {
+    private func reportSync(_ error: any Error, _ title: String) {
         guard (error as? CoreError)?.status == 404 else { return report(error, title) }
         NSSound.beep()
         notices.note(error.localizedDescription)

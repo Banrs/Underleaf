@@ -222,12 +222,12 @@ final class UndoableTrash {
     private let trash: (UndoableTrash) async -> Bool
     /// Runs once the item is back or gone again, for whatever lists it.
     private let changed: () async -> Void
-    private let failed: (String, Error) -> Void
+    private let failed: (String, any Error) -> Void
 
     init(original: URL, name: String, undoManager: UndoManager?,
          trash: @escaping (UndoableTrash) async -> Bool,
          changed: @escaping () async -> Void,
-         failed: @escaping (String, Error) -> Void) {
+         failed: @escaping (String, any Error) -> Void) {
         self.original = original
         self.name = name
         self.undoManager = undoManager

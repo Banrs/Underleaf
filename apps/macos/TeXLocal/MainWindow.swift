@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import SwiftUI
 
 /// One AppKit window for the SwiftUI projects screen, native project split and
@@ -154,7 +155,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     }
 
     private func findAction(for sender: Any?) -> (() -> Void)? {
-        (sender as? NSValidatedUserInterfaceItem).flatMap { workspace?.findAction($0) }
+        (sender as? any NSValidatedUserInterfaceItem).flatMap { workspace?.findAction($0) }
     }
 
     /// Edit › Find › Jump to Selection for the PDF's pages, which PDFKit leaves to text views: a

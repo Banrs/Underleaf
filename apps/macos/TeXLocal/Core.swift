@@ -68,7 +68,7 @@ final class Core {
 
     /// Accepts any JSON, for commands whose result is not needed.
     private nonisolated struct Ignored: Decodable, Sendable {
-        init(from decoder: Decoder) throws {}
+        init(from decoder: any Decoder) throws {}
     }
 
     /// On the calling thread, for as long as the command runs.
