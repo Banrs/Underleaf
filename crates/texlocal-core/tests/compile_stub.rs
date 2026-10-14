@@ -6,10 +6,11 @@ use std::fs;
 use std::future::Future;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use serde_json::json;
+use serde_json::{json, Value};
 use tempfile::TempDir;
 use texlocal_core::compile::{tex_available, CompileManager, CompileResult};
 use texlocal_core::error::CoreError;
@@ -18,12 +19,16 @@ use texlocal_core::projects::create_project;
 use texlocal_core::service::Service;
 use texlocal_core::settings::write_settings;
 use texlocal_core::synctex::{synctex_inverse_with_context, InverseLoc};
+use tokio::task::JoinHandle;
+
+fn executable(path: &Path, script: &str) {
+    fs::write(path, script).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
 
 fn stub_env(bin: &Path, script: &str) -> String {
     fs::create_dir_all(bin).unwrap();
-    let path = bin.join("latexmk");
-    fs::write(&path, script).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    executable(&bin.join("latexmk"), script);
     format!(
         "{}:{}",
         bin.display(),
@@ -51,6 +56,50 @@ async fn compile(mgr: &CompileManager, root: &Path) -> CompileResult {
     mgr.compile(root, None).await.unwrap()
 }
 
+/// A compile left running while the test goes on.
+fn in_flight(mgr: &Arc<CompileManager>, root: &Path) -> JoinHandle<CompileResult> {
+    let (mgr, root) = (Arc::clone(mgr), root.to_path_buf());
+    tokio::spawn(async move { compile(&mgr, &root).await })
+}
+
+/// A library of the projects `ids`, and a service whose PATH finds a stub
+/// latexmk running `script`.
+fn stub_service(script: &str, ids: &[&str]) -> (TempDir, Arc<Service>) {
+    let tmp = TempDir::new().unwrap();
+    let mut service = Service::new(tmp.path().to_path_buf());
+    service.compile.path_env = Some(stub_env(&tmp.path().join("bin"), script));
+    for id in ids {
+        create_project(tmp.path(), id, "blank").unwrap();
+    }
+    (tmp, Arc::new(service))
+}
+
+/// A project's build, asked for as a client asks and left running.
+fn build(service: &Arc<Service>, id: &'static str) -> JoinHandle<Result<Value, CoreError>> {
+    let service = Arc::clone(service);
+    tokio::spawn(async move { service.call("compile", &json!({ "id": id })).await })
+}
+
+/// Polls a later build just until it waits on the build before it.
+async fn waits(mut build: Pin<&mut impl Future>) {
+    std::future::poll_fn(|cx| match build.as_mut().poll(cx) {
+        std::task::Poll::Pending => std::task::Poll::Ready(()),
+        std::task::Poll::Ready(_) => panic!("replacement did not wait for the first build"),
+    })
+    .await;
+}
+
+/// Waits up to five seconds for a stub to make `path`, or fails saying `what` it didn't do.
+async fn appears(path: &Path, what: &str) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !path.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{what}"));
+}
+
 #[tokio::test]
 async fn compile_happy_path_parses_the_log_it_wrote() {
     let (_tmp, root, mgr) = setup(
@@ -68,13 +117,11 @@ async fn compile_happy_path_parses_the_log_it_wrote() {
 
 #[tokio::test]
 async fn an_unchanged_compile_leaves_latexmk_free_to_skip_the_engine() {
-    let (_tmp, root, mgr) = setup(
-        "#!/bin/sh\nmkdir -p build\necho \"$@\" > build/args\nprintf 'fake' > build/main.pdf\nexit 0\n",
-    );
+    let (_tmp, root, mgr) = setup(RECORD_ARGS);
     compile(&mgr, &root).await;
 
-    let args = fs::read_to_string(root.join("build/args")).unwrap();
-    assert!(!args.split_whitespace().any(|a| a == "-g"), "{args}");
+    let passed = args(&root);
+    assert!(!passed.contains(&"-g".into()), "{passed:?}");
 }
 
 #[tokio::test]
@@ -112,19 +159,8 @@ sleep 20
 ",
     );
     let record = root.join("build/main.fdb_latexmk");
-    let mgr = Arc::new(mgr);
-    let task = tokio::spawn({
-        let mgr = Arc::clone(&mgr);
-        let root = root.clone();
-        async move { compile(&mgr, &root).await }
-    });
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !record.exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("latexmk did not write its record");
+    let task = in_flight(&Arc::new(mgr), &root);
+    appears(&record, "latexmk did not write its record").await;
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     assert!(!record.exists());
@@ -132,26 +168,13 @@ sleep 20
 
 #[tokio::test]
 async fn a_build_stopped_by_a_rename_forgets_latexmks_record() {
-    let tmp = TempDir::new().unwrap();
-    let mut service = Service::new(tmp.path().to_path_buf());
-    service.compile.path_env = Some(stub_env(
-        &tmp.path().join("bin"),
+    let (tmp, service) = stub_service(
         "#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nsleep 20\n",
-    ));
-    create_project(tmp.path(), "one", "blank").unwrap();
-    let service = Arc::new(service);
-    let build = tokio::spawn({
-        let service = Arc::clone(&service);
-        async move { service.call("compile", &json!({ "id": "one" })).await }
-    });
+        &["one"],
+    );
+    let build = build(&service, "one");
     let record = tmp.path().join("one/build/main.fdb_latexmk");
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !record.exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("latexmk did not write its record");
+    appears(&record, "latexmk did not write its record").await;
 
     // The folder moves before the build can remove the record itself.
     service
@@ -218,10 +241,13 @@ async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
 
 #[tokio::test]
 async fn a_timed_out_compile_keeps_the_output_it_wrote() {
-    let (_tmp, root, mut mgr) = setup("#!/bin/sh\necho 'Running pdflatex'\nsleep 20\n");
-    // Long enough for the stub to print on a busy machine.
-    mgr.timeout = Some(Duration::from_secs(3));
-    let result = compile(&mgr, &root).await;
+    let (_tmp, root, mgr) = setup("#!/bin/sh\necho 'Running pdflatex'\ntouch printed\nsleep 20\n");
+    // Once the stub has printed, tokio's clock goes straight to the build's
+    // time limit, however long the stub took to print.
+    let (result, ()) = tokio::join!(compile(&mgr, &root), async {
+        appears(&root.join("printed"), "latexmk did not print").await;
+        tokio::time::pause();
+    });
 
     assert!(!result.ok);
     assert!(result.log.contains("Running pdflatex"), "{:?}", result.log);
@@ -270,16 +296,12 @@ async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
 #[tokio::test]
 async fn a_new_compile_supersedes_the_in_flight_one() {
     let (_tmp, root, mgr) = setup(
-        "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else sleep 20; fi\n",
+        "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else touch started; sleep 20; fi\n",
     );
     let mgr = Arc::new(mgr);
 
-    let first = tokio::spawn({
-        let mgr = Arc::clone(&mgr);
-        let root = root.clone();
-        async move { compile(&mgr, &root).await }
-    });
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    let first = in_flight(&mgr, &root);
+    appears(&root.join("started"), "first latexmk did not start").await;
     fs::write(root.join("fast"), "").unwrap();
 
     let second = compile(&mgr, &root).await;
@@ -306,28 +328,15 @@ esac
 "#,
     );
     let mgr = Arc::new(mgr);
-    let first = tokio::spawn({
-        let (mgr, root) = (Arc::clone(&mgr), root.clone());
-        async move { compile(&mgr, &root).await }
-    });
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !root.join("started").exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("first latexmk did not start");
+    let first = in_flight(&mgr, &root);
+    appears(&root.join("started"), "first latexmk did not start").await;
     // Each build reads the engine as it is asked for, which tells the three apart.
     let engine = |engine: &str| write_settings(&root, &json!({ "engine": engine })).unwrap();
     engine("xelatex");
     let mut second = Box::pin(mgr.compile(&root, None));
     // Poll just until it waits on the first build, then register the third
     // without letting the first release the build directory in between.
-    std::future::poll_fn(|cx| match second.as_mut().poll(cx) {
-        std::task::Poll::Pending => std::task::Poll::Ready(()),
-        std::task::Poll::Ready(_) => panic!("replacement did not wait for the first build"),
-    })
-    .await;
+    waits(second.as_mut()).await;
     engine("lualatex");
 
     let (third, second, first) = tokio::time::timeout(Duration::from_secs(5), async {
@@ -352,25 +361,11 @@ async fn a_cancelled_waiting_replacement_does_not_let_the_next_build_overtake_it
         "#!/bin/sh\nif [ -f fast ]; then\n  if kill -0 \"$(cat first.pid)\" 2>/dev/null; then touch overlap; fi\n  mkdir -p build; printf 'new' > build/main.pdf\nelse\n  echo $$ > first.pid\n  sleep 20\nfi\n",
     );
     let mgr = Arc::new(mgr);
-    let first = tokio::spawn({
-        let mgr = Arc::clone(&mgr);
-        let root = root.clone();
-        async move { compile(&mgr, &root).await }
-    });
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !root.join("first.pid").exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("first latexmk did not start");
+    let first = in_flight(&mgr, &root);
+    appears(&root.join("first.pid"), "first latexmk did not start").await;
 
     let mut replacement = Box::pin(mgr.compile(&root, None));
-    std::future::poll_fn(|cx| match replacement.as_mut().poll(cx) {
-        std::task::Poll::Pending => std::task::Poll::Ready(()),
-        std::task::Poll::Ready(_) => panic!("replacement did not wait for the first build"),
-    })
-    .await;
+    waits(replacement.as_mut()).await;
     drop(replacement);
 
     fs::write(root.join("fast"), "").unwrap();
@@ -391,19 +386,8 @@ async fn a_cancelled_compile_takes_its_whole_tree_down() {
     // Dropping the compile future kills latexmk (kill_on_drop), but the
     // engine it started must not keep writing into the build directory.
     let (_tmp, root, mgr) = setup("#!/bin/sh\n(touch started; sleep 1; touch late) &\nsleep 20\n");
-    let mgr = Arc::new(mgr);
-    let task = tokio::spawn({
-        let mgr = Arc::clone(&mgr);
-        let root = root.clone();
-        async move { mgr.compile(&root, None).await }
-    });
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !root.join("started").exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("latexmk descendant did not start");
+    let task = in_flight(&Arc::new(mgr), &root);
+    appears(&root.join("started"), "latexmk descendant did not start").await;
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
 
@@ -513,22 +497,18 @@ async fn a_failure_the_log_doesnt_explain_names_latexmks_summary() {
 
 #[tokio::test]
 async fn stopping_a_build_ends_that_projects_build_only_and_says_so() {
-    let tmp = TempDir::new().unwrap();
-    let mut service = Service::new(tmp.path().to_path_buf());
-    service.compile.path_env = Some(stub_env(
-        &tmp.path().join("bin"),
-        "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else sleep 20; fi\n",
-    ));
+    let (tmp, service) = stub_service(
+        "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else touch started; sleep 20; fi\n",
+        &["one", "two"],
+    );
+    let (one, two) = (build(&service, "one"), build(&service, "two"));
     for id in ["one", "two"] {
-        create_project(tmp.path(), id, "blank").unwrap();
+        appears(
+            &tmp.path().join(id).join("started"),
+            "latexmk did not start",
+        )
+        .await;
     }
-    let service = Arc::new(service);
-    let build = |id: &'static str| {
-        let service = Arc::clone(&service);
-        tokio::spawn(async move { service.call("compile", &json!({ "id": id })).await })
-    };
-    let (one, two) = (build("one"), build("two"));
-    tokio::time::sleep(Duration::from_millis(400)).await;
 
     let started = Instant::now();
     let stop = |id: &str| {
@@ -566,16 +546,9 @@ async fn stopping_a_build_ends_that_projects_build_only_and_says_so() {
 
 #[tokio::test]
 async fn renaming_a_project_stops_its_build() {
-    let tmp = TempDir::new().unwrap();
-    let mut service = Service::new(tmp.path().to_path_buf());
-    service.compile.path_env = Some(stub_env(&tmp.path().join("bin"), "#!/bin/sh\nsleep 20\n"));
-    create_project(tmp.path(), "one", "blank").unwrap();
-    let service = Arc::new(service);
-    let build = tokio::spawn({
-        let service = Arc::clone(&service);
-        async move { service.call("compile", &json!({ "id": "one" })).await }
-    });
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    let (tmp, service) = stub_service("#!/bin/sh\ntouch started\nsleep 20\n", &["one"]);
+    let build = build(&service, "one");
+    appears(&tmp.path().join("one/started"), "latexmk did not start").await;
 
     // A rename refused leaves the build running.
     create_project(tmp.path(), "taken", "blank").unwrap();
@@ -640,12 +613,10 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
     let bin = tmp.path().join("bin");
     let path = stub_env(&bin, "#!/bin/sh\nexit 0\n");
     let synctex = bin.join("synctex");
-    fs::write(
+    executable(
         &synctex,
         "#!/bin/sh\nprintf 'SyncTeX result begin\\nInput:%s/./chapter.tex\\nLine:7\\n' \"$(pwd -P)\"\n",
-    )
-    .unwrap();
-    fs::set_permissions(&synctex, fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     let loc = inverse(&root, None, None, &path).await.unwrap();
     assert_eq!(loc.file, "chapter.tex");
@@ -697,8 +668,7 @@ async fn inverse_sync_rejects_unsafe_sources_before_reading_words() {
     let bin = tmp.path().join("bin");
     let path = stub_env(&bin, "#!/bin/sh\nexit 0\n");
     let synctex = bin.join("synctex");
-    fs::write(&synctex, "").unwrap();
-    fs::set_permissions(&synctex, fs::Permissions::from_mode(0o755)).unwrap();
+    executable(&synctex, "");
     let mut accepted = Vec::new();
     for input in [
         "linked.tex",

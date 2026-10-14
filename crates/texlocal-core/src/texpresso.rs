@@ -1272,8 +1272,9 @@ mod tests {
         fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
         (tmp, root, bin.to_string_lossy().into_owned())
     }
+    const SOON: Duration = Duration::from_secs(3);
     async fn until(mut check: impl FnMut() -> bool) {
-        tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::time::timeout(SOON, async {
             while !check() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -1312,10 +1313,7 @@ mod tests {
         let first = manager
             .start(
                 &root,
-                &[FileBuffer {
-                    path: "main.tex".into(),
-                    text: original.into(),
-                }],
+                &main_buffer(original),
                 None,
                 &path_env,
                 Some(&Pane::default()),
@@ -1448,14 +1446,8 @@ mod tests {
     async fn edits_follow_one_another_and_a_new_main_file_stops_the_session() {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
-        let buffer = |text: &str| {
-            vec![FileBuffer {
-                path: "main.tex".into(),
-                text: text.into(),
-            }]
-        };
         let started = manager
-            .start(&root, &buffer("abc"), None, &path_env, None)
+            .start(&root, &main_buffer("abc"), None, &path_env, None)
             .await
             .unwrap();
         let token = started.session.as_deref().unwrap();
@@ -1538,18 +1530,15 @@ mod tests {
     async fn abandoned_session_lease_expires_without_polling() {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
-        manager
+        let started = manager
             .start(&root, &[], None, &path_env, None)
             .await
             .unwrap();
-        let session = manager
-            .sessions
-            .lock()
-            .unwrap()
-            .get(&fs::canonicalize(&root).unwrap())
-            .cloned()
-            .unwrap();
+        let session = manager.held(&started.session.unwrap()).unwrap();
         session.state.lock().unwrap().last_used = Instant::now() - LEASE;
+        // The session looks at its lease every five seconds of tokio's clock, which
+        // goes straight to its next look once nothing else has work.
+        tokio::time::pause();
         tokio::time::sleep(Duration::from_millis(5100)).await;
         let status = manager.status(&root, None, || &path_env).unwrap();
         assert!(!status.running);
@@ -1559,17 +1548,11 @@ mod tests {
     async fn backtracked_tex_log_excludes_historical_process_stderr() {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
-        manager
+        let started = manager
             .start(&root, &[], None, &path_env, None)
             .await
             .unwrap();
-        let session = manager
-            .sessions
-            .lock()
-            .unwrap()
-            .get(&fs::canonicalize(&root).unwrap())
-            .cloned()
-            .unwrap();
+        let session = manager.held(&started.session.unwrap()).unwrap();
         let diagnostic = "Undefined control sequence";
         session
             .state
@@ -1601,16 +1584,7 @@ mod tests {
             let (manager, root, path_env) = (Arc::clone(&manager), root.clone(), path_env.clone());
             async move {
                 manager
-                    .start(
-                        &root,
-                        &[FileBuffer {
-                            path: "main.tex".into(),
-                            text: "owner B".into(),
-                        }],
-                        None,
-                        &path_env,
-                        None,
-                    )
+                    .start(&root, &main_buffer("owner B"), None, &path_env, None)
                     .await
                     .unwrap()
             }
@@ -1707,14 +1681,19 @@ mod tests {
 
     #[test]
     fn edits_in_utf16_units_change_the_same_bytes_as_in_a_plain_string() {
-        // What the editor has: UTF-16 units. What TeXpresso takes: bytes.
+        // What the editor has: UTF-16 units. What TeXpresso takes: bytes. Counted
+        // byte by byte, as decoding each character took most of the test's time: a
+        // character starts at each byte that doesn't continue one, and is two units
+        // where it takes four bytes.
         let bytes_at = |text: &str, units: usize| {
             let mut seen = 0;
-            for (at, c) in text.char_indices() {
-                if seen == units {
-                    return Some(at);
+            for (at, &byte) in text.as_bytes().iter().enumerate() {
+                if byte & 0xC0 != 0x80 {
+                    if seen == units {
+                        return Some(at);
+                    }
+                    seen += 1 + usize::from(byte >= 0xF0);
                 }
-                seen += c.len_utf16();
             }
             (seen == units).then_some(text.len())
         };
@@ -1727,8 +1706,8 @@ mod tests {
                 .wrapping_add(1442695040888963407);
             (seed >> 33) as usize % below.max(1)
         };
+        let mut units = utf16_len(&plain);
         for round in 0..4000 {
-            let units = utf16_len(&plain);
             let start = next(units + 1);
             let remove = match round % 7 {
                 0 => next(5000),
@@ -1750,6 +1729,7 @@ mod tests {
             assert_eq!(changed, fits.map(|(from, to)| (from, to - from)), "{round}");
             if let Some((from, to)) = fits {
                 plain.replace_range(from..to, &inserted);
+                units = units - remove + utf16_len(&inserted);
             }
             assert_eq!(text.bytes, plain.len());
             assert_eq!(text.byte_offset(start), bytes_at(&plain, start));
@@ -1805,7 +1785,6 @@ mod tests {
             text: text.into(),
         }]
     }
-    const SOON: Duration = Duration::from_secs(3);
 
     #[tokio::test]
     async fn a_keystroke_goes_as_bytes_at_once_and_one_that_does_not_fit_is_refused() {

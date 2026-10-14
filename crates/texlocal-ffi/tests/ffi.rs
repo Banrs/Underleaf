@@ -1,6 +1,6 @@
 // Round trips through the C ABI exactly as a native host drives it.
 
-use std::ffi::{CStr, CString};
+use std::ffi::{c_char, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::ptr;
 
@@ -10,6 +10,24 @@ use texlocal_ffi::{
     tl_source_free_runs, tl_source_highlights, tl_source_line_at, tl_source_line_count,
     tl_source_line_start, tl_source_new, TlHandle, TlSource,
 };
+
+/// The JSON a call answered, read and handed back to the library to free; None
+/// for no answer.
+unsafe fn take_json(out: *mut c_char) -> Option<Value> {
+    if out.is_null() {
+        return None;
+    }
+    let value = serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
+    tl_free(out);
+    Some(value)
+}
+
+/// A command to a source mirror, as the editor sends one.
+unsafe fn source_call(source: *mut TlSource, command: &str, args: Value) -> Option<Value> {
+    let command = CString::new(command).unwrap();
+    let args = CString::new(args.to_string()).unwrap();
+    take_json(tl_source_call(source, command.as_ptr(), args.as_ptr()))
+}
 
 fn call(handle: *const TlHandle, command: &str, args: Option<Value>) -> Value {
     call_raw(handle, command, args.map(|a| a.to_string()).as_deref())
@@ -24,9 +42,7 @@ fn call_raw(handle: *const TlHandle, command: &str, args: Option<&str>) -> Value
             command.as_ptr(),
             args.as_ref().map_or(ptr::null(), |a| a.as_ptr()),
         );
-        let value = serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
-        tl_free(out);
-        value
+        take_json(out).unwrap()
     }
 }
 
@@ -287,7 +303,6 @@ fn a_dropped_link_imports_what_it_points_at_but_links_inside_a_folder_do_not() {
 
 #[test]
 fn the_source_mirror_round_trips_through_the_c_abi() {
-    let c = |s: &str| CString::new(s).unwrap();
     unsafe {
         let text = "é \\emph{x}";
         let source = tl_source_new(text.as_ptr(), text.len());
@@ -298,23 +313,12 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         let runs = tl_source_highlights(source, 0, 20, &mut count);
         assert_eq!(std::slice::from_raw_parts(runs, count), [3, 5, 0]);
         tl_source_free_runs(runs, count);
-        let call_on = |source: *mut TlSource, command: &str| {
-            let out = tl_source_call(source, c(command).as_ptr(), c("{}").as_ptr());
-            let value: Value = serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
-            tl_free(out);
-            Some(value)
-        };
-        let call = |command: &str, args: Value| {
-            let out = tl_source_call(source, c(command).as_ptr(), c(&args.to_string()).as_ptr());
-            if out.is_null() {
-                return None;
-            }
-            let value: Value = serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
-            tl_free(out);
-            Some(value)
-        };
-        assert_eq!(call("text", json!({})), Some(json!("é \n\\emph{x}")));
-        let symbol = call(
+        assert_eq!(
+            source_call(source, "text", json!({})),
+            Some(json!("é \n\\emph{x}"))
+        );
+        let symbol = source_call(
+            source,
             "insert_symbol",
             json!({ "command": "\\alpha", "selection": { "start": 0, "length": 1 } }),
         );
@@ -324,9 +328,9 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
                 json!({ "edit": { "start": 0, "length": 1, "text": "$\\alpha$" }, "caret": 8, "fields": [] })
             )
         );
-        let maths = call("math_at", json!({ "caret": 1 }));
+        let maths = source_call(source, "math_at", json!({ "caret": 1 }));
         assert_eq!(maths, Some(Value::Null), "é isn't maths");
-        assert_eq!(call("unknown", json!({})), None);
+        assert_eq!(source_call(source, "unknown", json!({})), None);
         tl_source_free(source);
 
         // A U+0000 is text like any other: it doesn't end the mirror's copy.
@@ -334,7 +338,10 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         let source = tl_source_new(text.as_ptr(), text.len());
         assert_eq!(tl_source_line_count(source), 2);
         tl_source_edit(source, 4, 0, "\0c".as_ptr(), 2);
-        assert_eq!(call_on(source, "text"), Some(json!("a\u{0}\nb\u{0}c")));
+        assert_eq!(
+            source_call(source, "text", json!({})),
+            Some(json!("a\u{0}\nb\u{0}c"))
+        );
         tl_source_free(source);
     }
 }
@@ -346,10 +353,8 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
 fn completions_offer_the_symbols_set_on_the_source() {
     let c = |s: &str| CString::new(s).unwrap();
     let offered = |source: *mut TlSource, caret: usize| unsafe {
-        let args = json!({ "caret": caret, "explicit": false }).to_string();
-        let out = tl_source_call(source, c("completions").as_ptr(), c(&args).as_ptr());
-        let value: Value = serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
-        tl_free(out);
+        let args = json!({ "caret": caret, "explicit": false });
+        let value = source_call(source, "completions", args).unwrap();
         value["items"].as_array().map_or(vec![], |items| {
             items
                 .iter()
@@ -420,10 +425,8 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
         // Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes them: the
         // edit still lands, keeping the mirror in step with the editor.
         tl_source_edit(source, 1, 0, b"\xff\n".as_ptr(), 2);
-        let out = tl_source_call(source, c("text").as_ptr(), c("{}").as_ptr());
-        let text: Value = serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
-        tl_free(out);
-        assert_eq!(text, json!("a\u{fffd}\nb"));
+        let text = source_call(source, "text", json!({}));
+        assert_eq!(text, Some(json!("a\u{fffd}\nb")));
         assert_eq!(tl_source_line_count(source), 2);
         tl_source_free(source);
     }
