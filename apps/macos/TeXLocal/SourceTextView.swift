@@ -736,7 +736,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     // MARK: the colours
 
-    /// Settings' Colour Theme.
+    /// Settings › Editor › Theme.
     var syntaxTheme = SyntaxTheme.overleaf {
         didSet { if syntaxTheme != oldValue { colour(from: 0) } }
     }
@@ -1546,7 +1546,7 @@ private extension NSString {
     }
 }
 
-/// The editor's syntax colours: Settings' Colour Theme. Text, braces and brackets are plain in all of them.
+/// The editor's syntax colours: Settings › Editor › Theme. Text, braces and brackets are plain in all of them.
 enum SyntaxTheme: String, CaseIterable, Identifiable {
     case overleaf, texstudio, system
 

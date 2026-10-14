@@ -8,6 +8,8 @@ on:
     paths: &paths
       - apps/macos/**
       - crates/**
+      - Cargo.toml
+      - Cargo.lock
       - web/**
       - package*.json
       - build.mjs
