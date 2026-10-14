@@ -35,7 +35,6 @@ pub struct DirListing {
     pub parent: Option<String>,
     pub dirs: Vec<String>,
     pub has_latexmk: bool,
-    pub roots: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -295,7 +294,6 @@ impl Service {
             parent: dir.parent().map(|p| p.to_string_lossy().into_owned()),
             dirs,
             has_latexmk: compile::has_latexmk(&dir),
-            roots: vec!["/".into()],
         })
     }
 

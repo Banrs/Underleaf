@@ -50,11 +50,12 @@ export function chooseTexFolder() {
       badge.hidden = !listing.hasLatexmk;
       path.classList.toggle('has-tex', listing.hasLatexmk);
       use.disabled = false;
-      roots.replaceChildren(...listing.roots.map((root) => el('button', {
+      // The server's system has one root.
+      roots.replaceChildren(el('button', {
         class: 'folder-root',
-        'aria-current': root === listing.path ? 'true' : null,
-        onclick: () => load(root),
-      }, root)));
+        'aria-current': listing.path === '/' ? 'true' : null,
+        onclick: () => load('/'),
+      }, '/'));
       // Keep keyboard focus in the list as its rows are replaced.
       const hadFocus = list.contains(document.activeElement);
       list.replaceChildren(

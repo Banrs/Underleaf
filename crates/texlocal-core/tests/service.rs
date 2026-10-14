@@ -556,7 +556,6 @@ async fn list_dirs_lists_visible_subfolders_by_name() {
     );
     assert_eq!(listing["dirs"], json!(["Alpha", "beta"]));
     assert_eq!(listing["hasLatexmk"], false);
-    assert!(!listing["roots"].as_array().unwrap().is_empty());
 
     let bin = fake_tex(&tmp.path().join("beta"));
     let tex = call(&service, "list_dirs", json!({ "path": bin })).await;
