@@ -291,6 +291,14 @@ final class ProjectModel {
         editor.textView.forwardSync = { [weak self] quietly in
             self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync(quietly: quietly) } } : nil
         }
+        if let saved {
+            panel.shown = saved.buildPanel
+            pdf.restorePage = saved.pdfPage
+            pdf.restoreZoom = saved.pdfZoom
+        }
+        // The PDF loads while the file is read and analysed, needing neither, and is shown before the
+        // workspace appears, so the pane doesn't open on its empty state and then change.
+        async let pdfShown = showPDFOnDisk()
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             try await tree.read()
@@ -299,11 +307,6 @@ final class ProjectModel {
             // Watched for other apps' edits and files, rather than saving over them.
             folderWatcher = FolderWatcher(folder: URL(fileURLWithPath: root)) { [weak self] in self?.folderChanged($0) }
             refreshSymbols()
-            if let saved {
-                panel.shown = saved.buildPanel
-                pdf.restorePage = saved.pdfPage
-                pdf.restoreZoom = saved.pdfZoom
-            }
             let restored = saved?.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
             // The workspace is installed only after its first outline is ready.
@@ -316,8 +319,7 @@ final class ProjectModel {
             if app?.project === self { await app?.close() }
             return
         }
-        // The PDF first, so the pane doesn't open on its empty state and then change.
-        let hasPDF = await showPDFOnDisk()
+        let hasPDF = await pdfShown
         guard !closed else { return }
         initialLoadComplete = true
         if !hasPDF, autoCompile { await compile(auto: true) }

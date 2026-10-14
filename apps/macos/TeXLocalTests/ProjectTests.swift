@@ -1,5 +1,6 @@
 import AppKit
 import os
+import PDFKit
 import Testing
 @testable import TeXLocal
 
@@ -353,6 +354,21 @@ final class ProjectFlowTests {
     func aProjectThatCannotLoadStaysClosed() async throws {
         await app.open("No Such Project \(UUID().uuidString.prefix(8))")
         #expect(app.project == nil && app.alert != nil && !app.isOpening)
+    }
+
+    /// A project whose PDF is built opens with it shown, and with the build panel as it was left:
+    /// the PDF loads as the main file is read, and is there when the workspace appears.
+    @Test(.timeLimit(.minutes(1)))
+    func aProjectOpensOnItsBuiltPDF() async throws {
+        let (info, folder) = try await project()
+        try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
+        #expect(try textPDF(["one", "two", "three"]).write(to: folder.appending(path: "build/main.pdf")))
+        let saved = SavedWorkspace(project: info.id, file: nil, line: 1, buildPanel: true, pdfPage: 2, pdfZoom: nil)
+        await app.open(info.id, restoring: saved)
+        let project = try #require(app.project)
+        #expect(project.initialLoadComplete && project.openPath == info.mainFile && project.panel.shown)
+        #expect(project.hasPDF && project.pdf.view.document?.pageCount == 3)
+        await app.close()
     }
 
     /// An item that can't be copied in and a rename the core refuses are each an alert that names
