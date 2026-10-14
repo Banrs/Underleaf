@@ -855,7 +855,7 @@ final class ProjectModel {
 
     /// The change shows at once, from a call made as the control is set: the core's answer replaces
     /// it, and a refusal puts back what was there.
-    func patchSettings(_ patch: [String: Any]) async -> Bool {
+    func patchSettings(_ patch: [String: any Sendable]) async -> Bool {
         let before = settings
         settings?.apply(patch)
         let done = await mutate("Couldn’t Change the Project’s Settings") { model in
@@ -869,7 +869,7 @@ final class ProjectModel {
     }
 
     /// A setting that changes the build: the build follows it when Compile Automatically is on.
-    func setBuildOption(_ patch: [String: Any]) async {
+    func setBuildOption(_ patch: [String: any Sendable]) async {
         if await patchSettings(patch), autoCompile { await compile(auto: true) }
     }
 
@@ -1011,7 +1011,7 @@ final class ProjectModel {
     }
 
     /// SyncTeX for the pages shown: TeXpresso's, through its session, or the last build's.
-    private func syncArguments(_ arguments: [String: Any]) -> [String: Any] {
+    private func syncArguments(_ arguments: [String: any Sendable]) -> [String: any Sendable] {
         guard livePDF, let owner = texpresso.owner else { return arguments }
         return arguments.merging(["live": true, "session": owner]) { $1 }
     }
@@ -1021,8 +1021,8 @@ final class ProjectModel {
         await restart(&syncTask) { [self] in
             do {
                 // A nil word bridges as null, which the core reads as none.
-                let args = syncArguments(["id": id, "page": page, "x": x, "y": y, "word": word?.text as Any, "offset": word?.offset as Any,
-                                          "context": word?.context as Any, "contextOffset": word?.contextOffset as Any])
+                let args = syncArguments(["id": id, "page": page, "x": x, "y": y, "word": word?.text, "offset": word?.offset,
+                                          "context": word?.context, "contextOffset": word?.contextOffset])
                 let loc = try await core.call("synctex_inverse", args, as: InverseLoc.self)
                 guard !Task.isCancelled, !closed else { return }
                 await open(loc.file, line: loc.line, column: loc.column)
@@ -1192,7 +1192,7 @@ final class ProjectModel {
     /// Taken names are asked about first (`importClash`), then copied again
     /// with the answer: "replace" (old ones to the Trash) or "keepBoth".
     func importFiles(_ urls: [URL], into dir: String = "", conflict: String? = nil) async {
-        var args: [String: Any] = ["id": id, "dir": dir, "paths": urls.map(\.path)]
+        var args: [String: any Sendable] = ["id": id, "dir": dir, "paths": urls.map(\.path)]
         args["conflict"] = conflict
         do {
             let clashes = try await core.call("import_files", args, as: Imported.self).existing.map(\.path)

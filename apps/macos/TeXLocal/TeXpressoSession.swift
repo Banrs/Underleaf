@@ -112,11 +112,11 @@ final class TeXpressoSession {
     /// The core, as the session calls it.
     struct Calls {
         /// Start, stop, rescan and status, which answer with the status.
-        var status: @MainActor (String, [String: Any]) async throws -> TeXpressoStatus
+        var status: @MainActor (String, [String: any Sendable]) async throws -> TeXpressoStatus
         /// A file's whole text.
-        var update: @MainActor ([String: Any]) async throws -> Void
+        var update: @MainActor ([String: any Sendable]) async throws -> Void
         /// An edit, the view or the caret, answered at once on the main thread.
-        var now: @MainActor (String, [String: Any]) throws -> Void
+        var now: @MainActor (String, [String: any Sendable]) throws -> Void
         /// Blocks until the session has news, on the session's thread.
         var wait: @Sendable ([String: any Sendable]) throws -> TeXpressoEvents
     }
@@ -255,9 +255,9 @@ final class TeXpressoSession {
             do {
                 // A patched build writes the document for the PDF pane rather than opening a window;
                 // TeXpresso's own window, which draws with MuPDF, is the fallback Settings offers.
-                var arguments: [String: Any] = ["id": session.id, "files": start.files.map { ["path": $0.path, "text": $0.text] }, "pdf": session.inPane]
+                var arguments: [String: any Sendable] = ["id": session.id, "files": start.files.map { ["path": $0.path, "text": $0.text] }, "pdf": session.inPane]
                 if let view = session.viewed { arguments["view"] = [view.lowerBound, view.upperBound] }
-                if let caret = start.caret { arguments["caret"] = ["path": caret.path, "offset": caret.offset] }
+                if let caret = start.caret { arguments["caret"] = ["path": caret.path, "offset": caret.offset] as [String: any Sendable] }
                 if replacing {
                     guard let owner = session.owner else { session.ended(); return }
                     arguments["session"] = owner

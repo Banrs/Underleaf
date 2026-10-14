@@ -61,7 +61,7 @@ nonisolated struct ProjectSettings: Decodable {
     var stopOnFirstError: Bool
 
     /// What `set_settings` does with `patch`, so a change can show before the core answers.
-    mutating func apply(_ patch: [String: Any]) {
+    mutating func apply(_ patch: [String: any Sendable]) {
         mainFile = patch["mainFile"] as? String ?? mainFile
         engine = patch["engine"] as? String ?? engine
         shellEscape = patch["shellEscape"] as? Bool ?? shellEscape

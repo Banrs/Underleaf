@@ -34,11 +34,11 @@ private final class Feed: Sendable {
 @MainActor
 private final class FakeCore {
     var commands: [String] = []
-    var starts: [[String: Any]] = []
+    var starts: [[String: any Sendable]] = []
     /// Each edit as "path start remove text", each whole text as "path=text".
     var sent: [String] = []
     var views: [[Int]] = [], carets: [Int] = []
-    var status: @MainActor (String, [String: Any]) async throws -> TeXpressoStatus = { command, _ in
+    var status: @MainActor (String, [String: any Sendable]) async throws -> TeXpressoStatus = { command, _ in
         FakeCore.status(running: command != "texpresso_stop")
     }
     var update: @MainActor (String, String) async throws -> Void = { _, _ in }

@@ -91,30 +91,24 @@ final class Core {
         return CoreError(message: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
     }
 
-    private nonisolated static func json(_ args: [String: Any]) throws -> String {
+    /// A command's arguments: JSON's strings, numbers, booleans, null (a nil) and collections of them.
+    private nonisolated static func json(_ args: [String: any Sendable]) throws -> String {
         String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
     }
 
-    /// A command's arguments, taken to the GCD thread to be encoded there: escaping a whole
-    /// document's text for an autosave took 3 ms of the main actor's time per megabyte. Unchecked,
-    /// as a dictionary of `Any` can't be proved Sendable: it is a value nothing changes once it is
-    /// handed over, and what it holds is JSON's, strings, numbers, booleans, null and collections of them.
-    private nonisolated struct Arguments: @unchecked Sendable {
-        let value: [String: Any]
-    }
-
-    private func result<T: Decodable & Sendable>(_ command: String, _ args: [String: Any], as: T.Type) async throws -> T? {
+    /// The arguments are taken to the GCD thread to be encoded there: escaping a whole
+    /// document's text for an autosave took 3 ms of the main actor's time per megabyte.
+    private func result<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable], as: T.Type) async throws -> T? {
         guard let handle else { throw Self.unavailable }
-        let args = Arguments(value: args)
         return try await withCheckedThrowingContinuation { done in
             DispatchQueue.global(qos: .userInitiated).async {
-                done.resume(with: Result { try Core.answer(handle, command, Core.json(args.value)) })
+                done.resume(with: Result { try Core.answer(handle, command, Core.json(args)) })
             }
         }
     }
 
     /// A command the core answers at once, where it's asked: a keystroke's edit doesn't wait for a thread.
-    func now(_ command: String, _ args: [String: Any]) throws {
+    func now(_ command: String, _ args: [String: any Sendable]) throws {
         guard let handle else { throw Self.unavailable }
         let _: Ignored? = try Self.answer(handle, command, try Self.json(args))
     }
@@ -128,12 +122,12 @@ final class Core {
         }
     }
 
-    func call<T: Decodable & Sendable>(_ command: String, _ args: [String: Any] = [:], as: T.Type) async throws -> T {
+    func call<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable] = [:], as: T.Type) async throws -> T {
         guard let ok = try await result(command, args, as: T.self) else { throw Self.fault(command, "no answer") }
         return ok
     }
 
-    func perform(_ command: String, _ args: [String: Any]) async throws {
+    func perform(_ command: String, _ args: [String: any Sendable]) async throws {
         _ = try await result(command, args, as: Ignored.self)
     }
 
