@@ -11,20 +11,23 @@
 extern "C" {
 #endif
 
+/* A pointer may be NULL only where it is marked _Nullable. */
+#pragma clang assume_nonnull begin
+
 typedef struct TlHandle TlHandle;
 
 /* Open the service over the library folder data_dir, a UTF-8 path the host
  * chooses. Returns NULL for a NULL data_dir, or on failure. */
-TlHandle *tl_open(const char *data_dir);
+TlHandle *_Nullable tl_open(const char *_Nullable data_dir);
 
 /* Blocking; call off the UI thread. args_json may be NULL. Returns
  * {"ok": value} or {"error": message, "status": code}. Free with tl_free. */
-char *tl_call(const TlHandle *handle, const char *command, const char *args_json);
+char *_Nullable tl_call(const TlHandle *handle, const char *command, const char *_Nullable args_json);
 
-void tl_free(char *text);
+void tl_free(char *_Nullable text);
 
 /* Stops running compiles and live previews. No call may be in flight. */
-void tl_close(TlHandle *handle);
+void tl_close(TlHandle *_Nullable handle);
 
 /* The source editor's mirror of a file's text (crates/texlocal-syntax).
  * Calls on one TlSource must not overlap: one thread at a time, as the Swift
@@ -34,12 +37,12 @@ void tl_close(TlHandle *handle);
 typedef struct TlSource TlSource;
 
 /* Text is len bytes of UTF-8, so it may hold U+0000; bytes that aren't UTF-8
- * read as U+FFFD. Never NULL. A call on a NULL source, or one that fails
- * inside, answers nothing, 0, no runs or NULL. */
-TlSource *tl_source_new(const uint8_t *text, size_t len);
+ * read as U+FFFD. Never NULL. A call that fails inside answers nothing, 0,
+ * no runs or NULL. */
+TlSource *tl_source_new(const uint8_t *_Nullable text, size_t len);
 
 /* The editor replaced length units at start with text. */
-void tl_source_edit(TlSource *source, uint32_t start, uint32_t length, const uint8_t *text, size_t len);
+void tl_source_edit(TlSource *source, uint32_t start, uint32_t length, const uint8_t *_Nullable text, size_t len);
 
 uint32_t tl_source_line_at(const TlSource *source, uint32_t offset);
 uint32_t tl_source_line_start(const TlSource *source, uint32_t line);
@@ -49,8 +52,8 @@ uint32_t tl_source_line_count(const TlSource *source);
  * (HighlightKind's order) for each; *count is the number of values. Free
  * them with tl_source_free_runs, which takes NULL as nothing. A NULL count
  * gets NULL, so there is nothing to free. */
-uint32_t *tl_source_highlights(TlSource *source, uint32_t start, uint32_t length, size_t *count);
-void tl_source_free_runs(uint32_t *runs, size_t count);
+uint32_t *_Nullable tl_source_highlights(TlSource *source, uint32_t start, uint32_t length, size_t *_Nullable count);
+void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 
 /* "completions", "toggle_comment", "indent", "set_heading", "insert_block",
  * "insert_symbol", "math_at", "text_styles", "not_prose" or "text", with a
@@ -59,9 +62,11 @@ void tl_source_free_runs(uint32_t *runs, size_t count);
  * "set_symbols" keeps the project's labels and citations, {"labels": [...],
  * "citations": [...]}, with the source, answering null: "completions" offers
  * them in \ref{ and \cite{ until they are set again. A new source has none. */
-char *tl_source_call(const TlSource *source, const char *command, const char *args_json);
+char *_Nullable tl_source_call(const TlSource *source, const char *command, const char *args_json);
 
-void tl_source_free(TlSource *source);
+void tl_source_free(TlSource *_Nullable source);
+
+#pragma clang assume_nonnull end
 
 #ifdef __cplusplus
 }
