@@ -59,15 +59,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if !setsCursor(with: event) { super.cursorUpdate(with: event) }
     }
 
-    /// The open file's text as the core mirrors it; every change reaches it.
-    private(set) var document = SourceDocument(text: "")
+    /// The open file's text as the core mirrors it; every change reaches it. A new one, which a
+    /// load makes, is given the project's symbols, which it keeps for completion.
+    private(set) var document = SourceDocument(text: "") {
+        didSet { document.setSymbols(symbols) }
+    }
     /// Only active IME composition needs a snapshot; ordinary edits and undo are live.
     private var beforeMarkedText: String?
     var committedString: String { hasMarkedText() ? beforeMarkedText ?? string : string }
     /// The storage's own UTF-16 units, read in place: `string` bridges the whole text to a Swift
     /// string each time it's asked, and a caret move, a key and a draw all ask.
     private var text: NSString { textStorage?.mutableString ?? "" }
-    var symbols = Symbols(citations: [], labels: [])
+    /// The project's labels and citations, which completion offers from the mirror.
+    var symbols = Symbols(citations: [], labels: []) {
+        didSet { document.setSymbols(symbols) }
+    }
     /// What dropping a file does, or nil to refuse it.
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
 
@@ -1130,7 +1136,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private func complete(explicit: Bool) {
         guard selectedRange().length == 0, selectedRanges.count == 1, !hasMarkedText(),
-              let found = document.completions(caret: caret, explicit: explicit, symbols: symbols) else {
+              let found = document.completions(caret: caret, explicit: explicit) else {
             return closeCompletions()
         }
         offered = found

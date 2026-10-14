@@ -337,6 +337,53 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
     }
 }
 
+/// The labels and citations are the source's, set when they change rather
+/// than sent with each completions call: offered until set again, and none on
+/// a new source.
+#[test]
+fn completions_offer_the_symbols_set_on_the_source() {
+    let c = |s: &str| CString::new(s).unwrap();
+    let offered = |source: *mut TlSource, caret: usize| unsafe {
+        let args = json!({ "caret": caret, "explicit": false }).to_string();
+        let out = tl_source_call(source, c("completions").as_ptr(), c(&args).as_ptr());
+        let value: Value = serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
+        tl_free(out);
+        value["items"].as_array().map_or(vec![], |items| {
+            items
+                .iter()
+                .map(|i| i["label"].as_str().unwrap().to_owned())
+                .collect()
+        })
+    };
+    let set = |source: *mut TlSource, symbols: Value| unsafe {
+        let out = tl_source_call(
+            source,
+            c("set_symbols").as_ptr(),
+            c(&symbols.to_string()).as_ptr(),
+        );
+        assert_eq!(CStr::from_ptr(out).to_str(), Ok("null"));
+        tl_free(out);
+    };
+    unsafe {
+        let text = "\\cite{sm} \\ref{fig";
+        let source = tl_source_new(text.as_ptr(), text.len());
+        assert!(offered(source, 8).is_empty(), "a new source has none");
+        set(
+            source,
+            json!({ "labels": ["fig:one", "sec:two"], "citations": ["smith2020", "jones"] }),
+        );
+        assert_eq!(offered(source, 8), ["smith2020"]);
+        assert_eq!(offered(source, 18), ["fig:one"]);
+        // Kept through edits, and replaced whole.
+        tl_source_edit(source, 0, 0, "x ".as_ptr(), 2);
+        assert_eq!(offered(source, 10), ["smith2020"]);
+        set(source, json!({ "citations": ["smyth"] }));
+        assert_eq!(offered(source, 10), ["smyth"]);
+        assert!(offered(source, 20).is_empty());
+        tl_source_free(source);
+    }
+}
+
 #[test]
 fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
     let c = |s: &str| CString::new(s).unwrap();

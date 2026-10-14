@@ -55,7 +55,10 @@ void tl_source_free_runs(uint32_t *runs, size_t count);
 /* "completions", "toggle_comment", "indent", "set_heading", "insert_block",
  * "insert_symbol", "math_at", "text_styles", "not_prose" or "text", with a
  * JSON object of arguments. Returns the result's JSON, or NULL for an unknown
- * command or arguments; free it with tl_free. */
+ * command or arguments; free it with tl_free.
+ * "set_symbols" keeps the project's labels and citations, {"labels": [...],
+ * "citations": [...]}, with the source, answering null: "completions" offers
+ * them in \ref{ and \cite{ until they are set again. A new source has none. */
 char *tl_source_call(const TlSource *source, const char *command, const char *args_json);
 
 void tl_source_free(TlSource *source);

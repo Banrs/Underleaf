@@ -43,8 +43,9 @@ final class SourceDocument {
         }
     }
 
-    /// The names commands take (packages, citations, labels, files) in the
-    /// paragraphs a range touches, which aren't prose.
+    /// What a spelling checker passes over where a range is: maths, literal code, and the names
+    /// commands take (packages, citations, labels, files), each from its start, however far
+    /// before the range.
     func notProse(in range: NSRange) -> [NSRange] {
         let ranges: [[String: Int]] = call("not_prose", ["selection": Self.json(range)]) ?? []
         return ranges.map { NSRange(location: $0["start"] ?? 0, length: $0["length"] ?? 0) }
@@ -52,8 +53,15 @@ final class SourceDocument {
 
     /// What to offer at the caret, if anything; `explicit` when the user
     /// asked, which offers commands after a bare backslash too.
-    func completions(caret: Int, explicit: Bool, symbols: Symbols) -> Completions? {
-        call("completions", ["caret": caret, "explicit": explicit, "labels": symbols.labels, "citations": symbols.citations])
+    func completions(caret: Int, explicit: Bool) -> Completions? {
+        call("completions", ["caret": caret, "explicit": explicit])
+    }
+
+    /// The project's labels and citations, which completions offer in `\ref{` and `\cite{`
+    /// until they are set again: kept with the mirror, not sent with each key's completions,
+    /// a bibliography being thousands of keys. A new document has none.
+    func setSymbols(_ symbols: Symbols) {
+        tl_free(send("set_symbols", ["labels": symbols.labels, "citations": symbols.citations]))
     }
 
     /// "%" comments on or off for the lines the selections touch, in order.
@@ -100,9 +108,14 @@ final class SourceDocument {
         ["start": range.location, "length": range.length]
     }
 
+    /// The command's JSON answer, to free with `tl_free`, or nil.
+    private func send(_ command: String, _ args: [String: Any]) -> UnsafeMutablePointer<CChar>? {
+        guard let json = try? JSONSerialization.data(withJSONObject: args) else { return nil }
+        return tl_source_call(raw, command, String(decoding: json, as: UTF8.self))
+    }
+
     private func call<T: Decodable>(_ command: String, _ args: [String: Any]) -> T? {
-        guard let json = try? JSONSerialization.data(withJSONObject: args),
-              let out = tl_source_call(raw, command, String(decoding: json, as: UTF8.self)) else { return nil }
+        guard let out = send(command, args) else { return nil }
         defer { tl_free(out) }
         return try? JSONDecoder().decode(T.self, from: Data(bytes: out, count: strlen(out)))
     }
