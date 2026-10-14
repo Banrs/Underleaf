@@ -1,9 +1,11 @@
-# Underleaf handoff — 12 October 2026
+# Underleaf handoff — 15 October 2026
 
 ## Branches
 
-`main` holds the work, and there is no other branch: the refactors' branches were merged
-into it and deleted on 12 October.
+`main` holds the work. The refactor of 14 and 15 October (backend, Swift and SwiftUI, HIG,
+tests, the gutter, edition 2024) was merged into it from `refactor/integration`, and its
+branches deleted; `frontend/audit-rewrite`, an ancestor of `main`, is left only because a
+checkout still has it.
 
 ## The Mac app's shape
 
@@ -54,15 +56,17 @@ into it and deleted on 12 October.
   So it ends at the editor's edges and goes over its line where there is no room under it;
   in an editor too short for either it takes the side with more room, with the whole rows
   that has.
-  A build's issues are on their lines (`SourceTextView`, "the build's issues"): the build
-  panel's symbol in the gutter, a neutral band over the whole paragraph in the current line's
-  shape (`tertiarySystemFill`; Xcode 27.1's is neutral too), the message at the end of the
-  paragraph's last line in the system font, cut or left out where there is no room, with a
-  help tag and a click that opens the panel on it, and an undefined command underlined in
-  red where the message names it. The message is a small view over TextKit's own, so a
+  A build's issues are on their lines (`SourceTextView`, "the build's issues"), as Xcode
+  sets them (Daniel, 14 October: "Just do it like Xcode"): a gutter of numbers only, a
+  neutral band over the whole paragraph in the current line's shape (`tertiarySystemFill`),
+  and at the end of its first line a box (`IssueMessageView`) as tall as the line, edged in
+  the separators' colour, holding the symbol at the text's size and, after a divider, the
+  message in the system font, cut short, or the symbol alone, where there is no room; a help
+  tag and a click open the panel on it, and an undefined command is underlined in red where
+  the message names it. The box's measures follow the text's size (Daniel, 15 October: "Use
+  system defaults and ensure minimal code"). It is a small view over TextKit's own, so a
   selection doesn't cover it; underline styles set as rendering attributes aren't drawn
-  (27.2), so the underline is drawn under the text. Xcode's boxed annotation was not copied
-  (Daniel: "Dont just blindly copy xcode").
+  (27.2), so the underline is drawn under the text.
 - **Status bar**: the source/PDF columns' bottom accessory at Xcode's measured spacing (14 pt
   in, 9 between items, 36 high; `BarMetrics`). It draws no ground of its own: under it is
   AppKit's own scroll edge, the accessory's automatic style (its default), as under the
@@ -132,14 +136,14 @@ into it and deleted on 12 October.
 
 Platform quirks met on the way (27.2) are in the code's comments where they're handled.
 
-## Validation, 12 October
+## Validation, 15 October
 
 CI: `ci.yml` runs the web tests and bundle and the Rust core's rustfmt, clippy and tests on
 Linux; `macos-app.yml` builds the app, checks the core is linked statically, runs the native
 tests and fails a run in which none passed.
 
-- Native: 172 tests in 21 suites pass. `npm test`: 183. Rust: 242, with rustfmt and clippy
-  `-D warnings` clean. `npm run verify:texpresso`: 25 checks against the patched engine, both
+- Native: 181 tests in 21 suites pass, in 22.5 s. `npm test`: 182. Rust (edition 2024): 247,
+  with rustfmt and clippy `-D warnings` clean. `npm run verify:texpresso`: 25 checks against the patched engine, both
   of its programs built from the patched source.
 - Live preview, measured from 60 fps screen recordings of a Release build on a one-page
   document: the pane shows a key's page one frame after the editor shows the glyph (median
