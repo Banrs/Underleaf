@@ -18,37 +18,28 @@ nonisolated enum CompletionKind: String, Decodable {
 }
 
 /// The core's completions under the typed text, drawn as the system draws a menu (an `NSMenu`
-/// measured on 27.2, 2026-10-12): Liquid Glass with 13 pt corners, 24 pt rows at the 13 pt font
-/// 5 pt in from its edges, the chosen row in the accent colour with 8 pt corners and its text
-/// white 10 pt into it, under a menu's shadow. The labels are the editor's font, what's typed of
-/// each heavier, and start under the typed word.
+/// measured on 27.2): Liquid Glass with 13 pt corners, rows 5 pt in from its edges, the chosen
+/// one in the accent colour with 8 pt corners and white text 10 pt into it, under a menu's
+/// shadow; the labels in the editor's font, what's typed of each heavier. At most 8 rows.
 ///
-/// It is a view over the editor, in the document's window, and not a window of its own: glass in
-/// a borderless panel that isn't key draws as a flat grey slab, a menu's material there as an
-/// opaque beige one, and AppKit's own completion list for a text view is still its square
-/// box from before the glass (all 27.2). So it ends at the editor's edges, as Xcode's opaque
-/// panel, which this was a copy of until Daniel called that "very bad and not native", does
-/// not. Typing stays in the document, which moves the selection and accepts it. At most 8 rows.
+/// A view over the editor, not a window: glass in a borderless panel that isn't key draws as a
+/// flat slab, and AppKit's own completion list is still its square box (27.2). Typing stays in
+/// the document, which moves the selection and accepts it.
 final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     /// A click chose this row.
     var clicked: (Int) -> Void = { _ in }
     var selection: Int { max(table.selectedRow, 0) }
 
     private let table = NSTableView()
-    /// The glass. Sized from the start, so that its views have margins to keep as it's resized.
+    /// Sized from the start, so that its views have margins to keep as it's resized.
     private let surface = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: leastWidth, height: leastWidth))
     private var labels: [String] = []
     /// How much of every label is typed, in UTF-16 units.
     private var typed = 0
     private var kind = CompletionKind.command
-    /// The labels' font, and what's typed of each in its bold, worked out once for all rows.
-    private var fonts = CompletionList.fonts(for: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
-    private static func fonts(for font: NSFont) -> (regular: NSFont, bold: NSFont) {
-        (font, NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask))
-    }
-    /// At most this many rows show; the rest scroll.
+    private var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    private var boldFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .bold)
     private static let shownRows = 8
-
     private static let radius: CGFloat = 13, margin: CGFloat = 5, highlightRadius: CGFloat = 8, textInset: CGFloat = 10
     /// What a narrow editor leaves it at least, where its labels need as much.
     private static let leastWidth: CGFloat = 160
@@ -114,9 +105,9 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         self.labels = labels
         self.typed = typed
         self.kind = kind
-        fonts = Self.fonts(for: font)
-        // A menu's 24 pt row at its 13 pt text, for the editor's font: 8 pt and its line to a whole
-        // point, 16 pt at 13.
+        self.font = font
+        boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        // A menu's 24 pt row at its 13 pt text: 8 pt and the line to a whole point.
         table.rowHeight = (font.ascender - font.descender + font.leading).rounded(.up) + 8
         table.reloadData()
         table.selectRowIndexes([0], byExtendingSelection: false)
@@ -241,9 +232,8 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// A row's label in the editor's font, what's typed of it heavier.
     private func label(_ row: Int) -> NSAttributedString {
         let colour: NSColor = row == table.selectedRow ? .alternateSelectedControlTextColor : .labelColor
-        let label = NSMutableAttributedString(string: labels[row], attributes: [.font: fonts.regular, .foregroundColor: colour, .paragraphStyle: Self.oneLine])
-        label.addAttribute(.font, value: fonts.bold,
-                           range: NSRange(location: 0, length: min(typed, label.length)))
+        let label = NSMutableAttributedString(string: labels[row], attributes: [.font: font, .foregroundColor: colour, .paragraphStyle: Self.oneLine])
+        label.addAttribute(.font, value: boldFont, range: NSRange(location: 0, length: min(typed, label.length)))
         return label
     }
 
