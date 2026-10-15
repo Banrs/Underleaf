@@ -1,17 +1,9 @@
 import AppKit
 import SwiftUI
 
-nonisolated struct SyncTeXWord: Equatable, Sendable {
-    let text: String
-    let offset: Int
-    let context: String
-    let contextOffset: Int
-}
-
 final class SourceEditor: NSObject, NSTextViewDelegate {
     let textView = SourceTextView.plainDocument()
     let scrollView = NSScrollView()
-    var onChanged: () -> Void = {}
     var onCursor: (Int, Int) -> Void = { _, _ in }
     var onScroll: (Int) -> Void = { _ in }
 
@@ -73,13 +65,14 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     // MARK: - Files
 
-    func open(path: String, text: String, focus: Bool) {
+    /// `source` is the session's document of `path`, which holds `text`.
+    func open(path: String, text: String, source: SourceDocument? = nil, focus: Bool) {
         if let current = self.path { kept[current] = (textView.string, undo, textView.selectedRange(), textView.shownTop) }
         // By UTF-16, as the kept ranges count: Swift's `==` also holds for a file rewritten in another Unicode normal form,
         // whose undo stack would then replace the wrong ranges.
         let prior = kept[path].flatMap { ($0.text as NSString).isEqual(to: text) ? $0 : nil }
         self.path = path
-        textView.load(text)
+        textView.load(text, source: source)
         undo = prior?.undo ?? UndoManager()
         textView.setSelectedRange(prior?.selection ?? NSRange(location: 0, length: 0))
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
@@ -90,8 +83,15 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         if focus { self.focus() }
     }
 
+    /// Another app's text for the file shown, from the session: its undo was the old text's.
+    func reload(text: String) {
+        undo = UndoManager()
+        textView.reload(text)
+        reportCursor()
+    }
+
     var document: (path: String, text: String)? {
-        path.map { ($0, textView.committedString) }
+        path.map { ($0, textView.string) }
     }
 
     func forget(path: String) {
@@ -114,20 +114,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     var currentLine: Int {
         textView.document.line(at: textView.selectedRange().location)
-    }
-
-    var currentSyncWord: SyncTeXWord? {
-        let source = textView.text
-        let position = textView.selectedRange().location
-        let caret = NSRange(location: position, length: 0)
-        let range = textView.selectionRange(forProposedRange: caret, granularity: .selectByWord)
-        let selected = source.substring(with: range)
-        let word = selected.trimmingCharacters(in: .alphanumerics.inverted)
-        guard !word.isEmpty else { return nil }
-        let start = range.location + (selected as NSString).range(of: word).location
-        let line = source.lineRange(for: caret)
-        return SyncTeXWord(text: word, offset: min(max(position - start, 0), (word as NSString).length - 1),
-                           context: source.substring(with: line), contextOffset: start - line.location)
     }
 
     var currentColumn: Int { textView.selectedRange().location - textView.document.lineStart(currentLine) }
@@ -177,7 +163,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     func textDidChange(_ notification: Notification) {
         changes.count += 1
-        onChanged()
     }
 
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
@@ -243,7 +228,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     @discardableResult
     func perform(_ command: EditorCommand, _ argument: String? = nil, title: String? = nil) -> Bool {
         guard path != nil, textView.isEditable else { return false }
-        let document = textView.document, selection = textView.selectedRange()
+        let document = textView.document, selection = textView.selectedRange(), selections = textView.selectedRanges.map(\.rangeValue)
         let inserting = title.map { String(localized: "Insert \($0)") } ?? String(localized: "Insert")
         let insert = { (insertion: Insertion?, name: String) in
             guard let insertion else { return false }
@@ -252,21 +237,22 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             return true
         }
         switch command {
-        case .bold: toggle(\.bold, "\\textbf{", named: String(localized: "Bold"))
-        case .italic: toggle(\.italic, "\\textit{", named: String(localized: "Italic"))
-        case .underline: toggle(\.underline, "\\underline{", named: String(localized: "Underline"))
-        case .math: wrap("$", "$", named: String(localized: "Inline Math"))
-        case .displayMath: wrap("\\[", "\\]", named: String(localized: "Display Math"))
+        case .bold: textView.apply(document.toggle(.bold, selections), named: String(localized: "Bold"))
+        case .italic: textView.apply(document.toggle(.italic, selections), named: String(localized: "Italic"))
+        case .underline: textView.apply(document.toggle(.underline, selections), named: String(localized: "Underline"))
+        case .math: textView.apply(document.wrap(selections, in: "$$0$"), named: String(localized: "Inline Math"))
+        case .displayMath: textView.apply(document.wrap(selections, in: "\\[$0\\]"), named: String(localized: "Display Math"))
         case .inline:
             // A template such as \ref{$0}: "$0" is where the selection goes.
-            let parts = ((argument ?? "") + "$0").components(separatedBy: "$0")
-            wrap(parts[0], parts[1...].dropLast().joined(separator: "$0"), named: inserting)
+            textView.apply(document.wrap(selections, in: argument ?? ""), named: inserting)
             // Empty braces: the labels or citations for them, once the menu has closed.
             if selection.length == 0 { Task { self.textView.complete(nil) } }
         case .comment:
-            textView.apply(document.toggleComment(textView.selectedRanges.map(\.rangeValue)), named: String(localized: "Comment"))
+            textView.apply(document.toggleComment(selections), named: String(localized: "Comment"))
         case .moveLineUp, .moveLineDown:
-            guard moveLines(up: command == .moveLineUp) else { return false }
+            let up = command == .moveLineUp
+            guard textView.apply(document.moveLines(selections, up: up),
+                                 named: up ? String(localized: "Move Line Up") : String(localized: "Move Line Down")) else { return false }
         case .heading:
             guard insert(document.setHeading(caret: selection.location, command: argument ?? ""), String(localized: "Section Level")) else { return false }
         case .symbol:
@@ -278,63 +264,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         return true
     }
 
-    private func moveLines(up: Bool) -> Bool {
-        let text = textView.text, length = text.length
-        let selections = textView.selectedRanges.map(\.rangeValue)
-        // Each selection's whole lines; one ending at a line's start doesn't take that line.
-        var runs: [NSRange] = []
-        for selection in selections {
-            let run = text.lineRange(for: selection)
-            if let previous = runs.last, run.location <= NSMaxRange(previous) {
-                runs[runs.count - 1] = NSUnionRange(previous, run)
-            } else {
-                runs.append(run)
-            }
-        }
-        var edits: [TextEdit] = [], shifts: [(run: NSRange, by: Int)] = []
-        for run in runs.sorted(by: { $0.location < $1.location }) {
-            // The empty line after a final line break has nothing to move.
-            guard run.length > 0, up ? run.location > 0 : NSMaxRange(run) < length else { return false }
-            let neighbour = text.lineRange(for: NSRange(location: up ? run.location - 1 : NSMaxRange(run), length: 0))
-            let whole = NSUnionRange(run, neighbour)
-            // The lines' text trades places; the line ends stay where they were, so a last line without one keeps none.
-            var lines: [(text: String, end: String)] = []
-            text.enumerateSubstrings(in: whole, options: [.byLines, .substringNotRequired]) { _, line, withEnd, _ in
-                let end = NSRange(location: NSMaxRange(line), length: NSMaxRange(withEnd) - NSMaxRange(line))
-                lines.append((text.substring(with: line), text.substring(with: end)))
-            }
-            let moved = up ? Array(lines.dropFirst() + lines.prefix(1)) : Array(lines.suffix(1) + lines.dropLast())
-            edits.append(TextEdit(whole, zip(moved, lines).map { $0.text + $1.end }.joined()))
-            let newStart = up ? whole.location : whole.location + (moved[0].text + lines[0].end).utf16.count
-            shifts.append((run, newStart - run.location))
-        }
-        textView.apply(edits, named: up ? String(localized: "Move Line Up") : String(localized: "Move Line Down"))
-        textView.setSelectedRanges(selections.map { selection in
-            let by = shifts.first { NSLocationInRange(selection.location, $0.run) || selection.location == NSMaxRange($0.run) && selection.length == 0 && NSMaxRange($0.run) == length }?.by ?? 0
-            return NSValue(range: NSRange(location: selection.location + by, length: selection.length))
-        }, affinity: .downstream, stillSelecting: false)
-        textView.scrollRangeToVisible(textView.selectedRange())
-        return true
-    }
-
     var textStyles: TextStyles {
         path == nil ? TextStyles() : textView.document.textStyles(textView.selectedRange())
-    }
-
-    private func toggle(_ style: KeyPath<TextStyles, [TextEdit]?>, _ command: String, named name: String) {
-        if let unwrap = textStyles[keyPath: style] {
-            textView.apply(unwrap, named: name)
-        } else {
-            wrap(command, "}", named: name)
-        }
-    }
-
-    private func wrap(_ prefix: String, _ suffix: String, named name: String) {
-        let selection = textView.selectedRange()
-        let selected = textView.text.substring(with: selection)
-        let edit = TextEdit(selection, prefix + selected + suffix)
-        textView.apply([edit], named: name,
-                       select: NSRange(location: selection.location + (prefix as NSString).length, length: selection.length))
     }
 }
 

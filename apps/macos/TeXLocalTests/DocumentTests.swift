@@ -17,94 +17,6 @@ struct SyncTeXGeometryTests {
 }
 
 @MainActor
-struct OutlineTests {
-    private func outline(_ headings: String...) -> [OutlineItem] {
-        headings.enumerated().map { index, heading in
-            let parts = heading.split(separator: ":", maxSplits: 1)
-            return OutlineItem(id: index, level: Int(parts[0])!, title: String(parts[1]), line: index + 1, file: "main.tex")
-        }
-    }
-
-    @Test func theCurrentHeadingFollowsTheFile() {
-        let project = [OutlineItem(id: 0, level: 1, title: "A", line: 1, file: "main.tex"),
-                       OutlineItem(id: 1, level: 2, title: "A1", line: 3, file: "a.tex"),
-                       OutlineItem(id: 2, level: 2, title: "A2", line: 5, file: "a.tex"),
-                       OutlineItem(id: 3, level: 1, title: "B", line: 9, file: "main.tex")]
-        #expect(Outline.current(project, file: "a.tex", line: 6) == 2)
-        #expect(Outline.current(project, file: "a.tex", line: 1) == nil)
-        #expect(Outline.current(project, file: "main.tex", line: 8) == 0)
-        #expect(Outline.current(project, file: "main.tex", line: 9) == 3)
-        #expect(Outline.current(project, file: "notes.tex", line: 1) == nil)
-    }
-
-    @Test func theTreeNestsAsTheHeadingsDo() {
-        let tree = Outline.tree(outline("3:(untitled)", "2:A", "3:A1", "4:A1a", "3:A2", "2:B"))
-        #expect(tree.map(\.item.displayTitle) == ["Untitled Subsection", "A", "B"])
-        #expect(tree[0].children == nil && tree[2].children == nil)
-        #expect(tree[1].children?.map(\.item.title) == ["A1", "A2"])
-        #expect(tree[1].children?[0].children?.map(\.item.title) == ["A1a"])
-    }
-
-    @Test func headingsOfOneTitleFoldApart() {
-        let tree = Outline.tree(outline("2:A", "3:Intro", "2:B", "3:Intro"))
-        let keys = tree.flatMap { [$0] + $0.descendants }.map(\.foldKey)
-        #expect(Set(keys).count == 4)
-        #expect(tree[0].descendants.map(\.foldKey) != tree[1].descendants.map(\.foldKey))
-    }
-}
-
-@MainActor
-struct HeadingStylesTests {
-    private func styles(_ name: String?, size: Int = 10, chapters: Bool = false) -> HeadingStyles {
-        HeadingStyles(documentClass: name.map { DocumentClass(name: $0, pointSize: size) }, hasChapters: chapters)
-    }
-
-    private func markers(_ styles: HeadingStyles) -> [String?] {
-        styles.levels.map(styles.marker)
-    }
-
-    @Test func theClassHasItsLevelsAndNumbersThem() {
-        #expect(styles("article").levels.map(\.title) == ["Normal Text", "Part", "Section", "Subsection", "Subsubsection", "Paragraph"])
-        #expect(markers(styles("article")) == [nil, "I", "1", "1.1", "1.1.1", nil])
-        #expect(markers(styles("report")) == [nil, "I", "1", "1.1", "1.1.1", nil, nil])
-        #expect(markers(styles("IEEEtran")) == [nil, "I", "A", "1", "a"])
-        #expect(styles("IEEEtran").levels.map(\.title) == ["Normal Text", "Section", "Subsection", "Subsubsection", "Paragraph"])
-        #expect(styles("letter").levels == [.normalText])
-        // A class it doesn't know has every level, numbered as a book's once there are chapters.
-        #expect(markers(styles("thesis", chapters: true)) == [nil, "I", "1", "1.1", "1.1.1", nil, nil])
-        #expect(markers(styles(nil)) == [nil, "I", nil, "1", "1.1", "1.1.1", nil])
-    }
-
-    @Test func theClassSetsTheLevelsSizes() {
-        let book = styles("book"), part = HeadingLevel.sections[0], section = HeadingLevel.sections[2]
-        #expect(book.font(part) == .init(scale: 2.488, bold: true, shape: .upright))
-        #expect(abs(styles("article").font(part).scale - 2.074) < 0.001)
-        #expect(abs(styles("article", size: 12).font(section).scale - 1.44) < 0.001)
-        #expect(book.font(.normalText) == .init(scale: 1, bold: false, shape: .upright))
-        #expect(styles("amsart").font(section) == .init(scale: 1, bold: false, shape: .smallCaps))
-    }
-
-    @Test func theClassIsTheOneNamedOutsideComments() {
-        #expect(DocumentClass(in: "% \\documentclass{book}\n\\documentclass[11pt,\n a4paper]{ report }") == DocumentClass(name: "report", pointSize: 11))
-        #expect(DocumentClass(in: "50\\% \\documentclass{book}") == DocumentClass(name: "book"))
-        #expect(DocumentClass(in: "\\documentclass[fontsize=12pt]{scrartcl}")?.pointSize == 12)
-        #expect(DocumentClass(in: "\\section{A}") == nil)
-        // Read in the preamble first, then in the whole text.
-        #expect(DocumentClass(in: "\\documentclass{article}\n\\begin{document}\n\\documentclass{book}") == DocumentClass(name: "article"))
-        #expect(DocumentClass(in: "% \\documentclass{book} and \\begin{document}\n\\documentclass[12pt]{report}")
-            == DocumentClass(name: "report", pointSize: 12))
-        #expect(DocumentClass(in: "\\begin{document}\n\\documentclass{book}") == DocumentClass(name: "book"))
-    }
-
-    /// Swift's regex reads "\r\n" as one Character, which a comment once ran on through to the file's end.
-    @Test func aCommentEndsAtAnyLineBreak() {
-        #expect(DocumentClass(in: "\\documentclass[11pt, % size\r\n a4paper]{report}\r\n") == DocumentClass(name: "report", pointSize: 11))
-        #expect(DocumentClass(in: "% \\documentclass{book}\r\n\\documentclass[12pt]{report}\r\n") == DocumentClass(name: "report", pointSize: 12))
-        #expect(DocumentClass(in: "% \\documentclass{book}\r\\documentclass{article}\r") == DocumentClass(name: "article"))
-    }
-}
-
-@MainActor
 struct FindTests {
     @Test func theMatchCountLabel() {
         #expect(PDFFind.count(3, of: 12, limited: false, for: "loop") == "3 of 12")
@@ -191,6 +103,7 @@ struct PDFFitTests {
         project.pdf.setScale(view.maxScaleFactor)
         #expect(!app.isEnabled(.viewZoomIn, on: project))
         #expect(app.isEnabled(.viewZoomOut, on: project))
+        project.tree.show(.sources)
         project.openPath = "references.bib"
         #expect(!app.isEnabled(.syncForward, on: project))
         project.openPath = "main.tex"
@@ -235,9 +148,9 @@ struct PDFFitTests {
         controller.view.setFrameSize(NSSize(width: 600, height: 500))
         let document = try pages(2)
         controller.show(document)
-        controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10), word: nil)
+        controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10))
         #expect(document.page(at: 0)?.annotations.isEmpty == true)
-        controller.reveal(ForwardLoc(page: 2, h: 72, v: 300, width: 180, height: 10), word: nil)
+        controller.reveal(ForwardLoc(page: 2, h: 72, v: 300, width: 180, height: 10))
         #expect(controller.view.mark != nil)
         controller.show(try pages(2))
         #expect(controller.view.mark == nil)
@@ -393,75 +306,39 @@ struct PDFFindTests {
         #expect(controller.query == "a" && controller.matches.count == 3)
     }
 
-    @Test func aClickSendsTheWordAndTheLetter() throws {
+    @Test func aClickSendsThePagesTextAndTheLetter() throws {
         let pdf = try textPDF(["alpha beta"]), page = try #require(pdf.page(at: 0))
         let text = try #require(page.string) as NSString
         let letter = try #require(page.selection(for: text.range(of: "e"))).bounds(for: page)
         // A page holds its document weakly; it's the view's in the app.
-        let word = try #require(withExtendedLifetime(pdf) { page.syncWord(at: CGPoint(x: letter.midX, y: letter.midY)) })
-        #expect(word.text == "beta" && word.offset == 1)
+        let click = try #require(withExtendedLifetime(pdf) { page.click(at: CGPoint(x: letter.midX, y: letter.midY)) })
+        #expect(click == PageClick(text: text as String, at: text.range(of: "e").location))
     }
 
     /// PDFKit's word lookup crashes on a page whose document has gone; it has no word.
     @Test func aPageWithoutItsDocumentHasNoWord() throws {
         let page = try autoreleasepool { try #require(try textPDF(["alpha beta"]).page(at: 0)) }
         #expect(page.document == nil)
-        #expect(page.syncWord(at: CGPoint(x: 10, y: 10)) == nil)
+        #expect(page.click(at: CGPoint(x: 10, y: 10)) == nil)
     }
 
-    private func loc(_ rect: CGRect, on page: PDFPage) -> ForwardLoc {
-        ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
-    }
-
-    /// One source line spans many PDF rows, and SyncTeX can report a middle row first.
-    @Test func forwardSearchRetainsRepeatedWordsAcrossWrappedRows() throws {
-        let source = String(repeating: "An echo repeats in this sentence. ", count: 8)
-        let pdf = try textPDF([source], width: 180), page = try #require(pdf.page(at: 0))
+    /// The core finds the source's word in the text round SyncTeX's box, and the PDF selects it.
+    @Test func forwardSearchSelectsTheWordTheCoreFinds() async throws {
+        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        let line = "An echo repeats. An echo repeats."
+        let info = try await Core.shared.call("create_project", ["name": "Sync \(UUID().uuidString.prefix(8))", "template": "blank"],
+                                              as: ProjectInfo.self)
+        defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
+        try await Core.shared.perform("write_file", ["id": info.id, "path": info.mainFile, "text": line])
+        let pdf = try textPDF([line], width: 180), page = try #require(pdf.page(at: 0))
         let rendered = try #require(page.string)
-        let sourceRanges = source.ranges(of: "echo"), renderedRanges = rendered.ranges(of: "echo")
-        #expect(sourceRanges.count == 8 && renderedRanges.count == 8)
-        let lines = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).selectionsByLine()
-        let boxes = lines.map { loc($0.bounds(for: page), on: page) }
-        #expect(boxes.count > 3)
-        let nativeOrder = Array(boxes.dropFirst(boxes.count / 2)) + Array(boxes.prefix(boxes.count / 2))
-        for index in [0, 3, 7] {
-            let word = SyncTeXWord(text: "echo", offset: 0, context: source, contextOffset: NSRange(sourceRanges[index], in: source).location)
-            let hit = try #require(pdf.match(for: word, near: nativeOrder))
-            let expected = try #require(page.selection(for: NSRange(renderedRanges[index], in: rendered))).bounds(for: page)
-            #expect(hit.page === page && hit.rect == expected)
-        }
-    }
-
-    @Test func forwardSearchUsesTheReportedParagraphForIdenticalText() throws {
-        let paragraph = "An echo repeats. An echo repeats. An echo repeats."
-        let pdf = try textPDF([paragraph + "\n\n" + paragraph], width: 180), page = try #require(pdf.page(at: 0))
-        let rendered = try #require(page.string), occurrences = rendered.ranges(of: "echo")
-        #expect(occurrences.count == 6)
-        let expected = try #require(page.selection(for: NSRange(occurrences[5], in: rendered))).bounds(for: page)
-        let word = SyncTeXWord(text: "echo", offset: 0, context: paragraph,
-                              contextOffset: (paragraph as NSString).range(of: "echo", options: .backwards).location)
-        let hit = try #require(pdf.match(for: word, near: [loc(expected, on: page)]))
-        #expect(hit.page === page && hit.rect == expected)
-        let inverse = try #require(page.syncWord(at: CGPoint(x: expected.midX, y: expected.midY)))
-        #expect(inverse.text == "echo" && inverse.context == rendered)
-        #expect(inverse.contextOffset == NSRange(occurrences[5], in: rendered).location)
-        let start = NSRange(occurrences[3], in: rendered).location - 3 // "An " before this paragraph’s first echo.
-        let lines = try #require(page.selection(for: NSRange(location: start, length: (rendered as NSString).length - start))).selectionsByLine()
-        let boxes = lines.map { loc($0.bounds(for: page), on: page) }
-        for index in 0..<3 {
-            let word = SyncTeXWord(text: "echo", offset: 0, context: paragraph,
-                                  contextOffset: NSRange(paragraph.ranges(of: "echo")[index], in: paragraph).location)
-            let hit = try #require(pdf.match(for: word, near: boxes))
-            #expect(hit.rect == (try #require(page.selection(for: NSRange(occurrences[index + 3], in: rendered)))).bounds(for: page))
-        }
-    }
-
-    @Test func forwardSearchKeepsTheNativeBoxWhenMacroContextIsAmbiguous() throws {
-        let pdf = try textPDF(["echo echo"]), page = try #require(pdf.page(at: 0))
-        let rendered = try #require(page.string)
-        let rect = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).bounds(for: page)
-        let word = SyncTeXWord(text: "echo", offset: 0, context: "\\LaTeX echo", contextOffset: 7)
-        #expect(pdf.match(for: word, near: [loc(rect, on: page)]) == nil)
+        let box = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).bounds(for: page)
+        let controller = shown(pdf)
+        let column = (line as NSString).range(of: "echo", options: .backwards).location
+        controller.reveal(ForwardLoc(page: 1, h: box.minX, v: page.bounds(for: .cropBox).maxY - box.minY, width: box.width, height: box.height),
+                          from: SyncSource(id: info.id, file: info.mainFile, line: 1, column: column))
+        let second = NSRange(try #require(rendered.ranges(of: "echo").last), in: rendered)
+        try await waitUntil { controller.view.currentSelection?.range(at: 0, on: page) == second }
     }
 
     private func shows(_ page: PDFPage?, in controller: PDFController) -> Bool {

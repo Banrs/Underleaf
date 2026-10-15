@@ -108,9 +108,28 @@ checkout still has it.
   was last shown whole, the next one is shown whole (`PDFController.memoryAtWhole`). Print
   prints the document showing, which is whole in memory; during Live Preview it reads the
   last build's file instead (`buildBehindLive`).
-- **Live preview**: each edit goes to the core as the text storage makes it (`texpresso_edit`);
-  a thread of the session's own waits in the core (`texpresso_wait`) for the pages in view,
-  and each is drawn over PDFKit's page at once (`LiveCanvas`, an IOSurface), over the part of
+- **Project sessions**: the open project is a session of the core's (`docs/core-api.md`), which
+  owns each open document's text (the editor sends each edit once, `tl_source_edit` on the
+  session's source), autosaves, builds, watches the folder and runs Live Preview, and tells
+  `ProjectModel` what changed in events (`Core.observe`, on the main queue in order). Session
+  commands go one at a time on a queue of their own (`Core.session`, `Core.send`).
+- **The editor's logic is texlocal-syntax's**: each key asks the source (`tl_source_call`'s
+  `type`, `delete_backward`, `insert_newline`) for the edit to type instead, and each storage
+  edit and selection is told back (`follow`, `select`), so the closers put in and a snippet's
+  fields live in the core. The commands' edits (Move Line, Bold, wrapping), the themes' colours
+  (`theme_colors`), the menus' catalogue (`menus`), the class's headings (`heading_styles`) and
+  maths and symbols as SVG (`math_svg`, `glyph_svg`, drawn as NSImage) come from
+  `tl_syntax_call` (`Syntax`). The maths preview is set at 1.21 times the text.
+- **The helpers are the core's too**: SyncTeX finds the word, not only the line (`synctex_match`
+  takes the text of the pages round SyncTeX's boxes; `synctex_inverse` the clicked page's text
+  and letter). The File Outline's tree and fold keys come with `analyze_project`, its current
+  heading from `outline_current`; a file's kind with `file_tree`; a free “untitled” name from
+  `create_entry`; the issue boxes' one-line message as `short`. The sidebar's open folders and
+  folded headings are saved in the project's settings (`get_ui_state`, `set_ui_state`), not
+  UserDefaults, so they go with the project.
+- **Live preview**: the session sends each edit on to TeXpresso and says where its pages are
+  (`live_document`, `live_page`); `TeXpressoSession` reads them off the main actor, and each page
+  is drawn over PDFKit's page at once (`LiveCanvas`, an IOSurface), over the part of
   the page in view only. The whole document follows 300 ms after the last key and replaces
   only the pages that changed; a scroll hands a waiting live page to PDFKit sooner. The
   protocol and the engine's passes are in `docs/texpresso.md`.
@@ -119,8 +138,8 @@ checkout still has it.
   alert can't do: either answer loses a version, so Return typed into the source as the sheet
   lands answers nothing. One moved or deleted is a SwiftUI alert whose default saves it
   again. Cancel in either writes nothing and the autosave stays quiet; the status bar says Not
-  Saved, and the next save that is asked for asks again (`ProjectModel.changedFile`,
-  `goneFile`, `leaveUnsaved`).
+  Saved, and the next save that is asked for asks again (the session's `conflict` event,
+  answered with `session_resolve`).
 - **Unavailable things are dim where they would otherwise jump** (Daniel: "sometimes greying
   is more useful than hiding"): the File Outline's header stays at the sidebar's foot, folded
   and dim, on a file that isn't LaTeX (it hides only for search results, which take the whole

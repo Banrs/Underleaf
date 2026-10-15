@@ -99,9 +99,10 @@ struct ShellTests {
         let palette = try #require(groups[0].first?.submenu)
         #expect(groups[0].count == 1 && palette.presentationStyle == .palette && palette.selectionMode == .selectAny)
         #expect(palette.items.map(\.title) == [MenuCommand.editBold, .editItalic, .editUnderline].map(\.title) && palette.selectedItems.isEmpty)
+        // The class's levels as the core sets and numbers them, "1.1" for a subsection.
         let headings = workspace.project.headingStyles
-        #expect(groups[1].map { $0.attributedTitle?.string ?? "" }
-                == headings.levels.map { level in headings.marker(level).map { "\($0)\u{2002}\(level.title)" } ?? level.title })
+        #expect(groups[1].map { $0.attributedTitle?.string ?? "" } == headings.map(\.numberedTitle))
+        #expect(headings.contains { $0.marker == "1.1" })
         #expect(groups[1].map(\.state) == [NSControl.StateValue.on] + Array(repeating: NSControl.StateValue.off, count: groups[1].count - 1))
         let fonts = groups[1].compactMap { item in item.attributedTitle.flatMap { $0.attribute(.font, at: $0.length - 1, effectiveRange: nil) as? NSFont } }
         #expect(fonts.count == groups[1].count && fonts[1].pointSize > fonts[0].pointSize)

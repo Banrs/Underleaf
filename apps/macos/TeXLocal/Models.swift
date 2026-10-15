@@ -15,10 +15,34 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
     let type: String
     let name: String
     let path: String
+    /// A file's, as the core sorts it by its name; a folder has none.
+    var kind: FileKind?
     let children: [TreeNode]?
 
     var id: String { path }
     var isDirectory: Bool { type == "dir" }
+
+    var symbol: String {
+        if isDirectory { return "folder" }
+        return switch kind ?? .other {
+        case .tex: "text.document"
+        case .bib: "books.vertical"
+        case .image: "photo"
+        case .pdf: "richtext.page"
+        default: "document"
+        }
+    }
+}
+
+nonisolated enum FileKind: String, Decodable, Sendable {
+    case tex, bib, image, pdf, text, other
+
+    /// Edited as text, not previewed.
+    var isText: Bool { self == .tex || self == .bib || self == .text }
+
+    init(from decoder: any Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .other
+    }
 }
 
 extension [TreeNode] {
@@ -28,11 +52,6 @@ extension [TreeNode] {
 nonisolated extension String {
     var parentFolder: String { (self as NSString).deletingLastPathComponent }
     var fileName: String { (self as NSString).lastPathComponent }
-
-    func numbered(_ number: Int) -> String {
-        guard let dot = lastIndex(of: "."), dot > startIndex else { return "\(self) \(number)" }
-        return "\(self[..<dot]) \(number)\(self[dot...])"
-    }
 }
 
 nonisolated struct TexStatus: Decodable {
@@ -101,11 +120,6 @@ nonisolated struct CompileResult: Decodable {
     }
 }
 
-nonisolated struct Symbols: Decodable, Equatable {
-    let citations: [String]
-    let labels: [String]
-}
-
 nonisolated struct SearchHit: Decodable, Identifiable {
     let file: String
     let line: Int
@@ -141,6 +155,27 @@ nonisolated struct InverseLoc: Decodable {
     let file: String
     let line: Int
     let column: Int?
+}
+
+/// Where a forward search began, for the core to find its word in the PDF's text (`synctex_match`); the column in UTF-16.
+nonisolated struct SyncSource: Sendable {
+    let id: String
+    let file: String
+    let line: Int
+    let column: Int
+}
+
+/// That word in a page's text: its UTF-16 range there.
+nonisolated struct PageHit: Decodable, Sendable {
+    let page: Int
+    let start: Int
+    let end: Int
+}
+
+/// A click on a page for `synctex_inverse`: the page's text, and the clicked letter's UTF-16 index in it.
+nonisolated struct PageClick: Equatable, Sendable {
+    let text: String
+    let at: Int
 }
 
 /// Asked nothing about them, it writes nothing.
@@ -249,28 +284,5 @@ final class UndoableTrash {
     private func trashAgain() {
         register(putBack)
         then { [self] in await trash(self) }
-    }
-}
-
-func isTextFile(_ path: String) -> Bool {
-    switch (path as NSString).pathExtension.lowercased() {
-    case "tex", "bib", "cls", "sty", "bst", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "lua",
-         "py", "r", "dat", "def", "clo", "tikz": true
-    default: false
-    }
-}
-
-func isLaTeXFile(_ path: String) -> Bool {
-    (path as NSString).pathExtension.lowercased() == "tex"
-}
-
-func fileSymbol(_ path: String, directory: Bool) -> String {
-    if directory { return "folder" }
-    return switch (path as NSString).pathExtension.lowercased() {
-    case "tex": "text.document"
-    case "bib": "books.vertical"
-    case "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp": "photo"
-    case "pdf": "richtext.page"
-    default: "document"
     }
 }

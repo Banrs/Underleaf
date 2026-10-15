@@ -46,29 +46,35 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if !setsCursor(with: event) { super.cursorUpdate(with: event) }
     }
 
-    private(set) var document = SourceDocument(text: "") {
-        didSet { document.setSymbols(symbols) }
-    }
-    /// Only active IME composition needs a snapshot; ordinary edits and undo are live.
-    private var beforeMarkedText: String?
-    var committedString: String { hasMarkedText() ? beforeMarkedText ?? string : string }
+    /// The text's mirror: a project session's document, whose edits it saves and previews, or the view's own.
+    private(set) var document = SourceDocument(text: "")
     /// Reads the storage's UTF-16 units in place: `string` bridges the whole text on every call.
     var text: NSString { textStorage?.mutableString ?? "" }
-    var symbols = Symbols(citations: [], labels: []) {
-        didSet { if symbols != oldValue { document.setSymbols(symbols) } }
-    }
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
 
     enum FileDrop {
         case open(() -> Void)
         case insert(String)
     }
-    var textEdited: (NSRange, String) -> Void = { _, _ in }
     var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
 
     private(set) var loading = false
 
-    func load(_ text: String) {
+    /// `source` is the session's document holding `text`; without one the view keeps a mirror of its own.
+    func load(_ text: String, source: SourceDocument? = nil) {
+        takeText(text)
+        document = source ?? SourceDocument(text: text)
+        loaded()
+    }
+
+    /// The disk's text, from the session's `document_reload`: shown without an edit, then the session told it is shown.
+    func reload(_ text: String) {
+        takeText(text)
+        document.reload(text)
+        loaded()
+    }
+
+    private func takeText(_ text: String) {
         loading = true
         // Else typing coalesced into the last file's undo would go on in this one's.
         breakUndoCoalescing()
@@ -78,11 +84,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         unmarkText()
         textStorage?.setAttributedString(NSAttributedString(string: text, attributes: typingAttributes))
         loading = false
-        document = SourceDocument(text: text)
+    }
+
+    private func loaded() {
         lastMath = nil
         dismissedMath = nil
-        snippet = nil
-        closers.removeAll()
+        _ = document.endSnippet()
         closeCompletions()
         updateGutterWidth()
         staleColours = 0
@@ -104,21 +111,34 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let old = NSRange(location: edited.location, length: edited.length - delta)
         let text = textStorage.mutableString.substring(with: edited)
         document.edit(old, with: text)
-        textEdited(old, text)
         edits += 1
         staleColours = min(staleColours ?? edited.location, edited.location)
-        let changed = changing.flatMap { $0.location == old.location && NSMaxRange($0) <= NSMaxRange(old) ? $0 : nil }
+        // The closers typing put in and a snippet's fields move with the text.
+        document.follow(old, delta: delta, changing: changing, mirroring: mirroring)
         changing = nil
-        follow(changed ?? old, delta)
         if lineCountDigits != digits(document.lineCount) {
             // After the edit: a layout change mid-edit would lay out stale text.
             Task { self.updateGutterWidth() }
         }
     }
 
+    /// The selections follow the edits, unless `select` is given.
     func apply(_ edits: [TextEdit], named name: String, select: NSRange? = nil) {
         guard !edits.isEmpty else { return }
-        let selections = selectedRanges.map(\.rangeValue)
+        let selections = select.map { [$0] } ?? document.map(selectedRanges.map(\.rangeValue), through: edits)
+        apply(edits, named: name, selecting: selections)
+    }
+
+    /// The core's edits, and the selections after them. False for none.
+    @discardableResult
+    func apply(_ change: Change?, named name: String) -> Bool {
+        guard let change, !change.edits.isEmpty else { return false }
+        apply(change.edits, named: name, selecting: change.selections.map(\.range))
+        return true
+    }
+
+    /// One undo step, from the last edit.
+    private func apply(_ edits: [TextEdit], named name: String, selecting selections: [NSRange]) {
         undoManager?.beginUndoGrouping()
         for edit in edits.reversed() {
             if shouldChangeText(in: edit.range, replacementString: edit.text) {
@@ -128,28 +148,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
         undoManager?.setActionName(name)
         undoManager?.endUndoGrouping()
-        if let select {
-            setSelectedRange(select)
-        } else {
-            setSelectedRanges(selections.map { r in
-                let start = Self.map(r.location, through: edits)
-                return NSValue(range: NSRange(location: start, length: max(0, Self.map(NSMaxRange(r), through: edits) - start)))
-            }, affinity: .downstream, stillSelecting: false)
+        if !selections.isEmpty {
+            setSelectedRanges(selections.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false)
         }
         scrollRangeToVisible(selectedRange())
-    }
-
-    private static func map(_ position: Int, through edits: [TextEdit]) -> Int {
-        var shift = 0
-        for edit in edits {
-            let inserted = (edit.text as NSString).length
-            if NSMaxRange(edit.range) <= position {
-                shift += inserted - edit.length
-            } else if edit.start < position {
-                return edit.start + shift + inserted
-            }
-        }
-        return position + shift
     }
 
     // MARK: the font
@@ -220,6 +222,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     struct LineIssue: Equatable {
         var isError: Bool
         var message: String
+        /// The core's line-end form of it.
+        var short: String
         var others: [String] = []
     }
 
@@ -527,7 +531,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let end = band.maxX - 1
         let room = end - (left + first.typographicBounds.maxX) - issueGap
         let view = view ?? IssueMessageView()
-        view.show(reported.message, others: reported.others.count, symbol: issueSymbols[reported.isError], font: issueFont)
+        view.show(reported.short, others: reported.others.count, symbol: issueSymbols[reported.isError], font: issueFont)
         if let fitted = view.fit(in: room) {
             let rect = NSRect(x: end - fitted.width, y: band.minY, width: fitted.width,
                               height: onPixels(top + first.typographicBounds.maxY + rowShift) - band.minY)
@@ -582,7 +586,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
                 for run in document.highlights(in: NSRange(location: start, length: end - start)) {
                     let clipped = NSIntersectionRange(run.range, NSRange(location: start, length: end - start))
                     if clipped.length > 0, let range = textRange(clipped) {
-                        manager.setRenderingAttributes([.foregroundColor: run.kind.color(in: syntaxTheme)], for: range)
+                        manager.setRenderingAttributes([.foregroundColor: syntaxTheme.color(run.kind)], for: range)
                     }
                 }
             }
@@ -607,8 +611,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     // MARK: the selection
 
-    private static let pairs: [Character: Character] = ["(": ")", "[": "]", "{": "}"]
-
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !loading else { return }
@@ -619,9 +621,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             redrawFragments()
         }
         previewMath()
-        if let snippet, !mirroring, !snippet.contains(selectedRange()) { self.snippet = nil }
-        let lineStart = text.lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
-        closers = closers.filter { $0 >= lineStart }
+        // A snippet ends once the selection leaves its fields, and closers before its line are no longer stepped over.
+        document.select(selectedRange(), mirroring: mirroring)
         redrawLineAndGutter()
     }
 
@@ -696,29 +697,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
                           edge: offered != nil && completionList.isAbove ? .maxY : .minY)
     }
 
-    private func character(at i: Int) -> Character? {
-        guard i >= 0, i < text.length else { return nil }
-        return text.substring(with: text.rangeOfComposedCharacterSequence(at: i)).first
-    }
-
-    /// Brackets are ASCII, so code units compare exactly.
-    private func partner(of at: Int) -> Int? {
-        let text = self.text
-        guard at >= 0, at < text.length, let c = Unicode.Scalar(text.character(at: at)).map(Character.init) else { return nil }
-        let close = Self.pairs[c], open = Self.pairs.first { $0.value == c }?.key
-        guard let other = (close ?? open)?.utf16.first, let unit = c.utf16.first else { return nil }
-        var depth = 0, i = at
-        while abs(i - at) <= 10_000, i >= 0, i < text.length {
-            let d = text.character(at: i)
-            if d == unit { depth += 1 } else if d == other { depth -= 1 }
-            if depth == 0 { return i }
-            i += close != nil ? 1 : -1
-        }
-        return nil
-    }
-
     private func showPartner(of at: Int) {
-        guard let i = partner(of: at), let first = fragments.first, let last = fragments.last,
+        guard at >= 0, at < text.length, let i = document.partner(of: at), let first = fragments.first, let last = fragments.last,
               first.offset <= i, i < offset(last.fragment.rangeInElement.endLocation) else { return }
         let range = NSRange(location: i, length: 1)
         guard reducesMotion(), let manager = textLayoutManager, let marked = textRange(range) else { return showFindIndicator(for: range) }
@@ -743,20 +723,26 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if before.length == 0, selectedRange() == NSRange(location: before.location - 1, length: 0) { showPartner(of: before.location - 1) }
     }
 
-    // MARK: typing
+    // MARK: typing: the core's brackets, indentation and snippet fields
 
-    private var closers: Set<Int> = []
-    private static let closeBefore: Set<Character> = [")", "]", "}", ":", ";", ">"]
+    /// Told as marked (IME) text comes and goes: the session's autosave waits for it to be committed.
+    var composing: (Bool) -> Void = { _ in }
+    private var toldComposing = false
+
+    private func markedTextChanged() {
+        guard hasMarkedText() != toldComposing else { return }
+        toldComposing.toggle()
+        composing(toldComposing)
+    }
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        if !hasMarkedText() { beforeMarkedText = self.string }
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
-        if !hasMarkedText() { beforeMarkedText = nil }
+        markedTextChanged()
     }
 
     override func unmarkText() {
         super.unmarkText()
-        beforeMarkedText = nil
+        markedTextChanged()
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
@@ -764,60 +750,31 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         typing = true
         defer {
             typing = wasTyping
-            if !hasMarkedText() { beforeMarkedText = nil }
+            markedTextChanged()
         }
-        guard let typed = string as? String, typed.count == 1, let c = typed.first,
-              replacementRange.location == NSNotFound, !hasMarkedText(), selectedRanges.count == 1 else {
+        guard let typed = string as? String, replacementRange.location == NSNotFound, !hasMarkedText(), selectedRanges.count == 1 else {
             super.insertText(string, replacementRange: replacementRange)
             closeCompletions()
             return
         }
-        let selection = selectedRange()
-        let next = character(at: selection.location)
-        if selection.length == 0, closers.contains(selection.location), Self.pairs.values.contains(c) {
-            if next == c {
-                closers.remove(selection.location)
-                setSelectedRange(NSRange(location: selection.location + 1, length: 0))
-                showPartner(of: selection.location)
-                return
-            }
-            // A closer put in as \] or \}: its bracket steps over both, and a backslash typed for it goes.
-            if next == "\\", character(at: selection.location + 1) == c {
-                closers.remove(selection.location)
-                var bracket = selection.location + 1
-                if text.isEscaped(at: selection.location) {
-                    insertText("", replacementRange: NSRange(location: selection.location - 1, length: 1))
-                    bracket -= 1
-                }
-                setSelectedRange(NSRange(location: bracket + 1, length: 0))
-                showPartner(of: bracket)
-                return
-            }
+        let stroke = document.type(typed, replacing: selectedRange(), autoPair: EditorPrefs.autoPair)
+        if let edit = stroke.edit {
+            super.insertText(edit.text, replacementRange: edit.range)
+        } else if stroke.selection == nil {
+            super.insertText(string, replacementRange: replacementRange)
         }
-        if EditorPrefs.autoPair, let close = Self.pairs[c] {
-            if selection.length > 0 {
-                super.insertText("\(c)\(text.substring(with: selection))\(close)", replacementRange: selection)
-                closers.insert(NSMaxRange(selection) + 1)
-                setSelectedRange(NSRange(location: selection.location + 1, length: selection.length))
-                return
-            }
-            if next.map({ $0.isWhitespace || Self.closeBefore.contains($0) }) ?? true {
-                super.insertText(text.isEscaped(at: selection.location) ? "\(c)\\\(close)" : "\(c)\(close)", replacementRange: selection)
-                closers.insert(selection.location + 1)
-                setSelectedRange(NSRange(location: selection.location + 1, length: 0))
-                offerCompletions()
-                return
-            }
-        }
-        super.insertText(string, replacementRange: replacementRange)
-        if Self.pairs.values.contains(c) { showPartner(of: selectedRange().location - 1) }
-        offerCompletions()
+        finish(stroke)
     }
 
-    private func closer(after caret: Int) -> Int? {
-        guard let close = character(at: caret - 1).flatMap({ Self.pairs[$0] }) else { return nil }
-        if character(at: caret) == close { return 1 }
-        return text.isEscaped(at: caret - 1) && character(at: caret) == "\\" && character(at: caret + 1) == close ? 2 : nil
+    /// What follows a key's edit: the selection, the bracket's partner and the completion list.
+    private func finish(_ stroke: Keystroke) {
+        if let selection = stroke.selection { setSelectedRange(selection.range) }
+        if let partner = stroke.partner { showPartner(of: partner) }
+        switch stroke.completions {
+        case .keep: break
+        case .offer: offerCompletions()
+        case .close: closeCompletions()
+        }
     }
 
     override func deleteBackward(_ sender: Any?) {
@@ -827,54 +784,31 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             typing = wasTyping
             if completing { offerCompletions() }
         }
-        let selection = selectedRange()
-        guard selection.length == 0, selection.location > 0, selectedRanges.count == 1 else { return super.deleteBackward(sender) }
-        let caret = selection.location
-        if EditorPrefs.autoPair, closers.contains(caret), let closer = closer(after: caret) {
-            insertText("", replacementRange: NSRange(location: caret - 1, length: 1 + closer))
-            return
-        }
-        let lineStart = text.lineRange(for: NSRange(location: caret, length: 0)).location
-        let indent = text.substring(with: NSRange(location: lineStart, length: caret - lineStart))
-        if !indent.isEmpty, indent.allSatisfy({ $0 == " " }) {
-            let drop = indent.count % 2 == 0 ? 2 : 1
-            insertText("", replacementRange: NSRange(location: caret - drop, length: drop))
-            return
-        }
-        super.deleteBackward(sender)
+        guard selectedRanges.count == 1, let edit = document.deleteBackward(selectedRange(), autoPair: EditorPrefs.autoPair).edit
+        else { return super.deleteBackward(sender) }
+        insertText(edit.text, replacementRange: edit.range)
     }
 
     override func insertNewline(_ sender: Any?) {
         guard selectedRanges.count == 1 else { return super.insertNewline(sender) }
-        var range = selectedRange()
-        let line = text.lineRange(for: NSRange(location: range.location, length: 0))
-        let lineText = text.substring(with: line).trimmingCharacters(in: .newlines)
-        let indent = String(lineText.prefix { $0 == " " || $0 == "\t" })
-        let lineEnd = line.location + (lineText as NSString).length
-        let between = range.length == 0 && closer(after: range.location) != nil
-        var insert = "\n" + indent
-        if between {
-            insert += "\n" + indent
-        } else {
-            while NSMaxRange(range) < lineEnd, text.substring(with: NSRange(location: NSMaxRange(range), length: 1)) == " " {
-                range.length += 1
-            }
-            if range.location > line.location, text.substring(with: NSRange(location: line.location, length: range.location - line.location)).allSatisfy(\.isWhitespace) {
-                range = NSRange(location: line.location, length: NSMaxRange(range) - line.location)
-            }
-        }
-        insertText(insert, replacementRange: range)
-        setSelectedRange(NSRange(location: range.location + 1 + (indent as NSString).length, length: 0))
+        let stroke = document.insertNewline(selectedRange())
+        guard let edit = stroke.edit else { return super.insertNewline(sender) }
+        insertText(edit.text, replacementRange: edit.range)
+        finish(stroke)
     }
 
     override func insertTab(_ sender: Any?) { tab(1) }
 
     override func insertBacktab(_ sender: Any?) { tab(-1) }
 
+    /// A snippet's next field, or the lines indented.
     private func tab(_ step: Int) {
-        if snippet != nil { return moveField(step) }
-        let edits = document.indent(selectedRanges.map(\.rangeValue), more: step > 0)
-        apply(edits, named: step > 0 ? String(localized: "Indent") : String(localized: "Outdent"))
+        let answer = document.tab(selectedRanges.map(\.rangeValue), step: step)
+        if let field = answer.field {
+            setSelectedRange(field.range)
+        } else {
+            apply(answer.edits, named: step > 0 ? String(localized: "Indent") : String(localized: "Outdent"))
+        }
     }
 
     override func toggleContinuousSpellChecking(_ sender: Any?) {
@@ -886,8 +820,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func cancelOperation(_ sender: Any?) {
         if offered != nil {
             closeCompletions()
-        } else if snippet != nil {
-            snippet = nil
+        } else if document.endSnippet() {
+            // Escape leaves the snippet's fields.
         } else if mathPopover?.isShown == true, let maths = math(at: caret) {
             dismissedMath = maths.start
             mathPopover?.close()
@@ -974,74 +908,24 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     // MARK: snippet fields
 
-    private struct Snippet {
-        var fields: [(index: Int, range: NSRange)]
-        var active: Int
-
-        func contains(_ selection: NSRange) -> Bool {
-            fields.contains { $0.range.location <= selection.location && NSMaxRange(selection) <= NSMaxRange($0.range) }
-        }
-
-        var typed: NSRange? { fields.first { $0.index == active }?.range }
-    }
-
-    private var snippet: Snippet?
+    /// The core's mirror edits are going in: they move the fields without ending the snippet.
     private var mirroring = false
-    private var needsMirror = false
 
     func startSnippet(_ fields: [SnippetField], at location: Int) {
-        let fields = fields.map { (index: $0.index, range: NSRange(location: location + $0.start, length: $0.length)) }
-        guard let first = fields.first(where: { $0.index == 0 }) else { return }
-        snippet = fields.count > 1 ? Snippet(fields: fields, active: 0) : nil
-        setSelectedRange(first.range)
+        guard let first = document.startSnippet(fields, at: location) else { return }
+        setSelectedRange(first)
     }
 
-    private func moveField(_ step: Int) {
-        guard var snippet else { return }
-        let next = snippet.active + step
-        guard let field = snippet.fields.first(where: { $0.index == next }) else { return }
-        snippet.active = next
-        let last = snippet.fields.allSatisfy { $0.index <= next }
-        self.snippet = last ? nil : snippet
-        setSelectedRange(field.range)
-    }
-
-    private func follow(_ old: NSRange, _ delta: Int) {
-        closers = Set(closers.compactMap { p in
-            p >= NSMaxRange(old) ? p + delta : (p < old.location ? p : nil)
-        })
-        guard var snippet else { return }
-        let inField = { (r: NSRange) in r.location <= old.location && NSMaxRange(old) <= NSMaxRange(r) }
-        if !mirroring {
-            guard let typed = snippet.typed, inField(typed) else {
-                self.snippet = nil
-                return
-            }
-            needsMirror = snippet.fields.filter { $0.index == snippet.active }.count > 1
-        }
-        for i in snippet.fields.indices {
-            let r = snippet.fields[i].range
-            if inField(r) && (mirroring || r == snippet.typed) {
-                snippet.fields[i].range.length += delta
-            } else if r.location >= NSMaxRange(old) {
-                snippet.fields[i].range.location += delta
-            }
-        }
-        self.snippet = snippet
-    }
-
+    /// What's typed in a field goes in its other places.
     override func didChangeText() {
         super.didChangeText()
-        guard needsMirror, !mirroring, let snippet, let typed = snippet.typed else { return }
-        needsMirror = false
-        let text = self.text.substring(with: typed)
+        guard !mirroring else { return }
+        let edits = document.mirrorSnippet()
+        guard !edits.isEmpty else { return }
         let selection = selectedRange()
         mirroring = true
-        for field in snippet.fields.reversed() where field.index == snippet.active && field.range != typed {
-            // Looked up again: each replacement moves the fields after it.
-            guard let range = self.snippet?.fields.first(where: { $0.index == field.index && $0.range.location == field.range.location })?.range,
-                  shouldChangeText(in: range, replacementString: text) else { continue }
-            textStorage?.replaceCharacters(in: range, with: text)
+        for edit in edits where shouldChangeText(in: edit.range, replacementString: edit.text) {
+            textStorage?.replaceCharacters(in: edit.range, with: edit.text)
             super.didChangeText()
         }
         mirroring = false
@@ -1201,10 +1085,8 @@ final class IssueMessageView: NSBox {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    /// The message on one line, without LaTeX's words for what the symbol says already.
+    /// `text` is the issue's short message, on one line.
     func show(_ text: String, others count: Int, symbol image: NSImage?, font: NSFont) {
-        var text = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        if text.hasPrefix("LaTeX Error: ") { text.removeFirst("LaTeX Error: ".count) }
         symbol.image = image
         message.font = font
         message.stringValue = text
@@ -1233,74 +1115,56 @@ private func typeset(_ string: String, in font: NSFont) -> (line: CTLine, width:
     return (line, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
 }
 
-private extension NSString {
-    func isEscaped(at: Int) -> Bool {
-        var slashes = 0
-        while at - slashes > 0, character(at: at - slashes - 1) == 0x5C { slashes += 1 }
-        return slashes % 2 == 1
-    }
-}
-
+/// The core's themes (texlocal-syntax's theme.rs), each kind's colour raised to the HIG's 4.5:1 on the editor's
+/// background and its current line in each appearance, and to 7:1 with Increase Contrast.
 enum SyntaxTheme: String, CaseIterable, Identifiable {
     case overleaf, texstudio, system
 
     var id: Self { self }
 
     var title: String {
-        switch self {
-        case .overleaf: "Overleaf"
-        case .texstudio: "TeXstudio"
-        case .system: "System"
+        Self.titles.first { $0.id == rawValue }?.title ?? rawValue
+    }
+
+    private nonisolated struct Title: Decodable {
+        let id: String
+        let title: String
+    }
+
+    private static let titles: [Title] = Syntax.call("themes", [:]) ?? []
+
+    func color(_ kind: HighlightKind) -> NSColor {
+        let shown = Self.made[self] ?? colors()
+        Self.made[self] = shown
+        return shown[Int(kind.rawValue)]
+    }
+
+    private static var made: [SyntaxTheme: [NSColor]] = [:]
+
+    /// The colours the System theme names, as AppKit has them.
+    private static let system: [String: NSColor] = [
+        "systemPink": .systemPink, "systemTeal": .systemTeal, "systemPurple": .systemPurple,
+        "secondaryLabelColor": .secondaryLabelColor, "systemRed": .systemRed,
+    ]
+
+    /// One colour per kind; kinds the theme colours alike share one.
+    private func colors() -> [NSColor] {
+        var shades: [NSAppearance.Name: [[Double]]] = [:]
+        for name in NSColor.textAppearances {
+            guard var args = NSColor.ground(name), let appearance = NSAppearance(named: name) else { continue }
+            args["theme"] = rawValue
+            args["system"] = Self.system.mapValues { $0.rgba(in: appearance) }
+            shades[name] = Syntax.call("theme_colors", args) as [[Double]]?
         }
-    }
-
-    struct Colours {
-        let command: NSColor
-        let argument: NSColor
-        let maths: NSColor
-        let comment: NSColor
-        let invalid: NSColor
-    }
-
-    var colours: Colours {
-        switch self {
-        case .overleaf: Self.overleafColours
-        case .texstudio: Self.texstudioColours
-        case .system: Self.systemColours
-        }
-    }
-
-    /// The themes' own colours fall short of the HIG's 4.5:1 in places, so each is raised to it, and further with Increase Contrast.
-    private static func rgb(_ light: UInt32, _ dark: UInt32) -> NSColor {
-        func srgb(_ hex: UInt32) -> NSColor {
-            NSColor(srgbRed: CGFloat(hex >> 16 & 0xFF) / 255, green: CGFloat(hex >> 8 & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
-        }
-        let light = srgb(light), dark = srgb(dark)
-        return NSColor(name: nil) { @Sendable in $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }.legibleAsText
-    }
-
-    private static let overleafColours = Colours(
-        command: rgb(0x0000FF, 0x8BE9FD), argument: rgb(0x318495, 0xFFB86C),
-        maths: rgb(0x036A07, 0xF1FA8C), comment: rgb(0x4C886B, 0x6272A4), invalid: rgb(0xFF0000, 0xFF79C6))
-
-    private static let texstudioColours = Colours(
-        command: rgb(0x800000, 0x60CDF2), argument: rgb(0x008000, 0x60F260),
-        maths: rgb(0x509600, 0x85F218), comment: rgb(0x808080, 0x667299), invalid: rgb(0xC00000, 0xF2F218))
-
-    private static let systemColours = Colours(
-        command: .systemPink.legibleAsText, argument: .systemTeal.legibleAsText,
-        maths: .systemPurple.legibleAsText, comment: .secondaryLabelColor.legibleAsText, invalid: .systemRed.legibleAsText)
-}
-
-private extension HighlightKind {
-    func color(in theme: SyntaxTheme) -> NSColor {
-        let colours = theme.colours
-        return switch self {
-        case .command: colours.command
-        case .argument, .builtin: colours.argument
-        case .mathDelimiter, .mathIdentifier, .number, .stringLiteral: colours.maths
-        case .comment: colours.comment
-        case .invalid: colours.invalid
+        var shared: [String: NSColor] = [:]
+        return HighlightKind.allCases.map { kind -> NSColor in
+            let index = Int(kind.rawValue)
+            let byName = shades.compactMapValues { index < $0.count ? $0[index] : nil }
+            let key = NSColor.textAppearances.map { byName[$0].map { "\($0)" } ?? "-" }.joined(separator: " ")
+            if let color = shared[key] { return color }
+            let color = NSColor.adapting(byName.mapValues { NSColor.srgb($0) }, fallback: .textColor)
+            shared[key] = color
+            return color
         }
     }
 }

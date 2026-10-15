@@ -67,7 +67,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             + toolbarImmovableItemIdentifiers(toolbar)
     }
 
-    private static let buttonTemplates = (referenceTemplates + insertTemplates + listTemplates).filter { $0.symbol != nil }
+    private static let buttonTemplates: [Template] = {
+        let templates = Menus.shared.templates
+        return (templates.references + templates.insert + templates.list).filter { $0.symbol != nil }
+    }()
 
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile,

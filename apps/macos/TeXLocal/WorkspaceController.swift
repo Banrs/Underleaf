@@ -479,7 +479,7 @@ final class WorkspaceController: RestoredSplitViewController {
             case .fitPage: pdf.fitPage()
             case .goToPage(let page): pdf.go(toPage: page)
             case .find: showPDFFind()
-            case let .reveal(loc, word): pdf.reveal(loc, word: word)
+            case let .reveal(loc, source): pdf.reveal(loc, from: source)
             case .inverseFromView:
                 if case let (page, point)? = pdf.sourcePoint() {
                     Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
