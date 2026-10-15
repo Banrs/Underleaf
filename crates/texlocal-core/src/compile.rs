@@ -140,11 +140,11 @@ pub(crate) fn program_at(path: &Path) -> Option<PathBuf> {
     path.is_absolute().then(|| which::which(path).ok())?
 }
 
-pub fn has_latexmk(dir: &Path) -> bool {
+fn has_latexmk(dir: &Path) -> bool {
     program_at(&dir.join("latexmk")).is_some()
 }
 
-pub fn latexmk_dir(path_env: &str) -> Option<PathBuf> {
+fn latexmk_dir(path_env: &str) -> Option<PathBuf> {
     find_tool("latexmk", path_env)?
         .parent()
         .map(Path::to_path_buf)
@@ -152,7 +152,7 @@ pub fn latexmk_dir(path_env: &str) -> Option<PathBuf> {
 
 /// The TeX programs folder `dir` names: `dir` itself, or the bin folder of a
 /// TeX Live root picked in its place.
-pub fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
     std::iter::once(dir.to_path_buf())
         .chain(children(dir.join("bin")))
         .find(|c| has_latexmk(c))

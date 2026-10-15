@@ -27,16 +27,6 @@ const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder
 const NO_TEXPRESSO: &str =
     "That folder doesn't contain the texpresso program. Choose the folder it's in.";
 
-/// TeX folder listing: names only, never file contents.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DirListing {
-    pub path: String,
-    pub parent: Option<String>,
-    pub dirs: Vec<String>,
-    pub has_latexmk: bool,
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadSpec {
@@ -269,41 +259,12 @@ impl Service {
         Ok(self.status().await)
     }
 
-    /// A folder's subfolders, for the browser version's TeX folder picker.
-    /// None starts at the TeX folder in use, else the home folder.
-    pub fn list_dirs(&self, path: Option<&str>) -> Result<DirListing, CoreError> {
-        let dir = match path.map(str::trim).filter(|p| !p.is_empty()) {
-            Some(path) => PathBuf::from(path),
-            None => self
-                .tex_dir()
-                .or_else(|| compile::latexmk_dir(&compile::tex_path(None)))
-                .or_else(std::env::home_dir)
-                .unwrap_or_default(),
-        };
-        let unreadable = || CoreError::bad_request("Couldn't open that folder.");
-        if !dir.is_absolute() {
-            return Err(unreadable());
-        }
-        let mut dirs: Vec<String> = std::fs::read_dir(&dir)
-            .map_err(|_| unreadable())?
-            .filter_map(|e| e.ok())
-            .filter(|e| !e.file_name().to_string_lossy().starts_with('.') && e.path().is_dir())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
-        dirs.sort_by_key(|name| name.to_lowercase());
-        Ok(DirListing {
-            path: dir.to_string_lossy().into_owned(),
-            parent: dir.parent().map(|p| p.to_string_lossy().into_owned()),
-            dirs,
-            has_latexmk: compile::has_latexmk(&dir),
-        })
-    }
-
     // ---------- files ----------
 
     /// Validate the whole batch before writing, so a late unsafe or oversize
     /// entry cannot cause a predictable partial import. Return clashes and free Keep Both
-    /// names for the host's Replace, Keep Both or Stop choice.
+    /// names for the host's Replace, Keep Both or Stop choice: an import's
+    /// (`import::import_files`).
     pub fn validate_uploads(
         &self,
         id: &str,
@@ -396,7 +357,8 @@ impl Service {
         settings::compiled_pdf_path(&self.project_root(id)?)
     }
 
-    /// A project file's location, through the path boundary.
+    /// A project file's location, through the path boundary, for the browser
+    /// server to serve it.
     pub fn raw_path(&self, id: &str, rel: &str) -> Result<PathBuf, CoreError> {
         paths::safe_path(&self.project_root(id)?, rel)
     }
@@ -406,9 +368,9 @@ impl Service {
     /// Shared JSON command table for browser and native hosts. Raw bytes and
     /// host-chosen absolute paths stay in direct methods outside this table.
     ///
-    /// Browser TeX-folder picking needs absolute paths in `set_tex_dir` and
-    /// `list_dirs`. Its server binds 127.0.0.1 with token and Host/Origin checks;
-    /// `list_dirs` returns names only, and compiling already permits choosing TeX.
+    /// `set_tex_dir` takes an absolute path from the browser too: its server
+    /// binds 127.0.0.1 with token and Host/Origin checks, and compiling
+    /// already permits choosing TeX.
     pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
         let s = |key: &str| string_arg(args, key);
         let root = || self.project_root(s("id")?);
@@ -469,7 +431,6 @@ impl Service {
                     .texpresso
                     .caret(s("session")?, s("path")?, arg(args, "offset")?)?)
             }
-            "texpresso_rerun" => out(self.texpresso.rerun(s("session")?)?),
             "texpresso_wait" => out(self
                 .texpresso
                 .wait(
@@ -499,7 +460,6 @@ impl Service {
             "set_tex_dir" => out(self
                 .set_tex_dir(arg::<Option<String>>(args, "dir")?.as_deref())
                 .await?),
-            "list_dirs" => out(self.list_dirs(arg::<Option<String>>(args, "path")?.as_deref())?),
             "list_projects" => out(projects::list_projects(&self.data_dir)?),
             "create_project" => out(projects::create_project(
                 &self.data_dir,
@@ -518,10 +478,6 @@ impl Service {
                     projects::rename_project(&self.data_dir, id, name, stop)
                 })?)
             }
-            "delete_project" => out(self.with_project(s("id")?, |root| {
-                self.stop_runs(root)?;
-                projects::discard(root)
-            })?),
             "get_settings" => out(settings::read_settings(&root()?)),
             // A rename also rewrites mainFile; serialize read/modify/write.
             "set_settings" => out(self.with_project(s("id")?, |root| {
@@ -578,19 +534,6 @@ impl Service {
                     Ok(result)
                 })?)
             }
-            "delete_entry" => {
-                let path = s("path")?;
-                out(self.with_project(s("id")?, |root| {
-                    projects::delete_entry(root, path)?;
-                    self.texpresso.stop(root)?;
-                    Ok(())
-                })?)
-            }
-            "validate_uploads" => out(self.validate_uploads(
-                s("id")?,
-                &arg::<Option<String>>(args, "dir")?.unwrap_or_default(),
-                &arg::<Vec<UploadSpec>>(args, "files")?,
-            )?),
             "compile" => out(self
                 .compile
                 .compile(&root()?, self.tex_dir().as_deref())

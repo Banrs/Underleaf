@@ -1,5 +1,5 @@
-//! The editing logic against the cases the web's tests also check
-//! (fixtures/editing.json; test/mathmode.test.js and test/editor.test.js).
+//! The editing logic against the expected answers in fixtures/editing.json:
+//! maths at a place, the maths to preview, completions, headings and blocks.
 
 use serde::Deserialize;
 use texlocal_syntax::{SourceDocument, TextEdit, TextRange, math_mode_at};
@@ -36,7 +36,7 @@ fn marked(source: &str) -> (SourceDocument, u32) {
 }
 
 #[test]
-fn math_mode_matches_the_web() {
+fn math_mode_is_known_at_a_place() {
     for (source, expected, note) in fixture().math_mode {
         let before: Vec<u16> = source[..source.find('|').unwrap()].encode_utf16().collect();
         assert_eq!(math_mode_at(&before), expected, "{source} {note}");
@@ -48,7 +48,7 @@ fn math_mode_matches_the_web() {
 }
 
 #[test]
-fn the_maths_to_preview_matches_the_web() {
+fn the_maths_to_preview_is_found_around_a_place() {
     for (source, expected) in fixture().math_at {
         let (doc, at) = marked(&source);
         assert_eq!(
@@ -60,7 +60,7 @@ fn the_maths_to_preview_matches_the_web() {
 }
 
 #[test]
-fn completions_match_the_web() {
+fn completions_are_offered_for_what_is_typed() {
     let (labels, citations) = (["sec:intro".to_string()], ["knuth84".to_string()]);
     for (before, explicit, start, offered) in fixture().completions {
         let doc = SourceDocument::new(&before);
@@ -76,7 +76,7 @@ fn completions_match_the_web() {
 }
 
 #[test]
-fn headings_match_the_web() {
+fn a_line_becomes_a_heading() {
     for (line, command, text, cursor) in fixture().headings {
         let doc = SourceDocument::new(&format!("above\n{line}\nbelow"));
         let insertion = doc.set_heading(7, &command);
@@ -94,7 +94,7 @@ fn headings_match_the_web() {
 }
 
 #[test]
-fn blocks_match_the_web() {
+fn blocks_go_in_with_their_fields() {
     for (before, id, text, fields) in fixture().blocks {
         let doc = SourceDocument::new(&before);
         let end = units(&before);

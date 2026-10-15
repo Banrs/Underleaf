@@ -790,7 +790,7 @@ impl Manager {
         });
         // TeXpresso's idle reruns stay off: each starts TeX again from nothing after a pause
         // in typing and shows no page until it is over. A build that sends pages makes its
-        // finishing passes beside the document; for another there is `rerun`.
+        // finishing passes beside the document.
         if let Some((first, last)) = pane.and_then(|pane| pane.view) {
             opened.push(json!(["view", first, last.max(first)]));
         }
@@ -920,12 +920,6 @@ impl Manager {
         if session.sends_pages(&lock(&session.state)) {
             session.send(&[json!(["caret", path, offset])]);
         }
-        Ok(())
-    }
-    /// Asks for a finishing pass now, for references and contents: a patched build makes
-    /// its own after a pause; upstream makes one only when asked.
-    pub fn rerun(&self, token: &str) -> Result<(), CoreError> {
-        self.held(token)?.send(&[json!(["rerun-once"])]);
         Ok(())
     }
     /// Waits until the session has something a client at `after` hasn't had (`Events`),
@@ -1834,8 +1828,7 @@ mod tests {
         assert_eq!(manager.edit(token, "main.tex", 1, 3, "").unwrap(), 2);
         manager.view(token, 5, 4).unwrap();
         manager.caret(token, "main.tex", 2).unwrap();
-        manager.rerun(token).unwrap();
-        until(|| commands(&tmp).len() >= 10).await;
+        until(|| commands(&tmp).len() >= 9).await;
         let sent = commands(&tmp);
         assert_eq!(
             sent[1..],
@@ -1848,7 +1841,6 @@ mod tests {
                 json!(["mark", 2]),
                 json!(["view", 5, 5]),
                 json!(["caret", path, 2]),
-                json!(["rerun-once"]),
             ]
         );
         // No finishing passes of upstream's kind, which start the document over.
@@ -1886,9 +1878,9 @@ mod tests {
             .unwrap();
         assert_eq!(repaired.edit, 3);
         assert_eq!(manager.edit(token, "main.tex", 5, 0, "!").unwrap(), 4);
-        until(|| commands(&tmp).len() >= 14).await;
+        until(|| commands(&tmp).len() >= 13).await;
         assert_eq!(
-            commands(&tmp)[10..],
+            commands(&tmp)[9..],
             [
                 json!(["change", path, 3, 0, "😀"]),
                 json!(["mark", 3]),
@@ -1959,8 +1951,9 @@ mod tests {
         assert!(quiet.pages.is_empty() && quiet.pdf.is_none() && quiet.seq == all.seq);
         assert_eq!(quiet.synced, 2);
 
-        // A new document takes the place of the pages before it.
-        manager.rerun(&token).unwrap();
+        // A new document takes the place of the pages before it: the stub writes one when
+        // asked for a finishing pass, as upstream's build does.
+        manager.held(&token).unwrap().send(&[json!(["rerun-once"])]);
         let mut events = wait(all.seq, SOON).await;
         while events.done.is_none() {
             events = wait(all.seq, SOON).await;

@@ -76,7 +76,7 @@ fn ensure_existing_ancestor_within(
 /// symlink aliases outside the data directory, and missing projects. A project
 /// is one folder directly under `data_dir`, as list_projects reports it: a
 /// nested id would let the project commands rename, trash or compile a folder
-/// inside another project, past delete_entry's main-file guard.
+/// inside another project.
 pub fn project_root(data_dir: &Path, id: &str) -> Result<PathBuf, CoreError> {
     let root = data_dir.join(project_name(id)?);
     if !root.is_dir() {

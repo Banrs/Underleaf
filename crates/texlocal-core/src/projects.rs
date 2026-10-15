@@ -521,28 +521,6 @@ pub(crate) fn numbered(name: &str, n: u32) -> String {
     }
 }
 
-pub fn delete_entry(root: &Path, rel: &str) -> Result<(), CoreError> {
-    delete_entry_using(root, rel, discard)
-}
-
-fn delete_entry_using(
-    root: &Path,
-    rel: &str,
-    move_to_trash: impl FnOnce(&Path) -> Result<(), CoreError>,
-) -> Result<(), CoreError> {
-    let abs = safe_path(root, rel)?;
-    // However the request spells the main file or a folder holding it.
-    if after_entry(&read_settings(root).main_file, &rel_key(rel)?).is_some() {
-        return Err(CoreError::conflict(
-            "Choose a different main file before deleting this entry",
-        ));
-    }
-    if fs::symlink_metadata(&abs).is_ok() {
-        move_to_trash(&abs)?;
-    }
-    Ok(())
-}
-
 // ---------- search ----------
 
 // Keep one folded character per original character so snippet offsets agree.
@@ -677,47 +655,7 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{after_entry, create_file, create_project, delete_entry_using};
-    use crate::CoreError;
-    use crate::paths::project_root;
-    use crate::settings::write_settings;
-    use serde_json::json;
-    use std::path::PathBuf;
-
-    fn project() -> (tempfile::TempDir, PathBuf) {
-        let data = tempfile::tempdir().unwrap();
-        create_project(data.path(), "P", "blank").unwrap();
-        let root = project_root(data.path(), "P").unwrap();
-        (data, root)
-    }
-
-    // These go through a stand-in for the platform trash: the real one is slow
-    // or unavailable under test, and must not fill the user's Trash either.
-
-    #[test]
-    fn deleting_an_entry_never_turns_a_trash_failure_into_permanent_deletion() {
-        let (_data, root) = project();
-        create_file(&root, "notes/scratch.tex", false).unwrap();
-        let unavailable = |_: &_| Err(CoreError::internal("trash unavailable"));
-        let err = delete_entry_using(&root, "notes/scratch.tex", unavailable).unwrap_err();
-        assert_eq!(err.status, 500);
-        assert!(root.join("notes/scratch.tex").is_file());
-    }
-
-    #[test]
-    fn an_entry_named_with_a_leading_dash_reaches_the_trash() {
-        // create_entry and uploads accept such a name; only the main file,
-        // which reaches latexmk's command line, may not start with "-".
-        let (_data, root) = project();
-        create_file(&root, "-notes/-draft.tex", false).unwrap();
-        let mut trashed = None;
-        delete_entry_using(&root, "-notes", |path| {
-            trashed = Some(path.to_path_buf());
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(trashed, Some(root.join("-notes")));
-    }
+    use super::after_entry;
 
     #[test]
     fn main_file_guards_compare_names_as_the_volume_does() {
@@ -738,26 +676,5 @@ mod tests {
             after_entry("Chapters/a.tex", "chapters"),
             insensitive.then_some("/a.tex")
         );
-    }
-
-    #[test]
-    fn the_main_file_guard_runs_before_the_trash() {
-        let (_data, root) = project();
-        create_file(&root, "chapters/main.tex", false).unwrap();
-        write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
-        for path in ["chapters", "chapters/main.tex"] {
-            let err =
-                delete_entry_using(&root, path, |_| panic!("{path} was trashed")).unwrap_err();
-            assert_eq!(err.status, 409, "{path}");
-        }
-        // A sibling that merely shares the name's prefix is not the main file.
-        create_file(&root, "chapters2/x.tex", false).unwrap();
-        let mut trashed = false;
-        delete_entry_using(&root, "chapters2", |_| {
-            trashed = true;
-            Ok(())
-        })
-        .unwrap();
-        assert!(trashed);
     }
 }

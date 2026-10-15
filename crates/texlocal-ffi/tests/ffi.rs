@@ -126,17 +126,7 @@ fn native_only_commands_resolve_absolute_paths() {
     let dir = tempfile::tempdir().unwrap();
     let handle = open_with_project(dir.path());
 
-    let raw = call(
-        handle,
-        "raw_path",
-        Some(json!({ "id": "P", "path": "img/a.png" })),
-    );
-    assert!(raw["ok"].as_str().unwrap().ends_with("a.png"));
-    let escape = call(
-        handle,
-        "raw_path",
-        Some(json!({ "id": "P", "path": "../../x" })),
-    );
+    let escape = call(handle, "project_root", Some(json!({ "id": "../x" })));
     assert_eq!(escape["status"], 400);
     let root = call(handle, "project_root", Some(json!({ "id": "P" })));
     assert!(root["ok"].as_str().unwrap().ends_with("P"));

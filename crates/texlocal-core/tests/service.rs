@@ -551,44 +551,6 @@ async fn status_reports_the_current_tex_choice() {
 }
 
 #[tokio::test]
-async fn list_dirs_lists_visible_subfolders_by_name() {
-    let (_dir, service) = service();
-    let tmp = TempDir::new().unwrap();
-    for name in ["beta", "Alpha", ".hidden"] {
-        std::fs::create_dir(tmp.path().join(name)).unwrap();
-    }
-    std::fs::write(tmp.path().join("file.txt"), "secret").unwrap();
-
-    let listing = call(&service, "list_dirs", json!({ "path": tmp.path() })).await;
-    assert_eq!(listing["path"], tmp.path().to_string_lossy().as_ref());
-    assert_eq!(
-        listing["parent"],
-        tmp.path().parent().unwrap().to_string_lossy().as_ref()
-    );
-    assert_eq!(listing["dirs"], json!(["Alpha", "beta"]));
-    assert_eq!(listing["hasLatexmk"], false);
-
-    let bin = fake_tex(&tmp.path().join("beta"));
-    let tex = call(&service, "list_dirs", json!({ "path": bin })).await;
-    assert_eq!(tex["hasLatexmk"], true);
-
-    // With no path it starts at the chosen TeX folder.
-    call(&service, "set_tex_dir", json!({ "dir": bin })).await;
-    let start = call(&service, "list_dirs", json!({ "path": null })).await;
-    assert_eq!(start["path"], bin);
-
-    let missing = tmp.path().join("missing");
-    assert_eq!(
-        status_of(&service, "list_dirs", json!({ "path": missing })).await,
-        400
-    );
-    assert_eq!(
-        status_of(&service, "list_dirs", json!({ "path": "relative" })).await,
-        400
-    );
-}
-
-#[tokio::test]
 async fn the_app_settings_file_is_not_listed_as_a_project() {
     let (_dir, service) = with_project();
     let tex = TempDir::new().unwrap();
