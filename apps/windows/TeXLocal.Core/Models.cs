@@ -1,4 +1,4 @@
-namespace TeXLocal.Core;
+namespace TeXLocal.Bridge;
 
 /// <param name="Mtime">Milliseconds since the epoch; list_projects sorts newest first.</param>
 public sealed record ProjectInfo(string Id, string Name, long Mtime, string MainFile);

@@ -1,0 +1,238 @@
+<Page
+    x:Class="TeXLocal.Pages.WorkspacePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:TeXLocal.Controls"
+    xmlns:local="using:TeXLocal.Pages"
+    Background="Transparent">
+
+    <Page.KeyboardAccelerators>
+        <KeyboardAccelerator Invoked="OnNextRegion" Key="F6" />
+        <KeyboardAccelerator Invoked="OnNextRegion" Key="F6" Modifiers="Shift" />
+    </Page.KeyboardAccelerators>
+
+    <Grid Background="Transparent">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="40" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="32" />
+        </Grid.RowDefinitions>
+
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup>
+                <VisualState x:Name="Wide">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="1008" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="Split.DisplayMode" Value="Inline" />
+                        <Setter Target="Split.PaneBackground" Value="Transparent" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="Narrow">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="0" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="Split.DisplayMode" Value="Overlay" />
+                        <Setter Target="Split.PaneBackground" Value="{ThemeResource AcrylicInAppFillColorDefaultBrush}" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
+
+        <Grid Padding="4,0,8,0" Background="Transparent">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <MenuBar VerticalAlignment="Center">
+                <MenuBarItem x:Name="FileMenu" AccessKey="F" Title="File">
+                    <MenuFlyoutItem AccessKey="N" Click="OnNewFile" Text="New file">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="N" Modifiers="Control" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutItem AccessKey="F" Click="OnNewFolder" Text="New folder" />
+                    <MenuFlyoutSeparator />
+                    <MenuFlyoutSubItem AccessKey="O" Text="Open">
+                        <MenuFlyoutItem AccessKey="F" Click="OnOpenFolder" Text="Folder…">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Key="O" Modifiers="Control" />
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutItem AccessKey="Z" Click="OnOpenFile" Text="ZIP or TeX file…">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Key="O" Modifiers="Control,Shift" />
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
+                    </MenuFlyoutSubItem>
+                    <MenuFlyoutItem AccessKey="C" Click="OnClose" Text="Close project">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="W" Modifiers="Control" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutSeparator />
+                    <MenuFlyoutItem
+                        AccessKey="S"
+                        Click="OnSettings"
+                        KeyboardAcceleratorTextOverride="Ctrl+,"
+                        Text="Settings" />
+                </MenuBarItem>
+                <MenuBarItem AccessKey="V" Title="View">
+                    <ToggleMenuFlyoutItem
+                        x:Name="SidebarItem"
+                        AccessKey="S"
+                        Click="OnSidebar"
+                        IsChecked="True"
+                        Text="Sidebar">
+                        <ToggleMenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="E" Modifiers="Control,Shift" />
+                        </ToggleMenuFlyoutItem.KeyboardAccelerators>
+                    </ToggleMenuFlyoutItem>
+                </MenuBarItem>
+            </MenuBar>
+        </Grid>
+
+        <SplitView
+            x:Name="Split"
+            Grid.Row="1"
+            DisplayMode="Inline"
+            IsPaneOpen="True"
+            OpenPaneLength="280"
+            PaneBackground="Transparent"
+            PaneClosed="OnPaneClosed">
+            <SplitView.Pane>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Margin="16,12,16,8" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Files" />
+                    <TreeView
+                        x:Name="Tree"
+                        Grid.Row="1"
+                        AllowDrop="True"
+                        AutomationProperties.Name="Files"
+                        CanDragItems="False"
+                        CanReorderItems="False"
+                        Collapsed="OnCollapsed"
+                        ContextRequested="OnTreeContextRequested"
+                        DragOver="OnDragOver"
+                        Drop="OnDrop"
+                        Expanding="OnExpanding"
+                        SelectionMode="Single">
+                        <TreeView.ContextFlyout>
+                            <MenuFlyout x:Name="TreeMenu" Opening="OnTreeMenuOpening">
+                                <MenuFlyoutItem Click="OnNewFile" Text="New file">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8A5;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Click="OnNewFolder" Text="New folder">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8F4;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutSeparator />
+                                <MenuFlyoutItem x:Name="MainItem" Click="OnSetMain" Text="Set as main file">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE735;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem x:Name="RenameItem" Click="OnRename" Text="Rename">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8AC;" />
+                                    </MenuFlyoutItem.Icon>
+                                    <MenuFlyoutItem.KeyboardAccelerators>
+                                        <KeyboardAccelerator Key="F2" />
+                                    </MenuFlyoutItem.KeyboardAccelerators>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem x:Name="RevealItem" Click="OnReveal" Text="Show in File Explorer">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xEC50;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutSeparator />
+                                <MenuFlyoutItem x:Name="DeleteItem" Click="OnDelete" Text="Delete">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE74D;" />
+                                    </MenuFlyoutItem.Icon>
+                                    <MenuFlyoutItem.KeyboardAccelerators>
+                                        <KeyboardAccelerator Key="Delete" />
+                                    </MenuFlyoutItem.KeyboardAccelerators>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </TreeView.ContextFlyout>
+                        <TreeView.ItemTemplate>
+                            <DataTemplate x:DataType="local:FileItem">
+                                <TreeViewItem
+                                    AutomationProperties.Name="{x:Bind Name}"
+                                    IsExpanded="{x:Bind IsExpanded}"
+                                    ItemsSource="{x:Bind Children}"
+                                    ToolTipService.ToolTip="{x:Bind Path}">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon FontSize="16" Glyph="{x:Bind Glyph}" />
+                                        <TextBlock
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Style="{StaticResource BodyTextBlockStyle}"
+                                            Text="{x:Bind Name}"
+                                            TextTrimming="CharacterEllipsis"
+                                            TextWrapping="NoWrap" />
+                                        <FontIcon
+                                            Grid.Column="2"
+                                            AutomationProperties.Name="Main file"
+                                            FontSize="16"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Glyph="&#xE735;"
+                                            Visibility="{x:Bind IsMain}" />
+                                    </Grid>
+                                </TreeViewItem>
+                            </DataTemplate>
+                        </TreeView.ItemTemplate>
+                    </TreeView>
+                    <controls:Sizer
+                        x:Name="PaneSizer"
+                        Grid.RowSpan="2"
+                        Grid.Column="1"
+                        AutomationProperties.Name="Sidebar width" />
+                </Grid>
+            </SplitView.Pane>
+
+            <Grid Style="{StaticResource ContentCardStyle}">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
+                    <FontIcon
+                        HorizontalAlignment="Center"
+                        FontSize="48"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        Glyph="&#xE8A5;" />
+                    <TextBlock HorizontalAlignment="Center" Style="{StaticResource BodyTextBlockStyle}" Text="Choose a file in the sidebar." />
+                </StackPanel>
+                <InfoBar
+                    x:Name="Notice"
+                    Margin="16,12,16,0"
+                    VerticalAlignment="Top"
+                    Severity="Warning" />
+            </Grid>
+        </SplitView>
+
+        <ContentDialog
+            x:Name="ReplaceDialog"
+            Title="Replace existing files?"
+            CloseButtonText="Cancel"
+            DefaultButton="Secondary"
+            PrimaryButtonText="Replace"
+            SecondaryButtonText="Keep both"
+            Style="{StaticResource DefaultContentDialogStyle}" />
+    </Grid>
+</Page>

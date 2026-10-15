@@ -1,0 +1,33 @@
+<Window
+    x:Class="TeXLocal.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="TeXLocal">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
+    <Grid x:Name="Root" Background="Transparent">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TitleBar
+            x:Name="Bar"
+            Height="48"
+            Title="TeXLocal"
+            BackRequested="OnBackRequested"
+            PaneToggleRequested="OnPaneToggleRequested">
+            <TitleBar.IconSource>
+                <ImageIconSource ImageSource="ms-appx:///Assets/TeXLocal.png" />
+            </TitleBar.IconSource>
+        </TitleBar>
+
+        <Frame
+            x:Name="Pages"
+            Grid.Row="1"
+            Background="Transparent"
+            Navigated="OnNavigated" />
+    </Grid>
+</Window>

@@ -1,14 +1,14 @@
 using System.Text.Json;
-using TeXLocal.Core;
+using TeXLocal.Bridge;
 
 namespace TeXLocal.Tests;
 
 public sealed class CoreTests : IDisposable
 {
     readonly string dir = Directory.CreateTempSubdirectory("tl-test-").FullName;
-    readonly Core.Core core;
+    readonly Core core;
 
-    public CoreTests() => core = Core.Core.Open(dir, a => a());
+    public CoreTests() => core = Core.Open(dir, a => a());
 
     public void Dispose()
     {

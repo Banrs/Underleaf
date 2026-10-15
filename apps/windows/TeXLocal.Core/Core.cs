@@ -1,9 +1,9 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using static TeXLocal.Core.Native;
+using static TeXLocal.Bridge.Native;
 
-namespace TeXLocal.Core;
+namespace TeXLocal.Bridge;
 
 public sealed class CoreException(int status, string message) : Exception(message)
 {
