@@ -189,6 +189,12 @@ pub fn contrasting(color: Rgba, background: Rgba, ratio: f64) -> Rgba {
 /// text under 18 points, or WCAG's enhanced 7:1 with Increase Contrast.
 pub fn legible(color: Rgba, background: Rgba, fill: Rgba, increase_contrast: bool) -> Rgba {
     let ratio = if increase_contrast { 7.0 } else { 4.5 };
+    legible_at(color, background, fill, ratio)
+}
+
+/// `legible`, to a contrast `ratio` of the caller's choosing: 3:1 is the
+/// HIG's for large text and graphics, such as a border.
+pub fn legible_at(color: Rgba, background: Rgba, fill: Rgba, ratio: f64) -> Rgba {
     let line = over(fill, background);
     contrasting(
         contrasting(over(color, background), background, ratio),

@@ -94,7 +94,8 @@ impl SourceDocument {
     /// (`selections`, `step`), "mirror_snippet"; "move_lines" (`selections`,
     /// `up`), "toggle_style" (`selections`, `style`: "bold", "italic" or
     /// "underline"), "wrap" (`selections`, `template`) and "map_selections"
-    /// (`edits`, `selections`).
+    /// (`edits`, `selections`); "reset_typing" forgets the closers and
+    /// snippet, as when the document is shown again (it answers null).
     pub fn call(&mut self, command: &str, args_json: &str) -> Option<String> {
         let value: Value = serde_json::from_str(args_json).ok()?;
         if !value.is_object() {
@@ -134,6 +135,10 @@ impl SourceDocument {
             }
             "start_snippet" => json(self.start_snippet(&a.fields, a.at)),
             "end_snippet" => json(self.end_snippet()),
+            "reset_typing" => {
+                self.reset_typing();
+                json(())
+            }
             "tab" => json(self.tab(&a.selections, a.step)),
             "mirror_snippet" => json(self.mirror_snippet()),
             "move_lines" => json(self.move_lines(&a.selections, a.up)),
@@ -148,11 +153,14 @@ impl SourceDocument {
 /// The commands that need no document: "themes", the themes' colours;
 /// "theme_colors", a theme's (`theme`, its id) legible in an appearance
 /// (`theme::Appearance`'s fields), by highlight kind; "legible" (`color`,
-/// `background`, `fill`, `increaseContrast`), one colour raised so; and
+/// `background`, `fill`, `increaseContrast`, `ratio`), one colour raised to
+/// `ratio` (default 4.5, or 7 with `increaseContrast`); and
 /// "contrast" (`a`, `b`), WCAG's ratio. "menus", the catalogue's templates,
 /// heading levels and symbol groups; "document_class" (`text`), the class a
 /// main file names, or null; "heading_styles" (`class`, `pointSize`,
 /// `hasChapters`), the levels the class has, as it sets and numbers them.
+/// "drop_text" (`path`, `kind`, `into`), what a project file dropped on the
+/// editor does: {"insert": text} or {"open": true}, or null for a folder.
 /// "math_svg" (`tex`, `display`, `size`, `color`) and "glyph_svg"
 /// (`command`, `size`, `side`, `color`): `render::MathSvg`, or
 /// {"error": why}.
@@ -200,11 +208,41 @@ struct Legible {
     fill: Rgba,
     #[serde(default)]
     increase_contrast: bool,
+    /// The contrast to raise to; without it, 4.5, or 7 with `increase_contrast`.
+    ratio: Option<f64>,
+}
+
+/// What a file dropped on the editor does.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+enum Dropped {
+    /// Put this LaTeX at the caret.
+    Insert(String),
+    /// Open the file.
+    Open(bool),
+}
+
+/// An image or PDF dropped on a LaTeX file is `\includegraphics`; any other
+/// file opens. `kind` is the file's `file_tree` kind, none for a folder (which
+/// does nothing); `into` the kind of the file dropped on.
+fn dropped(path: &str, kind: &str, into: &str) -> Option<Dropped> {
+    match kind {
+        "" => None,
+        "image" | "pdf" if into == "tex" => {
+            Some(Dropped::Insert(format!("\\includegraphics{{{path}}}")))
+        }
+        _ => Some(Dropped::Open(true)),
+    }
 }
 
 fn call_with(command: &str, value: &Value) -> Option<String> {
     let string = |key: &str| value.get(key).and_then(Value::as_str);
     match command {
+        "drop_text" => json(dropped(
+            string("path")?,
+            string("kind").unwrap_or_default(),
+            string("into").unwrap_or("tex"),
+        )),
         "themes" => json(theme::THEMES),
         "math_svg" | "glyph_svg" => {
             let m: Maths = args(value)?;
@@ -235,12 +273,10 @@ fn call_with(command: &str, value: &Value) -> Option<String> {
         }
         "legible" => {
             let a: Legible = args(value)?;
-            json(theme::legible(
-                a.color,
-                a.background,
-                a.fill,
-                a.increase_contrast,
-            ))
+            json(match a.ratio {
+                Some(ratio) => theme::legible_at(a.color, a.background, a.fill, ratio),
+                None => theme::legible(a.color, a.background, a.fill, a.increase_contrast),
+            })
         }
         "contrast" => {
             let [a, b]: [Rgba; 2] = [args(value.get("a")?)?, args(value.get("b")?)?];
@@ -268,6 +304,32 @@ mod tests {
     }
 
     #[test]
+    fn a_dropped_file_is_inserted_or_opened() {
+        let drop = |args: &str| super::call("drop_text", args);
+        let image = r#"{"path": "figs/plot.png", "kind": "image"}"#;
+        assert_eq!(
+            drop(image).as_deref(),
+            Some(r#"{"insert":"\\includegraphics{figs/plot.png}"}"#)
+        );
+        let pdf = r#"{"path": "a.pdf", "kind": "pdf", "into": "tex"}"#;
+        assert!(drop(pdf).unwrap().contains("includegraphics{a.pdf}"));
+        // Into any other file, or any other kind, it opens.
+        let into_bib = r#"{"path": "a.pdf", "kind": "pdf", "into": "bib"}"#;
+        assert_eq!(drop(into_bib).as_deref(), Some(r#"{"open":true}"#));
+        let tex = r#"{"path": "ch1.tex", "kind": "tex"}"#;
+        assert_eq!(drop(tex).as_deref(), Some(r#"{"open":true}"#));
+        // A folder does nothing; a call without a path is no call.
+        assert_eq!(drop(r#"{"path": "figs"}"#).as_deref(), Some("null"));
+        assert_eq!(drop("{}"), None);
+    }
+
+    #[test]
+    fn resetting_typing_answers_null() {
+        let mut doc = SourceDocument::new("");
+        assert_eq!(doc.call("reset_typing", "{}").as_deref(), Some("null"));
+    }
+
+    #[test]
     fn colours_answer_by_name() {
         let themes = super::call("themes", "{}").unwrap();
         assert!(themes.starts_with(
@@ -286,6 +348,31 @@ mod tests {
             super::call("legible", black).as_deref(),
             Some("[0.0,0.0,0.0,1.0]")
         );
+        // A ratio asked for is the one it is raised to.
+        let grey = r#"[0.6, 0.6, 0.6, 1]"#;
+        let args = |extra: &str| {
+            format!(
+                r#"{{"color": {grey}, "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0]{extra}}}"#
+            )
+        };
+        let ratio_of = |extra: &str| {
+            let raised: [f64; 4] =
+                serde_json::from_str(&super::call("legible", &args(extra)).unwrap()).unwrap();
+            super::call(
+                "contrast",
+                &format!(r#"{{"a": {raised:?}, "b": [1, 1, 1, 1]}}"#),
+            )
+            .unwrap()
+            .parse::<f64>()
+            .unwrap()
+        };
+        let plain = ratio_of("");
+        assert!((4.5..5.0).contains(&plain), "{plain}");
+        assert_eq!(ratio_of(r#", "ratio": 4.5"#), plain);
+        let border = ratio_of(r#", "ratio": 3.0"#);
+        assert!((3.0..3.5).contains(&border), "{border}");
+        let enhanced = ratio_of(r#", "increaseContrast": true"#);
+        assert!((7.0..7.6).contains(&enhanced), "{enhanced}");
         let ratio = super::call("contrast", r#"{"a": [0, 0, 0, 1], "b": [1, 1, 1, 1]}"#).unwrap();
         assert_eq!(ratio, "21.0");
         let menus = super::call("menus", "{}").unwrap();

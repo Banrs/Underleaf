@@ -1,169 +1,131 @@
-# Underleaf handoff — 15 October 2026
+# Underleaf handoff
 
-## Branches
+Status and decisions for the next agent. `README.md` is the overview and `docs/core-api.md`
+the hosts' contract with the core.
 
-`main` holds the work. The refactor of 14 and 15 October (backend, Swift and SwiftUI, HIG,
-tests, the gutter, edition 2024) was merged into it from `refactor/integration`, and its
-branches deleted; `frontend/audit-rewrite`, an ancestor of `main`, is left only because a
-checkout still has it.
+## Shape
 
-## The Mac app's shape
+- **Rust core** (`crates/texlocal-core`) builds and tests on Windows, macOS and Linux. It owns
+  everything but UI and OS integration: projects, path safety, latexmk and SyncTeX, log
+  parsing, ZIP export, the JSON command service, and **project sessions** (`session/`):
+  each open document's text, autosave, notify-based folder watching, builds, issues and the
+  TeXpresso client. Hosts send commands and receive events (`tl_set_listener`).
+- **`crates/texlocal-syntax`** is I/O-free and also builds to wasm. It owns editor logic:
+  typing transforms, snippets, completion, highlighting, themes, the symbol and template
+  catalogue, heading styles, and maths and glyph rendering through RaTeX (`math_svg`,
+  `glyph_svg`).
+- **`crates/texlocal-ffi`** is the C ABI: a static library for the Mac app, a dynamic one
+  for the Windows app.
+- **`crates/texlocal-server`** serves the API on `127.0.0.1` with a startup token. A web
+  directory is optional: with none, it serves the API alone. A browser frontend is to be
+  written on the same core.
+- **macOS app** (`apps/macos`) is UI only, on the core.
+- **Windows app**: a native WinUI 3 / Fluent app is in progress on branch `claude/windows`.
+- **CI** is `.github/workflows/ci.yml`: a path-filtered `changes` job, Rust on Ubuntu and
+  Windows, the Mac app's `xcodebuild test` on the `xcode-27` runner, and `ci-ok`, the one
+  required check.
+
+## The Mac app
 
 - **Window, toolbar and splits are AppKit**: only `NSToolbar`'s tracking separators follow
   the source|PDF divider, and a three-column `NavigationSplitView` can't hide its detail
-  column. Panes, bars, sheets, popovers, Settings and Home are SwiftUI, hosting AppKit's text
-  and PDF views where SwiftUI has none.
-- **Narrow windows**: the window stops at 542 pt, the toolbar's least, with the PDF or
-  without (about 683 while the sidebar is open at its least); source and PDF keep minimums of
-  260 and 188 pt, the sidebar Xcode's navigator's 222; it opens at 270, the width of AppKit's
-  inspector. Tools without room go to `NSToolbar`'s own overflow menu by
-  `visibilityPriority`, and nowhere else; Compile gives up its word for its symbol first.
-  That is reckoned from the default tools' measured widths (`ColumnMetrics`), so it holds
-  while the toolbar has its default tools: customised, Compile keeps its word while the tools
-  that never leave have room for it (`WorkspaceToolbar.holdsDefaultItems`). AppKit overflows
-  by the room between the sidebar's and the inspector's separators, not by a pane's own, and
-  its source|PDF separator stops where a section's tools need the room, so a narrower pane
-  left the separator apart from the divider and the tools over the neighbouring pane. The
-  divider therefore goes to the separator a turn after any layout that parts them
-  (`WorkspaceController.joinDivider`, which finds the toolbar's line by its class,
-  `NSSeparatorToolbarItemView`, 27.2): the two met at every width from 542 to 1100 pt with
-  the sidebar open and shut. Sidebar and
-  inspector fold for a narrow window and are not saved as hidden for it (`sidebarFolded`).
-- **The window's title** is AppKit's, which keeps 160 pt for it whatever it says (27.2): with
-  both side columns open that sends Zoom to the overflow menu at a 1000 pt window, and with
-  both closed somewhere under 800. A trial that hid the title where it cost a tool kept every
-  tool down to the narrowest window; Daniel chose the system's title and overflow over it
-  (12 October: "HIG. appkit system over custom").
-- **Compile** is a hosted SwiftUI button in the toolbar's prominent item (`CompileButton`),
-  drawn as AppKit draws its own item, which can't show a spinner: Stop has the build's
-  spinner beside its word, or round its stop symbol where Compile is its symbol, at the width
-  Compile has there. The status bar's Compiling has none of its own. It changes form
-  as AppKit's own compact change does, measured on `NSSearchToolbarItem` going to its button
-  and back (27.2, in the unit-test host): the width in one step, the symbol fading in, or out
-  over the word, in 0.2 s on Core Animation's default curve. A change through the widths
-  between, tried the same day, was dropped for this at Daniel's word ("ensure the icon change
-  animation is same as apple app's compact"). The fade itself was not watched on screen
-  (Daniel, 12 October: "no more on-screen tests"), nor could the suite read it. A sidebar
-  that folds for a narrow window gives its width to the toolbar, so tools come back from the
-  overflow menu and leave again further on: both are AppKit's, and stay (Daniel: "if this is
-  normal, leave as is").
-- **Source**: one TextKit 2 `NSTextView` (`SourceTextView`), shared across files, in an
-  `NSScrollView` of its own (`EditorView`). Xcode's metrics for the font, gutter and current
-  line. The completion list (`CompletionList`) is Liquid Glass in a system menu's measures
-  (13 pt corners, 24 pt rows, the chosen row in the accent colour; from an `NSMenu` on 27.2),
-  a view of the editor's scroll view and not a window: glass in a borderless panel that isn't
-  key draws as a flat slab, and AppKit's own completion list is still its square box (27.2).
-  So it ends at the editor's edges and goes over its line where there is no room under it;
-  in an editor too short for either it takes the side with more room, with the whole rows
-  that has.
-  A build's issues are on their lines (`SourceTextView`, "the build's issues"), as Xcode
-  sets them (Daniel, 14 October: "Just do it like Xcode"): a gutter of numbers only, a
-  neutral band over the whole paragraph in the current line's shape (`tertiarySystemFill`),
-  and at the end of its first line a box (`IssueMessageView`) as tall as the line, edged in
-  the separators' colour, holding the symbol at the text's size and, after a divider, the
-  message in the system font, cut short, or the symbol alone, where there is no room; a help
-  tag and a click open the panel on it, and an undefined command is underlined in red where
-  the message names it. The box's measures follow the text's size (Daniel, 15 October: "Use
-  system defaults and ensure minimal code"). It is a small view over TextKit's own, so a
-  selection doesn't cover it; underline styles set as rendering attributes aren't drawn
-  (27.2), so the underline is drawn under the text.
-- **Status bar**: the source/PDF columns' bottom accessory at Xcode's measured spacing (14 pt
-  in, 9 between items, 36 high; `BarMetrics`). It draws no ground of its own: under it is
-  AppKit's own scroll edge, the accessory's automatic style (its default), as under the
-  toolbar over the same panes, by Daniel's "use system defaults" (15 October). In Light it
-  rests near white over a white editor; in Dark a few levels lighter than the editor (about
-  38 to 46 over 30, a little wallpaper-tinted), passing about a thirtieth of the text under
-  it (27.2, measured before). It replaced the editors' colour at 83% over a Core Image blur,
-  a custom ground that rested at exactly the editors' colour. AppKit's edge draws no line,
-  so the bar keeps its own: a point, as Xcode's, in a row of its own above the bar
-  (`BarMetrics.line`); the File Outline header's line beside it is the system's hard-edge
-  hairline, a device pixel, with the rest of the point drawn over it in the separator's
-  colour (`HeaderEdge`). SwiftUI's hard scroll edge, which is Xcode's bar, draws only over a
-  SwiftUI scroll view, and one around PDFKit's view takes its rubber-banding and insets
-  (27.2), so the PDF view sits directly in its pane.
-  After a save that failed, or a Cancel in an alert about the file on disk, the bar says Not
-  Saved, and that button saves.
-- **Build panel**: below the columns, so the status bar rides up as it opens, with AppKit's
-  collapse animation. Its controls are a bar at its foot, as Xcode's console bar: a pop-up for
-  Issues, Build Log and Live Preview Log (dim until Live Preview has run), then Warnings (dim
-  with none) or Copy Log, then a filter. The bar
-  is a SwiftUI safe-area bar under a line of its own: there its filter draws as
-  the filled capsule a toolbar's search field is, and as a row of a plain stack it draws as a
-  form's outlined field (27.2). The filter is the regular 24 pt among the bar's small
-  controls, as Xcode's; SwiftUI passes its control size on to a hosted `NSSearchField`, and a
-  small one is an outlined box that drops the filter symbol. Over the logs, which are AppKit
-  scroll views, the filter is still outlined. The list hides the system's wallpaper-tinted
-  ground so it is the editors' colour.
-- **Split dividers** are AppKit's thin divider as it comes, a point in the separator colour,
-  the thickness of Xcode's (27.1; Xcode's are darker, 215 where the separator gives 230, a
-  colour with no system name). The source|PDF divider stops
-  above the status bar (`ColumnsSplitView`), and a double-click on it restores the even split.
-  A drag stops at the sidebar's opening width and at the even split, with the alignment
-  haptic as it arrives (`RestoredSplitViewController.detent`).
-  A display link lays the splits out during pane animations, which otherwise don't always
-  reach the screen (27.2).
-- **PDF**: a rebuilt document's pages replace those showing, in the same `PDFDocument`, since
-  a new document flashes the pane's background for a few frames. PDFKit keeps every such
-  page's objects for the document's life, so once the app has grown by 512 MB since a document
-  was last shown whole, the next one is shown whole (`PDFController.memoryAtWhole`). Print
-  prints the document showing, which is whole in memory; during Live Preview it reads the
-  last build's file instead (`buildBehindLive`).
-- **Live preview**: each edit goes to the core as the text storage makes it (`texpresso_edit`);
-  a thread of the session's own waits in the core (`texpresso_wait`) for the pages in view,
-  and each is drawn over PDFKit's page at once (`LiveCanvas`, an IOSurface), over the part of
-  the page in view only. The whole document follows 300 ms after the last key and replaces
-  only the pages that changed; a scroll hands a waiting live page to PDFKit sooner. The
-  protocol and the engine's passes are in `docs/texpresso.md`.
+  column. Panes, bars, sheets, popovers, Settings and Home are SwiftUI, hosting AppKit's
+  text and PDF views where SwiftUI has none.
+- **Narrow windows**: the window stops at 542 pt, the toolbar's least (`ColumnMetrics`).
+  Source and PDF keep minimums of 260 and 188 pt; the sidebar's is 222 and it opens at 270.
+  Tools without room go to `NSToolbar`'s own overflow menu by `visibilityPriority`, and
+  nowhere else. Sidebar and inspector fold for a narrow window and are not saved as hidden
+  for it. The window's title is AppKit's, which keeps 160 pt for it (27.2); the system's
+  title and overflow were chosen over a custom one.
+- **Toolbar**: Compile is a symbol item (it becomes Stop while building). Aa is an
+  `NSMenuToolbarItem` menu grouped as Notes'; Math and Insert are menus beside it.
+- **Source**: one TextKit 2 `NSTextView` (`SourceTextView`) shared across files, in an
+  `NSScrollView` of its own (`EditorView`), at Xcode's metrics for font, gutter and current
+  line. The completion list (`CompletionList`) is Liquid Glass in a system menu's measures,
+  a view of the editor's scroll view and not a window, since glass in a borderless
+  non-key panel draws flat.
+- **Issues** are on their lines as in Xcode: a gutter of numbers only, a band over the whole
+  paragraph (`tertiarySystemFill`), and at the end of its first line a box
+  (`IssueMessageView`, an `NSBox`) of system views holding the symbol and the core's
+  one-line message, or the symbol alone where there is no room. A help tag and a click open
+  the build panel on it. Its measures follow the text's size. Underline styles set as
+  rendering attributes aren't drawn (27.2), so an undefined command's underline is drawn
+  under the text.
+- **Status bar**: the source and PDF columns' bottom accessory at Xcode's spacing
+  (`BarMetrics`), with AppKit's own scroll edge as its ground and a point line of its own
+  above it. After a failed save, or a Cancel in an alert about the file on disk, it says Not
+  Saved and that button saves.
+- **Build panel**: below the columns, so the status bar rides up as it opens. A bar at its
+  foot, as Xcode's console bar: a pop-up for Issues, Build Log and Live Preview Log, then
+  Warnings or Copy Log, then a filter. The bar is a SwiftUI safe-area bar, where the filter
+  draws as a toolbar's capsule; the filter is a regular 24 pt control among small ones.
+- **Splits**: AppKit's thin dividers. The source|PDF divider stops above the status bar
+  (`ColumnsSplitView`) and a double-click restores the even split; a drag stops at the
+  sidebar's opening width and the even split, with the alignment haptic
+  (`RestoredSplitViewController.detent`). A display link lays the splits out during pane
+  animations, which otherwise don't always reach the screen (27.2).
+- **File Outline** sits at the sidebar's foot. On a file that isn't LaTeX it stays, folded
+  and dim; it hides only for search results.
+- **PDF**: a rebuilt document's pages replace those showing in the same `PDFDocument`, since
+  a new document flashes the pane's background. PDFKit keeps every replaced page's objects
+  for the document's life, so once the app has grown by 512 MB since a document was last
+  shown whole, the next one is shown whole (`PDFController.memoryAtWhole`). Print prints the
+  document showing; during Live Preview it reads the last build's file (`buildBehindLive`).
+  The PDF view sits directly in its pane: SwiftUI's scroll edge needs a SwiftUI scroll view,
+  and one around PDFKit's view takes its rubber-banding and insets (27.2).
+- **Sessions**: the open project is a core session. The editor sends each edit once
+  (`tl_source_edit`); `ProjectModel` learns what changed from events (`Core.observe`, on the
+  main queue in order); session commands go one at a time on a queue of their own
+  (`Core.session`, `Core.send`). The sidebar's open folders and folded headings are the
+  project's settings (`get_ui_state`, `set_ui_state`), not UserDefaults.
+- **Editor logic is the core's**: each key asks the source (`tl_source_call`: `type`,
+  `delete_backward`, `insert_newline`) for the edit to type instead, and each storage edit
+  and selection is told back (`follow`, `select`). Command edits, theme colours, the menu
+  catalogue, heading styles and maths SVG come from `tl_syntax_call` (`Syntax`). The maths
+  preview is set at 1.21 times the text.
+- **Other helpers are the core's**: SyncTeX finds the word (`synctex_match`,
+  `synctex_inverse`); the outline's tree and fold keys come with `analyze_project` and its
+  current heading with `outline_current`; a file's kind with `file_tree`; a free name with
+  `create_entry`; an issue box's message as `short`.
+- **Live preview**: the session sends each edit on to TeXpresso and reports its pages
+  (`live_document`, `live_page`); `TeXpressoSession` reads them off the main actor and
+  `PDFController` swaps them into the pane (`showLive`). The whole document follows 300 ms
+  after the last key and replaces only the pages that changed. The protocol is in
+  `docs/texpresso.md`. The pane is the only display: TeXpresso opens no window of its own.
 - **A file another app changed** while it has unsaved edits here is asked about in an AppKit
-  alert on the window (Save Anyway, Revert, Cancel) with no default button, which SwiftUI's
-  alert can't do: either answer loses a version, so Return typed into the source as the sheet
-  lands answers nothing. One moved or deleted is a SwiftUI alert whose default saves it
-  again. Cancel in either writes nothing and the autosave stays quiet; the status bar says Not
-  Saved, and the next save that is asked for asks again (`ProjectModel.changedFile`,
-  `goneFile`, `leaveUnsaved`).
-- **Unavailable things are dim where they would otherwise jump** (Daniel: "sometimes greying
-  is more useful than hiding"): the File Outline's header stays at the sidebar's foot, folded
-  and dim, on a file that isn't LaTeX (it hides only for search results, which take the whole
-  sidebar); the panel's Warnings toggle with no warnings; Live Preview Log in the panel's
-  pop-up before Live Preview has run; Format › Bold, Italic, Underline and Inline Math in the
-  files the toolbar's are dim in. Zoom still leaves the toolbar with the PDF column, and the
-  status bar's Page with no PDF.
-- **Spelling** in the interface is British (Colours, Page Colour) except LaTeX's own terms
-  (Math), by Daniel's rule: American only where it is customary in research writing.
-- **Settings**: a five-pane window (General, Editor, Compiling, PDF, Live Preview).
-- **Words**: the feature is Live Preview, and TeXpresso is named only where the program is the
-  subject; the verb is Compile and a run and its result are a build.
+  alert (Save Anyway, Revert, Cancel) with no default button, since either answer loses a
+  version; SwiftUI's alert can't omit the default. One moved or deleted gets a SwiftUI alert
+  whose default saves it again. Cancel writes nothing (the session's `conflict` event,
+  answered with `session_resolve`).
+- **Dim, not hidden**, where hiding would make things jump: the File Outline, the panel's
+  Warnings toggle with no warnings, Live Preview Log before Live Preview has run, and
+  Format items in files the toolbar's are dim in.
+- **Settings** has four panes: General, Editor, Compiling, Live Preview.
+- **Words**: the feature is Live Preview; TeXpresso is named only where the program is the
+  subject. The verb is Compile, and a run and its result are a build. Interface spelling is
+  British (Colours) except LaTeX's own terms (Math).
+- Removed on purpose: a dark-paper PDF, TeXpresso's own window, Home's template cards.
 
 Platform quirks met on the way (27.2) are in the code's comments where they're handled.
 
-## Validation, 15 October
+## Testing
 
-CI: `ci.yml` runs the web tests and bundle and the Rust core's rustfmt, clippy and tests on
-Linux; `macos-app.yml` builds the app, checks the core is linked statically, runs the native
-tests and fails a run in which none passed.
+- `cargo test --workspace`; CI also runs `cargo fmt --all --check` (Linux) and
+  `cargo clippy --workspace --all-targets -- -D warnings`.
+- The Mac app: `xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal test`
+  (Swift Testing). The tests run a host app that shares the app's defaults unless built
+  with another bundle identifier: pass `TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev`, as CI
+  does with its own, or quit the installed app first.
+- The live preview's end-to-end check needs the patched engine:
+  `cargo test -p texlocal-core --test texpresso_live -- --ignored` (`docs/texpresso.md`).
+- Physical trackpad gestures, the dividers' haptic, interactive IME and visual-material
+  checks stay manual.
 
-- Native: 181 tests in 21 suites pass, in 22.5 s. `npm test`: 182. Rust (edition 2024): 247,
-  with rustfmt and clippy `-D warnings` clean. `npm run verify:texpresso`: 25 checks against the patched engine, both
-  of its programs built from the patched source.
-- Live preview, measured from 60 fps screen recordings of a Release build on a one-page
-  document: the pane shows a key's page one frame after the editor shows the glyph (median
-  17 ms, worst 42 ms); TeXpresso's own window, the same way, in zero to one frame (worst
-  41 ms). Headless, a key reaches its page in 12.9 ms median through the core against 12.2 ms
-  to the window's flush.
+## Build and install the Mac app
 
-The native tests run a host app that shares the app's defaults unless built with another
-bundle identifier: build with `TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev`, as CI does with
-its own, or quit the installed app first.
-
-## Build and install
-
-Requires Xcode 27, Rust stable and installed npm dependencies.
+Requires Xcode 27 and Rust stable.
 
 ```sh
-xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Debug \
-  -destination 'platform=macOS' -derivedDataPath /private/tmp/underleaf-dd \
-  TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev CODE_SIGNING_ALLOWED=NO test
-
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Release \
   -destination 'platform=macOS' -derivedDataPath /private/tmp/underleaf-release \
   CODE_SIGNING_ALLOWED=NO build
@@ -174,14 +136,11 @@ its signature, and compare the installed and built binaries.
 
 ## Open
 
-- Live preview is about half a frame behind TeXpresso's own window at a steady typing pace;
-  each page file carries its fonts whole, and most of drawing a fresh page is setting them up.
-  A long document's latency has not been measured on screen.
-- The engine installed on Daniel's Mac is the patched `texpresso` built against MuPDF and SDL2
-  made from source (Homebrew has neither there), and `texpresso-xetex` built against Homebrew's
-  `icu4c`, `harfbuzz` and `graphite2`, which have to stay installed. `tools/texpresso/build.sh`
-  builds both where Homebrew has all of TeXpresso's dependencies and `pkg-config`.
-- Watched on screen since the live preview's rewrite: a restart after TeXpresso exits, and a
-  quick Stop and Start. Find and the selection while pages are replaced are tested (in view
-  and out of it), not watched.
-- Physical trackpad gestures, the dividers' haptic and interactive IME remain manual checks.
+- A long document's live preview latency has not been measured on screen.
+- The TeXpresso engine on Daniel's Mac is the patched `texpresso` built against MuPDF and
+  SDL2 made from source, and `texpresso-xetex` built against Homebrew's `icu4c`, `harfbuzz`
+  and `graphite2`, which have to stay installed. `tools/texpresso/build.sh` builds both
+  where Homebrew has all of TeXpresso's dependencies and `pkg-config`.
+- Not watched on screen since the live preview's rewrite: a restart after TeXpresso exits,
+  and a quick Stop and Start.
+- The browser frontend and the Windows app are not finished.

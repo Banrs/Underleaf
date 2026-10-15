@@ -459,6 +459,33 @@ fn a_field_in_two_places_is_typed_in_both() {
 }
 
 #[test]
+fn resetting_typing_forgets_the_closers_and_the_snippet() {
+    // The closer put in is stepped over by the bracket typed...
+    let mut e = Editor::open("", None);
+    e.type_text("(");
+    e.set_selection(caret(1));
+    e.type_text(")");
+    assert_eq!((e.string().as_str(), e.selection()), ("()", caret(2)));
+    // ...but not once the document is shown again.
+    let mut e = Editor::open("", None);
+    e.type_text("(");
+    e.set_selection(caret(1));
+    e.doc.reset_typing();
+    e.type_text(")");
+    assert_eq!((e.string().as_str(), e.selection()), ("())", caret(2)));
+    // A snippet is over.
+    let mut doc = SourceDocument::new("ab");
+    let field = |start, index| texlocal_syntax::SnippetField {
+        start,
+        length: 0,
+        index,
+    };
+    assert!(doc.start_snippet(&[field(0, 0), field(1, 1)], 0).is_some());
+    doc.reset_typing();
+    assert!(!doc.end_snippet());
+}
+
+#[test]
 fn lines_move_up_and_down() {
     let mut e = Editor::open("a\nb\nc\nd", Some(2));
     let change = e.doc.move_lines(&e.selections.clone(), true).unwrap();

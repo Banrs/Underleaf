@@ -67,7 +67,7 @@ struct FilesList: View {
                         Button(MenuCommand.fileNew.title) { create(NewEntry(directory: false, folder: node.path)) }
                         Button(MenuCommand.fileNewFolder.title) { create(NewEntry(directory: true, folder: node.path)) }
                         Divider()
-                    } else if isLaTeXFile(node.path) {
+                    } else if node.kind == .tex {
                         Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
                             .disabled(node.path == project.settings?.mainFile)
                         Divider()
@@ -215,7 +215,7 @@ struct FilesList: View {
                 }
             }
         } icon: {
-            Image(systemName: fileSymbol(node.path, directory: node.isDirectory))
+            Image(systemName: node.symbol)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
@@ -287,17 +287,17 @@ private func disclosure(_ set: ReferenceWritableKeyPath<ProjectModel, Set<String
 
 #Preview("File tree") {
     @Previewable @State var expanded: Set<String> = ["figures"]
-    let file = { (path: String) in TreeNode(type: "file", name: path.fileName, path: path, children: nil) }
+    let file = { (path: String, kind: FileKind) in TreeNode(type: "file", name: path.fileName, path: path, kind: kind, children: nil) }
     List {
         Section("Files") {
             TreeRows(nodes: [
                 TreeNode(type: "dir", name: "figures", path: "figures",
-                         children: [file("figures/plot.pdf"), file("figures/diagram.png")]),
-                file("main.tex"), file("references.bib"),
+                         children: [file("figures/plot.pdf", .pdf), file("figures/diagram.png", .image)]),
+                file("main.tex", .tex), file("references.bib", .bib),
             ], children: \.children, isExpanded: { node in
                 Binding(get: { expanded.contains(node.path) }, set: { if $0 { expanded.insert(node.path) } else { expanded.remove(node.path) } })
             }) { node in
-                Label(node.name, systemImage: fileSymbol(node.path, directory: node.isDirectory))
+                Label(node.name, systemImage: node.symbol)
             }
         }
     }
@@ -335,14 +335,10 @@ extension View {
 /// Folded to its section header, the pane is held at the header's height (`WorkspaceController.foldOutline`).
 struct OutlineList: View {
     let project: ProjectModel
-    /// The caret's line when both change, as its `onChange` runs second.
-    @State private var line = 1
 
     var body: some View {
         // The rows only when the current heading changes, not at each line the caret moves to.
-        OutlineRows(project: project, current: Outline.current(project.outline, file: project.openPath, line: line))
-            .onChange(of: project.topHeading) { line = project.topLine }
-            .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
+        OutlineRows(project: project, current: project.currentHeading)
     }
 }
 
@@ -367,7 +363,7 @@ private struct OutlineRows: View {
         ScrollViewReader { proxy in
             List(selection: selection) {
                 Section(isExpanded: expanded) {
-                    TreeRows(nodes: Outline.tree(outline), children: \.children, isExpanded: { node in
+                    TreeRows(nodes: project.outlineTree, children: \.children, isExpanded: { node in
                         disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
                     }) { node in
                         HeadingRow(item: node.item).equatable().tag(node.id)

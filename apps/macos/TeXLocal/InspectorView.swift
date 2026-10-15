@@ -7,7 +7,7 @@ struct InspectorView: View {
     var body: some View {
         Form {
             Section("Project") {
-                let texFiles = project.tree.nodes.flattened.filter { !$0.isDirectory && isLaTeXFile($0.path) }.map(\.path)
+                let texFiles = project.tree.nodes.flattened.filter { $0.kind == .tex }.map(\.path)
                 // The current value is always a choice, before the settings come (nil) or the main file is in the file list: a selection with no tag is a SwiftUI fault.
                 let main = project.settings?.mainFile
                 Picker("Main File", selection: Binding(get: { main }, set: { new in

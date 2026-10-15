@@ -5,12 +5,11 @@ struct SectionLevelItems: View {
     let project: ProjectModel?
 
     var body: some View {
-        let headings = project?.headingStyles
-        ForEach(headings?.levels ?? HeadingLevel.all, id: \.self) { level in
-            // Numbered as Aa's are (`FormatMenu`).
-            Toggle(headings?.marker(level).map { "\($0)\u{2002}\(level.title)" } ?? level.title,
-                   isOn: Binding(get: { project?.headingLevel == level },
-                                 set: { _ in project?.editor.perform(.heading, level.command) }))
+        // Numbered as Aa's are (`FormatMenu`), once there's a project's class to number them by.
+        ForEach(project?.headingStyles ?? HeadingStyle.styles(of: nil, hasChapters: false), id: \.command) { style in
+            Toggle(project == nil ? style.title : style.numberedTitle,
+                   isOn: Binding(get: { project?.headingLevel.command == style.command },
+                                 set: { _ in project?.editor.perform(.heading, style.command) }))
         }
     }
 }
@@ -24,21 +23,22 @@ struct SymbolItems: View {
     }
 
     var body: some View {
-        ForEach(symbolGroups, id: \.title) { title, symbols in
+        ForEach(Menus.shared.symbolGroups, id: \.title) { group in
+            let symbols = group.symbols
             let columns = Self.columns(symbols.count)
-            Menu(title) {
+            Menu(group.title) {
                 ForEach(Array(stride(from: 0, to: symbols.count, by: columns)), id: \.self) { start in
                     // A palette row, which shows its items' images: text alone draws blank (27.2).
                     ControlGroup {
-                        ForEach(symbols[start..<min(start + columns, symbols.count)], id: \.command) { glyph, command in
-                            Button { project?.editor.perform(.symbol, command) } label: {
+                        ForEach(symbols[start..<min(start + columns, symbols.count)], id: \.command) { symbol in
+                            Button { project?.editor.perform(.symbol, symbol.command) } label: {
                                 Label {
-                                    Text(verbatim: MathGlyphs.spokenName(glyph, command))
+                                    Text(verbatim: MathGlyphs.spokenName(symbol.glyph, symbol.command))
                                 } icon: {
-                                    Image(nsImage: MathGlyphs.image(glyph, command))
+                                    Image(nsImage: MathGlyphs.image(symbol.command))
                                 }
                             }
-                            .help(command)
+                            .help(symbol.command)
                         }
                     }
                     .controlGroupStyle(.palette)
@@ -64,7 +64,7 @@ struct MathMenuItems: View {
             // Verbatim: a string literal is Markdown, where "\\[" is "[".
             Text(verbatim: "\\[ … \\]")
         }
-        ForEach(mathTemplates, id: \.title) { template in
+        ForEach(Menus.shared.templates.math, id: \.title) { template in
             Button { project?.insert(template) } label: {
                 Text(template.title)
                 Text(verbatim: "\\begin{\(template.body)}")
@@ -78,10 +78,11 @@ struct InsertMenuItems: View {
     let project: ProjectModel?
 
     var body: some View {
-        items(insertTemplates)
-        Menu("List") { items(listTemplates) }
+        let templates = Menus.shared.templates
+        items(templates.insert)
+        Menu("List") { items(templates.list) }
         Divider()
-        Menu("References and Links") { items(referenceTemplates) }
+        Menu("References and Links") { items(templates.references) }
     }
 
     private func items(_ templates: [Template]) -> some View {
@@ -91,10 +92,8 @@ struct InsertMenuItems: View {
     }
 }
 
+/// The symbols as the core draws them (`glyph_svg`): each one's ink centred in a square, as TeX sets it in text.
 enum MathGlyphs {
-    private static let side: CGFloat = 24
-    private static let size: CGFloat = 19
-    private static let bigOperators: Set = ["\\sum", "\\prod", "\\int", "\\oint"]
     private static var images: [String: NSImage] = [:]
     /// AppKit selects a palette's item as it's chosen (27.2), and these insert, they don't select.
     private static let unmark = NotificationCenter.default.addObserver(
@@ -107,39 +106,12 @@ enum MathGlyphs {
         }
     }
 
-    private static let faces: [String: NSFontDescriptor] = {
-        guard let folder = Bundle.main.url(forResource: "KaTeX", withExtension: nil)?.appending(path: "fonts") else { return [:] }
-        var faces: [String: NSFontDescriptor] = [:]
-        for face in ["Main-Regular", "Math-Italic", "Size1-Regular", "AMS-Regular"] {
-            // Unregistered: the app's fonts stay its own.
-            guard let data = try? Data(contentsOf: folder.appending(path: "KaTeX_\(face).woff2")),
-                  let made = CTFontManagerCreateFontDescriptorsFromData(data as CFData) as? [NSFontDescriptor],
-                  let descriptor = made.first else { continue }
-            faces[face] = descriptor
-        }
-        return faces
-    }()
-
-    private static func font(_ glyph: String, _ command: String) -> NSFont {
-        let face = bigOperators.contains(command) ? "Size1-Regular"
-            : glyph.first?.isLowercase == true ? "Math-Italic" : "Main-Regular"
-        let cascade = ["Main-Regular", "AMS-Regular"].filter { $0 != face }.compactMap { faces[$0] }
-            + [NSFontDescriptor(name: "STIXTwoMath-Regular", size: size)]
-        guard let descriptor = faces[face] else { return .systemFont(ofSize: size) }
-        return NSFont(descriptor: descriptor.addingAttributes([.cascadeList: cascade]), size: size) ?? .systemFont(ofSize: size)
-    }
-
-    static func image(_ glyph: String, _ command: String) -> NSImage {
+    /// A template, so the menu tints it.
+    static func image(_ command: String) -> NSImage {
         _ = unmark
         if let image = images[command] { return image }
-        let line = CTLineCreateWithAttributedString(NSAttributedString(string: glyph, attributes: [.font: font(glyph, command)]))
-        let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
-        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
-            guard let context = NSGraphicsContext.current?.cgContext else { return false }
-            context.textPosition = CGPoint(x: rect.midX - ink.midX, y: rect.midY - ink.midY)
-            CTLineDraw(line, context)
-            return true
-        }
+        let drawn: Syntax.Drawing? = Syntax.call("glyph_svg", ["command": command])
+        let image = drawn.flatMap { NSImage(drawing: $0) } ?? NSImage(size: NSSize(width: 24, height: 24))
         image.isTemplate = true
         images[command] = image
         return image

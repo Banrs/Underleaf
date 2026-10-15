@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A clean editor can still have a settings change or rename in flight.
         guard let project = app.project else { return .terminateNow }
         Task {
-            let saved = await project.flush()
+            let saved = await project.save()
             // Not saved, the quit stops: the window its alert shows in comes back if closing it began the quit.
             if !saved, mainWindow.window?.isVisible != true { mainWindow.showWindow(nil) }
             sender.reply(toApplicationShouldTerminate: saved)
@@ -155,7 +155,7 @@ private struct WindowModals: ViewModifier {
                     .fileDialogConfirmationLabel("Open")
                     .fileDialogMessage("Choose a project folder, a .tex file or a .zip. TeXLocal copies it into the projects folder.")
             }
-            .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0, taken: app.projects.map(\.name)) }
+            .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0) }
             .alert($app.alert)
     }
 }

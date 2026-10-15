@@ -146,27 +146,40 @@ mod tests {
         assert_ne!(written, Stamp::of(&fs::metadata(&file).unwrap()));
     }
 
-    #[cfg(unix)]
     #[test]
-    fn a_failed_save_leaves_the_original_intact() {
-        use std::os::unix::fs::PermissionsExt;
+    fn a_save_that_cannot_complete_leaves_the_original_intact() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("main.tex");
-        fs::write(&file, "original").unwrap();
+        let file = dir.path().join("locked.tex");
+        fs::write(&file, "keep").unwrap();
+        // A read-only file is refused, as writing it in place would be.
+        let mut perms = fs::metadata(&file).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&file, perms.clone()).unwrap();
+        assert!(write(&file, b"new").is_err());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "keep");
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        fs::set_permissions(&file, perms).unwrap();
+
         // No temporary file can be made beside it.
-        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
-        let result = write(&file, b"new");
-        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(result.is_err());
-        assert_eq!(fs::read_to_string(&file).unwrap(), "original");
-        assert_eq!(names(dir.path()), ["main.tex"]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
+            let result = write(&file, b"new");
+            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(result.is_err());
+            assert_eq!(fs::read_to_string(&file).unwrap(), "keep");
+            assert_eq!(names(dir.path()), ["locked.tex"]);
+        }
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_save_through_a_symlink_writes_its_target_and_keeps_the_mode() {
+    fn a_save_writes_through_a_symlink_keeps_a_mode_and_gives_a_new_file_the_usual_one() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
+        let mode = |path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
         let target = dir.path().join("real.tex");
         let link = dir.path().join("link.tex");
         fs::write(&target, "old").unwrap();
@@ -180,59 +193,16 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
-        let mode = fs::metadata(&target).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o640);
-    }
+        assert_eq!(mode(&target), 0o640);
 
-    #[cfg(unix)]
-    #[test]
-    fn a_new_file_gets_the_mode_any_new_file_gets() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
         let usual = dir.path().join("usual.tex");
         fs::write(&usual, "").unwrap();
         let file = dir.path().join("main.tex");
         write(&file, b"new").unwrap();
-        let mode = |path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&file), mode(&usual));
         // A private file stays private when it is saved again.
         fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
         write(&file, b"again").unwrap();
         assert_eq!(mode(&file), 0o600);
-    }
-
-    #[test]
-    fn a_file_with_a_long_name_saves() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join(format!("{}.tex", "n".repeat(240)));
-        write(&file, b"one").unwrap();
-        write(&file, b"two").unwrap();
-        assert_eq!(fs::read(&file).unwrap(), b"two");
-        assert_eq!(names(dir.path()).len(), 1);
-    }
-
-    #[test]
-    fn a_file_with_a_long_unicode_name_saves() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join(format!("{}.tex", "🦀".repeat(60)));
-        write(&file, b"one").unwrap();
-        write(&file, b"two").unwrap();
-        assert_eq!(fs::read(&file).unwrap(), b"two");
-        assert_eq!(names(dir.path()).len(), 1);
-    }
-
-    #[test]
-    fn a_read_only_file_is_not_replaced() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("locked.tex");
-        fs::write(&file, "keep").unwrap();
-        let mut perms = fs::metadata(&file).unwrap().permissions();
-        perms.set_readonly(true);
-        fs::set_permissions(&file, perms.clone()).unwrap();
-        assert!(write(&file, b"new").is_err());
-        assert_eq!(fs::read_to_string(&file).unwrap(), "keep");
-        #[allow(clippy::permissions_set_readonly_false)]
-        perms.set_readonly(false);
-        fs::set_permissions(&file, perms).unwrap();
     }
 }

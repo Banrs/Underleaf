@@ -1,4 +1,4 @@
-//! The session's side of live preview: what TeXpressoSession.swift kept.
+//! The session's side of live preview.
 //! Starts, stops and whole texts go one at a time; a key's edit goes on as
 //! the editor makes it; a task of the session's own waits for the pages and
 //! hands them on as events.

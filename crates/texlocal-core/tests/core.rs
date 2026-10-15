@@ -271,23 +271,6 @@ fn links_to_reserved_paths_are_held_to_their_rules() {
 }
 
 #[test]
-fn project_names_are_sanitized() {
-    let data = data_dir();
-    fails_with(
-        create_project(data.path(), ".hidden", "blank"),
-        "Invalid name",
-    );
-    fails_with(create_project(data.path(), "   ", "blank"), "Invalid name");
-    // A taken name gets the first free number, so a second Untitled works.
-    for want in ["Untitled", "Untitled 2", "Untitled 3"] {
-        assert_eq!(
-            create_project(data.path(), "Untitled", "blank").unwrap().id,
-            want
-        );
-    }
-}
-
-#[test]
 fn compiled_pdf_path_derives_from_a_nested_main_file() {
     let data = data_dir();
     let root = project(data.path(), "pdfpath-test");
@@ -296,21 +279,6 @@ fn compiled_pdf_path_derives_from_a_nested_main_file() {
     assert_eq!(
         compiled_pdf_path(&root).unwrap(),
         root.join("build").join("paper.pdf")
-    );
-}
-
-#[test]
-fn zip_export_can_replace_a_destination_inside_the_project_without_archiving_itself() {
-    let data = data_dir();
-    let root = project(data.path(), "zip-self-test");
-    let dest = root.join("project.zip");
-    fs::write(&dest, "old incomplete archive").unwrap();
-    export_zip(&root, &dest).unwrap();
-    let names = zip_names(&dest);
-    assert!(!names.contains(&"project.zip".to_string()), "{names:?}");
-    assert!(
-        !names.iter().any(|name| name.contains(".texlocal-")),
-        "{names:?}"
     );
 }
 
@@ -331,7 +299,7 @@ fn files_the_app_makes_get_the_mode_any_new_file_gets() {
 }
 
 #[test]
-fn zip_export_excludes_build_and_settings_but_keeps_nested_namesakes() {
+fn zip_export_excludes_build_and_settings_and_never_archives_itself() {
     let data = data_dir();
     let root = project(data.path(), "zip-test");
     create_file(&root, "chapters/intro.tex", false).unwrap();
@@ -352,6 +320,18 @@ fn zip_export_excludes_build_and_settings_but_keeps_nested_namesakes() {
     );
     assert!(!names.iter().any(|n| n.starts_with("build")), "{names:?}");
     assert!(!names.contains(&".texlocal.json".to_string()), "{names:?}");
+
+    // A destination inside the project can replace an old file there, and
+    // neither it nor its temporary file lands in the archive.
+    let inside = root.join("project.zip");
+    fs::write(&inside, "old incomplete archive").unwrap();
+    export_zip(&root, &inside).unwrap();
+    let names = zip_names(&inside);
+    assert!(!names.contains(&"project.zip".to_string()), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.contains(".texlocal-")),
+        "{names:?}"
+    );
 }
 
 #[test]
@@ -400,7 +380,7 @@ fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
 }
 
 #[test]
-fn search_folds_case_and_cuts_its_snippet_at_the_match() {
+fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
     let data = data_dir();
     let root = project(data.path(), "search");
     fs::write(root.join("ascii.tex"), "One\nThe THEOREM holds\n").unwrap();
@@ -445,15 +425,23 @@ fn search_folds_case_and_cuts_its_snippet_at_the_match() {
     };
     assert!(files("istanbul").contains(&"wide.tex".to_string()));
     assert!(files("k").contains(&"kelvin.tex".to_string()));
+    // The limit cuts the hits off.
+    fs::write(root.join("many.tex"), "needle\n".repeat(20)).unwrap();
+    let hits = search_project(&root, "needle", 5).unwrap();
+    assert_eq!(hits.len(), 5);
+    assert!(hits.iter().all(|h| h.file == "many.tex"));
 }
 
+/// Only the project's own top-level build/ is compile output. A `build` deeper
+/// in the tree is the author's: file_tree lists it and export_zip archives it,
+/// so search and the symbol scan must see it too.
 #[test]
-fn scans_reach_a_nested_build_directory_the_tree_and_zip_both_keep() {
-    // Only the project's own top-level build/ is compile output. A `build`
-    // deeper in the tree is the author's: file_tree lists it and export_zip
-    // archives it, so search and the symbol scan must see it too.
+fn only_the_top_level_build_folder_stays_out_of_the_scans() {
     let data = data_dir();
-    let root = project(data.path(), "nested-build");
+    let root = project(data.path(), "build-scans");
+    fs::create_dir_all(root.join("build")).unwrap();
+    fs::write(root.join("build/main.tex"), "needle \\label{gen:one}\n").unwrap();
+    fs::write(root.join("build/main.log"), "needle in the build dir").unwrap();
     create_file(&root, "chapters/build/notes.tex", false).unwrap();
     fs::write(
         root.join("chapters/build/notes.tex"),
@@ -466,28 +454,9 @@ fn scans_reach_a_nested_build_directory_the_tree_and_zip_both_keep() {
         hits.iter().map(|h| h.file.as_str()).collect::<Vec<_>>(),
         vec!["chapters/build/notes.tex"],
     );
-    assert!(
-        scan_symbols(&root)
-            .unwrap()
-            .labels
-            .contains(&"deep:one".to_string())
-    );
-}
-
-#[test]
-fn top_level_build_output_stays_out_of_every_scan() {
-    let data = data_dir();
-    let root = project(data.path(), "top-build");
-    fs::create_dir_all(root.join("build")).unwrap();
-    fs::write(root.join("build/main.tex"), "needle \\label{gen:one}\n").unwrap();
-
-    assert!(search_project(&root, "needle", 10).unwrap().is_empty());
-    assert!(
-        !scan_symbols(&root)
-            .unwrap()
-            .labels
-            .contains(&"gen:one".to_string())
-    );
+    let labels = scan_symbols(&root).unwrap().labels;
+    assert!(labels.contains(&"deep:one".to_string()));
+    assert!(!labels.contains(&"gen:one".to_string()));
 }
 
 #[test]
@@ -521,22 +490,6 @@ fn a_project_is_dated_by_its_newest_file() {
         .unwrap()
         .as_millis() as u64;
     assert_eq!(list_projects(data.path()).unwrap()[0].mtime, expected);
-}
-
-#[test]
-fn search_stops_at_the_limit_and_skips_build_output() {
-    let data = data_dir();
-    let root = project(data.path(), "limits");
-    fs::write(root.join("many.tex"), "needle\n".repeat(20)).unwrap();
-    fs::create_dir_all(root.join("build")).unwrap();
-    fs::write(
-        root.join("build").join("main.log"),
-        "needle in the build dir",
-    )
-    .unwrap();
-    let hits = search_project(&root, "needle", 5).unwrap();
-    assert_eq!(hits.len(), 5);
-    assert!(hits.iter().all(|h| h.file == "many.tex"));
 }
 
 #[test]
@@ -596,6 +549,38 @@ fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
         "{:?}",
         found.labels
     );
+}
+
+#[test]
+fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
+    let data = data_dir();
+    let root = project(data.path(), "bibitems");
+    fs::write(
+        root.join("main.tex"),
+        "\\label{kept} % \\label{old}\n% \\bibitem{gone}\n50\\% \\label{after-percent} \\label{fig:}\n\
+         \\begin{thebibliography}{9}\n\\bibitem[K]{knuth} Knuth.\n\\bibitem {lamport} Lamport.\n",
+    )
+    .unwrap();
+    let found = scan_symbols(&root).unwrap();
+    assert_eq!(found.labels, ["kept", "after-percent"]);
+    assert_eq!(found.citations, ["knuth", "lamport"]);
+
+    // Files come in name order, and a repeated symbol keeps its first place.
+    fs::remove_file(root.join("main.tex")).unwrap();
+    fs::write(
+        root.join("z.tex"),
+        "\\label{shared}\\label{last}\\bibitem{two}",
+    )
+    .unwrap();
+    fs::write(
+        root.join("a.tex"),
+        "\\label{first}\\label{shared}\\bibitem{one}",
+    )
+    .unwrap();
+    fs::write(root.join("refs.bib"), "@article{one,}\n@article{two,}").unwrap();
+    let found = scan_symbols(&root).unwrap();
+    assert_eq!(found.labels, ["first", "shared", "last"]);
+    assert_eq!(found.citations, ["one", "two"]);
 }
 
 #[test]
@@ -664,8 +649,20 @@ fn a_new_project_never_lands_on_an_existing_entry_even_a_dangling_link() {
 }
 
 #[test]
-fn a_new_project_holds_its_template_and_default_settings() {
+fn new_projects_are_named_sanitized_and_stocked_with_a_template() {
     let data = data_dir();
+    fails_with(
+        create_project(data.path(), ".hidden", "blank"),
+        "Invalid name",
+    );
+    fails_with(create_project(data.path(), "   ", "blank"), "Invalid name");
+    // A taken name gets the first free number, so a second Untitled works.
+    for want in ["Untitled", "Untitled 2", "Untitled 3"] {
+        assert_eq!(
+            create_project(data.path(), "Untitled", "blank").unwrap().id,
+            want
+        );
+    }
     let info = create_project(data.path(), "  Thesis  ", "report").unwrap();
     assert_eq!((info.id.as_str(), info.name.as_str()), ("Thesis", "Thesis"));
     assert_eq!(info.main_file, "main.tex");
@@ -683,60 +680,7 @@ fn a_new_project_holds_its_template_and_default_settings() {
 
 #[cfg(unix)]
 #[test]
-fn zip_export_skips_its_own_archive_when_the_destination_is_spelled_through_a_link() {
-    // The project is reached through one spelling and the destination through
-    // another, as when a Save panel hands back /private/var for a data folder
-    // under /var. A lexical comparison would miss that and archive the ZIP's
-    // own half-written temporary file into it.
-    let data = data_dir();
-    let root = project(data.path(), "zip-alias");
-    let aliases = tempfile::tempdir().unwrap();
-    let alias = aliases.path().join("alias");
-    std::os::unix::fs::symlink(&root, &alias).unwrap();
-    export_zip(&root, &alias.join("out.zip")).unwrap();
-    let names = zip_names(&root.join("out.zip"));
-    assert_eq!(names, ["main.tex"]);
-}
-
-#[test]
-fn citations_include_bibitem_keys_and_commented_or_unfilled_labels_are_left_out() {
-    let data = data_dir();
-    let root = project(data.path(), "bibitems");
-    fs::write(
-        root.join("main.tex"),
-        "\\label{kept} % \\label{old}\n% \\bibitem{gone}\n50\\% \\label{after-percent} \\label{fig:}\n\
-         \\begin{thebibliography}{9}\n\\bibitem[K]{knuth} Knuth.\n\\bibitem {lamport} Lamport.\n",
-    )
-    .unwrap();
-    let found = scan_symbols(&root).unwrap();
-    assert_eq!(found.labels, ["kept", "after-percent"]);
-    assert_eq!(found.citations, ["knuth", "lamport"]);
-}
-
-#[test]
-fn symbol_completions_keep_file_order_and_remove_duplicates() {
-    let data = data_dir();
-    let root = project(data.path(), "symbol-order");
-    fs::write(
-        root.join("z.tex"),
-        "\\label{shared}\\label{last}\\bibitem{two}",
-    )
-    .unwrap();
-    fs::write(
-        root.join("a.tex"),
-        "\\label{first}\\label{shared}\\bibitem{one}",
-    )
-    .unwrap();
-    fs::write(root.join("refs.bib"), "@article{one,}\n@article{two,}").unwrap();
-
-    let found = scan_symbols(&root).unwrap();
-    assert_eq!(found.labels, ["first", "shared", "last"]);
-    assert_eq!(found.citations, ["one", "two"]);
-}
-
-#[cfg(unix)]
-#[test]
-fn the_tree_scans_and_zip_follow_only_links_to_files_inside_the_project() {
+fn the_tree_scans_and_zip_follow_only_links_to_files_inside_the_project_however_it_is_reached() {
     // A link to a file inside is content. One to a folder, outside, broken or
     // in a loop is not, and must not turn the tree, the scans or the ZIP
     // export into an error, however the project's folder is reached.
@@ -793,4 +737,10 @@ fn the_tree_scans_and_zip_follow_only_links_to_files_inside_the_project() {
     let mut body = String::new();
     std::io::Read::read_to_string(&mut archive.by_name("linked.tex").unwrap(), &mut body).unwrap();
     assert_eq!(body, "needle \\label{linked}");
+
+    // The destination spelled through a link into the project, as when a Save
+    // panel hands back /private/var for a data folder under /var: a lexical
+    // comparison would archive the ZIP's own half-written temporary file.
+    export_zip(&root, &alias.join("again.zip")).unwrap();
+    assert_eq!(zip_names(&root.join("again.zip")), zip_names(&dest));
 }

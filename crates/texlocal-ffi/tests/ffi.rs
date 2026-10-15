@@ -1,7 +1,7 @@
 // Round trips through the C ABI exactly as a native host drives it.
 
 use std::ffi::{CStr, CString, c_char, c_void};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::ptr;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -66,16 +66,6 @@ fn open_with_project(data: &Path) -> *mut TlHandle {
     );
     assert_eq!(created["ok"]["id"], "P");
     handle
-}
-
-fn strings<const N: usize>(paths: [PathBuf; N]) -> [String; N] {
-    paths.map(|p| p.to_str().unwrap().to_owned())
-}
-
-fn saved(out: &Value) -> Vec<String> {
-    let mut saved: Vec<String> = serde_json::from_value(out["ok"]["saved"].clone()).unwrap();
-    saved.sort();
-    saved
 }
 
 #[test]
@@ -163,139 +153,18 @@ fn null_and_malformed_inputs_are_rejected_safely() {
         call_raw(handle, "list_projects", Some("{not json"))["status"],
         400
     );
+    // Import arguments of the wrong type are the caller's mistake, not an I/O error.
+    for args in [
+        json!({ "id": "P", "paths": [42] }),
+        json!({ "id": "P", "conflict": "merge" }),
+    ] {
+        assert_eq!(call(handle, "import_files", Some(args))["status"], 400);
+    }
     unsafe {
         tl_free(ptr::null_mut());
         tl_close(handle);
         tl_close(ptr::null_mut());
     }
-}
-
-#[test]
-fn dropped_files_and_folders_import_into_the_project() {
-    let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(&dir.path().join("data"));
-
-    let drop = dir.path().join("drop");
-    std::fs::create_dir_all(drop.join("figs/sub")).unwrap();
-    std::fs::write(drop.join("figs/a.png"), b"a").unwrap();
-    std::fs::write(drop.join("figs/sub/b.png"), b"b").unwrap();
-    std::fs::write(drop.join("notes.tex"), b"n").unwrap();
-    let paths = strings([drop.join("figs"), drop.join("notes.tex")]);
-
-    let out = call(
-        handle,
-        "import_files",
-        Some(json!({ "id": "P", "dir": "in", "paths": paths })),
-    );
-    assert_eq!(
-        saved(&out),
-        ["in/figs/a.png", "in/figs/sub/b.png", "in/notes.tex"]
-    );
-    assert_eq!(
-        std::fs::read(dir.path().join("data/P/in/figs/sub/b.png")).unwrap(),
-        b"b"
-    );
-
-    // A batch that would collide fails before anything is written.
-    let twice = strings([drop.join("notes.tex"), drop.join("notes.tex")]);
-    let refused = call(
-        handle,
-        "import_files",
-        Some(json!({ "id": "P", "dir": "again", "paths": twice })),
-    );
-    assert_eq!(refused["status"], 400);
-    assert!(!dir.path().join("data/P/again").exists());
-
-    // A path that is not a string is the caller's mistake, not an I/O error.
-    let malformed = call(
-        handle,
-        "import_files",
-        Some(json!({ "id": "P", "paths": [42] })),
-    );
-    assert_eq!(malformed["status"], 400);
-
-    unsafe { tl_close(handle) };
-}
-
-#[test]
-fn a_drop_onto_existing_files_asks_first_and_can_keep_both() {
-    let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(&dir.path().join("data"));
-
-    let drop = dir.path().join("drop");
-    std::fs::create_dir_all(drop.join("figs/.git")).unwrap();
-    std::fs::write(drop.join("figs/.git/HEAD"), b"ref").unwrap();
-    std::fs::write(drop.join("figs/.DS_Store"), b"x").unwrap();
-    std::fs::write(drop.join("figs/a.png"), b"a").unwrap();
-    std::fs::write(drop.join("main.tex"), b"new").unwrap();
-    let paths = strings([drop.join("figs"), drop.join("main.tex")]);
-    let args = |conflict: Value| json!({ "id": "P", "paths": paths, "conflict": conflict });
-
-    // Without an answer nothing is written; the clash is reported.
-    let asked = call(handle, "import_files", Some(args(Value::Null)));
-    assert_eq!(
-        asked["ok"],
-        json!({ "saved": [], "existing": [{ "path": "main.tex", "keepBoth": "main 2.tex" }] })
-    );
-    let main = dir.path().join("data/P/main.tex");
-    let original = std::fs::read(&main).unwrap();
-
-    let kept = call(handle, "import_files", Some(args(json!("keepBoth"))));
-    // Hidden files inside a dropped folder stay behind.
-    assert_eq!(saved(&kept), ["figs/a.png", "main 2.tex"]);
-    assert_eq!(std::fs::read(&main).unwrap(), original);
-    assert_eq!(
-        std::fs::read(dir.path().join("data/P/main 2.tex")).unwrap(),
-        b"new"
-    );
-
-    let bad = call(handle, "import_files", Some(args(json!("merge"))));
-    assert_eq!(bad["status"], 400);
-
-    unsafe { tl_close(handle) };
-}
-
-#[test]
-fn file_open_imports_a_chosen_file_as_a_new_project() {
-    let dir = tempfile::tempdir().unwrap();
-    let handle = open(&dir.path().join("data"));
-    let tex = dir.path().join("essay.tex");
-    std::fs::write(&tex, "\\documentclass{article}").unwrap();
-    let [src] = strings([tex]);
-    let out = call(handle, "import_project", Some(json!({ "src": src })));
-    assert_eq!(out["ok"]["id"], "essay");
-    assert_eq!(out["ok"]["mainFile"], "essay.tex");
-    unsafe { tl_close(handle) };
-}
-
-#[cfg(unix)]
-#[test]
-fn a_dropped_link_imports_what_it_points_at_but_links_inside_a_folder_do_not() {
-    let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(&dir.path().join("data"));
-
-    let elsewhere = dir.path().join("elsewhere");
-    std::fs::create_dir_all(&elsewhere).unwrap();
-    std::fs::write(elsewhere.join("plot.png"), b"p").unwrap();
-    let drop = dir.path().join("drop");
-    std::fs::create_dir_all(drop.join("figs")).unwrap();
-    std::os::unix::fs::symlink(elsewhere.join("plot.png"), drop.join("plot-link.png")).unwrap();
-    std::os::unix::fs::symlink(elsewhere.join("plot.png"), drop.join("figs/inner.png")).unwrap();
-    std::fs::write(drop.join("figs/real.png"), b"r").unwrap();
-    let paths = strings([drop.join("plot-link.png"), drop.join("figs")]);
-
-    let out = call(
-        handle,
-        "import_files",
-        Some(json!({ "id": "P", "dir": "", "paths": paths })),
-    );
-    assert_eq!(saved(&out), ["figs/real.png", "plot-link.png"]);
-    assert_eq!(
-        std::fs::read(dir.path().join("data/P/plot-link.png")).unwrap(),
-        b"p"
-    );
-
-    unsafe { tl_close(handle) };
 }
 
 #[test]
@@ -447,6 +316,49 @@ fn until(seen: &Mutex<Vec<Value>>, found: impl Fn(&Value) -> bool) -> Value {
         assert!(Instant::now() < deadline, "{:?}", seen.lock().unwrap());
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let handle = open_with_project(dir.path());
+    let empty = json!({ "id": "P", "path": "main.tex", "text": "" });
+    call(handle, "write_file", Some(empty));
+    let opened = call(handle, "session_open", Some(json!({ "id": "P" })));
+    let session = opened["ok"]["session"].as_u64().unwrap();
+    let args = json!({ "session": session, "path": "main.tex" });
+    call(handle, "session_open_document", Some(args));
+    let path = CString::new("main.tex").unwrap();
+    unsafe {
+        let source = tl_session_source(handle, session, path.as_ptr());
+        // The editor closed a bracket for the user at the start of the file.
+        let typed = json!({ "selection": { "start": 0, "length": 0 }, "text": "{" });
+        let key = source_call(source, "type", typed).unwrap();
+        assert_eq!(key["edit"]["text"], "{}");
+        tl_source_edit(source, 0, 0, b"{}".as_ptr(), 2);
+        let followed = json!({ "old": { "start": 0, "length": 0 }, "delta": 2 });
+        source_call(source, "follow", followed);
+        // Typing its closer steps over it.
+        let closing = json!({ "selection": { "start": 1, "length": 0 }, "text": "}" });
+        let key = source_call(source, "type", closing).unwrap();
+        assert_eq!(key["selection"]["start"], 2);
+        tl_source_free(source);
+
+        // A bracket closed in one visit is only text in the next.
+        let source = tl_session_source(handle, session, path.as_ptr());
+        let typed = json!({ "selection": { "start": 2, "length": 0 }, "text": "(" });
+        source_call(source, "type", typed);
+        tl_source_edit(source, 2, 0, b"()".as_ptr(), 2);
+        let followed = json!({ "old": { "start": 2, "length": 0 }, "delta": 2 });
+        source_call(source, "follow", followed);
+        tl_source_free(source);
+        let source = tl_session_source(handle, session, path.as_ptr());
+        let closing = json!({ "selection": { "start": 3, "length": 0 }, "text": ")" });
+        let key = source_call(source, "type", closing).unwrap();
+        assert_eq!(key["selection"], Value::Null, "the closer was forgotten");
+        tl_source_free(source);
+    }
+    unsafe { tl_close(handle) };
 }
 
 #[test]

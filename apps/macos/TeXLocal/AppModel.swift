@@ -48,7 +48,9 @@ struct ExportFile: Transferable {
 final class AppModel {
     var projects: [ProjectInfo] = []
     private(set) var projectsLoaded = false
-    var tex: TexStatus?
+    var tex: TexStatus? {
+        didSet { project?.optionsChanged() }
+    }
     private(set) var settingTeX = false
     var project: ProjectModel?
     var alert: AppAlert?
@@ -73,7 +75,10 @@ final class AppModel {
 
     // Stored here rather than as @AppStorage so the menus and models observe them.
     var autoCompile: Bool {
-        didSet { UserDefaults.standard.set(autoCompile, forKey: DefaultsKey.autoCompile) }
+        didSet {
+            UserDefaults.standard.set(autoCompile, forKey: DefaultsKey.autoCompile)
+            project?.optionsChanged()
+        }
     }
     var showWordCount: Bool {
         didSet { UserDefaults.standard.set(showWordCount, forKey: DefaultsKey.showWordCount) }
@@ -211,16 +216,14 @@ final class AppModel {
     }
 
     private func isInLibrary(_ url: URL, open: Bool) async -> Bool {
-        let library = FolderWatcher.realPath(Core.libraryFolder) + "/", path = FolderWatcher.realPath(url)
-        guard path.hasPrefix(library) else { return false }
-        let parts = path.dropFirst(library.count).split(separator: "/", maxSplits: 1).map(String.init)
-        guard let id = parts.first else { return false }
+        guard let located = try? await core.answer("locate", ["path": url.path(percentEncoded: false)], as: Located.self) else { return false }
+        let id = located.id
         if !projects.contains(where: { $0.id == id }) { await refresh() }
         guard projects.contains(where: { $0.id == id }) else { return false }
         guard open else { return true }
         await self.open(id)
-        if parts.count > 1, let project, project.id == id, project.tree.node(at: parts[1])?.isDirectory == false {
-            await project.open(parts[1])
+        if !located.path.isEmpty, let project, project.id == id, project.tree.node(at: located.path)?.isDirectory == false {
+            await project.open(located.path)
         }
         return true
     }
@@ -236,7 +239,6 @@ final class AppModel {
         await alerting("Couldn’t Rename “\(shown)”") {
             let renamed = try await core.call("rename_project", ["id": id, "name": name], as: ProjectInfo.self)
             recentProjects = recentProjects.map { $0 == id ? renamed.id : $0 }
-            ProjectModel.moveSidebarState(from: id, to: renamed.id)
             return renamed
         }
     }
@@ -268,7 +270,6 @@ final class AppModel {
                 do {
                     try item.recycle()
                     self?.recentProjects.removeAll { $0 == project.id }
-                    ProjectModel.forgetSidebarState(of: project.id)
                     return true
                 } catch {
                     self?.alert = AppAlert(failure, error)
@@ -359,11 +360,11 @@ final class AppModel {
     private func leave(_ generation: Int) async -> Bool {
         guard let project else { return true }
         if !project.closed {
-            guard await project.flush(), generation == openGeneration else { return false }
+            guard await project.save(), generation == openGeneration else { return false }
             project.close()
         }
-        // Finish a late live start's Stop before another model can start the same project's session through the core's concurrent call queue.
-        await project.texpresso.waitForPendingCalls()
+        // Its session's Live Preview stopped before another model can start the project's.
+        await project.waitUntilClosed()
         return generation == openGeneration
     }
 }

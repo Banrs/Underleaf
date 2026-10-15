@@ -944,3 +944,63 @@ async fn the_watcher_tells_another_apps_changes_from_the_sessions_own() {
     assert!(until_event(&seen, |e| e["type"] == "tree").is_some());
     sessions.close_all().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn no_event_reaches_the_listener_before_the_answer_to_its_sessions_open() {
+    let data = tempfile::tempdir().unwrap();
+    crate::projects::create_project(data.path(), "P", "blank").unwrap();
+    let service = Arc::new(Service::new(data.path().to_path_buf()));
+    let hub = Arc::new(Hub::default());
+    // The listener and the answer's delivery write to one list, in the order they happen.
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    hub.set_listener(Some(Box::new(move |event| {
+        sink.lock().unwrap().push(event.clone())
+    })));
+    let fake = Arc::new(Fake::default());
+    let engine = Arc::clone(&fake) as Arc<dyn Engine>;
+    let timings = Timings {
+        watch: false,
+        ..Timings::default()
+    };
+    let sessions = Sessions::with_engine(service, hub, engine, timings);
+    // No PDF yet, so a build starts at once: its `build` event is made while
+    // the open is still being answered.
+    let args = json!({ "id": "P", "autoCompile": true });
+    let delivered = Arc::clone(&seen);
+    let session = sessions
+        .call_then("session_open", &args, |answer| {
+            // The build has started, so its event is made; and then a good while for it to
+            // have gone out, had it not been held back.
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while fake.called("compile") == 0 && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert_eq!(fake.called("compile"), 1, "the build started");
+            std::thread::sleep(Duration::from_millis(200));
+            let session = answer.unwrap()["session"].as_u64().unwrap();
+            delivered
+                .lock()
+                .unwrap()
+                .push(json!({ "type": "answer", "session": session }));
+            session
+        })
+        .await
+        .unwrap_or_else(|_| panic!("a session command"));
+    let first = until_event(&seen, |e| e["type"] == "build").expect("the build is told");
+    let events = seen.lock().unwrap().clone();
+    assert_eq!(events[0], json!({ "type": "answer", "session": session }));
+    assert_eq!(first["session"], session);
+    assert_eq!(first["compiling"], true);
+    // A command that isn't a session's is given back, and a failed open holds nothing.
+    let other = sessions
+        .call_then("list_projects", &json!({}), |_| ())
+        .await;
+    assert!(other.is_err());
+    let missing = json!({ "id": "Nope" });
+    sessions
+        .call_then("session_open", &missing, |answer| assert!(answer.is_err()))
+        .await
+        .unwrap_or_else(|_| panic!("a session command"));
+    sessions.close_all().await;
+}

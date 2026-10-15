@@ -16,7 +16,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     @ObservationIgnored private var scrolling: NotificationCenter.ObservationToken?
     private(set) var page = 0
     @ObservationIgnored var restorePage: Int?
-    @ObservationIgnored private var pendingReveal: (loc: ForwardLoc, word: SyncTeXWord?)?
+    @ObservationIgnored private var pendingReveal: (loc: ForwardLoc, source: SyncSource?)?
+    @ObservationIgnored private var revealing: Task<Void, Never>?
     private(set) var pageCount = 0
     var finding = false {
         didSet { if finding, !oldValue, findText.isEmpty { findText = PDFFind.shared ?? "" } }
@@ -65,7 +66,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
             restoreZoomIfReady()
             if fit == .page { fitPage() }
             restorePageIfReady()
-            if let pending = pendingReveal { reveal(pending.loc, word: pending.word) }
+            if let pending = pendingReveal { reveal(pending.loc, from: pending.source) }
         }
         NotificationCenter.default.addObserver(self, selector: #selector(pageChanged), name: .PDFViewPageChanged, object: view)
         NotificationCenter.default.addObserver(self, selector: #selector(visiblePagesChanged), name: .PDFViewVisiblePagesChanged, object: view)
@@ -525,24 +526,64 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         go(toPage: number)
     }
 
-    func reveal(_ loc: ForwardLoc, word: SyncTeXWord?) {
+    /// The source's word is looked for in the text of the pages round SyncTeX's boxes (`synctex_match`) and selected; where
+    /// it isn't found once, SyncTeX's box flashes.
+    func reveal(_ loc: ForwardLoc, from source: SyncSource? = nil) {
         guard view.hasShownArea else {
-            pendingReveal = (loc, word)
+            pendingReveal = (loc, source)
             return
         }
         pendingReveal = nil
-        guard let document = view.document, let locatedPage = document.page(ifAt: Int(loc.page) - 1) else { return }
-        // The source occurrence can wrap beyond the first SyncTeX box.
-        let match = word.flatMap { document.match(for: $0, near: loc.matches ?? [loc]) }
-        let page = match?.page ?? locatedPage
-        let rect = match?.rect ?? SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
+        revealing?.cancel()
+        guard let document = view.document, let located = document.page(ifAt: Int(loc.page) - 1) else { return }
+        guard let source else { return showFound(loc, on: located, hit: nil) }
+        let pages = syncPages(loc.matches ?? [loc], in: document)
+        revealing = Task {
+            let hit = try? await Core.shared.answer("synctex_match", ["id": source.id, "file": source.file, "line": source.line,
+                                                                      "column": source.column, "pages": pages], as: PageHit.self)
+            guard !Task.isCancelled, view.document === document else { return }
+            showFound(loc, on: located, hit: hit)
+        }
+    }
+
+    private func showFound(_ loc: ForwardLoc, on located: PDFPage, hit: PageHit?) {
+        var found: (page: PDFPage, selection: PDFSelection)?
+        if let hit, hit.end > hit.start, let page = view.document?.page(ifAt: hit.page - 1),
+           let selection = page.selection(for: NSRange(location: hit.start, length: hit.end - hit.start)) {
+            found = (page, selection)
+        }
+        let page = found?.page ?? located
+        let rect = found.map { $0.selection.bounds(for: $0.page) }
+            ?? SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
         view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
-        if let selection = match?.selection, !finding {
+        if let selection = found?.selection, !finding {
             view.removeMark()
             selection.color = .findHighlightColor
             view.setCurrentSelection(selection, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         } else {
             view.flash(rect, on: page)
+        }
+    }
+
+    /// The pages from the one before SyncTeX's first box to the one after its last: each one's text, and the UTF-16 ranges
+    /// of it the boxes cover. The source's line can wrap past the first box, and TeX can be a page on.
+    private func syncPages(_ boxes: [ForwardLoc], in document: PDFDocument) -> [[String: any Sendable]] {
+        let numbers = boxes.map { Int($0.page) }
+        guard let lowest = numbers.min(), let highest = numbers.max() else { return [] }
+        let first = max(1, lowest - 1), last = min(document.pageCount, highest + 1)
+        guard first <= last else { return [] }
+        return (first...last).compactMap { number -> [String: any Sendable]? in
+            guard let page = document.page(ifAt: number - 1), let text = page.string else { return nil }
+            let bounds = page.bounds(for: view.displayBox)
+            var near: [[Int]] = []
+            for box in boxes where Int(box.page) == number {
+                guard let covered = page.selection(for: SyncTeXGeometry.highlightRect(box, pageBounds: bounds)) else { continue }
+                for index in 0..<covered.numberOfTextRanges(on: page) {
+                    let range = covered.range(at: index, on: page)
+                    if range.location != NSNotFound, range.length > 0 { near.append([range.location, NSMaxRange(range)]) }
+                }
+            }
+            return ["page": number, "text": text, "near": near]
         }
     }
 
@@ -581,7 +622,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 }
 
 final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
-    var onInverse: (_ page: Int, _ point: CGPoint, _ word: SyncTeXWord?) -> Void = { _, _, _ in }
+    var onInverse: (_ page: Int, _ point: CGPoint, _ click: PageClick?) -> Void = { _, _, _ in }
     var onResize: () -> Void = {}
 
     /// PDFKit's scroll view isn't in its interface: its document view leads to it.
@@ -824,7 +865,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     private func goToSource(at location: CGPoint) {
         guard let page = page(for: location, nearest: true), let number = document?.number(of: page) else { return }
         let point = convert(location, to: page)
-        onInverse(number, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox)), page.syncWord(at: point))
+        onInverse(number, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox)), page.click(at: point))
     }
 }
 
@@ -861,7 +902,7 @@ private final class MarkView: NSView {
         let find = NSColor.findHighlightColor
         layer?.backgroundColor = find.withAlphaComponent(0.4).cgColor
         layer?.borderColor = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-            ? find.contrasting(with: .white, by: 3).cgColor : find.withAlphaComponent(0.2).cgColor
+            ? find.legibleAsText(in: .aqua, ratio: 3).cgColor : find.withAlphaComponent(0.2).cgColor
         layer?.borderWidth = 1
     }
 }
@@ -871,8 +912,8 @@ struct PDFRepresentable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> SyncPDFView {
         let view = project.pdf.view
-        view.onInverse = { [weak project] page, point, word in
-            Task { await project?.inverseSync(page: page, x: point.x, y: point.y, word: word) }
+        view.onInverse = { [weak project] page, point, click in
+            Task { await project?.inverseSync(page: page, x: point.x, y: point.y, click: click) }
         }
         return view
     }
@@ -881,15 +922,17 @@ struct PDFRepresentable: NSViewRepresentable {
 }
 
 extension PDFPage {
-    /// PDFKit's characterIndex is inaccurate for pdfTeX's T1 fonts on 27.2; each letter's selection is measured instead.
-    func syncWord(at point: CGPoint) -> SyncTeXWord? {
+    /// The page's text and the clicked letter's index in it, for the core to find in the source. PDFKit's characterIndex is
+    /// inaccurate for pdfTeX's T1 fonts on 27.2; each letter's selection is measured instead.
+    func click(at point: CGPoint) -> PageClick? {
         // PDFKit's word lookup crashes on a page whose document has gone (it holds it weakly).
-        guard document != nil, let word = selectionForWord(at: point), let text = word.string, let context = string else { return nil }
+        guard document != nil, let word = selectionForWord(at: point), let text = string else { return nil }
         let range = word.range(at: 0, on: self)
+        guard range.location != NSNotFound else { return nil }
         let offset = (0..<range.length).first { i in
             selection(for: NSRange(location: range.location + i, length: 1)).map { $0.bounds(for: self).maxX > point.x } ?? false
         }
-        return SyncTeXWord(text: text, offset: offset ?? 0, context: context, contextOffset: range.location)
+        return PageClick(text: text, at: range.location + (offset ?? 0))
     }
 
     nonisolated func hideLinkBorders() {
@@ -934,102 +977,6 @@ extension PDFDocument {
             if let goTo = link.action as? PDFActionGoTo, let destination = here(goTo.destination) {
                 link.action = PDFActionGoTo(destination: destination)
             }
-        }
-    }
-
-    typealias SyncMatch = (page: PDFPage, rect: CGRect, selection: PDFSelection)
-
-    func match(for word: SyncTeXWord, near locations: [ForwardLoc]) -> SyncMatch? {
-        guard !locations.isEmpty, pageCount > 0 else { return nil }
-        let first = max(0, Int(locations.lazy.map(\.page).min()!) - 2)
-        let last = min(pageCount - 1, Int(locations.lazy.map(\.page).max()!))
-        guard first <= last else { return nil }
-        var letters: [Character] = [], positions: [(page: PDFPage, range: NSRange)] = []
-        for index in first...last {
-            guard let page = page(at: index), let text = page.string else { continue }
-            let normalized = SyncText(text)
-            letters += normalized.letters
-            positions.append(contentsOf: normalized.ranges.lazy.map { (page, $0) })
-        }
-        let source = SyncText(word.context, source: true), target = SyncText(word.text).letters
-        guard !target.isEmpty else { return nil }
-        let at = source.ranges.firstIndex { $0.location >= word.contextOffset } ?? source.letters.count
-        func rect(at start: Int, length: Int) -> SyncMatch? {
-            guard start >= 0, start + length <= positions.count else { return nil }
-            let first = positions[start]
-            let samePage = positions[start..<start + length].prefix { $0.page === first.page }
-            guard let end = samePage.last,
-                  let selection = first.page.selection(for: NSRange(location: first.range.location,
-                                                                    length: NSMaxRange(end.range) - first.range.location)) else { return nil }
-            return (first.page, selection.bounds(for: first.page), selection)
-        }
-        func distance(_ hit: SyncMatch) -> CGFloat {
-            let index = index(for: hit.page) + 1
-            return locations.lazy.map { loc in
-                let box = SyncTeXGeometry.highlightRect(loc, pageBounds: hit.page.bounds(for: .cropBox))
-                let x = max(0, box.minX - hit.rect.maxX, hit.rect.minX - box.maxX)
-                let y = max(0, box.minY - hit.rect.maxY, hit.rect.minY - box.maxY)
-                return CGFloat(abs(Double(index) - loc.page)) * 100_000 + x + y
-            }.min() ?? .greatestFiniteMagnitude
-        }
-        if at + target.count <= source.letters.count,
-           source.letters[at..<at + target.count].elementsEqual(target) {
-            let exact = SyncText.matches(source.letters, in: letters).compactMap { start -> (target: SyncMatch, distance: CGFloat, anchor: CGFloat)? in
-                guard let anchor = rect(at: start, length: 1), let end = rect(at: start + source.letters.count - 1, length: 1),
-                      let target = rect(at: start + at, length: target.count) else { return nil }
-                return (target, distance(target), distance(anchor) + distance(end))
-            }
-            if let best = exact.min(by: { a, b in a.distance == b.distance ? a.anchor < b.anchor : a.distance < b.distance }) {
-                let tied = exact.lazy.filter { abs($0.distance - best.distance) < 0.001 && abs($0.anchor - best.anchor) < 0.001 }.prefix(2)
-                return tied.count == 1 ? best.target : nil
-            }
-        }
-        let before = source.letters.prefix(at), after = source.letters.dropFirst(min(at + target.count, source.letters.count))
-        let candidates = SyncText.matches(target, in: letters).compactMap { start -> (hit: SyncMatch, context: Int, distance: CGFloat)? in
-            guard let hit = rect(at: start, length: target.count) else { return nil }
-            let page = Double(index(for: hit.page) + 1)
-            let boxes = locations.filter { $0.page == page }.map { SyncTeXGeometry.highlightRect($0, pageBounds: hit.page.bounds(for: .cropBox)) }
-            guard let top = boxes.lazy.map(\.maxY).max(), let bottom = boxes.lazy.map(\.minY).min(),
-                  hit.rect.maxY >= bottom - hit.rect.height, hit.rect.minY <= top + hit.rect.height else { return nil }
-            let prefix = zip(before.reversed(), letters[..<start].reversed()).prefix { $0 == $1 }.count
-            let suffix = zip(after, letters[(start + target.count)...]).prefix { $0 == $1 }.count
-            return (hit, prefix + suffix, distance(hit))
-        }
-        guard let best = candidates.max(by: { a, b in a.context == b.context ? a.distance > b.distance : a.context < b.context }) else { return nil }
-        // Equal evidence cannot identify which duplicate was clicked; keep SyncTeX's box.
-        let tied = candidates.lazy.filter { $0.context == best.context && abs($0.distance - best.distance) < 0.001 }.prefix(2)
-        return tied.count == 1 ? best.hit : nil
-    }
-}
-
-private nonisolated struct SyncText {
-    var letters: [Character] = []
-    var ranges: [NSRange] = []
-
-    init(_ text: String, source: Bool = false) {
-        var offset = 0, command = false, escaped = false
-        let ligatures = ["ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl"]
-        for character in text {
-            let value = String(character), length = value.utf16.count
-            defer { offset += length }
-            if source {
-                if character == "\\" { command = true; escaped = true; continue }
-                if command, character.isLetter { continue }
-                command = false
-                if character == "%", !escaped { break }
-                escaped = false
-            }
-            for letter in (ligatures[value] ?? value.precomposedStringWithCanonicalMapping) where letter.isLetter || letter.isNumber {
-                letters.append(letter)
-                ranges.append(NSRange(location: offset, length: length))
-            }
-        }
-    }
-
-    static func matches(_ target: [Character], in text: [Character]) -> [Int] {
-        guard !target.isEmpty, text.count >= target.count else { return [] }
-        return (0...text.count - target.count).filter { start in
-            text[start] == target[0] && text[start..<start + target.count].elementsEqual(target)
         }
     }
 }

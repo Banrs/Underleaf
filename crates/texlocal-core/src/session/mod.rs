@@ -36,7 +36,7 @@ pub use document::Document;
 pub(crate) use engine::{Engine, ServiceEngine};
 use watch::Change;
 
-/// The session's waits, as the Mac app had them.
+/// The session's waits.
 #[derive(Debug, Clone)]
 pub(crate) struct Timings {
     /// From the last edit to the autosave.
@@ -100,6 +100,15 @@ pub(crate) enum Msg {
     Fs(Vec<Change>),
 }
 
+/// Lets a new session's events go out when dropped.
+struct Release<'a>(&'a Hub, u64);
+
+impl Drop for Release<'_> {
+    fn drop(&mut self) {
+        self.0.release(self.1);
+    }
+}
+
 struct Open {
     tx: mpsc::UnboundedSender<Msg>,
     /// The session's documents by path, for the host's editor to edit.
@@ -152,14 +161,34 @@ impl Sessions {
     /// Answers a `session_*` command; None for any other command, which the
     /// host sends on to `Service::call`. Must run inside a tokio runtime that
     /// goes on running its tasks between calls.
+    ///
+    /// A new session's events are held until the answer to `session_open` is produced (here,
+    /// as it returns); see `call_then` for holding them until the host has it.
     pub async fn call(&self, command: &str, args: &Value) -> Option<Result<Value, CoreError>> {
+        self.call_then(command, args, |answer| answer).await.ok()
+    }
+
+    /// `call`, handing the answer to `deliver` and returning what it does. No event of
+    /// a session reaches the listener before `deliver` has returned for the answer to its
+    /// `session_open`: `deliver` is where a host's callback gets the answer, so none of the
+    /// events can come first. A command that isn't a `session_*` one gives `deliver` back.
+    pub async fn call_then<T, F>(&self, command: &str, args: &Value, deliver: F) -> Result<T, F>
+    where
+        F: FnOnce(Result<Value, CoreError>) -> T,
+    {
         if !command.starts_with("session_") {
-            return None;
+            return Err(deliver);
         }
-        Some(match command {
+        let answer = match command {
             "session_open" => self.open(args),
             _ => self.send(command, args).await,
-        })
+        };
+        // Released however `deliver` ends.
+        let _release = (command == "session_open")
+            .then(|| answer.as_ref().ok()?["session"].as_u64())
+            .flatten()
+            .map(|session| Release(&self.hub, session));
+        Ok(deliver(answer))
     }
 
     fn open(&self, args: &Value) -> Result<Value, CoreError> {
@@ -182,6 +211,9 @@ impl Sessions {
             auto_compile,
         })?;
         let opened = actor.opened();
+        // Before the task can make an event (a build, say, for `autoCompile`), and let go
+        // once the host has the answer that names the session (`call_then`).
+        self.hub.hold(id);
         tokio::spawn(actor.run(rx));
         lock(&self.open).insert(id, Open { tx, docs });
         Ok(
@@ -210,6 +242,8 @@ impl Sessions {
             .unwrap_or_else(|_| Err(CoreError::not_found("No such session")));
         if closing {
             lock(&self.open).remove(&id);
+            // A session closed before its open was released lets go of its events.
+            self.hub.release(id);
         }
         answer
     }

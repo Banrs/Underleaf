@@ -1,132 +1,53 @@
 import Foundation
 
-nonisolated struct DocumentClass: Equatable {
+/// The class a main file's `\documentclass` names, and the type size its options set.
+nonisolated struct DocumentClass: Equatable, Decodable {
     var name: String
     var pointSize = 10
 }
 
 extension DocumentClass {
+    /// The class named outside comments, read in the preamble first: the core's `document_class`.
     init?(in text: String) {
-        let named = { (text: Substring) in
-            // A comment runs from a % that isn't escaped to the line's end, however the line ends:
-            // `.` stops at a line break, where `[^\n]` took a CRLF, one Character, for the comment's.
-            text.replacing(/(^|[^\\])%.*/.anchorsMatchLineEndings()) { $0.1 }
-                .firstMatch(of: /\\documentclass\s*(?:\[([^\]]*)\])?\s*\{\s*([^}\s]+)\s*\}/)
-        }
-        // LaTeX takes the class in the preamble, so the text up to the first \begin{document} is read first, and the whole only when
-        // that has none: the comments of a 470 KB file took 37 ms to take out, its preamble's 0.3 ms.
-        let preamble = text.firstRange(of: "\\documentclass")
-            .flatMap { text[$0.upperBound...].firstRange(of: "\\begin{document}") }
-            .map { text[..<$0.upperBound] }
-        guard let match = preamble.flatMap(named) ?? named(text[...]) else { return nil }
-        name = String(match.2)
-        let options = match.1.map { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } } ?? []
-        // KOMA-Script's fontsize=11pt as well as the standard 11pt.
-        pointSize = [11, 12].first { size in options.contains { $0 == "\(size)pt" || $0 == "fontsize=\(size)pt" } } ?? 10
+        guard let named: DocumentClass = Syntax.call("document_class", ["text": text]) else { return nil }
+        self = named
     }
 }
 
-/// A class it doesn't know has every level, set as the standard classes set them, and numbers them as a book's once the document has chapters.
-nonisolated struct HeadingStyles: Equatable {
-    struct Font: Equatable {
+/// A level the class has, as its class file sets and numbers its headings (the core's `heading_styles`): Normal Text
+/// first. A class it doesn't know has every level, numbered as a book's once the document has chapters.
+nonisolated struct HeadingStyle: Equatable, Decodable {
+    nonisolated struct Font: Equatable, Decodable {
+        /// The size as a multiple of the text's.
         var scale: Double
         var bold: Bool
         var shape: Shape
     }
 
-    enum Shape { case upright, italic, smallCaps }
-
-    let levels: [HeadingLevel]
-    private let fonts: [String: Font]
-    /// The deepest level numbered (LaTeX's secnumdepth: 1 is sections).
-    private let numbered: Int
-    private let chapters: Bool
-    private let roman: Bool
-
-    private enum Family { case article, book, amsArticle, amsBook, komaArticle, komaBook, ieee, llncs, unsectioned }
-
-    private static let families: [String: Family] = [
-        "article": .article, "proc": .article, "report": .book, "book": .book, "memoir": .book,
-        "amsart": .amsArticle, "amsproc": .amsArticle, "amsbook": .amsBook,
-        "scrartcl": .komaArticle, "scrreprt": .komaBook, "scrbook": .komaBook,
-        "IEEEtran": .ieee, "llncs": .llncs, "letter": .unsectioned, "minimal": .unsectioned,
-    ]
-
-    private enum Size: Int { case normalsize, large, Large, LARGE, huge, Huge }
-
-    private static let points: [Int: [Double]] = [
-        10: [10, 12, 14.4, 17.28, 20.74, 24.88],
-        11: [10.95, 12, 14.4, 17.28, 20.74, 24.88],
-        12: [12, 14.4, 17.28, 20.74, 24.88, 24.88],
-    ]
-
-    init(documentClass: DocumentClass?, hasChapters: Bool) {
-        let family = documentClass.flatMap { Self.families[$0.name] }
-        let sizes = Self.points[documentClass?.pointSize ?? 10] ?? Self.points[10]!
-        let bold = { (size: Size) in Font(scale: sizes[size.rawValue] / sizes[0], bold: true, shape: .upright) }
-        let plain = { (shape: Shape) in Font(scale: 1, bold: false, shape: shape) }
-        var fonts: [String: Font] = [
-            "part": bold(.Huge), "chapter": bold(.Huge), "section": bold(.Large),
-            "subsection": bold(.large), "subsubsection": bold(.normalsize), "paragraph": bold(.normalsize),
-        ]
-        var commands = HeadingLevel.sections.map(\.command)
-        (numbered, chapters, roman) = switch family {
-        case .article?, .komaArticle?, .amsArticle?: (3, false, false)
-        case .book?, .komaBook?: (2, true, false)
-        case .amsBook?: (3, true, false)
-        case .ieee?: (4, false, true)
-        case .llncs?: (2, false, false)
-        case .unsectioned?: (0, false, false)
-        case nil: (hasChapters ? 2 : 3, hasChapters, false)
-        }
-        switch family {
-        case .article?:
-            fonts["part"] = bold(.huge)
-            commands.removeAll { $0 == "chapter" }
-        case .amsArticle?:
-            fonts = ["part": bold(.normalsize), "section": plain(.smallCaps), "subsection": bold(.normalsize),
-                     "subsubsection": plain(.italic), "paragraph": plain(.upright)]
-            commands.removeAll { $0 == "chapter" }
-        case .amsBook?:
-            fonts = ["part": Font(scale: 20.74 / sizes[0], bold: true, shape: .upright),
-                     "chapter": Font(scale: 14.4 / sizes[0], bold: true, shape: .upright),
-                     "section": bold(.normalsize), "subsection": bold(.normalsize),
-                     "subsubsection": plain(.italic), "paragraph": plain(.upright)]
-        case .komaArticle?:
-            commands.removeAll { $0 == "chapter" }
-        case .komaBook?:
-            fonts["chapter"] = bold(.huge)
-        case .ieee?:
-            fonts = ["section": plain(.smallCaps), "subsection": plain(.italic),
-                     "subsubsection": plain(.italic), "paragraph": plain(.italic)]
-            commands.removeAll { $0 == "part" || $0 == "chapter" }
-        case .llncs?:
-            fonts["section"] = bold(.large)
-            fonts["subsection"] = bold(.normalsize)
-            fonts["paragraph"] = plain(.italic)
-            commands.removeAll { $0 == "chapter" }
-        case .unsectioned?:
-            commands = []
-        case .book?, nil:
-            break
-        }
-        self.fonts = fonts
-        levels = [.normalText] + HeadingLevel.sections.filter { commands.contains($0.command) }
+    nonisolated enum Shape: String, Decodable {
+        case upright, italic, smallCaps
     }
 
-    func font(_ level: HeadingLevel) -> Font {
-        fonts[level.command] ?? Font(scale: 1, bold: false, shape: .upright)
+    let title: String
+    let command: String
+    let font: Font
+    /// Its number as its heading prints it, with the class's counters: "1.1" for a subsection.
+    let marker: String?
+
+    var level: HeadingLevel { HeadingLevel(title: title, command: command) }
+
+    /// The title after its number, as the menus show it.
+    var numberedTitle: String {
+        marker.map { "\($0)\u{2002}\(title)" } ?? title
     }
 
-    /// The level's number as its heading prints it, with the class's counters.
-    func marker(_ level: HeadingLevel) -> String? {
-        guard let index = HeadingLevel.sections.firstIndex(of: level), levels.contains(level) else { return nil }
-        // LaTeX's depths: part -1, chapter 0, section 1.
-        let depth = index - 1
-        if depth < 0 { return "I" }
-        guard depth <= numbered else { return nil }
-        if roman { return ["I", "A", "1", "a"][depth - 1] }
-        if depth == 0 { return chapters ? "1" : nil }
-        return Array(repeating: "1", count: depth + (chapters ? 1 : 0)).joined(separator: ".")
+    static func styles(of documentClass: DocumentClass?, hasChapters: Bool) -> [HeadingStyle] {
+        var args: [String: Any] = ["hasChapters": hasChapters]
+        if let documentClass {
+            args["class"] = documentClass.name
+            args["pointSize"] = documentClass.pointSize
+        }
+        return Syntax.call("heading_styles", args) ?? [HeadingStyle(title: HeadingLevel.normalText.title, command: "",
+                                                                    font: Font(scale: 1, bold: false, shape: .upright), marker: nil)]
     }
 }
