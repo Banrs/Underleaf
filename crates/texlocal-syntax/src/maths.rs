@@ -1,5 +1,5 @@
-//! Maths, as web/src/editor.js reads it: whether a position is in maths
-//! (`mathModeAt`), and the maths at the caret to preview (`mathAt`).
+//! Maths: whether a position is in maths (`math_mode_at`), and the maths at
+//! the caret to preview (`math_at`).
 
 use std::{borrow::Cow, sync::LazyLock};
 
@@ -14,12 +14,12 @@ fn find(src: &[u16], from: usize, needle: &[u16]) -> Option<usize> {
     (from..=src.len().checked_sub(needle.len())?).find(|&i| src[i..].starts_with(needle))
 }
 
-/// JavaScript's whitespace rules, used by the web editor's regex and trim.
+/// Trimmed of ECMAScript's whitespace, as \s and trim() have it.
 fn trim_js_space(text: &str) -> &str {
     text.trim_matches(|c| c <= '\u{ffff}' && space(c as u16))
 }
 
-/// An environment's name in braces, within the web editor's 64-unit window.
+/// An environment's name in braces, within a 64-unit window.
 fn environment_name(src: &[u16], from: usize) -> Option<(&[u16], usize)> {
     let window = &src[from..(from + 64).min(src.len())];
     let leading = window.iter().take_while(|&&u| space(u)).count();

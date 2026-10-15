@@ -139,7 +139,9 @@ mod tests {
         let file = dir.path().join("main.tex");
         let written = write(&file, b"one").unwrap();
         assert_eq!(written, Stamp::of(&fs::metadata(&file).unwrap()));
-        // Another app's write in place keeps the file but not the stamp.
+        // Another app's write in place keeps the file but not the stamp, once
+        // the clock has moved: Windows dates writes in steps of up to 16 ms.
+        std::thread::sleep(std::time::Duration::from_millis(20));
         fs::write(&file, b"two").unwrap();
         assert_ne!(written, Stamp::of(&fs::metadata(&file).unwrap()));
     }

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::analyze;
+use crate::atomic::Stamp;
 use crate::compile::{self, CompileManager, TexStatus};
 use crate::paths::fold_case;
 use crate::projects;
@@ -210,7 +211,7 @@ impl Service {
     }
 
     /// The PATH for TeX's tools, and for TeXpresso's, with its chosen folder first.
-    fn tool_paths(&self) -> (String, String) {
+    pub(crate) fn tool_paths(&self) -> (String, String) {
         let (tex_dir, texpresso_dir) = self.app_folders();
         let tex = compile::tex_path(tex_dir.as_deref());
         let texpresso = match texpresso_dir {
@@ -366,6 +367,20 @@ impl Service {
         paths::safe_path(&self.project_root(id)?, rel)
     }
 
+    // ---------- project sessions (session/) ----------
+
+    /// Writes a project file's text under the project's lock; the file's
+    /// stamp as written, for the session to know its own write's change.
+    pub(crate) fn write_text(&self, id: &str, rel: &str, text: &str) -> Result<Stamp, CoreError> {
+        self.with_project(id, |root| {
+            projects::write_creating(&paths::safe_write_path(root, rel)?, text.as_bytes())
+        })
+    }
+
+    pub(crate) fn scan_symbols(&self, root: &Path) -> Result<projects::Symbols, CoreError> {
+        self.symbols.scan(root)
+    }
+
     // ---------- dispatch ----------
 
     /// Shared JSON command table for browser and native hosts. Raw bytes and
@@ -392,17 +407,10 @@ impl Service {
                         .unwrap_or_default(),
                     arg::<Option<String>>(args, "session")?.as_deref(),
                     &self.tool_paths().1,
-                    // The Mac app shows the document in its PDF pane.
-                    arg::<Option<bool>>(args, "pdf")?
-                        .unwrap_or(false)
-                        .then(|| -> Result<_, CoreError> {
-                            Ok(crate::texpresso::Pane {
-                                view: arg(args, "view")?,
-                                caret: arg(args, "caret")?,
-                            })
-                        })
-                        .transpose()?
-                        .as_ref(),
+                    &crate::texpresso::Pane {
+                        view: arg(args, "view")?,
+                        caret: arg(args, "caret")?,
+                    },
                 )
                 .await?),
             "texpresso_update" => out(self
@@ -500,7 +508,8 @@ impl Service {
             "analyze_project" => {
                 let root = root()?;
                 let main = settings::read_settings(&root).main_file;
-                out(analyze::analyze_project(&root, &main, s("file")?))
+                let analysis = analyze::analyze_project(&root, &main, s("file")?);
+                out(analyze::ProjectAnalysis::from(analysis))
             }
             "search_project" => out(projects::search_project(
                 &root()?,
@@ -523,10 +532,19 @@ impl Service {
                     projects::write_creating(&abs, text.as_bytes())
                 })?)
             }
+            // With `free`, a taken name is numbered past ("untitled 2.tex") rather than refused.
             "create_entry" => {
                 let (path, dir) = (s("path")?, arg::<Option<bool>>(args, "dir")?);
+                let free = arg::<Option<bool>>(args, "free")?.unwrap_or(false);
                 out(self.with_project(s("id")?, |root| {
-                    projects::create_file(root, path, dir.unwrap_or(false))
+                    let dir = dir.unwrap_or(false);
+                    let made = if free {
+                        projects::create_free(root, path, dir)?
+                    } else {
+                        projects::create_file(root, path, dir)?;
+                        path.to_owned()
+                    };
+                    Ok(json!({ "path": made }))
                 })?)
             }
             "rename_entry" => {
@@ -559,20 +577,41 @@ impl Service {
             }
             "synctex_inverse" => {
                 let root = root()?;
-                out(synctex::synctex_inverse_with_context(
+                // `text`, the clicked page's text, and `at`, the clicked character's UTF-16 index in it.
+                let click =
+                    arg::<Option<String>>(args, "text")?.zip(arg::<Option<usize>>(args, "at")?);
+                out(synctex::synctex_inverse(
                     &root,
                     arg(args, "page")?,
                     arg(args, "x")?,
                     arg(args, "y")?,
-                    arg::<Option<String>>(args, "word")?.as_deref(),
-                    arg(args, "offset")?,
-                    arg::<Option<String>>(args, "context")?.as_deref(),
-                    arg(args, "contextOffset")?,
+                    click.as_ref().map(|(text, at)| (text.as_str(), *at)),
                     self.live_pdf(&root, args)?.as_deref(),
                     &self.tool_paths().0,
                 )
                 .await?)
             }
+            // ---------- logic the hosts used to hold ----------
+            // The word at `column` of a source line, in the `pages` ([{page, text, near}]) of a forward sync.
+            "synctex_match" => out(synctex::match_forward(
+                &root()?,
+                s("file")?,
+                arg(args, "line")?,
+                arg(args, "column")?,
+                &arg::<Vec<synctex::PdfPage>>(args, "pages")?,
+            )?),
+            // The index in an `analyze_project` outline of the heading a line is under.
+            "outline_current" => out(analyze::current_heading(
+                &arg::<Vec<analyze::Heading>>(args, "outline")?,
+                arg::<Option<String>>(args, "file")?.as_deref(),
+                arg(args, "line")?,
+            )),
+            // An absolute path in the library as {id, path}; null outside every project.
+            "locate" => out(projects::locate(&self.data_dir, Path::new(s("path")?))?),
+            "get_ui_state" => out(settings::read_ui(&root()?)),
+            "set_ui_state" => out(self.with_project(s("id")?, |root| {
+                settings::write_ui(root, arg(args, "patch")?)
+            })?),
             _ => Err(CoreError::not_found(format!("Unknown command: {command}"))),
         }
     }

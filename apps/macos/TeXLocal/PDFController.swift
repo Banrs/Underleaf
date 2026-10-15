@@ -1,6 +1,5 @@
 import PDFKit
 import SwiftUI
-import Synchronization
 
 @Observable
 final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
@@ -107,7 +106,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     }
 
     @objc private func scaleChanged() {
-        view.fitPageEdges()
         if view.liveScaleChanged { dropLive() }
         guard view.document != nil, view.hasShownArea else { return }
         scale = view.scaleFactor
@@ -176,24 +174,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let scale = pageScale
         if view.scaleFactor != scale { view.scaleFactor = scale }
         fit = .page
-    }
-
-    func setDarkPaper(_ dark: Bool) {
-        guard dark != view.darkPaper else { return }
-        dropLive()
-        let fit = fit, scale = view.scaleFactor, place = view.shownDestination
-        view.darkPaper = dark
-        guard view.document != nil else { return }
-        // PDFKit caches page tiles; changing the display box refreshes them.
-        let box = view.displayBox
-        view.displayBox = box == .mediaBox ? .cropBox : .mediaBox
-        view.displayBox = box
-        switch fit {
-        case .width: fitWidth()
-        case .page: fitPage()
-        case nil: setScale(scale)
-        }
-        if let place { view.go(to: place) }
     }
 
     /// PDFKit searches off the main thread; the first query extracts page text.
@@ -365,7 +345,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         view.minScaleFactor = Self.minScale
         view.maxScaleFactor = Self.maxScale
         view.pageScrollView?.setAccessibilityLabel("PDF")
-        view.matchScroller()
+        // The knob is over white paper whatever the window's appearance.
+        view.pageScrollView?.scrollerKnobStyle = .dark
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         restoreZoomIfReady()
         if let place {
@@ -602,23 +583,9 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var onInverse: (_ page: Int, _ point: CGPoint, _ word: SyncTeXWord?) -> Void = { _, _, _ in }
     var onResize: () -> Void = {}
-    private let pagesDark = Atomic(false)
-
-    var darkPaper = false {
-        didSet {
-            pagesDark.store(darkPaper, ordering: .relaxed)
-            pageShadowsEnabled = !darkPaper
-            matchScroller()
-            fitPageEdges()
-        }
-    }
 
     /// PDFKit's scroll view isn't in its interface: its document view leads to it.
     var pageScrollView: NSScrollView? { documentView?.enclosingScrollView }
-
-    func matchScroller() {
-        pageScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark
-    }
 
     override func zoomIn(_ sender: Any?) {
         autoScales = false
@@ -630,30 +597,19 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         super.zoomOut(sender)
     }
 
-    /// PDFKit draws page tiles off the main actor; only page pixels change.
+    /// PDFKit draws page tiles off the main actor, here as a live page is drawn (`drawLive`).
     override nonisolated func draw(_ page: PDFPage, to context: CGContext) {
-        Self.drawPaper(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox)), to: context,
-                       dark: pagesDark.load(ordering: .relaxed)) { page.draw(with: .cropBox, to: context) }
+        Self.drawPaper(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox)), to: context) {
+            page.draw(with: .cropBox, to: context)
+        }
     }
 
-    private nonisolated static func drawPaper(_ box: CGRect, to context: CGContext, dark: Bool, page draw: () -> Void) {
+    private nonisolated static func drawPaper(_ box: CGRect, to context: CGContext, page draw: () -> Void) {
         context.saveGState()
         defer { context.restoreGState() }
-        func drawPage() {
-            context.setFillColor(.white)
-            context.fill(box)
-            draw()
-        }
-        drawPage()
-        guard dark else { return }
-        context.setBlendMode(.difference)
         context.setFillColor(.white)
         context.fill(box)
-        context.setBlendMode(.color)
-        context.beginTransparencyLayer(auxiliaryInfo: nil)
-        context.setBlendMode(.normal)
-        drawPage()
-        context.endTransparencyLayer()
+        draw()
     }
 
     // MARK: - Live preview
@@ -690,7 +646,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
               let surface = IOSurface(properties: [.width: width, .height: height, .bytesPerElement: 4,
                                                    .pixelFormat: kCVPixelFormatType_32BGRA]),
               surface.lock(options: [], seed: nil) == KERN_SUCCESS else { return false }
-        Self.drawLive(page, to: surface, box: box, scale: scale, from: part.origin, dark: darkPaper)
+        Self.drawLive(page, to: surface, box: box, scale: scale, from: part.origin)
         surface.unlock(options: [], seed: nil)
         if let name = Self.liveSpace.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, name) }
         let layer = liveLayers[index] ?? {
@@ -712,8 +668,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     /// Halves drawn at once by Core Graphics itself: most of a page's time is its fonts', and PDFKit draws a page for
     /// one caller at a time (27.2). A page whose box PDFKit would turn or move is drawn in one, by PDFKit.
-    private nonisolated static func drawLive(_ page: PDFPage, to surface: IOSurface, box: CGRect, scale: CGFloat, from corner: CGPoint,
-                                             dark: Bool) {
+    private nonisolated static func drawLive(_ page: PDFPage, to surface: IOSurface, box: CGRect, scale: CGFloat, from corner: CGPoint) {
         // Drawing a page is safe from any thread, as PDFKit's own tiles are drawn.
         nonisolated(unsafe) let page = page
         nonisolated(unsafe) let ref = page.rotation == 0 && box.origin == .zero && page.bounds(for: .mediaBox) == box ? page.pageRef : nil
@@ -728,7 +683,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
             context.translateBy(x: -corner.x, y: CGFloat(rows.upperBound - height) - corner.y)
             context.scaleBy(x: scale, y: scale)
             context.translateBy(x: -box.minX, y: -box.minY)
-            drawPaper(box, to: context, dark: dark) {
+            drawPaper(box, to: context) {
                 if let ref { context.drawPDFPage(ref) } else { page.draw(with: .cropBox, to: context) }
             }
         }
@@ -759,7 +714,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     /// A fade is what the HIG puts in motion's place, so Reduce Motion keeps it.
     func flash(_ rect: CGRect, on page: PDFPage) {
         removeMark()
-        let view = MarkView(onDarkPaper: darkPaper)
+        let view = MarkView()
         let fading = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(2.2)) } catch { return }
             await NSAnimationContext.runAnimationGroup { _ in view.animator().alphaValue = 0 }
@@ -778,21 +733,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
         let overlay = PageOverlay()
-        overlay.dark = darkPaper
         overlays.setObject(overlay, forKey: page)
         return overlay
-    }
-
-    func fitPageEdges() {
-        for case let overlay as PageOverlay in overlays.objectEnumerator()?.allObjects ?? [] {
-            overlay.dark = darkPaper
-            overlay.fitEdge()
-        }
-    }
-
-    override func viewDidChangeBackingProperties() {
-        super.viewDidChangeBackingProperties()
-        fitPageEdges()
     }
 
     func pdfView(_ pdfView: PDFView, willDisplayOverlayView overlay: NSView, for page: PDFPage) {
@@ -901,45 +843,13 @@ private final class LiveCanvas: NSView {
 }
 
 private final class PageOverlay: NSView {
-    /// On dark paper, PDFKit's white layer under each page's tiles shows through the inverted tile as a light line
-    /// where the page's edge falls inside a pixel (27.2); a black edge covers it.
-    private let edge = CALayer()
-    var dark = false
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        edge.borderColor = .black
-        edge.isHidden = true
-        layer?.addSublayer(edge)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func layout() {
-        super.layout()
-        fitEdge()
-    }
-
-    func fitEdge() {
-        let pixel = convertFromBacking(NSSize(width: 1, height: 1))
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        edge.isHidden = !dark
-        edge.frame = bounds.insetBy(dx: -pixel.width, dy: -pixel.height)
-        edge.borderWidth = 2 * max(pixel.width, pixel.height)
-        CATransaction.commit()
-    }
 }
 
 private final class MarkView: NSView {
-    private let paper: NSColor
-
-    init(onDarkPaper dark: Bool) {
-        paper = dark ? .black : .white
+    init() {
         super.init(frame: .zero)
+        wantsLayer = true
         setAccessibilityElement(false)
     }
 
@@ -951,14 +861,13 @@ private final class MarkView: NSView {
         let find = NSColor.findHighlightColor
         layer?.backgroundColor = find.withAlphaComponent(0.4).cgColor
         layer?.borderColor = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-            ? find.contrasting(with: paper, by: 3).cgColor : find.withAlphaComponent(0.2).cgColor
+            ? find.contrasting(with: .white, by: 3).cgColor : find.withAlphaComponent(0.2).cgColor
         layer?.borderWidth = 1
     }
 }
 
 struct PDFRepresentable: NSViewRepresentable {
     let project: ProjectModel
-    let darkPaper: Bool
 
     func makeNSView(context: Context) -> SyncPDFView {
         let view = project.pdf.view
@@ -968,9 +877,7 @@ struct PDFRepresentable: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: SyncPDFView, context: Context) {
-        project.pdf.setDarkPaper(darkPaper)
-    }
+    func updateNSView(_ view: SyncPDFView, context: Context) {}
 }
 
 extension PDFPage {

@@ -72,7 +72,7 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         # The app runs latexmk and reads ~/TeXLocal, which the sandbox forbids.
         ENABLE_APP_SANDBOX: NO
-        # The build scripts run cargo and npm in the repository.
+        # The build script runs cargo in the repository.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         SWIFT_INCLUDE_PATHS: $(SRCROOT)/../../crates/texlocal-ffi/include
         # As Xcode 27's App template sets it: a UI module runs on the main
@@ -92,13 +92,6 @@ targets:
         script: |
           "$SRCROOT/scripts/build-core.sh"
         # Cargo checks Rust inputs and the archive's freshness itself.
-        basedOnDependencyAnalysis: false
-    postCompileScripts:
-      - name: Copy shared resources
-        script: |
-          "$SRCROOT/scripts/copy-resources.sh"
-        # KaTeX's font set can change with npm packages; the script runs each
-        # build but leaves unchanged bundle files untouched.
         basedOnDependencyAnalysis: false
   TeXLocalTests:
     type: bundle.unit-test

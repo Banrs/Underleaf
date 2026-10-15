@@ -682,54 +682,19 @@ struct SourceEditorTests {
         #expect(text.selectedRange() == NSRange(location: 4, length: 4) && asked == [2])
     }
 
-    @Test func anIssuesMessageFitsItsRoom() {
-        let font = NSFont.systemFont(ofSize: 12)
-        func width(_ string: String) -> CGFloat { (string as NSString).size(withAttributes: [.font: font]).width }
-        let label = IssueLabel("Paragraph ended before \\section was complete", others: 0, font: font)
-        #expect(abs(label.width - width("Paragraph ended before \\section was complete")) < 0.01)
-        let whole = label.line(in: label.width)
-        #expect(whole?.cut == false && whole?.width == label.width)
-        let cut = label.line(in: label.width - 1)
-        #expect(cut?.cut == true && (cut?.width ?? .infinity) <= label.width - 1)
-        let twelve = label.line(in: width("Paragraph en…") + 1)
-        #expect(twelve?.cut == true && abs((twelve?.width ?? 0) - width("Paragraph en…")) < 0.5)
-        #expect(label.line(in: width("Paragra…") + 1) == nil && label.line(in: 0) == nil && label.line(in: -40) == nil)
-        let short = IssueLabel("Bad math", others: 0, font: font)
-        #expect(short.line(in: short.width)?.cut == false && short.line(in: short.width - 1) == nil)
-        let counted = IssueLabel("Missing number, treated as zero", others: 2, font: font)
-        #expect(abs(counted.width - width("Missing number, treated as zero  +2")) < 0.01)
-        let both = counted.line(in: width("Missing number, treated…  +2") + 1)
-        #expect(both?.cut == true && abs((both?.width ?? 0) - width("Missing number, treated…  +2")) < 0.5)
-        #expect(abs(IssueLabel("Missing $\n  inserted", others: 0, font: font).width - width("Missing $ inserted")) < 0.01)
-        #expect(abs(IssueLabel("LaTeX Error: There's no line here to end.", others: 0, font: font).width
-                    - width("There's no line here to end.")) < 0.01)
-        let undefined = IssueLabel("Undefined control sequence: \\undefinedmacro", others: 0, font: font)
-        #expect(undefined.line(in: undefined.width)?.cut == false)
-        let named = undefined.line(in: undefined.width - 1)
-        #expect(named?.cut == true && abs((named?.width ?? 0) - width("Undefined: \\undefinedmacro")) < 0.01)
-        let part = undefined.line(in: width("Undefined: \\undefin…") + 1)
-        #expect(part?.cut == true && abs((part?.width ?? 0) - width("Undefined: \\undefin…")) < 0.5)
-        #expect(undefined.line(in: width("Undefin…") + 1) == nil)
-        let several = IssueLabel("Undefined control sequence: \\foo", others: 2, font: font)
-        #expect(abs((several.line(in: several.width - 1)?.width ?? 0) - width("Undefined: \\foo  +2")) < 0.01)
-    }
-
-    @Test func onlyAnUndefinedCommandIsFoundOnItsLine() {
-        #expect(UndefinedCommand.named(in: "Undefined control sequence: \\foo") == "\\foo")
-        #expect(UndefinedCommand.named(in: "Undefined control sequence: \\@foo") == "\\@foo")
-        #expect(UndefinedCommand.named(in: "Undefined control sequence: \\;") == "\\;")
-        for other in ["Undefined control sequence", "Undefined control sequence.", "Undefined control sequence: \\", "Missing $ inserted",
-                      "Undefined control sequence: \\foo bar", "graphicx.sty: Undefined control sequence: \\foo",
-                      "Reference `fig:x' on page 1 undefined on input line 3"] {
-            #expect(UndefinedCommand.named(in: other) == nil, "\(other)")
-        }
-        func found(_ line: String, _ command: String = "\\foo") -> [NSRange] { UndefinedCommand.ranges(of: command, in: line as NSString) }
-        #expect(found("a \\foo b \\foo{c}\n") == [NSRange(location: 2, length: 4), NSRange(location: 9, length: 4)])
-        #expect(found("\\foobar \\foo@ \\\\foo \\foo1") == [NSRange(location: 20, length: 4)])
-        #expect(found("\\foo % \\foo") == [NSRange(location: 0, length: 4)])
-        #expect(found("50\\% \\foo") == [NSRange(location: 5, length: 4)])
-        #expect(found("a\\;b \\\\;", "\\;") == [NSRange(location: 1, length: 2)])
-        #expect(found("no such command").isEmpty)
+    @Test func anIssuesBoxFitsItsRoom() throws {
+        let font = NSFont.systemFont(ofSize: 13), symbol = try #require(NSImage(systemSymbolName: "xmark.octagon.fill", accessibilityDescription: nil))
+        let box = IssueMessageView()
+        box.show("Paragraph ended before \\section was\n  complete", others: 0, symbol: symbol, font: font)
+        let whole = try #require(box.fit(in: 1000))
+        #expect(!whole.cut && whole.width == whole.width.rounded())
+        let cut = try #require(box.fit(in: whole.width - 40))
+        #expect(cut.cut && cut.width == (whole.width - 40).rounded(.down))
+        let alone = try #require(box.fit(in: 40))
+        #expect(alone.cut && alone.width < 40)
+        #expect(box.fit(in: alone.width - 1) == nil)
+        box.show("Paragraph ended before \\section was complete", others: 2, symbol: symbol, font: font)
+        #expect(try #require(box.fit(in: 1000)).width > whole.width)
     }
 
     private func layOut(width: CGFloat? = nil) throws {

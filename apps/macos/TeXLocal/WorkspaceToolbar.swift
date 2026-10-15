@@ -26,19 +26,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                               NSToolbarItemValidation, NSMenuItemValidation {
     /// Renamed as the defaults change: a layout saved under an earlier name would bring back or lack items.
     let toolbar = NSToolbar(identifier: "Workspace 4")
-    var compactCompile: Bool {
-        get { fit.compact }
-        set { if fit.compact != newValue { fit.compact = newValue } }
-    }
-    private let fit = Fit()
-    @Observable final class Fit { var compact = false }
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
     private weak var workspace: WorkspaceController?
-    private lazy var format = FormatPopover(app: app, project: project)
+    private lazy var format = FormatMenu(app: app, project: project)
     private var applied: State?
-    private var customized: NSKeyValueObservation?
     private var closed = false
 
     init(app: AppModel, project: ProjectModel, workspace: WorkspaceController) {
@@ -48,21 +41,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
-        // Compile's word is the one label, and the workspace knows its width (`ColumnMetrics`).
+        // The window's least width is the symbols' toolbar's (`ColumnMetrics.toolbarMinimum`).
         toolbar.allowsDisplayModeCustomization = false
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
-        // A turn later, once AppKit has done with its items.
-        customized = toolbar.observe(\.itemIdentifiers) { [weak self] _, _ in
-            Task { @MainActor [weak self] in self?.workspace?.toolbarItemsChanged() }
-        }
         watch()
     }
 
     func close() {
         closed = true
-        customized = nil
-        format.popover.close()
     }
 
     // MARK: - Items
@@ -85,13 +72,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile,
          .inspectorTrackingSeparator, .togglePDF, .toggleInspector]
-    }
-
-    var holdsDefaultItems: Bool {
-        func tools(_ ids: [NSToolbarItem.Identifier]) -> [NSToolbarItem.Identifier] {
-            ids.filter { $0 != .space && $0 != .flexibleSpace }
-        }
-        return tools(toolbar.itemIdentifiers) == tools(toolbarDefaultItemIdentifiers(toolbar))
     }
 
     /// The system's toggles go to the window's split, not the nested ones, which would answer first.
@@ -143,18 +123,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             share.toolTip = "Share the PDF"
             item = share
         case .compile:
-            // A word, not a play symbol, which reads as media; Customize Toolbar gets a title, as it draws custom views without their style.
-            item = NSToolbarItem(itemIdentifier: id)
-            item.label = MenuCommand.compileRun.title
-            if flag {
-                item.view = NSHostingView(rootView: compileButton(state))
-            } else {
-                item.title = MenuCommand.compileRun.title
-            }
+            // The window's one prominent action (HIG, Toolbars): a symbol Stop swaps in place, so nothing beside it moves.
+            item = button(id, MenuCommand.compileRun.title, "hammer.fill", #selector(compile), help: "Compile the project")
+            item.style = .prominent
+            item.autovalidates = false
             let form = NSMenuItem(title: MenuCommand.compileRun.title, action: #selector(compile), keyEquivalent: "")
             form.target = self
             item.menuFormRepresentation = form
-            item.style = .prominent
         case .togglePDF:
             item = button(id, "PDF", "richtext.page", #selector(togglePDF), help: "Show or hide the PDF")
         default:
@@ -238,17 +213,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     private func formatItem() -> NSToolbarItem {
-        let item = button(.format, "Format", "textformat", #selector(showFormat(_:)), help: "Choose a style to apply to text")
-        let form = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
-        form.submenu = menu(Group { [app, project] in
-            ForEach([MenuCommand.editBold, .editItalic, .editUnderline], id: \.self) { command in
-                Button(command.title) { app.perform(command, on: project) }
-            }
-            Divider()
-            SectionLevelItems(project: project)
-        })
-        item.menuFormRepresentation = form
-        item.autovalidates = false
+        let item = NSMenuToolbarItem(itemIdentifier: .format)
+        item.label = "Format"
+        item.toolTip = "Choose a style to apply to text"
+        item.image = symbol("textformat", "Format")
+        item.menu = format.makeMenu()
+        item.showsIndicator = false
         return item
     }
 
@@ -264,14 +234,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let canZoomOut: Bool
         let compiling: Bool
         let canCompile: Bool
-        let compactCompile: Bool
     }
 
     private var state: State {
         State(isLaTeX: project.isLaTeX,
               hasPDF: project.hasPDF, canShare: project.buildPDF != nil, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
-              compiling: project.compiling, canCompile: canCompile, compactCompile: fit.compact)
+              compiling: project.compiling, canCompile: canCompile)
     }
 
     /// A column resizing refits the PDF during layout, and an async `track` would set the new scale a pass later:
@@ -307,20 +276,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .share:
             if changed(\.canShare) { item.isEnabled = state.canShare }
         case .compile:
-            let command = state.compiling ? MenuCommand.compileStop : .compileRun
             if changed(\.compiling) {
+                let command = state.compiling ? MenuCommand.compileStop : .compileRun
                 item.label = command.title
                 item.menuFormRepresentation?.title = command.title
+                item.image = symbol(state.compiling ? "stop.fill" : "hammer.fill", command.title)
+                item.toolTip = state.compiling ? "Stop the build" : "Compile the project"
                 // Stop on clear glass: a prominent item's glass stays its own, where a plain item's joins its neighbours'.
                 item.backgroundTintColor = state.compiling ? .clear : nil
             }
             if changed(\.canCompile) { item.isEnabled = state.canCompile }
-            if changed(\.compiling) || changed(\.compactCompile) {
-                item.toolTip = !state.compactCompile ? nil : state.compiling ? "Stop the build" : "Compile the project"
-            }
-            if changed(\.compiling) || changed(\.compactCompile) || changed(\.canCompile) {
-                (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
-            }
         case .togglePDF:
             if changed(\.showsPDF) { item.toolTip = app.title(.viewTogglePdf, on: project) }
         default:
@@ -347,11 +312,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     @objc private func back() { perform(.projectClose) }
 
-    /// A toolbar button's action comes from its item, as `insertTemplate`'s does (27.2).
-    @objc private func showFormat(_ item: NSToolbarItem) {
-        format.toggle(relativeTo: item)
-    }
-
     @objc private func bold() { perform(.editBold) }
 
     @objc private func italic() { perform(.editItalic) }
@@ -376,12 +336,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         menuItem.action != #selector(compile) || canCompile
     }
 
-    private func compileButton(_ state: State) -> CompileButton {
-        CompileButton(compiling: state.compiling, compact: state.compactCompile, enabled: state.canCompile) { [weak self] in
-            self?.compile()
-        }
-    }
-
     @objc private func togglePDF() { perform(.viewTogglePdf) }
 
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
@@ -398,31 +352,24 @@ private final class ShareItem: NSSharingServicePickerToolbarItem {
 
 /// The segments keep one width as the scale changes, and the percentage tabular digits: otherwise the capsule, and the items after it, move.
 private final class ZoomControl: NSSegmentedControl {
-    var widestLabel = "" { didSet { reserveWidth() } }
+    var widestLabel = ""
+    private var measuredSize: CGFloat?
 
     override var font: NSFont? {
         get { super.font }
-        set {
-            super.font = newValue.map { .monospacedDigitSystemFont(ofSize: $0.pointSize, weight: .regular) }
-            reserveWidth()
-        }
+        set { super.font = newValue.map { .monospacedDigitSystemFont(ofSize: $0.pointSize, weight: .regular) } }
     }
 
     override var controlSize: NSControl.ControlSize {
         didSet { font = font }
     }
 
-    private var reserving = false
-
-    /// Inside the toolbar's own update, as it sets the font on showing a hidden item, the control's size lags each change by one,
-    /// and the round trip below widened the scale each time the PDF came back (27.2).
-    private func reserveWidth() {
-        guard !reserving else { return }
-        reserving = true
-        Task { [weak self] in
-            self?.reserving = false
-            self?.measure()
-        }
+    /// Inside the toolbar's own update the control's size lags each font change by one (27.2).
+    override func layout() {
+        super.layout()
+        guard let size = font?.pointSize, size != measuredSize else { return }
+        measuredSize = size
+        measure()
     }
 
     private func measure() {
@@ -435,61 +382,6 @@ private final class ZoomControl: NSSegmentedControl {
         let margins = intrinsicContentSize.width - widest
         setWidth(widest - margins, forSegment: 1)
         setLabel(label, forSegment: 1)
-    }
-}
-
-/// It fills the item's glass, which doesn't pass clicks on to an undersized custom view. It changes form as AppKit's
-/// search item goes to its button and back (27.2): the width in one step, the symbol fading in, or out over the word.
-private struct CompileButton: View {
-    let compiling: Bool
-    let compact: Bool
-    let enabled: Bool
-    let action: () -> Void
-    @Environment(\.appearsActive) private var appearsActive
-
-    var body: some View {
-        Button(action: action) {
-            ZStack {
-                idle.opacity(compiling ? 0 : 1)
-                // The button stays a button to VoiceOver; the status bar says Compiling.
-                busy.opacity(compiling ? 1 : 0)
-                    .accessibilityHidden(true)
-            }
-            .foregroundStyle(appearsActive ? .primary : .tertiary)
-            .animation(.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2), value: compact)
-            // The item's glass as AppKit draws a titled item's and a symbol's (27.2).
-            .padding(.horizontal, compact ? 0 : 12)
-            .frame(minWidth: 36, minHeight: 36)
-            .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
-    }
-
-    @ViewBuilder private var idle: some View {
-        if compact {
-            // At the size AppKit draws an item's symbol (27.2).
-            Image(systemName: "play.fill").font(.system(size: 17))
-        } else {
-            Text(MenuCommand.compileRun.title).transition(.identity)
-        }
-    }
-
-    /// The regular spinner would touch the circle's edge, and the small one has no room inside it.
-    @ViewBuilder private var busy: some View {
-        if compact {
-            ZStack {
-                ProgressView().controlSize(.regular).scaleEffect(0.8)
-                Image(systemName: "stop.fill").font(.system(size: 7))
-            }
-        } else {
-            HStack(spacing: 4) {
-                ProgressView().controlSize(.small)
-                Text(MenuCommand.compileStop.title)
-            }
-            .transition(.identity)
-        }
     }
 }
 

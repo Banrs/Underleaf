@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum SettingsPane: String {
-    case general, editor, compiling, pdf, livePreview
+    case general, editor, compiling, livePreview
 }
 
 /// In a Settings scene a TabView is the window's toolbar of panes, titles the window after the pane shown and sizes it to that pane (HIG, Settings).
@@ -14,7 +14,6 @@ struct SettingsView: View {
             Tab("General", systemImage: "gearshape", value: .general) { GeneralSettings() }
             Tab("Editor", systemImage: "character.cursor.ibeam", value: .editor) { EditorSettings() }
             Tab("Compiling", systemImage: "hammer", value: .compiling) { CompilingSettings() }
-            Tab("PDF", systemImage: "richtext.page", value: .pdf) { PDFSettings() }
             Tab("Live Preview", systemImage: "bolt", value: .livePreview) { LivePreviewSettings() }
         }
         .frame(width: 500)
@@ -142,25 +141,8 @@ private struct CompilingSettings: View {
     }
 }
 
-private struct PDFSettings: View {
-    @AppStorage(PDFPrefs.paperKey) private var paper = PDFPrefs.paper
-
-    var body: some View {
-        Form {
-            Picker(selection: $paper) {
-                ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
-            } label: {
-                Text("Page Colour")
-                Text("Dark inverts the PDF’s pages for reading at night. Printing and saving are unaffected.")
-            }
-        }
-        .settingsPane()
-    }
-}
-
 private struct LivePreviewSettings: View {
     @Environment(AppModel.self) private var app
-    @AppStorage(LiveViewer.key) private var viewer = LiveViewer.pane
 
     var body: some View {
         Form {
@@ -177,12 +159,6 @@ private struct LivePreviewSettings: View {
                 }
                 // An app opened from the Finder sees no shell PATH.
                 ProgramFolder(program: .texpresso)
-                Picker(selection: $viewer) {
-                    ForEach(LiveViewer.allCases) { Text($0.title).tag($0) }
-                } label: {
-                    Text("Show Live Preview In")
-                    Text("Takes effect the next time Live Preview starts.")
-                }
             } footer: {
                 Text("Live Preview is experimental. It uses TeXpresso to update the PDF as you type, without compiling.")
                     .frame(maxWidth: .infinity, alignment: .leading)

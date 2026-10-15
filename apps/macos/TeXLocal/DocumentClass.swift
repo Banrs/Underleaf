@@ -38,6 +38,7 @@ nonisolated struct HeadingStyles: Equatable {
 
     let levels: [HeadingLevel]
     private let fonts: [String: Font]
+    /// The deepest level numbered (LaTeX's secnumdepth: 1 is sections).
     private let numbered: Int
     private let chapters: Bool
     private let roman: Bool
@@ -117,6 +118,7 @@ nonisolated struct HeadingStyles: Equatable {
         fonts[level.command] ?? Font(scale: 1, bold: false, shape: .upright)
     }
 
+    /// The level's number as its heading prints it, with the class's counters.
     func marker(_ level: HeadingLevel) -> String? {
         guard let index = HeadingLevel.sections.firstIndex(of: level), levels.contains(level) else { return nil }
         // LaTeX's depths: part -1, chapter 0, section 1.

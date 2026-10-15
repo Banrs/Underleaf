@@ -18,7 +18,7 @@ use texlocal_core::paths::project_root;
 use texlocal_core::projects::create_project;
 use texlocal_core::service::Service;
 use texlocal_core::settings::write_settings;
-use texlocal_core::synctex::{InverseLoc, synctex_inverse_with_context};
+use texlocal_core::synctex::{InverseLoc, synctex_inverse};
 use tokio::task::JoinHandle;
 
 fn executable(path: &Path, script: &str) {
@@ -585,15 +585,14 @@ async fn tex_available_reports_the_stub_version() {
     assert_eq!(none.version, None);
 }
 
-/// An inverse sync from a spot the stub synctex answers for, without the
-/// PDF's text round the word.
+/// An inverse sync from a spot the stub synctex answers for, with the clicked
+/// page's text and the index clicked in it.
 async fn inverse(
     root: &Path,
-    word: Option<&str>,
-    offset: Option<usize>,
+    click: Option<(&str, usize)>,
     path: &str,
 ) -> Result<InverseLoc, CoreError> {
-    synctex_inverse_with_context(root, 1.0, 10.0, 20.0, word, offset, None, None, None, path).await
+    synctex_inverse(root, 1.0, 10.0, 20.0, click, None, path).await
 }
 
 #[tokio::test]
@@ -618,7 +617,7 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
         "#!/bin/sh\nprintf 'SyncTeX result begin\\nInput:%s/./chapter.tex\\nLine:7\\n' \"$(pwd -P)\"\n",
     );
 
-    let loc = inverse(&root, None, None, &path).await.unwrap();
+    let loc = inverse(&root, None, &path).await.unwrap();
     assert_eq!(loc.file, "chapter.tex");
     assert_eq!((loc.line, loc.column), (7, None));
 
@@ -636,9 +635,7 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
         ("ﬁnal", 1, 7, Some(2)),
         ("absent", 0, 7, None),
     ] {
-        let loc = inverse(&root, Some(word), Some(offset), &path)
-            .await
-            .unwrap();
+        let loc = inverse(&root, Some((word, offset)), &path).await.unwrap();
         assert_eq!((loc.line, loc.column), (line, column), "{word}");
     }
 
@@ -648,7 +645,7 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
         "#!/bin/sh\nprintf 'Input:/old/Paper/./chapter.tex\\nLine:7\\n'\n",
     )
     .unwrap();
-    let loc = inverse(&root, None, None, &path).await.unwrap();
+    let loc = inverse(&root, None, &path).await.unwrap();
     assert_eq!((loc.file.as_str(), loc.line), ("chapter.tex", 7));
 }
 
@@ -686,7 +683,7 @@ async fn inverse_sync_rejects_unsafe_sources_before_reading_words() {
             format!("#!/bin/sh\nprintf 'Input:{input}\\nLine:1\\n'\n"),
         )
         .unwrap();
-        if let Ok(loc) = inverse(&root, Some("secret"), Some(2), &path).await {
+        if let Ok(loc) = inverse(&root, Some(("secret", 2)), &path).await {
             accepted.push((input, loc.file, loc.column));
         }
     }

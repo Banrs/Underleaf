@@ -1,13 +1,13 @@
 //! A document's outline and word count, read from its main file through the
 //! files it inputs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::paths;
 
@@ -46,13 +46,85 @@ static WORD_BREAK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\s{}$&_^~\\%
 /// A sectioning command: its depth (0 for \part to 5 for \paragraph), its
 /// title as plain text ("(untitled)" when empty), its 1-based line and, in a
 /// project's analysis, its file.
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Heading {
     pub depth: usize,
     pub title: String,
     pub line: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+}
+
+/// A heading with what nests under it. `fold_key` names its fold in the
+/// project's saved UI state: file, depth, title and which of that name it is.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutlineNode {
+    /// Its place in the flat outline.
+    pub index: usize,
+    #[serde(flatten)]
+    pub heading: Heading,
+    pub fold_key: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<OutlineNode>,
+}
+
+/// `analyze_project`'s answer: the analysis, and its outline as a tree.
+#[derive(Debug, Serialize)]
+pub struct ProjectAnalysis {
+    #[serde(flatten)]
+    pub analysis: Analysis,
+    pub tree: Vec<OutlineNode>,
+}
+
+impl From<Analysis> for ProjectAnalysis {
+    fn from(analysis: Analysis) -> Self {
+        let tree = outline_tree(&analysis.outline);
+        Self { analysis, tree }
+    }
+}
+
+/// The outline nested by depth. A heading deeper than the one before it goes
+/// under it, so a subsection before any section sits flush, not under a
+/// missing parent.
+pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
+    fn nest(
+        outline: &[Heading],
+        next: &mut usize,
+        above: Option<usize>,
+        seen: &mut HashMap<String, usize>,
+    ) -> Vec<OutlineNode> {
+        let mut nodes = Vec::new();
+        while let Some(heading) = outline.get(*next)
+            && above.is_none_or(|depth| heading.depth > depth)
+        {
+            let index = *next;
+            *next += 1;
+            let file = heading.file.as_deref().unwrap_or_default();
+            let key = format!("{file}\t{}:{}", heading.depth, heading.title);
+            let count = seen.entry(key.clone()).or_default();
+            *count += 1;
+            let fold_key = format!("{key}#{count}");
+            let children = nest(outline, next, Some(heading.depth), seen);
+            nodes.push(OutlineNode {
+                index,
+                heading: heading.clone(),
+                fold_key,
+                children,
+            });
+        }
+        nodes
+    }
+    nest(outline, &mut 0, None, &mut HashMap::new())
+}
+
+/// The heading a line of a file is under, as its place in `outline`: the
+/// file's last at or above the line. None above the file's first, since where
+/// the file is read in isn't known.
+pub fn current_heading(outline: &[Heading], file: Option<&str>, line: usize) -> Option<usize> {
+    outline
+        .iter()
+        .rposition(|h| h.file.as_deref() == file && h.line <= line)
 }
 
 #[derive(Debug, Default, PartialEq, Serialize)]
@@ -300,6 +372,60 @@ mod tests {
             let found = analyze_project(dir.path(), "main.tex", "main.tex");
             assert_eq!(found, expected, "{text}");
         }
+    }
+
+    #[test]
+    fn the_outline_nests_by_depth_with_a_fold_key_for_each_heading() {
+        let heading = |depth, title: &str, file: &str, line| Heading {
+            depth,
+            title: title.into(),
+            line,
+            file: Some(file.into()),
+        };
+        // A subsection before any section sits flush; same-named headings are numbered.
+        let outline = [
+            heading(3, "Early", "a.tex", 1),
+            heading(2, "Intro", "a.tex", 5),
+            heading(3, "Intro", "a.tex", 8),
+            heading(3, "Intro", "a.tex", 9),
+            heading(2, "Intro", "a.tex", 12),
+            heading(1, "Back", "b.tex", 2),
+        ];
+        let tree = outline_tree(&outline);
+        let shape = |nodes: &[OutlineNode]| -> Vec<(usize, String, usize)> {
+            nodes
+                .iter()
+                .map(|n| (n.index, n.fold_key.clone(), n.children.len()))
+                .collect()
+        };
+        assert_eq!(
+            shape(&tree),
+            [
+                (0, "a.tex\t3:Early#1".into(), 0),
+                (1, "a.tex\t2:Intro#1".into(), 2),
+                (4, "a.tex\t2:Intro#2".into(), 0),
+                (5, "b.tex\t1:Back#1".into(), 0),
+            ]
+        );
+        assert_eq!(
+            shape(&tree[1].children),
+            [
+                (2, "a.tex\t3:Intro#1".into(), 0),
+                (3, "a.tex\t3:Intro#2".into(), 0),
+            ]
+        );
+        // On the wire: the heading's own fields, camelCase keys, no empty children.
+        let json = serde_json::to_value(&tree[0]).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "index": 0, "depth": 3, "title": "Early", "line": 1,
+                "file": "a.tex", "foldKey": "a.tex\t3:Early#1" })
+        );
+        // The heading a line is under: its file's last at or above it.
+        assert_eq!(current_heading(&outline, Some("a.tex"), 9), Some(3));
+        assert_eq!(current_heading(&outline, Some("a.tex"), 100), Some(4));
+        assert_eq!(current_heading(&outline, Some("b.tex"), 1), None);
+        assert_eq!(current_heading(&outline, None, 5), None);
     }
 
     /// The main file's inputs read in place, each file once, commented ones not;

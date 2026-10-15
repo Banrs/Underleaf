@@ -1,24 +1,30 @@
-//! LaTeX editing logic for the Mac's editor, as the web's editor has it:
-//! highlighting, completion and the editing commands, as ranges and edits for
-//! the editor to apply. The editor owns the text, its undo and its drawing; a
+//! LaTeX editing logic for the editors: highlighting, completion and the
+//! editing commands, as ranges and edits for the editor to apply. The editor owns the text, its undo and its drawing; a
 //! `SourceDocument` mirrors the text through the editor's edits and answers in
-//! UTF-16 offsets, which NSString and JavaScript both count in.
+//! UTF-16 offsets, which NSString, JavaScript and WinUI all count in.
 
-mod catalog;
+mod call;
+pub mod catalog;
 mod complete;
 mod edit;
+pub mod headings;
 mod highlight;
 mod maths;
 mod prose;
+pub mod render;
 mod stack;
 mod style;
+pub mod theme;
+mod typing;
 
 use serde::{Deserialize, Serialize};
 
+pub use call::call;
 pub use complete::{Completion, CompletionKind, Completions, SnippetField};
 pub use highlight::{Highlight, HighlightKind};
 pub use maths::{MathPreview, math_mode_at};
 pub use style::TextStyles;
+pub use typing::{Change, Completing, Keystroke, Style, Tab, map_selections};
 
 /// A range of the text, in UTF-16 units.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,7 +34,7 @@ pub struct TextRange {
 }
 
 /// Replace `length` units at `start` with `text`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextEdit {
     pub start: u32,
     pub length: u32,
@@ -122,6 +128,11 @@ pub struct SourceDocument {
     highlighter: highlight::Cache,
     /// Kept for the questions that read the text from its start.
     scans: maths::Scans,
+    /// The project's, which "completions" offers in `\ref{` and `\cite{`.
+    labels: Vec<String>,
+    citations: Vec<String>,
+    /// The closers and snippet fields typing keeps between keys.
+    typing: typing::Typing,
 }
 
 impl SourceDocument {
@@ -130,7 +141,17 @@ impl SourceDocument {
             text: Text::new(text),
             highlighter: highlight::Cache::default(),
             scans: maths::Scans::default(),
+            labels: Vec::new(),
+            citations: Vec::new(),
+            typing: typing::Typing::default(),
         }
+    }
+
+    /// The project's labels and citations, which `call`'s "completions"
+    /// offers until they are set again: kept here rather than sent with each
+    /// key's completions, a bibliography being thousands of keys.
+    pub fn set_symbols(&mut self, labels: Vec<String>, citations: Vec<String>) {
+        (self.labels, self.citations) = (labels, citations);
     }
 
     /// The editor replaced `length` units at `start` with `text`. A range
@@ -219,6 +240,85 @@ impl SourceDocument {
         style::text_styles(&self.text, &mut self.scans, selection)
     }
 
+    /// A character typed in place of the selection: a bracket closed for the
+    /// user (`auto_pair`) or stepped over, or none of that.
+    pub fn type_text(&mut self, selection: TextRange, typed: &str, auto_pair: bool) -> Keystroke {
+        let selection = clamp(selection, self.text.len());
+        self.typing
+            .type_text(&self.text, selection, typed, auto_pair)
+    }
+
+    /// Delete at the caret: an empty pair put in for the user goes whole,
+    /// and in the indentation it goes back to a two-column stop.
+    pub fn delete_backward(&mut self, selection: TextRange, auto_pair: bool) -> Keystroke {
+        let selection = clamp(selection, self.text.len());
+        self.typing
+            .delete_backward(&self.text, selection, auto_pair)
+    }
+
+    /// Return, keeping the line's indentation.
+    pub fn insert_newline(&mut self, selection: TextRange) -> Keystroke {
+        let selection = clamp(selection, self.text.len());
+        self.typing.insert_newline(&self.text, selection)
+    }
+
+    /// Where the bracket at `at` is matched, within 10,000 units.
+    pub fn partner(&self, at: u32) -> Option<u32> {
+        typing::partner(&self.text, at)
+    }
+
+    /// The editor changed `old` by `delta` units (`Typing::follow`).
+    pub fn follow(
+        &mut self,
+        old: TextRange,
+        delta: i64,
+        changing: Option<TextRange>,
+        mirroring: bool,
+    ) {
+        self.typing.follow(old, delta, changing, mirroring);
+    }
+
+    /// The editor's selection (its first) moved.
+    pub fn select(&mut self, selection: TextRange, mirroring: bool) {
+        self.typing.select(&self.text, selection, mirroring);
+    }
+
+    /// A completion's or block's fields, from `at`: the first to select.
+    pub fn start_snippet(&mut self, fields: &[SnippetField], at: u32) -> Option<TextRange> {
+        self.typing.start_snippet(fields, at)
+    }
+
+    /// Whether there was a snippet to end.
+    pub fn end_snippet(&mut self) -> bool {
+        self.typing.end_snippet()
+    }
+
+    /// Tab (`step` 1) or Shift-Tab (-1).
+    pub fn tab(&mut self, selections: &[TextRange], step: i64) -> Tab {
+        self.typing.tab(&self.text, selections, step)
+    }
+
+    /// What's typed in a snippet's field, for its other places.
+    pub fn mirror_snippet(&mut self) -> Vec<TextEdit> {
+        self.typing.mirror_snippet(&self.text)
+    }
+
+    /// Move Line Up or Down; none when a line has nowhere to go.
+    pub fn move_lines(&self, selections: &[TextRange], up: bool) -> Option<Change> {
+        typing::move_lines(&self.text, selections, up)
+    }
+
+    /// Bold, Italic or Underline, on or off.
+    pub fn toggle_style(&mut self, selections: &[TextRange], style: Style) -> Change {
+        let styles = self.text_styles(selections.first().copied().unwrap_or_default());
+        typing::toggle_style(&self.text, styles, selections, style)
+    }
+
+    /// The selection round a template's "$0".
+    pub fn wrap(&self, selections: &[TextRange], template: &str) -> Change {
+        typing::wrap(&self.text, selections, template)
+    }
+
     /// The maths to preview at the caret, if it's in some.
     pub fn math_at(&self, caret: u32) -> Option<MathPreview> {
         maths::math_at(&self.text, caret.min(self.text.len()))
@@ -277,7 +377,7 @@ fn letter(u: u16) -> bool {
     u < 128 && (u as u8).is_ascii_alphabetic()
 }
 
-/// JavaScript's \s.
+/// ECMAScript's \s.
 fn space(u: u16) -> bool {
     matches!(u, 0x09..=0x0d | 0x20 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
 }

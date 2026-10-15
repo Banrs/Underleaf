@@ -7,8 +7,9 @@ license.workspace = true
 
 [lib]
 name = "texlocal_ffi"
-# staticlib links into the macOS app; rlib is for tests/ffi.rs.
-crate-type = ["staticlib", "rlib"]
+# staticlib links into the macOS app, cdylib loads into the Windows app
+# (P/Invoke); rlib is for tests/ffi.rs.
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
