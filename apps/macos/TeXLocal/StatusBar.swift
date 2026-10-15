@@ -58,7 +58,7 @@ struct StatusBar: View {
                 .help("Show the Live Preview log")
             }
             if let reason = project.saveFailure {
-                Button { Task { await project.saveEdits() } } label: {
+                Button { Task { await project.save() } } label: {
                     Label("Not Saved", systemImage: "exclamationmark.triangle.fill")
                         .symbolRenderingMode(.multicolor)
                         .hitTarget()
@@ -128,7 +128,7 @@ struct StatusBar: View {
                     .hitTarget()
             }
             .help("The latest build failed, so this is the last PDF that built")
-        } else if project.pdfOutdated, !project.livePDF {
+        } else if project.outdated, !project.livePDF {
             Button { app.perform(.compileRun, on: project) } label: {
                 Label("PDF Out of Date", systemImage: "arrow.clockwise")
                     .hitTarget()

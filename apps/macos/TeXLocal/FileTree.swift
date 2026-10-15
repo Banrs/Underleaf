@@ -7,7 +7,6 @@ final class FileTree {
 
     private(set) var nodes: [TreeNode] = []
     @ObservationIgnored var onChange: () -> Void = {}
-    @ObservationIgnored private var reloading: Task<Void, Never>?
     @ObservationIgnored private var reads = 0
     @ObservationIgnored private var taken = 0
     @ObservationIgnored private var closed = false
@@ -37,16 +36,16 @@ final class FileTree {
         try? await read()
     }
 
-    func reloadSoon() {
-        reloading?.cancel()
-        reloading = Task { [weak self] in
-            guard !Task.isCancelled else { return }
-            await self?.reload()
+    /// The tree as the session's watcher read it: a read started before is older.
+    func show(_ files: [TreeNode]) {
+        taken = reads
+        if files != nodes, !closed {
+            nodes = files
+            onChange()
         }
     }
 
     func close() {
         closed = true
-        reloading?.cancel()
     }
 }

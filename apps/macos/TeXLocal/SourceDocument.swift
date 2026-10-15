@@ -11,6 +11,16 @@ final class SourceDocument {
         raw = text.withUTF8 { tl_source_new($0.baseAddress, $0.count) }
     }
 
+    private init(raw: OpaquePointer) {
+        self.raw = raw
+    }
+
+    /// The document a project session has open at `path`: each edit is the session's, which saves and previews it.
+    convenience init?(session: UInt64, path: String) {
+        guard let raw = Core.shared.source(session: session, path: path) else { return nil }
+        self.init(raw: raw)
+    }
+
     isolated deinit {
         tl_source_free(raw)
     }
@@ -18,6 +28,12 @@ final class SourceDocument {
     func edit(_ range: NSRange, with text: String) {
         var text = text
         text.withUTF8 { tl_source_edit(raw, UInt32(range.location), UInt32(range.length), $0.baseAddress, $0.count) }
+    }
+
+    /// The editor shows `text` whole, as the session's `document_reload` gave it: not an edit to save.
+    func reload(_ text: String) {
+        var text = text
+        text.withUTF8 { tl_source_reload(raw, $0.baseAddress, $0.count) }
     }
 
     func line(at offset: Int) -> Int {
@@ -49,11 +65,6 @@ final class SourceDocument {
 
     func completions(caret: Int, explicit: Bool) -> Completions? {
         call("completions", ["caret": caret, "explicit": explicit])
-    }
-
-    /// Kept with the mirror, not sent with each key's completions, a bibliography being thousands of keys.
-    func setSymbols(_ symbols: Symbols) {
-        tl_free(send("set_symbols", ["labels": symbols.labels, "citations": symbols.citations]))
     }
 
     func toggleComment(_ selections: [NSRange]) -> [TextEdit] {

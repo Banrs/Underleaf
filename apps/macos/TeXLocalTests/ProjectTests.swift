@@ -4,69 +4,6 @@ import PDFKit
 import Testing
 @testable import TeXLocal
 
-@MainActor
-final class FolderWatcherTests {
-    private let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-
-    init() throws {
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-    }
-
-    isolated deinit {
-        try? FileManager.default.removeItem(at: folder)
-    }
-
-    private func watch(_ path: String) -> (FolderWatcher, () -> [FolderWatcher.Change]) {
-        var told: [FolderWatcher.Change] = []
-        let watcher = FolderWatcher(folder: folder) { told += $0 }
-        return (watcher, { told.filter { watcher.relativePath($0.path) == path } })
-    }
-
-    @Test func changesInPlaceAndByReplacementAreBothTold() async throws {
-        let url = folder.appending(path: "main.tex")
-        try "one".write(to: url, atomically: false, encoding: .utf8)
-        let (watcher, changes) = watch("main.tex")
-
-        try "two".write(to: url, atomically: false, encoding: .utf8)
-        try await waitUntil { !changes().isEmpty }
-        let inPlace = changes().count
-        try "three".write(to: url, atomically: true, encoding: .utf8)
-        try await waitUntil { changes().count > inPlace }
-        let replaced = changes().count
-        try "four".write(to: url, atomically: false, encoding: .utf8)
-        try await waitUntil { changes().count > replaced }
-        _ = watcher
-    }
-
-    @Test func aFileDeletedThenRecreatedIsStillTold() async throws {
-        let url = folder.appending(path: "main.tex")
-        try "one".write(to: url, atomically: false, encoding: .utf8)
-        let (watcher, changes) = watch("main.tex")
-
-        try FileManager.default.removeItem(at: url)
-        try await waitUntil { changes().contains(where: \.structural) }
-        // The deletion is told only after the watcher's settle time, so the recreate is an event of its own.
-        let deleted = changes().count
-        try "two".write(to: url, atomically: false, encoding: .utf8)
-        try await waitUntil { changes().count > deleted }
-        _ = watcher
-    }
-
-    @Test func aFileIsARegularFileAtItsOwnSpelling() throws {
-        let watcher = FolderWatcher(folder: folder) { _ in }
-        try "text".write(to: folder.appending(path: "main.tex"), atomically: false, encoding: .utf8)
-        try FileManager.default.createDirectory(at: folder.appending(path: "chapters"), withIntermediateDirectories: true)
-        try FileManager.default.createSymbolicLink(at: folder.appending(path: "link.tex"),
-                                                   withDestinationURL: folder.appending(path: "main.tex"))
-        #expect(watcher.hasFile("main.tex"))
-        #expect(!watcher.hasFile("link.tex") && !watcher.hasFile("chapters") && !watcher.hasFile("gone.tex"))
-        // A volume that ignores case finds the file by this name too.
-        if FileManager.default.fileExists(atPath: folder.appending(path: "MAIN.tex").path(percentEncoded: false)) {
-            #expect(!watcher.hasFile("MAIN.tex"))
-        }
-    }
-}
-
 /// Projects are removed, not trashed: `delete_project` trashes through Finder, which a headless test host can't drive.
 @MainActor
 struct CoreTests {
@@ -134,6 +71,13 @@ final class ProjectFlowTests {
     }
 
     private func exists(_ url: URL) -> Bool { files.fileExists(atPath: url.path(percentEncoded: false)) }
+
+    /// The session builds on a thread of its own, and says when it's done.
+    private func built(_ project: ProjectModel, auto: Bool = false) async throws {
+        let before = project.finishedBuilds
+        await project.compile(auto: auto)
+        try await waitUntil(timeout: .seconds(60)) { project.finishedBuilds > before && !project.compiling }
+    }
 
     @Test func theMainFileOnDiskStaysOutOfTheTrash() async throws {
         let (project, folder) = try await opened()
@@ -230,37 +174,16 @@ final class ProjectFlowTests {
     /// CI has no TeX.
     @Test func onlyCompileMovesThePanel() async throws {
         let project = try await openedWithTeX("\\documentclass{article}\\begin{document}\\undefinedmacro x\\end{document}")
-        await project.compile(auto: true)
+        try await built(project, auto: true)
         #expect(project.result?.failed == true && project.result?.pdf != nil && !project.panel.shown)
-        await project.compile()
+        try await built(project)
         #expect(project.panel.shown && project.panel.tab == .issues)
         let text = project.editor.textView
         text.insertText("", replacementRange: (text.string as NSString).range(of: "\\undefinedmacro"))
-        await project.compile(auto: true)
+        try await built(project, auto: true)
         #expect(project.result?.ok == true && project.panel.shown)
-        await project.compile()
+        try await built(project)
         #expect(project.result?.ok == true && !project.panel.shown)
-        await app.close()
-    }
-
-    @Test func aFailedAutosaveInterruptsNothing() async throws {
-        let (project, folder) = try await opened("original")
-        let main = folder.appending(path: try #require(project.openPath))
-        func lock(_ locked: Bool) throws {
-            try files.setAttributes([.posixPermissions: locked ? 0o444 : 0o644], ofItemAtPath: main.path(percentEncoded: false))
-            try files.setAttributes([.posixPermissions: locked ? 0o555 : 0o755], ofItemAtPath: folder.path(percentEncoded: false))
-        }
-        try lock(true)
-        defer { try? lock(false) }
-        #expect(project.editor.perform(.bold))
-        #expect(await !project.save(reporting: false))
-        #expect(project.saveFailure != nil && app.alert == nil && project.dirty)
-        #expect(await !project.flush())
-        #expect(app.alert != nil)
-        app.alert = nil
-        try lock(false)
-        #expect(await project.save(reporting: false))
-        #expect(project.saveFailure == nil && app.alert == nil)
         await app.close()
     }
 
@@ -317,49 +240,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// CI has no TeX.
-    @Test func issuesAreSteppedThroughAndMarked() async throws {
-        let project = try await openedWithTeX("\\documentclass{article}\n\\begin{document}\n\\undefinedmacro\n\n\\anotherundefined\n\\end{document}\n")
-        await project.compile()
-        let text = project.editor.textView, issues = project.issues
-        let places = issues.indices.filter { issues[$0].file != nil }
-        #expect(places.map { issues[$0].line } == [3, 5] && text.issueLines.mapValues(\.isError) == [3: true, 5: true])
-        for (next, place) in [(true, 0), (true, 1), (true, 0), (false, 1)] {
-            project.goToIssue(next: next)
-            #expect(project.chosenIssue == places[place])
-            try await waitUntil { project.cursorLine == issues[places[place]].line }
-        }
-        text.insertText("x", replacementRange: text.selectedRange())
-        #expect(text.issueLines.isEmpty)
-        await app.close()
-    }
-
-    @Test func aLinesIssuesAreItsFirstAndItsOthers() async throws {
-        let (project, folder) = try await opened("a\nb\n")
-        try await Core.shared.perform("write_file", ["id": project.id, "path": "part.tex", "text": "a\nb\n"])
-        func item(_ type: String, _ file: String, _ line: Int, _ message: String) -> LogItem {
-            LogItem(type: type, file: file, line: line, message: message)
-        }
-        let main = try #require(project.openPath)
-        project.result = CompileResult(
-            ok: false, stopped: false, pdf: nil, pdfChanged: false, durationMs: 0,
-            errors: [item("error", "part.tex", 2, "first"), item("error", main, 1, "elsewhere"), item("error", "part.tex", 2, "second")],
-            warnings: [item("warning", "part.tex", 2, "third"), item("warning", "part.tex", 1, "alone")], log: "")
-        await project.open("part.tex")
-        let text = project.editor.textView
-        #expect(project.openPath == "part.tex")
-        #expect(text.issueLines == [1: .init(isError: false, message: "alone"), 2: .init(isError: true, message: "first", others: ["second", "third"])])
-        // Another app's change to the file is an edit of it: the build's lines were the old text's, and stay gone when the file is next shown.
-        try "c\nd\n".write(to: folder.appending(path: "part.tex"), atomically: false, encoding: .utf8)
-        try await waitUntil(timeout: .seconds(5)) { text.string == "c\nd\n" }
-        #expect(text.issueLines.isEmpty)
-        await project.open(main)
-        #expect(text.issueLines.mapValues(\.isError) == [1: true])
-        await project.open("part.tex")
-        #expect(text.string == "c\nd\n" && text.issueLines.isEmpty)
-        await app.close()
-    }
-
     /// A TeXpresso stand-in that writes a one-page PDF where it's asked to, as Underleaf's patched build does, and reads edits until it's stopped.
     private func liveTeXpresso() throws -> URL {
         let folder = files.temporaryDirectory.appending(path: "texpresso-\(UUID().uuidString)")
@@ -400,11 +280,11 @@ final class ProjectFlowTests {
     @Test func aNoOpBuildKeepsThePDFDocumentAndThePanel() async throws {
         let project = try await openedWithTeX("\\documentclass{article}\\begin{document}x\\end{document}")
         (project.panel.shown, project.panel.tab) = (true, .log)
-        await project.compile()
+        try await built(project)
         #expect(project.result?.ok == true && project.result?.pdfChanged == true && project.panel.shown)
         let shown = project.pdf.shownVersion
         project.panel.tab = .issues
-        await project.compile()
+        try await built(project)
         #expect(project.result?.ok == true && project.result?.pdfChanged == false)
         #expect(project.pdf.shownVersion == shown)
         #expect(project.panel.shown)
@@ -437,45 +317,6 @@ final class ProjectFlowTests {
         panel.tab = .texpresso
         panel.shown = false
         #expect(!project.texpresso.showsLog)
-        await app.close()
-    }
-
-    @Test func aRenameAndSettingsChangesKeepTheLatestMainFile() async throws {
-        let source = "\\documentclass{article}\\begin{document}x\\end{document}"
-        let project = try await openedWithTeX(source), folder = Core.libraryFolder.appending(path: project.id)
-        try await Core.shared.perform("write_file", ["id": project.id, "path": "second.tex", "text": source])
-        await project.compile()
-        #expect(project.result?.ok == true && project.pdfURL?.lastPathComponent == "main.pdf")
-
-        app.autoCompile = true
-        let rename = Task { await project.renameEntry("main.tex", to: "renamed.tex") }
-        let flag = Task { _ = await project.patchSettings(.stopOnFirstError(true)) }
-        let main = Task { await project.setMainFile("second.tex") }
-        for change in [rename, flag, main] { await change.value }
-        try await waitUntil(timeout: .seconds(30)) {
-            !project.compiling && project.result?.pdf == "build/second.pdf"
-                && project.pdfURL?.lastPathComponent == "second.pdf"
-        }
-
-        let persisted = try await Core.shared.call("get_settings", ["id": project.id], as: ProjectSettings.self)
-        #expect(project.settings?.mainFile == "second.tex" && persisted.mainFile == "second.tex")
-        #expect(project.settings?.stopOnFirstError == true && persisted.stopOnFirstError)
-        #expect(project.result?.ok == true)
-        #expect(exists(folder.appending(path: "renamed.tex")) && !exists(folder.appending(path: "main.tex")))
-        #expect(app.alert == nil)
-        await app.close()
-    }
-
-    /// CI has no TeX.
-    @Test func aNewMainFileBuildsOnlyWhenCompilingAutomatically() async throws {
-        let source = "\\documentclass{article}\\begin{document}x\\end{document}"
-        let project = try await openedWithTeX(source)
-        try await Core.shared.perform("write_file", ["id": project.id, "path": "second.tex", "text": source])
-        await project.setMainFile("second.tex")
-        #expect(project.settings?.mainFile == "second.tex" && project.result == nil && !project.compiling)
-        app.autoCompile = true
-        await project.setMainFile("main.tex")
-        #expect(project.result?.pdf == "build/main.pdf")
         await app.close()
     }
 
@@ -538,77 +379,24 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func anOpenFileDeletedElsewhere() async throws {
-        let (project, folder) = try await opened()
-        let notes = folder.appending(path: "notes.tex")
-        try "notes".write(to: notes, atomically: false, encoding: .utf8)
-
-        await project.open("notes.tex")
-        try files.removeItem(at: notes)
-        try await waitUntil(timeout: .seconds(5)) { project.openPath == nil }
-        #expect(project.missingFile == nil)
-
-        try "notes".write(to: notes, atomically: false, encoding: .utf8)
-        await project.open("notes.tex")
-        try files.removeItem(at: notes)
-        #expect(project.editor.perform(.bold))
-        try await waitUntil(timeout: .seconds(5)) { project.missingFile == "notes.tex" }
-        // After the autosave, which would have made the file again.
-        await project.saveTask?.value
-        #expect(!exists(notes))
-        // Cancel leaves the edits unsaved: an autosave doesn't make the file, and a save asks again.
-        project.missingFile = nil
-        #expect(project.editor.perform(.italic))
-        await project.saveTask?.value
-        #expect(!exists(notes) && project.missingFile == nil)
-        #expect(await !project.saveEdits() && project.missingFile == "notes.tex")
-        project.saveMissingFile()
-        try await waitUntil(timeout: .seconds(5)) { exists(notes) }
-        #expect(try String(contentsOf: notes, encoding: .utf8).contains("\\textbf{\\textit{}}"))
-        await app.close()
-    }
-
-    @Test func anOpenFileChangedElsewhere() async throws {
+    /// The session's watcher, reload and conflict reach the editor; the rules are the core's (session/tests.rs).
+    @Test func anotherAppsChangeReachesTheEditor() async throws {
         let (project, folder) = try await opened("original")
-        let main = folder.appending(path: "main.tex")
+        let main = folder.appending(path: "main.tex"), text = project.editor.textView
         let onDisk = { try? String(contentsOf: main, encoding: .utf8) }
 
         try "theirs".write(to: main, atomically: false, encoding: .utf8)
+        try await waitUntil(timeout: .seconds(5)) { text.string == "theirs" }
+        // Shown without an edit, and taken: the next edit is saved over it.
         #expect(project.editor.perform(.bold))
-        try await waitUntil(timeout: .seconds(5)) { project.diskConflict == "main.tex" }
-        // Cancel, then after an autosave, which would have written over the other app's change.
-        project.diskConflict = nil
-        #expect(project.editor.perform(.italic))
-        await project.saveTask?.value
-        #expect(onDisk() == "theirs" && project.diskConflict == nil && project.dirty)
-        #expect(await !project.saveEdits() && project.diskConflict == "main.tex")
-        project.keepEdits()
-        try await waitUntil(timeout: .seconds(5)) { onDisk() == project.editor.textView.string }
-        #expect(project.diskConflict == nil && onDisk()?.contains("\\textbf{\\textit{}}") == true)
-        // Behind that save in the lane, so it has finished with the model before the next change.
-        #expect(await project.save() && !project.dirty)
+        #expect(await project.save() && onDisk() == text.string)
 
-        // Answered, so the next change asks anew.
         try "theirs again".write(to: main, atomically: false, encoding: .utf8)
-        #expect(project.editor.perform(.bold))
+        #expect(project.editor.perform(.italic))
         try await waitUntil(timeout: .seconds(5)) { project.diskConflict == "main.tex" }
-        await project.revertToDisk("main.tex")
-        #expect(project.editor.textView.string == "theirs again" && onDisk() == "theirs again")
-        #expect(project.diskConflict == nil && !project.dirty && app.alert == nil)
-        await app.close()
-    }
-
-    @Test func aChangeOfTheSameLengthAfterASaveIsTaken() async throws {
-        let (project, folder) = try await opened("original")
-        #expect(project.editor.perform(.bold))
-        #expect(await project.save() && !project.dirty)
-        let saved = project.editor.textView.string
-        // Past the save's own change, which leaves the editor as it is.
-        try await Task.sleep(for: .seconds(1))
-        #expect(project.editor.textView.string == saved && project.diskConflict == nil)
-        let theirs = String(saved.reversed())
-        try theirs.write(to: folder.appending(path: "main.tex"), atomically: false, encoding: .utf8)
-        try await waitUntil(timeout: .seconds(5)) { project.editor.textView.string == theirs }
+        project.revertToDisk("main.tex")
+        try await waitUntil(timeout: .seconds(5)) { text.string == "theirs again" }
+        #expect(project.diskConflict == nil && onDisk() == "theirs again" && app.alert == nil)
         await app.close()
     }
 
@@ -693,17 +481,6 @@ final class ProjectFlowTests {
         await project.cleanBuildFolder()
         #expect(!exists(folder.appending(path: "build")) && exists(folder.appending(path: "main.tex")))
         #expect(project.result == nil && project.pdfURL == nil)
-    }
-
-    /// CI has no TeX.
-    @Test func cleanBuildFolderWaitsForTheBuildItStops() async throws {
-        let project = try await openedWithTeX("\\documentclass{article}\\begin{document}x\\end{document}")
-        let build = Task.immediate { await project.compile() }
-        #expect(project.compiling)
-        await project.cleanBuildFolder()
-        #expect(!project.compiling && project.result == nil && project.pdfURL == nil)
-        await build.value
-        #expect(project.result == nil && !exists(Core.libraryFolder.appending(path: "\(project.id)/build")))
         await app.close()
     }
 

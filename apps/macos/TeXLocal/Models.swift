@@ -101,11 +101,6 @@ nonisolated struct CompileResult: Decodable {
     }
 }
 
-nonisolated struct Symbols: Decodable, Equatable {
-    let citations: [String]
-    let labels: [String]
-}
-
 nonisolated struct SearchHit: Decodable, Identifiable {
     let file: String
     let line: Int

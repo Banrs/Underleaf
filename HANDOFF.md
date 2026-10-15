@@ -108,9 +108,14 @@ checkout still has it.
   was last shown whole, the next one is shown whole (`PDFController.memoryAtWhole`). Print
   prints the document showing, which is whole in memory; during Live Preview it reads the
   last build's file instead (`buildBehindLive`).
-- **Live preview**: each edit goes to the core as the text storage makes it (`texpresso_edit`);
-  a thread of the session's own waits in the core (`texpresso_wait`) for the pages in view,
-  and each is drawn over PDFKit's page at once (`LiveCanvas`, an IOSurface), over the part of
+- **Project sessions**: the open project is a session of the core's (`docs/core-api.md`), which
+  owns each open document's text (the editor sends each edit once, `tl_source_edit` on the
+  session's source), autosaves, builds, watches the folder and runs Live Preview, and tells
+  `ProjectModel` what changed in events (`Core.observe`, on the main queue in order). Session
+  commands go one at a time on a queue of their own (`Core.session`, `Core.send`).
+- **Live preview**: the session sends each edit on to TeXpresso and says where its pages are
+  (`live_document`, `live_page`); `TeXpressoSession` reads them off the main actor, and each page
+  is drawn over PDFKit's page at once (`LiveCanvas`, an IOSurface), over the part of
   the page in view only. The whole document follows 300 ms after the last key and replaces
   only the pages that changed; a scroll hands a waiting live page to PDFKit sooner. The
   protocol and the engine's passes are in `docs/texpresso.md`.
@@ -119,8 +124,8 @@ checkout still has it.
   alert can't do: either answer loses a version, so Return typed into the source as the sheet
   lands answers nothing. One moved or deleted is a SwiftUI alert whose default saves it
   again. Cancel in either writes nothing and the autosave stays quiet; the status bar says Not
-  Saved, and the next save that is asked for asks again (`ProjectModel.changedFile`,
-  `goneFile`, `leaveUnsaved`).
+  Saved, and the next save that is asked for asks again (the session's `conflict` event,
+  answered with `session_resolve`).
 - **Unavailable things are dim where they would otherwise jump** (Daniel: "sometimes greying
   is more useful than hiding"): the File Outline's header stays at the sidebar's foot, folded
   and dim, on a file that isn't LaTeX (it hides only for search results, which take the whole

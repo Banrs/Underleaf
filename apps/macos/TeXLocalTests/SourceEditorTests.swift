@@ -378,22 +378,6 @@ struct SourceEditorTests {
         #expect(text.document.text == text.string)
     }
 
-    @Test func completionsOfferTheSymbolsInAFileLoadedAfterThem() throws {
-        text.symbols = Symbols(citations: ["smith2020", "jones"], labels: ["fig:one", "sec:two"])
-        open("\\cite{sm", path: "a.tex")
-        text.complete(nil)
-        #expect(try #require(text.offered).items.map(\.label) == ["smith2020"])
-        let first = text.document
-        open("See \\ref{fig", path: "b.tex")
-        #expect(text.document !== first)
-        text.complete(nil)
-        #expect(try #require(text.offered).items.map(\.label) == ["fig:one"])
-        text.symbols = Symbols(citations: ["smyth"], labels: [])
-        open("\\cite{sm", path: "a.tex")
-        text.complete(nil)
-        #expect(try #require(text.offered).items.map(\.label) == ["smyth"])
-    }
-
     @Test func theCompletionListTakesOnlyItsKeys() throws {
         open("\\")
         text.insertText("b", replacementRange: typed)
@@ -420,52 +404,25 @@ struct SourceEditorTests {
         #expect(text.offered == nil)
     }
 
-    @Test func autosaveReadsOnlyCommittedTextDuringIMEComposition() {
+    /// The session's autosave waits while marked (IME) text shows; the text itself is the mirror's at every step.
+    @Test func markedTextIsToldAsItComesAndGoes() {
         open("start")
-        text.insertText("x", replacementRange: typed)
-        #expect(editor.document?.text == "startx")
-
+        var told: [Bool] = []
+        text.composing = { told.append($0) }
         text.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
-        #expect(text.hasMarkedText())
-        #expect(text.string == "startxあ" && text.document.text == text.string)
-        // ProjectModel's pending autosave reads this payload.
-        #expect(editor.document?.text == "startx")
         text.setMarkedText("あい", selectedRange: NSRange(location: 2, length: 0), replacementRange: typed)
-        #expect(text.string == "startxあい" && text.document.text == text.string)
-        #expect(editor.document?.text == "startx")
-
-        text.setMarkedText("", selectedRange: NSRange(location: 0, length: 0), replacementRange: typed)
-        #expect(!text.hasMarkedText())
-        #expect(text.string == "startx" && text.document.text == text.string)
-        #expect(editor.document?.text == text.string)
-
+        #expect(told == [true] && text.string == "startあい" && text.document.text == text.string)
+        text.unmarkText()
+        #expect(told == [true, false] && !text.hasMarkedText())
         text.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
         text.insertText("亜", replacementRange: typed)
-        #expect(!text.hasMarkedText())
-        #expect(text.string == "startx亜" && text.document.text == text.string)
-        #expect(editor.document?.text == text.string)
-    }
-
-    @Test func replacingASelectionStaysProvisionalUntilUnmarked() {
-        open("before old after")
-        text.setSelectedRange(NSRange(location: 7, length: 3))
-        text.setMarkedText("候補", selectedRange: NSRange(location: 2, length: 0), replacementRange: typed)
-        #expect(text.string == "before 候補 after")
-        #expect(editor.document?.text == "before old after")
-
-        text.unmarkText()
-        #expect(!text.hasMarkedText())
-        #expect(editor.document?.text == "before 候補 after")
-        text.setMarkedText("仮", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
-        #expect(editor.document?.text == "before 候補 after")
-        text.setMarkedText("", selectedRange: NSRange(location: 0, length: 0), replacementRange: typed)
-        #expect(editor.document?.text == text.string)
+        #expect(told == [true, false, true, false] && !text.hasMarkedText())
+        #expect(text.string == "startあい亜" && text.document.text == text.string)
     }
 
     @Test func switchingFilesDuringCompositionKeepsUndoWithItsOwnText() {
         open("first", path: "a.tex")
         text.setMarkedText("仮", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
-        #expect(editor.document?.text == "first")
 
         open("second", path: "b.tex")
         #expect(!text.hasMarkedText())

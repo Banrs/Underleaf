@@ -11,7 +11,6 @@ nonisolated struct SyncTeXWord: Equatable, Sendable {
 final class SourceEditor: NSObject, NSTextViewDelegate {
     let textView = SourceTextView.plainDocument()
     let scrollView = NSScrollView()
-    var onChanged: () -> Void = {}
     var onCursor: (Int, Int) -> Void = { _, _ in }
     var onScroll: (Int) -> Void = { _ in }
 
@@ -73,13 +72,14 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     // MARK: - Files
 
-    func open(path: String, text: String, focus: Bool) {
+    /// `source` is the session's document of `path`, which holds `text`.
+    func open(path: String, text: String, source: SourceDocument? = nil, focus: Bool) {
         if let current = self.path { kept[current] = (textView.string, undo, textView.selectedRange(), textView.shownTop) }
         // By UTF-16, as the kept ranges count: Swift's `==` also holds for a file rewritten in another Unicode normal form,
         // whose undo stack would then replace the wrong ranges.
         let prior = kept[path].flatMap { ($0.text as NSString).isEqual(to: text) ? $0 : nil }
         self.path = path
-        textView.load(text)
+        textView.load(text, source: source)
         undo = prior?.undo ?? UndoManager()
         textView.setSelectedRange(prior?.selection ?? NSRange(location: 0, length: 0))
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
@@ -90,8 +90,15 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         if focus { self.focus() }
     }
 
+    /// Another app's text for the file shown, from the session: its undo was the old text's.
+    func reload(text: String) {
+        undo = UndoManager()
+        textView.reload(text)
+        reportCursor()
+    }
+
     var document: (path: String, text: String)? {
-        path.map { ($0, textView.committedString) }
+        path.map { ($0, textView.string) }
     }
 
     func forget(path: String) {
@@ -177,7 +184,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     func textDidChange(_ notification: Notification) {
         changes.count += 1
-        onChanged()
     }
 
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,

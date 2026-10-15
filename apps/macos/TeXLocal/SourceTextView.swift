@@ -46,29 +46,35 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if !setsCursor(with: event) { super.cursorUpdate(with: event) }
     }
 
-    private(set) var document = SourceDocument(text: "") {
-        didSet { document.setSymbols(symbols) }
-    }
-    /// Only active IME composition needs a snapshot; ordinary edits and undo are live.
-    private var beforeMarkedText: String?
-    var committedString: String { hasMarkedText() ? beforeMarkedText ?? string : string }
+    /// The text's mirror: a project session's document, whose edits it saves and previews, or the view's own.
+    private(set) var document = SourceDocument(text: "")
     /// Reads the storage's UTF-16 units in place: `string` bridges the whole text on every call.
     var text: NSString { textStorage?.mutableString ?? "" }
-    var symbols = Symbols(citations: [], labels: []) {
-        didSet { if symbols != oldValue { document.setSymbols(symbols) } }
-    }
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
 
     enum FileDrop {
         case open(() -> Void)
         case insert(String)
     }
-    var textEdited: (NSRange, String) -> Void = { _, _ in }
     var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
 
     private(set) var loading = false
 
-    func load(_ text: String) {
+    /// `source` is the session's document holding `text`; without one the view keeps a mirror of its own.
+    func load(_ text: String, source: SourceDocument? = nil) {
+        takeText(text)
+        document = source ?? SourceDocument(text: text)
+        loaded()
+    }
+
+    /// The disk's text, from the session's `document_reload`: shown without an edit, then the session told it is shown.
+    func reload(_ text: String) {
+        takeText(text)
+        document.reload(text)
+        loaded()
+    }
+
+    private func takeText(_ text: String) {
         loading = true
         // Else typing coalesced into the last file's undo would go on in this one's.
         breakUndoCoalescing()
@@ -78,7 +84,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         unmarkText()
         textStorage?.setAttributedString(NSAttributedString(string: text, attributes: typingAttributes))
         loading = false
-        document = SourceDocument(text: text)
+    }
+
+    private func loaded() {
         lastMath = nil
         dismissedMath = nil
         snippet = nil
@@ -104,7 +112,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let old = NSRange(location: edited.location, length: edited.length - delta)
         let text = textStorage.mutableString.substring(with: edited)
         document.edit(old, with: text)
-        textEdited(old, text)
         edits += 1
         staleColours = min(staleColours ?? edited.location, edited.location)
         let changed = changing.flatMap { $0.location == old.location && NSMaxRange($0) <= NSMaxRange(old) ? $0 : nil }
@@ -748,15 +755,24 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var closers: Set<Int> = []
     private static let closeBefore: Set<Character> = [")", "]", "}", ":", ";", ">"]
 
+    /// Told as marked (IME) text comes and goes: the session's autosave waits for it to be committed.
+    var composing: (Bool) -> Void = { _ in }
+    private var toldComposing = false
+
+    private func markedTextChanged() {
+        guard hasMarkedText() != toldComposing else { return }
+        toldComposing.toggle()
+        composing(toldComposing)
+    }
+
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        if !hasMarkedText() { beforeMarkedText = self.string }
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
-        if !hasMarkedText() { beforeMarkedText = nil }
+        markedTextChanged()
     }
 
     override func unmarkText() {
         super.unmarkText()
-        beforeMarkedText = nil
+        markedTextChanged()
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
@@ -764,7 +780,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         typing = true
         defer {
             typing = wasTyping
-            if !hasMarkedText() { beforeMarkedText = nil }
+            markedTextChanged()
         }
         guard let typed = string as? String, typed.count == 1, let c = typed.first,
               replacementRange.location == NSNotFound, !hasMarkedText(), selectedRanges.count == 1 else {

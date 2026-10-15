@@ -211,7 +211,7 @@ extension AppModel {
             showSideColumn?(.sidebar, true)
             newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
-        case .fileSave: Task { await project?.saveEdits() }
+        case .fileSave: Task { await project?.save() }
         case .pdfSave:
             if let project, let url = project.buildPDF {
                 exporting = ExportFile(name: "\(project.id).pdf", type: .pdf) { url }
