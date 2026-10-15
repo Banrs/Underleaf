@@ -845,65 +845,22 @@ struct SourceEditorTests {
         #expect(text.selectedRange() == NSRange(location: 4, length: 4) && asked == [2])
     }
 
-    /// An issue's message is whole where there is room for it and cut with an ellipsis where there
-    /// isn't, down to ten of its characters: with room for fewer it isn't shown. An undefined
-    /// command's is set in fewer words before it is cut, so that the command's name is kept.
-    @Test func anIssuesMessageFitsItsRoom() {
-        let font = NSFont.systemFont(ofSize: 12)
-        func width(_ string: String) -> CGFloat { (string as NSString).size(withAttributes: [.font: font]).width }
-        let label = IssueLabel("Paragraph ended before \\section was complete", others: 0, font: font)
-        #expect(abs(label.width - width("Paragraph ended before \\section was complete")) < 0.01)
-        let whole = label.line(in: label.width)
-        #expect(whole?.cut == false && whole?.width == label.width)
-        let cut = label.line(in: label.width - 1)
-        #expect(cut?.cut == true && (cut?.width ?? .infinity) <= label.width - 1)
-        let twelve = label.line(in: width("Paragraph en…") + 1)
-        #expect(twelve?.cut == true && abs((twelve?.width ?? 0) - width("Paragraph en…")) < 0.5)
-        #expect(label.line(in: width("Paragra…") + 1) == nil && label.line(in: 0) == nil && label.line(in: -40) == nil)
-        // A short message has room or it hasn't.
-        let short = IssueLabel("Bad math", others: 0, font: font)
-        #expect(short.line(in: short.width)?.cut == false && short.line(in: short.width - 1) == nil)
-        // The line's other issues are counted after it, and the count is kept where it is cut.
-        let counted = IssueLabel("Missing number, treated as zero", others: 2, font: font)
-        #expect(abs(counted.width - width("Missing number, treated as zero  +2")) < 0.01)
-        let both = counted.line(in: width("Missing number, treated…  +2") + 1)
-        #expect(both?.cut == true && abs((both?.width ?? 0) - width("Missing number, treated…  +2")) < 0.5)
-        // One line, whatever TeX's own breaks.
-        #expect(abs(IssueLabel("Missing $\n  inserted", others: 0, font: font).width - width("Missing $ inserted")) < 0.01)
-        // LaTeX's own words for an error are left to the symbol beside the message.
-        #expect(abs(IssueLabel("LaTeX Error: There's no line here to end.", others: 0, font: font).width
-                    - width("There's no line here to end.")) < 0.01)
-        // An undefined command's name is at its message's end, which a cut would take first: with
-        // no room for all of it, fewer words and the name, and the cut is theirs.
-        let undefined = IssueLabel("Undefined control sequence: \\undefinedmacro", others: 0, font: font)
-        #expect(undefined.line(in: undefined.width)?.cut == false)
-        let named = undefined.line(in: undefined.width - 1)
-        #expect(named?.cut == true && abs((named?.width ?? 0) - width("Undefined: \\undefinedmacro")) < 0.01)
-        let part = undefined.line(in: width("Undefined: \\undefin…") + 1)
-        #expect(part?.cut == true && abs((part?.width ?? 0) - width("Undefined: \\undefin…")) < 0.5)
-        #expect(undefined.line(in: width("Undefin…") + 1) == nil)
-        let several = IssueLabel("Undefined control sequence: \\foo", others: 2, font: font)
-        #expect(abs((several.line(in: several.width - 1)?.width ?? 0) - width("Undefined: \\foo  +2")) < 0.01)
-    }
-
-    /// Only a message that names an undefined command gives a place on its line, and only where
-    /// the line has that command: not a longer one that starts with it, nor a comment's.
-    @Test func onlyAnUndefinedCommandIsFoundOnItsLine() {
-        #expect(UndefinedCommand.named(in: "Undefined control sequence: \\foo") == "\\foo")
-        #expect(UndefinedCommand.named(in: "Undefined control sequence: \\@foo") == "\\@foo")
-        #expect(UndefinedCommand.named(in: "Undefined control sequence: \\;") == "\\;")
-        for other in ["Undefined control sequence", "Undefined control sequence.", "Undefined control sequence: \\", "Missing $ inserted",
-                      "Undefined control sequence: \\foo bar", "graphicx.sty: Undefined control sequence: \\foo",
-                      "Reference `fig:x' on page 1 undefined on input line 3"] {
-            #expect(UndefinedCommand.named(in: other) == nil, "\(other)")
-        }
-        func found(_ line: String, _ command: String = "\\foo") -> [NSRange] { UndefinedCommand.ranges(of: command, in: line as NSString) }
-        #expect(found("a \\foo b \\foo{c}\n") == [NSRange(location: 2, length: 4), NSRange(location: 9, length: 4)])
-        #expect(found("\\foobar \\foo@ \\\\foo \\foo1") == [NSRange(location: 20, length: 4)])
-        #expect(found("\\foo % \\foo") == [NSRange(location: 0, length: 4)])
-        #expect(found("50\\% \\foo") == [NSRange(location: 5, length: 4)])
-        #expect(found("a\\;b \\\\;", "\\;") == [NSRange(location: 1, length: 2)])
-        #expect(found("no such command").isEmpty)
+    /// An issue's box holds the whole message where there is room for it, the message cut short
+    /// where there is room for a few words of it, the symbol alone where there is room for that,
+    /// and is left out with less. A line's other issues are counted after the message.
+    @Test func anIssuesBoxFitsItsRoom() throws {
+        let font = NSFont.systemFont(ofSize: 13), symbol = try #require(NSImage(systemSymbolName: "xmark.octagon.fill", accessibilityDescription: nil))
+        let box = IssueMessageView()
+        box.show("Paragraph ended before \\section was\n  complete", others: 0, symbol: symbol, font: font)
+        let whole = try #require(box.fit(in: 1000))
+        #expect(!whole.cut && whole.width == whole.width.rounded())
+        let cut = try #require(box.fit(in: whole.width - 40))
+        #expect(cut.cut && cut.width == (whole.width - 40).rounded(.down))
+        let alone = try #require(box.fit(in: 40))
+        #expect(alone.cut && alone.width < 40)
+        #expect(box.fit(in: alone.width - 1) == nil)
+        box.show("Paragraph ended before \\section was complete", others: 2, symbol: symbol, font: font)
+        #expect(try #require(box.fit(in: 1000)).width > whole.width)
     }
 
     /// The text laid out for the editor's width.
@@ -913,10 +870,9 @@ struct SourceEditorTests {
         try #require(text.textLayoutManager).textViewportLayoutController.layoutViewport()
     }
 
-    /// A line with an issue has its symbol and what it says in a box at the end of its first
-    /// wrapped line, a point inside its band's end, as Xcode's; a narrower pane cuts the words
-    /// short, then leaves the symbol alone, then nothing, with a help tag's words for what isn't
-    /// shown. An undefined command is underlined where it stands.
+    /// A line with an issue has its box at the end of its first wrapped line, a point inside its
+    /// band's end, as Xcode's; a narrower pane cuts the words short, then leaves the symbol
+    /// alone, then nothing, with a help tag's words for what isn't shown.
     @Test func anIssuesMessageIsAtItsLinesEnd() throws {
         let window = inWindow()
         defer { withExtendedLifetime(window) {} }
@@ -924,8 +880,6 @@ struct SourceEditorTests {
         text.issueLines = [1: .init(isError: false, message: "Marked"), 2: .init(isError: true, message: "Undefined control sequence: \\foo"),
                            4: .init(isError: true, message: "Emergency stop", others: ["Missing \\begin{document}"])]
         try layOut()
-        let padding = try #require(text.textContainer).lineFragmentPadding
-        let digit = ("0" as NSString).size(withAttributes: [.font: try #require(text.font)]).width
         var rows = text.issueRows
         // The last line is the document's empty one, laid out with the paragraph before it.
         #expect(rows.map(\.line) == [1, 2, 4] && rows.map(\.isError) == [false, true, true])
@@ -942,46 +896,32 @@ struct SourceEditorTests {
         #expect(rows.allSatisfy { row in text.subviews.firstIndex { $0 === row.message?.view }.map { $0 > selection } == true })
         #expect(rows[0].band.maxY <= rows[1].band.minY && rows[1].band.maxY < rows[2].band.minY)
         #expect(rows[0].tip == nil && rows[1].tip == nil && rows[2].tip == "Emergency stop\nMissing \\begin{document}")
-        // Both places the command stands, each four characters wide to the pixel, and none for the
-        // other lines.
-        let pixel = 1 / window.backingScaleFactor
-        #expect(rows.map(\.tokens.count) == [0, 2, 0] && rows[1].tokens.allSatisfy { abs($0.width - 4 * digit) <= pixel })
-        let start = text.textContainerOrigin.x + padding
-        #expect(abs(rows[1].tokens[0].minX - (start + 4 * digit)) <= pixel / 2 && abs(rows[1].tokens[1].minX - (start + 19 * digit)) <= pixel / 2)
-        #expect(rows[1].tokens.allSatisfy { token in [token.minX, token.maxX, token.minY, token.maxY].allSatisfy { ($0 / pixel).rounded() == $0 / pixel } })
         // Laid out again as it is, as a scroll does, the rows are the ones there were.
         try layOut()
         #expect(zip(rows, text.issueRows).allSatisfy { $0.shape === $1.shape } && text.issueRows.count == 3)
 
-        // Narrower: the second line's message is in fewer words, its box three digits from its
-        // text at the nearest, in the view it had.
-        try layOut(width: 520)
+        // Narrower: the second line's message is cut short, in the view it had, three digits from
+        // its text at the nearest.
+        let digit = ("0" as NSString).size(withAttributes: [.font: try #require(text.font)]).width
+        let start = try text.textContainerOrigin.x + #require(text.textContainer).lineFragmentPadding
         let views = rows.map { $0.message?.view }
+        try layOut(width: 520)
         rows = text.issueRows
         let cut = try #require(rows[1].message)
-        #expect(cut.cut && cut.rect.maxX == rows[1].band.maxX - 1)
+        #expect(cut.cut && cut.rect.maxX == rows[1].band.maxX - 1 && cut.view === views[1] && cut.view.frame == cut.rect)
         #expect(cut.rect.minX >= start + 30 * digit + 3 * digit)
-        let font = NSFont.systemFont(ofSize: 13)
-        let words = ("Undefined: \\foo" as NSString).size(withAttributes: [.font: font]).width
-        #expect(abs(cut.rect.width - IssueMessageView.width(ofText: words, font: font)) < 0.01 && cut.view === views[1] && cut.view.frame == cut.rect)
         #expect(rows[1].tip == "Undefined control sequence: \\foo" && rows[0].message?.cut == false)
         // Narrower still, the line wraps, and its box is on its first line, the one its number is on.
         try layOut(width: 300)
         rows = text.issueRows
         #expect(abs(rows[1].band.height - 2 * rows[0].band.height) < 0.01)
         #expect(rows[1].message.map { $0.rect.minY == rows[1].band.minY && $0.rect.height == rows[0].band.height } != false)
-        // Room for the symbol and not for words: the symbol alone, and the help tag's words.
-        open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
-        text.issueLines = [2: .init(isError: true, message: "Undefined control sequence: \\foo")]
-        try layOut(width: 480)
-        let alone = try #require(text.issueRows.first?.message)
-        #expect(alone.cut && alone.rect.width == IssueMessageView.width(ofText: nil, font: font) && text.issueRows.first?.tip != nil)
         // No room: the band is left, and the help tag's words.
-        open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
+        open("one\nUse \\foo here, and \\foo there, to the very edge of it\n", caret: 0)
         text.issueLines = [2: .init(isError: true, message: "Undefined control sequence: \\foo")]
         try layOut(width: 440)
         rows = text.issueRows
-        #expect(rows.count == 1 && rows[0].message == nil && rows[0].tip == "Undefined control sequence: \\foo" && rows[0].tokens.count == 2)
+        #expect(rows.count == 1 && rows[0].message == nil && rows[0].tip == "Undefined control sequence: \\foo")
         #expect(!text.subviews.contains { $0 is IssueMessageView })
         // Nothing once the issues go, as on the first edit after a build.
         try layOut(width: 600)
