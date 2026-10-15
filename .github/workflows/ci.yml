@@ -101,7 +101,7 @@ jobs:
           fi
           # xcodebuild passes a run in which no test ran.
           xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/TeXLocal.xcresult" --compact \
-            | jq -e '"\(.totalTestCount) tests: \(.passedTests) passed, \(.skippedTests) skipped" as $s | ($s | debug) | .passedTests > 0'
+            | jq -e '. as $r | "\(.totalTestCount) tests: \(.passedTests) passed, \(.skippedTests) skipped" | debug | $r.passedTests > 0'
       - if: failure()
         uses: actions/upload-artifact@v7
         with:

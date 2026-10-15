@@ -549,10 +549,12 @@ impl Manager {
         let token = crate::random_hex(16)?;
         // The session's own folder, for its owner alone: no build output or
         // other session shares it. The session removes it as it stops.
-        let folder = tempfile::Builder::new()
-            .prefix("texlocal-texpresso-")
-            .tempdir()?
-            .keep();
+        let mut folder = tempfile::Builder::new();
+        folder.prefix("texlocal-texpresso-");
+        // tempfile makes folders 0o777 less the umask.
+        #[cfg(unix)]
+        folder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
+        let folder = folder.tempdir()?.keep();
         let pdf = dunce::canonicalize(folder)?.join("live.pdf");
         let mut command = tokio::process::Command::new(&executable);
         command
