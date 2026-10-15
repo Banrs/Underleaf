@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -31,9 +32,11 @@ public sealed partial class MainWindow : Window
         ApplyTheme((ElementTheme)Pref("theme", 0));
         PlaceWindow();
 
-        var settings = new KeyboardAccelerator { Key = (VirtualKey)188, Modifiers = VirtualKeyModifiers.Control };
-        settings.Invoked += (_, e) => { e.Handled = true; OpenSettings(); };
-        Root.KeyboardAccelerators.Add(settings);
+        // Ctrl+, as a handled-too key handler: the editor's RichEditBox swallows it before accelerators.
+        Root.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, e) =>
+        {
+            if (e.Key == (VirtualKey)188 && InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down)) OpenSettings();
+        }), true);
 
         Activated += (_, e) =>
         {

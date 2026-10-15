@@ -24,6 +24,7 @@ internal static unsafe partial class Native
     [LibraryImport(Lib)] public static partial void tl_source_free_runs(uint* runs, nuint count);
     [LibraryImport(Lib)] public static partial nint tl_source_call(nint s, byte* cmd, byte* args);
     [LibraryImport(Lib)] public static partial void tl_source_free(nint s);
+    [LibraryImport(Lib)] public static partial nint tl_syntax_call(byte* cmd, byte* args);
 
     /// NUL-terminated UTF-8, or null for a null string.
     public static byte[]? Utf8(string? s) => s is null ? null : Encoding.UTF8.GetBytes(s + '\0');

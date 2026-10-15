@@ -76,9 +76,6 @@
         <Grid Visibility="Collapsed">
             <Rectangle x:Name="PaperInk" Fill="{ThemeResource SolidBackgroundFillColorBaseBrush}" />
             <Rectangle x:Name="TextInk" Fill="{ThemeResource TextFillColorPrimaryBrush}" />
-            <Rectangle x:Name="CommandInk" Fill="{ThemeResource SyntaxCommandBrush}" />
-            <Rectangle x:Name="CommentInk" Fill="{ThemeResource SyntaxCommentBrush}" />
-            <Rectangle x:Name="InvalidInk" Fill="{ThemeResource SyntaxInvalidBrush}" />
         </Grid>
 
         <Canvas x:Name="Gutter" Width="48" />

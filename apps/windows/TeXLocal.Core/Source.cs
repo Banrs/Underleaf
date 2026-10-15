@@ -62,4 +62,14 @@ public sealed unsafe class Source : SafeHandle
         fixed (byte* a = Utf8(JsonSerializer.Serialize(args, Core.Json)))
             return Take(tl_source_call(handle, c, a));
     }
+
+    /// texlocal-syntax's commands that need no document: themes, menus, headings, maths.
+    public static T? SyntaxCall<T>(string cmd, object args)
+    {
+        string? json;
+        fixed (byte* c = Utf8(cmd))
+        fixed (byte* a = Utf8(JsonSerializer.Serialize(args, Core.Json)))
+            json = Take(tl_syntax_call(c, a));
+        return json is null ? default : JsonSerializer.Deserialize<T>(json, Core.Json);
+    }
 }
