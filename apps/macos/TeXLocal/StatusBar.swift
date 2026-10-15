@@ -170,7 +170,8 @@ struct StatusBar: View {
     private var buildStatus: some View {
         HStack {
             if project.compiling {
-                // The toolbar's Stop has the build's one spinner.
+                // The build's one spinner: the toolbar's Stop keeps Compile's place.
+                ProgressView().accessibilityHidden(true)
                 Text("Compiling…")
             } else if let result = project.result {
                 if result.stopped {
@@ -192,9 +193,8 @@ struct StatusBar: View {
                 badge("\(project.warningCount)", "exclamationmark.triangle.fill", spoken: "^[\(project.warningCount) warning](inflect: true)")
             }
         }
-        // A build starting or ending crossfades its status, as Compile's button changes form, and
-        // under Reduce Motion too, where the HIG has a crossfade stand for motion; nothing here
-        // moves with typing.
+        // A build starting or ending crossfades its status, under Reduce Motion too, where the HIG
+        // has a crossfade stand for motion; nothing here moves with typing.
         .animation(.easeInOut(duration: 0.2), value: project.compiling)
     }
 

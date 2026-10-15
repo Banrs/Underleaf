@@ -86,9 +86,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         // PDF, measured on 27.2 in a window that isn't the active one), whatever this colour is.
         window.backgroundColor = .untintedTextBackground
         window.toolbar = workspace.toolbar.toolbar
-        // Compile's form goes by the toolbar's tools, which a workspace that appeared as the
-        // window took it could not yet read.
-        workspace.toolbarItemsChanged()
         self.workspace = workspace
         home = nil
         titleWatch?.cancel()
