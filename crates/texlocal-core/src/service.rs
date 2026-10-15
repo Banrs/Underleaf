@@ -539,7 +539,8 @@ impl Service {
             "analyze_project" => {
                 let root = root()?;
                 let main = settings::read_settings(&root).main_file;
-                out(analyze::analyze_project(&root, &main, s("file")?))
+                let analysis = analyze::analyze_project(&root, &main, s("file")?);
+                out(analyze::ProjectAnalysis::from(analysis))
             }
             "search_project" => out(projects::search_project(
                 &root()?,
@@ -625,6 +626,13 @@ impl Service {
                 )
                 .await?)
             }
+            // ---------- logic the hosts used to hold ----------
+            // The index in an `analyze_project` outline of the heading a line is under.
+            "outline_current" => out(analyze::current_heading(
+                &arg::<Vec<analyze::Heading>>(args, "outline")?,
+                arg::<Option<String>>(args, "file")?.as_deref(),
+                arg(args, "line")?,
+            )),
             _ => Err(CoreError::not_found(format!("Unknown command: {command}"))),
         }
     }
