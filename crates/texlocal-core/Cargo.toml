@@ -6,7 +6,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+dunce = "1"
 getrandom = "0.4"
+memchr = "2"
+ropey = "1.6"
+which = "8"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 regex = "1"
 trash = "5"
@@ -24,6 +28,10 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+same-file = "1"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

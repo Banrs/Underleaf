@@ -50,9 +50,15 @@ static BIBTEX_ERROR: LazyLock<Regex> =
 static BIBER_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[\d+\] .*> ERROR - (.*)$").unwrap());
 
-/// A forward-slash project path; None for an absolute TeX distribution path.
+/// A forward-slash project path; None for an absolute TeX distribution path,
+/// `/…` or, from a TeX on Windows, `C:/…`, `C:\…` or `\\server\…`.
 fn project_path(path: &str) -> Option<String> {
-    (!path.starts_with('/')).then(|| path.strip_prefix("./").unwrap_or(path).to_string())
+    let absolute = match path.as_bytes() {
+        [b'/' | b'\\', ..] => true,
+        [drive, b':', b'/' | b'\\', ..] => drive.is_ascii_alphabetic(),
+        _ => false,
+    };
+    (!absolute).then(|| path.strip_prefix("./").unwrap_or(path).to_string())
 }
 
 /// Follow the files TeX opens and closes on a line. Each "(" pushes the path
@@ -99,7 +105,7 @@ fn locate(
     if let Some(rel) = project_path(path) {
         return (Some(rel), Some(line));
     }
-    let name = path.rsplit('/').next().unwrap_or(path);
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     *message = format!("{name}: {message}");
     (files.find_map(project_path), None)
 }
@@ -559,5 +565,14 @@ mod tests {
             Some("chapters/a.tex".into())
         );
         assert_eq!(project_path("/usr/local/texlive/a.sty"), None);
+        for windows in [
+            "C:/texlive/2026/texmf-dist/tex/latex/base/article.cls",
+            r"c:\Program Files\MiKTeX\tex/latex/base\article.cls",
+            r"\\server\texmf\a.sty",
+        ] {
+            assert_eq!(project_path(windows), None, "{windows}");
+        }
+        // A file named like a drive is still the project's.
+        assert_eq!(project_path("c:a.tex"), Some("c:a.tex".into()));
     }
 }

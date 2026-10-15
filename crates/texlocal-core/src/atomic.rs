@@ -6,17 +6,20 @@
 use serde::Serialize;
 use std::fs::{self, File, Metadata, Permissions};
 use std::io::{self, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
+use std::time::UNIX_EPOCH;
 use tempfile::TempPath;
 
 /// A file as written: which file it is, its length, and when it was last
-/// written, to the nanosecond. A client that keeps it knows a change it is
-/// told of for the file is its own write's while a stat still gives the same,
-/// without reading the file back.
+/// written, to the nanosecond, as stat gives them (st_ino, st_size, and
+/// st_mtime and its nanoseconds, from 0 up even before 1970). A client that
+/// keeps it knows a change it is told of for the file is its own write's while
+/// a stat still gives the same, without reading the file back. Windows has no
+/// inode a stat gives, and the stamp none: there, length and date alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Stamp {
-    pub inode: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inode: Option<u64>,
     pub size: u64,
     pub seconds: i64,
     pub nanoseconds: i64,
@@ -24,11 +27,23 @@ pub struct Stamp {
 
 impl Stamp {
     pub fn of(meta: &Metadata) -> Self {
+        #[cfg(unix)]
+        let inode = Some(std::os::unix::fs::MetadataExt::ino(meta));
+        #[cfg(not(unix))]
+        let inode = None;
+        let nanos = match meta.modified().map(|time| time.duration_since(UNIX_EPOCH)) {
+            Ok(Ok(after)) => after.as_nanos() as i128,
+            Ok(Err(before)) => -(before.duration().as_nanos() as i128),
+            Err(_) => 0,
+        };
+        // Before 1970 too, as a timespec has it: seconds down, then
+        // nanoseconds up from them.
+        const NANOS: i128 = 1_000_000_000;
         Stamp {
-            inode: meta.ino(),
-            size: meta.size(),
-            seconds: meta.mtime(),
-            nanoseconds: meta.mtime_nsec(),
+            inode,
+            size: meta.len(),
+            seconds: nanos.div_euclid(NANOS) as i64,
+            nanoseconds: nanos.rem_euclid(NANOS) as i64,
         }
     }
 }
@@ -45,7 +60,9 @@ pub(crate) fn create_temp(
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
     let mut builder = tempfile::Builder::new();
     builder.prefix(".texlocal-");
+    #[cfg(unix)]
     if existing.is_none() {
+        use std::os::unix::fs::PermissionsExt;
         builder.permissions(Permissions::from_mode(0o666));
     }
     let temp = builder.tempfile_in(parent.unwrap_or(Path::new(".")))?;
@@ -58,14 +75,25 @@ pub(crate) fn create_temp(
     Ok((path, file))
 }
 
+/// Moves a finished temporary file into `path`'s place in one rename. std's
+/// rather than tempfile's, which on Windows reaches no path past 260
+/// characters.
+pub(crate) fn persist(temp: TempPath, path: &Path) -> io::Result<()> {
+    fs::rename(&temp, path)?;
+    // Renamed, it is no longer there to remove.
+    let _ = temp.keep();
+    Ok(())
+}
+
 /// Replace `path`'s contents with `bytes`, or create it. A symlinked file is
 /// written through, so the link stays a link, and the file keeps its
 /// permissions; a read-only file is refused, as writing it in place would be.
 /// The stamp is the temporary file's, which the rename keeps: one taken
-/// after it could be another app's write landing in between.
+/// after it could be another app's write landing in between. It is taken
+/// once the file is closed, as Windows dates the last write then.
 pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     let target = match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => fs::canonicalize(path)?,
+        Ok(meta) if meta.file_type().is_symlink() => dunce::canonicalize(path)?,
         _ => path.to_path_buf(),
     };
     let permissions = fs::metadata(&target).ok().map(|meta| meta.permissions());
@@ -75,8 +103,9 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     let (temp, mut file) = create_temp(&target, permissions)?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    let stamp = Stamp::of(&file.metadata()?);
-    temp.persist(&target).map_err(|err| err.error)?;
+    drop(file);
+    let stamp = Stamp::of(&fs::metadata(&temp)?);
+    persist(temp, &target)?;
     Ok(stamp)
 }
 

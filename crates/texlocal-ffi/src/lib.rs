@@ -34,7 +34,6 @@ impl TlHandle {
         let path = |p: PathBuf| json!(p.to_string_lossy());
         match command {
             "pdf_path" => service.pdf_path(s("id")?).map(path),
-            "raw_path" => service.raw_path(s("id")?, s("path")?).map(path),
             "project_root" => service.project_root(s("id")?).map(path),
             "export_zip" => {
                 let root = service.project_root(s("id")?)?;

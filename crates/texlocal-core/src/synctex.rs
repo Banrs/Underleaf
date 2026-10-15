@@ -199,14 +199,14 @@ pub async fn synctex_inverse_with_context(
     // project aren't real sources — report "no match" so the UI shows a toast.
     // TeX records the physical working directory, even if root is a link.
     let no_source = || CoreError::not_found("No source file at this location");
-    let canonical_root = std::fs::canonicalize(root)?;
+    let canonical_root = dunce::canonicalize(root)?;
     let rel = rel_to_root(root, &abs)
         .or_else(|| rel_to_root(&canonical_root, &abs))
         // A moved project can retain TeX's old "<folder>/./<file>" spelling.
         .or_else(|| safe_rel_file(root, file.split_once("/./")?.1).ok())
         .ok_or_else(no_source)?;
     let rel = safe_rel_file(root, &rel).map_err(|_| no_source())?;
-    let source = std::fs::canonicalize(root.join(&rel)).map_err(|_| no_source())?;
+    let source = dunce::canonicalize(root.join(&rel)).map_err(|_| no_source())?;
     let physical = rel_to_root(&canonical_root, &source)
         .and_then(|rel| safe_rel_file(root, &rel).ok())
         .ok_or_else(no_source)?;

@@ -12,12 +12,12 @@ use std::time::SystemTime;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use crate::atomic::create_temp;
+use crate::atomic::{create_temp, persist};
 use crate::error::CoreError;
 use crate::{BUILD_DIR, SETTINGS_FILE};
 
 pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
-    let root_canonical = fs::canonicalize(root)?;
+    let root_canonical = dunce::canonicalize(root)?;
     let (temp_path, file) = create_temp(dest, None)?;
 
     // Resolve the archive folder as the walk resolves the project, so a
@@ -27,12 +27,12 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
         writer: ZipWriter::new(file),
         options: SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
         root_canonical: &root_canonical,
-        archive_dir: fs::canonicalize(parent.unwrap_or(Path::new(".")))?,
+        archive_dir: dunce::canonicalize(parent.unwrap_or(Path::new(".")))?,
         archive_names: [dest.file_name(), temp_path.file_name()],
     };
     export.add_dir(root, &root_canonical, "")?;
     export.writer.finish()?.sync_all()?;
-    temp_path.persist(dest).map_err(|err| err.error.into())
+    Ok(persist(temp_path, dest)?)
 }
 
 /// The parts of an export that do not change as the walk descends: where the
@@ -78,7 +78,7 @@ impl Export<'_> {
             if entry_type.is_symlink() {
                 // Unresolvable (dangling, a loop): nothing to export, as in
                 // the project walks.
-                let Ok(target) = fs::canonicalize(&path) else {
+                let Ok(target) = dunce::canonicalize(&path) else {
                     continue;
                 };
                 if !target.starts_with(self.root_canonical) {
@@ -94,7 +94,7 @@ impl Export<'_> {
             }
 
             if entry_type.is_dir() {
-                let canonical = fs::canonicalize(&path)?;
+                let canonical = dunce::canonicalize(&path)?;
                 if !canonical.starts_with(self.root_canonical) {
                     continue;
                 }

@@ -1,11 +1,20 @@
 //! The answers that read the text from its start (maths and code to skip,
 //! name arguments, text styles, maths at a point) are the same however
 //! they're reached: resumed from kept points, after edits that forget some
-//! of them, as on a document read fresh.
-
-use std::time::{Duration, Instant};
+//! of them, as on a document read fresh. How far a question reads is
+//! checked beside the scanner (maths.rs).
 
 use texlocal_syntax::{SourceDocument, TextRange, math_mode_at};
+
+/// How many of a random test's documents or rounds: fewer in a debug build, where
+/// each takes about ten times as long, and still every kind of each.
+const fn runs(release: usize, debug: usize) -> usize {
+    if cfg!(debug_assertions) {
+        debug
+    } else {
+        release
+    }
+}
 
 const PIECES: &[&str] = &[
     "\\cite{",
@@ -62,7 +71,7 @@ fn range(start: u32, length: u32) -> TextRange {
 #[test]
 fn answers_after_edits_are_a_fresh_reading_s() {
     let mut seed = Seeded(5);
-    for document in 0..12 {
+    for document in 0..runs(12, 6) {
         // Several kept points' worth; every third with no blank line at all.
         let source: String = (0..3_000)
             .map(|_| {
@@ -172,11 +181,12 @@ fn article(seed: &mut Seeded, paragraphs: bool) -> String {
 fn every_answer_after_every_edit_is_a_fresh_reading_s() {
     // The selections found in a text style, which the test is to ask about.
     let mut styled = 0;
-    for document in 1..=4 {
-        let mut seed = Seeded(document);
+    let (documents, rounds) = (runs(4, 2), runs(200, 120));
+    for document in 1..=documents {
+        let mut seed = Seeded(document as u32);
         let mut doc = SourceDocument::new("");
         let mut units: Vec<u16> = Vec::new();
-        for round in 0..200 {
+        for round in 0..rounds {
             let len = units.len();
             let (at, cut, piece) = if round % 20 == 0 {
                 // Random edits leave less and less of a document to ask
@@ -245,7 +255,11 @@ fn every_answer_after_every_edit_is_a_fresh_reading_s() {
             styled += (styles != Default::default()) as usize;
         }
     }
-    assert!(styled > 100, "{styled} selections in a text style");
+    let asked = documents * rounds;
+    assert!(
+        styled > asked / 8,
+        "{styled} of {asked} selections in a text style"
+    );
 }
 
 #[test]
@@ -312,41 +326,4 @@ fn what_runs_over_a_kept_point_keeps_its_start() {
     );
     let after = source.find("fig").unwrap() as u32;
     assert_eq!(doc.not_prose(after, 3), [range(after, 3)]);
-}
-
-/// 200 spelling and style questions near the end of a long text, between
-/// edits, then the time they took.
-fn questions_near_the_end(source: &str) -> Duration {
-    let len = source.encode_utf16().count() as u32;
-    let mut doc = SourceDocument::new(source);
-    let started = Instant::now();
-    for k in 0..200 {
-        let at = len - 1_000 - k * 37;
-        doc.not_prose(at, 40);
-        doc.text_styles(range(at, 3));
-        doc.insert_symbol("\\alpha", range(at, 0));
-        if k % 20 == 0 {
-            doc.edit(at + 500, 0, "x");
-        }
-    }
-    started.elapsed()
-}
-
-#[test]
-fn questions_about_a_long_text_read_only_near_them() {
-    // 2.8 million units, braces closed and paragraphs short: each question
-    // had read it all from the start, 52 s in a test build for these.
-    let source = "A paragraph with $x^2$ and \\textbf{bold \\emph{words}}.\n\n".repeat(50_000);
-    let elapsed = questions_near_the_end(&source);
-    assert!(elapsed < Duration::from_secs(10), "{elapsed:?}");
-}
-
-#[test]
-fn braces_nobody_closes_cost_no_more_as_they_pile_up() {
-    // 20,000 lines, a brace left open on each and no blank line: kept points
-    // had been dropped above 64 open groups, and each question read the
-    // whole text from the start, twice.
-    let source: String = (0..20_000).map(|n| format!("{{ line {n} word\n")).collect();
-    let elapsed = questions_near_the_end(&source);
-    assert!(elapsed < Duration::from_secs(10), "{elapsed:?}");
 }

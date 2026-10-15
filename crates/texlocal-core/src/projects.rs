@@ -2,23 +2,23 @@
 //! dir; all returned paths use forward slashes.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 use std::time::UNIX_EPOCH;
 
 use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::BUILD_DIR;
-use crate::atomic;
+use crate::atomic::{self, Stamp};
 use crate::error::CoreError;
 use crate::paths::{fold_case, project_root, rel_key, safe_path, safe_write_path, sanitize_name};
 use crate::settings::{read_settings, write_settings};
 use crate::templates;
+use crate::{BUILD_DIR, lock};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,8 +94,15 @@ struct Entry {
 }
 
 impl Entry {
+    /// Its path from the root, in forward slashes on Windows too, where no
+    /// name holds a backslash.
     fn rel<'a>(&'a self, root: &Path) -> std::borrow::Cow<'a, str> {
-        self.path.strip_prefix(root).unwrap().to_string_lossy()
+        let rel = self.path.strip_prefix(root).unwrap().to_string_lossy();
+        if cfg!(windows) {
+            rel.replace('\\', "/").into()
+        } else {
+            rel
+        }
     }
 }
 
@@ -129,7 +136,7 @@ fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> {
         let path = entry.path();
         // No directory links (cycles), nor any without a proven in-project target.
         let shown = if kind.is_symlink() {
-            fs::canonicalize(&path).is_ok_and(|t| t.starts_with(root) && t.is_file())
+            dunce::canonicalize(&path).is_ok_and(|t| t.starts_with(root) && t.is_file())
         } else {
             kind.is_file() || kind.is_dir()
         };
@@ -165,7 +172,7 @@ pub(crate) fn visit_files(
         Ok(true)
     }
 
-    let root = fs::canonicalize(root)?;
+    let root = dunce::canonicalize(root)?;
     walk(&root, &root, visit)?;
     Ok(())
 }
@@ -186,18 +193,31 @@ fn project_info(name: String, mtime: u64, main_file: String) -> ProjectInfo {
     }
 }
 
-/// A project's date as the library shows it: the newest of its folder's and
-/// its content files', as a folder's own date moves only when entries come
-/// or go directly in it, not when a file in it is saved or compiled.
+/// A project's date as the library shows it: the newest of its folders' and
+/// its top-level files', without a stat of every file on each listing. A
+/// folder's date moves as entries come, go or are renamed in it, which every
+/// save the app makes does, as it renames the new file into place; a file
+/// saved in place by another app, most often the main file at the top, moves
+/// only its own date. One saved in place in a subfolder shows once anything
+/// else moves a folder's date.
 fn newest(root: &Path, meta: &fs::Metadata) -> u64 {
-    let mut mtime = mtime_ms(meta);
-    let _ = visit_files(root, &mut |abs, _| {
-        if let Ok(meta) = fs::metadata(abs) {
-            mtime = mtime.max(mtime_ms(&meta));
+    fn walk(root: &Path, dir: &Path, newest: &mut u64) {
+        for entry in entries(root, dir).into_iter().flatten() {
+            if (entry.dir || dir == root)
+                && let Ok(meta) = fs::metadata(&entry.path)
+            {
+                *newest = (*newest).max(mtime_ms(&meta));
+            }
+            if entry.dir {
+                walk(root, &entry.path, newest);
+            }
         }
-        Ok(true)
-    });
-    mtime
+    }
+    let mut newest = mtime_ms(meta);
+    if let Ok(root) = dunce::canonicalize(root) {
+        walk(&root, &root, &mut newest);
+    }
+    newest
 }
 
 pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
@@ -336,18 +356,28 @@ pub fn rename_project(
 }
 
 /// Whether a rename from `src` to `dest` would land on another entry. On a
-/// case-insensitive volume, the default on macOS, a case-only
+/// case-insensitive volume, the default on macOS and Windows, a case-only
 /// rename's destination already "exists" because it is `src` itself.
 fn occupied(src: &Path, dest: &Path) -> bool {
     fs::symlink_metadata(dest).is_ok() && !same_entry(src, dest)
 }
 
+/// Whether two paths name one entry, a link itself rather than its target.
+#[cfg(unix)]
 fn same_entry(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
         (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
         _ => false,
     }
+}
+
+/// Whether two paths name one entry. Windows' file identity is had only by
+/// opening the file, which follows a link, so a link is only ever itself.
+#[cfg(windows)]
+fn same_entry(a: &Path, b: &Path) -> bool {
+    let link = |path| fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
+    !link(a) && !link(b) && same_file::is_same_file(a, b).unwrap_or(false)
 }
 
 /// Delete to the platform's trash, so a mis-click is recoverable. A trash
@@ -387,7 +417,7 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
         Ok(nodes)
     }
 
-    let root = fs::canonicalize(root)?;
+    let root = dunce::canonicalize(root)?;
     walk(&root, &root)
 }
 
@@ -504,28 +534,6 @@ pub(crate) fn numbered(name: &str, n: u32) -> String {
     }
 }
 
-pub fn delete_entry(root: &Path, rel: &str) -> Result<(), CoreError> {
-    delete_entry_using(root, rel, discard)
-}
-
-fn delete_entry_using(
-    root: &Path,
-    rel: &str,
-    move_to_trash: impl FnOnce(&Path) -> Result<(), CoreError>,
-) -> Result<(), CoreError> {
-    let abs = safe_path(root, rel)?;
-    // However the request spells the main file or a folder holding it.
-    if after_entry(&read_settings(root).main_file, &rel_key(rel)?).is_some() {
-        return Err(CoreError::conflict(
-            "Choose a different main file before deleting this entry",
-        ));
-    }
-    if fs::symlink_metadata(&abs).is_ok() {
-        move_to_trash(&abs)?;
-    }
-    Ok(())
-}
-
 // ---------- search ----------
 
 // Keep one folded character per original character so snippet offsets agree.
@@ -632,74 +640,91 @@ fn parse_symbols(bytes: &[u8], ext: &str) -> Symbols {
     Symbols { citations, labels }
 }
 
+/// A project's labels and citations, read fresh.
 pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
-    let mut files = BTreeMap::new();
-    visit_files(root, &mut |abs, rel| {
-        let ext = ext_of(rel);
-        if (ext == "bib" || ext == "tex")
-            && let Some(bytes) = skip_unreadable(fs::read(abs))?
-        {
-            files.insert(rel.to_owned(), parse_symbols(&bytes, &ext));
-        }
-        Ok(true)
-    })?;
+    SymbolCache::default().scan(root)
+}
 
-    fn dedup<'a>(symbols: impl Iterator<Item = &'a String>) -> Vec<String> {
-        let mut seen = HashSet::new();
-        symbols
-            .filter(|symbol| seen.insert(*symbol))
-            .cloned()
-            .collect()
+/// The symbols of each .tex and .bib file of the projects scanned, by the
+/// file's stamp when it was read: a scan reads again only the files changed
+/// since, where every save would otherwise read the whole project.
+#[derive(Default)]
+pub struct SymbolCache(Mutex<HashMap<PathBuf, Files>>);
+
+/// A project's files' symbols, by project path, with the stamp each was read at.
+type Files = BTreeMap<String, (Stamp, Symbols)>;
+
+impl SymbolCache {
+    pub fn scan(&self, root: &Path) -> Result<Symbols, CoreError> {
+        // Taken out while the scan runs: one beside it starts afresh.
+        let mut known = lock(&self.0).remove(root).unwrap_or_default();
+        let mut files = Files::new();
+        visit_files(root, &mut |abs, rel| {
+            let ext = ext_of(rel);
+            if ext != "bib" && ext != "tex" {
+                return Ok(true);
+            }
+            // The stamp before the read: a write between them reads again.
+            let Some(meta) = skip_unreadable(fs::metadata(abs))? else {
+                return Ok(true);
+            };
+            let stamp = Stamp::of(&meta);
+            let symbols = match known.remove(rel) {
+                Some((seen, symbols)) if seen == stamp => symbols,
+                _ => match skip_unreadable(fs::read(abs))? {
+                    Some(bytes) => parse_symbols(&bytes, &ext),
+                    None => return Ok(true),
+                },
+            };
+            files.insert(rel.to_owned(), (stamp, symbols));
+            Ok(true)
+        })?;
+
+        fn dedup<'a>(symbols: impl Iterator<Item = &'a String>) -> Vec<String> {
+            let mut seen = HashSet::new();
+            symbols
+                .filter(|symbol| seen.insert(*symbol))
+                .cloned()
+                .collect()
+        }
+        // File-name order keeps completions stable, retaining the first occurrence.
+        let found = Symbols {
+            citations: dedup(files.values().flat_map(|(_, s)| &s.citations)),
+            labels: dedup(files.values().flat_map(|(_, s)| &s.labels)),
+        };
+        lock(&self.0).insert(root.to_path_buf(), files);
+        Ok(found)
     }
-    // File-name order keeps completions stable, retaining the first occurrence.
-    Ok(Symbols {
-        citations: dedup(files.values().flat_map(|s| &s.citations)),
-        labels: dedup(files.values().flat_map(|s| &s.labels)),
-    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{after_entry, create_file, create_project, delete_entry_using};
-    use crate::CoreError;
-    use crate::paths::project_root;
-    use crate::settings::write_settings;
-    use serde_json::json;
-    use std::path::PathBuf;
-
-    fn project() -> (tempfile::TempDir, PathBuf) {
-        let data = tempfile::tempdir().unwrap();
-        create_project(data.path(), "P", "blank").unwrap();
-        let root = project_root(data.path(), "P").unwrap();
-        (data, root)
-    }
-
-    // These go through a stand-in for the platform trash: the real one is slow
-    // or unavailable under test, and must not fill the user's Trash either.
+    use super::{SymbolCache, after_entry};
+    use std::fs;
 
     #[test]
-    fn deleting_an_entry_never_turns_a_trash_failure_into_permanent_deletion() {
-        let (_data, root) = project();
-        create_file(&root, "notes/scratch.tex", false).unwrap();
-        let unavailable = |_: &_| Err(CoreError::internal("trash unavailable"));
-        let err = delete_entry_using(&root, "notes/scratch.tex", unavailable).unwrap_err();
-        assert_eq!(err.status, 500);
-        assert!(root.join("notes/scratch.tex").is_file());
-    }
-
-    #[test]
-    fn an_entry_named_with_a_leading_dash_reaches_the_trash() {
-        // create_entry and uploads accept such a name; only the main file,
-        // which reaches latexmk's command line, may not start with "-".
-        let (_data, root) = project();
-        create_file(&root, "-notes/-draft.tex", false).unwrap();
-        let mut trashed = None;
-        delete_entry_using(&root, "-notes", |path| {
-            trashed = Some(path.to_path_buf());
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(trashed, Some(root.join("-notes")));
+    fn a_scan_reads_again_only_the_files_changed_since() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, a) = (dir.path(), dir.path().join("a.tex"));
+        fs::write(&a, "\\label{one}").unwrap();
+        fs::write(root.join("b.tex"), "\\label{two}").unwrap();
+        let cache = SymbolCache::default();
+        assert_eq!(cache.scan(root).unwrap().labels, ["one", "two"]);
+        // Of the same length and date, it is as it was, and isn't read.
+        let date = fs::metadata(&a).unwrap().modified().unwrap();
+        fs::write(&a, "\\label{uno}").unwrap();
+        let file = fs::File::options().write(true).open(&a).unwrap();
+        file.set_modified(date).unwrap();
+        drop(file);
+        fs::write(root.join("b.tex"), "\\label{three}").unwrap();
+        fs::write(root.join("c.bib"), "@book{key,").unwrap();
+        assert_eq!(cache.scan(root).unwrap().labels, ["one", "three"]);
+        fs::remove_file(root.join("b.tex")).unwrap();
+        let found = cache.scan(root).unwrap();
+        assert_eq!(
+            (found.labels, found.citations),
+            (vec!["one".into()], vec!["key".into()])
+        );
     }
 
     #[test]
@@ -714,33 +739,12 @@ mod tests {
         );
         assert_eq!(after_entry("chapters2/main.tex", "chapters"), None);
         assert_eq!(after_entry("chapters", "chapters/main.tex"), None);
-        // On a Mac's case-insensitive volume, Main.tex is main.tex.
-        let insensitive = cfg!(target_os = "macos");
+        // On a Mac's or Windows' case-insensitive volume, Main.tex is main.tex.
+        let insensitive = cfg!(any(target_os = "macos", windows));
         assert_eq!(after_entry("main.tex", "Main.tex").is_some(), insensitive);
         assert_eq!(
             after_entry("Chapters/a.tex", "chapters"),
             insensitive.then_some("/a.tex")
         );
-    }
-
-    #[test]
-    fn the_main_file_guard_runs_before_the_trash() {
-        let (_data, root) = project();
-        create_file(&root, "chapters/main.tex", false).unwrap();
-        write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
-        for path in ["chapters", "chapters/main.tex"] {
-            let err =
-                delete_entry_using(&root, path, |_| panic!("{path} was trashed")).unwrap_err();
-            assert_eq!(err.status, 409, "{path}");
-        }
-        // A sibling that merely shares the name's prefix is not the main file.
-        create_file(&root, "chapters2/x.tex", false).unwrap();
-        let mut trashed = false;
-        delete_entry_using(&root, "chapters2", |_| {
-            trashed = true;
-            Ok(())
-        })
-        .unwrap();
-        assert!(trashed);
     }
 }

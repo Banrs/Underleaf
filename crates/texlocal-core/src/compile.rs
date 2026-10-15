@@ -50,9 +50,20 @@ fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
         .map(|entry| entry.path())
 }
 
+/// Where TeX Live installs each year's release.
+fn texlive_root() -> PathBuf {
+    if cfg!(windows) {
+        let mut root = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
+        root.push(r"\texlive");
+        root.into()
+    } else {
+        PathBuf::from("/usr/local/texlive")
+    }
+}
+
 /// Year/architecture-specific TeX Live bin dirs, newest year first.
 fn texlive_bins() -> impl Iterator<Item = PathBuf> {
-    let mut years: Vec<_> = children("/usr/local/texlive")
+    let mut years: Vec<_> = children(texlive_root())
         .filter(|year| {
             year.file_name()
                 .and_then(|name| name.to_str())
@@ -69,36 +80,79 @@ fn texlive_bins() -> impl Iterator<Item = PathBuf> {
 /// read_dirs — so a TeX install performed while the app runs is found without
 /// a restart.
 pub fn tex_path(chosen: Option<&Path>) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    if let Some(dir) = chosen {
-        parts.push(dir.to_string_lossy().into_owned());
+    let user = std::env::var_os("PATH").unwrap_or_default();
+    join_path(
+        chosen
+            .map(Path::to_path_buf)
+            .into_iter()
+            .chain(absolute_dirs(&user))
+            .chain(usual_tex_dirs())
+            .chain(texlive_bins()),
+    )
+}
+
+/// Where TeX's installers put its programs, besides TeX Live's years: MacTeX's
+/// link and Homebrew's folders, or MiKTeX's for one user and for all.
+fn usual_tex_dirs() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        let under = |var, dir| Some(PathBuf::from(std::env::var_os(var)?).join(dir));
+        [
+            under("LOCALAPPDATA", r"Programs\MiKTeX\miktex\bin\x64"),
+            under("ProgramFiles", r"MiKTeX\miktex\bin\x64"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    } else {
+        ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"]
+            .map(PathBuf::from)
+            .into()
     }
-    parts.extend(absolute_dirs(&std::env::var_os("PATH").unwrap_or_default()));
-    parts
-        .extend(["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"].map(str::to_string));
-    parts.extend(texlive_bins().map(|p| p.to_string_lossy().into_owned()));
-    parts.join(":")
+}
+
+/// Folders as a PATH, in the platform's form. A folder whose name holds the
+/// separator can't be one of them, and is left out.
+pub(crate) fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
+    let dirs = dirs
+        .into_iter()
+        .filter(|dir| std::env::join_paths([dir]).is_ok());
+    std::env::join_paths(dirs)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// A PATH's absolute folders: an empty or relative entry would be looked up
 /// from the project, where a latexmk of its own could stand.
-fn absolute_dirs(path: &std::ffi::OsStr) -> impl Iterator<Item = String> + '_ {
-    std::env::split_paths(path)
-        .filter(|dir| dir.is_absolute())
-        .map(|dir| dir.to_string_lossy().into_owned())
+fn absolute_dirs(path: &std::ffi::OsStr) -> impl Iterator<Item = PathBuf> + '_ {
+    std::env::split_paths(path).filter(|dir| dir.is_absolute())
 }
 
-pub fn has_latexmk(dir: &Path) -> bool {
-    dir.join("latexmk").is_file()
+/// `program` as a shell finds it in `path_env`'s folders: a file it may run,
+/// by any of Windows' program extensions (.exe, .bat …) there.
+pub(crate) fn find_tool(program: &str, path_env: &str) -> Option<PathBuf> {
+    // The PATHs built here hold absolute folders only: none is found from
+    // the folder given for relative ones.
+    which::which_in(program, Some(path_env), Path::new("/")).ok()
 }
 
-pub fn latexmk_dir(path_env: &str) -> Option<PathBuf> {
-    std::env::split_paths(path_env).find(|dir| has_latexmk(dir))
+/// The program at the absolute `path`, by any of Windows' program extensions.
+pub(crate) fn program_at(path: &Path) -> Option<PathBuf> {
+    path.is_absolute().then(|| which::which(path).ok())?
+}
+
+fn has_latexmk(dir: &Path) -> bool {
+    program_at(&dir.join("latexmk")).is_some()
+}
+
+fn latexmk_dir(path_env: &str) -> Option<PathBuf> {
+    find_tool("latexmk", path_env)?
+        .parent()
+        .map(Path::to_path_buf)
 }
 
 /// The TeX programs folder `dir` names: `dir` itself, or the bin folder of a
 /// TeX Live root picked in its place.
-pub fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
     std::iter::once(dir.to_path_buf())
         .chain(children(dir.join("bin")))
         .find(|c| has_latexmk(c))
@@ -106,12 +160,112 @@ pub fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
 
 // ---------- process plumbing ----------
 
-/// Kill the process group, including the engines latexmk or TeXpresso
-/// started. Each tool leads a group of its own (base_command, and TeXpresso's
-/// start), so its pid names the group.
-pub(crate) fn kill_pid_tree(pid: u32) {
-    unsafe {
-        libc::killpg(pid as i32, libc::SIGKILL);
+/// A tool and every process it starts, the engines latexmk or TeXpresso runs
+/// among them, which stopping the tool alone would leak: a process group of
+/// its own on Unix, a Job Object on Windows. Kept apart from the child, so a
+/// Stop or quit kills the tree from any thread while another awaits the tool.
+#[derive(Clone)]
+pub(crate) struct Tree {
+    #[cfg(unix)]
+    group: i32,
+    #[cfg(windows)]
+    job: Arc<job::Job>,
+}
+
+impl Tree {
+    /// Spawn `command` as the root of a tree of its own.
+    pub(crate) fn spawn(
+        command: &mut tokio::process::Command,
+    ) -> std::io::Result<(tokio::process::Child, Tree)> {
+        #[cfg(unix)]
+        {
+            let child = command.process_group(0).spawn()?;
+            let group = child.id().expect("a child just spawned has its pid") as i32;
+            Ok((child, Tree { group }))
+        }
+        #[cfg(windows)]
+        {
+            // A console of its own that is never shown, which its engines
+            // share: a console program a windowed app starts would open a
+            // window for each pass.
+            command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+            let mut child = command.spawn()?;
+            let handle = child
+                .raw_handle()
+                .expect("a child just spawned has its handle");
+            // Joined as it starts, long before it has loaded, let alone run a
+            // program of its own.
+            match job::Job::of(handle) {
+                Ok(job) => Ok((child, Tree { job: Arc::new(job) })),
+                Err(err) => {
+                    let _ = child.start_kill();
+                    Err(err)
+                }
+            }
+        }
+    }
+
+    pub(crate) fn kill(&self) {
+        // SAFETY: a plain system call, on the group the tool leads.
+        #[cfg(unix)]
+        unsafe {
+            libc::killpg(self.group, libc::SIGKILL);
+        }
+        #[cfg(windows)]
+        self.job.kill();
+    }
+}
+
+/// A Job Object that ends every process in it when it is killed, or when its
+/// last handle closes: as the last owner of its tree here lets go, or the app
+/// quits or crashes.
+#[cfg(windows)]
+mod job {
+    use std::io;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, TerminateJobObject,
+    };
+
+    pub(crate) struct Job(OwnedHandle);
+
+    impl Job {
+        /// A new job holding `process`, which takes every process it starts.
+        pub(crate) fn of(process: RawHandle) -> io::Result<Self> {
+            // SAFETY: no name and no attributes make an unnamed job with the
+            // default security; the handle is owned from here.
+            let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            if handle.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let job = Job(unsafe { OwnedHandle::from_raw_handle(handle) });
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            // SAFETY: the limits are of the class named, at their own size,
+            // and both handles are open.
+            let joined = unsafe {
+                SetInformationJobObject(
+                    handle,
+                    JobObjectExtendedLimitInformation,
+                    (&raw const limits).cast(),
+                    size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                ) != 0
+                    && AssignProcessToJobObject(handle, process) != 0
+            };
+            if joined {
+                Ok(job)
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        }
+
+        pub(crate) fn kill(&self) {
+            // SAFETY: the handle is open while self is.
+            unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) };
+        }
     }
 }
 
@@ -122,22 +276,18 @@ fn base_command(
 ) -> std::io::Result<tokio::process::Command> {
     // A full path avoids std's fork fallback, which can crash a child of the
     // multithreaded Mac app before exec.
-    let program = std::env::split_paths(path_env)
-        .map(|dir| dir.join(program))
-        .find(|path| path.is_file())
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("{program} is not on the PATH"),
-            )
-        })?;
+    let program = find_tool(program, path_env).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("{program} is not on the PATH"),
+        )
+    })?;
     let mut cmd = tokio::process::Command::new(program);
     // TeX Live's engines read texmf.cnf's variables from the environment
     // first. Unwrapped, the log keeps each message and path on one line;
     // wrapped at the default 79 columns, words and paths split mid-way.
     cmd.env("PATH", path_env)
         .env("max_print_line", "10000")
-        .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -166,12 +316,12 @@ pub(crate) async fn run(
     timeout: Duration,
     path_env: &str,
 ) -> (i32, String) {
-    let Ok(mut child) =
-        base_command(program, cwd, path_env).and_then(|mut cmd| cmd.args(args).spawn())
+    let Ok((mut child, tree)) =
+        base_command(program, cwd, path_env).and_then(|mut cmd| Tree::spawn(cmd.args(args)))
     else {
         return (-1, String::new());
     };
-    let (code, stdout, ..) = drive(&mut child, timeout).await;
+    let (code, stdout, ..) = drive(&mut child, &tree, timeout).await;
     (code, stdout)
 }
 
@@ -179,9 +329,9 @@ pub(crate) async fn run(
 /// tree before reaping; the final value reports whether it timed out.
 async fn drive(
     child: &mut tokio::process::Child,
+    tree: &Tree,
     timeout: Duration,
 ) -> (i32, String, String, bool) {
-    let pid = child.id();
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
     let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -193,9 +343,7 @@ async fn drive(
             match tokio::time::timeout(timeout, child.wait()).await {
                 Ok(status) => (status.ok(), false),
                 Err(_) => {
-                    if let Some(pid) = pid {
-                        kill_pid_tree(pid);
-                    }
+                    tree.kill();
                     let _ = child.start_kill();
                     (child.wait().await.ok(), true)
                 }
@@ -286,7 +434,7 @@ pub struct CompileResult {
 struct RunningEntry {
     gate: Arc<ProjectGate>,
     latest: Option<Arc<()>>,
-    pid: Option<u32>,
+    tree: Option<Tree>,
     /// The active run's latexmk record, for a Stop to remove where it is: a
     /// rename moves the folder before the run can remove it itself.
     record: Option<PathBuf>,
@@ -313,7 +461,7 @@ struct Registration<'a> {
     gate: Arc<ProjectGate>,
     request: Arc<()>,
     gate_guard: Option<OwnedMutexGuard<()>>,
-    child: Option<tokio::process::Child>,
+    child: Option<(tokio::process::Child, Tree)>,
     /// latexmk's record of a run that has started and not yet ended ok. After
     /// a fatal TeX error it holds the truncated .aux's state, so bibtex fails
     /// on it ("no \citation") and every later run stops at "gave an error in
@@ -345,11 +493,14 @@ impl Drop for Registration<'_> {
         {
             entry.latest = None;
         }
-        if let Some(pid) = self.child.as_ref().and_then(tokio::process::Child::id) {
-            kill_pid_tree(pid);
+        // Not once it is reaped, when its group's number may be another's.
+        if let Some((child, tree)) = &self.child
+            && child.id().is_some()
+        {
+            tree.kill();
         }
         if self.gate_guard.is_some() {
-            entry.pid = None;
+            entry.tree = None;
             entry.record = None;
         }
         self.child = None;
@@ -413,10 +564,11 @@ impl CompileRun {
 
 /// The user's own latexmkrc, found where latexmk looks for it, so that it can
 /// be named after -norc turns off the automatic ones. A relative home would
-/// find the project's own rc instead, so only absolute paths count.
+/// find the project's own rc instead, so only absolute paths count. On
+/// Windows, without HOME, latexmk's home is the user's profile folder.
 fn user_latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
     let dir = |key| var(key).map(PathBuf::from).filter(|p| p.is_absolute());
-    let home = dir("HOME")?;
+    let home = dir("HOME").or_else(|| dir("USERPROFILE").filter(|_| cfg!(windows)))?;
     let config = dir("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"));
     [
         config.join("latexmk").join("latexmkrc"),
@@ -432,8 +584,8 @@ impl CompileManager {
         let mut running = lock(&self.running);
         for entry in running.values_mut() {
             entry.latest = None;
-            if let Some(pid) = entry.pid {
-                kill_pid_tree(pid);
+            if let Some(tree) = &entry.tree {
+                tree.kill();
             }
         }
     }
@@ -448,8 +600,8 @@ impl CompileManager {
             return false;
         };
         entry.stopped = true;
-        if let Some(pid) = entry.pid {
-            kill_pid_tree(pid);
+        if let Some(tree) = &entry.tree {
+            tree.kill();
         }
         if let Some(record) = entry.record.take() {
             let _ = std::fs::remove_file(record);
@@ -480,10 +632,10 @@ impl CompileManager {
         let request = Arc::new(());
         entry.latest = Some(Arc::clone(&request));
         entry.stopped = false;
-        // The PID belongs to the gate's active owner, even when the latest
+        // The tree belongs to the gate's active owner, even when the latest
         // request is still waiting or an intervening request was cancelled.
-        if let Some(pid) = entry.pid {
-            kill_pid_tree(pid);
+        if let Some(tree) = &entry.tree {
+            tree.kill();
         }
         Registration {
             manager: self,
@@ -595,9 +747,9 @@ impl CompileManager {
             .as_deref()
             .map_or_else(|| Cow::Owned(tex_path(tex_dir)), Cow::Borrowed);
         let spawned = {
-            // Hold the registry lock across synchronous spawn + PID publication.
-            // A successor or Stop therefore sees either no child or the actual
-            // PID, never an unkillable gap between the two.
+            // Hold the registry lock across synchronous spawn + tree publication.
+            // A successor or Stop therefore sees either no child or its tree,
+            // never an unkillable gap between the two.
             let mut running = lock(&self.running);
             if registration.stopped(&running) {
                 None
@@ -605,8 +757,10 @@ impl CompileManager {
                 running.get_mut(root).unwrap().record = Some(run.output("fdb_latexmk"));
                 Some(
                     base_command("latexmk", Some(root), &path_env)
-                        .and_then(|mut cmd| cmd.args(&args).spawn())
-                        .inspect(|child| running.get_mut(root).unwrap().pid = child.id()),
+                        .and_then(|mut cmd| Tree::spawn(cmd.args(&args)))
+                        .inspect(|(_, tree)| {
+                            running.get_mut(root).unwrap().tree = Some(tree.clone());
+                        }),
                 )
             }
         };
@@ -618,16 +772,16 @@ impl CompileManager {
         registration.record = Some(run.output("fdb_latexmk"));
         let (end, output) = match spawned {
             Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
-            Ok(child) => {
-                let child = registration.child.insert(child);
+            Ok(spawned) => {
+                let (child, tree) = registration.child.insert(spawned);
                 let timeout = self.timeout.unwrap_or(COMPILE_TIMEOUT);
-                let (code, mut output, stderr, timed_out) = drive(child, timeout).await;
+                let (code, mut output, stderr, timed_out) = drive(child, tree, timeout).await;
                 registration.child = None;
                 output.push_str(&stderr);
                 let mut running = lock(&self.running);
-                // Reaped: a Stop from here on must not signal its pid, which
-                // may already be another process's.
-                running.get_mut(root).expect("registered project").pid = None;
+                // Reaped: a Stop from here on must not signal its group, whose
+                // number may already be another process's.
+                running.get_mut(root).expect("registered project").tree = None;
                 let end = if registration.stopped(&running) {
                     End::Stopped
                 } else if timed_out {
@@ -801,9 +955,25 @@ mod tests {
 
     #[test]
     fn tools_are_found_only_in_absolute_folders_of_the_path() {
-        let path = std::ffi::OsStr::new("/usr/bin::.:bin:/opt/tex/bin");
-        let dirs: Vec<_> = absolute_dirs(path).collect();
-        assert_eq!(dirs, ["/usr/bin", "/opt/tex/bin"]);
+        let base = std::env::temp_dir();
+        let (first, last) = (base.join("bin"), base.join("tex").join("bin"));
+        let path = std::env::join_paths([&first, Path::new(""), Path::new("."), &last]).unwrap();
+        let dirs: Vec<_> = absolute_dirs(&path).collect();
+        assert_eq!(dirs, [first, last]);
+    }
+
+    #[tokio::test]
+    async fn killing_a_tree_ends_the_tool() {
+        let mut command = tokio::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+        if cfg!(windows) {
+            command.args(["/C", "ping -n 30 127.0.0.1 > NUL"]);
+        } else {
+            command.args(["-c", "sleep 30; true"]);
+        }
+        let (mut child, tree) = super::Tree::spawn(&mut command).unwrap();
+        tree.kill();
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait());
+        assert!(!ended.await.unwrap().unwrap().success());
     }
 
     #[test]
@@ -833,5 +1003,10 @@ mod tests {
         assert_eq!(user_latexmkrc(env(home)), rc(&config));
         // A relative home would be the project's own folder.
         assert_eq!(user_latexmkrc(env(Path::new("."))), None);
+        // Without HOME, Windows' latexmk looks in the user's profile.
+        let profile = OsString::from(home);
+        let windows = move |key: &str| (key == "USERPROFILE").then(|| profile.clone());
+        let found = user_latexmkrc(windows);
+        assert_eq!(found, rc(&config).filter(|_| cfg!(windows)));
     }
 }

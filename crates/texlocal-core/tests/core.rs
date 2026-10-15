@@ -6,7 +6,7 @@ use std::path::Path;
 use serde_json::json;
 use tempfile::TempDir;
 use texlocal_core::CoreError;
-use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file, safe_write_path};
+use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file};
 use texlocal_core::projects::{
     create_file, create_project, file_tree, list_projects, rename_entry, rename_project,
     scan_symbols, search_project,
@@ -275,6 +275,7 @@ fn the_settings_file_and_its_case_aliases_are_not_reachable_through_the_file_api
 #[test]
 fn links_to_reserved_paths_are_held_to_their_rules() {
     use std::os::unix::fs::symlink;
+    use texlocal_core::paths::safe_write_path;
     let data = data_dir();
     let root = project(data.path(), "reserved-links");
     fs::write(root.join(".texlocal.json"), "{}").unwrap();
