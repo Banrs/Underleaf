@@ -5,12 +5,10 @@ import Synchronization
 import Testing
 @testable import TeXLocal
 
-/// Events for a session's thread, which waits here as it does in the core.
 private final class Feed: Sendable {
     private let state = Mutex<(answers: [Result<TeXpressoEvents, CoreError>], asked: [Int])>(([], []))
     private let news = DispatchSemaphore(value: 0)
 
-    /// The `after` of each wait so far.
     var asked: [Int] { state.withLock { $0.asked } }
 
     func send(_ events: TeXpressoEvents) {
@@ -30,12 +28,10 @@ private final class Feed: Sendable {
     }
 }
 
-/// The core as a session calls it: what it was asked, in order, and answers a test can change.
 @MainActor
 private final class FakeCore {
     var commands: [String] = []
     var starts: [[String: any Sendable]] = []
-    /// Each edit as "path start remove text", each whole text as "path=text".
     var sent: [String] = []
     var views: [[Int]] = [], carets: [Int] = []
     var status: @MainActor (String, [String: any Sendable]) async throws -> TeXpressoStatus = { command, _ in
@@ -82,7 +78,6 @@ private final class FakeCore {
     }
 }
 
-/// A PDF on disk, each page's text 50 times over drawn as text, as TeXpresso leaves its documents and pages.
 @MainActor
 private func writePDF(_ pages: [String]) throws -> URL {
     let document = try textPDF(pages.map { String(repeating: $0 + " ", count: 50) })
@@ -103,7 +98,6 @@ struct TeXpressoSessionTests {
         throw TimedOut()
     }
 
-    /// A fake core's session, started with `files`.
     private func started(_ files: [TeXpressoFile], haltsAfter: Duration = .seconds(1)) async -> (FakeCore, TeXpressoSession) {
         let core = FakeCore(), session = core.session(haltsAfter: haltsAfter)
         session.start(.init(files: files))
@@ -113,9 +107,8 @@ struct TeXpressoSessionTests {
 
     private func word(_ page: PDFPage?) -> String { page?.string?.components(separatedBy: " ").first ?? "" }
 
-    // ---------- edits ----------
+    // MARK: - Edits
 
-    /// A key is one call, made where the edit is: the range in the old text and what replaced it.
     @Test func eachEditOfAFileSentGoesAtOnceAndInOrder() async {
         let (core, session) = await started([main])
         session.edit("main.tex", NSRange(location: 3, length: 0), "é") { Issue.record("The whole text isn't needed"); return "" }
@@ -125,8 +118,6 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    /// An edit the core's copy doesn't fit is put right by the whole text, once; the edits
-    /// before it aren't sent again, and the ones after it are edits again.
     @Test func anEditThatDoesNotFitSendsTheWholeTextAndCarriesOn() async {
         let (core, session) = await started([main])
         core.edit = { _ in throw CoreError(message: "The edit doesn't fit the text TeXpresso has.", status: 412) }
@@ -143,7 +134,6 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    /// A file the session wasn't started with has no copy in the core until its whole text is sent.
     @Test func aFileNotSentYetGoesWholeFirst() async {
         let (core, session) = await started([main])
         session.edit("parts/a.tex", NSRange(location: 0, length: 0), "x") { "x include" }
@@ -155,7 +145,6 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    /// Edits made while TeXpresso starts follow the start whole, each file's latest text once.
     @Test func editsDuringStartFollowItWhole() async throws {
         let core = FakeCore(), session = core.session()
         var start: CheckedContinuation<TeXpressoStatus, Never>?
@@ -178,7 +167,6 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    /// A text the core can't take keeps its error and doesn't hold other files back.
     @Test func aRejectedTextDoesNotBlockOtherFiles() async {
         let (core, session) = await started([])
         var failures = 0
@@ -200,7 +188,6 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    /// A whole text that fails for another reason is tried again without more typing.
     @Test func anUnsentTextIsTriedAgain() async throws {
         let (core, session) = await started([])
         var attempts = 0
@@ -217,9 +204,8 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    /// A whole text sent again for a file the core has, as when the file is opened again, is on
-    /// its way when a key is typed: the key follows it whole. Sent as an edit it could reach the
-    /// core first, and the older text would then replace it.
+    /// A whole text sent again for a file the core has, as when the file is opened again, is on its way when a key is typed:
+    /// the key follows it whole. Sent as an edit it could reach the core first, and the older text would then replace it.
     @Test func anEditWhileAWholeTextIsOnItsWayFollowsItWhole() async throws {
         let (core, session) = await started([main])
         var sending: CheckedContinuation<Void, Never>?
@@ -239,10 +225,8 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    // ---------- the view and the caret ----------
+    // MARK: - The view and the caret
 
-    /// The engine has the pane's pages and the caret from the start, the pages again as they
-    /// change, and the caret when it rests where typing didn't take it.
     @Test func theViewAndTheCaretAreToldWhenTheyChange() async throws {
         let core = FakeCore(), session = core.session()
         session.view(3...4)
@@ -269,10 +253,8 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    // ---------- documents and pages ----------
+    // MARK: - Documents and pages
 
-    /// What waits for the main actor is the latest document and the latest of each page newer
-    /// than it: a page typeset twice is drawn once, and a document not shown hands its changes on.
     @Test func newsWaitingIsTheLatestOnly() throws {
         func document(_ serial: Int, _ changed: IndexSet?) throws -> LiveDocument {
             LiveDocument(url: URL(filePath: "/tmp/live.pdf"), document: PDFDocument(), serial: serial, changed: changed, complete: true)
@@ -293,8 +275,6 @@ struct TeXpressoSessionTests {
         #expect(news.document?.serial == 14 && news.document?.changed == nil)
     }
 
-    /// In one answer the document comes before the pages; a page past the end of what shows
-    /// waits for the document that makes room for it; and the wait goes on from the last answer.
     @Test func theDocumentIsShownBeforeItsPagesAndMakesRoomForThem() async throws {
         let (core, session) = await started([main])
         var shown: [String] = [], count = 0
@@ -334,8 +314,6 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    /// A build that never says which pages changed, or how its run ended, has its documents
-    /// shown whole; and a page whose file has gone by the time it is read is passed over.
     @Test func anOlderBuildsDocumentIsShownWhole() async throws {
         let (core, session) = await started([main])
         var documents: [LiveDocument] = [], pages = 0
@@ -355,9 +333,6 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    /// A document that couldn't be read leaves the next one's list of changes short: all of
-    /// that one's pages are taken. So does one the core replaced before it was asked for, which
-    /// the gap in the documents' numbers tells; one with no pages has its number all the same.
     @Test func aDocumentMissedMakesTheNextOneWhole() async throws {
         let (core, session) = await started([main])
         var documents: [LiveDocument] = []
@@ -385,9 +360,8 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    // ---------- starting, stopping and ending ----------
+    // MARK: - Starting, stopping and ending
 
-    /// TeX stopped at an error is said so once it has lasted, and not for a brace half typed.
     @Test func aRunStoppedAtAnErrorIsSaidOnceItLasts() async throws {
         // A tenth of a second for the app's second.
         let (core, session) = await started([main], haltsAfter: .milliseconds(100))
@@ -405,7 +379,6 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    /// TeXpresso going by itself ends the session and says why; the warning lasts until its log has been read.
     @Test func aSessionThatEndsByItselfSaysWhy() async throws {
         let core = FakeCore(), session = core.session()
         var ended: [Bool] = [], failures = 0
@@ -428,7 +401,6 @@ struct TeXpressoSessionTests {
         #expect(!session.needsAttention && session.title == "Live Preview Stopped" && session.log == "TeXpresso exited (signal 11).")
     }
 
-    /// The log is asked for while it shows and has changed, not at every answer.
     @Test func theLogIsReadOnlyWhileItShows() async throws {
         let (core, session) = await started([main])
         core.feed.send(TeXpressoEvents(seq: 1, running: true, revision: 5))

@@ -1,34 +1,27 @@
 import SwiftUI
 
-/// The projects: new ones from templates, then all of them to search and open.
 struct HomeView: View {
     @Environment(AppModel.self) private var app
-    /// Single selection: every action here acts on one project.
     @State private var selection: ProjectInfo.ID?
     @State private var rename = InPlaceRename<ProjectInfo.ID>()
     @FocusState private var listFocused: Bool
     @FocusState private var searching: Bool
     @State private var query = ""
     @AppStorage("dismissedTeXTip") private var dismissedTeXTip = false
-    /// What has been opening or copying for over 300 ms: a quicker one shows nothing.
     @State private var slow: Set<String> = []
 
     var body: some View {
-        // Over the list, which runs on under it and the toolbar with one edge effect.
         Group {
             if let problem = app.libraryProblem { unavailable(problem) } else { list }
         }
         .safeAreaBar(edge: .top) {
             if app.tex?.available == false, !dismissedTeXTip { texMissing }
         }
-        // Projects, copied in, as the Open panel says; other items are left out. One
-        // opens; several stay listed under All Projects.
         .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in
             Task {
                 for url in urls { await app.importProject(from: url, open: urls.count == 1) }
             }
         }
-        // Named for what the window shows, not the app (HIG, Toolbars).
         .navigationTitle("Projects")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -42,7 +35,6 @@ struct HomeView: View {
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
         .searchFocused($searching)
-        // Edit › Find Project…
         .onChange(of: app.searchFocusToken) { searching = true }
         .task(id: app.opening) {
             do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
@@ -50,7 +42,6 @@ struct HomeView: View {
         }
     }
 
-    /// Instead of the list, with no alert as the app starts (HIG, Alerts).
     private func unavailable(_ problem: AppAlert) -> some View {
         ContentUnavailableView {
             Label(problem.title, systemImage: "externaldrive.badge.exclamationmark")
@@ -63,20 +54,17 @@ struct HomeView: View {
 
     private var list: some View {
         List(selection: $selection) {
-            // No section header: the list pins its first one with a rule the full width
-            // of the window, over cards that have no rule of their own.
+            // No section header: the list pins its first one with a rule the full width of the window, over cards that have no rule of their own.
             VStack(alignment: .leading, spacing: 8) {
                 Text("New").font(.subheadline).fontWeight(.semibold).foregroundStyle(.secondary)
                 templates
             }
             .selectionDisabled()
             .listRowSeparator(.hidden)
-            // The buttons bring their own 10 pt edge.
             .listRowInsets(EdgeInsets())
             .accessibilityElement(children: .contain)
             .accessibilityLabel("New")
             Section {
-                // An item being copied into the library, in the place its project will take.
                 ForEach(copying, id: \.self) { name in
                     ProjectLabel(detail: Text("Copying…"), progress: "Copying") { Text(name).font(.headline) }
                 }
@@ -101,7 +89,6 @@ struct HomeView: View {
         } primaryAction: { ids in
             if let id = ids.first { Task { await app.open(id) } }
         }
-        // Return opens the chosen project, as in Xcode's project list; double-clicking does too.
         .onKeyPress(.return) {
             guard rename.id == nil, let id = selection else { return .ignored }
             Task { await app.open(id) }
@@ -119,8 +106,6 @@ struct HomeView: View {
                     moveToTrash: { Task { await app.delete(project) } })
     }
 
-    /// Wrapping, so no card is cut off in a narrow window; 4 pt apart, so the hover shapes of
-    /// buttons this size don't touch (HIG, Buttons).
     private var templates: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: TemplateCard.width, maximum: TemplateCard.width), spacing: 4, alignment: .top)],
                   alignment: .leading, spacing: 4) {
@@ -134,7 +119,6 @@ struct HomeView: View {
         }
     }
 
-    /// In the projects' section, not over the list, so the templates stay in view.
     @ViewBuilder private var empty: some View {
         if !query.isEmpty {
             ContentUnavailableView.search(text: query)
@@ -154,16 +138,13 @@ struct HomeView: View {
         Task { await app.rename(project, to: name) }
     }
 
-    /// Being opened or copied in for a while.
     private var working: Set<String> { slow.intersection(app.opening) }
 
-    /// Items being copied in, which are not projects yet.
     private var copying: [String] {
         let ids = Set(app.projects.map(\.id))
         return query.isEmpty ? app.opening.filter { working.contains($0) && !ids.contains($0) } : []
     }
 
-    /// Newest first, as the core lists them.
     private var shown: [ProjectInfo] {
         query.isEmpty ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
     }
@@ -186,8 +167,6 @@ struct HomeView: View {
     }
 }
 
-/// A project: its name over its main file and when it last changed.
-/// While renamed, a field takes the name's place; while it opens, a spinner follows.
 private struct ProjectRow: View {
     let project: ProjectInfo
     let working: Bool
@@ -207,8 +186,6 @@ private struct ProjectRow: View {
     }
 }
 
-/// What the project rows share: the document's icon, a name over a detail line, and a spinner
-/// with the accessibility name `progress` at the trailing edge while there is one.
 private struct ProjectLabel<Name: View>: View {
     let detail: Text
     let progress: String?
@@ -235,7 +212,6 @@ private struct ProjectLabel<Name: View>: View {
     }
 }
 
-/// A button, not a link, to match the actions beside it.
 struct GetMacTeXButton: View {
     @Environment(\.openURL) private var openURL
 
@@ -244,8 +220,6 @@ struct GetMacTeXButton: View {
     }
 }
 
-/// The guide to installing TeXpresso, which has to be built against the app's engine. A button,
-/// as Get MacTeX is, wherever TeXpresso is missing.
 struct TeXpressoGuideButton: View {
     @Environment(\.openURL) private var openURL
 
@@ -256,12 +230,9 @@ struct TeXpressoGuideButton: View {
     }
 }
 
-/// A template the core makes projects from (crates/texlocal-core templates.rs). The raw value is
-/// the core's id, which is what Settings stores.
 enum ProjectTemplate: String, CaseIterable, Identifiable {
     case blank, article, report, beamer
 
-    /// What a new project is made from until Settings says otherwise.
     static let standard = ProjectTemplate.article
 
     var id: String { rawValue }
@@ -276,8 +247,6 @@ enum ProjectTemplate: String, CaseIterable, Identifiable {
     }
 }
 
-/// An image button (HIG, Buttons): no border at rest, 10 pt from the content to the
-/// clickable edge, and a fill under the pointer that deepens while pressed.
 private struct TemplateButtonStyle: ButtonStyle {
     static let edge: CGFloat = 10
     @State private var hovered = false
@@ -295,12 +264,9 @@ private struct TemplateButtonStyle: ButtonStyle {
     }
 }
 
-/// A template's card: a drawing of its first page with its name under it, as in a template chooser.
 private struct TemplateCard: View {
     let template: ProjectTemplate
-    /// A US Letter page, 120 pt wide; its corner is drawn to look like paper, not to the kit.
     private static let page = CGSize(width: 120, height: 120 * 11 / 8.5)
-    /// With the button's edge on both sides.
     static let width = page.width + 2 * TemplateButtonStyle.edge
     private static let corner: CGFloat = 6
     @Environment(\.colorScheme) private var colorScheme
@@ -309,8 +275,6 @@ private struct TemplateCard: View {
         VStack(spacing: 8) {
             PagePreview(template: template)
                 .frame(width: Self.page.width, height: Self.page.height)
-                // White paper in either appearance, dimmed a little in dark mode;
-                // the drawing in light colours, which are made for paper.
                 .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1),
                             in: .rect(cornerRadius: Self.corner, style: .continuous))
                 .overlay {
@@ -318,7 +282,6 @@ private struct TemplateCard: View {
                         .strokeBorder(.separator)
                 }
                 .environment(\.colorScheme, .light)
-                // The card reads as its name ("Blank", not "Add, Blank").
                 .accessibilityHidden(true)
             Text(template.title)
         }
@@ -326,8 +289,6 @@ private struct TemplateCard: View {
     }
 }
 
-/// Bars where the text would be, laid out like the template's first page.
-/// Its numbers are the drawing's, in points of the 120 pt page, not layout.
 private struct PagePreview: View {
     let template: ProjectTemplate
 
@@ -381,7 +342,6 @@ private struct PagePreview: View {
     }
 }
 
-/// Starts as the first Untitled not taken, as Finder numbers a new folder, so Create is ready at once.
 struct NewProjectSheet: View {
     @Environment(AppModel.self) private var app
     @State private var name: String
@@ -401,9 +361,8 @@ struct NewProjectSheet: View {
                     action: "Create", enabled: !trimmed.isEmpty, failure: { "Couldn’t Create “\(trimmed)”" }) {
             try await app.create(name: trimmed, template: template)
         } fields: {
-            // At a grouped form's trailing edge AppKit shows a space typed last only once a letter
-            // follows (27.2), so the text leads in a field as wide as the name: the row keeps it
-            // at its trailing edge, and each space moves the name as it is typed.
+            // At a grouped form's trailing edge AppKit shows a space typed last only once a letter follows (27.2), so the text leads in
+            // a field as wide as the name: the row keeps it at its trailing edge, and each space moves the name as it is typed.
             LabeledContent("Name") {
                 NameWidth {
                     TextField("Name", text: $name, prompt: Text("Required"))
@@ -420,9 +379,7 @@ struct NewProjectSheet: View {
     }
 }
 
-/// A field as wide as its text, up to the room the row offers, where a field takes all it is
-/// offered. Asked for its ideal it claims none, so a long name scrolls in its row and the form
-/// never moves it under its label as it is typed.
+/// Asked for its ideal it claims none, so a long name scrolls in its row and the form never moves it under its label as it is typed.
 private struct NameWidth: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let text = subviews[0].sizeThatFits(.unspecified).width

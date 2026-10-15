@@ -1,22 +1,17 @@
 import CoreServices
 import Foundation
 
-/// Recursive FSEvents watch for external changes. Watching the folder survives
-/// editors that atomically replace files on save.
+/// Watching the folder survives editors that atomically replace files on save.
 final class FolderWatcher {
     struct Change {
-        /// Symlinks resolved, as FSEvents gives it.
         let path: String
-        /// Added, removed or renamed; or FSEvents lost count, and anything may have.
         let structural: Bool
     }
 
-    /// Symlinks resolved, as the changes' paths are.
     let folder: String
     private let changed: @MainActor ([Change]) -> Void
     private var stream: FSEventStreamRef?
 
-    /// A write arrives as several events.
     private static let settle: CFTimeInterval = 0.25
     private static let structuralFlags = FSEventStreamEventFlags(
         kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved | kFSEventStreamEventFlagItemRenamed
@@ -60,23 +55,19 @@ final class FolderWatcher {
         FSEventStreamRelease(stream)
     }
 
-    /// `path` from the folder ("chapters/one.tex"); nil for the folder itself
-    /// or anything outside it.
     func relativePath(_ path: String) -> String? {
         let prefix = folder + "/"
         return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : nil
     }
 
-    /// A regular file at `path` from the folder, with no link on the way and spelt as the disk
-    /// spells it (`realpath` gives the disk's case): what a save leaves, renaming a new file over the old.
+    /// Spelt as the disk spells it (`realpath` gives the disk's case): what a save leaves, renaming a new file over the old.
     func hasFile(_ path: String) -> Bool {
         let full = folder + "/" + path
         var info = stat()
         return lstat(full, &info) == 0 && info.st_mode & S_IFMT == S_IFREG && Self.realPath(URL(filePath: full)) == full
     }
 
-    /// Resolved as FSEvents resolves it. `resolvingSymlinksInPath` would take
-    /// /private off /private/var and /private/tmp, which FSEvents keeps.
+    /// `resolvingSymlinksInPath` would take /private off /private/var and /private/tmp, which FSEvents keeps.
     static func realPath(_ url: URL) -> String {
         let path = url.path(percentEncoded: false)
         guard let resolved = realpath(path, nil) else { return path }

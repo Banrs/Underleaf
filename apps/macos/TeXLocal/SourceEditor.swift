@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// A word plus its occurrence in source/PDF text. Offsets are UTF-16, as AppKit/PDFKit use.
 nonisolated struct SyncTeXWord: Equatable, Sendable {
     let text: String
     let offset: Int
@@ -9,27 +8,20 @@ nonisolated struct SyncTeXWord: Equatable, Sendable {
     let contextOffset: Int
 }
 
-/// One native text view shared across files, preserving each file's undo and selection.
-/// Owns formatting commands; find is the text view's own find bar.
 final class SourceEditor: NSObject, NSTextViewDelegate {
     let textView = SourceTextView.plainDocument()
-    /// The text view's own scroll view, which AppKit insets under the toolbar and the status bar.
     let scrollView = NSScrollView()
     var onChanged: () -> Void = {}
-    /// The caret's line and column (UTF-16, from 0).
     var onCursor: (Int, Int) -> Void = { _, _ in }
-    /// The line at the top of the view.
     var onScroll: (Int) -> Void = { _ in }
 
     private(set) var path: String?
-    /// The files shown before, as they were left: their state, and where they were scrolled to,
-    /// come back only if their text is unchanged since, as Xcode's do.
+    /// Their state and scroll come back only if their text is unchanged since, as Xcode's do.
     private var kept: [String: (text: String, undo: UndoManager, selection: NSRange, top: (offset: Int, below: CGFloat)?)] = [:]
     private var undo = UndoManager()
     private var cursorLine = 1, cursorColumn = 0, topLine = 1
 
-    /// Hiding removes the editor from the key view loop; showing it restores
-    /// requested focus after a file opens.
+    /// Hiding removes the editor from the key view loop; showing it restores requested focus after a file opens.
     var shown = false {
         didSet {
             textView.isHidden = !shown
@@ -38,9 +30,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
     private var focusWhenShown = false
 
-    /// The clip view's scrolling, watched for as long as its token is held.
     private var scrolling: NotificationCenter.ObservationToken?
-    /// Counts edits and selection changes, for views that follow the selection's styles.
     let changes = EditorChanges()
 
     override init() {
@@ -49,14 +39,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.usesFontPanel = false
         text.usesFindBar = true
         text.isIncrementalSearchingEnabled = true
-        // Xcode's first line, measured: its highlight 8 pt under the bar, a point under where TextKit's line starts.
         text.textContainerInset = NSSize(width: 0, height: 7)
         text.fontSize = NSFont.systemFontSize
         text.allowsUndo = true
-        // Native spelling, correction and text replacement in prose only (below); the last
-        // two as the user has them in System Settings, which a text view follows unless
-        // told otherwise (NSSpellChecker.h), and Edit › Substitutions. Smart dashes and
-        // quotes would rewrite the LaTeX (-- to an em dash).
+        // Smart dashes and quotes would rewrite the LaTeX (-- to an em dash), so spelling, correction and text replacement apply to prose only (below).
         text.isContinuousSpellCheckingEnabled = EditorPrefs.spellCheck
         text.isGrammarCheckingEnabled = false
         text.isAutomaticQuoteSubstitutionEnabled = false
@@ -73,13 +59,11 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.allowedWritingToolsResultOptions = .plainText
         text.setAccessibilityLabel(String(localized: "Source"))
         text.delegate = self
-        // Untinted, as the column's surface around it (`SourceColumn`).
         text.backgroundColor = .untintedTextBackground
         text.isHidden = true
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
         scrollView.documentView = text
-        // The top line follows the scrolling.
         let clip = scrollView.contentView
         clip.postsBoundsChangedNotifications = true
         scrolling = NotificationCenter.default.addObserver(of: clip, for: .boundsDidChange) { [weak self] _ in self?.scrolled() }
@@ -87,14 +71,12 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     func undoManager(for view: NSTextView) -> UndoManager? { undo }
 
-    // ---------- files ----------
+    // MARK: - Files
 
-    /// Show a file where it was left, or at its top; sidebar selection leaves keyboard focus where it is.
     func open(path: String, text: String, focus: Bool) {
         if let current = self.path { kept[current] = (textView.string, undo, textView.selectedRange(), textView.shownTop) }
-        // By UTF-16, as the kept ranges count: Swift's `==` also holds for a file rewritten in
-        // another Unicode normal form, whose undo stack would then replace the wrong ranges, and
-        // whose selection could end past its text.
+        // By UTF-16, as the kept ranges count: Swift's `==` also holds for a file rewritten in another Unicode normal form,
+        // whose undo stack would then replace the wrong ranges.
         let prior = kept[path].flatMap { ($0.text as NSString).isEqual(to: text) ? $0 : nil }
         self.path = path
         textView.load(text)
@@ -112,12 +94,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         path.map { ($0, textView.committedString) }
     }
 
-    /// Forget a file's kept state after it's deleted, or every file's under a deleted folder.
     func forget(path: String) {
         kept = kept.filter { $0.key != path && !$0.key.hasPrefix(path + "/") }
     }
 
-    /// Preserve file state, including undo, across file or folder renames.
     /// Whatever is kept at the new name is stale, a file gone outside the app: the name was free.
     func rename(from: String, to: String) {
         if to != from { forget(path: to) }
@@ -130,13 +110,12 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         textView.window?.makeFirstResponder(textView)
     }
 
-    // ---------- where it is ----------
+    // MARK: - Where it is
 
     var currentLine: Int {
         textView.document.line(at: textView.selectedRange().location)
     }
 
-    /// SyncTeX needs the occurrence within the source line, not just its spelling.
     var currentSyncWord: SyncTeXWord? {
         let source = textView.text
         let position = textView.selectedRange().location
@@ -153,9 +132,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     var currentColumn: Int { textView.selectedRange().location - textView.document.lineStart(currentLine) }
 
-    /// Put the line at the top or centre; a column selects its word.
-    /// Show the system find indicator after the scroll completes: it bounces, so not with
-    /// Reduce Motion, where the selected word or the caret's line is the mark.
+    /// Shows the system find indicator after the scroll completes; it bounces, so not with Reduce Motion, where the selected word or the caret's line is the mark.
     func reveal(line: Int, column: Int? = nil, atTop: Bool = false, focus: Bool = true) {
         let document = textView.document
         let start = document.lineStart(line)
@@ -179,7 +156,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         textView.scroll(target.location) { atTop ? $0.minY - insets.top : $0.midY - insets.top - shown / 2 }
     }
 
-    /// The first line at least half showing below the toolbar.
     private func scrolled() {
         textView.previewMath()
         guard let manager = textView.textLayoutManager, let font = textView.font else { return }
@@ -204,8 +180,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         onChanged()
     }
 
-    /// Spelling, correction and text replacement apply to prose, including comments and
-    /// math's text arguments; commands, math, literal code and TeX names are protected.
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
                   orthography: NSOrthography, wordCount: Int) -> [NSTextCheckingResult] {
@@ -213,23 +187,18 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         return results.filter { result in
             // Language metadata can span both prose and TeX without changing it.
             if result.resultType == .orthography { return true }
-            // Native results count from the checked range's start. Rebase only
-            // the comparison and return the original results for AppKit to apply.
+            // Native results count from the checked range's start. Rebase only the comparison and return the original results for AppKit to apply.
             let found = NSRange(location: range.location + result.range.location, length: result.range.length)
             return !code.contains { NSIntersectionRange($0, found).length > 0 }
         }
     }
 
-    /// What isn't prose in a range: the runs the highlighter gives those kinds, and the core's
-    /// not-prose ranges (maths, literal code and the names commands take). The highlighter also
-    /// colours words inside \text{…} as maths, while the core keeps those as prose, so spelling
-    /// leaves the maths kinds out of `kinds`.
+    /// The highlighter also colours words inside \text{…} as maths, while the core keeps those as prose, so spelling leaves the maths kinds out of `kinds`.
     private func code(in range: NSRange, kinds: Set<HighlightKind>) -> [NSRange] {
         let document = textView.document
         return document.highlights(in: range).filter { kinds.contains($0.kind) }.map(\.range) + document.notProse(in: range)
     }
 
-    /// Writing Tools pass over everything coloured as LaTeX, comments too: only prose is rewritten.
     func textView(_ view: NSTextView, writingToolsIgnoredRangesInEnclosingRange range: NSRange) -> [NSValue] {
         code(in: range, kinds: [.command, .argument, .mathDelimiter, .mathIdentifier, .number, .comment, .invalid, .stringLiteral, .builtin])
             .map(NSValue.init(range:))
@@ -241,9 +210,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         reportCursor()
     }
 
-    /// The system's text menu without what does nothing for LaTeX source (the layout's direction,
-    /// speech, the case transformations), under Go to PDF Position, while there's somewhere to
-    /// go, and Comment Selection.
     func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
         let unwanted = [#selector(NSTextView.changeLayoutOrientation(_:)), #selector(NSTextView.startSpeaking(_:)),
                         #selector(NSResponder.uppercaseWord(_:))]
@@ -272,10 +238,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     @objc private func goToPDF() { textView.forwardSync(false)?() }
     @objc private func toggleComment() { perform(.comment) }
 
-    // ---------- commands ----------
+    // MARK: - Commands
 
-    /// False when there's no text to run it on, or no block of that id. `title` names what an
-    /// insertion puts in, for Undo.
     @discardableResult
     func perform(_ command: EditorCommand, _ argument: String? = nil, title: String? = nil) -> Bool {
         guard path != nil, textView.isEditable else { return false }
@@ -314,9 +278,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         return true
     }
 
-    /// The lines the selections touch, each run of them past the line above or below, in one
-    /// undo step, the selections going with them, as Xcode's Move Line Up and Down; nothing
-    /// moves when a run is already at the file's start or end.
     private func moveLines(up: Bool) -> Bool {
         let text = textView.text, length = text.length
         let selections = textView.selectedRanges.map(\.rangeValue)
@@ -336,14 +297,12 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             guard run.length > 0, up ? run.location > 0 : NSMaxRange(run) < length else { return false }
             let neighbour = text.lineRange(for: NSRange(location: up ? run.location - 1 : NSMaxRange(run), length: 0))
             let whole = NSUnionRange(run, neighbour)
-            // The lines' text trades places; the line ends stay where they were, so a last line
-            // without one keeps none.
+            // The lines' text trades places; the line ends stay where they were, so a last line without one keeps none.
             var lines: [(text: String, end: String)] = []
             text.enumerateSubstrings(in: whole, options: [.byLines, .substringNotRequired]) { _, line, withEnd, _ in
                 let end = NSRange(location: NSMaxRange(line), length: NSMaxRange(withEnd) - NSMaxRange(line))
                 lines.append((text.substring(with: line), text.substring(with: end)))
             }
-            // The neighbour is one line, first going up and last going down.
             let moved = up ? Array(lines.dropFirst() + lines.prefix(1)) : Array(lines.suffix(1) + lines.dropLast())
             edits.append(TextEdit(whole, zip(moved, lines).map { $0.text + $1.end }.joined()))
             let newStart = up ? whole.location : whole.location + (moved[0].text + lines[0].end).utf16.count
@@ -358,13 +317,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         return true
     }
 
-    /// The styles the selection is in, for Format's toggles.
     var textStyles: TextStyles {
         path == nil ? TextStyles() : textView.document.textStyles(textView.selectedRange())
     }
 
-    /// A style off when the selection is in it, as a word processor's: the
-    /// command giving it unwraps, its argument staying selected; on otherwise.
     private func toggle(_ style: KeyPath<TextStyles, [TextEdit]?>, _ command: String, named name: String) {
         if let unwrap = textStyles[keyPath: style] {
             textView.apply(unwrap, named: name)
@@ -373,7 +329,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
     }
 
-    /// Round the selection, which stays selected (or the caret, between them).
     private func wrap(_ prefix: String, _ suffix: String, named name: String) {
         let selection = textView.selectedRange()
         let selected = textView.text.substring(with: selection)
@@ -383,7 +338,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 }
 
-/// The editor's scroll view and text view, reused across SwiftUI updates.
 struct EditorView: NSViewRepresentable {
     let editor: SourceEditor
     let shown: Bool
@@ -406,39 +360,31 @@ struct EditorView: NSViewRepresentable {
 
 enum EditorCommand {
     case bold, italic, underline, math, displayMath, comment, heading, symbol, moveLineUp, moveLineDown
-    /// A block from the core's catalog (crates/texlocal-syntax), by id.
     case block
-    /// A template with "$0" where the selection goes.
     case inline
 }
 
 enum EditorPrefs {
     static let fontSizeKey = "editorFontSize", spellCheckKey = "editorSpellCheck", syntaxThemeKey = "editorSyntaxTheme"
     static let fontSize = Int(NSFont.systemFontSize)
-    /// The sizes Settings and View › Make Text Bigger and Smaller allow.
     static let fontSizes = 10...28
 
-    /// A point larger or smaller, within `fontSizes`.
     static func stepFontSize(by step: Int) {
         let current = UserDefaults.standard.object(forKey: fontSizeKey) as? Int ?? fontSize
         UserDefaults.standard.set(min(max(current + step, fontSizes.lowerBound), fontSizes.upperBound), forKey: fontSizeKey)
     }
-    /// A fixed-pitch family's name; empty, the system's monospaced font.
     static let fontNameKey = "editorFontName", lineNumbersKey = "editorLineNumbers"
     static let autoPairKey = "editorAutoPair", autoCompleteKey = "editorAutoComplete"
 
-    /// Settings › Editor › Typing, read as a key is typed; both on at first.
     static var autoPair: Bool { UserDefaults.standard.object(forKey: autoPairKey) as? Bool ?? true }
     static var autoComplete: Bool { UserDefaults.standard.object(forKey: autoCompleteKey) as? Bool ?? true }
 
-    /// Edit › Spelling and Grammar › Check Spelling While Typing, as last set; on at first.
     static var spellCheck: Bool {
         get { UserDefaults.standard.object(forKey: spellCheckKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: spellCheckKey) }
     }
 }
 
-/// The text's edits and selection changes, counted.
 @Observable final class EditorChanges {
     var count = 0
 }

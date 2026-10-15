@@ -5,10 +5,8 @@ enum SettingsPane: String {
     case general, editor, compiling, pdf, livePreview
 }
 
-/// The Settings window's panes. In a Settings scene a TabView is the window's toolbar of
-/// panes, titles the window after the pane shown and sizes it to that pane (HIG, Settings).
+/// In a Settings scene a TabView is the window's toolbar of panes, titles the window after the pane shown and sizes it to that pane (HIG, Settings).
 struct SettingsView: View {
-    /// The pane last shown, which the window opens on.
     @AppStorage(DefaultsKey.settingsPane) private var pane = SettingsPane.general
 
     var body: some View {
@@ -16,17 +14,14 @@ struct SettingsView: View {
             Tab("General", systemImage: "gearshape", value: .general) { GeneralSettings() }
             Tab("Editor", systemImage: "character.cursor.ibeam", value: .editor) { EditorSettings() }
             Tab("Compiling", systemImage: "hammer", value: .compiling) { CompilingSettings() }
-            // The toolbar's PDF symbol and the status bar's Live Preview one.
             Tab("PDF", systemImage: "richtext.page", value: .pdf) { PDFSettings() }
             Tab("Live Preview", systemImage: "bolt", value: .livePreview) { LivePreviewSettings() }
         }
-        // The UI kit's example forms' width.
         .frame(width: 500)
     }
 }
 
 extension View {
-    /// A pane: a grouped form as tall as its rows.
     fileprivate func settingsPane() -> some View {
         formStyle(.grouped).scrollDisabled(true).fixedSize(horizontal: false, vertical: true)
     }
@@ -74,7 +69,6 @@ private struct EditorSettings: View {
     @AppStorage(EditorPrefs.autoPairKey) private var autoPair = true
     @AppStorage(EditorPrefs.autoCompleteKey) private var autoComplete = true
 
-    /// The installed fixed-pitch families, read once.
     private static let families = Set((NSFontManager.shared.availableFontNames(with: .fixedPitchFontMask) ?? [])
         .compactMap { NSFont(name: $0, size: 0)?.familyName }).sorted()
     private static let sizes = Double(EditorPrefs.fontSizes.lowerBound)...Double(EditorPrefs.fontSizes.upperBound)
@@ -140,7 +134,6 @@ private struct CompilingSettings: View {
             Section {
                 ProgramFolder(program: .tex)
             } footer: {
-                // One help button a window, in a pane's lower corner (HIG, Buttons).
                 HelpLink(destination: URL(string: "https://github.com/Banrs/Underleaf#requirements")!)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -199,8 +192,6 @@ private struct LivePreviewSettings: View {
     }
 }
 
-/// The folder a program runs from, picked as Safari picks its downloads folder: a pop-up of
-/// Automatic, the folder chosen and Other…, with the folder in use underneath (HIG, Pop-up buttons).
 /// Each row has its own file dialog and alert, so neither can act for the other program.
 private struct ProgramFolder: View {
     enum Program {
@@ -227,7 +218,6 @@ private struct ProgramFolder: View {
             }
         }
 
-        /// The folder the user chose, if any.
         func chosen(in tex: TexStatus) -> String? {
             switch self {
             case .tex: tex.texDir
@@ -235,7 +225,6 @@ private struct ProgramFolder: View {
             }
         }
 
-        /// The folder in use, if the program is found.
         func folder(in tex: TexStatus) -> String? {
             switch self {
             case .tex: tex.available ? tex.found ?? tex.texDir : nil
@@ -243,8 +232,6 @@ private struct ProgramFolder: View {
             }
         }
 
-        /// "latexmk 4.87 in /Library/TeX/texbin", from latexmk's "Latexmk, John Collins, 17 Nov. 2025. Version 4.87";
-        /// the folder alone when the line reads otherwise.
         func detail(in tex: TexStatus) -> String {
             guard let path = folder(in: tex) else { return "Not Found" }
             guard self == .tex, let number = tex.version?.firstMatch(of: /Version (\d[\w.]*)/)?.1 else { return path }

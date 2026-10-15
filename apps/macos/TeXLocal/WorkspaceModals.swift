@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Workspace sheets, alerts, and file dialogs on the always-visible source column.
 struct WorkspaceModals: ViewModifier {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
@@ -46,8 +45,7 @@ struct WorkspaceModals: ViewModifier {
                 }
             }
             .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
-                // Keep Both, which loses nothing, is the default, as in Finder's copy alert;
-                // Replace trashes the item here.
+                // Keep Both, which loses nothing, is the default, as in Finder's copy alert.
                 Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "keepBoth") } }
                 Button("Replace", role: .destructive) { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
                 Button("Cancel", role: .cancel) {}
@@ -62,7 +60,6 @@ struct WorkspaceModals: ViewModifier {
                 // Return saves: the button that discards the edits is never the default.
                 Button("Save Again") { project.saveMissingFile() }
                 Button("Discard Changes", role: .destructive) { project.closeMissingFile() }
-                // Leaves the edits unsaved in the editor, and the status bar saying so.
                 Button("Cancel", role: .cancel) {
                     project.leaveUnsaved(String(localized: "Another app moved or deleted “\(path.fileName)”."))
                 }
@@ -71,15 +68,11 @@ struct WorkspaceModals: ViewModifier {
             }
     }
 
-    /// The Changed on Disk alert, where either answer loses a version, has no default button, so
-    /// that Return chooses neither unread (HIG, Alerts: "avoid making any button the default
-    /// button"). It is AppKit's own for that: SwiftUI's alert can move its default button
-    /// (`keyboardShortcut(.defaultAction)`) but has no way to have none. Cancel, and so Escape,
-    /// writes nothing: the edits stay unsaved, and the next save that is asked for asks again.
+    /// The Changed on Disk alert, where either answer loses a version, has no default button, so that Return chooses neither
+    /// unread (HIG, Alerts). It is AppKit's own: SwiftUI's alert can move its default button but has no way to have none.
     private func askWhichVersion(of path: String) {
         let alert = NSAlert()
         alert.messageText = String(localized: "“\(path.fileName)” Changed on Disk")
-        // The buttons say what each does, so the text doesn't ask (HIG, Alerts).
         alert.informativeText = String(localized: "Another app changed “\(path)” while it has unsaved changes here.")
         // An alert's first button has Return until it gives it up; one titled Cancel has Escape.
         alert.addButton(withTitle: String(localized: "Save Anyway")).keyEquivalent = ""
@@ -92,7 +85,6 @@ struct WorkspaceModals: ViewModifier {
             default: project.leaveUnsaved(String(localized: "Another app changed “\(path.fileName)”."))
             }
         }
-        // A sheet on the editor's window, as SwiftUI's alerts are; a file with edits to ask about is in it.
         if let window = project.editor.textView.window {
             alert.beginSheetModal(for: window, completionHandler: answered)
         } else {
@@ -101,9 +93,7 @@ struct WorkspaceModals: ViewModifier {
     }
 }
 
-/// Go to Line… and Go to Page…, also from the status bar: a sheet, as Preview's Go to
-/// Page. A number past the end goes to the last. `limit` is read as the sheet draws, so
-/// a build finishing meanwhile counts.
+/// `limit` is read as the sheet draws, so a build finishing meanwhile counts.
 private struct GoToSheet: View {
     let noun: String
     let limit: () -> Int?
@@ -111,8 +101,7 @@ private struct GoToSheet: View {
     @State private var text = ""
     @FocusState private var focused: Bool
 
-    /// Read from the text as it is typed: a field of a number's own tells its binding only as
-    /// editing ends, and Go would wait for a first Return.
+    /// Read from the text as it is typed: a field of a number's own tells its binding only as editing ends, and Go would wait for a first Return.
     private var number: Int? {
         guard let number = try? Int(text.trimmingCharacters(in: .whitespaces), format: .number.grouping(.never)),
               number >= 1 else { return nil }

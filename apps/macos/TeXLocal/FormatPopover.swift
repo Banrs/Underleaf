@@ -1,16 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// Aa's popover, as Notes' Aa: the styles' toggles, then the levels, the caret's checked. The
-/// menu bar's Format menu and the toolbar's overflow menu keep them as plain menu items.
 final class FormatPopover: NSObject, NSPopoverDelegate {
     let popover = NSPopover()
     private let app: AppModel
     private let project: ProjectModel
-    /// The click that closed it, when one did: on Aa, it isn't one to open it again.
+    /// The click that closed it: on Aa, it isn't one to open it again.
     private var closingClick: Int?
 
-    /// The mouse click being handled; its press and release have one number.
     private var click: Int? {
         NSApp.currentEvent.flatMap { [.leftMouseDown, .leftMouseUp].contains($0.type) ? $0.eventNumber : nil }
     }
@@ -19,7 +16,6 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
         self.app = app
         self.project = project
         super.init()
-        // Escape and a click elsewhere close it.
         popover.behavior = .transient
         popover.delegate = self
     }
@@ -30,7 +26,6 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
             return
         }
         if let click, click == closingClick { return }
-        // Made anew, so it opens at the caret's level.
         let content = NSHostingController(rootView: FormatPanel(app: app, project: project) { [weak self] in
             self?.popover.close()
         })
@@ -48,31 +43,18 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     }
 }
 
-/// Bold, Italic and Underline, centred, lit when the selection is in their command; then the
-/// levels the document's class has, each at its weight and shape there and its size scaled into
-/// Notes', at an even pitch, after its number as the class prints it. A style toggles and the popover
-/// stays, as Notes' does; a level is chosen and it closes, as a menu. It opens with the caret's
-/// level checked and nothing highlighted; the arrow keys start from the checked level, and the
-/// pointer highlights a level without taking the keyboard's focus to it. The highlight is also
-/// the keyboard's focus, which draws no ring: Tab shows where it is, and Return and Space act
-/// only on a highlighted level.
+/// The highlight is also the keyboard's focus, which draws no ring: Tab shows where it is, and Return and Space act only on a highlighted level.
 struct FormatPanel: View {
     let app: AppModel
     let project: ProjectModel
     let close: () -> Void
-    /// The keyboard's level, which the arrow keys move.
     @FocusState private var focused: HeadingLevel?
-    /// The level under the pointer or last reached by the arrow keys, as a menu's highlight.
     @State private var highlighted: HeadingLevel?
     /// Set while the caret's level is given the keyboard on opening, which isn't a move to highlight.
     @State private var seeding = false
-    /// The selection's, read again as the text or the selection changes.
     @State private var styles = TextStyles()
 
-    /// Notes' list markers sit a word space from their text.
     private static let markerGap: CGFloat = 4
-    /// The UI kit's menu (macOS 27, Menus, Regular): an item's highlight 5 pt in from the edge with
-    /// 8 pt corners, its content and the separators 16 pt in, the first item 6 pt down.
     private static let highlightInset: CGFloat = 5, highlightRadius: CGFloat = 8, contentInset: CGFloat = 16, menuTop: CGFloat = 6
 
     var body: some View {
@@ -107,7 +89,6 @@ struct FormatPanel: View {
             close()
             return .handled
         }
-        // At the caret's level, as a pop-up menu opens at its item.
         .onAppear {
             seeding = headings.levels.contains { $0 == project.headingLevel }
             focused = project.headingLevel
@@ -133,7 +114,6 @@ struct FormatPanel: View {
         .labelStyle(.iconOnly)
         .controlSize(.large)
         .imageScale(.large)
-        // What it does, as the toolbar's own buttons for these say (HIG, Offering help).
         .help(help)
     }
 
@@ -142,7 +122,6 @@ struct FormatPanel: View {
         let font = layout.font(level)
         return Button { choose(level) } label: {
             HStack(spacing: 6) {
-                // The kit's checkmark: bold at the menu's size.
                 Image(systemName: "checkmark")
                     .font(.body.bold())
                     .opacity(checked ? 1 : 0)
@@ -160,8 +139,6 @@ struct FormatPanel: View {
             }
             .padding(.horizontal, Self.contentInset - Self.highlightInset)
             .frame(height: layout.pitch)
-            // A menu's highlight, the system's tint, which follows the pointer and the arrow keys;
-            // on it the text's styles turn as a selected row's do.
             .foregroundStyle(.primary)
             .background(lit ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: Self.highlightRadius))
             .environment(\.backgroundProminence, lit ? .increased : .standard)
@@ -184,7 +161,6 @@ struct FormatPanel: View {
     }
 
     private func move(by step: Int, in levels: [HeadingLevel]) -> KeyPress.Result {
-        // From the highlight; with none yet, the keyboard's own level is highlighted first.
         let next = highlighted.flatMap(levels.firstIndex).map { levels[min(max($0 + step, 0), levels.count - 1)] } ?? focused
         highlighted = next
         focused = next
@@ -196,15 +172,12 @@ struct FormatPanel: View {
         close()
     }
 
-    /// Return and Space choose the highlighted level.
     private func chooseFocused() -> KeyPress.Result {
         guard let level = highlighted else { return .ignored }
         choose(level)
         return .handled
     }
 
-    /// The levels' fonts at the text's size, the even pitch the largest needs, and the marker
-    /// column, as wide as the widest number shown in its level's font.
     struct Layout {
         private let fonts: [HeadingLevel: NSFont]
         private let headings: HeadingStyles
@@ -215,8 +188,6 @@ struct FormatPanel: View {
             var fonts: [HeadingLevel: NSFont] = [:]
             for level in headings.levels {
                 let style = headings.font(level)
-                // LaTeX's sizes in Notes' range: \Huge's 2.5 times the text comes out at Notes'
-                // Title, 22 points, and \large and \Large near its Subheading and Heading.
                 let size = NSFont.systemFontSize * pow(style.scale, 0.58)
                 var font = NSFont.systemFont(ofSize: size.rounded(), weight: style.bold ? .bold : .regular)
                 if style.shape == .italic {
@@ -226,7 +197,6 @@ struct FormatPanel: View {
             }
             self.fonts = fonts
             self.headings = headings
-            // The rows' even pitch, as Notes': the largest line and a little, and at least the kit's 24 pt item.
             let line = fonts.values.map { $0.ascender - $0.descender + $0.leading }.max() ?? 16
             pitch = max(24, (line + 4).rounded(.up))
             markers = headings.levels.compactMap { level in

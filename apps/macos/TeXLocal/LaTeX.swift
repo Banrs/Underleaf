@@ -1,9 +1,5 @@
 import Foundation
 
-// LaTeX templates shared by the toolbar and Insert and Format menus.
-
-/// A core catalog block, or an inline command with "$0" for the selection.
-/// A symbol makes it available as a Customize Toolbar button.
 struct Template {
     let title: String
     let body: String
@@ -34,8 +30,6 @@ let listTemplates = [
     Template(title: "Description List", body: "description"),
 ]
 
-/// Cross-references, citations and links; with nothing selected, a
-/// reference or citation offers what can go in its braces.
 let referenceTemplates = [
     Template(title: "Reference", body: "\\ref{$0}", symbol: "number.sign", inline: true),
     Template(title: "Equation Reference", body: "\\eqref{$0}", inline: true),
@@ -45,8 +39,6 @@ let referenceTemplates = [
     Template(title: "URL", body: "\\url{$0}", inline: true),
 ]
 
-/// A line's style: plain text or a sectioning command (`command` without
-/// the backslash; empty for plain text).
 nonisolated struct HeadingLevel: Hashable {
     let title: String
     let command: String
@@ -70,8 +62,6 @@ nonisolated struct HeadingLevel: Hashable {
     }
 }
 
-/// The engines a project can compile with. The raw value is the core's id, which is what other
-/// files pass around.
 enum TeXEngine: String, CaseIterable, Identifiable {
     case pdflatex, xelatex, lualatex
 
@@ -86,7 +76,6 @@ enum TeXEngine: String, CaseIterable, Identifiable {
     }
 }
 
-/// Symbols by kind, each inserted as its command.
 let symbolGroups: [(title: String, symbols: [(glyph: String, command: String)])] = [
     ("Greek", [("α", "\\alpha"), ("β", "\\beta"), ("γ", "\\gamma"), ("δ", "\\delta"), ("ϵ", "\\epsilon"),
                ("ζ", "\\zeta"), ("η", "\\eta"), ("θ", "\\theta"), ("κ", "\\kappa"), ("λ", "\\lambda"),

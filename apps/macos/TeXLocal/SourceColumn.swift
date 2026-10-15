@@ -11,8 +11,6 @@ struct SourceColumn: View {
     var body: some View {
         // Keep the editor under previews so it retains its text and scroll position.
         ZStack {
-            // Under the toolbar and the status bar, as the PDF: AppKit insets the scroll view and
-            // draws its edges over it.
             EditorView(editor: project.editor, shown: project.editsText, fontName: fontName, fontSize: fontSize,
                        lineNumbers: lineNumbers, syntaxTheme: syntaxTheme)
                 .ignoresSafeArea(.container, edges: [.top, .bottom])
@@ -31,10 +29,8 @@ struct SourceColumn: View {
     }
 }
 
-/// Quick Look's preview of a file the editor doesn't edit.
 private struct FilePreview: NSViewRepresentable {
     let url: URL
-    /// The project's count of the file's changes on disk: the preview reads it again at each.
     let version: Int
 
     final class Shown {

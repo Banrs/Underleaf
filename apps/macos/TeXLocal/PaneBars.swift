@@ -1,10 +1,8 @@
 import SwiftUI
 
-/// A field the window can focus after AppKit creates it.
 final class FieldHandle {
     fileprivate(set) weak var field: NSTextField?
 
-    /// With its text selected, to type over.
     func focus() {
         guard let field, let window = field.window else { return }
         if window.firstResponder !== field.currentEditor() { window.makeFirstResponder(field) }
@@ -17,11 +15,9 @@ final class FieldHandle {
     }
 }
 
-/// A native search field with optional Return and Escape actions.
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
-    /// In the magnifying glass's place: a filter's, as Xcode's filter fields.
     var symbol: String?
     var handle: FieldHandle?
     var step: (@MainActor (Int) -> Void)?
@@ -32,14 +28,12 @@ struct SearchField: NSViewRepresentable {
 
         init(_ field: SearchField) { self.field = field }
 
-        // Typing and the native clear button both send the action.
         @objc func changed(_ sender: NSSearchField) {
             if field.text != sender.stringValue { field.text = sender.stringValue }
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            // Let the input method commit or cancel marked text before the find
-            // bar treats Return and Escape as navigation commands.
+            // Let the input method commit or cancel marked text before the find bar treats Return and Escape as navigation commands.
             guard !textView.hasMarkedText() else { return false }
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
@@ -80,15 +74,13 @@ struct SearchField: NSViewRepresentable {
         view.placeholderString = prompt
         // VoiceOver's name: the placeholder goes once there's text.
         view.setAccessibilityLabel(prompt)
-        // A SwiftUI update can arrive during input-method composition; writing
-        // the bound query back then would discard the marked characters.
+        // A SwiftUI update can arrive during input-method composition; writing the bound query back would discard the marked characters.
         if view.stringValue != text, (view.currentEditor() as? NSTextView)?.hasMarkedText() != true {
             view.stringValue = text
         }
     }
 }
 
-/// Pass Edit › Find from the PDF find field's editor to the window, which routes it to the PDF.
 final class FindPassingTextView: NSTextView {
     override func performFindPanelAction(_ sender: Any?) {
         nextResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: sender)
@@ -98,8 +90,7 @@ final class FindPassingTextView: NSTextView {
         guard let action = item.action, action == #selector(NSTextView.performFindPanelAction(_:)) else {
             return super.validateMenuItem(item)
         }
-        // The chain from the next responder; NSApp.target(forAction:) starts
-        // at the first responder, which is this editor.
+        // The chain from the next responder; NSApp.target(forAction:) starts at the first responder, which is this editor.
         let target = nextResponder.flatMap { first in
             sequence(first: first, next: \.nextResponder).first { $0.responds(to: action) }
         }
@@ -113,8 +104,7 @@ struct DialogSheet<Fields: View>: View {
     var message: String?
     let action: String
     let enabled: Bool
-    /// The alert's title if `submit` throws: the sheet stays, with what was typed. Read
-    /// then: the toolbar keeps the button's action from its last change of state.
+    /// Read when it fails: the toolbar keeps the button's action from its last change of state.
     var failure: () -> String = { "" }
     let submit: () async throws -> Void
     @ViewBuilder var fields: Fields
@@ -144,7 +134,6 @@ struct DialogSheet<Fields: View>: View {
                 .scrollDisabled(true)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        // The form size is wider (about 560 pt); the UI kit's dialog is 390.
         .frame(width: 390)
         // macOS 27 resets the control size in sheets: set it here.
         .controlSize(.regular)
@@ -165,7 +154,6 @@ struct DialogSheet<Fields: View>: View {
     }
 }
 
-/// A list's rename state; observation redraws only the editing row.
 @Observable
 final class InPlaceRename<ID: Hashable> {
     private(set) var id: ID?
@@ -186,23 +174,18 @@ final class InPlaceRename<ID: Hashable> {
     }
 }
 
-/// A project's or a file's own actions: its context menu's, and File's for the
-/// chosen item of the list with the keyboard (`offersActions`).
 struct ItemActions {
     let rename: () -> Void
     let showInFinder: () -> Void
     let moveToTrash: () -> Void
 }
 
-/// The same items in File and in the context menus, dimmed with no item. All three have an icon,
-/// as a group has icons for all its items or none (HIG, Menus): "folder" stands for Show in
-/// Finder's file-system location, which has no icon of its own.
+/// All three have an icon, as a group has icons for all its items or none (HIG, Menus); "folder" stands for Show in Finder's file-system location.
 struct ItemMenuItems: View {
     let actions: ItemActions?
     var trashShortcut: KeyboardShortcut?
 
     var body: some View {
-        // The standard icons (HIG, Icons), which show where the menu's label style has them: File's.
         Button { actions?.rename() } label: { Label("Rename", systemImage: "pencil") }
             .disabled(actions == nil)
         Button { actions?.showInFinder() } label: { Label("Show in Finder", systemImage: "folder") }
@@ -215,9 +198,7 @@ struct ItemMenuItems: View {
 }
 
 extension View {
-    /// The chosen item's actions for File's items, none while its name is edited
-    /// (where ⌘⌫ edits the name). Through `AppModel`: a focused value doesn't
-    /// reach the menus from an AppKit window's hosting views.
+    /// Through `AppModel`: a focused value doesn't reach the menus from an AppKit window's hosting views.
     func offersActions<ID: Hashable>(for id: ID?, _ actions: @escaping (ID) -> ItemActions?) -> some View {
         modifier(ActionsOffer(id: id, actions: actions))
     }
@@ -229,8 +210,7 @@ private struct ActionsOffer<ID: Hashable>: ViewModifier {
     let actions: (ID) -> ItemActions?
 
     func body(content: Content) -> some View {
-        // Only while its item exists: one trashed or renamed away, here or by
-        // another app, takes its actions with it.
+        // Only while its item exists: one trashed or renamed away, here or by another app, takes its actions with it.
         let present = id.flatMap { actions($0) == nil ? nil : $0 }
         content
             .onChange(of: present, initial: true) { _, id in app.chosenItem = id.flatMap(actions) }
@@ -238,14 +218,10 @@ private struct ActionsOffer<ID: Hashable>: ViewModifier {
     }
 }
 
-/// Return or losing focus commits, Escape cancels; file selection preserves the extension.
 struct RenameField: View {
     @Binding var text: String
     var isFile = false
-    /// A character a name can't hold: refused as it's typed or pasted, with the alert sound,
-    /// rather than after the name is committed.
     var forbidden: Character?
-    /// Return or Escape ended it: the list takes the keyboard back, as Finder's does.
     let ended: () -> Void
     let commit: () -> Void
     let cancel: () -> Void
@@ -274,7 +250,6 @@ struct RenameField: View {
 }
 
 extension TextSelection {
-    /// A file name up to its extension; all of a name without one, or a dot file's.
     static func baseName(of name: String) -> TextSelection {
         let dot = name.lastIndex(of: ".").flatMap { $0 > name.startIndex ? $0 : nil }
         return TextSelection(range: name.startIndex..<(dot ?? name.endIndex))

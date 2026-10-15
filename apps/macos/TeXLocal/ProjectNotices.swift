@@ -2,14 +2,10 @@ import Accessibility
 import Foundation
 import Observation
 
-/// What a project has to say that interrupts nothing: the status bar's notice, and what VoiceOver
-/// is told, which share the one record of what was last said.
 @Observable
 final class ProjectNotices {
-    /// News that interrupts nothing, in the status bar for a few seconds and spoken by VoiceOver.
     private(set) var current: String?
     @ObservationIgnored private var clearing: Task<Void, Never>?
-    /// How long a notice stays: three seconds, shorter in a test.
     @ObservationIgnored private let lasting: Duration
 
     init(lasting: Duration = .seconds(3)) {
@@ -24,9 +20,7 @@ final class ProjectNotices {
 
     @ObservationIgnored private var announced: (text: String, at: ContinuousClock.Instant)?
 
-    /// Not within 0.3 s of the last announcement, nor the same one again within a few seconds:
-    /// VoiceOver would cut one short or repeat itself. `queued`, it waits for what VoiceOver is
-    /// saying instead of interrupting it.
+    /// Not within 0.3 s of the last announcement, nor the same one again within a few seconds: VoiceOver would cut one short or repeat itself.
     func announce(_ text: String, queued: Bool = false) {
         let now = ContinuousClock.now
         if let announced, now - announced.at < (text == announced.text ? .seconds(3) : .milliseconds(300)) { return }
@@ -36,7 +30,6 @@ final class ProjectNotices {
         AccessibilityNotification.Announcement(speech).post()
     }
 
-    /// The project closed: nothing waits to clear its notice.
     func cancel() {
         clearing?.cancel()
     }

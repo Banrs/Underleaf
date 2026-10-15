@@ -18,8 +18,7 @@ struct LogTextViewTests {
         #expect(scroll.contentView.bounds.origin == origin)
         #expect(view.string == initial + "new output\n")
 
-        // A restart or bounded-log rollover can replace everything, including
-        // shortening past the selected error. That must not crash AppKit.
+        // A restart or bounded-log rollover can replace everything, shortening past the selected error; that must not crash AppKit.
         LogTextView(text: "é\n").updateText(in: scroll)
         #expect(view.selectedRange() == NSRange(location: 2, length: 0))
         LogTextView(text: "e\u{301}\nnext\n").updateText(in: scroll)

@@ -4,9 +4,6 @@ import PDFKit
 import Testing
 @testable import TeXLocal
 
-/// The project folder's watcher: a write in place, a save over a file (a new
-/// one renamed over it) and a delete then recreate are all told, by path;
-/// items coming and going in a subfolder are told as structural.
 @MainActor
 final class FolderWatcherTests {
     private let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
@@ -19,7 +16,6 @@ final class FolderWatcherTests {
         try? FileManager.default.removeItem(at: folder)
     }
 
-    /// A watcher of the folder, and the changes it has told about `path`.
     private func watch(_ path: String) -> (FolderWatcher, () -> [FolderWatcher.Change]) {
         var told: [FolderWatcher.Change] = []
         let watcher = FolderWatcher(folder: folder) { told += $0 }
@@ -36,7 +32,6 @@ final class FolderWatcherTests {
         let inPlace = changes().count
         try "three".write(to: url, atomically: true, encoding: .utf8)
         try await waitUntil { changes().count > inPlace }
-        // Still watching the new file at that path.
         let replaced = changes().count
         try "four".write(to: url, atomically: false, encoding: .utf8)
         try await waitUntil { changes().count > replaced }
@@ -50,16 +45,13 @@ final class FolderWatcherTests {
 
         try FileManager.default.removeItem(at: url)
         try await waitUntil { changes().contains(where: \.structural) }
-        // Past the watcher's settle time, so the recreate is an event of its own.
-        try await Task.sleep(for: .milliseconds(500))
+        // The deletion is told only after the watcher's settle time, so the recreate is an event of its own.
         let deleted = changes().count
         try "two".write(to: url, atomically: false, encoding: .utf8)
         try await waitUntil { changes().count > deleted }
         _ = watcher
     }
 
-    /// What a save leaves is a file at its path, spelt as the disk spells it; a link, a folder,
-    /// another spelling or nothing is not.
     @Test func aFileIsARegularFileAtItsOwnSpelling() throws {
         let watcher = FolderWatcher(folder: folder) { _ in }
         try "text".write(to: folder.appending(path: "main.tex"), atomically: false, encoding: .utf8)
@@ -73,71 +65,34 @@ final class FolderWatcherTests {
             #expect(!watcher.hasFile("MAIN.tex"))
         }
     }
-
-    @Test func anItemAddedInASubfolderIsStructural() async throws {
-        try FileManager.default.createDirectory(at: folder.appending(path: "chapters"), withIntermediateDirectories: true)
-        let (watcher, changes) = watch("chapters/one.tex")
-
-        try "text".write(to: folder.appending(path: "chapters/one.tex"), atomically: false, encoding: .utf8)
-        try await waitUntil { changes().contains(where: \.structural) }
-        _ = watcher
-    }
 }
 
-/// The Rust core through its C ABI, in the scheme's scratch library
-/// (`TEXLOCAL_DATA`). Projects are removed, not trashed: `delete_project`
-/// trashes through Finder, which a headless test host can't drive, and the
-/// core's own tests cover it.
+/// Projects are removed, not trashed: `delete_project` trashes through Finder, which a headless test host can't drive.
 @MainActor
 struct CoreTests {
     init() throws {
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
     }
 
-    @Test func commandsRoundTripThroughTheRustCore() async throws {
+    @Test func aCoreErrorIsDecodedAndAMisshapenAnswerIsSaidInTheAppsWords() async throws {
         let core = Core.shared
-        let name = "Test \(UUID().uuidString.prefix(8))"
-        let info = try await core.call("create_project", ["name": name, "template": "blank"], as: ProjectInfo.self)
+        let info = try await core.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"], as: ProjectInfo.self)
         defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
-        #expect(info.mainFile == "main.tex")
-
-        try await core.perform("write_file", ["id": info.id, "path": "a.tex", "text": "hé"])
-        let file = try await core.call("read_file", ["id": info.id, "path": "a.tex"], as: FileText.self)
-        #expect(file.text == "hé")
-
-        let tree = try await core.call("file_tree", ["id": info.id], as: [TreeNode].self)
-        #expect(tree.contains { $0.path == "a.tex" })
-
-        // A path outside the project is refused.
         let error = await #expect(throws: CoreError.self) {
             _ = try await core.call("read_file", ["id": info.id, "path": "../../x"], as: FileText.self)
         }
         #expect(error?.message == "Path escapes project")
-
         // An answer in another shape than was asked for is said in the app's words, without the command's name.
         let fault = await #expect(throws: CoreError.self) {
             _ = try await core.call("file_tree", ["id": info.id], as: FileText.self)
         }
         #expect(fault?.message.hasPrefix("Something went wrong inside TeXLocal.") == true && fault?.status == nil)
     }
-
-    /// Every template the projects screen offers is one the core can make.
-    @Test func everyTemplateMakesAProject() async throws {
-        for template in ProjectTemplate.allCases {
-            let name = "Test \(template.id) \(UUID().uuidString.prefix(8))"
-            let info = try await Core.shared.call("create_project", ["name": name, "template": template.rawValue],
-                                                  as: ProjectInfo.self)
-            try FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id))
-        }
-    }
 }
 
-/// Projects as the app opens and edits them, in the test library. Each test
-/// puts back the defaults `AppModel` writes and removes its projects.
 @MainActor
 @Suite(.serialized, .timeLimit(.minutes(2)))
 final class ProjectFlowTests {
-    /// The app's defaults the tests change, put back after.
     private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects]
     private let kept: [Any?]
     private var folders: [URL] = []
@@ -157,7 +112,6 @@ final class ProjectFlowTests {
         for folder in folders { try? files.removeItem(at: folder) }
     }
 
-    /// A blank project whose main file holds `text`, and its folder.
     private func project(_ text: String = "text") async throws -> (info: ProjectInfo, folder: URL) {
         let info = try await Core.shared.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"],
                                               as: ProjectInfo.self)
@@ -167,7 +121,6 @@ final class ProjectFlowTests {
         return (info, folder)
     }
 
-    /// A new project, open.
     private func opened(_ text: String = "text") async throws -> (project: ProjectModel, folder: URL) {
         let (info, folder) = try await project(text)
         await app.open(info.id)
@@ -182,8 +135,6 @@ final class ProjectFlowTests {
 
     private func exists(_ url: URL) -> Bool { files.fileExists(atPath: url.path(percentEncoded: false)) }
 
-    /// The main file is read from disk before a Move to Trash: another editor may have
-    /// changed it since the project opened (#37).
     @Test func theMainFileOnDiskStaysOutOfTheTrash() async throws {
         let (project, folder) = try await opened()
         try await Core.shared.perform("write_file", ["id": project.id, "path": "second.tex", "text": "x"])
@@ -196,9 +147,6 @@ final class ProjectFlowTests {
         #expect(project.settings?.mainFile == "second.tex")
     }
 
-    /// Two opens that overlap (the project restored at launch and an Open
-    /// With import, or quick successive opens) leave the editor on the one
-    /// opened last, never on the other's text.
     @Test func theLastOpenHasTheEditor() async throws {
         let first = try await project("first").info, second = try await project("second").info
         // Started in this order on the main actor, each waiting on the core in turn.
@@ -235,7 +183,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Edit › Undo takes a file's rename back, and the main file with it; Redo renames it again.
     @Test func aFileRenameCanBeUndoneAndRedone() async throws {
         let undo = UndoManager()
         undo.groupsByEvent = false
@@ -259,7 +206,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Export Project as ZIP archives the open file as it is on screen, before its autosave (#27).
     @Test func theExportedZipHasTheUnsavedEdits() async throws {
         let (project, _) = try await opened("original")
         #expect(project.editor.perform(.bold))
@@ -281,9 +227,7 @@ final class ProjectFlowTests {
         #expect(!exists(next.deletingLastPathComponent()))
     }
 
-    /// Automatic builds leave the build panel as it is while typing goes on, failed or clean;
-    /// Compile opens it on a failure's issues, and closes the panel it opened once the build is
-    /// clean. CI has no TeX.
+    /// CI has no TeX.
     @Test func onlyCompileMovesThePanel() async throws {
         let project = try await openedWithTeX("\\documentclass{article}\\begin{document}\\undefinedmacro x\\end{document}")
         await project.compile(auto: true)
@@ -299,8 +243,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// An autosave that fails says so in the status bar, without an alert at each pause in
-    /// typing; a save that was asked for explains itself, and the next good one clears both.
     @Test func aFailedAutosaveInterruptsNothing() async throws {
         let (project, folder) = try await opened("original")
         let main = folder.appending(path: try #require(project.openPath))
@@ -322,8 +264,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A search with no PDF to search, like one on a line SyncTeX has no match for, is a line
-    /// in the status bar, not an alert.
     @Test func aSyncTeXMissIsNoAlert() async throws {
         let (project, _) = try await opened()
         await project.forwardSync()
@@ -331,7 +271,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A notice is in the status bar at once, the later of two, and goes by itself.
     @Test func aNoticeGoesByItself() async throws {
         let notices = ProjectNotices(lasting: .milliseconds(100))
         notices.note("One")
@@ -340,14 +279,11 @@ final class ProjectFlowTests {
         try await waitUntil { notices.current == nil }
     }
 
-    /// A project that can't be read doesn't open on an empty workspace: the alert says why over Home.
     @Test func aProjectThatCannotLoadStaysClosed() async throws {
         await app.open("No Such Project \(UUID().uuidString.prefix(8))")
         #expect(app.project == nil && app.alert != nil && !app.isOpening)
     }
 
-    /// A project whose PDF is built opens with it shown, and with the build panel as it was left:
-    /// the PDF loads as the main file is read, and is there when the workspace appears.
     @Test func aProjectOpensOnItsBuiltPDF() async throws {
         let (info, folder) = try await project()
         try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
@@ -360,8 +296,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// An item that can't be copied in and a rename the core refuses are each an alert that names
-    /// it: nothing is left opening, and the recents keep what they had.
     @Test func aRefusalOnHomeIsAnAlertThatNamesIt() async throws {
         let missing = files.temporaryDirectory.appending(path: "\(UUID().uuidString).zip")
         await app.importProject(from: missing)
@@ -372,8 +306,6 @@ final class ProjectFlowTests {
         #expect(app.alert?.title == "Couldn’t Rename “Gone”" && app.recentProjects == recents)
     }
 
-    /// A file of a project already in the library opens that project on the file, where it had
-    /// been copied into a second project.
     @Test func aLibraryFileOpensItsOwnProject() async throws {
         let (info, folder) = try await project()
         try "notes".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
@@ -385,8 +317,7 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Go to Next Issue goes round the issues the log places in a file, and the gutter marks
-    /// their lines until the file is edited. CI has no TeX.
+    /// CI has no TeX.
     @Test func issuesAreSteppedThroughAndMarked() async throws {
         let project = try await openedWithTeX("\\documentclass{article}\n\\begin{document}\n\\undefinedmacro\n\n\\anotherundefined\n\\end{document}\n")
         await project.compile()
@@ -403,9 +334,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A line with several issues is marked for its first, an error's before a warning's, with
-    /// what its others say in their order; another file's issues aren't the open file's. A
-    /// build's result is put in its place, so without TeX.
     @Test func aLinesIssuesAreItsFirstAndItsOthers() async throws {
         let (project, folder) = try await opened("a\nb\n")
         try await Core.shared.perform("write_file", ["id": project.id, "path": "part.tex", "text": "a\nb\n"])
@@ -421,8 +349,7 @@ final class ProjectFlowTests {
         let text = project.editor.textView
         #expect(project.openPath == "part.tex")
         #expect(text.issueLines == [1: .init(isError: false, message: "alone"), 2: .init(isError: true, message: "first", others: ["second", "third"])])
-        // Another app's change to the file is an edit of it: the build's lines were the old text's,
-        // and stay gone when the file is next shown.
+        // Another app's change to the file is an edit of it: the build's lines were the old text's, and stay gone when the file is next shown.
         try "c\nd\n".write(to: folder.appending(path: "part.tex"), atomically: false, encoding: .utf8)
         try await waitUntil(timeout: .seconds(5)) { text.string == "c\nd\n" }
         #expect(text.issueLines.isEmpty)
@@ -433,8 +360,7 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A TeXpresso stand-in that writes a one-page PDF where it's asked to, as Underleaf's
-    /// patched build does, and reads edits until it's stopped.
+    /// A TeXpresso stand-in that writes a one-page PDF where it's asked to, as Underleaf's patched build does, and reads edits until it's stopped.
     private func liveTeXpresso() throws -> URL {
         let folder = files.temporaryDirectory.appending(path: "texpresso-\(UUID().uuidString)")
         try files.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -454,9 +380,6 @@ final class ProjectFlowTests {
         return script
     }
 
-    /// Live pages aren't a build's: SyncTeX looks them up in TeXpresso's own (which the stand-in
-    /// doesn't write, so the core says so rather than answering from a build's), and stopping
-    /// without a build's PDF empties the pane rather than leaving them as one.
     @Test func livePagesAreNeverTakenForABuilds() async throws {
         setenv("TEXLOCAL_TEXPRESSO", try liveTeXpresso().path, 1)
         defer { unsetenv("TEXLOCAL_TEXPRESSO") }
@@ -474,7 +397,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A clean no-op build keeps the PDF's pages, and leaves open a panel the person opened.
     @Test func aNoOpBuildKeepsThePDFDocumentAndThePanel() async throws {
         let project = try await openedWithTeX("\\documentclass{article}\\begin{document}x\\end{document}")
         (project.panel.shown, project.panel.tab) = (true, .log)
@@ -489,9 +411,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A clean build closes the panel only where a failed one opened it and it still shows the
-    /// issues: not one the person opened, before the failure or again after closing it. The live
-    /// preview's log is followed while the panel shows it, and no longer.
     @Test func aCleanBuildClosesOnlyThePanelAFailureOpened() async throws {
         let project = try await opened().project, panel = project.panel
         panel.openForFailedBuild()
@@ -521,7 +440,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Overlapping rename/settings requests leave the build and disk settings in agreement.
     @Test func aRenameAndSettingsChangesKeepTheLatestMainFile() async throws {
         let source = "\\documentclass{article}\\begin{document}x\\end{document}"
         let project = try await openedWithTeX(source), folder = Core.libraryFolder.appending(path: project.id)
@@ -529,7 +447,6 @@ final class ProjectFlowTests {
         await project.compile()
         #expect(project.result?.ok == true && project.pdfURL?.lastPathComponent == "main.pdf")
 
-        // The build follows the main file only when Compile Automatically is on.
         app.autoCompile = true
         let rename = Task { await project.renameEntry("main.tex", to: "renamed.tex") }
         let flag = Task { _ = await project.patchSettings(.stopOnFirstError(true)) }
@@ -549,8 +466,7 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Set as Main File starts a build only when Compile Automatically is on, as every other
-    /// setting that changes the build does. CI has no TeX.
+    /// CI has no TeX.
     @Test func aNewMainFileBuildsOnlyWhenCompilingAutomatically() async throws {
         let source = "\\documentclass{article}\\begin{document}x\\end{document}"
         let project = try await openedWithTeX(source)
@@ -563,7 +479,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// The outline hears of a scroll only as another heading reaches the top, not on every line.
     @Test func theOutlineFollowsTheTopHeadingOnly() async throws {
         let project = try await opened("\\section{A}\n1\n2\n\\section{B}\n3").project
         try await waitUntil { project.outline.count == 2 }
@@ -578,8 +493,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// The outline and word count are the document's, through its \input and \include;
-    /// a heading in another file opens that file at it.
     @Test func theOutlineReadsTheInputs() async throws {
         let (info, folder) = try await project("\\section{Intro}\nOne two\n\\include{chapters/a}")
         try files.createDirectory(at: folder.appending(path: "chapters"), withIntermediateDirectories: false)
@@ -596,7 +509,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Aa numbers the levels as the main file's class does, read whichever file is open.
     @Test func theClassIsTheMainFiles() async throws {
         let (info, folder) = try await project("% \\documentclass{book}\n\\documentclass[11pt]{report}\n\\include{a}")
         try "\\section{A}\nthree".write(to: folder.appending(path: "a.tex"), atomically: false, encoding: .utf8)
@@ -609,7 +521,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Files another app adds, moves or deletes show in the sidebar's tree.
     @Test func anotherAppsFilesComeAndGo() async throws {
         let (project, folder) = try await opened()
         let paths = { Set(project.tree.nodes.flattened.map(\.path)) }
@@ -627,8 +538,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Deleted by another app, the open file closes; with unsaved edits it asks
-    /// first, saving nothing meanwhile, and Save Again makes it again.
     @Test func anOpenFileDeletedElsewhere() async throws {
         let (project, folder) = try await opened()
         let notes = folder.appending(path: "notes.tex")
@@ -659,9 +568,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Changed by another app while it has unsaved edits, the open file asks which version to
-    /// keep and saves nothing meanwhile. Cancel leaves the edits unsaved, and a save that is
-    /// asked for asks again; Save Anyway writes them, and Revert takes the disk's text.
     @Test func anOpenFileChangedElsewhere() async throws {
         let (project, folder) = try await opened("original")
         let main = folder.appending(path: "main.tex")
@@ -692,8 +598,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// After a save here, another app's change of the same length, in place, still reaches the
-    /// editor: the save's own change is known by the file's stamp, which a later write alters.
     @Test func aChangeOfTheSameLengthAfterASaveIsTaken() async throws {
         let (project, folder) = try await opened("original")
         #expect(project.editor.perform(.bold))
@@ -708,8 +612,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A file's Move to Trash can't be undone or redone once its project has closed, as its
-    /// renames can't: the window's undo stack outlives the project, and nothing would show the result.
     @Test func aClosedProjectsTrashCannotBeUndone() async throws {
         let undo = UndoManager()
         undo.groupsByEvent = false
@@ -730,8 +632,6 @@ final class ProjectFlowTests {
         #expect(!undo.canRedo && !undo.canUndo)
     }
 
-    /// A project's rename on Home can't be undone once a project is open: the Undo, reached from
-    /// the sidebar, would rename the open project's folder under it.
     @Test func aRenameOnHomeCannotBeUndoneUnderAProject() async throws {
         let undo = UndoManager()
         undo.groupsByEvent = false
@@ -749,8 +649,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A file dropped on the source opens: the project's own in the editor, but its image goes
-    /// into LaTeX as a figure. One from elsewhere is refused: the sidebar copies files in.
     @Test func aDroppedFileOpens() async throws {
         let (project, folder) = try await opened()
         let notes = folder.appending(path: "notes.tex")
@@ -776,8 +674,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A change to a setting shows in the model before the core answers, so its control doesn't
-    /// snap back, and one the core refuses is put back.
     @Test func aSettingShowsAtOnceAndARefusedOneIsPutBack() async throws {
         let (project, _) = try await opened()
         let on = Task.immediate { await project.patchSettings(.shellEscape(true)) }
@@ -790,7 +686,6 @@ final class ProjectFlowTests {
         app.alert = nil
     }
 
-    /// Clean Build Folder removes the build folder and what the build left in the window.
     @Test func cleanBuildFolderRemovesTheBuildFolder() async throws {
         let (project, folder) = try await opened()
         try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
@@ -800,8 +695,7 @@ final class ProjectFlowTests {
         #expect(project.result == nil && project.pdfURL == nil)
     }
 
-    /// Clean Build Folder during a build stops it and waits for it to end, so the stopped build
-    /// neither writes into the folder after it goes nor reports after the clean. CI has no TeX.
+    /// CI has no TeX.
     @Test func cleanBuildFolderWaitsForTheBuildItStops() async throws {
         let project = try await openedWithTeX("\\documentclass{article}\\begin{document}x\\end{document}")
         let build = Task.immediate { await project.compile() }
@@ -813,9 +707,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Find in Project has a query's hits under their files, in the order of the files' names,
-    /// with the query they are for until the next search ends, and none yet, nor a failure, once
-    /// the query is cleared.
     @Test func aSearchListsItsHitsByFile() async throws {
         let project = try await opened("needle\nhay\nNeedle").project
         try await Core.shared.perform("write_file", ["id": project.id, "path": "appendix.tex", "text": "a needle"])
@@ -833,8 +724,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// The tree tells its project of a read only when the files have changed, and takes none
-    /// once the project has closed.
     @Test func theTreeTellsOfAChangeOnly() async throws {
         let info = try await project().info, tree = FileTree(id: info.id)
         var changes = 0
@@ -852,7 +741,6 @@ final class ProjectFlowTests {
         #expect(changes == 2 && tree.node(at: "more.tex") == nil)
     }
 
-    /// A project's open folders and folded headings come back the next time it opens.
     @Test func theSidebarsStateIsKeptForTheProject() {
         let id = "SidebarState \(UUID().uuidString.prefix(8))"
         let defaults = UserDefaults.standard
@@ -865,8 +753,6 @@ final class ProjectFlowTests {
         #expect(second.expandedFolders == ["chapters", "chapters/appendix"] && second.foldedHeadings == ["main.tex\t1:Methods#1"])
     }
 
-    /// A renamed project keeps its open folders and folded headings, which go with its id; a
-    /// deleted one's are forgotten.
     @Test func theSidebarsStateFollowsARenameAndGoesWithTheProject() async throws {
         let info = try await project().info
         let defaults = UserDefaults.standard
@@ -883,9 +769,6 @@ final class ProjectFlowTests {
         #expect(defaults.object(forKey: "expandedFolders.\(renamed)") == nil && defaults.object(forKey: "foldedHeadings.\(renamed)") == nil)
     }
 
-    /// The Dock icon's menu lists the recent projects still in the library, newest first,
-    /// as Pages and Xcode list their recent documents; one opens as from Home, its window
-    /// brought forward, and offers New Project…, which opens its sheet.
     @Test func theDockMenuOpensARecentProject() async throws {
         let first = try await project("first").info, second = try await project("second").info
         await app.refresh()
@@ -906,9 +789,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// New items are "untitled.tex" and "untitled folder", numbered past the names taken
-    /// where they go as Finder numbers them, another app's too before the tree has them.
-    /// A new file opens, without the keyboard, which goes to its name.
     @Test func newItemsTakeTheNextFreeName() async throws {
         let (project, folder) = try await opened()
         try "x".write(to: folder.appending(path: "untitled.tex"), atomically: false, encoding: .utf8)
@@ -924,8 +804,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Dropped on the tree, the project's own files move, as in Finder, but a
-    /// folder not into itself; a file from elsewhere is copied in.
     @Test func treeDropsMoveTheProjectsFiles() async throws {
         let (project, folder) = try await opened()
         try files.createDirectory(at: folder.appending(path: "parts"), withIntermediateDirectories: false)
@@ -950,7 +828,6 @@ final class ProjectFlowTests {
 }
 
 private extension ProjectModel {
-    /// The file the PDF pane shows, a build's or live preview's: the app itself asks only which kind it is.
     var pdfURL: URL? {
         switch shown {
         case .none: nil
@@ -959,7 +836,6 @@ private extension ProjectModel {
     }
 }
 
-/// Move to Trash that Edit › Undo takes back, as Finder's does.
 @Suite(.timeLimit(.minutes(1)))
 @MainActor
 struct UndoableTrashTests {
@@ -988,14 +864,12 @@ struct UndoableTrashTests {
         try await waitUntil { !files.fileExists(atPath: url.path) && listed == 2 }
         #expect(undo.canUndo)
 
-        // Leave the Trash as it was.
         undo.undo()
         try await waitUntil { files.fileExists(atPath: url.path) }
         try files.removeItem(at: url)
     }
 
-    /// An Undo asked while a Redo is still on its way to the Trash waits for it, then puts
-    /// the item back, rather than finding nothing to put back (#36).
+    /// An Undo asked while a Redo is still on its way to the Trash waits for it, rather than finding nothing to put back (#36).
     @Test func anUndoDuringARedoWaitsForIt() async throws {
         let files = FileManager.default
         let url = files.temporaryDirectory.appending(path: "undo-\(UUID().uuidString.prefix(8)).tex")

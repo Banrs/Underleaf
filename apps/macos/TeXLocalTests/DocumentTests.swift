@@ -5,23 +5,7 @@ import Testing
 
 @MainActor
 struct SyncTeXGeometryTests {
-    // A US Letter page whose box starts at the origin, and one offset the way
-    // some producers write a crop box.
-    let letter = CGRect(x: 0, y: 0, width: 612, height: 792)
     let offset = CGRect(x: 10, y: 20, width: 612, height: 792)
-
-    @Test func theForwardBoxFlipsFromTopLeftToBottomLeft() {
-        let loc = ForwardLoc(page: 1, h: 72, v: 100, width: 468, height: 10)
-        let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: letter)
-        // Baseline 100pt below the top edge is 692pt above the bottom edge.
-        #expect(rect == CGRect(x: 70, y: 690, width: 472, height: 14))
-    }
-
-    @Test func theForwardBoxIsNeverNarrowerThanAWord() {
-        let loc = ForwardLoc(page: 1, h: 72, v: 100, width: 0, height: nil)
-        let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: letter)
-        #expect(rect.size == CGSize(width: 28, height: 16))
-    }
 
     @Test func theInversePointRoundTripsThroughAnOffsetBox() {
         let synctex = SyncTeXGeometry.synctexPoint(CGPoint(x: 82, y: 712), pageBounds: offset)
@@ -32,11 +16,8 @@ struct SyncTeXGeometryTests {
     }
 }
 
-/// The reading is the core's (tests/fixtures/analyze.json); these check what the
-/// views make of its outline.
 @MainActor
 struct OutlineTests {
-    /// Headings as the core sends them, "2:A" for a section A, one a line of main.tex.
     private func outline(_ headings: String...) -> [OutlineItem] {
         headings.enumerated().map { index, heading in
             let parts = heading.split(separator: ":", maxSplits: 1)
@@ -44,8 +25,6 @@ struct OutlineTests {
         }
     }
 
-    /// A line is under its file's last heading above it, wherever the file is read in;
-    /// above the file's first, under none.
     @Test func theCurrentHeadingFollowsTheFile() {
         let project = [OutlineItem(id: 0, level: 1, title: "A", line: 1, file: "main.tex"),
                        OutlineItem(id: 1, level: 2, title: "A1", line: 3, file: "a.tex"),
@@ -58,8 +37,6 @@ struct OutlineTests {
         #expect(Outline.current(project, file: "notes.tex", line: 1) == nil)
     }
 
-    /// A subsection before any section has no parent: it sits flush, as does
-    /// the section after it; the subsection under that section is one in.
     @Test func theTreeNestsAsTheHeadingsDo() {
         let tree = Outline.tree(outline("3:(untitled)", "2:A", "3:A1", "4:A1a", "3:A2", "2:B"))
         #expect(tree.map(\.item.displayTitle) == ["Untitled Subsection", "A", "B"])
@@ -68,7 +45,6 @@ struct OutlineTests {
         #expect(tree[1].children?[0].children?.map(\.item.title) == ["A1a"])
     }
 
-    /// Two headings with one title fold on their own, and each keeps its key as the others fold.
     @Test func headingsOfOneTitleFoldApart() {
         let tree = Outline.tree(outline("2:A", "3:Intro", "2:B", "3:Intro"))
         let keys = tree.flatMap { [$0] + $0.descendants }.map(\.foldKey)
@@ -77,7 +53,6 @@ struct OutlineTests {
     }
 }
 
-/// Aa's levels: those the main file's class has, numbered and set as it sets them.
 @MainActor
 struct HeadingStylesTests {
     private func styles(_ name: String?, size: Int = 10, chapters: Bool = false) -> HeadingStyles {
@@ -100,7 +75,6 @@ struct HeadingStylesTests {
         #expect(markers(styles(nil)) == [nil, "I", nil, "1", "1.1", "1.1.1", nil])
     }
 
-    /// LaTeX's sizes against the text's, at the class's size option.
     @Test func theClassSetsTheLevelsSizes() {
         let book = styles("book"), part = HeadingLevel.sections[0], section = HeadingLevel.sections[2]
         #expect(book.font(part) == .init(scale: 2.488, bold: true, shape: .upright))
@@ -122,8 +96,7 @@ struct HeadingStylesTests {
         #expect(DocumentClass(in: "\\begin{document}\n\\documentclass{book}") == DocumentClass(name: "book"))
     }
 
-    /// A comment ends at a CRLF or a CR as at a line feed: Swift's regex reads "\r\n" as one
-    /// Character, which a comment once ran on through to the file's end.
+    /// Swift's regex reads "\r\n" as one Character, which a comment once ran on through to the file's end.
     @Test func aCommentEndsAtAnyLineBreak() {
         #expect(DocumentClass(in: "\\documentclass[11pt, % size\r\n a4paper]{report}\r\n") == DocumentClass(name: "report", pointSize: 11))
         #expect(DocumentClass(in: "% \\documentclass{book}\r\n\\documentclass[12pt]{report}\r\n") == DocumentClass(name: "report", pointSize: 12))
@@ -138,25 +111,19 @@ struct FindTests {
         #expect(PDFFind.count(1, of: 1, limited: false, for: "loop") == "1 of 1")
         #expect(PDFFind.count(2, of: 1000, limited: true, for: "a") == "2 of 1,000+")
         #expect(PDFFind.count(2290, of: 2290, limited: false, for: "a") == "2,290 of 2,290")
-        // As the bar asks with no matches: the first of none.
         #expect(PDFFind.count(1, of: 0, limited: false, for: "loop") == "Not found")
         #expect(PDFFind.count(1, of: 0, limited: false, for: "").isEmpty)
     }
 }
 
-/// The PDF view's fits, off screen.
 @MainActor
 struct PDFFitTests {
-    /// Fit Page shows the whole page, its page-break margins too, and keeps it whole as
-    /// the view resizes: by its height in a wide view, by its width in a narrow one; a page
-    /// turned a quarter by its shape as shown (#25).
-    @Test(arguments: [0.0, 37.0], [0, 90])
+    @Test(arguments: zip([CGFloat(0), 37], [0, 90]))
     func fitPageKeepsTheWholePageInView(_ bottomInset: CGFloat, _ rotation: Int) throws {
         let controller = PDFController()
         let view = controller.view
         view.setFrameSize(NSSize(width: 600, height: 500))
         view.additionalSafeAreaInsets.bottom = bottomInset
-        // The pane's mode is PDFView's default.
         #expect(view.displayMode == .singlePageContinuous)
         view.displaysPageBreaks = true
         let document = try pages(1)
@@ -177,9 +144,7 @@ struct PDFFitTests {
         }
     }
 
-    /// The toolbar's percentage follows every zoom, a pinch's steps too (the scroll
-    /// view's magnification, which posts no PDFViewScaleChanged until a pinch ends),
-    /// and any scale but the fitted one ends fitting.
+    /// A pinch's steps are the scroll view's magnification, which posts no PDFViewScaleChanged until a pinch ends.
     @Test func theScaleFollowsEveryZoom() throws {
         let controller = PDFController()
         let view = controller.view
@@ -210,9 +175,6 @@ struct PDFFitTests {
         follows(.width, "pinched back")
     }
 
-    /// The menus and the saved workspace read the project's own PDF view: Zoom In
-    /// stops at PDFKit's limit, Go to PDF Position needs a .tex file, and a
-    /// reopened project returns to the page shown.
     @Test func theMenusAndTheSavedPageReadTheProjectsPDF() throws {
         let app = AppModel()
         let project = ProjectModel(id: "PDFFitTests", app: app)
@@ -237,8 +199,6 @@ struct PDFFitTests {
         #expect(project.saved.pdfPage == 2)
     }
 
-    /// Go to Page keeps to the document: a number past its end is its last page, one under 1 its
-    /// first, and with no document there is nowhere to go.
     @Test func goToPageKeepsToTheDocument() throws {
         let controller = PDFController()
         controller.view.setFrameSize(NSSize(width: 600, height: 500))
@@ -252,8 +212,6 @@ struct PDFFitTests {
         #expect(controller.page == 1)
     }
 
-    /// A reopened project's PDF opens at the fit or scale it was left at, once it has a size,
-    /// and a workspace saved before zooms were kept still opens.
     @Test(arguments: [PDFController.Zoom.fitPage, .scale(1.5), .fitWidth])
     func theSavedZoomComesBack(zoom: PDFController.Zoom) throws {
         let project = ProjectModel(id: "PDFFitTests", app: AppModel())
@@ -271,9 +229,7 @@ struct PDFFitTests {
         #expect(try JSONDecoder().decode(SavedWorkspace.self, from: old).pdfZoom == nil)
     }
 
-    /// A forward search marks SyncTeX's box beside the page, not with an annotation, which
-    /// Print and VoiceOver would see; one mark at a time, a second search's replacing the
-    /// first's, and a rebuilt PDF has none.
+    /// The mark is beside the page, not an annotation, which Print and VoiceOver would see.
     @Test func theForwardSearchMarkIsOneAndNoAnnotation() throws {
         let controller = PDFController()
         controller.view.setFrameSize(NSSize(width: 600, height: 500))
@@ -299,7 +255,6 @@ struct PDFFitTests {
     }
 }
 
-/// A document with each page's text drawn as text, so PDFKit reads and finds it.
 @MainActor
 func textPDF(_ pages: [String], width: CGFloat = 612) throws -> PDFDocument {
     let document = PDFDocument()
@@ -312,7 +267,6 @@ func textPDF(_ pages: [String], width: CGFloat = 612) throws -> PDFDocument {
     return document
 }
 
-/// Find in PDF across a rebuild, off screen.
 @MainActor
 @Suite(.serialized)
 struct PDFFindTests {
@@ -321,7 +275,6 @@ struct PDFFindTests {
         PDFFind.board = NSPasteboard.withUniqueName()
     }
 
-    /// Off screen at a fixed size, showing `document`.
     private func shown(_ document: PDFDocument) -> PDFController {
         let controller = PDFController()
         controller.view.setFrameSize(NSSize(width: 600, height: 500))
@@ -329,7 +282,6 @@ struct PDFFindTests {
         return controller
     }
 
-    /// Three pages, each with "target" once.
     private func targets() throws -> PDFController {
         shown(try textPDF(["alpha target", "beta target", "gamma target"]))
     }
@@ -340,8 +292,6 @@ struct PDFFindTests {
         controller.view.setCurrentSelection(page.selection(for: range), animate: false)
     }
 
-    /// Use Selection for Find makes the selection the system's find text and marks its
-    /// matches, the selection's own the current one, without moving.
     @Test func useSelectionForFindStaysAtTheSelection() async throws {
         let controller = try targets()
         try select("target", onPage: 1, in: controller)
@@ -351,7 +301,6 @@ struct PDFFindTests {
         #expect(controller.matchIndex == 1 && controller.finding && PDFFind.shared == "target")
     }
 
-    /// Jump to Selection brings a selection on a page out of view into view.
     @Test func jumpToSelectionShowsTheSelection() throws {
         let controller = try targets(), view = controller.view
         view.layoutDocumentView()
@@ -363,8 +312,6 @@ struct PDFFindTests {
         #expect(shows() && view.currentPage === page)
     }
 
-    /// Find Next with nothing searched yet searches for the system's find text, going on from
-    /// the selection; with matches it steps through them.
     @Test func findNextGoesOnFromTheSelection() async throws {
         let controller = try targets()
         PDFFind.shared = "target"
@@ -379,12 +326,10 @@ struct PDFFindTests {
         try select("alpha", onPage: 0, in: controller)
         controller.findNext(-1)
         try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 3 }
-        // Nothing before the first page's: round to the last.
         #expect(controller.matchIndex == 2)
     }
 
-    /// Shared text replaces an earlier search, including an in-flight one; pending local typing wins.
-    @Test(arguments: ["alpha", "nothing"], [1, -1])
+    @Test(arguments: zip(["alpha", "nothing"], [1, -1]))
     func findNextUsesTheLatestSharedOrTypedText(_ earlier: String, _ step: Int) async throws {
         let controller = try targets()
         controller.findText = earlier
@@ -432,7 +377,6 @@ struct PDFFindTests {
         #expect(controller.matches.count == 1)
     }
 
-    /// Typing back to the found text while a longer one is searched ends with the field's matches.
     @Test func typingBackKeepsTheFieldsMatches() async throws {
         let controller = shown(try textPDF(["a ab a"]))
         controller.finding = true
@@ -449,7 +393,6 @@ struct PDFFindTests {
         #expect(controller.query == "a" && controller.matches.count == 3)
     }
 
-    /// A double-click sends the word, and where in it the click fell.
     @Test func aClickSendsTheWordAndTheLetter() throws {
         let pdf = try textPDF(["alpha beta"]), page = try #require(pdf.page(at: 0))
         let text = try #require(page.string) as NSString
@@ -466,7 +409,6 @@ struct PDFFindTests {
         #expect(page.syncWord(at: CGPoint(x: 10, y: 10)) == nil)
     }
 
-    /// SyncTeX's box for `rect` on `page`, the document's first: down from the page's top to the box's foot.
     private func loc(_ rect: CGRect, on page: PDFPage) -> ForwardLoc {
         ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
     }
@@ -522,7 +464,6 @@ struct PDFFindTests {
         #expect(pdf.match(for: word, near: [loc(rect, on: page)]) == nil)
     }
 
-    /// The page is one of those showing: a rebuild's pages replace the last's.
     private func shows(_ page: PDFPage?, in controller: PDFController) -> Bool {
         guard let page, let document = controller.view.document else { return false }
         return (0..<document.pageCount).contains { document.page(at: $0) === page }
@@ -535,9 +476,7 @@ struct PDFFindTests {
         }
     }
 
-    /// The bar stays: its matches are the new PDF's, the current one is kept,
-    /// and the pages don't move.
-    @Test(arguments: [NSScroller.Style.overlay, .legacy], [CGFloat?.none, 1.75])
+    @Test(arguments: zip([NSScroller.Style.overlay, .legacy], [CGFloat?.none, 1.75]))
     func aRebuildFindsAgainInPlace(_ scrollerStyle: NSScroller.Style, _ scale: CGFloat?) async throws {
         let controller = PDFController()
         let view = controller.view

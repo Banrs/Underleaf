@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// Shared Format and toolbar choices: the levels the class has, the caret's checked.
 struct SectionLevelItems: View {
     let project: ProjectModel?
 
@@ -13,12 +12,10 @@ struct SectionLevelItems: View {
     }
 }
 
-/// The symbols by kind, each kind a grid of TeX's glyphs: a list of 30 Greek letters runs off a
-/// laptop's screen. The glyph's command is its help tag.
+/// A grid per kind: a list of 30 Greek letters runs off a laptop's screen.
 struct SymbolItems: View {
     let project: ProjectModel?
 
-    /// About six to a row, in full rows: a palette spreads a short row across the menu's width.
     static func columns(_ count: Int) -> Int {
         [6, 5, 7].first { count % $0 == 0 } ?? 6
     }
@@ -29,7 +26,6 @@ struct SymbolItems: View {
             Menu(title) {
                 ForEach(Array(stride(from: 0, to: symbols.count, by: columns)), id: \.self) { start in
                     // A palette row, which shows its items' images: text alone draws blank (27.2).
-                    // The title is what VoiceOver says.
                     ControlGroup {
                         ForEach(symbols[start..<min(start + columns, symbols.count)], id: \.command) { glyph, command in
                             Button { project?.editor.perform(.symbol, command) } label: {
@@ -49,10 +45,8 @@ struct SymbolItems: View {
     }
 }
 
-/// Each item over what it puts in, as its subtitle.
 struct MathMenuItems: View {
     let project: ProjectModel?
-    /// The menu bar's Inline Math carries the shortcut; the toolbar's leaves it there.
     var shortcut: KeyboardShortcut?
     let inlineMath: () -> Void
 
@@ -73,7 +67,6 @@ struct MathMenuItems: View {
                 Text(verbatim: "\\begin{\(template.body)}")
             }
         }
-        // A section, so a symbol is one submenu down (HIG, Menus); it brings its own separators.
         Section("Symbols") { SymbolItems(project: project) }
     }
 }
@@ -95,16 +88,12 @@ struct InsertMenuItems: View {
     }
 }
 
-/// The symbols as TeX draws them, in the KaTeX fonts the maths preview has (Resources/KaTeX):
-/// lowercase Greek in math italic, the big operators at their text size, the rest upright;
-/// what those lack from KaTeX's AMS font, then STIX Two Math.
 enum MathGlyphs {
     private static let side: CGFloat = 24
     private static let size: CGFloat = 19
     private static let bigOperators: Set = ["\\sum", "\\prod", "\\int", "\\oint"]
     private static var images: [String: NSImage] = [:]
-    /// A chosen symbol isn't marked: AppKit selects a palette's item as it's chosen (27.2),
-    /// and these insert, they don't select.
+    /// AppKit selects a palette's item as it's chosen (27.2), and these insert, they don't select.
     private static let unmark = NotificationCenter.default.addObserver(
         forName: NSMenu.didSendActionNotification, object: nil, queue: .main) { note in
         // Posted on the main thread, which has the menu.
@@ -137,7 +126,6 @@ enum MathGlyphs {
         return NSFont(descriptor: descriptor.addingAttributes([.cascadeList: cascade]), size: size) ?? .systemFont(ofSize: size)
     }
 
-    /// The glyph's ink centred in a square, as a template image, so the menu colours it.
     static func image(_ glyph: String, _ command: String) -> NSImage {
         _ = unmark
         if let image = images[command] { return image }
@@ -154,8 +142,6 @@ enum MathGlyphs {
         return image
     }
 
-    /// What VoiceOver says: a Greek letter by its command's name, another symbol by its
-    /// Unicode name, then the command.
     static func spokenName(_ glyph: String, _ command: String) -> String {
         let letter = String(command.dropFirst())
         let name = glyph.first?.isLetter == true
