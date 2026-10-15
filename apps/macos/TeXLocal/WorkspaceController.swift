@@ -382,7 +382,8 @@ final class WorkspaceController: RestoredSplitViewController {
             if height >= ColumnMetrics.outlineMinimum { outlineHeight = height }
             (outlineItem.minimumThickness, outlineItem.maximumThickness) = (ColumnMetrics.outlineFolded, ColumnMetrics.outlineFolded)
         } else {
-            (outlineItem.minimumThickness, outlineItem.maximumThickness) = (ColumnMetrics.outlineMinimum, NSSplitViewItem.unspecifiedDimension)
+            outlineItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
+            outlineItem.minimumThickness = ColumnMetrics.outlineMinimum
             let split = sidebar.splitView
             split.setPosition(split.bounds.height - split.dividerThickness - outlineHeight, ofDividerAt: 0)
         }

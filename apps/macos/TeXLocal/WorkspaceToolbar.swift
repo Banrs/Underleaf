@@ -186,7 +186,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     /// Zoom out | scale menu | zoom in, one native capsule. Its menu form is a title alone, as
-    /// Format's, Compile's and the forms AppKit makes for the plain items beside them.
+    /// Compile's and the forms AppKit makes for the plain items beside them.
     private func zoomItem() -> NSToolbarItem {
         let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
         let menu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF }) { [app, project, pdf] in
