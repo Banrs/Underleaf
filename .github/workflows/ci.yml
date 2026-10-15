@@ -74,7 +74,6 @@ jobs:
     env:
       # The app and its test host get a defaults domain of their own.
       APP_ID: com.texlocal.mac.ci${{ github.run_id }}
-      DD: ${{ runner.temp }}/dd
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -91,13 +90,13 @@ jobs:
         working-directory: apps/macos
         run: >-
           xcodebuild test -scheme TeXLocal -destination 'platform=macOS'
-          -derivedDataPath "$DD" -parallel-testing-enabled NO
+          -derivedDataPath "$RUNNER_TEMP/dd" -parallel-testing-enabled NO
           -resultBundlePath "$RUNNER_TEMP/TeXLocal.xcresult"
           TEXLOCAL_APP_IDENTIFIER="$APP_ID"
       # A dylib would load from target/, which exists only where it was built.
       - name: Core linked statically, tests ran
         run: |
-          if otool -L "$DD"/Build/Products/Debug/TeXLocal.app/Contents/MacOS/TeXLocal | grep -q texlocal_ffi; then
+          if otool -L "$RUNNER_TEMP"/dd/Build/Products/Debug/TeXLocal.app/Contents/MacOS/TeXLocal | grep -q texlocal_ffi; then
             echo "::error::The app loads the Rust core as a dylib"; exit 1
           fi
           # xcodebuild passes a run in which no test ran.
