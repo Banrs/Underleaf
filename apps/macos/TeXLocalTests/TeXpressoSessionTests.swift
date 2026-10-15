@@ -519,7 +519,7 @@ struct TeXpressoSessionTests {
         #expect(core.starts.count == 1 && session.active)
         #expect(core.starts[0]["session"] == nil)
         #expect(core.starts[0]["files"] as? [[String: String]] == [["path": "main.tex", "text": "latest"]])
-        // For the PDF pane, not TeXpresso's own window.
+        // For the PDF pane: TeXpresso opens no window of its own.
         #expect(core.starts[0]["pdf"] as? Bool == true)
         session.stop()
         await session.waitForPendingCalls()

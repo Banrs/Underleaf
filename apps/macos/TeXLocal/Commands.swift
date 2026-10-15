@@ -205,11 +205,10 @@ extension AppModel {
         case .projectClose: Task { await close() }
         case .projectExport:
             if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
-        case .projectSearch:
-            if project != nil { sidebarShown = true }
-            searchFocusToken += 1
+        // The workspace shows the sidebar for its search field.
+        case .projectSearch: searchFocusToken += 1
         case .fileNew, .fileNewFolder:
-            sidebarShown = true
+            showSideColumn?(.sidebar, true)
             newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.saveEdits() }
@@ -230,9 +229,9 @@ extension AppModel {
         case .editGotoLine: prompt = .gotoLine
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
-        case .viewToggleSidebar: sidebarShown.toggle()
+        case .viewToggleSidebar: showSideColumn?(.sidebar, !sidebarShown)
         case .viewTogglePdf: togglePDF()
-        case .viewToggleInspector: inspectorShown.toggle()
+        case .viewToggleInspector: showSideColumn?(.inspector, !inspectorShown)
         case .viewToggleLogs: project?.panel.shown.toggle()
         case .viewToggleWordCount: showWordCount.toggle()
         case .viewZoomIn: requestPDF(.zoomIn)

@@ -75,8 +75,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         // AppKit's top scroll edge is a glass that lightens what is under it in Dark (27.2), so the toolbar over the source is the editor's surface at rest only in Light.
         window.backgroundColor = .untintedTextBackground
         window.toolbar = workspace.toolbar.toolbar
-        // Compile's form goes by the toolbar's tools, which a workspace that appeared as the window took it could not yet read.
-        workspace.toolbarItemsChanged()
         self.workspace = workspace
         home = nil
         titleWatch?.cancel()

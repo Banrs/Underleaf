@@ -28,12 +28,9 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var labels: [String] = []
     private var typed = 0
     private var kind = CompletionKind.command
-    private var fonts = CompletionList.fonts(for: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
-    private static func fonts(for font: NSFont) -> (regular: NSFont, bold: NSFont) {
-        (font, NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask))
-    }
+    private var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    private var boldFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .bold)
     private static let shownRows = 8
-
     private static let radius: CGFloat = 13, margin: CGFloat = 5, highlightRadius: CGFloat = 8, textInset: CGFloat = 10
     private static let leastWidth: CGFloat = 160
 
@@ -90,7 +87,8 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         self.labels = labels
         self.typed = typed
         self.kind = kind
-        fonts = Self.fonts(for: font)
+        self.font = font
+        boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         table.rowHeight = (font.ascender - font.descender + font.leading).rounded(.up) + 8
         table.reloadData()
         table.selectRowIndexes([0], byExtendingSelection: false)
@@ -198,9 +196,8 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     private func label(_ row: Int) -> NSAttributedString {
         let colour: NSColor = row == table.selectedRow ? .alternateSelectedControlTextColor : .labelColor
-        let label = NSMutableAttributedString(string: labels[row], attributes: [.font: fonts.regular, .foregroundColor: colour, .paragraphStyle: Self.oneLine])
-        label.addAttribute(.font, value: fonts.bold,
-                           range: NSRange(location: 0, length: min(typed, label.length)))
+        let label = NSMutableAttributedString(string: labels[row], attributes: [.font: font, .foregroundColor: colour, .paragraphStyle: Self.oneLine])
+        label.addAttribute(.font, value: boldFont, range: NSRange(location: 0, length: min(typed, label.length)))
         return label
     }
 

@@ -26,7 +26,7 @@ struct StatusBar: View {
             content(.short).labelStyle(.iconOnly)
         }
         .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
-        // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`).
+        // Its line's row, where the folded File Outline's divider is beside it.
         .padding(.top, BarMetrics.line)
         // No ground of its own: AppKit's scroll edge lies under the bar (`buildArea`) and draws no line, so the bar has its own.
         .overlay(alignment: .top) { Divider() }
@@ -133,9 +133,7 @@ struct StatusBar: View {
                 Label("PDF Out of Date", systemImage: "arrow.clockwise")
                     .hitTarget()
             }
-            .help(project.texpresso.active
-                ? "Live Preview updates its own window; compile to refresh this PDF"
-                : "The PDF is older than the source; compile to refresh it")
+            .help("The PDF is older than the source; compile to refresh it")
             .disabled(!app.isEnabled(.compileRun, on: project))
         }
     }
@@ -143,6 +141,7 @@ struct StatusBar: View {
     private var buildStatus: some View {
         HStack {
             if project.compiling {
+                ProgressView().accessibilityHidden(true)
                 Text("Compiling…")
             } else if let result = project.result {
                 if result.stopped {

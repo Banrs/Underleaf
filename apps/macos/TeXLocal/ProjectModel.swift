@@ -168,7 +168,7 @@ final class ProjectModel {
 
     var isLaTeX: Bool { openPath.map(isLaTeXFile) ?? false }
     var headingStyles: HeadingStyles {
-        HeadingStyles(documentClass: documentClass, hasChapters: outline.contains { $0.level == 1 })
+        HeadingStyles(documentClass: documentClass)
     }
 
     var headingLevel: HeadingLevel {
