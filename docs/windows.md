@@ -107,7 +107,7 @@ from a surface edge to its text. Pages: padding `36,0,36,0`, title margin `36,24
 from `ControlCornerRadius` (4) and `OverlayCornerRadius` (8); never override them.
 
 **Icons.** Segoe Fluent Icons through `SymbolThemeFontFamily` on `FontIcon`, written `&#xE768;` in
-XAML or `""` in C#, never raw. Sizes 16 (menus, tree, title bar, overflow), 20 (primary
+XAML or `"\uE768"` in C#, never raw. Sizes 16 (menus, tree, title bar, overflow), 20 (primary
 commands, card icons), 32 (two-line list items), 48 (empty states). Compile E768, Stop E71A, Save
 E74E, Folder E8B7, Document E8A5, Settings E713, Search E721, ZoomIn E8A3, ZoomOut E71F, Error
 E783, Warning E7BA, Info E946, Add E710, More E712.

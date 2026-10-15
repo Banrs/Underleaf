@@ -11,6 +11,10 @@ release/
 # Rust build output
 target/
 
+# .NET build output
+apps/windows/**/bin/
+apps/windows/**/obj/
+
 # Logs
 *.log
 
