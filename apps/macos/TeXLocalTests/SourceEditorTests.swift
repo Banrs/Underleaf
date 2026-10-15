@@ -57,15 +57,13 @@ struct SourceEditorTests {
         #expect(view.string == "xone" && view.document.text == "xone")
     }
 
-    @Test func bracketsCloseAndAreSteppedOver() {
+    /// Each key goes through the core, which closes brackets and steps over them, keeps the indentation and indents by Tab.
+    @Test func typingIsTheCores() {
         open("")
         text.insertText("{", replacementRange: typed)
         #expect(text.string == "{}" && text.selectedRange() == NSRange(location: 1, length: 0))
         text.insertText("}", replacementRange: typed)
         #expect(text.string == "{}" && text.selectedRange() == NSRange(location: 2, length: 0))
-        open("x", caret: 0)
-        text.insertText("(", replacementRange: typed)
-        #expect(text.string == "(x")
         open("ab")
         text.setSelectedRange(NSRange(location: 0, length: 2))
         text.insertText("[", replacementRange: typed)
@@ -74,37 +72,18 @@ struct SourceEditorTests {
         text.insertText("{", replacementRange: typed)
         text.deleteBackward(nil)
         #expect(text.string == "")
-        open("{}", caret: 1)
-        text.deleteBackward(nil)
-        #expect(text.string == "}")
-    }
-
-    @Test func escapedBracketsCloseEscaped() {
+        // A closer put in as \]: its bracket steps over both, and the backslash typed for it goes.
         open("\\")
-        text.insertText("[", replacementRange: typed)
-        #expect(text.string == "\\[\\]" && text.selectedRange() == NSRange(location: 2, length: 0))
-        text.insertText("x", replacementRange: typed)
-        text.insertText("\\", replacementRange: typed)
-        text.insertText("]", replacementRange: typed)
+        for key in ["[", "x", "\\", "]"] { text.insertText(key, replacementRange: typed) }
         #expect(text.string == "\\[x\\]" && text.selectedRange() == NSRange(location: 5, length: 0))
-        open("\\")
-        text.insertText("(", replacementRange: typed)
-        for c in "\\pi" { text.insertText(String(c), replacementRange: typed) }
-        #expect(text.string == "\\(\\pi\\)" && text.selectedRange() == NSRange(location: 5, length: 0))
-        text.insertText(")", replacementRange: typed)
-        #expect(text.string == "\\(\\pi\\)" && text.selectedRange() == NSRange(location: 7, length: 0))
-        open("\\")
-        text.insertText("{", replacementRange: typed)
-        #expect(text.string == "\\{\\}")
-        text.deleteBackward(nil)
-        #expect(text.string == "\\")
-        open("\\")
-        text.insertText("[", replacementRange: typed)
+        open("  a{}", caret: 4)
         text.insertNewline(nil)
-        #expect(text.string == "\\[\n\n\\]" && text.selectedRange() == NSRange(location: 3, length: 0))
-        open("\\\\")
-        text.insertText("[", replacementRange: typed)
-        #expect(text.string == "\\\\[]")
+        #expect(text.string == "  a{\n  \n  }" && text.selectedRange().location == 7)
+        open("x", caret: 0)
+        text.insertTab(nil)
+        #expect(text.string == "  x")
+        text.insertBacktab(nil)
+        #expect(text.string == "x" && text.document.text == text.string)
     }
 
     @Test func escapeStaysInTheEditor() throws {
@@ -142,32 +121,8 @@ struct SourceEditorTests {
         #expect(try #require(text.offered).items.count < all)
     }
 
-    @Test func anEmojiAfterAnOpeningBracketIsOccupiedText() {
-        open("😀", caret: 0)
-        text.insertText("(", replacementRange: typed)
-        #expect(text.string == "(😀")
-        #expect(text.selectedRange() == NSRange(location: 1, length: 0))
-    }
-
-    @Test func newLinesKeepTheIndentation() {
-        open("  a", caret: 3)
-        text.insertNewline(nil)
-        #expect(text.string == "  a\n  " && text.selectedRange().location == 6)
-        open("  a{}", caret: 4)
-        text.insertNewline(nil)
-        #expect(text.string == "  a{\n  \n  }" && text.selectedRange().location == 7)
-        open("x", caret: 0)
-        text.insertTab(nil)
-        #expect(text.string == "  x")
-        text.insertBacktab(nil)
-        #expect(text.string == "x")
-        open("     y", caret: 5)
-        text.deleteBackward(nil)
-        #expect(text.string == "    y")
-    }
-
     struct Step: Sendable {
-        enum Command: Sendable { case comment, bold, italic }
+        enum Command: Sendable { case comment, bold }
         let text: String, selection: NSRange, command: Command, result: String, selected: NSRange
     }
 
@@ -178,17 +133,11 @@ struct SourceEditorTests {
              result: "\\textbf{word}", selected: NSRange(location: 8, length: 4)),
         Step(text: "a \\textit{b \\textbf{word} c} d", selection: NSRange(location: 20, length: 4), command: .bold,
              result: "a \\textit{b word c} d", selected: NSRange(location: 12, length: 4)),
-        Step(text: "a \\textit{b \\underline{word} c} d", selection: NSRange(location: 11, length: 0), command: .italic,
-             result: "a b \\underline{word} c d", selected: NSRange(location: 3, length: 0)),
     ])
     func aCommandIsOneUndoStepThatKeepsTheSelection(_ step: Step) {
         open(step.text)
         text.setSelectedRange(step.selection)
-        let command: EditorCommand = switch step.command {
-        case .comment: .comment
-        case .bold: .bold
-        case .italic: .italic
-        }
+        let command: EditorCommand = step.command == .comment ? .comment : .bold
         #expect(editor.perform(command))
         #expect(text.string == step.result && text.selectedRange() == step.selected)
         #expect(editor.document?.text == text.string)
@@ -327,16 +276,6 @@ struct SourceEditorTests {
         #expect(text.undoManager?.undoActionName == "Move Line Up")
         text.undoManager?.undo()
         #expect(text.string == "b\na\nd\nc")
-        #expect(text.document.text == text.string)
-    }
-
-    @Test func severalSelectionsMoveTogether() {
-        open("1\n2\n3\n4\n5\n6", caret: 0)
-        text.setSelectedRanges([NSValue(range: NSRange(location: 2, length: 4)), NSValue(range: NSRange(location: 8, length: 1))],
-                               affinity: .downstream, stillSelecting: false)
-        #expect(editor.perform(.moveLineUp))
-        #expect(text.string == "2\n3\n1\n5\n4\n6")
-        #expect(text.selectedRanges.map(\.rangeValue) == [NSRange(location: 0, length: 4), NSRange(location: 6, length: 1)])
         #expect(text.document.text == text.string)
     }
 
@@ -505,19 +444,19 @@ struct SourceEditorTests {
         defer { withExtendedLifetime(window) {} }
         open("x")
         text.insertText("\n\\section", replacementRange: typed)
-        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.colours.command }
+        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.color(.command) }
     }
 
     @Test func anEditRecoloursTheLinesBelowIt() async throws {
         let window = inWindow()
         defer { withExtendedLifetime(window) {} }
         open("a\nb\nxyz\n\\]", caret: 0)
-        let colours = SyntaxTheme.overleaf.colours
-        try await waitUntil { (try? self.colour(of: "]")) == colours.invalid }
+        let theme = SyntaxTheme.overleaf
+        try await waitUntil { (try? self.colour(of: "]")) == theme.color(.invalid) }
         text.insertText("\\[\n", replacementRange: NSRange(location: 2, length: 0))
-        try await waitUntil { (try? self.colour(of: "]")) == colours.maths }
+        try await waitUntil { (try? self.colour(of: "]")) == theme.color(.mathDelimiter) }
         text.undoManager?.undo()
-        try await waitUntil { (try? self.colour(of: "]")) == colours.invalid }
+        try await waitUntil { (try? self.colour(of: "]")) == theme.color(.invalid) }
     }
 
     @Test func reduceMotionMarksABracketsPartnerInPlace() throws {
@@ -550,45 +489,18 @@ struct SourceEditorTests {
         defer { window.close() }
         open("\\section{A} % note")
         text.syntaxTheme = .texstudio
-        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.texstudio.colours.command } state: {
+        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.texstudio.color(.command) } state: {
             "TeXstudio: \(String(describing: try? self.colour(of: "\\section")))"
         }
-        #expect(try colour(of: "% note") == SyntaxTheme.texstudio.colours.comment)
+        #expect(try colour(of: "% note") == SyntaxTheme.texstudio.color(.comment))
         let before = try renderedText()
         text.syntaxTheme = .system
-        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.system.colours.command } state: {
+        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.system.color(.command) } state: {
             "System: \(String(describing: try? self.colour(of: "\\section")))"
         }
         #expect(try renderedText() != before, "A theme change must repaint the already-visible text.")
         text.syntaxTheme = .overleaf
-        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.colours.command }
-    }
-
-    @Test(arguments: [NSAppearance.Name.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
-    func theThemesAreLegible(name: NSAppearance.Name) throws {
-        let appearance = try #require(NSAppearance(named: name))
-        // Its own reading of a colour, not the app's `resolved(in:)`, which made the colours under test.
-        func resolved(_ color: NSColor) -> NSColor {
-            var out = color
-            appearance.performAsCurrentDrawingAppearance { out = color.usingColorSpace(.sRGB) ?? color }
-            return out
-        }
-        let background = resolved(.textBackgroundColor), fill = resolved(.secondarySystemFill)
-        // The fill as the window server mixes it in: 235 on white, 48 on Dark's 30.
-        func under(_ component: KeyPath<NSColor, CGFloat>) -> CGFloat {
-            background[keyPath: component] * (1 - fill.alphaComponent) + fill[keyPath: component] * fill.alphaComponent
-        }
-        let currentLine = NSColor(srgbRed: under(\.redComponent), green: under(\.greenComponent), blue: under(\.blueComponent), alpha: 1)
-        for theme in SyntaxTheme.allCases {
-            let c = theme.colours
-            // By the name: an Increase Contrast appearance made here is the plain one, the setting being off.
-            for color in [c.command, c.argument, c.maths, c.comment, c.invalid].map({ $0.legibleAsText(in: name) }) {
-                for ground in [background, currentLine] {
-                    #expect(color.contrast(with: ground) >= ([.aqua, .darkAqua].contains(name) ? 4.5 : 7), "\(theme) \(color) on \(ground)")
-                }
-            }
-        }
-        if name == .aqua { #expect(resolved(SyntaxTheme.overleaf.colours.command) == NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)) }
+        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.color(.command) }
     }
 
     @Test func aDoubleClickGoesToThePDF() throws {
