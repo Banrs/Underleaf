@@ -44,7 +44,7 @@ fn settings_reject_unsafe_compiler_inputs() {
 
     fails_with(
         write_settings(&root, &json!({ "shellEscape": "false" })),
-        "shellEscape must be a boolean",
+        "expected a boolean",
     );
     fails_with(
         write_settings(&root, &json!({ "mainFile": "-interaction.tex" })),
@@ -54,17 +54,6 @@ fn settings_reject_unsafe_compiler_inputs() {
         write_settings(&root, &json!({ "mainFile": "../outside.tex" })),
         "Path escapes project",
     );
-}
-
-#[test]
-fn renaming_a_directory_keeps_the_main_file_setting_valid() {
-    let data = data_dir();
-    let root = project(data.path(), "rename-test");
-    create_file(&root, "chapters/main.tex", false).unwrap();
-    write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
-    let result = rename_entry(&root, "chapters", "content").unwrap();
-    assert_eq!(result.main_file, "content/main.tex");
-    assert_eq!(read_settings(&root).main_file, "content/main.tex");
 }
 
 #[test]
@@ -79,19 +68,6 @@ fn a_settings_write_failure_rolls_back_the_filesystem_rename() {
     assert!(!root.join("paper.tex").exists());
 }
 
-#[test]
-fn an_entry_named_with_a_leading_dash_can_be_renamed() {
-    // create_entry and uploads accept such a name; only the main file, which
-    // reaches latexmk's command line, may not start with "-". Deleting one is
-    // covered in projects.rs, against a stand-in for the platform trash.
-    let data = data_dir();
-    let root = project(data.path(), "dash-test");
-    create_file(&root, "-draft.tex", false).unwrap();
-    let result = rename_entry(&root, "-draft.tex", "-notes/-draft.tex").unwrap();
-    assert_eq!(result.to, "-notes/-draft.tex");
-    assert!(root.join("-notes/-draft.tex").is_file());
-}
-
 fn names_in(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = fs::read_dir(dir)
         .unwrap()
@@ -99,6 +75,35 @@ fn names_in(dir: &Path) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+#[test]
+fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rules() {
+    let data = data_dir();
+    let root = project(data.path(), "rename-test");
+    create_file(&root, "chapters/main.tex", false).unwrap();
+    create_file(&root, "chapters2/other.tex", false).unwrap();
+    // A folder holding the main file takes it along.
+    write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
+    let result = rename_entry(&root, "chapters", "content").unwrap();
+    assert_eq!(result.main_file, "content/main.tex");
+    assert_eq!(read_settings(&root).main_file, "content/main.tex");
+    // One that merely shares a name's start with the main file's folder does not.
+    create_file(&root, "chapters/x.tex", false).unwrap();
+    write_settings(&root, &json!({ "mainFile": "chapters2/other.tex" })).unwrap();
+    rename_entry(&root, "chapters", "moved").unwrap();
+    assert_eq!(read_settings(&root).main_file, "chapters2/other.tex");
+    // A folder can't be moved into itself.
+    let err = rename_entry(&root, "moved", "moved/old/moved").unwrap_err();
+    assert_eq!(err.status, 400, "{}", err.message);
+    assert_eq!(names_in(&root.join("moved")), ["x.tex"]);
+    // create_entry and uploads accept a leading "-"; only the main file, which
+    // reaches latexmk's command line, may not start with one. Deleting one is
+    // covered in projects.rs, against a stand-in for the platform trash.
+    create_file(&root, "-draft.tex", false).unwrap();
+    let result = rename_entry(&root, "-draft.tex", "-notes/-draft.tex").unwrap();
+    assert_eq!(result.to, "-notes/-draft.tex");
+    assert!(root.join("-notes/-draft.tex").is_file());
 }
 
 #[test]
@@ -147,16 +152,6 @@ fn a_project_made_while_a_rename_is_under_way_gets_another_name() {
     let stopped = rename_project(data.path(), "R", "S", |_| Err(CoreError::conflict("no")));
     assert_eq!(stopped.unwrap_err().status, 409);
     assert_eq!(names_in(data.path()), ["R", "R 2"]);
-}
-
-#[test]
-fn a_folder_cannot_be_moved_into_itself() {
-    let data = data_dir();
-    let root = project(data.path(), "into-itself");
-    create_file(&root, "chapters/one.tex", false).unwrap();
-    let err = rename_entry(&root, "chapters", "chapters/old/chapters").unwrap_err();
-    assert_eq!(err.status, 400, "{}", err.message);
-    assert_eq!(names_in(&root.join("chapters")), ["one.tex"]);
 }
 
 #[test]
@@ -227,30 +222,6 @@ fn existing_symlink_ancestors_cannot_escape_the_project() {
         fails_with(safe_path(&root, path), "Path escapes project");
         fails_with(safe_rel_file(&root, path), "Path escapes project");
     }
-}
-
-#[cfg(unix)]
-#[test]
-fn implicit_project_scans_skip_external_symlink_files() {
-    let data = data_dir();
-    let root = project(data.path(), "symlink-scans");
-    let outside = tempfile::tempdir().unwrap();
-    fs::write(
-        outside.path().join("secret.tex"),
-        "needle\n\\label{outside-secret}\n",
-    )
-    .unwrap();
-    std::os::unix::fs::symlink(outside.path().join("secret.tex"), root.join("external.tex"))
-        .unwrap();
-
-    assert!(search_project(&root, "needle", 50).unwrap().is_empty());
-    assert!(scan_symbols(&root).unwrap().labels.is_empty());
-    assert!(
-        file_tree(&root)
-            .unwrap()
-            .iter()
-            .all(|node| node.path != "external.tex")
-    );
 }
 
 // Not gated: the settings name's case aliases are reserved on every platform
@@ -325,49 +296,6 @@ fn compiled_pdf_path_derives_from_a_nested_main_file() {
         compiled_pdf_path(&root).unwrap(),
         root.join("build").join("paper.pdf")
     );
-}
-
-#[test]
-fn renaming_an_unrelated_entry_leaves_the_main_file_alone() {
-    let data = data_dir();
-    let root = project(data.path(), "rename-unrelated");
-    create_file(&root, "chapters/main.tex", false).unwrap();
-    create_file(&root, "chapters2/other.tex", false).unwrap();
-    write_settings(&root, &json!({ "mainFile": "chapters2/other.tex" })).unwrap();
-    rename_entry(&root, "chapters", "content").unwrap();
-    assert_eq!(read_settings(&root).main_file, "chapters2/other.tex");
-}
-
-#[cfg(unix)]
-#[test]
-fn zip_export_keeps_safe_file_links_but_skips_directory_and_external_links() {
-    let data = data_dir();
-    let root = project(data.path(), "zip-symlink-test");
-    fs::write(root.join("real.tex"), "shared").unwrap();
-    fs::create_dir(root.join("figures")).unwrap();
-    fs::write(root.join("figures/a.txt"), "figure").unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    fs::write(outside.path().join("secret.tex"), "secret").unwrap();
-    std::os::unix::fs::symlink(root.join("real.tex"), root.join("linked.tex")).unwrap();
-    std::os::unix::fs::symlink(root.join("figures"), root.join("linked-dir")).unwrap();
-    std::os::unix::fs::symlink(outside.path().join("secret.tex"), root.join("outside.tex"))
-        .unwrap();
-    std::os::unix::fs::symlink(root.join("gone.tex"), root.join("broken.tex")).unwrap();
-    let dest = data.path().join("out.zip");
-    export_zip(&root, &dest).unwrap();
-    let names = zip_names(&dest);
-    assert!(names.contains(&"linked.tex".to_string()), "{names:?}");
-    assert!(
-        !names.iter().any(|name| name.starts_with("linked-dir")),
-        "{names:?}"
-    );
-    assert!(!names.contains(&"outside.tex".to_string()), "{names:?}");
-    assert!(!names.contains(&"broken.tex".to_string()), "{names:?}");
-    let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
-    let mut linked = archive.by_name("linked.tex").unwrap();
-    let mut body = String::new();
-    std::io::Read::read_to_string(&mut linked, &mut body).unwrap();
-    assert_eq!(body, "shared");
 }
 
 #[test]
@@ -471,7 +399,7 @@ fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
 }
 
 #[test]
-fn search_is_case_insensitive_for_ascii_and_unicode() {
+fn search_folds_case_and_cuts_its_snippet_at_the_match() {
     let data = data_dir();
     let root = project(data.path(), "search");
     fs::write(root.join("ascii.tex"), "One\nThe THEOREM holds\n").unwrap();
@@ -501,18 +429,21 @@ fn search_is_case_insensitive_for_ascii_and_unicode() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].before, "Çà İstanbul, GRÖSSE und ");
     assert_eq!(hits[0].matched, "Größe");
-}
-
-#[test]
-fn a_hit_carries_the_text_either_side_of_it() {
-    let data = data_dir();
-    let root = project(data.path(), "snippet");
-    fs::write(root.join("a.tex"), "the quick brown fox jumps\n").unwrap();
+    // A hit carries the text either side of it.
+    fs::write(root.join("quick.tex"), "the quick brown fox jumps\n").unwrap();
     let hits = search_project(&root, "brown", 50).unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].before, "the quick ");
     assert_eq!(hits[0].matched, "brown");
     assert_eq!(hits[0].after, " fox jumps");
+    // U+0130 and the Kelvin sign both lowercase into plain ASCII.
+    fs::write(root.join("kelvin.tex"), "measured 5 \u{212A} today\n").unwrap();
+    let files = |query: &str| -> Vec<String> {
+        let hits = search_project(&root, query, 50).unwrap();
+        hits.into_iter().map(|hit| hit.file).collect()
+    };
+    assert!(files("istanbul").contains(&"wide.tex".to_string()));
+    assert!(files("k").contains(&"kelvin.tex".to_string()));
 }
 
 #[test]
@@ -667,28 +598,6 @@ fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
 }
 
 #[test]
-fn unicode_characters_can_match_an_ascii_query() {
-    // U+0130 and the Kelvin sign both lowercase into plain ASCII.
-    let data = data_dir();
-    let root = project(data.path(), "folding");
-    fs::write(root.join("a.tex"), "\u{0130}stanbul\n").unwrap();
-    fs::write(root.join("b.tex"), "measured 5 \u{212A} today\n").unwrap();
-
-    let hits = search_project(&root, "istanbul", 10).unwrap();
-    assert_eq!(
-        hits.iter().map(|h| h.file.as_str()).collect::<Vec<_>>(),
-        vec!["a.tex"],
-        "U+0130 lowercases to an ASCII 'i'"
-    );
-
-    let hits = search_project(&root, "k", 10).unwrap();
-    assert!(
-        hits.iter().any(|h| h.file == "b.tex"),
-        "U+212A lowercases to an ASCII 'k': {hits:?}"
-    );
-}
-
-#[test]
 fn the_file_tree_lists_folders_first_then_names_ignoring_case() {
     let data = data_dir();
     let root = project(data.path(), "tree-order");
@@ -788,30 +697,6 @@ fn zip_export_skips_its_own_archive_when_the_destination_is_spelled_through_a_li
     assert_eq!(names, ["main.tex"]);
 }
 
-#[cfg(unix)]
-#[test]
-fn a_link_loop_in_the_project_is_skipped_rather_than_failing_every_scan() {
-    // A link that resolves to nothing, here two links pointing at each other,
-    // cannot be shown to stay inside the project, so it is not content. It
-    // must not turn the file tree, the scans or the ZIP export into an error.
-    let data = data_dir();
-    let root = project(data.path(), "link-loop");
-    std::os::unix::fs::symlink(root.join("b.tex"), root.join("a.tex")).unwrap();
-    std::os::unix::fs::symlink(root.join("a.tex"), root.join("b.tex")).unwrap();
-
-    let names: Vec<String> = file_tree(&root)
-        .unwrap()
-        .into_iter()
-        .map(|n| n.name)
-        .collect();
-    assert_eq!(names, ["main.tex"]);
-    assert!(search_project(&root, "documentclass", 50).is_ok());
-    assert!(scan_symbols(&root).is_ok());
-    let out = tempfile::tempdir().unwrap();
-    export_zip(&root, &out.path().join("out.zip")).unwrap();
-    assert_eq!(zip_names(&out.path().join("out.zip")), ["main.tex"]);
-}
-
 #[test]
 fn citations_include_bibitem_keys_and_commented_or_unfilled_labels_are_left_out() {
     let data = data_dir();
@@ -850,23 +735,61 @@ fn symbol_completions_keep_file_order_and_remove_duplicates() {
 
 #[cfg(unix)]
 #[test]
-fn scans_from_an_aliased_root_follow_file_links_and_skip_directory_links() {
+fn the_tree_scans_and_zip_follow_only_links_to_files_inside_the_project() {
+    // A link to a file inside is content. One to a folder, outside, broken or
+    // in a loop is not, and must not turn the tree, the scans or the ZIP
+    // export into an error, however the project's folder is reached.
     let data = data_dir();
-    let root = project(data.path(), "scan-alias");
+    let root = project(data.path(), "links");
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(
+        outside.path().join("secret.tex"),
+        "needle\n\\label{outside-secret}\n",
+    )
+    .unwrap();
     fs::write(root.join("source.txt"), "needle \\label{linked}").unwrap();
-    std::os::unix::fs::symlink(root.join("source.txt"), root.join("linked.tex")).unwrap();
-    std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+    fs::create_dir(root.join("figures")).unwrap();
+    fs::write(root.join("figures/a.txt"), "figure").unwrap();
+    let link = |target: &Path, name: &str| {
+        std::os::unix::fs::symlink(target, root.join(name)).unwrap();
+    };
+    link(&root.join("source.txt"), "linked.tex");
+    link(&outside.path().join("secret.tex"), "external.tex");
+    link(&root.join("figures"), "linked-dir");
+    link(&root, "loop");
+    link(&root.join("gone.tex"), "broken.tex");
+    link(&root.join("b.tex"), "a.tex");
+    link(&root.join("a.tex"), "b.tex");
     let alias = data.path().join("alias");
     std::os::unix::fs::symlink(&root, &alias).unwrap();
 
-    let tree = file_tree(&alias).unwrap();
+    for base in [&root, &alias] {
+        let tree = file_tree(base).unwrap();
+        let top: Vec<_> = tree.iter().map(|n| n.path.as_str()).collect();
+        assert_eq!(top, ["figures", "linked.tex", "main.tex", "source.txt"]);
+        let mut hits: Vec<_> = search_project(base, "needle", 10)
+            .unwrap()
+            .into_iter()
+            .map(|hit| hit.file)
+            .collect();
+        hits.sort();
+        assert_eq!(hits, ["linked.tex", "source.txt"]);
+        assert_eq!(scan_symbols(base).unwrap().labels, ["linked"]);
+    }
+    let dest = data.path().join("out.zip");
+    export_zip(&root, &dest).unwrap();
     assert_eq!(
-        tree.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(),
-        ["linked.tex", "main.tex", "source.txt"]
+        zip_names(&dest),
+        [
+            "figures/",
+            "figures/a.txt",
+            "linked.tex",
+            "main.tex",
+            "source.txt"
+        ]
     );
-    let hits = search_project(&alias, "needle", 10).unwrap();
-    assert_eq!(hits.len(), 2);
-    assert!(hits.iter().any(|h| h.file == "linked.tex"));
-    assert!(hits.iter().any(|h| h.file == "source.txt"));
-    assert_eq!(scan_symbols(&alias).unwrap().labels, ["linked"]);
+    let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
+    let mut body = String::new();
+    std::io::Read::read_to_string(&mut archive.by_name("linked.tex").unwrap(), &mut body).unwrap();
+    assert_eq!(body, "needle \\label{linked}");
 }

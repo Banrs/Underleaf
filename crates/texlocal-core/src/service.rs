@@ -563,10 +563,19 @@ impl Service {
                     projects::write_creating(&abs, text.as_bytes())
                 })?)
             }
+            // With `free`, a taken name is numbered past ("untitled 2.tex") rather than refused.
             "create_entry" => {
                 let (path, dir) = (s("path")?, arg::<Option<bool>>(args, "dir")?);
+                let free = arg::<Option<bool>>(args, "free")?.unwrap_or(false);
                 out(self.with_project(s("id")?, |root| {
-                    projects::create_file(root, path, dir.unwrap_or(false))
+                    let dir = dir.unwrap_or(false);
+                    let made = if free {
+                        projects::create_free(root, path, dir)?
+                    } else {
+                        projects::create_file(root, path, dir)?;
+                        path.to_owned()
+                    };
+                    Ok(json!({ "path": made }))
                 })?)
             }
             "rename_entry" => {
@@ -641,6 +650,12 @@ impl Service {
                 arg::<Option<String>>(args, "file")?.as_deref(),
                 arg(args, "line")?,
             )),
+            // An absolute path in the library as {id, path}; null outside every project.
+            "locate" => out(projects::locate(&self.data_dir, Path::new(s("path")?))?),
+            "get_ui_state" => out(settings::read_ui(&root()?)),
+            "set_ui_state" => out(self.with_project(s("id")?, |root| {
+                settings::write_ui(root, arg(args, "patch")?)
+            })?),
             _ => Err(CoreError::not_found(format!("Unknown command: {command}"))),
         }
     }
