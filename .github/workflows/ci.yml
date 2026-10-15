@@ -128,11 +128,15 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ hashFiles('apps/windows/**/*.csproj', 'apps/windows/Directory.Build.props') }}
       - name: No WebView2, no raw icon glyphs
         shell: bash
         run: |
           # An if, since bash -e ignores a failing `! grep` before the last line.
-          if grep -rIlE 'WebView2|CoreWebView' apps/windows --include='*.cs' --include='*.xaml' --include='*.csproj' --include='*.props'; then exit 1; fi
+          if grep -rIlE 'WebView2|CoreWebView' apps/windows --exclude-dir=obj --exclude-dir=bin --include='*.cs' --include='*.xaml' --include='*.csproj' --include='*.props'; then exit 1; fi
           if LC_ALL=C.UTF-8 grep -rIlP '[\x{E000}-\x{F8FF}]' apps/windows --include='*.cs' --include='*.xaml'; then exit 1; fi
       - run: cargo rustc -p texlocal-ffi --lib --release --crate-type cdylib
       - run: dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64 -p:SkipCargo=true
@@ -144,10 +148,11 @@ jobs:
         run: |
           $exe = Get-ChildItem apps/windows/TeXLocal/bin -Recurse -Filter TeXLocal.exe | Select-Object -First 1
           if (-not (Test-Path (Join-Path $exe.DirectoryName 'texlocal_ffi.dll'))) { throw 'texlocal_ffi.dll missing' }
-          $p = Start-Process $exe.FullName -ArgumentList '--smoke' -PassThru
+          $err = Join-Path $env:RUNNER_TEMP smoke.err
+          $p = Start-Process $exe.FullName -ArgumentList '--smoke' -PassThru -RedirectStandardError $err
           $null = $p.Handle  # else ExitCode can read null once it has exited
           if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'smoke timed out' }
-          if ($p.ExitCode -ne 0) { throw "smoke exited $($p.ExitCode)" }
+          if ($p.ExitCode -ne 0) { Get-Content $err; throw "smoke exited $($p.ExitCode)" }
 
   ci-ok:
     needs: [changes, rust, mac, windows]

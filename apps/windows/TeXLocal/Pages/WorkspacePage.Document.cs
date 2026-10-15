@@ -237,6 +237,7 @@ public sealed partial class WorkspacePage
         panelOpen = IssuesItem.IsChecked = open;
         IssuesRow.Height = new GridLength(open ? MainWindow.Pref("issuesHeight", 200.0) : 0);
         IssuesSizer.Visibility = IssuesPanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        if (open && Editor.Path is not null) Editor.ScrollToCaret();
     }
 
     void OnIssuesPane(object sender, RoutedEventArgs e) => ShowPanel(IssuesItem.IsChecked);

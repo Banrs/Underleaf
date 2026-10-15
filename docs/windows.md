@@ -36,7 +36,7 @@ apps/windows/
     App.xaml(.cs), MainWindow.xaml(.cs)
     Pages/HomePage, WorkspacePage, SettingsPage (.xaml/.cs); WorkspacePage.Document.cs (editor, builds, issues, PDF, SyncTeX)
     Controls/Sizer.cs, RenameFlyout.xaml(.cs), PdfView.xaml(.cs), SourceView.xaml(.cs)
-    Themes/Generic.xaml        card styles, status button style, syntax ThemeDictionaries
+    Themes/Generic.xaml        card styles, status button style
   TeXLocal.Tests/              xUnit, against TeXLocal.Core only: the bridge and smoke behaviour
 ```
 
@@ -70,7 +70,7 @@ apps/windows/
 | Need | Choice | Why not the alternative |
 |---|---|---|
 | Window, chrome | `Window` + `MicaBackdrop` (Base), WinUI `TitleBar` (`Height` 48 with `TitleBarHeightOption.Tall`; the control alone stays 32) | Mica Alt is for tabs in the title bar; no hand-built caption |
-| Pages | `Frame`: Home, Workspace, Settings; back via `TitleBar.IsBackButtonVisible` | `NavigationView` switches top-level sections, which this app hasn't |
+| Pages | `Frame`: Home, Workspace, Settings; back via `TitleBar.IsBackButtonVisible`. The workspace page stays cached (and its session open) under Settings, and is dropped when it goes anywhere else | `NavigationView` switches top-level sections, which this app hasn't |
 | Commands | `MenuBar` (File, Edit, Insert, View, Build) in a 40 row, Compile and Settings at its end | Notepad's model; a `CommandBar` can't hold Insert's and Section's depth. One model, not both |
 | Sidebar | `SplitView` (Inline ≥ 1008, Overlay below) holding a `TreeView`; width by `Sizer` | NavigationView is not a file tree |
 | Splitters | `Sizer` (a `Grid`: `Border` is sealed), ~50 lines: pointer capture, `SizeWestEast`/`SizeNorthSouth` cursor, arrow keys | Toolkit 8.2 pulls the 1.6 metapackage; 8.3 is preview. Move when 8.3 is stable |
@@ -139,9 +139,11 @@ E783, Warning E7BA, Info E946, Add E710, More E712.
 **Colour.** `{ThemeResource}` only; no hex in XAML or C#. Text: `TextFillColorPrimaryBrush`,
 `...Secondary` (metadata), `...Tertiary` (line numbers, hints). Status: `SystemFillColorCritical`,
 `Caution`, `Success`, `Attention` brushes with their `...Background` partners, always with an icon
-and words. Custom brushes (syntax, gutter) are `ThemeDictionaries` with `Light`, `Dark` and
-`HighContrast` keys; HighContrast maps to `SystemColorWindowTextColor`, `WindowColor`,
-`HighlightColor`, `HotlightColor` (links only), `GrayTextColor` (disabled only). No `Foreground` in
+and words. Syntax colours are the core's (`theme_colors`, Overleaf, the Mac's default), raised by
+the core to 4.5:1 on the editor's resolved background and current-line fill; a high-contrast theme
+draws every kind in the window text colour. HighContrast otherwise maps to
+`SystemColorWindowTextColor`, `WindowColor`, `HighlightColor`, `HotlightColor` (links only),
+`GrayTextColor` (disabled only). No `Foreground` in
 list item templates. Theme follows the system unless Settings says otherwise.
 
 **Accent.** One `AccentButtonStyle` per surface: New project on Home, Compile in a project, the
@@ -188,9 +190,10 @@ minimum 800 × 500 (`OverlappedPresenter.PreferredMinimum*`); default 1280 × 80
   text area; the caret is its focus indicator. Gutter numbers `TextFillColorTertiaryBrush`, the
   caret's `...Primary`; current line `SubtleFillColorSecondaryBrush`. Issue boxes at line ends:
   `Border` CornerRadius 4, `SystemFillColorCriticalBackgroundBrush` / `...CautionBackgroundBrush`,
-  16 glyph, Caption message, trimmed. RichEdit draws colours without alpha, so translucent syntax
-  inks (`TextFillColorSecondary` for comments) are laid over `SolidBackgroundFillColorBase` first;
-  and it drops colours given before its template is applied, so the first file waits for that.
+  16 glyph, Caption message, trimmed. RichEdit draws colours without alpha, so the translucent text
+  ink is laid over `SolidBackgroundFillColorBase` first; and it drops colours given before its
+  template is applied or while it is off screen, so the first file and a theme change made under
+  Settings wait until it is loaded and laid out.
 - **PDF** (Edge's viewer): pages as white paper, square corners, 1px `CardStrokeColorDefaultBrush`,
   12 apart, centred; the reserved 4px `ProgressBar` at the pane's top edge; the last good render
   stays up during builds. Before a first build, a centred Body line in secondary text says where
@@ -202,8 +205,9 @@ minimum 800 × 500 (`OverlappedPresenter.PreferredMinimum*`); default 1280 × 80
   page), zoom %. Buttons through lightweight styling only: `ButtonBackground`
   `SubtleFillColorTransparentBrush`, `ButtonBackgroundPointerOver` `SubtleFillColorSecondaryBrush`.
 - **Issues panel**: a 48 header row (the `SelectorBar`'s selection pill is cut off at 40):
-  `SelectorBar` (Issues, Build log; Live preview log later) and a Warnings `ToggleButton` and Copy
-  log at its end. Issues `ListView`: 16 severity glyph coloured
+  `SelectorBar` (Issues, Build log; Live preview log later) and a Warnings `CheckBox` (a checked
+  `ToggleButton` is a second accent fill beside Compile) and Copy log at its end. Opening the
+  panel scrolls the caret's line back into view. Issues `ListView`: 16 severity glyph coloured
   Critical/Caution/Attention, Body message, Caption `file.tex:42`; Enter or double-click goes
   there. Build log: read-only `TextBox`, Cascadia Mono 12. A failed manual build opens the panel
   and shows an `InfoBar` (Error, "Build failed", action Show issues), opened only on a settled result.
@@ -265,7 +269,8 @@ templates), `document_class` / `heading_styles`, and `math_svg` / `glyph_svg` th
 2. **Catalogue command**: the project templates (Blank, Article, Report, Presentation) and the
    engines, with their labels, for New project and the Build menu; `create_project` takes a
    `template` id but nothing lists them. Until then New project uses the core's default.
-3. (Landed: themes. The host maps only a high-contrast theme to `SystemColor*`.)
+3. (Landed: themes; the editor colours from `theme_colors` through `tl_syntax_call`. The host maps
+   only a high-contrast theme to the window text colour. A theme picker waits for Settings › Editor.)
 4. (Landed: document class and heading styles.)
 5. (Landed: maths as SVG; a PNG through resvg only if `SvgImageSource` falls short.)
 6. **PDF in the core**: PDFium (`pdfium-render` 0.9.4, `pdfium-win-x64` chromium/7881) giving page

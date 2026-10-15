@@ -50,6 +50,7 @@ public sealed partial class WorkspacePage : Page
     public WorkspacePage()
     {
         InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Required;
         foreach (var item in TreeMenu.Items)
             foreach (var key in item.KeyboardAccelerators) key.ScopeOwner = Tree;
         Split.OpenPaneLength = MainWindow.Pref("sidebarWidth", 280.0);
@@ -60,12 +61,23 @@ public sealed partial class WorkspacePage : Page
         };
         Split.RegisterPropertyChangedCallback(SplitView.DisplayModeProperty, (_, _) => ShowPane(Split.DisplayMode == SplitViewDisplayMode.Inline && sidebarWanted));
         SetUpDocument();
+        Loaded += (_, _) =>
+        {
+            // An InfoBar open while the page sat cached under Settings keeps the old theme's state colours.
+            foreach (var bar in (InfoBar[])[BuildFailed, Notice])
+            {
+                var severity = bar.Severity;
+                bar.Severity = severity == InfoBarSeverity.Informational ? InfoBarSeverity.Success : InfoBarSeverity.Informational;
+                bar.Severity = severity;
+            }
+        };
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         id = (string)e.Parameter;
         App.Window.TitleBar.Subtitle = id;
+        if (session != 0) return;
         Core.Event += OnEvent;
         try { await OpenSession(); }
         catch (CoreException ex)
@@ -75,8 +87,15 @@ public sealed partial class WorkspacePage : Page
         }
     }
 
+    /// Settings keeps the project open underneath: the page is cached until it goes elsewhere.
+    protected override void OnNavigatingFrom(NavigatingCancelEventArgs e)
+    {
+        if (e.SourcePageType != typeof(SettingsPage)) NavigationCacheMode = NavigationCacheMode.Disabled;
+    }
+
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        if (e.SourcePageType == typeof(SettingsPage)) return;
         Core.Event -= OnEvent;
         if (session != 0) _ = Core.CallAsync("session_close", new { session });
     }

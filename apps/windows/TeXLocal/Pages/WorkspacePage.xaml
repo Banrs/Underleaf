@@ -399,7 +399,7 @@
                             <SelectorBarItem x:Name="IssuesTab" IsSelected="True" Text="Issues" />
                             <SelectorBarItem x:Name="LogTab" Text="Build log" />
                         </SelectorBar>
-                        <ToggleButton
+                        <CheckBox
                             x:Name="WarningsToggle"
                             Grid.Column="1"
                             VerticalAlignment="Center"

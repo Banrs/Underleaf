@@ -23,9 +23,11 @@ public sealed partial class SourceView : UserControl
     Source? source;
     ScrollViewer? scroller;
     string text = "";
-    bool setting, changed, undoing, restoring, composing, loading;
+    bool setting, changed, undoing, restoring, composing, loading, stale;
     int loads, lastEnd = -1;
-    Color ink, command, comment, invalid;
+    Color ink;
+    Color[] kinds = [];
+    ElementTheme inked;
 
     public string? Path { get; private set; }
     public event Action<bool>? Composing;
@@ -69,14 +71,28 @@ public sealed partial class SourceView : UserControl
             scroller.ViewChanged += (_, _) => Refresh();
             Refresh();
         };
-        ActualThemeChanged += async (_, _) =>
+        ActualThemeChanged += (_, _) =>
         {
-            if (source is null || loading) return;
-            var at = CaretOffset;
-            await SetText(text);
-            Document.Selection.SetRange(at, at);
+            stale = true;
+            if (IsLoaded) Recolour();
+        };
+        Loaded += (_, _) =>
+        {
+            stale |= ActualTheme != inked;
+            if (stale) Recolour();
         };
     }
+
+    /// RichEdit drops colours given off screen (the page cached under Settings) or before it has
+    /// laid out again, so a theme change recolours once the editor is back and drawn.
+    void Recolour() => DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, async () =>
+    {
+        if (!stale || !IsLoaded || source is null || loading) return;
+        stale = false;
+        var at = CaretOffset;
+        await SetText(text);
+        Document.Selection.SetRange(at, at);
+    });
 
     static T? Descendant<T>(DependencyObject root) where T : DependencyObject
     {
@@ -97,7 +113,24 @@ public sealed partial class SourceView : UserControl
         return Color.FromArgb(255, Mix(c.R, under.R), Mix(c.G, under.G), Mix(c.B, under.B));
     }
 
-    void Inks() => (ink, command, comment, invalid) = (Of(TextInk), Of(CommandInk), Of(CommentInk), Of(InvalidInk));
+    /// The core's Overleaf theme raised to legibility on this background and current line, by
+    /// highlight kind; a high-contrast theme keeps every kind in the window text colour.
+    void Inks()
+    {
+        ink = Of(TextInk);
+        inked = ActualTheme;
+        static double[] Rgba(Color c) => [c.R / 255.0, c.G / 255.0, c.B / 255.0, c.A / 255.0];
+        static byte Byte(double v) => (byte)Math.Round(Math.Clamp(v, 0, 1) * 255);
+        var colours = new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast ? null
+            : Source.SyntaxCall<double[][]>("theme_colors", new
+            {
+                theme = "overleaf",
+                dark = ActualTheme == ElementTheme.Dark,
+                background = Rgba(((SolidColorBrush)PaperInk.Fill).Color),
+                fill = Rgba(((SolidColorBrush)CurrentLine.Fill).Color),
+            });
+        kinds = [.. (colours ?? []).Select(c => Color.FromArgb(255, Byte(c[0]), Byte(c[1]), Byte(c[2])))];
+    }
 
     /// Completes once the whole text is in. RichEdit drops the text's colours if it gets them before
     /// its template is applied, so the first file waits for that.
@@ -176,14 +209,14 @@ public sealed partial class SourceView : UserControl
     {
         var rtf = new StringBuilder(to - from + (to - from) / 4 + 128);
         rtf.Append(@"{\rtf1\ansi{\colortbl;");
-        foreach (var c in (Color[])[command, comment, invalid]) rtf.Append($@"\red{c.R}\green{c.G}\blue{c.B};");
+        foreach (var c in kinds) rtf.Append($@"\red{c.R}\green{c.G}\blue{c.B};");
         rtf.Append('}');
         var at = from;
         foreach (var run in source?.Highlights(from, to - from) ?? [])
         {
-            if (run.Kind is not (0 or 5 or 6) || run.Start < at || run.Start + run.Length > to) continue;
+            if (InkOf(run.Kind) is null || run.Start < at || run.Start + run.Length > to) continue;
             Escape(rtf, content.AsSpan(at, run.Start - at));
-            rtf.Append(run.Kind switch { 0 => @"{\cf1 ", 5 => @"{\cf2 ", _ => @"{\cf3 " });
+            rtf.Append($@"{{\cf{run.Kind + 1} ");
             Escape(rtf, content.AsSpan(run.Start, run.Length));
             rtf.Append('}');
             at = run.Start + run.Length;
@@ -270,6 +303,9 @@ public sealed partial class SourceView : UserControl
         Document.BeginUndoGroup();
     }
 
+    /// After the view shrinks (the issues panel opening), once it has laid out.
+    public void ScrollToCaret() => DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => Document.Selection.ScrollIntoView(PointOptions.None));
+
     public void Cut() => Document.Selection.Cut();
     public void Copy() => Document.Selection.Copy();
     public void Paste() => OnPaste(Editor, null);
@@ -311,13 +347,7 @@ public sealed partial class SourceView : UserControl
         Refresh();
     }
 
-    Color? InkOf(int kind) => kind switch
-    {
-        0 => command,
-        5 => comment,
-        6 => invalid,
-        _ => null,
-    };
+    Color? InkOf(int kind) => kind >= 0 && kind < kinds.Length ? kinds[kind] : null;
 
     void Colour(int first, int last)
     {
