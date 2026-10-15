@@ -6,17 +6,13 @@ import SwiftUI
 struct PDFPane: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
-    @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var darkPaper: Bool { pdfPaper == .dark || (pdfPaper == .auto && colorScheme == .dark) }
 
     var body: some View {
         if project.hasPDF {
             // Under the toolbar and the status bar, as the source. Directly in the pane, not in another
             // scroll view: PDFKit insets its own scrolling from the pane's safe area and rubber-bands
             // at its ends, which a scroll view around it takes over (27.2).
-            PDFRepresentable(project: project, darkPaper: darkPaper)
+            PDFRepresentable(project: project)
                 .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
         } else {
             emptyState
@@ -158,25 +154,6 @@ enum PDFFind {
             board.setString(newValue, forType: .string)
         }
     }
-}
-
-enum PDFPaper: String, CaseIterable, Identifiable {
-    case white, dark, auto
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .white: "White"
-        case .dark: "Dark"
-        case .auto: "Match Appearance"
-        }
-    }
-}
-
-enum PDFPrefs {
-    static let paperKey = "pdfPaper"
-    static let paper = PDFPaper.white
 }
 
 #Preview("Find bar") {

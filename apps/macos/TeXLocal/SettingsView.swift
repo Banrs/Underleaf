@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum SettingsPane: String {
-    case general, editor, compiling, pdf, livePreview
+    case general, editor, compiling, livePreview
 }
 
 /// The Settings window's panes. In a Settings scene a TabView is the window's toolbar of
@@ -16,8 +16,7 @@ struct SettingsView: View {
             Tab("General", systemImage: "gearshape", value: .general) { GeneralSettings() }
             Tab("Editor", systemImage: "character.cursor.ibeam", value: .editor) { EditorSettings() }
             Tab("Compiling", systemImage: "hammer", value: .compiling) { CompilingSettings() }
-            // The toolbar's PDF symbol and the status bar's Live Preview one.
-            Tab("PDF", systemImage: "richtext.page", value: .pdf) { PDFSettings() }
+            // The status bar's Live Preview symbol.
             Tab("Live Preview", systemImage: "bolt", value: .livePreview) { LivePreviewSettings() }
         }
         // The UI kit's example forms' width.
@@ -143,22 +142,6 @@ private struct CompilingSettings: View {
                 // One help button a window, in a pane's lower corner (HIG, Buttons).
                 HelpLink(destination: URL(string: "https://github.com/Banrs/Underleaf#requirements")!)
                     .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-        }
-        .settingsPane()
-    }
-}
-
-private struct PDFSettings: View {
-    @AppStorage(PDFPrefs.paperKey) private var paper = PDFPrefs.paper
-
-    var body: some View {
-        Form {
-            Picker(selection: $paper) {
-                ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
-            } label: {
-                Text("Page Colour")
-                Text("Dark inverts the PDF’s pages for reading at night. Printing and saving are unaffected.")
             }
         }
         .settingsPane()
