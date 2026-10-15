@@ -599,3 +599,77 @@ async fn the_app_settings_file_is_not_listed_as_a_project() {
         .collect();
     assert_eq!(ids, ["P"]);
 }
+
+#[tokio::test]
+async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
+    let (dir, service) = with_project();
+    let write = |path: &'static str, text: &'static str| {
+        call(
+            &service,
+            "write_file",
+            json!({ "id": "P", "path": path, "text": text }),
+        )
+    };
+
+    // A free name is numbered past those taken; a plain create still refuses one.
+    for expected in ["untitled.tex", "untitled 2.tex"] {
+        let args = json!({ "id": "P", "path": "untitled.tex", "free": true });
+        let made = call(&service, "create_entry", args).await;
+        assert_eq!(made, json!({ "path": expected }));
+    }
+    let taken = json!({ "id": "P", "path": "untitled.tex" });
+    assert_eq!(status_of(&service, "create_entry", taken).await, 409);
+    let tree = call(&service, "file_tree", json!({ "id": "P" })).await;
+    assert!(tree.as_array().unwrap().iter().all(|n| n["kind"] == "tex"));
+
+    // The outline as a tree, and the heading a line is under.
+    write("main.tex", "\\section{A}\n\\subsection{B}\n\\section{A}\n").await;
+    let analysis = call(
+        &service,
+        "analyze_project",
+        json!({ "id": "P", "file": "main.tex" }),
+    )
+    .await;
+    assert_eq!(analysis["outline"].as_array().unwrap().len(), 3);
+    assert_eq!(analysis["tree"][0]["children"][0]["title"], "B");
+    assert_eq!(analysis["tree"][1]["foldKey"], "main.tex\t2:A#2");
+    let at = json!({ "outline": analysis["outline"], "file": "main.tex", "line": 2 });
+    assert_eq!(call(&service, "outline_current", at).await, json!(1));
+
+    // Where a path in the library is.
+    let path = dir.path().join("P/sec/new.tex");
+    let located = call(&service, "locate", json!({ "path": path })).await;
+    assert_eq!(located, json!({ "id": "P", "path": "sec/new.tex" }));
+    let outside = json!({ "path": dir.path().parent().unwrap() });
+    assert_eq!(call(&service, "locate", outside).await, Value::Null);
+
+    // The interface state is kept with the project and follows a rename.
+    write("sec/a.tex", "").await;
+    let patch = json!({ "expandedFolders": ["sec"], "foldedHeadings": ["sec/a.tex\t2:A#1"] });
+    call(
+        &service,
+        "set_ui_state",
+        json!({ "id": "P", "patch": patch }),
+    )
+    .await;
+    let rename = json!({ "id": "P", "from": "sec", "to": "part" });
+    call(&service, "rename_entry", rename).await;
+    let ui = call(&service, "get_ui_state", json!({ "id": "P" })).await;
+    assert_eq!(
+        ui,
+        json!({ "expandedFolders": ["part"], "foldedHeadings": ["part/a.tex\t2:A#1"] })
+    );
+    // It is not a file the generic APIs reach.
+    let name = ".texlocal.json";
+    let args = json!({ "id": "P", "path": name, "text": "{}" });
+    assert_eq!(status_of(&service, "write_file", args).await, 400);
+
+    // The word a source line's caret is on, among a forward sync's pages.
+    write("main.tex", "alpha beta gamma\n").await;
+    let page = json!({ "page": 2, "text": "alpha beta gamma", "near": [[0, 16]] });
+    let args = json!({ "id": "P", "file": "main.tex", "line": 1, "column": 8, "pages": [page] });
+    let hit = call(&service, "synctex_match", args).await;
+    assert_eq!(hit, json!({ "page": 2, "start": 6, "end": 10 }));
+    let beyond = json!({ "id": "P", "file": "main.tex", "line": 9, "column": 0, "pages": [] });
+    assert_eq!(call(&service, "synctex_match", beyond).await, Value::Null);
+}
