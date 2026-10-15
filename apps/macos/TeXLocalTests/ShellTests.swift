@@ -88,17 +88,26 @@ struct ShellTests {
         #expect(compile.toolTip == "Compile the project" && compile.backgroundTintColor == nil)
     }
 
-    @Test func formatIsAPullDownOfStylesAndLevels() async throws {
+    @Test func formatIsAPullDownGroupedAsNotesAa() async throws {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
         let menu = try #require(try item(.format, in: workspace) as? NSMenuToolbarItem).menu
         menu.delegate?.menuNeedsUpdate?(menu)
-        let items = menu.items.filter { !$0.isSeparatorItem }
-        #expect(items.map(\.title) == [MenuCommand.editBold, .editItalic, .editUnderline, .editMath].map(\.title) + HeadingLevel.all.map(\.title))
+        // The styles' palette row, the levels, then what goes in.
+        let groups = menu.items.split(whereSeparator: \.isSeparatorItem).map(Array.init)
+        #expect(groups.count == 3)
+        let palette = try #require(groups[0].first?.submenu)
+        #expect(groups[0].count == 1 && palette.presentationStyle == .palette && palette.selectionMode == .selectAny)
+        #expect(palette.items.map(\.title) == [MenuCommand.editBold, .editItalic, .editUnderline].map(\.title) && palette.selectedItems.isEmpty)
+        let headings = workspace.project.headingStyles
+        #expect(groups[1].map { $0.attributedTitle?.string ?? "" }
+                == headings.levels.map { level in headings.marker(level).map { "\($0)\u{2002}\(level.title)" } ?? level.title })
+        #expect(groups[1].map(\.state) == [NSControl.StateValue.on] + Array(repeating: NSControl.StateValue.off, count: groups[1].count - 1))
+        let fonts = groups[1].compactMap { item in item.attributedTitle.flatMap { $0.attribute(.font, at: $0.length - 1, effectiveRange: nil) as? NSFont } }
+        #expect(fonts.count == groups[1].count && fonts[1].pointSize > fonts[0].pointSize)
+        #expect(groups[2].first?.title == MenuCommand.editMath.title)
         // No LaTeX file is open.
-        #expect(items.allSatisfy { !$0.isEnabled })
-        let fonts = items.suffix(HeadingLevel.all.count).compactMap { $0.attributedTitle?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont }
-        #expect(fonts.count == HeadingLevel.all.count && fonts[1].pointSize > fonts[0].pointSize)
+        #expect(menu.items.allSatisfy { !$0.isEnabled } && palette.items.allSatisfy { !$0.isEnabled })
     }
 
     @Test func theOutlineFoldsToItsHeaderAndGoesOnlyForSearchResults() async throws {
