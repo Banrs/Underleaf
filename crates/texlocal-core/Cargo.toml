@@ -9,7 +9,9 @@ license.workspace = true
 dunce = "1"
 getrandom = "0.4"
 memchr = "2"
+notify = "8"
 ropey = "1.6"
+texlocal-syntax = { path = "../texlocal-syntax" }
 which = "8"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 regex = "1"
