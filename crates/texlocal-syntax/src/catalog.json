@@ -19,6 +19,119 @@
   "verbatimEnvironments": ["verbatim","verbatim*","Verbatim","Verbatim*","lstlisting","minted","comment"],
   "textCommands": ["text","textrm","textit","textbf","textsf","texttt","textup","textsl","textsc","textmd","textnormal","mbox","hbox","fbox","intertext","shortintertext"],
   "previewEnvironments": ["equation","align","gather","multline","eqnarray","alignat","flalign","cases","split"],
+  "templates": {
+    "math": [
+      {"title":"Equation","body":"equation"},
+      {"title":"Aligned Equations","body":"align"}
+    ],
+    "insert": [
+      {"title":"Figure","body":"figure","symbol":"photo"},
+      {"title":"Table","body":"table","symbol":"tablecells"},
+      {"title":"Code Block","body":"code"}
+    ],
+    "list": [
+      {"title":"Bulleted List","body":"itemize","symbol":"list.bullet"},
+      {"title":"Numbered List","body":"enumerate","symbol":"list.number"},
+      {"title":"Description List","body":"description"}
+    ],
+    "references": [
+      {"title":"Reference","body":"\\ref{$0}","symbol":"number.sign","inline":true},
+      {"title":"Equation Reference","body":"\\eqref{$0}","inline":true},
+      {"title":"Citation","body":"\\cite{$0}","symbol":"text.quote","inline":true},
+      {"title":"Label","body":"\\label{$0}","inline":true},
+      {"title":"Link","body":"\\href{$0}{}","symbol":"link","inline":true},
+      {"title":"URL","body":"\\url{$0}","inline":true}
+    ]
+  },
+  "headingLevels": [
+    {"title":"Part","command":"part"},
+    {"title":"Chapter","command":"chapter"},
+    {"title":"Section","command":"section"},
+    {"title":"Subsection","command":"subsection"},
+    {"title":"Subsubsection","command":"subsubsection"},
+    {"title":"Paragraph","command":"paragraph"}
+  ],
+  "symbolGroups": [
+    {"title":"Greek","symbols":[
+      {"glyph":"α","command":"\\alpha"},
+      {"glyph":"β","command":"\\beta"},
+      {"glyph":"γ","command":"\\gamma"},
+      {"glyph":"δ","command":"\\delta"},
+      {"glyph":"ϵ","command":"\\epsilon"},
+      {"glyph":"ζ","command":"\\zeta"},
+      {"glyph":"η","command":"\\eta"},
+      {"glyph":"θ","command":"\\theta"},
+      {"glyph":"κ","command":"\\kappa"},
+      {"glyph":"λ","command":"\\lambda"},
+      {"glyph":"μ","command":"\\mu"},
+      {"glyph":"ν","command":"\\nu"},
+      {"glyph":"ξ","command":"\\xi"},
+      {"glyph":"π","command":"\\pi"},
+      {"glyph":"ρ","command":"\\rho"},
+      {"glyph":"σ","command":"\\sigma"},
+      {"glyph":"τ","command":"\\tau"},
+      {"glyph":"ϕ","command":"\\phi"},
+      {"glyph":"χ","command":"\\chi"},
+      {"glyph":"ψ","command":"\\psi"},
+      {"glyph":"ω","command":"\\omega"},
+      {"glyph":"Γ","command":"\\Gamma"},
+      {"glyph":"Δ","command":"\\Delta"},
+      {"glyph":"Θ","command":"\\Theta"},
+      {"glyph":"Λ","command":"\\Lambda"},
+      {"glyph":"Π","command":"\\Pi"},
+      {"glyph":"Σ","command":"\\Sigma"},
+      {"glyph":"Φ","command":"\\Phi"},
+      {"glyph":"Ψ","command":"\\Psi"},
+      {"glyph":"Ω","command":"\\Omega"}
+    ]},
+    {"title":"Operators","symbols":[
+      {"glyph":"±","command":"\\pm"},
+      {"glyph":"×","command":"\\times"},
+      {"glyph":"÷","command":"\\div"},
+      {"glyph":"·","command":"\\cdot"},
+      {"glyph":"∑","command":"\\sum"},
+      {"glyph":"∏","command":"\\prod"},
+      {"glyph":"∫","command":"\\int"},
+      {"glyph":"∮","command":"\\oint"},
+      {"glyph":"√","command":"\\sqrt{}"},
+      {"glyph":"∂","command":"\\partial"},
+      {"glyph":"∇","command":"\\nabla"},
+      {"glyph":"∞","command":"\\infty"},
+      {"glyph":"∘","command":"\\circ"},
+      {"glyph":"⊗","command":"\\otimes"},
+      {"glyph":"⊕","command":"\\oplus"}
+    ]},
+    {"title":"Relations","symbols":[
+      {"glyph":"≤","command":"\\leq"},
+      {"glyph":"≥","command":"\\geq"},
+      {"glyph":"≠","command":"\\neq"},
+      {"glyph":"≈","command":"\\approx"},
+      {"glyph":"≡","command":"\\equiv"},
+      {"glyph":"∼","command":"\\sim"},
+      {"glyph":"∝","command":"\\propto"},
+      {"glyph":"∈","command":"\\in"},
+      {"glyph":"∉","command":"\\notin"},
+      {"glyph":"⊂","command":"\\subset"},
+      {"glyph":"⊆","command":"\\subseteq"},
+      {"glyph":"∪","command":"\\cup"},
+      {"glyph":"∩","command":"\\cap"},
+      {"glyph":"∅","command":"\\emptyset"}
+    ]},
+    {"title":"Arrows and Logic","symbols":[
+      {"glyph":"→","command":"\\rightarrow"},
+      {"glyph":"←","command":"\\leftarrow"},
+      {"glyph":"↔","command":"\\leftrightarrow"},
+      {"glyph":"⇒","command":"\\Rightarrow"},
+      {"glyph":"⇐","command":"\\Leftarrow"},
+      {"glyph":"⇔","command":"\\Leftrightarrow"},
+      {"glyph":"↦","command":"\\mapsto"},
+      {"glyph":"∀","command":"\\forall"},
+      {"glyph":"∃","command":"\\exists"},
+      {"glyph":"¬","command":"\\neg"},
+      {"glyph":"∧","command":"\\wedge"},
+      {"glyph":"∨","command":"\\vee"}
+    ]}
+  ],
   "commands": [
     ["\\documentclass","class","\\documentclass{#{article}}"],
     ["\\usepackage","package","\\usepackage{#{}}"],

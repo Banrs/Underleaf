@@ -4,9 +4,10 @@
 //! UTF-16 offsets, which NSString, JavaScript and WinUI all count in.
 
 mod call;
-mod catalog;
+pub mod catalog;
 mod complete;
 mod edit;
+pub mod headings;
 mod highlight;
 mod maths;
 mod prose;

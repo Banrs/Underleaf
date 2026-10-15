@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::headings;
 use crate::theme::{self, Rgba};
 use crate::{SnippetField, SourceDocument, Style, TextEdit, TextRange, map_selections};
 
@@ -148,7 +149,10 @@ impl SourceDocument {
 /// "theme_colors", a theme's (`theme`, its id) legible in an appearance
 /// (`theme::Appearance`'s fields), by highlight kind; "legible" (`color`,
 /// `background`, `fill`, `increaseContrast`), one colour raised so; and
-/// "contrast" (`a`, `b`), WCAG's ratio.
+/// "contrast" (`a`, `b`), WCAG's ratio. "menus", the catalogue's templates,
+/// heading levels and symbol groups; "document_class" (`text`), the class a
+/// main file names, or null; "heading_styles" (`class`, `pointSize`,
+/// `hasChapters`), the levels the class has, as it sets and numbers them.
 pub fn call(command: &str, args_json: &str) -> Option<String> {
     let value: Value = serde_json::from_str(args_json).ok()?;
     if !value.is_object() {
@@ -171,6 +175,19 @@ fn call_with(command: &str, value: &Value) -> Option<String> {
     let string = |key: &str| value.get(key).and_then(Value::as_str);
     match command {
         "themes" => json(theme::THEMES),
+        "menus" => json(crate::catalog::menus()),
+        "document_class" => json(headings::document_class(string("text")?)),
+        "heading_styles" => {
+            let class = string("class").map(|name| headings::DocumentClass {
+                name: name.to_owned(),
+                point_size: value.get("pointSize").and_then(Value::as_u64).unwrap_or(10) as u32,
+            });
+            let chapters = value.get("hasChapters").and_then(Value::as_bool);
+            json(headings::heading_styles(
+                class.as_ref(),
+                chapters.unwrap_or(false),
+            ))
+        }
         "theme_colors" => {
             let theme = theme::theme(string("theme")?)?;
             json(theme::theme_colors(theme, &args(value)?))
@@ -230,6 +247,21 @@ mod tests {
         );
         let ratio = super::call("contrast", r#"{"a": [0, 0, 0, 1], "b": [1, 1, 1, 1]}"#).unwrap();
         assert_eq!(ratio, "21.0");
+        let menus = super::call("menus", "{}").unwrap();
+        assert!(menus.contains(
+            r#"{"title":"Reference","body":"\\ref{$0}","symbol":"number.sign","inline":true}"#
+        ));
+        assert!(menus.contains(r#"{"glyph":"α","command":"\\alpha"}"#));
+        let class = super::call(
+            "document_class",
+            r#"{"text": "\\documentclass[11pt]{book}"}"#,
+        );
+        assert_eq!(class.as_deref(), Some(r#"{"name":"book","pointSize":11}"#));
+        let levels = super::call("heading_styles", r#"{"class": "letter"}"#).unwrap();
+        assert_eq!(
+            levels,
+            r#"[{"title":"Normal Text","command":"","font":{"scale":1.0,"bold":false,"shape":"upright"},"marker":null}]"#
+        );
         // A document answers them too.
         assert!(SourceDocument::new("").call("themes", "{}").is_some());
     }
