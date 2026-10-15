@@ -1,20 +1,16 @@
-// Match the browser's analyzeDoc counts and outlines, including JavaScript's
-// whitespace and line-terminator rules; shared fixtures pin this compatibility.
+//! A document's outline and word count, read from its main file through the
+//! files it inputs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::paths;
 
-/// JavaScript's `\s`, which differs from Unicode's White_Space (U+FEFF in,
-/// U+0085 out).
-const JS_SPACE: &str =
-    r"\t\n\x0B\x0C\r \xA0\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}";
 const LEVELS: [&str; 6] = [
     "part",
     "chapter",
@@ -24,60 +20,114 @@ const LEVELS: [&str; 6] = [
     "paragraph",
 ];
 
-static COMMENT_LINE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&format!(r"^[{JS_SPACE}]*%")).unwrap());
-// JavaScript's `.` stops at line terminators, so a `%` with U+2028 or U+2029
-// after it starts no comment.
-static COMMENT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(^|[^\\])%[^\n\r\x{2028}\x{2029}]*$").unwrap());
+static COMMENT_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*%").unwrap());
+static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(^|[^\\])%.*$").unwrap());
 // Headings, inputs and their literal boundaries in reading order. Consume other
 // control sequences too, so an escaped slash cannot start a command.
 static TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(
-        r"%|\\(?:(?P<heading>part|chapter|section|subsection|subsubsection|paragraph)\*?[{JS_SPACE}]*(?:\[[^\]]*\])?[{JS_SPACE}]*\{{|(?:input|include|subfile)[{JS_SPACE}]*\{{(?P<braced>[^{{}}%]+)\}}|input[{JS_SPACE}]+(?P<bare>[^{{}}\\%{JS_SPACE}]+)|begin[{JS_SPACE}]*\{{(?P<literal>verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}}|verb\*?(?P<delimiter>[^A-Za-z])|[A-Za-z]+|.)"
-    ))
-    .unwrap()
+    Regex::new(r"%|\\(?:(?P<heading>part|chapter|section|subsection|subsubsection|paragraph)\*?\s*(?:\[[^\]]*\])?\s*\{|(?:input|include|subfile)\s*\{(?P<braced>[^{}%]+)\}|input\s+(?P<bare>[^{}\\%\s]+)|begin\s*\{(?P<literal>verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}|verb\*?(?P<delimiter>[^A-Za-z])|[A-Za-z]+|.)").unwrap()
 });
 static COMMAND: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])?").unwrap());
 // What a title drops whole: \texorpdfstring's TeX argument (its PDF string is
 // the group after), labels and notes.
-static TITLE_DROP: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(
-        r"\\(?:texorpdfstring|label|index|footnote)[{JS_SPACE}]*\{{"
-    ))
-    .unwrap()
-});
+static TITLE_DROP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\\(?:texorpdfstring|label|index|footnote)\s*\{").unwrap());
 // Styles a title shows as plain text: \emph and the like, and font switches.
 static TITLE_STYLE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(
-        r"\\(?:emph|text(?:bf|it|sl|sc|tt|sf|rm|up|md|normal)|underline|em|bf|it|sl|sc|tt|sf|rm|normalfont|(?:bf|md)series|(?:it|sl|sc|up)shape|(?:rm|sf|tt)family)(?-u:\b)[{JS_SPACE}]*"
-    ))
-    .unwrap()
+    Regex::new(r"\\(?:emph|text(?:bf|it|sl|sc|tt|sf|rm|up|md|normal)|underline|em|bf|it|sl|sc|tt|sf|rm|normalfont|(?:bf|md)series|(?:it|sl|sc|up)shape|(?:rm|sf|tt)family)(?-u:\b)\s*").unwrap()
 });
 // Grouping braces go; an escaped special shows as itself.
 static TITLE_BRACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([{}&%$#_])|[{}]").unwrap());
-static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!("[{JS_SPACE}]+")).unwrap());
-// What separates words: JavaScript's `\s` and TeX's special characters.
-static WORD_BREAK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&format!(r"[{JS_SPACE}{{}}$&_^~\\%]")).unwrap());
+static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+// What separates words: spaces and TeX's special characters.
+static WORD_BREAK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\s{}$&_^~\\%]").unwrap());
 
 /// A sectioning command: its depth (0 for \part to 5 for \paragraph), its
 /// title as plain text ("(untitled)" when empty), its 1-based line and, in a
 /// project's analysis, its file.
-#[derive(Debug, PartialEq, Serialize)]
-#[cfg_attr(test, derive(serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Heading {
     pub depth: usize,
     pub title: String,
     pub line: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
 }
 
+/// A heading with what nests under it. `fold_key` names its fold in the
+/// project's saved UI state: file, depth, title and which of that name it is.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutlineNode {
+    /// Its place in the flat outline.
+    pub index: usize,
+    #[serde(flatten)]
+    pub heading: Heading,
+    pub fold_key: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<OutlineNode>,
+}
+
+/// `analyze_project`'s answer: the analysis, and its outline as a tree.
+#[derive(Debug, Serialize)]
+pub struct ProjectAnalysis {
+    #[serde(flatten)]
+    pub analysis: Analysis,
+    pub tree: Vec<OutlineNode>,
+}
+
+impl From<Analysis> for ProjectAnalysis {
+    fn from(analysis: Analysis) -> Self {
+        let tree = outline_tree(&analysis.outline);
+        Self { analysis, tree }
+    }
+}
+
+/// The outline nested by depth. A heading deeper than the one before it goes
+/// under it, so a subsection before any section sits flush, not under a
+/// missing parent.
+pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
+    fn nest(
+        outline: &[Heading],
+        next: &mut usize,
+        above: Option<usize>,
+        seen: &mut HashMap<String, usize>,
+    ) -> Vec<OutlineNode> {
+        let mut nodes = Vec::new();
+        while let Some(heading) = outline.get(*next)
+            && above.is_none_or(|depth| heading.depth > depth)
+        {
+            let index = *next;
+            *next += 1;
+            let file = heading.file.as_deref().unwrap_or_default();
+            let key = format!("{file}\t{}:{}", heading.depth, heading.title);
+            let count = seen.entry(key.clone()).or_default();
+            *count += 1;
+            let fold_key = format!("{key}#{count}");
+            let children = nest(outline, next, Some(heading.depth), seen);
+            nodes.push(OutlineNode {
+                index,
+                heading: heading.clone(),
+                fold_key,
+                children,
+            });
+        }
+        nodes
+    }
+    nest(outline, &mut 0, None, &mut HashMap::new())
+}
+
+/// The heading a line of a file is under, as its place in `outline`: the
+/// file's last at or above the line. None above the file's first, since where
+/// the file is read in isn't known.
+pub fn current_heading(outline: &[Heading], file: Option<&str>, line: usize) -> Option<usize> {
+    outline
+        .iter()
+        .rposition(|h| h.file.as_deref() == file && h.line <= line)
+}
+
 #[derive(Debug, Default, PartialEq, Serialize)]
-// Read back only by the tests, from the fixtures the web version shares.
-#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct Analysis {
     pub outline: Vec<Heading>,
     pub words: usize,
@@ -118,12 +168,7 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
     };
     let text = crate::lossy_string(text);
     let mut literal: Option<String> = None;
-    // CodeMirror breaks lines at CR LF, CR or LF, including a trailing break.
-    for (index, line) in text
-        .split('\n')
-        .flat_map(|l| l.strip_suffix('\r').unwrap_or(l).split('\r'))
-        .enumerate()
-    {
+    for (index, line) in text.lines().enumerate() {
         if !COMMENT_LINE.is_match(line) {
             into.words += words(line);
         }
@@ -237,32 +282,150 @@ fn words(line: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::Deserialize;
 
-    /// The cases web/src/state.js is held to as well (test/analyze.test.js).
+    /// A heading's depth, title and line.
+    type Outline<'a> = &'a [(usize, &'a str, usize)];
+
+    /// Headings and words, of one file's text.
     #[test]
-    fn matches_the_shared_fixtures() {
-        #[derive(Deserialize)]
-        struct Case {
-            name: String,
-            text: String,
-            expected: Analysis,
-        }
-        let cases: Vec<Case> =
-            serde_json::from_str(include_str!("../tests/fixtures/analyze.json")).unwrap();
+    fn a_file_reads_as_its_outline_and_words() {
+        let cases: &[(&str, Outline, usize)] = &[
+            ("", &[], 0),
+            ("Hello world\n", &[], 2),
+            (
+                "one\r\n\\section{Two}\r\n\\section{Three}\nfour",
+                &[(2, "Two", 2), (2, "Three", 3)],
+                4,
+            ),
+            (
+                "\\part{P}\n\\chapter{C}\n\\section{S}\n\\subsection{Sub}\n\\subsubsection{SubSub}\n\\paragraph{Para}\n\\subparagraph{Not in the outline}",
+                &[
+                    (0, "P", 1),
+                    (1, "C", 2),
+                    (2, "S", 3),
+                    (3, "Sub", 4),
+                    (4, "SubSub", 5),
+                    (5, "Para", 6),
+                ],
+                10,
+            ),
+            (
+                "\\section*{Starred}\n\\section[Short]{Long title}\n\\subsection * [x] {Spaced}\n\\section\u{a0}{After a no-break space}",
+                &[
+                    (2, "Starred", 1),
+                    (2, "Long title", 2),
+                    (2, "After a no-break space", 4),
+                ],
+                9,
+            ),
+            (
+                "\\section{}\n\\chapter*{}",
+                &[(2, "(untitled)", 1), (1, "(untitled)", 2)],
+                0,
+            ),
+            ("Text \\section{A} and \\subsection{B}", &[(2, "A", 1)], 4),
+            (
+                "% \\section{Hidden}\n  \t% \\section{Indented}\n\\section{Shown} % \\section{After}",
+                &[(2, "Shown", 3)],
+                1,
+            ),
+            (
+                "\\section{\\texorpdfstring{$\\mathbf{E}$-fields}{E-fields} and \\textbf{More}}\n\\subsection{A {\\bfseries Bold} \\textit{and} Heading\\label{sec:a}}\n\\section{Notes\\footnote{See \\cite{x}.}}\n\\section{R\\&D at 50\\% \\{set\\}}",
+                &[
+                    (2, "E-fields and More", 1),
+                    (3, "A Bold and Heading", 2),
+                    (2, "Notes", 3),
+                    (2, "R&D at 50% {set}", 4),
+                ],
+                17,
+            ),
+            (
+                "Hello \\textbf{bold} world \\cite[p.~3]{key} text \\\\ done",
+                &[],
+                6,
+            ),
+            ("one two % three four\n50\\% off % really", &[], 3),
+            ("x^2 + y_1 = $a$ and~b & c{d}e", &[], 8),
+            ("123 456 7.5 foo123", &[], 1),
+            ("Café naïve Ελληνικά Русский 中文 123", &[], 5),
+            (
+                "\\begin{verbatim}\n\\section{Hidden}\n\\end{verbatim}\\section{Visible}\n\\verb|\\section{Hidden}| \\section{After}\n\\\\section{Escaped}",
+                &[(2, "Visible", 3), (2, "After", 4)],
+                7,
+            ),
+        ];
         let dir = tempfile::tempdir().unwrap();
-        for mut case in cases {
-            fs::write(dir.path().join("main.tex"), case.text).unwrap();
-            for heading in &mut case.expected.outline {
-                heading.file = Some("main.tex".into());
-            }
-            assert_eq!(
-                analyze_project(dir.path(), "main.tex", "main.tex"),
-                case.expected,
-                "{}",
-                case.name
-            );
+        for &(text, outline, words) in cases {
+            fs::write(dir.path().join("main.tex"), text).unwrap();
+            let expected = Analysis {
+                outline: outline
+                    .iter()
+                    .map(|&(depth, title, line)| Heading {
+                        depth,
+                        title: title.into(),
+                        line,
+                        file: Some("main.tex".into()),
+                    })
+                    .collect(),
+                words,
+            };
+            let found = analyze_project(dir.path(), "main.tex", "main.tex");
+            assert_eq!(found, expected, "{text}");
         }
+    }
+
+    #[test]
+    fn the_outline_nests_by_depth_with_a_fold_key_for_each_heading() {
+        let heading = |depth, title: &str, file: &str, line| Heading {
+            depth,
+            title: title.into(),
+            line,
+            file: Some(file.into()),
+        };
+        // A subsection before any section sits flush; same-named headings are numbered.
+        let outline = [
+            heading(3, "Early", "a.tex", 1),
+            heading(2, "Intro", "a.tex", 5),
+            heading(3, "Intro", "a.tex", 8),
+            heading(3, "Intro", "a.tex", 9),
+            heading(2, "Intro", "a.tex", 12),
+            heading(1, "Back", "b.tex", 2),
+        ];
+        let tree = outline_tree(&outline);
+        let shape = |nodes: &[OutlineNode]| -> Vec<(usize, String, usize)> {
+            nodes
+                .iter()
+                .map(|n| (n.index, n.fold_key.clone(), n.children.len()))
+                .collect()
+        };
+        assert_eq!(
+            shape(&tree),
+            [
+                (0, "a.tex\t3:Early#1".into(), 0),
+                (1, "a.tex\t2:Intro#1".into(), 2),
+                (4, "a.tex\t2:Intro#2".into(), 0),
+                (5, "b.tex\t1:Back#1".into(), 0),
+            ]
+        );
+        assert_eq!(
+            shape(&tree[1].children),
+            [
+                (2, "a.tex\t3:Intro#1".into(), 0),
+                (3, "a.tex\t3:Intro#2".into(), 0),
+            ]
+        );
+        // On the wire: the heading's own fields, camelCase keys, no empty children.
+        let json = serde_json::to_value(&tree[0]).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "index": 0, "depth": 3, "title": "Early", "line": 1,
+                "file": "a.tex", "foldKey": "a.tex\t3:Early#1" })
+        );
+        // The heading a line is under: its file's last at or above it.
+        assert_eq!(current_heading(&outline, Some("a.tex"), 9), Some(3));
+        assert_eq!(current_heading(&outline, Some("a.tex"), 100), Some(4));
+        assert_eq!(current_heading(&outline, Some("b.tex"), 1), None);
+        assert_eq!(current_heading(&outline, None, 5), None);
     }
 
     /// The main file's inputs read in place, each file once, commented ones not;

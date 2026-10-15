@@ -6,7 +6,6 @@
 
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -320,10 +319,15 @@ fn import_project_within(
     // which a later import sweeps away.
     fs::create_dir_all(&service.data_dir)?;
     sweep_staging(&service.data_dir);
-    let staging = tempfile::Builder::new()
-        .prefix(STAGING)
-        .permissions(fs::Permissions::from_mode(0o777))
-        .tempdir_in(&service.data_dir)?;
+    let mut staging = tempfile::Builder::new();
+    staging.prefix(STAGING);
+    // A new folder's usual mode, not tempfile's private one.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        staging.permissions(fs::Permissions::from_mode(0o777));
+    }
+    let staging = staging.tempdir_in(&service.data_dir)?;
     let (staged, staged_id) = (staging.path(), staging.path().file_name().unwrap());
     let (specs, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
     service.validate_uploads(&staged_id.to_string_lossy(), "", &specs)?;
@@ -413,7 +417,19 @@ mod tests {
             fs::create_dir_all(folder.join("sub")).unwrap();
             fs::write(folder.join("sub/main.tex"), "x").unwrap();
             let when = std::time::SystemTime::now() - Duration::from_secs(age);
-            File::open(&folder).unwrap().set_modified(when).unwrap();
+            // Windows opens a folder only for its backup semantics, and to
+            // date it, for its attributes.
+            #[cfg(windows)]
+            let handle = {
+                use std::os::windows::fs::OpenOptionsExt;
+                fs::OpenOptions::new()
+                    .access_mode(0x100)
+                    .custom_flags(0x0200_0000)
+                    .open(&folder)
+            };
+            #[cfg(not(windows))]
+            let handle = File::open(&folder);
+            handle.unwrap().set_modified(when).unwrap();
             folder
         };
         let crashed = staged(".texlocal-import-crashed", 25 * 60 * 60);
@@ -550,8 +566,12 @@ mod tests {
         let info = import_project_within(&service, &src, IMPORT).unwrap();
         let root = service.data_dir.join(&info.id);
         // Made hidden, it has a new folder's usual mode all the same.
-        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode(&root), mode(&service.data_dir));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&root), mode(&service.data_dir));
+        }
         let mut found = Vec::new();
         projects::visit_files(&root, &mut |_, rel| {
             found.push(rel.to_owned());

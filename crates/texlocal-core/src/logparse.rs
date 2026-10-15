@@ -19,17 +19,43 @@ pub struct LogItem {
     pub file: Option<String>,
     pub line: Option<u32>,
     pub message: String,
+    /// `message` for a line's end: on one line, without LaTeX's own prefix.
+    pub short: String,
+    /// The command an "Undefined control sequence" names, with its backslash.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 impl LogItem {
-    pub(crate) fn error(message: impl Into<String>) -> Self {
+    fn new(kind: &'static str, file: Option<String>, line: Option<u32>, message: String) -> Self {
+        let flat = message.split_whitespace().collect::<Vec<_>>().join(" ");
+        let short = flat
+            .strip_prefix("LaTeX Error: ")
+            .unwrap_or(&flat)
+            .to_owned();
+        let command = undefined_command(&short);
         Self {
-            kind: "error",
-            file: None,
-            line: None,
-            message: message.into(),
+            kind,
+            file,
+            line,
+            message,
+            short,
+            command,
         }
     }
+
+    pub(crate) fn error(message: impl Into<String>) -> Self {
+        Self::new("error", None, None, message.into())
+    }
+}
+
+/// The command a message names as undefined, as `parse_log` writes it, and for
+/// no other message: one from a file TeX loaded has that file's name before it.
+fn undefined_command(message: &str) -> Option<String> {
+    let name = message.strip_prefix("Undefined control sequence: \\")?;
+    // TeX's two forms of name: letters (and @), or one character of any other kind.
+    let letters = name.chars().all(|c| c.is_ascii_alphabetic() || c == '@');
+    ((!name.is_empty() && letters) || name.chars().count() == 1).then(|| format!("\\{name}"))
 }
 
 // Sources, and the files LaTeX writes and reads back (.aux, .toc, .bbl …),
@@ -50,9 +76,15 @@ static BIBTEX_ERROR: LazyLock<Regex> =
 static BIBER_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[\d+\] .*> ERROR - (.*)$").unwrap());
 
-/// A forward-slash project path; None for an absolute TeX distribution path.
+/// A forward-slash project path; None for an absolute TeX distribution path,
+/// `/…` or, from a TeX on Windows, `C:/…`, `C:\…` or `\\server\…`.
 fn project_path(path: &str) -> Option<String> {
-    (!path.starts_with('/')).then(|| path.strip_prefix("./").unwrap_or(path).to_string())
+    let absolute = match path.as_bytes() {
+        [b'/' | b'\\', ..] => true,
+        [drive, b':', b'/' | b'\\', ..] => drive.is_ascii_alphabetic(),
+        _ => false,
+    };
+    (!absolute).then(|| path.strip_prefix("./").unwrap_or(path).to_string())
 }
 
 /// Follow the files TeX opens and closes on a line. Each "(" pushes the path
@@ -99,7 +131,7 @@ fn locate(
     if let Some(rel) = project_path(path) {
         return (Some(rel), Some(line));
     }
-    let name = path.rsplit('/').next().unwrap_or(path);
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     *message = format!("{name}: {message}");
     (files.find_map(project_path), None)
 }
@@ -213,12 +245,12 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
                 ON_LINE.captures(&message).and_then(|lm| lm[1].parse().ok())
             };
             let (file, line_no) = locate(named, line_no, &open, main_file, &mut message);
-            items.push(LogItem {
-                kind: if error { "error" } else { "warning" },
+            items.push(LogItem::new(
+                if error { "error" } else { "warning" },
                 file,
-                line: line_no,
-                message: message.trim().to_string(),
-            });
+                line_no,
+                message.trim().to_string(),
+            ));
         } else if line.starts_with("Overfull \\") || line.starts_with("Underfull \\") {
             // The box's contents follow, up to a blank line.
             quiet_until = blank_from(&lines, i + 1);
@@ -249,12 +281,12 @@ pub fn parse_blg(blg: &str) -> Vec<LogItem> {
             if let Some(m) = BIBTEX_ERROR.captures(line) {
                 let file = project_path(m[3].trim());
                 let message = if m[1].trim().is_empty() { above } else { &m[1] };
-                Some(LogItem {
-                    kind: "error",
-                    line: file.as_ref().and(m[2].parse().ok()),
-                    file,
-                    message: message.trim().to_string(),
-                })
+                Some(LogItem::new(
+                    "error",
+                    file.clone(),
+                    file.and(m[2].parse().ok()),
+                    message.trim().to_string(),
+                ))
             } else {
                 BIBER_ERROR
                     .captures(line)
@@ -279,7 +311,7 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
 
 #[cfg(test)]
 mod tests {
-    use super::{latexmk_errors, parse_blg, parse_log, project_path};
+    use super::{latexmk_errors, parse_blg, parse_log, project_path, undefined_command};
 
     #[test]
     fn an_error_without_its_own_line_names_no_place() {
@@ -365,6 +397,33 @@ mod tests {
                 "Undefined control sequence: \\foo",
                 "Emergency stop.",
             ]
+        );
+    }
+
+    #[test]
+    fn an_item_has_a_one_line_message_and_the_command_it_cannot_find() {
+        let log = "./main.tex:3: LaTeX Error: Environment foo\n\
+                   undefined.\n\
+                   l.3 \\begin{foo}\n\
+                   \n\
+                   ./main.tex:4: Undefined control sequence.\n\
+                   l.4 \\foo@x\n\
+                   \n\
+                   ./main.tex:5: Undefined control sequence.\n\
+                   l.5 \\&\n";
+        let items = parse_log(log, "main.tex");
+        assert_eq!(items[0].short, "Environment foo undefined.");
+        assert_eq!(items[0].command, None);
+        let commands: Vec<_> = items[1..].iter().map(|it| it.command.as_deref()).collect();
+        assert_eq!(commands, [Some("\\foo@x"), Some("\\&")]);
+        // The name of a file TeX loaded comes first in its message: not this file's command.
+        assert_eq!(
+            undefined_command("x.sty: Undefined control sequence: \\a"),
+            None
+        );
+        assert_eq!(
+            undefined_command("Undefined control sequence: \\ab-c"),
+            None
         );
     }
 
@@ -559,5 +618,14 @@ mod tests {
             Some("chapters/a.tex".into())
         );
         assert_eq!(project_path("/usr/local/texlive/a.sty"), None);
+        for windows in [
+            "C:/texlive/2026/texmf-dist/tex/latex/base/article.cls",
+            r"c:\Program Files\MiKTeX\tex/latex/base\article.cls",
+            r"\\server\texmf\a.sty",
+        ] {
+            assert_eq!(project_path(windows), None, "{windows}");
+        }
+        // A file named like a drive is still the project's.
+        assert_eq!(project_path("c:a.tex"), Some("c:a.tex".into()));
     }
 }

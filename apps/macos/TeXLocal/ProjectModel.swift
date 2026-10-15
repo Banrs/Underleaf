@@ -4,70 +4,47 @@ import Observation
 import PDFKit
 import UniformTypeIdentifiers
 
-/// One open project: its files, the document in the editor, and its builds.
 @Observable
 final class ProjectModel {
     let id: String
     var settings: ProjectSettings?
-    /// The project's files, as the sidebar lists them.
     let tree: FileTree
-    /// The first file and its outline are ready for the workspace to appear.
     private(set) var initialLoadComplete = false
     var openPath: String?
     var outline: [OutlineItem] = []
-    /// The main file's `\documentclass`, for the levels Aa offers and how it sets them.
     var documentClass: DocumentClass?
-    /// The main file `documentClass` was read from.
     @ObservationIgnored private var classFile: String?
     var words: Int?
     var cursorLine = 1
-    /// The caret's column (UTF-16, from 0), for the status bar.
     var cursorColumn = 0
-    /// The line at the top of the source; unobserved, as it changes on every
-    /// line scrolled past.
     @ObservationIgnored var topLine = 1
-    /// The heading at the top of the source, which the outline follows.
     private(set) var topHeading: Int?
 
     var dirty = false
-    /// Why the open file's last save failed, until one succeeds: the status bar says Not Saved.
     private(set) var saveFailure: String?
-    /// Edits since the build of the PDF on screen started.
     private(set) var pdfOutdated = false
     @ObservationIgnored private var edits = 0
-    /// `edits` at each file's last edit, and when `result`'s build started: the build's
-    /// lines are a file's until it's edited.
     @ObservationIgnored private var lastEdit: [String: Int] = [:]
     @ObservationIgnored private var resultEdits = 0
     var compiling = false
     var result: CompileResult?
-    /// The issue chosen in the list or by Go to Next Issue, a place in `issues`; a new build starts with none.
     private(set) var chosenIssue: Int?
-    /// What the PDF pane shows: nothing until one loads, the last build's PDF, or TeXpresso's live document.
     nonisolated enum ShownPDF: Equatable { case none, build(URL), live(URL) }
     var shown = ShownPDF.none
     var hasPDF: Bool { shown != .none }
     var livePDF: Bool { if case .live = shown { true } else { false } }
-    /// The last build's PDF, which is the one to save or share: the live document is TeXpresso's
-    /// working file, rewritten as its pages come.
     private(set) var buildPDF: URL?
-    /// The PDF view's page, scale and find, for the menus and the window.
     let pdf = PDFController()
-    /// The build panel: whether it shows, and what.
     let panel: BuildPanelModel
-    /// TeXpresso's live preview, in the PDF pane; the last build's PDF comes back after it.
     let texpresso: TeXpressoSession
     @ObservationIgnored private var liveRestartTask: Task<Void, Never>?
     @ObservationIgnored private var liveDiskTask: Task<Void, Never>?
     @ObservationIgnored private var liveDiskPaths = Set<String>()
     @ObservationIgnored private var liveIntent = 0
-    /// Changes under way that end the live session in the core and start it again after.
     @ObservationIgnored private var liveChanges = 0
 
-    /// The build's errors, then its warnings.
     var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) }
 
-    /// Choosing an issue shows its line; the list keeps the keyboard, the menus give it to the source.
     func chooseIssue(_ place: Int?, focus: Bool) {
         chosenIssue = place
         let issues = issues
@@ -75,8 +52,6 @@ final class ProjectModel {
         Task { await open(file, line: issues[place].line, focus: focus) }
     }
 
-    /// The next or previous issue the log places in a file, round from the chosen one, with
-    /// the list open on it: the message is there.
     func goToIssue(next: Bool) {
         let issues = issues, places = issues.indices.filter { issues[$0].file != nil }
         guard let first = places.first, let last = places.last else { return }
@@ -89,12 +64,9 @@ final class ProjectModel {
         chooseIssue(place, focus: true)
     }
 
-    /// The open file's lines with issues, for the editor to mark: each line's first, and what its
-    /// others say.
     private func markIssues() {
         var lines: [Int: SourceTextView.LineIssue] = [:]
         if let openPath, lastEdit[openPath, default: 0] <= resultEdits {
-            // Errors last: a line with both is an error's, and the issue it had is the first of its others.
             for item in issues.reversed() where item.file == openPath {
                 guard let line = item.line else { continue }
                 let others = lines[line].map { [$0.message] + $0.others } ?? []
@@ -104,31 +76,20 @@ final class ProjectModel {
         editor.textView.issueLines = lines
     }
 
-    /// The open file on disk, for the window's document icon and the preview of a file the editor doesn't edit.
     var openURL: URL? { openPath.flatMap(url) }
-    /// The open file's path, while the alert asks whether to keep the edits
-    /// here or the change on disk.
     var diskConflict: String?
-    /// The open file's path, while the alert asks what becomes of its unsaved
-    /// edits now another app has moved or deleted it.
     var missingFile: String?
-    /// Each alert's path until its question is answered: Cancel leaves it, and no save writes
-    /// over the other app's change, or puts the file back, unasked.
+    /// Cancel leaves it, and no save writes over the other app's change, or puts the file back, unasked.
     @ObservationIgnored private var changedFile: String?
     @ObservationIgnored private var goneFile: String?
-    /// Bumped when a file the editor only previews changes on disk, for its preview to read it again.
     private(set) var previewVersion = 0
-    /// The text last read or written, to tell another app's change from our save.
     @ObservationIgnored private var diskText: String?
-    /// The file as it was when `diskText` was read or written. While a stat still gives it, a
-    /// change told of the file is our own save's, or no change, and the file isn't read again.
+    /// While a stat still gives it, a change told of the file is our own save's, or no change, and the file isn't read again.
     @ObservationIgnored private var diskStamp: FileStamp?
-    /// Has the project's folder too, so it is observed: the window's document icon follows `openURL`.
     private var folderWatcher: FolderWatcher?
 
     var importClash: ImportClash?
 
-    /// The files' open folders and the outline's folded headings, kept for the project between visits.
     var expandedFolders: Set<String> {
         didSet { UserDefaults.standard.set(expandedFolders.sorted(), forKey: Self.key("expandedFolders", id)) }
     }
@@ -138,7 +99,6 @@ final class ProjectModel {
     private static let sidebarKeys = ["expandedFolders", "foldedHeadings"]
     private static func key(_ name: String, _ id: String) -> String { "\(name).\(id)" }
 
-    /// A project's id is its folder's name, so a rename moves what is kept under it.
     static func moveSidebarState(from id: String, to new: String) {
         let defaults = UserDefaults.standard
         for name in sidebarKeys {
@@ -152,15 +112,12 @@ final class ProjectModel {
         for name in sidebarKeys { UserDefaults.standard.removeObject(forKey: key(name, id)) }
     }
 
-    /// Find in Project, in the sidebar.
     let search: ProjectSearch
 
     let editor = SourceEditor()
     @ObservationIgnored private weak var app: AppModel?
     private let core = Core.shared
-    /// The autosave that waits for a pause in typing, or runs; a test waits for it.
     @ObservationIgnored private(set) var saveTask: Task<Void, Never>?
-    /// Saves, settings, renames, deletions and disk checks finish in order, including their model updates.
     @ObservationIgnored private var lastMutation: Task<Bool, Never>?
     @ObservationIgnored private var analysis: Task<Void, Never>?
     @ObservationIgnored private var symbolsTask: Task<Void, Never>?
@@ -168,13 +125,9 @@ final class ProjectModel {
     @ObservationIgnored private var openTask: Task<Void, Never>?
     @ObservationIgnored private var syncTask: Task<Void, Never>?
     @ObservationIgnored private var pdfLoad: Task<Bool, Never>?
-    /// The build asked for while one runs: automatic unless any request wasn't.
     @ObservationIgnored private var compileQueued: Bool?
-    /// Stop while the build's save runs, before the core has a build to stop.
     @ObservationIgnored private var stopRequested = false
-    /// The files moved to the Trash from here, whose Undo and Redo go when the project closes.
     @ObservationIgnored private var trashed: [UndoableTrash] = []
-    /// A build still running when the project closes reports nothing.
     private(set) var closed = false
 
     init(id: String, app: AppModel) {
@@ -204,20 +157,16 @@ final class ProjectModel {
         pdf.buildBehindLive = { [weak self] in self.flatMap { $0.livePDF ? $0.buildPDF : nil } }
         texpresso.onEnded = { [weak self] restartable in
             guard let self else { return }
-            // TeXpresso went by itself: it starts again where it was, and the live pages stay meanwhile.
             if restartable, !closed {
                 texpresso.restart(liveStart)
                 if texpresso.active { return notices.note(String(localized: "Live Preview Restarted")) }
             }
-            // The last build's PDF comes back, and automatic builds paused for it resume.
             Task { await self.endLivePDF() }
             if autoCompile { Task { await self.compile(auto: true) } }
         }
     }
 
-    /// Only LaTeX has an outline, a word count and the LaTeX tools.
     var isLaTeX: Bool { openPath.map(isLaTeXFile) ?? false }
-    /// The levels the main file's class has, and how it sets them.
     var headingStyles: HeadingStyles {
         HeadingStyles(documentClass: documentClass)
     }
@@ -231,7 +180,6 @@ final class ProjectModel {
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
 
-    /// The latest build failed without writing a PDF, so the one shown is an earlier build's.
     var showsLastSuccessfulBuild: Bool { hasPDF && result?.failed == true && result?.pdf == nil }
     var texAvailable: Bool { app?.tex?.available ?? false }
     var autoCompile: Bool { app?.autoCompile ?? false }
@@ -240,12 +188,9 @@ final class ProjectModel {
         app?.alert = AppAlert(title, error)
     }
 
-    /// The status bar's notice, and what VoiceOver is told.
     let notices = ProjectNotices()
 
-    /// A SyncTeX search that finds no match is ordinary (a comment, the preamble, a figure): a
-    /// sound, and the core's word for what it missed in the status bar. Anything else is a
-    /// failure to explain.
+    /// A SyncTeX search that finds no match is ordinary (a comment, the preamble, a figure); anything else is a failure to explain.
     private func reportSync(_ error: any Error, _ title: String) {
         guard (error as? CoreError)?.status == 404 else { return report(error, title) }
         NSSound.beep()
@@ -257,10 +202,9 @@ final class ProjectModel {
                        pdfZoom: pdf.restoreZoom ?? pdf.zoom)
     }
 
-    // ---------- loading ----------
+    // MARK: - Loading
 
-    /// Opens the main file, or where `saved` left off. Stops if the project
-    /// is left meanwhile, so it never writes to the editor after the next one.
+    /// Stops if the project is left meanwhile, so it never writes to the editor after the next one.
     func load(restoring saved: SavedWorkspace?) async {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line, column in
@@ -276,7 +220,6 @@ final class ProjectModel {
         editor.onScroll = { [weak self] line in
             guard let self else { return }
             topLine = line
-            // The outline redraws only as a heading reaches the top.
             topHeading = Outline.current(outline, file: openPath, line: line)
         }
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
@@ -297,24 +240,20 @@ final class ProjectModel {
             pdf.restorePage = saved.pdfPage
             pdf.restoreZoom = saved.pdfZoom
         }
-        // The PDF loads while the file is read and analysed, needing neither, and is shown before the
-        // workspace appears, so the pane doesn't open on its empty state and then change.
+        // The PDF loads while the file is read and analysed, and is shown before the workspace appears, so the pane doesn't open on its empty state.
         async let pdfShown = showPDFOnDisk()
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             try await tree.read()
             let root = try await core.call("project_root", ["id": id], as: String.self)
             guard !closed else { return }
-            // Watched for other apps' edits and files, rather than saving over them.
             folderWatcher = FolderWatcher(folder: URL(filePath: root, directoryHint: .isDirectory)) { [weak self] in self?.folderChanged($0) }
             refreshSymbols()
             let restored = saved?.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
-            // The workspace is installed only after its first outline is ready.
             await analysis?.value
         } catch {
-            // Home stays, with the alert over it: a workspace would have no files to show, or none
-            // it could reveal, drag out, move to the Trash or see another app change.
+            // Home stays, with the alert over it: a workspace would have no files to show.
             guard !closed else { return }
             report(error, "Couldn’t Open “\(id)”")
             if app?.project === self { await app?.close() }
@@ -326,11 +265,9 @@ final class ProjectModel {
         if !hasPDF, autoCompile { await compile(auto: true) }
     }
 
-    /// The tree has other files: the outline is read again, and TeXpresso looks again.
     private func filesChanged() {
         analyze()
-        // TeXpresso keeps the texts it was sent through a rescan, so only a new session drops
-        // one whose file has gone or moved; any other change it finds by looking again.
+        // TeXpresso keeps the texts it was sent through a rescan, so only a new session drops one whose file has gone or moved.
         if initialLoadComplete, texpresso.active {
             let paths = Set(tree.nodes.flattened.map(\.path))
             if texpresso.files.isSubset(of: paths) { texpresso.rescan() } else { restartTeXpresso() }
@@ -338,7 +275,6 @@ final class ProjectModel {
     }
 
     private func refreshSymbols(delayed: Bool = false) {
-        // Several saves during a typing burst need only one symbols scan.
         restart(&symbolsTask, after: delayed ? .milliseconds(150) : .zero) { [weak self] in
             guard let self, let symbols = try? await core.call("scan_symbols", ["id": id], as: Symbols.self),
                   !Task.isCancelled, !closed else { return }
@@ -346,10 +282,7 @@ final class ProjectModel {
         }
     }
 
-    /// The main file's PDF on disk, unless a later load replaces this one. A no-op
-    /// build's PDF is already shown: reopening every page would lose PDFKit's state.
-    /// During live preview it is kept for after it, and `replacingLive` it takes the
-    /// live document's place, unless live preview is on again by then.
+    /// A no-op build's PDF is already shown: reopening every page would lose PDFKit's state.
     @discardableResult private func showPDFOnDisk(reloadIfUnchanged: Bool = true, replacingLive: Bool = false) async -> Bool {
         await restart(&pdfLoad) { [self] in
             guard !closed, let path = try? await core.call("pdf_path", ["id": id], as: String.self),
@@ -369,16 +302,12 @@ final class ProjectModel {
         }.value
     }
 
-    /// Live preview over, the last build's PDF, or the pane's empty state without one: the live
-    /// document isn't a build's, to save or sync with. A new live session's document wins.
     private func endLivePDF() async {
         guard livePDF, !livePreviewing, !(await showPDFOnDisk(replacingLive: true)), livePDF, !livePreviewing, !closed else { return }
         shown = .none
         pdf.clear()
     }
 
-    /// TeXpresso's document in the PDF pane; the pane shows on the first, as the preview the
-    /// person asked for.
     private func showLive(_ live: LiveDocument) {
         guard texpresso.active, !closed else { return }
         if !livePDF, app?.showPDF == false { app?.showPDF = true }
@@ -386,18 +315,14 @@ final class ProjectModel {
         pdf.showLive(live.document, changed: live.changed, complete: live.complete)
     }
 
-    // ---------- editing ----------
+    // MARK: - Editing
 
-    /// Text opens in the editor, anything else in a preview. The sidebar
-    /// passes `focus: false` so the arrow keys stay in its list. Only the latest
-    /// open carries on, so the editor can't show one file while `openPath`,
-    /// where autosave writes, names another.
+    /// Only the latest open carries on, so the editor can't show one file while `openPath`, where autosave writes, names another.
     func open(_ path: String, line: Int? = nil, column: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
         await restart(&openTask) { [self] in
             if path != openPath {
                 do {
-                    // Read first and saved last, with nothing awaited between the save and the switch:
-                    // a key typed while the next file is read is still the open file's, and reaches it.
+                    // Read first and saved last, with nothing awaited between the save and the switch: a key typed while the next file is read is still the open file's.
                     let read = isTextFile(path) ? try await readDisk(path) : nil
                     guard await saveEdits(), !Task.isCancelled, !closed else { return }
                     openPath = path
@@ -423,25 +348,20 @@ final class ProjectModel {
         try await core.call("read_file", ["id": id, "path": path], as: FileText.self).text
     }
 
-    /// The file's text, and its stamp from before the read: one changed meanwhile has another
-    /// stamp by the next check, which reads it again rather than take it for this text.
+    /// Its stamp is from before the read: a file changed meanwhile has another stamp by the next check, which reads it again.
     private func readDisk(_ path: String) async throws -> (text: String, stamp: FileStamp?) {
         let stamp = url(path).flatMap(FileStamp.init(of:))
         return (try await readText(path), stamp)
     }
 
-    /// A file of the project on disk, to drag out; nil until its folder is watched.
     func url(_ path: String) -> URL? {
         folderWatcher.map { URL(filePath: $0.folder).appending(path: path) }
     }
 
-    /// A dragged file's path in the project; nil for one from elsewhere.
     func projectPath(_ url: URL) -> String? {
         folderWatcher?.relativePath(FolderWatcher.realPath(url))
     }
 
-    /// A file of the project dropped on the source opens in the editor, and an image or a PDF
-    /// dropped on LaTeX goes in as a figure; one from elsewhere goes on the sidebar.
     private func dropped(_ url: URL) -> SourceTextView.FileDrop? {
         guard let path = projectPath(url), tree.node(at: path)?.isDirectory == false else { return nil }
         let type = UTType(filenameExtension: url.pathExtension)
@@ -461,7 +381,6 @@ final class ProjectModel {
         if let openPath { lastEdit[openPath] = edits }
         if !editor.textView.issueLines.isEmpty { editor.textView.issueLines = [:] }
         if hasPDF { pdfOutdated = true }
-        // Long enough to cover a pause between keystrokes.
         restart(&saveTask, after: .milliseconds(700)) { [weak self] in
             guard let self, await save(reporting: false), !Task.isCancelled else { return }
             // In a task of its own: this one is cancelled by the next key, and by the build's own save.
@@ -469,21 +388,17 @@ final class ProjectModel {
         }
     }
 
-    /// Queued after earlier mutations; true means the text reached disk. A failure is an alert
-    /// only when `reporting`, for a save someone asked for or something waits on: an autosave's
-    /// stays in the status bar, where it doesn't come back at every pause in typing.
+    /// A failure is an alert only when `reporting`; an autosave's stays in the status bar, where it doesn't come back at every pause in typing.
     func save(reporting: Bool = true) async -> Bool {
         await mutate { await $0.write(reporting: reporting) }
     }
 
     private func write(reporting: Bool = true) async -> Bool {
         guard hasUnsavedText, let document = editor.document else { return true }
-        // Not over another app's change until asked which to keep.
         guard diskConflict == nil, missingFile == nil else { return false }
         // The editor's text, which is the open file's: they change together.
         let (path, text) = document
-        // Nor after the alert's Cancel, over the change or back where the file was moved or
-        // deleted from: a save someone asked for asks again.
+        // Nor after the alert's Cancel: a save someone asked for asks again.
         if goneFile == path {
             if reporting { missingFile = path }
             return false
@@ -515,8 +430,6 @@ final class ProjectModel {
         }
     }
 
-    /// The project's outline and words, for a .tex file
-    /// only. The core reads the saved files; the latest reading wins.
     private func analyze() {
         analysis?.cancel()
         guard isLaTeX, let path = openPath else {
@@ -543,18 +456,14 @@ final class ProjectModel {
         }
     }
 
-    /// Saves before a file switch, close or quit; cancels pending autosave.
     func flush(reporting: Bool = true) async -> Bool {
         saveTask?.cancel()
-        // Repeat if an edit arrives during the write.
         repeat {
             guard await save(reporting: reporting) else { return false }
         } while hasUnsavedText
         return true
     }
 
-    /// Restores the automatic build canceled with the pending autosave. Not `reporting`, for a
-    /// save nobody asked for, a failure stays in the status bar and a question put off stays put off.
     @discardableResult
     func saveEdits(reporting: Bool = true) async -> Bool {
         let edited = dirty
@@ -563,33 +472,27 @@ final class ProjectModel {
         return true
     }
 
-    // ---------- changes on disk ----------
+    // MARK: - Changes on disk
 
-    /// The tree is read again when something comes, goes or moves in a folder
-    /// it shows; what it shows (not hidden files or the build's) is the core's.
     private func folderChanged(_ changes: [FolderWatcher.Change]) {
         guard let watcher = folderWatcher else { return }
-        // Read once for the batch: a checkout changes every file at once.
         let entries = tree.nodes.flattened
         let folders = Set(entries.filter(\.isDirectory).map(\.path))
         let files = Set(entries.filter { !$0.isDirectory }.map(\.path))
         let previewed = texpresso.active ? Set(entries.map(\.path)) : []
-        // A save, ours or another app's, renames a new file over a listed one, which leaves the tree
-        // as it was; nor does the core list a hidden file, such as the save's temporary one.
+        // A save, ours or another app's, renames a new file over a listed one, which leaves the tree as it was; nor does the core list a hidden file.
         func listedAsBefore(_ path: String) -> Bool {
             path.fileName.hasPrefix(".") || files.contains(path) && watcher.hasFile(path)
         }
         var openFileChanged = false, treeChanged = false
         for change in changes {
             guard let path = watcher.relativePath(change.path) else {
-                // The folder itself: moved, or FSEvents lost count of it, so the
-                // open file may have changed unseen too.
+                // The folder itself: moved, or FSEvents lost count of it, so the open file may have changed unseen too.
                 let folder = change.path == watcher.folder || change.path == watcher.folder + "/"
                 treeChanged = treeChanged || change.structural && folder
                 openFileChanged = openFileChanged || change.structural && folder && openPath != nil
                 continue
             }
-            // A folder moves as one change, not one for each file in it.
             openFileChanged = openFileChanged || path == openPath
                 || change.structural && openPath?.hasPrefix(path + "/") == true
             let parent = path.parentFolder
@@ -607,14 +510,12 @@ final class ProjectModel {
         if texpresso.active, !liveDiskPaths.isEmpty { refreshTeXpressoDisk() }
     }
 
-    /// With no unsaved edits the editor takes the disk's text, and true says so; otherwise ask.
     private func checkDisk() async -> Bool {
         guard let path = openPath else { return false }
         if let url = openURL, !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
             fileGone(path)
             return false
         }
-        // Back, if it had gone.
         goneFile = nil
         guard editsText else {
             previewVersion += 1
@@ -637,15 +538,11 @@ final class ProjectModel {
         return true
     }
 
-    /// Another app moved or deleted the open file. It closes, as the sidebar
-    /// drops it, unless it has unsaved edits: those are asked about, and not
-    /// saved meanwhile, which would put the file back unasked.
+    /// Unsaved edits are asked about and not saved meanwhile, which would put the file back unasked.
     private func fileGone(_ path: String) {
         saveTask?.cancel()
-        // Its change, if it was asked about and left, went with it.
         changedFile = nil
         if hasUnsavedText {
-            // Asked once: after Cancel, at the next save someone asks for.
             if goneFile != path { missingFile = path }
             goneFile = path
         } else {
@@ -653,13 +550,11 @@ final class ProjectModel {
         }
     }
 
-    /// The edits saved where the file was, making it again.
     func saveMissingFile() {
         (missingFile, goneFile) = (nil, nil)
         Task { await saveEdits() }
     }
 
-    /// Discards unsaved edits to a file that no longer exists.
     func closeMissingFile() {
         (missingFile, goneFile) = (nil, nil)
         clearOpenFile()
@@ -667,8 +562,7 @@ final class ProjectModel {
 
     private func showDiskText(_ text: String, of path: String) {
         let top = topLine
-        // The last build's lines were the text's it replaces: they go as on an edit, which this
-        // is to the file, and stay gone until a build has read it.
+        // The last build's lines were the replaced text's: they go as on an edit, and stay gone until a build has read it.
         edits += 1
         lastEdit[path] = edits
         if !editor.textView.issueLines.isEmpty { editor.textView.issueLines = [:] }
@@ -679,8 +573,7 @@ final class ProjectModel {
         texpresso.update(TeXpressoFile(path: path, text: text))
     }
 
-    /// The disk's text of `path`, the file the alert asked about, written back in case
-    /// a save under way when the change came wrote the edits over it.
+    /// Written back in case a save under way when the change came wrote the edits over it.
     func revertToDisk(_ path: String) async {
         (diskConflict, changedFile) = (nil, nil)
         saveTask?.cancel()
@@ -693,28 +586,21 @@ final class ProjectModel {
         if reverted, autoCompile { await compile(auto: true) }
     }
 
-    /// Cancel in either alert about another app's change: the edits stay unsaved, and the status
-    /// bar says so, as after a save that failed. Its button saves, and so asks again.
     func leaveUnsaved(_ reason: String) {
         (diskConflict, missingFile) = (nil, nil)
         saveFailure = reason
     }
 
-    /// Save Anyway: the edits written over the other app's change, now.
     func keepEdits() {
         (diskConflict, changedFile) = (nil, nil)
-        // The autosave was cancelled while asking, or the edits were already saved
-        // before the other app's change: either way they're written again.
+        // The autosave was cancelled while asking, or the edits were already saved before the other app's change: either way they're written again.
         dirty = true
         Task { await saveEdits() }
     }
 
-    // ---------- compile ----------
+    // MARK: - Compile
 
-    /// A request during a build queues one follow-up. Only a build the person asked for moves
-    /// the build panel: a failure opens it on the issues, and a clean build closes the panel a
-    /// failure opened. An automatic one changes the status bar and the gutter alone, and waits
-    /// while TeXpresso previews, without changing the preference.
+    /// A request during a build queues one follow-up. An automatic build changes the status bar and the gutter alone, and waits while TeXpresso previews, without changing the preference.
     func compile(auto: Bool = false) async {
         guard texAvailable, !closed, !auto || !livePreviewing else { return }
         if compiling {
@@ -724,19 +610,15 @@ final class ProjectModel {
         // Before the save, so a second request queues instead of racing this one.
         compiling = true
         stopRequested = false
-        // Through the mutation lane, after the settings and renames asked for before.
         let saved = await flush(reporting: !auto)
-        // Counted after the save, which has everything typed until now.
         let built = edits
         if saved, !stopRequested, !closed, !auto || !livePreviewing {
-            // The toolbar's Stop says so to the eye only. Not through `notices.announce`: the result of a
-            // short build isn't held back for it.
+            // Not through `notices.announce`: the result of a short build isn't held back for it.
             if !auto { AccessibilityNotification.Announcement(String(localized: "Compiling")).post() }
             let result: CompileResult
             do {
                 result = try await core.call("compile", ["id": id], as: CompileResult.self)
             } catch {
-                // A build the core couldn't run failed too, and says why where the others do.
                 let issue = LogItem(type: "error", file: nil, line: nil, message: error.localizedDescription)
                 result = CompileResult(ok: false, stopped: false, pdf: nil, pdfChanged: false, durationMs: 0,
                                        errors: [issue], warnings: [], log: "")
@@ -744,11 +626,8 @@ final class ProjectModel {
             // The PDF is the main file's now: a main-file change stopped any build of the old one.
             if result.pdf != nil, !closed {
                 await showPDFOnDisk(reloadIfUnchanged: result.pdfChanged)
-                // Edits made while it built aren't in it.
                 pdfOutdated = edits != built
-                // Settings' jump to the caret's place, in a PDF pane that is showing. Not after typing
-                // through the build: the PDF hasn't the caret's text yet, and the sync would save it
-                // mid-word and start the next build at once.
+                // Not after typing through the build: the PDF hasn't the caret's text yet, and the sync would save it mid-word and start the next build at once.
                 if result.ok, !pdfOutdated, app?.showPDF == true, isLaTeX, UserDefaults.standard.bool(forKey: DefaultsKey.syncAfterCompile) {
                     Task { await forwardSync(quietly: true) }
                 }
@@ -762,8 +641,6 @@ final class ProjectModel {
                 if !auto {
                     finishedManualBuild(result)
                 } else if errorCount != errors {
-                    // An automatic build speaks only when the errors come, go or change in number,
-                    // and after whatever VoiceOver is saying: it follows typing.
                     announceResult(result, queued: true)
                 }
             }
@@ -778,7 +655,6 @@ final class ProjectModel {
     private func finishedManualBuild(_ result: CompileResult) {
         if result.failed {
             panel.openForFailedBuild()
-            // The Dock says so while another app is in front.
             if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
         } else if result.ok, issues.isEmpty {
             panel.closeAfterCleanBuild()
@@ -786,7 +662,6 @@ final class ProjectModel {
         announceResult(result)
     }
 
-    /// A stopped build says nothing.
     private func announceResult(_ result: CompileResult, queued: Bool = false) {
         if result.failed {
             notices.announce(errorCount == 0 ? String(localized: "Build failed")
@@ -796,7 +671,6 @@ final class ProjectModel {
         }
     }
 
-    /// A build still running stops and reports nothing, so it can't supersede the next project's.
     func close() {
         guard !closed else { return }
         stopCompile()
@@ -805,8 +679,7 @@ final class ProjectModel {
         editor.textView.isEditable = false
         cancelTeXpressoWork()
         texpresso.close()
-        // Its renames and its files' moves to the Trash can't be undone once it's closed: nothing
-        // would show the result. The window's stack outlives it.
+        // Its renames and its files' moves to the Trash can't be undone once it's closed; the window's stack outlives it.
         let undo = app?.undoManager
         undo?.removeAllActions(withTarget: self)
         for item in trashed { undo?.removeAllActions(withTarget: item) }
@@ -823,7 +696,6 @@ final class ProjectModel {
         pdfLoad?.cancel()
     }
 
-    /// Kills the build's process group; the compile returns stopped.
     func stopCompile() {
         guard compiling else { return }
         compileQueued = nil
@@ -831,7 +703,7 @@ final class ProjectModel {
         Task { try? await core.perform("stop_compile", ["id": id]) }
     }
 
-    // ---------- settings ----------
+    // MARK: - Settings
 
     private func mutate(_ title: String? = nil, _ update: @escaping @MainActor (ProjectModel) async throws -> Bool) async -> Bool {
         let previous = lastMutation
@@ -849,8 +721,6 @@ final class ProjectModel {
         return await task.value
     }
 
-    /// The change shows at once, from a call made as the control is set: the core's answer replaces
-    /// it, and a refusal puts back what was there.
     func patchSettings(_ change: SettingsChange) async -> Bool {
         let before = settings
         settings?.apply(change)
@@ -864,13 +734,10 @@ final class ProjectModel {
         return done
     }
 
-    /// A setting that changes the build: the build follows it when Compile Automatically is on.
     func setBuildOption(_ change: SettingsChange) async {
         if await patchSettings(change), autoCompile { await compile(auto: true) }
     }
 
-    /// Compile › Clean Build Folder: a build under way stops, the folder goes, and the next build
-    /// starts from nothing, at once when Compile Automatically is on.
     func cleanBuildFolder() async {
         guard !closed else { return }
         stopCompile()
@@ -902,13 +769,11 @@ final class ProjectModel {
         if await keepingLive({ await patchSettings(.mainFile(path)) }), !closed { await mainFileChanged() }
     }
 
-    // ---------- TeXpresso live preview ----------
+    // MARK: - TeXpresso live preview
 
     private var livePreviewing: Bool { texpresso.active || liveRestartTask != nil || liveChanges > 0 }
 
-    /// The core ends a live session when a rename or a new main file changes what it previews.
-    /// One live before `change` starts again after it, unless stopped or started meanwhile; the
-    /// live pages stay until then.
+    /// The core ends a live session when a rename or a new main file changes what it previews; one live before starts again after, unless stopped or started meanwhile.
     @discardableResult
     private func keepingLive(_ change: () async -> Bool) async -> Bool {
         guard texpresso.active else { return await change() }
@@ -920,7 +785,6 @@ final class ProjectModel {
         return changed
     }
 
-    /// The editor's text as its storage has it, which the edits that follow are edits of, and the caret in it.
     private var liveStart: TeXpressoSession.Start {
         guard editsText, let path = editor.path, path == openPath else { return .init(files: []) }
         return .init(files: [TeXpressoFile(path: path, text: editor.textView.string)],
@@ -931,7 +795,6 @@ final class ProjectModel {
         guard !closed, texpresso.canStart else { return }
         liveIntent += 1
         if let pages = pdf.visiblePages { texpresso.view(pages) }
-        // The preview is the feedback; the log opens only on a failure.
         texpresso.start(liveStart)
     }
 
@@ -951,7 +814,6 @@ final class ProjectModel {
     }
 
     private func restartTeXpresso() {
-        // Coalesce a rename's tree and main-file notifications.
         restart(&liveRestartTask, after: .milliseconds(180)) { [weak self] in
             guard let self, !closed else { return }
             texpresso.restart(liveStart)
@@ -961,14 +823,10 @@ final class ProjectModel {
         }
     }
 
-    /// Another app's change to an include the editor sent replaces TeXpresso's copy; the open
-    /// file's is the editor's, even while it asks about the change. A path whose read fails waits
-    /// for the next change.
     private func refreshTeXpressoDisk() {
         restart(&liveDiskTask, after: .milliseconds(180)) { [weak self] in
             guard let self else { return }
-            // Our own save of the open file isn't news to TeXpresso, which has the editor's text:
-            // a rescan then, landing as it typesets the edit, stalled it (TeXpresso e8df770).
+            // Our own save of the open file isn't news to TeXpresso: a rescan then, landing as it typesets the edit, stalled it (TeXpresso e8df770).
             var others = false
             for path in liveDiskPaths {
                 guard !closed, !Task.isCancelled, texpresso.active else { return }
@@ -984,9 +842,8 @@ final class ProjectModel {
         }
     }
 
-    // ---------- SyncTeX ----------
+    // MARK: - SyncTeX
 
-    /// Each sync replaces the one before; the PDF pane shows the spot once it has its width.
     func forwardSync(quietly: Bool = false) async {
         guard let path = openPath else { return }
         let (line, column, word) = (editor.currentLine, editor.currentColumn, editor.currentSyncWord)
@@ -1005,13 +862,11 @@ final class ProjectModel {
         }.value
     }
 
-    /// SyncTeX for the pages shown: TeXpresso's, through its session, or the last build's.
     private func syncArguments(_ arguments: [String: any Sendable]) -> [String: any Sendable] {
         guard livePDF, let owner = texpresso.owner else { return arguments }
         return arguments.merging(["live": true, "session": owner]) { $1 }
     }
 
-    /// `word`, the PDF's word clicked `offset` in, takes the caret to it on the line.
     func inverseSync(page: Int, x: Double, y: Double, word: SyncTeXWord? = nil) async {
         await restart(&syncTask) { [self] in
             do {
@@ -1027,11 +882,8 @@ final class ProjectModel {
         }.value
     }
 
-    // ---------- files ----------
+    // MARK: - Files
 
-    /// "untitled.tex", or "untitled folder", in `folder`, numbered past the names taken
-    /// there as Finder numbers them; its path once made. In the lane, after the renames and
-    /// deletions asked for before it. A file opens, leaving the keyboard for its name.
     func createEntry(in folder: String, directory: Bool) async -> String? {
         let name = directory ? "untitled folder" : "untitled.tex"
         var made: String?
@@ -1055,14 +907,11 @@ final class ProjectModel {
         return made
     }
 
-    /// `action` names it in Edit › Undo: a drop in the tree is a Move.
     func renameEntry(_ from: String, to: String, action: String = String(localized: "Rename")) async {
         if let result = await performRename(from, to: to) { registerRenameUndo(result, action: action) }
     }
 
-    /// Undo renames it back, by the core's normalised paths; the main file follows it both
-    /// ways. The Redo is registered as the Undo starts, as `UndoableTrash`'s are, and one
-    /// that fails takes it away. The closures hold the model: the manager doesn't.
+    /// The Redo is registered as the Undo starts, as `UndoableTrash`'s are, and one that fails takes it away. The closures hold the model: the manager doesn't.
     private func registerRenameUndo(_ result: RenameResult, action: String) {
         guard let undo = app?.undoManager else { return }
         undo.registerUndo(withTarget: self) { _ in
@@ -1079,18 +928,15 @@ final class ProjectModel {
         var reopen: String?
         var mainChanged = false
         var renamed: RenameResult?
-        // Restarted once the editor and tree have the new names.
         await keepingLive {
             let renaming = await mutate("Couldn’t Rename “\(from.fileName)”") { model in
                 let result = try await model.core.call("rename_entry", ["id": model.id, "from": from, "to": to], as: RenameResult.self)
                 guard !model.closed else { return false }
                 renamed = result
                 model.editor.rename(from: result.from, to: result.to)
-                // The open file may move with its folder. The editor keeps its
-                // text; only the save path changes, so the old path can't return.
+                // The editor keeps its text; only the save path changes, so the old path can't return.
                 if let was = model.openPath, case let now = remapPath(was, from: result.from, to: result.to), now != was {
                     model.openPath = now
-                    // Its new kind may edit or preview it differently.
                     if isTextFile(now) != isTextFile(was) || isLaTeXFile(now) != isLaTeXFile(was) { reopen = now }
                 }
                 mainChanged = result.mainFile != model.settings?.mainFile
@@ -1111,7 +957,6 @@ final class ProjectModel {
         return renamed
     }
 
-    /// Move to Trash, which Edit › Undo takes back.
     func deleteEntry(_ path: String) async {
         guard let original = url(path) else { return }
         let item = UndoableTrash(
@@ -1124,7 +969,6 @@ final class ProjectModel {
         if !closed { await tree.reload() }
     }
 
-    /// In the lane, so it follows the saves and renames asked for before it.
     private func trashEntry(_ path: String, _ item: UndoableTrash) async -> Bool {
         await mutate("Couldn’t Move “\(path.fileName)” to the Trash") { model in
             // Saved first, so an autosave cannot recreate the deleted file.
@@ -1147,8 +991,6 @@ final class ProjectModel {
         }
     }
 
-    /// No file editing: the editor may still hold the old text, but nothing saves or analyses it,
-    /// and with no file `analyze` leaves no outline and no word count.
     private func clearOpenFile() {
         openPath = nil
         (diskText, diskStamp) = (nil, nil)
@@ -1157,10 +999,6 @@ final class ProjectModel {
         analyze()
     }
 
-    /// The new main file's PDF, if it has one, replaces the old one's; a build of the old one
-    /// stops (the core reports it stopped) and a build of the new one follows, as after any
-    /// setting that changes the build, when Compile Automatically is on or a build was under way:
-    /// with it off that was one someone asked for.
     private func mainFileChanged() async {
         analyze()
         let building = compiling
@@ -1170,13 +1008,10 @@ final class ProjectModel {
         if !closed, autoCompile || building { await compile(auto: autoCompile) }
     }
 
-    /// Files dropped on the tree: the project's own move into `dir`, as in Finder,
-    /// and files from elsewhere are copied in.
     func dropFiles(_ urls: [URL], into dir: String) async {
         var outside: [URL] = []
         for url in urls {
             guard let path = projectPath(url) else { outside.append(url); continue }
-            // Not into the folder it's in, nor a folder into itself.
             guard path.parentFolder != dir, dir != path, !dir.hasPrefix(path + "/") else { continue }
             await renameEntry(path, to: dir.isEmpty ? path.fileName : "\(dir)/\(path.fileName)",
                                action: String(localized: "Move"))
@@ -1184,8 +1019,6 @@ final class ProjectModel {
         if !outside.isEmpty { await importFiles(outside, into: dir) }
     }
 
-    /// Taken names are asked about first (`importClash`), then copied again
-    /// with the answer: "replace" (old ones to the Trash) or "keepBoth".
     func importFiles(_ urls: [URL], into dir: String = "", conflict: String? = nil) async {
         var args: [String: any Sendable] = ["id": id, "dir": dir, "paths": urls.map { $0.path(percentEncoded: false) }]
         args["conflict"] = conflict
@@ -1199,11 +1032,9 @@ final class ProjectModel {
         await tree.reload()
     }
 
-    // ---------- export ----------
+    // MARK: - Export
 
-    /// In a temporary folder; the save panel copies it where it goes, and the next export or the
-    /// project's closing removes it. The core archives the files on disk, so the open file's
-    /// edits are saved first: an archive without them would be a stale copy reported as a good one.
+    /// The core archives the files on disk, so the open file's edits are saved first: an archive without them would be a stale copy reported as a good one.
     func exportZip() async throws -> URL {
         guard await saveEdits() else {
             let name = openPath?.fileName ?? id
@@ -1227,9 +1058,8 @@ final class ProjectModel {
         exportFolder = nil
     }
 
-    // ---------- editor commands ----------
+    // MARK: - Editor commands
 
-    /// An outline heading at the top of the source, in its file; the keyboard stays where it is.
     func reveal(_ item: OutlineItem) {
         // Already there: a click chooses the row as it goes down, then taps it.
         guard item.file != openPath || cursorLine != item.line || topLine != item.line else { return }
@@ -1237,43 +1067,35 @@ final class ProjectModel {
     }
 }
 
-/// Where a project was left, in the window's restorable state (`MainWindowController`).
-/// Pane visibility and sizes are in the defaults instead.
 nonisolated struct SavedWorkspace: Codable, Equatable {
     var project: String
     var file: String?
     var line: Int
     var buildPanel: Bool
     var pdfPage: Int
-    /// Nil in what an earlier version saved.
     var pdfZoom: PDFController.Zoom?
 }
 
-/// A file's identity, length and last write to the nanosecond, as the core's `write_file` answers
-/// it (`atomic::Stamp`): a stat that gives the same is of the same file, not written since.
+/// A stat that gives the same is of the same file, not written since (`atomic::Stamp`).
 nonisolated struct FileStamp: Decodable, Equatable {
     let inode: UInt64
     let size: Int64
     let seconds: Int
     let nanoseconds: Int
 
-    /// The file at `url`, through a link as the core writes through one; nil when it can't be had.
     init?(of url: URL) {
         var info = stat()
         guard stat(url.path(percentEncoded: false), &info) == 0 else { return nil }
         (inode, size, seconds, nanoseconds) = (info.st_ino, info.st_size, info.st_mtimespec.tv_sec, info.st_mtimespec.tv_nsec)
     }
 
-    /// A volume that keeps whole seconds only (HFS+, FAT) could see another app's write of the same
-    /// length in the same second as ours, in place, give the same stamp: there, every change is read.
+    /// A volume that keeps whole seconds only (HFS+, FAT) could give the same stamp for another app's same-length write in the same second: there, every change is read.
     var exact: Bool { nanoseconds != 0 }
 }
 
-/// An import whose names are already taken where it goes.
 struct ImportClash {
     let urls: [URL]
     let dir: String
-    /// Project paths.
     let names: [String]
 
     var title: String {

@@ -1,7 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The app's commands and their key equivalents.
 enum MenuCommand: CaseIterable {
     case projectNew
     case projectOpen
@@ -44,7 +43,6 @@ enum MenuCommand: CaseIterable {
     case issueNext
     case issuePrevious
 
-    /// The toggles' titles name what they show; the menus say Show or Hide (`AppModel.title`).
     var title: String {
         switch self {
         case .projectNew: "New Project…"
@@ -52,7 +50,6 @@ enum MenuCommand: CaseIterable {
         case .projectClose: "Close Project"
         case .projectExport: "Export Project as ZIP…"
         case .projectSearch: "Find in Project…"
-        // No ellipsis: the name is typed in place, as in Finder's New Folder (HIG, Menus).
         case .fileNew: "New File"
         case .fileNewFolder: "New Folder"
         case .fileUpload: "Add Files…"
@@ -79,7 +76,6 @@ enum MenuCommand: CaseIterable {
         case .viewActualSize: "Actual Size"
         case .viewFitWidth: "Fit Width"
         case .viewFitPage: "Fit Page"
-        // Safari's names for them, beside its Zoom In and Zoom Out.
         case .viewTextBigger: "Make Text Bigger"
         case .viewTextSmaller: "Make Text Smaller"
         case .compileRun: "Compile"
@@ -92,8 +88,6 @@ enum MenuCommand: CaseIterable {
         }
     }
 
-    /// Menus carry icons for a whole group or none of it (HIG, Menus): only Bold, Italic and
-    /// Underline, the text-formatting trio, have them.
     var symbol: String? {
         switch self {
         case .editBold: "bold"
@@ -103,9 +97,7 @@ enum MenuCommand: CaseIterable {
         }
     }
 
-    /// The menus' key equivalents, clear of the system's and on keys every keyboard layout has
-    /// (HIG, Keyboards). ⌥⌘G is Go to Page, as in the Mac's PDF readers; Find in PDF… has none, as
-    /// ⌘F finds in the PDF while it has the keyboard.
+    /// ⌥⌘G is Go to Page, as in the Mac's PDF readers; Find in PDF… has none, as ⌘F finds in the PDF while it has the keyboard.
     var shortcut: KeyboardShortcut? {
         switch self {
         case .projectNew: KeyboardShortcut("n", modifiers: [.command, .shift])
@@ -119,7 +111,6 @@ enum MenuCommand: CaseIterable {
         case .editBold: KeyboardShortcut("b")
         case .editItalic: KeyboardShortcut("i")
         case .editUnderline: KeyboardShortcut("u")
-        // Pages' Insert › Equation.
         case .editMath: KeyboardShortcut("e", modifiers: [.command, .option])
         case .editComment: KeyboardShortcut("/")
         case .editMoveLineUp: KeyboardShortcut(.upArrow, modifiers: [.command, .control])
@@ -129,7 +120,6 @@ enum MenuCommand: CaseIterable {
         case .viewToggleSidebar: KeyboardShortcut("s", modifiers: [.command, .control])
         case .viewTogglePdf: KeyboardShortcut("p", modifiers: [.command, .option])
         case .viewToggleInspector: KeyboardShortcut("i", modifiers: [.command, .option])
-        // Xcode's Show/Hide Debug Area.
         case .viewToggleLogs: KeyboardShortcut("y", modifiers: [.command, .shift])
         case .viewZoomIn: KeyboardShortcut("=")
         case .viewZoomOut: KeyboardShortcut("-")
@@ -138,11 +128,8 @@ enum MenuCommand: CaseIterable {
         case .viewFitPage: KeyboardShortcut("9", modifiers: [.command, .option])
         case .compileRun: KeyboardShortcut(.return)
         case .compileStop: KeyboardShortcut(".")
-        // Xcode's Product › Clean Build Folder.
         case .compileClean: KeyboardShortcut("k", modifiers: [.command, .shift])
-        // As the Mac's VS Code LaTeX extension; a double-click goes either way.
         case .syncForward: KeyboardShortcut("j", modifiers: [.command, .option])
-        // Xcode's Navigate › Jump to Next Issue.
         case .issueNext: KeyboardShortcut("'")
         case .issuePrevious: KeyboardShortcut("\"")
         // ⌥⌘= and ⌥⌘− are the system's own screen zoom.
@@ -158,8 +145,6 @@ enum Prompt: Identifiable, Hashable {
     var id: Self { self }
 }
 
-/// File › New File or New Folder, for the sidebar to make and name in place: in `folder`,
-/// or the folder chosen there.
 struct NewEntry: Equatable {
     var directory: Bool
     var folder: String?
@@ -167,20 +152,16 @@ struct NewEntry: Equatable {
 
 enum PDFAction {
     case zoomIn, zoomOut, actualSize, fitWidth, fitPage, goToPage(Int), find, inverseFromView
-    /// Go to PDF Position's result.
     case reveal(ForwardLoc, SyncTeXWord?)
 }
 
 extension AppModel {
-    /// `project` is nil on the projects screen or while Settings is in front.
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         switch command {
         case .projectNew, .projectOpen: libraryProblem == nil
-        // On Home, the search of the projects.
         case .projectSearch: project != nil || (self.project == nil && mainWindowIsKey)
         case .fileSave, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .viewTextBigger, .viewTextSmaller:
             project?.editsText == true
-        // LaTeX's own: dim in the files the toolbar's are dim in.
         case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .compileStop: project?.compiling == true
@@ -195,7 +176,6 @@ extension AppModel {
         }
     }
 
-    /// View-menu titles say what the item will do (HIG, The menu bar).
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
         if command == .projectSearch, self.project == nil { return "Find Project…" }
         let shown: Bool? = switch command {
@@ -209,7 +189,6 @@ extension AppModel {
         return shown.map { "\($0 ? "Hide" : "Show") \(command.title)" } ?? command.title
     }
 
-    /// With no project there's no file to make, so ⌘N makes a project.
     func shortcut(_ command: MenuCommand, on project: ProjectModel?) -> KeyboardShortcut? {
         switch (command, project) {
         case (.projectNew, nil): MenuCommand.fileNew.shortcut
@@ -272,14 +251,11 @@ extension AppModel {
         }
     }
 
-    /// Live Preview runs TeXpresso, which the core found or was told where to look for.
     var canPreviewLive: Bool { tex?.texpresso != nil }
 }
 
 struct AppCommands: Commands {
     let app: AppModel
-    /// Nil on the projects screen, and while Settings or a sheet is key, which
-    /// turns the project items off.
     private var project: ProjectModel? { app.commandProject }
 
     private func item(_ command: MenuCommand) -> some View {
@@ -301,7 +277,7 @@ struct AppCommands: Commands {
                     } label: {
                         Label(recent.name, systemImage: "text.document")
                     }
-                    // Documents keep their icon (HIG, Menus); macOS 27 hides menu images otherwise.
+                    // macOS 27 hides a menu item's image unless the label style shows it.
                     .labelStyle(.titleAndIcon)
                 }
                 Divider()
@@ -311,13 +287,11 @@ struct AppCommands: Commands {
             Divider()
             item(.fileUpload)
         }
-        // After the system's Close (⌘W).
         CommandGroup(after: .saveItem) {
             item(.fileSave)
             Divider()
             item(.projectClose)
             Divider()
-            // These act on the chosen item of the list with the keyboard.
             ItemMenuItems(actions: app.mainWindowIsKey ? app.chosenItem : nil, trashShortcut: KeyboardShortcut(.delete))
                 .labelStyle(.titleAndIcon)
         }
@@ -333,8 +307,7 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .printItem) {
             item(.filePrint)
         }
-        // The system's own, answered by whatever has the keyboard; a
-        // replacement group loses the spelling and substitution checkmarks.
+        // A replacement group would lose the spelling and substitution checkmarks.
         TextEditingCommands()
         CommandGroup(before: .textEditing) {
             items([.projectSearch, .pdfFind])
@@ -351,21 +324,16 @@ struct AppCommands: Commands {
         }
         CommandGroup(replacing: .sidebar) {
             item(.viewToggleSidebar)
-            // The keyboard's and VoiceOver's way to the File Outline header's fold.
-            // Named for what shows: a file with no outline has it folded (`OutlineState`).
             Button(app.outlineCollapsed || project?.isLaTeX != true ? "Show File Outline" : "Hide File Outline") {
                 app.outlineCollapsed.toggle()
             }
-                // Off where the header is dim or away: no outline for the file, or search results over it.
                 .disabled(project?.isLaTeX != true || project?.search.isSearching == true || !app.sidebarShown)
             items([.viewTogglePdf, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
             Divider()
             items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage])
             Divider()
-            // The source's, as Settings sets it; the zoom above is the PDF's.
             items([.viewTextBigger, .viewTextSmaller])
         }
-        // The app's own menus go between View and Window (HIG, The menu bar).
         CommandMenu("Go") {
             items([.editGotoLine, .pdfGotoPage])
             Divider()
@@ -395,8 +363,7 @@ struct AppCommands: Commands {
     }
 }
 
-/// A menu item of its own, so a change to what it shows re-evaluates it and not the whole menu bar
-/// (Observation tracks what a body reads).
+/// A menu item of its own, so a change to what it shows re-evaluates it and not the whole menu bar.
 private struct CommandItem: View {
     let app: AppModel
     let command: MenuCommand
@@ -415,7 +382,6 @@ private struct CommandItem: View {
     }
 }
 
-/// A mode, like Compile Automatically: checked while its window is live. Disk changes rescan on their own.
 private struct LivePreviewItem: View {
     let app: AppModel
 
@@ -428,7 +394,6 @@ private struct LivePreviewItem: View {
     }
 }
 
-/// The open file; the files' context menu has it for any .tex file.
 private struct SetMainFileItem: View {
     let app: AppModel
 

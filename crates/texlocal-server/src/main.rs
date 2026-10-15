@@ -1,5 +1,5 @@
-//! `texlocal-server [--port N] [--web-dir PATH]` — serve TeXLocal to a browser
-//! on this machine only.
+//! `texlocal-server [--port N] [--web-dir PATH]` — serve TeXLocal's API (and a
+//! web UI, when one is built) to this machine only.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -32,12 +32,9 @@ async fn main() -> std::io::Result<()> {
         }
     }
     let web_dir = std::path::absolute(web_dir)?;
-    if !web_dir.join("dist/bundle.js").is_file() {
-        eprintln!(
-            "No web build in {} — run `npm run build` first.",
-            web_dir.display()
-        );
-        std::process::exit(1);
+    if !web_dir.join("index.html").is_file() {
+        // The browser frontend is being rewritten; until then only the API answers.
+        eprintln!("No web UI in {}; serving the API only.", web_dir.display());
     }
 
     let data_dir = texlocal_core::default_data_dir();

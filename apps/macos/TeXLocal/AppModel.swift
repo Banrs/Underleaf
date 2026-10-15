@@ -17,7 +17,6 @@ enum DefaultsKey {
 
 enum SideColumn { case sidebar, inspector }
 
-/// An alert: a short, specific title and the detail in the message (HIG, Alerts).
 struct AppAlert: Sendable {
     let title: String
     let message: String
@@ -32,8 +31,6 @@ struct AppAlert: Sendable {
     }
 }
 
-/// What Export as PDF… or Export Project as ZIP… writes (`fileExporter`),
-/// made only once the panel is done.
 struct ExportFile: Transferable {
     let name: String
     let type: UTType
@@ -47,30 +44,24 @@ struct ExportFile: Transferable {
     }
 }
 
-/// The library: projects on disk, TeX availability, and the open project.
 @Observable
 final class AppModel {
     var projects: [ProjectInfo] = []
-    /// The first list has come: Home says there are no projects only after it.
     private(set) var projectsLoaded = false
     var tex: TexStatus?
     private(set) var settingTeX = false
     var project: ProjectModel?
     var alert: AppAlert?
-    /// Why the library can't be listed, for Home to say in place of its list: no alert as the app starts.
     private(set) var libraryProblem: AppAlert? = Core.shared.isOpen ? nil
         : AppAlert("Couldn’t Open the Projects Folder", Core.libraryAdvice)
 
-    // Requests from menu commands to the views that own the UI.
     var newProjectTemplate: ProjectTemplate?
     var prompt: Prompt?
     var newEntry: NewEntry?
     var openingProject = false
     var addingFiles = false
     var exporting: ExportFile?
-    /// Bumped by Find in Project…, to focus the sidebar's search field.
     var searchFocusToken = 0
-    /// The workspace's, which shows the PDF column and then acts on it.
     @ObservationIgnored var performPDF: ((PDFAction) -> Void)?
 
     /// The side columns as the workspace's split has them, which keeps them across launches
@@ -87,26 +78,19 @@ final class AppModel {
     var showWordCount: Bool {
         didSet { UserDefaults.standard.set(showWordCount, forKey: DefaultsKey.showWordCount) }
     }
-    /// The PDF column. View › Show PDF and the toolbar keep the choice for later
-    /// launches (`togglePDF`); a PDF command or Go to PDF Position shows it for now.
+    /// View › Show PDF and the toolbar keep the choice for later launches; a PDF command or Go to PDF Position shows it for now.
     var showPDF: Bool
-    /// The sidebar's File Outline folded to its header.
     var outlineCollapsed: Bool {
         didSet { UserDefaults.standard.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) }
     }
-    /// Set by the window: the menus act on the project only while its window
-    /// is key, not behind Settings or a sheet.
+    /// The menus act on the project only while its window is key, not behind Settings or a sheet.
     var mainWindowIsKey = false
-    /// The project the menus act on.
     var commandProject: ProjectModel? { mainWindowIsKey && project?.closed != true ? project : nil }
-    /// Offered by the list with the keyboard (`offersActions`).
     var chosenItem: ItemActions?
-    /// Newest first, by id.
     var recentProjects: [String] {
         didSet { UserDefaults.standard.set(recentProjects, forKey: DefaultsKey.recentProjects) }
     }
-    /// The recent projects still in the library. Filtered, not pruned on refresh:
-    /// a library that lists empty (another TEXLOCAL_DATA, a missing folder) would wipe them.
+    /// Filtered, not pruned on refresh: a library that lists empty (another TEXLOCAL_DATA, a missing folder) would wipe them.
     var recents: [ProjectInfo] {
         recentProjects.compactMap { id in projects.first { $0.id == id } }
     }
@@ -122,7 +106,6 @@ final class AppModel {
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
     }
 
-    /// Without a template, the one Settings names for new projects.
     func newProject(_ template: ProjectTemplate? = nil) {
         guard libraryProblem == nil else { return }
         newProjectTemplate = template ?? UserDefaults.standard.string(forKey: DefaultsKey.newProjectTemplate)
@@ -134,18 +117,14 @@ final class AppModel {
         UserDefaults.standard.set(showPDF, forKey: DefaultsKey.showPDF)
     }
 
-    /// Shows the PDF column too, so the action happens now rather than when
-    /// the column next appears.
     func requestPDF(_ action: PDFAction) {
         showPDF = true
         performPDF?(action)
     }
 
     private let core = Core.shared
-    /// The latest TeX status read; a TeX folder choice cancels it.
     @ObservationIgnored private var texCheck: Task<Void, Never>?
 
-    /// Home's Try Again: opens the library folder again if need be, then lists it.
     func retryLibrary() async {
         core.reopen()
         if core.isOpen { libraryProblem = nil }
@@ -153,7 +132,7 @@ final class AppModel {
         await refreshTeXStatus()
     }
 
-    /// Lists the projects. TeX is read apart (`refreshTeXStatus`), as the probe starts a process.
+    /// TeX is read apart (`refreshTeXStatus`), as the probe starts a process.
     func refresh() async {
         guard core.isOpen else { return }
         do {
@@ -165,9 +144,7 @@ final class AppModel {
         projectsLoaded = true
     }
 
-    /// `status` searches the disk for latexmk. Not while a TeX folder is being chosen. Read at launch,
-    /// when the app comes back to the front without TeX and when Settings changes the folder: TeX
-    /// changes through another app or through Settings.
+    /// `status` searches the disk for latexmk, so not while a TeX folder is being chosen.
     func refreshTeXStatus() async {
         guard !settingTeX else { return }
         await restart(&texCheck) { [self] in
@@ -176,8 +153,6 @@ final class AppModel {
         }.value
     }
 
-    /// Nil finds TeX, or TeXpresso, automatically. The core refuses a folder without
-    /// latexmk, or texpresso. Settings turns its buttons off meanwhile.
     func setTeXFolder(_ path: String?, texpresso: Bool) async throws {
         settingTeX = true
         texCheck?.cancel()
@@ -186,8 +161,7 @@ final class AppModel {
             tex = try await core.call(texpresso ? "set_texpresso_dir" : "set_tex_dir", ["dir": path ?? NSNull()],
                                       as: TexStatus.self)
         } catch {
-            // A status read started before this choice was discarded. Refresh
-            // after the check ends, even if the chosen folder was refused.
+            // A status read started before this choice was discarded: refresh after the check ends, even if the chosen folder was refused.
             Task { await refreshTeXStatus() }
             throw error
         }
@@ -195,8 +169,7 @@ final class AppModel {
 
     func create(name: String, template: ProjectTemplate) async throws {
         let info = try await core.call("create_project", ["name": name, "template": template.rawValue], as: ProjectInfo.self)
-        // Settings' engine for new projects; the core's own is pdfLaTeX. The project stands if this fails,
-        // and opens under the alert that says so.
+        // The project stands if this fails, and opens under the alert that says so.
         if let engine = UserDefaults.standard.string(forKey: DefaultsKey.newProjectEngine).flatMap(TeXEngine.init(rawValue:)),
            engine != .pdflatex {
             _ = await alerting("Couldn’t Set the Engine for “\(info.name)”") {
@@ -219,10 +192,7 @@ final class AppModel {
         return openableTypes.contains { type.conforms(to: $0) }
     }
 
-    /// Copies a folder, .tex file (with its folder) or .zip into the library and opens it, or
-    /// with `open` off only lists it; without asking, as the copy goes to the Trash like any
-    /// project. An item already in the library is its project's own, which opens instead. The
-    /// core removes a project it couldn't finish, so a bad zip leaves none.
+    /// Without asking, as the copy goes to the Trash like any project. The core removes a project it couldn't finish, so a bad zip leaves none.
     func importProject(from url: URL, open: Bool = true) async {
         if await isInLibrary(url, open: open) { return }
         // A second Return while it copies would make a second project.
@@ -240,8 +210,6 @@ final class AppModel {
         if open { await self.open(info.id) }
     }
 
-    /// A project's folder in the library, or a file in one, opens that project, on the file. A
-    /// project's id is its folder's name.
     private func isInLibrary(_ url: URL, open: Bool) async -> Bool {
         let library = FolderWatcher.realPath(Core.libraryFolder) + "/", path = FolderWatcher.realPath(url)
         guard path.hasPrefix(library) else { return false }
@@ -264,8 +232,6 @@ final class AppModel {
         await refresh()
     }
 
-    /// The project as renamed, or nil once an alert has said why not. Its id is its folder's
-    /// name, so the recents follow it.
     private func renameProject(_ id: String, shown: String, to name: String) async -> ProjectInfo? {
         await alerting("Couldn’t Rename “\(shown)”") {
             let renamed = try await core.call("rename_project", ["id": id, "name": name], as: ProjectInfo.self)
@@ -275,9 +241,7 @@ final class AppModel {
         }
     }
 
-    /// Undo renames `current` back to `previous`'s name, and the Redo is registered as the
-    /// Undo starts, as `UndoableTrash`'s are (a project's id is its name's folder, so it is
-    /// known); one that fails takes it away. The closures hold the model, as the manager doesn't.
+    /// The Redo is registered as the Undo starts, as `UndoableTrash`'s are; one that fails takes it away. The closures hold the model, as the manager doesn't.
     private func registerRenameUndo(current: (id: String, name: String), previous: (id: String, name: String)) {
         guard let undo = undoManager else { return }
         undo.registerUndo(withTarget: self) { _ in
@@ -292,11 +256,9 @@ final class AppModel {
         undo.setActionName(String(localized: "Rename"))
     }
 
-    /// The main window's, which Edit › Undo reaches while the list has the keyboard.
     var undoManager: UndoManager? { undoSource() }
     @ObservationIgnored var undoSource: () -> UndoManager? = { NSApp.mainWindow?.undoManager }
 
-    /// Without asking, as in Finder: Edit › Undo and the Trash give the item back (HIG, Alerts).
     func delete(_ project: ProjectInfo) async {
         let failure = "Couldn’t Move “\(project.name)” to the Trash"
         guard let root = await folder(of: project, orAlert: failure) else { return }
@@ -326,12 +288,10 @@ final class AppModel {
         }
     }
 
-    /// The project's folder, or nil once an alert titled `title` has said why it can't be had.
     private func folder(of project: ProjectInfo, orAlert title: String) async -> URL? {
         await alerting(title) { URL(fileURLWithPath: try await core.call("project_root", ["id": project.id], as: String.self)) }
     }
 
-    /// `work`'s answer, or nil once an alert titled `title` has said why there is none.
     private func alerting<T>(_ title: String, _ work: () async throws -> T) async -> T? {
         do {
             return try await work()
@@ -341,11 +301,8 @@ final class AppModel {
         }
     }
 
-    /// Bumped by each `open` and `close`, so only the latest carries on: the
-    /// restored project and an Open With import can overlap at launch.
+    /// Only the latest carries on: the restored project and an Open With import can overlap at launch.
     @ObservationIgnored private var openGeneration = 0
-    /// What is opening, for Home to show at work: a project's id while it loads, before
-    /// `project` may name it, or the name of an item being copied in.
     private(set) var opening: [String] = []
     var isOpening: Bool { !opening.isEmpty }
     @ObservationIgnored private var importing = Set<URL>()
@@ -354,7 +311,6 @@ final class AppModel {
         if let place = opening.firstIndex(of: name) { opening.remove(at: place) }
     }
 
-    /// `--args -openProject <id>`: the argument domain holds it for this run only.
     @ObservationIgnored private var launchProject: String?
 
     func takeLaunchProject() -> String? {
@@ -362,8 +318,7 @@ final class AppModel {
         return launchProject
     }
 
-    /// Saves and leaves the open project first. `project` goes straight from
-    /// one to the next, never nil between, so the window keeps the workspace.
+    /// `project` goes straight from one to the next, never nil between, so the window keeps the workspace.
     func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {
         openGeneration += 1
         let generation = openGeneration
@@ -372,9 +327,7 @@ final class AppModel {
         defer { stopOpening(id) }
         guard await leave(generation) else { return }
         dropRequests()
-        // Home's renames and moves to the Trash can't be undone under a project, as a project's own
-        // can't once it has closed (`ProjectModel.close`): nothing would show the result, and Undo
-        // from the sidebar could rename the open project's folder under it.
+        // Home's renames and moves to the Trash can't be undone under a project: Undo from the sidebar could rename the open project's folder under it.
         undoManager?.removeAllActions()
         recentProjects = Array(([id] + recentProjects.filter { $0 != id })
             .prefix(NSDocumentController.shared.maximumRecentDocumentCount))
@@ -396,7 +349,6 @@ final class AppModel {
         return true
     }
 
-    /// The project's own requests, which the next project mustn't present.
     private func dropRequests() {
         prompt = nil
         newEntry = nil
@@ -404,15 +356,13 @@ final class AppModel {
         exporting = nil
     }
 
-    /// Unless a later open or close took over while this saved; that one leaves it.
     private func leave(_ generation: Int) async -> Bool {
         guard let project else { return true }
         if !project.closed {
             guard await project.flush(), generation == openGeneration else { return false }
             project.close()
         }
-        // Finish a late live start's Stop before another model can start the
-        // same project's session through the core's concurrent call queue.
+        // Finish a late live start's Stop before another model can start the same project's session through the core's concurrent call queue.
         await project.texpresso.waitForPendingCalls()
         return generation == openGeneration
     }

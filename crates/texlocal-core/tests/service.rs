@@ -401,13 +401,29 @@ fn served_files_are_found_through_the_project_boundary() {
     assert!(service.raw_path("P", "../../secret").is_err());
 }
 
+/// A stand-in program `name` in `dir` that prints `line`: a shell script, or
+/// a batch file on Windows. Its path.
+fn fake_program(dir: &Path, name: &str, line: &str) -> std::path::PathBuf {
+    std::fs::create_dir_all(dir).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let exe = dir.join(name);
+        std::fs::write(&exe, format!("#!/bin/sh\necho '{line}'\n")).unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        exe
+    }
+    #[cfg(windows)]
+    {
+        let exe = dir.join(format!("{name}.bat"));
+        std::fs::write(&exe, format!("@echo {line}\r\n")).unwrap();
+        exe
+    }
+}
+
 /// A folder holding a stand-in `latexmk` that prints a version.
 fn fake_tex(dir: &Path) -> String {
-    std::fs::create_dir_all(dir).unwrap();
-    let exe = dir.join("latexmk");
-    std::fs::write(&exe, "#!/bin/sh\necho 'Latexmk, stub 1.0'\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    fake_program(dir, "latexmk", "Latexmk, stub 1.0");
     dir.to_string_lossy().into_owned()
 }
 
@@ -450,10 +466,7 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
     assert_eq!(refused.status, 400);
     assert!(call(&service, "status", json!({})).await["texpressoDir"].is_null());
 
-    let exe = empty.path().join("texpresso");
-    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let exe = fake_program(empty.path(), "texpresso", "");
     let status = call(
         &service,
         "set_texpresso_dir",
@@ -466,7 +479,7 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
     );
     assert_eq!(status["texDir"], bin);
     if std::env::var_os("TEXLOCAL_TEXPRESSO").is_none() {
-        let exe = std::fs::canonicalize(&exe).unwrap();
+        let exe = dunce::canonicalize(&exe).unwrap();
         assert_eq!(status["texpresso"], exe.to_string_lossy().as_ref());
     }
 
@@ -527,11 +540,7 @@ async fn status_reports_the_current_tex_choice() {
     assert_eq!(chosen["found"], bin);
 
     // An update in the same folder is reflected without another folder choice.
-    std::fs::write(
-        tex.path().join("latexmk"),
-        "#!/bin/sh\necho 'Latexmk, stub 2.0'\n",
-    )
-    .unwrap();
+    fake_program(tex.path(), "latexmk", "Latexmk, stub 2.0");
     let updated = call(&service, "status", json!({})).await;
     assert_eq!(updated["version"], "Latexmk, stub 2.0");
     assert_eq!(updated["texDir"], bin);
@@ -539,44 +548,6 @@ async fn status_reports_the_current_tex_choice() {
     let automatic = call(&service, "set_tex_dir", json!({ "dir": null })).await;
     assert_eq!(automatic["texDir"], Value::Null);
     assert_ne!(automatic["version"], "Latexmk, stub 1.0");
-}
-
-#[tokio::test]
-async fn list_dirs_lists_visible_subfolders_by_name() {
-    let (_dir, service) = service();
-    let tmp = TempDir::new().unwrap();
-    for name in ["beta", "Alpha", ".hidden"] {
-        std::fs::create_dir(tmp.path().join(name)).unwrap();
-    }
-    std::fs::write(tmp.path().join("file.txt"), "secret").unwrap();
-
-    let listing = call(&service, "list_dirs", json!({ "path": tmp.path() })).await;
-    assert_eq!(listing["path"], tmp.path().to_string_lossy().as_ref());
-    assert_eq!(
-        listing["parent"],
-        tmp.path().parent().unwrap().to_string_lossy().as_ref()
-    );
-    assert_eq!(listing["dirs"], json!(["Alpha", "beta"]));
-    assert_eq!(listing["hasLatexmk"], false);
-
-    let bin = fake_tex(&tmp.path().join("beta"));
-    let tex = call(&service, "list_dirs", json!({ "path": bin })).await;
-    assert_eq!(tex["hasLatexmk"], true);
-
-    // With no path it starts at the chosen TeX folder.
-    call(&service, "set_tex_dir", json!({ "dir": bin })).await;
-    let start = call(&service, "list_dirs", json!({ "path": null })).await;
-    assert_eq!(start["path"], bin);
-
-    let missing = tmp.path().join("missing");
-    assert_eq!(
-        status_of(&service, "list_dirs", json!({ "path": missing })).await,
-        400
-    );
-    assert_eq!(
-        status_of(&service, "list_dirs", json!({ "path": "relative" })).await,
-        400
-    );
 }
 
 #[tokio::test]
@@ -598,4 +569,78 @@ async fn the_app_settings_file_is_not_listed_as_a_project() {
         .map(|p| p["id"].as_str().unwrap())
         .collect();
     assert_eq!(ids, ["P"]);
+}
+
+#[tokio::test]
+async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
+    let (dir, service) = with_project();
+    let write = |path: &'static str, text: &'static str| {
+        call(
+            &service,
+            "write_file",
+            json!({ "id": "P", "path": path, "text": text }),
+        )
+    };
+
+    // A free name is numbered past those taken; a plain create still refuses one.
+    for expected in ["untitled.tex", "untitled 2.tex"] {
+        let args = json!({ "id": "P", "path": "untitled.tex", "free": true });
+        let made = call(&service, "create_entry", args).await;
+        assert_eq!(made, json!({ "path": expected }));
+    }
+    let taken = json!({ "id": "P", "path": "untitled.tex" });
+    assert_eq!(status_of(&service, "create_entry", taken).await, 409);
+    let tree = call(&service, "file_tree", json!({ "id": "P" })).await;
+    assert!(tree.as_array().unwrap().iter().all(|n| n["kind"] == "tex"));
+
+    // The outline as a tree, and the heading a line is under.
+    write("main.tex", "\\section{A}\n\\subsection{B}\n\\section{A}\n").await;
+    let analysis = call(
+        &service,
+        "analyze_project",
+        json!({ "id": "P", "file": "main.tex" }),
+    )
+    .await;
+    assert_eq!(analysis["outline"].as_array().unwrap().len(), 3);
+    assert_eq!(analysis["tree"][0]["children"][0]["title"], "B");
+    assert_eq!(analysis["tree"][1]["foldKey"], "main.tex\t2:A#2");
+    let at = json!({ "outline": analysis["outline"], "file": "main.tex", "line": 2 });
+    assert_eq!(call(&service, "outline_current", at).await, json!(1));
+
+    // Where a path in the library is.
+    let path = dir.path().join("P/sec/new.tex");
+    let located = call(&service, "locate", json!({ "path": path })).await;
+    assert_eq!(located, json!({ "id": "P", "path": "sec/new.tex" }));
+    let outside = json!({ "path": dir.path().parent().unwrap() });
+    assert_eq!(call(&service, "locate", outside).await, Value::Null);
+
+    // The interface state is kept with the project and follows a rename.
+    write("sec/a.tex", "").await;
+    let patch = json!({ "expandedFolders": ["sec"], "foldedHeadings": ["sec/a.tex\t2:A#1"] });
+    call(
+        &service,
+        "set_ui_state",
+        json!({ "id": "P", "patch": patch }),
+    )
+    .await;
+    let rename = json!({ "id": "P", "from": "sec", "to": "part" });
+    call(&service, "rename_entry", rename).await;
+    let ui = call(&service, "get_ui_state", json!({ "id": "P" })).await;
+    assert_eq!(
+        ui,
+        json!({ "expandedFolders": ["part"], "foldedHeadings": ["part/a.tex\t2:A#1"] })
+    );
+    // It is not a file the generic APIs reach.
+    let name = ".texlocal.json";
+    let args = json!({ "id": "P", "path": name, "text": "{}" });
+    assert_eq!(status_of(&service, "write_file", args).await, 400);
+
+    // The word a source line's caret is on, among a forward sync's pages.
+    write("main.tex", "alpha beta gamma\n").await;
+    let page = json!({ "page": 2, "text": "alpha beta gamma", "near": [[0, 16]] });
+    let args = json!({ "id": "P", "file": "main.tex", "line": 1, "column": 8, "pages": [page] });
+    let hit = call(&service, "synctex_match", args).await;
+    assert_eq!(hit, json!({ "page": 2, "start": 6, "end": 10 }));
+    let beyond = json!({ "id": "P", "file": "main.tex", "line": 9, "column": 0, "pages": [] });
+    assert_eq!(call(&service, "synctex_match", beyond).await, Value::Null);
 }

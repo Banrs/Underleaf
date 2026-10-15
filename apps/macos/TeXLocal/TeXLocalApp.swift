@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// SwiftUI's app: the menus and Settings. The one window is AppKit's
-/// (`MainWindowController`), made by the delegate at launch.
 @main
 struct TeXLocalApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
@@ -17,17 +15,14 @@ struct TeXLocalApp: App {
             // The app has no help book; the default item would only say so.
             CommandGroup(replacing: .help) {
                 Link("Visit TeXLocal on GitHub", destination: URL(string: "https://github.com/Banrs/Underleaf")!)
-                // Where Apple's apps put their feedback: Help.
                 Link("Report Issue", destination: URL(string: "https://github.com/Banrs/Underleaf/issues")!)
             }
         }
     }
 }
 
-/// Owns the app model and the window; Quit waits for the project's writes,
-/// and refuses when a save fails rather than drop the only copy of the edits.
+/// Quit waits for the project's writes, and refuses when a save fails rather than drop the only copy of the edits.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// For window restoration, which asks a class for the window.
     private(set) static weak var shared: AppDelegate?
     let app = AppModel()
     private(set) lazy var mainWindow = MainWindowController(app: app)
@@ -46,13 +41,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
-    /// TeX installed meanwhile in another app counts once the user comes back.
     func applicationDidBecomeActive(_ notification: Notification) {
         if app.tex?.available == false { Task { await app.refreshTeXStatus() } }
     }
 
-    /// Open With and Dock drops, as File › Open…: a project's own file opens it, anything else is copied in. Several
-    /// items are all imported and none opens, as dropped on Home.
     func application(_ application: NSApplication, open urls: [URL]) {
         let urls = urls.filter(AppModel.canOpen)
         Task {
@@ -60,7 +52,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// The Dock icon brings the window back, closed or minimised, even while Settings shows.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if mainWindow.window?.isVisible != true { mainWindow.showWindow(nil) }
         return true
@@ -80,8 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let project = app.project else { return .terminateNow }
         Task {
             let saved = await project.flush()
-            // Not saved, the quit stops: the window its alert shows in comes back if
-            // closing it began the quit.
+            // Not saved, the quit stops: the window its alert shows in comes back if closing it began the quit.
             if !saved, mainWindow.window?.isVisible != true { mainWindow.showWindow(nil) }
             sender.reply(toApplicationShouldTerminate: saved)
         }
@@ -93,16 +83,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Core.shared.killAll()
     }
 
-    /// The app is its one window, so closing it quits (and the quit saves).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
 }
 
-/// The Dock icon's menu: the recent projects, newest first, as Pages, Xcode and Preview
-/// list their recent documents there, and New Project…, which File has too. Not the system's
-/// recent documents, which come back through `application(_:open:)` as items to copy in. One
-/// opens as from Home's project list, with the window brought forward.
 final class DockMenu: NSObject {
     private let app: AppModel
     private let show: () -> Void
@@ -140,13 +125,10 @@ final class DockMenu: NSObject {
 }
 
 extension View {
-    /// The window's own sheets, alerts and dialogs, whichever screen shows:
-    /// File › Open…, New Project… and `AppModel.alert`.
     func windowModals() -> some View {
         modifier(WindowModals())
     }
 
-    /// Shows an `AppAlert` while `alert` holds one.
     func alert(_ alert: Binding<AppAlert?>) -> some View {
         // No actions: the system adds its own OK.
         self.alert(alert.wrappedValue?.title ?? "", item: alert) { _ in } message: { alert in
@@ -161,8 +143,7 @@ private struct WindowModals: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var app = app
         content
-            // On a view of its own: a file dialog's labels reach every dialog
-            // presented from the view they're set on.
+            // On a view of its own: a file dialog's labels reach every dialog presented from the view they're set on.
             .background {
                 Color.clear
                     .fileImporter(isPresented: $app.openingProject, allowedContentTypes: AppModel.openableTypes) { result in

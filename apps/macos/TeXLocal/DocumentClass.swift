@@ -1,14 +1,11 @@
 import Foundation
 
-/// The class a main file's `\documentclass` names, and the type size its options set.
 nonisolated struct DocumentClass: Equatable {
     var name: String
-    /// 10, 11 or 12 (points): LaTeX's size options, which set what `\large` and the rest are.
     var pointSize = 10
 }
 
 extension DocumentClass {
-    /// The class named outside comments, if any.
     init?(in text: String) {
         let named = { (text: Substring) in
             // A comment runs from a % that isn't escaped to the line's end, however the line ends:
@@ -16,10 +13,8 @@ extension DocumentClass {
             text.replacing(/(^|[^\\])%.*/.anchorsMatchLineEndings()) { $0.1 }
                 .firstMatch(of: /\\documentclass\s*(?:\[([^\]]*)\])?\s*\{\s*([^}\s]+)\s*\}/)
         }
-        // LaTeX takes the class in the preamble, so the text up to the first \begin{document}
-        // after a class is named is read first, and the whole only when that has none (a
-        // \begin{document} in a comment, say). Each save of the main file reads it on the main
-        // actor: a 470 KB file's comments took 37 ms to take out, its preamble's 0.3 ms.
+        // LaTeX takes the class in the preamble, so the text up to the first \begin{document} is read first, and the whole only when
+        // that has none: the comments of a 470 KB file took 37 ms to take out, its preamble's 0.3 ms.
         let preamble = text.firstRange(of: "\\documentclass")
             .flatMap { text[$0.upperBound...].firstRange(of: "\\begin{document}") }
             .map { text[..<$0.upperBound] }
@@ -31,12 +26,8 @@ extension DocumentClass {
     }
 }
 
-/// How a document's class sets its headings, as its class file does (TeX Live's base, amscls,
-/// koma-script, memoir, IEEEtran and llncs): the levels it has, and each one's size against the
-/// text's, its weight and its shape. A class it doesn't know has every level, set as the
-/// standard classes set them.
+/// A class it doesn't know has every level, set as the standard classes set them.
 nonisolated struct HeadingStyles: Equatable {
-    /// A level's look: its size as a multiple of the text's, bold or not, and its shape.
     struct Font: Equatable {
         var scale: Double
         var bold: Bool
@@ -45,7 +36,6 @@ nonisolated struct HeadingStyles: Equatable {
 
     enum Shape { case upright, italic, smallCaps }
 
-    /// Normal Text, then the levels the class has.
     let levels: [HeadingLevel]
     private let fonts: [String: Font]
 
@@ -58,10 +48,8 @@ nonisolated struct HeadingStyles: Equatable {
         "IEEEtran": .ieee, "llncs": .llncs, "letter": .unsectioned, "minimal": .unsectioned,
     ]
 
-    /// The size commands, from \normalsize up.
     private enum Size: Int { case normalsize, large, Large, LARGE, huge, Huge }
 
-    /// size10.clo, size11.clo and size12.clo, in points.
     private static let points: [Int: [Double]] = [
         10: [10, 12, 14.4, 17.28, 20.74, 24.88],
         11: [10.95, 12, 14.4, 17.28, 20.74, 24.88],
@@ -73,7 +61,6 @@ nonisolated struct HeadingStyles: Equatable {
         let sizes = Self.points[documentClass?.pointSize ?? 10] ?? Self.points[10]!
         let bold = { (size: Size) in Font(scale: sizes[size.rawValue] / sizes[0], bold: true, shape: .upright) }
         let plain = { (shape: Shape) in Font(scale: 1, bold: false, shape: shape) }
-        // The standard classes' (article.cls, book.cls): every level bold, and so memoir's.
         var fonts: [String: Font] = [
             "part": bold(.Huge), "chapter": bold(.Huge), "section": bold(.Large),
             "subsection": bold(.large), "subsubsection": bold(.normalsize), "paragraph": bold(.normalsize),
@@ -88,7 +75,6 @@ nonisolated struct HeadingStyles: Equatable {
                      "subsubsection": plain(.italic), "paragraph": plain(.upright)]
             commands.removeAll { $0 == "chapter" }
         case .amsBook?:
-            // \@xxpt and \@xivpt, whatever the size option.
             fonts = ["part": Font(scale: 20.74 / sizes[0], bold: true, shape: .upright),
                      "chapter": Font(scale: 14.4 / sizes[0], bold: true, shape: .upright),
                      "section": bold(.normalsize), "subsection": bold(.normalsize),
@@ -96,7 +82,6 @@ nonisolated struct HeadingStyles: Equatable {
         case .komaArticle?:
             commands.removeAll { $0 == "chapter" }
         case .komaBook?:
-            // headings=big, KOMA-Script's default.
             fonts["chapter"] = bold(.huge)
         case .ieee?:
             fonts = ["section": plain(.smallCaps), "subsection": plain(.italic),

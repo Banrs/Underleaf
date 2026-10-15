@@ -2,15 +2,11 @@ import AppKit
 import SwiftUI
 import WebKit
 
-/// The maths at the caret, typeset, in the system's popover by the caret:
-/// KaTeX (Resources/KaTeX) in a web view that never takes a click or
-/// the keyboard.
 final class MathPopover {
     private let popover = NSPopover()
     private let page = WebPage()
     private let content: NSHostingController<MathView>
     private var loaded = false
-    /// The maths asked for, where, and what the popover shows.
     private var wanted: (maths: MathPreview, size: CGFloat, rect: NSRect, view: NSView, edge: NSRectEdge)?
     private var rendered: (maths: MathPreview, size: CGFloat)?
     private var rendering = false
@@ -31,7 +27,6 @@ final class MathPopover {
         }
     }
 
-    /// Shows `maths` at `size` points, on `edge` of `rect` of `view`.
     func show(_ maths: MathPreview, size: CGFloat, at rect: NSRect, of view: NSView, edge: NSRectEdge) {
         wanted = (maths, size, rect, view, edge)
         if rendered?.maths == maths, rendered?.size == size {
@@ -41,8 +36,7 @@ final class MathPopover {
         }
     }
 
-    /// Shown, or moved while it shows. Unconditionally: `isShown` stays true
-    /// while a closed popover animates out, and a show then brings it back.
+    /// Unconditionally: `isShown` stays true while a closed popover animates out, and a show then brings it back.
     private func present() {
         guard let wanted else { return }
         popover.show(relativeTo: wanted.rect, of: wanted.view, preferredEdge: wanted.edge)
@@ -75,8 +69,6 @@ final class MathPopover {
         }
     }
 
-    /// The typeset maths in the label colour, as wide as it is (560 pt at
-    /// most), with no margin of its own.
     private static let html = """
         <!doctype html><meta charset="utf-8">
         <link rel="stylesheet" href="katex.min.css"><script src="katex.min.js"></script>
@@ -102,12 +94,9 @@ final class MathPopover {
         """
 }
 
-/// The maths in the system's margins, at least as wide as it's tall: a single
-/// letter is a rounded square, not an egg. The popover's material shows
-/// through; not focusable, or it takes the source's keyboard as it shows.
+/// Not focusable, or it takes the source's keyboard as it shows.
 struct MathView: View {
     let page: WebPage
-    /// The source, which the web view's content isn't exposed as.
     var tex = ""
     var size = CGSize.zero
 

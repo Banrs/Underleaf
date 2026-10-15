@@ -3,18 +3,15 @@ import Observation
 import PDFKit
 import Synchronization
 
-/// The core's status of a session: its log, which is large, so asked for only when it shows.
 nonisolated struct TeXpressoStatus: Decodable, Sendable, Equatable {
     let running: Bool
     let log: String
     let output: String
     let error: String?
     let session: String?
-    /// Rises when the log, the output or the error changes.
     var revision = 0
 }
 
-/// What is new in a session since the last answer (`texpresso_wait`).
 nonisolated struct TeXpressoEvents: Decodable, Sendable {
     struct Document: Decodable, Sendable {
         let path: String
@@ -22,9 +19,7 @@ nonisolated struct TeXpressoEvents: Decodable, Sendable {
         let version: Int
         let serial: Int
         let pages: Int
-        /// `complete`, `stopped` at an error before the end, or `partial` while the first is typeset; nil from an older build.
         var run: String?
-        /// Ranges, first and last, of the pages that differ from the document before; nil from an older build, when any may.
         var changed: [[Int]]?
     }
 
@@ -44,7 +39,6 @@ nonisolated struct TeXpressoEvents: Decodable, Sendable {
     var revision = 0
     /// The whole document, written again; it comes before `pages`, which are all newer.
     var pdf: Document?
-    /// The latest of each page typeset since, each alone in a file.
     var pages: [Page] = []
     var done: RunEnd?
 }
@@ -54,43 +48,34 @@ nonisolated struct TeXpressoFile: Sendable {
     let text: String
 }
 
-/// Where the caret is, in UTF-16 units of a file's text.
 nonisolated struct TeXpressoCaret: Equatable, Sendable {
     let path: String
     let offset: Int
 }
 
-/// A live document read from its file. Made on the session's thread and handed to the main
-/// actor, which alone uses it from then on.
+/// Made on the session's thread and handed to the main actor, which alone uses it from then on.
 nonisolated struct LiveDocument: @unchecked Sendable {
     let url: URL
     let document: PDFDocument
     let serial: Int
-    /// The pages that differ from the live document before; nil when any may, from an older build.
     var changed: IndexSet?
-    /// TeX reached the document's end: pages past this document's last are gone. Otherwise
-    /// they stay, as a construct half typed stops TeX short of them.
+    /// TeX reached the document's end: pages past this document's last are gone. Otherwise they stay, as a construct half typed stops TeX short of them.
     var complete: Bool
 }
 
-/// A live page read from its file, as `LiveDocument`.
 nonisolated struct LivePage: @unchecked Sendable {
     let index: Int
     let serial: Int
     let page: PDFPage
 }
 
-/// What the session's thread has read and the main actor hasn't taken yet: the latest
-/// document, and the latest of each page newer than it.
 nonisolated struct LiveNews: Sendable {
     var running = true
     var error: String?
     var revision = 0
     var document: LiveDocument?
     var pages: [Int: LivePage] = [:]
-    /// How the last run of TeX ended: stopped at an error, or at the document's end.
     var stopped: Bool?
-    /// The wait itself failed.
     var failure: CoreError?
 
     mutating func add(_ newer: LiveNews) {
@@ -108,22 +93,15 @@ nonisolated struct LiveNews: Sendable {
     }
 }
 
-/// A session belongs to one open project and never changes a saved preference. Starts, stops
-/// and whole texts share a lane, so none overtakes another; a keystroke's edit goes to the
-/// core where it is made; and a thread of the session's own waits in the core for pages.
+/// Starts, stops and whole texts share a lane, so none overtakes another; a keystroke's edit goes to the core where it is made; a thread of the session's own waits in the core for pages.
 @Observable
 final class TeXpressoSession {
     enum Phase { case stopped, starting, running, stopping }
 
-    /// The core, as the session calls it.
     struct Calls {
-        /// Start, stop, rescan and status, which answer with the status.
         var status: @MainActor (String, [String: any Sendable]) async throws -> TeXpressoStatus
-        /// A file's whole text.
         var update: @MainActor ([String: any Sendable]) async throws -> Void
-        /// An edit, the view or the caret, answered at once on the main thread.
         var now: @MainActor (String, [String: any Sendable]) throws -> Void
-        /// Blocks until the session has news, on the session's thread.
         var wait: @Sendable ([String: any Sendable]) throws -> TeXpressoEvents
     }
 
@@ -131,20 +109,14 @@ final class TeXpressoSession {
     private(set) var status: TeXpressoStatus?
     private var requestFailure: String?
     private var rejected: [String: String] = [:]
-    /// TeX has stopped at an error before the document's end for a second or more: the pages
-    /// past it are from before.
     private(set) var halted = false
-    /// The failure has been read: it stays in the log, without the status bar's warning.
     private var acknowledged = false
     var onFailure: () -> Void = {}
-    /// The session is over; `restartable` when TeXpresso went by itself after running a while.
     var onEnded: (_ restartable: Bool) -> Void = { _ in }
     var onOwnershipLost: () -> Void = {}
-    /// The PDF pane: a whole document, a page of it, and how many pages it shows.
     @ObservationIgnored var showDocument: (LiveDocument) -> Void = { _ in }
     @ObservationIgnored var showPage: (PDFPage, Int) -> Void = { _, _ in }
     @ObservationIgnored var shownPages: () -> Int = { 0 }
-    /// The log is on screen, so it follows the session; otherwise it is read when the session ends.
     @ObservationIgnored var showsLog = false {
         didSet {
             if showsLog { fetchStatus() } else if oldValue, phase == .stopped { acknowledged = true }
@@ -153,39 +125,29 @@ final class TeXpressoSession {
 
     @ObservationIgnored private let id: String
     @ObservationIgnored private let calls: Calls
-    /// How long TeX stays stopped at an error before the session says so (`runEnded`): a
-    /// second, shorter in a test.
     @ObservationIgnored private let haltsAfter: Duration
     @ObservationIgnored private var lane: Task<Void, Never>?
     @ObservationIgnored private var flushing: Int?
     @ObservationIgnored private var retry: Task<Void, Never>?
-    /// Whole texts to send: files the core has no copy of, or whose copy an edit didn't fit.
     @ObservationIgnored private var pending: [String: String] = [:]
-    /// The files whose copy in the core follows the editor's edit by edit.
     @ObservationIgnored private var synced: Set<String> = []
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var closed = false
     @ObservationIgnored private var lastReportedErrors: Set<String> = []
-    /// The core's token for this client's session, which its other calls name.
     @ObservationIgnored private(set) var owner: String?
     @ObservationIgnored private var queued: Start?
     @ObservationIgnored private var inbox: Inbox?
     @ObservationIgnored private var started: ContinuousClock.Instant?
-    /// The session has shown a document; pages before its first wait for it.
     @ObservationIgnored private var documentShown = false
-    /// Pages past the end of what shows, until a document makes room.
     @ObservationIgnored private var waiting: [Int: LivePage] = [:]
     @ObservationIgnored private var revision = 0
     @ObservationIgnored private var statusFetch: Task<Void, Never>?
     @ObservationIgnored private var halting: Task<Void, Never>?
-    /// The pages the pane shows and where the caret is, as the engine was last told.
     @ObservationIgnored private var viewed: ClosedRange<Int>?
     @ObservationIgnored private var sentView: ClosedRange<Int>?
     @ObservationIgnored private var caret: TeXpressoCaret?
     @ObservationIgnored private var settling: Task<Void, Never>?
 
-    /// What a session starts with: the files it is sent, and where the first key will land, in
-    /// one of them: TeX is ready there.
     struct Start {
         var files: [TeXpressoFile]
         var caret: TeXpressoCaret?
@@ -199,7 +161,6 @@ final class TeXpressoSession {
 
     var active: Bool { phase == .starting || phase == .running }
     var canStart: Bool { !closed && phase == .stopped }
-    /// The files the session has a copy of, which it keeps until it ends.
     var files: Set<String> { synced.union(pending.keys).union(queued?.files.map(\.path) ?? []) }
     private var requestErrors: [String] {
         [requestFailure].compactMap { $0 } + rejected.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }
@@ -209,7 +170,6 @@ final class TeXpressoSession {
         return messages.isEmpty ? nil : messages.joined(separator: "\n\n")
     }
     var needsAttention: Bool { halted || !acknowledged && (failure != nil || status?.error != nil) }
-    /// Started in this window, so it has a log to show.
     var used: Bool { phase != .stopped || status != nil || failure != nil }
     var title: String {
         switch phase {
@@ -229,7 +189,7 @@ final class TeXpressoSession {
         return parts.joined(separator: "\n\n")
     }
 
-    // ---------- starting and stopping ----------
+    // MARK: - Starting and stopping
 
     func start(_ start: Start) {
         guard canStart else { return }
@@ -314,7 +274,6 @@ final class TeXpressoSession {
         stop()
     }
 
-    /// Nothing of the session that was is waited for or sent.
     private func reset() {
         inbox?.cancel()
         inbox = nil
@@ -327,7 +286,6 @@ final class TeXpressoSession {
         (documentShown, halted, started, sentView, caret) = (false, false, nil, nil, nil)
     }
 
-    /// Waits for the currently queued work without starting or stopping a process.
     func waitForPendingCalls() async { await lane?.value }
 
     private func enqueue(_ action: @escaping @MainActor (TeXpressoSession) async -> Void) {
@@ -338,11 +296,9 @@ final class TeXpressoSession {
         }
     }
 
-    // ---------- edits ----------
+    // MARK: - Edits
 
-    /// An edit as the text storage made it: `range` of the text before it, replaced by `text`.
-    /// It reaches the core here, and TeXpresso from there, without a wait. `whole` is the text
-    /// after it, for a file the core has no copy of or whose copy the edit doesn't fit.
+    /// `whole` is the text after it, for a file the core has no copy of or whose copy the edit doesn't fit.
     func edit(_ path: String, _ range: NSRange, _ text: String, whole: () -> String) {
         guard active, !closed else { return }
         // Typing takes the engine's snapshot along: the caret there is no news.
@@ -363,11 +319,9 @@ final class TeXpressoSession {
         flushEdits()
     }
 
-    /// A file's whole text: one just opened, or changed by another app.
     func update(_ file: TeXpressoFile) {
         guard active, !closed else { return }
-        // Not edit by edit until it is there: a key's edit sent meanwhile could reach the core
-        // first, and this older text would then replace it.
+        // Not edit by edit until it is there: a key's edit sent meanwhile could reach the core first, and this older text would then replace it.
         synced.remove(file.path)
         pending[file.path] = file.text
         flushEdits()
@@ -410,7 +364,6 @@ final class TeXpressoSession {
         }
     }
 
-    /// TeXpresso looks at the files on disk again; the texts it was sent stay as sent.
     func rescan() {
         guard active, !closed else { return }
         let current = generation
@@ -424,9 +377,8 @@ final class TeXpressoSession {
         }
     }
 
-    // ---------- the view and the caret ----------
+    // MARK: - The view and the caret
 
-    /// The pages the PDF pane shows, from 0: TeX typesets as far as the last of them first.
     func view(_ pages: ClosedRange<Int>) {
         viewed = pages
         guard phase == .running, pages != sentView, let owner else { return }
@@ -434,8 +386,6 @@ final class TeXpressoSession {
         try? calls.now("texpresso_view", ["session": owner, "first": pages.lowerBound, "last": pages.upperBound])
     }
 
-    /// The caret has moved. Once it rests where typing didn't take it, TeX gets ready there,
-    /// and the first key costs what the ones after it do.
     func caretMoved(_ path: String, _ offset: Int) {
         let moved = TeXpressoCaret(path: path, offset: offset)
         guard phase == .running, caret != moved else { return }
@@ -447,9 +397,8 @@ final class TeXpressoSession {
         }
     }
 
-    // ---------- what the session sends back ----------
+    // MARK: - What the session sends back
 
-    /// What the thread has read, for the main actor to take once however much has come.
     private nonisolated final class Inbox: Sendable {
         private let state = Mutex<(news: LiveNews?, cancelled: Bool)>((nil, false))
 
@@ -476,8 +425,7 @@ final class TeXpressoSession {
         }
     }
 
-    /// A thread of the session's own: the wait blocks for up to half a minute, which neither
-    /// the main thread nor Swift's pool may.
+    /// A thread of the session's own: the wait blocks for up to half a minute, which neither the main thread nor Swift's pool may.
     private func listen() {
         guard let owner else { return }
         let inbox = Inbox()
@@ -493,8 +441,7 @@ final class TeXpressoSession {
                     (news.running, news.error, news.revision) = (events.running, events.error, events.revision)
                     news.stopped = (events.done?.run ?? events.pdf?.run).flatMap { $0 == "partial" ? nil : $0 == "stopped" }
                     if let pdf = events.pdf {
-                        // The core keeps the latest document only: one it replaced before this
-                        // thread asked again took its list of changed pages with it.
+                        // The core keeps the latest document only: one it replaced before this thread asked again took its list of changed pages with it.
                         let skipped = pdf.version != version + 1
                         version = pdf.version
                         if pdf.pages > 0 {
@@ -519,10 +466,9 @@ final class TeXpressoSession {
         thread.start()
     }
 
-    /// The file is complete when it is named, and replaced by another of its name, never rewritten:
-    /// mapped, it is read as its pages are drawn and stays whole when its name goes. It has no
-    /// links to see to, as a build's has: the engine writes its pages through MuPDF's PDF
-    /// device, which carries content and no annotations.
+    /// The file is complete when it is named, and replaced by another of its name, never rewritten: mapped, it is read as its
+    /// pages are drawn and stays whole when its name goes. It has no links to see to: the engine writes its pages through
+    /// MuPDF's PDF device, which carries no annotations.
     private nonisolated static func read(_ pdf: TeXpressoEvents.Document, whole: Bool) -> LiveDocument? {
         let url = URL(filePath: pdf.path)
         guard let data = try? Data(contentsOf: url, options: .alwaysMapped), let document = PDFDocument(data: data),
@@ -589,8 +535,7 @@ final class TeXpressoSession {
         }
     }
 
-    /// A run stopped at an error is said so once it has lasted a second: a brace or a dollar
-    /// half typed stops TeX for a moment at every other key.
+    /// A brace or a dollar half typed stops TeX for a moment at every other key, so a stopped run is said so only once it has lasted a second.
     private func runEnded(stopped: Bool) {
         if !stopped {
             halting?.cancel()
@@ -603,7 +548,6 @@ final class TeXpressoSession {
         }
     }
 
-    /// The log, when what it shows is behind; once at a time, and not for every key.
     private func fetchStatus() {
         guard statusFetch == nil, let owner, (status?.revision ?? -1) < revision || phase == .stopped else { return }
         let current = generation, ended = phase == .stopped

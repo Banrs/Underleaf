@@ -1,11 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// What a completion is (crates/texlocal-syntax `CompletionKind`): every item of a list is one kind.
 nonisolated enum CompletionKind: String, Decodable {
     case command, environment, label, citation, entryType
 
-    /// As VoiceOver names it when the list opens.
     var name: String {
         switch self {
         case .command: String(localized: "Command")
@@ -17,16 +15,10 @@ nonisolated enum CompletionKind: String, Decodable {
     }
 }
 
-/// The core's completions under the typed text, drawn as the system draws a menu (an `NSMenu`
-/// measured on 27.2): Liquid Glass with 13 pt corners, rows 5 pt in from its edges, the chosen
-/// one in the accent colour with 8 pt corners and white text 10 pt into it, under a menu's
-/// shadow; the labels in the editor's font, what's typed of each heavier. At most 8 rows.
-///
-/// A view over the editor, not a window: glass in a borderless panel that isn't key draws as a
-/// flat slab, and AppKit's own completion list is still its square box (27.2). Typing stays in
-/// the document, which moves the selection and accepts it.
+/// A view over the editor, in the document's window, not a window of its own: glass in a borderless panel that isn't key
+/// draws as a flat grey slab, a menu's material there as an opaque beige one, and AppKit's own completion list for a text
+/// view is still its square box from before the glass (all 27.2). Typing stays in the document, which moves the selection and accepts it.
 final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate {
-    /// A click chose this row.
     var clicked: (Int) -> Void = { _ in }
     var selection: Int { max(table.selectedRow, 0) }
 
@@ -34,17 +26,14 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// Sized from the start, so that its views have margins to keep as it's resized.
     private let surface = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: leastWidth, height: leastWidth))
     private var labels: [String] = []
-    /// How much of every label is typed, in UTF-16 units.
     private var typed = 0
     private var kind = CompletionKind.command
     private var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
     private var boldFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .bold)
     private static let shownRows = 8
     private static let radius: CGFloat = 13, margin: CGFloat = 5, highlightRadius: CGFloat = 8, textInset: CGFloat = 10
-    /// What a narrow editor leaves it at least, where its labels need as much.
     private static let leastWidth: CGFloat = 160
 
-    /// The chosen row as a menu's: the accent colour, in from the list's edges.
     private final class Row: NSTableRowView {
         override func drawSelection(in dirtyRect: NSRect) {
             NSColor.controlAccentColor.setFill()
@@ -60,8 +49,6 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         super.init()
         surface.cornerRadius = Self.radius
         surface.wantsLayer = true
-        // A menu's shadow, measured under an NSMenu on white (27.2): 13% at its foot, gone 27 pt
-        // out, and less at its sides.
         let shadow = NSShadow()
         shadow.shadowOffset = NSSize(width: 0, height: -4)
         shadow.shadowBlurRadius = 22
@@ -85,7 +72,6 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         scroll.hasVerticalScroller = true
         scroll.scrollerStyle = .overlay
         scroll.automaticallyAdjustsContentInsets = false
-        // Whole rows only: the rows' view stops at the margins.
         let content = NSView(frame: surface.bounds)
         content.autoresizingMask = [.width, .height]
         scroll.frame = content.bounds.insetBy(dx: 0, dy: Self.margin)
@@ -94,10 +80,6 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         surface.contentView = content
     }
 
-    /// Shows `labels`, all of one `kind` and each starting with the `typed` units before the
-    /// caret, in `font` with the first selected, their text under the typed text's start,
-    /// `start`, within `editor`, the part of `host` the text shows in: both in `host`'s
-    /// coordinates. Without a host it holds them unseen.
     func show(_ labels: [String], typed: Int, kind: CompletionKind, font: NSFont, under start: NSRect, in editor: NSRect,
               of host: NSScrollView?) {
         guard !labels.isEmpty else { return close() }
@@ -107,7 +89,6 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         self.kind = kind
         self.font = font
         boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-        // A menu's 24 pt row at its 13 pt text: 8 pt and the line to a whole point.
         table.rowHeight = (font.ascender - font.descender + font.leading).rounded(.up) + 8
         table.reloadData()
         table.selectRowIndexes([0], byExtendingSelection: false)
@@ -121,9 +102,7 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         if opening || labels.count != count { announce(interrupting: opening) }
     }
 
-    /// The list never has VoiceOver's focus, which stays in the document: the row chosen is
-    /// spoken as the list opens and as the arrows move through it, as Xcode's list speaks it,
-    /// and, without interrupting, as typing changes how many it has.
+    /// The list never has VoiceOver's focus, which stays in the document: the row chosen is spoken as the list opens and as the arrows move through it.
     private func announce(interrupting: Bool = true) {
         guard labels.indices.contains(selection) else { return }
         let position = String(localized: "\(selection + 1) of \(labels.count)")
@@ -132,16 +111,12 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         AccessibilityNotification.Announcement(announcement).post()
     }
 
-    /// From its leading edge to its labels' text: the chosen row's inset and the text's in it.
     private static let textStart = margin + textInset
-    /// What its widest label and its rows need.
     private var size = NSSize.zero
 
-    /// Measures its widest label, and takes the height of its rows.
     private func fit() {
-        // The editor's font is fixed-pitch, so of the labels all in ASCII the longest is the widest.
-        // A citation key's or a label's accents and other scripts come from a fallback font of
-        // another width: each of those is measured with it.
+        // The editor's font is fixed-pitch, so of the labels all in ASCII the longest is the widest; accents and other scripts
+        // come from a fallback font of another width and are measured.
         let isASCII = { (row: Int) in self.labels[row].utf8.allSatisfy { $0 < 0x80 } }
         var measured = labels.indices.filter { !isASCII($0) }
         if let longest = labels.indices.filter(isASCII).max(by: { labels[$0].utf8.count < labels[$1].utf8.count }) { measured.append(longest) }
@@ -150,14 +125,9 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
                       height: CGFloat(min(labels.count, Self.shownRows)) * table.rowHeight + 2 * Self.margin)
     }
 
-    /// Over the typed text, there being no room under it.
     private(set) var isAbove = false
 
-    /// Moves it under `start`, hard against its line, or over it when there's no room under it
-    /// down to the `editor`'s foot and there is over it. An editor too short for either has it on
-    /// the side with more room, with the whole rows that has: it is a view of the editor's, and
-    /// what ran past the foot would be under the status bar. It ends at the editor's trailing edge,
-    /// its labels' ends cut, unless its least width needs more, and never past the editor's sides.
+    /// An editor too short for either has it on the side with more room: it is a view of the editor's, and what ran past the foot would be under the status bar.
     func place(under start: NSRect, in editor: NSRect) {
         guard let host = surface.superview else { return }
         var frame = NSRect(origin: NSPoint(x: start.minX - Self.textStart, y: 0), size: size)
@@ -177,14 +147,12 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         guard frame != surface.frame else { return }
         let shorter = frame.height != surface.frame.height
         surface.frame = frame
-        // Fewer rows show: the chosen one is among them.
         if shorter {
             surface.layoutSubtreeIfNeeded()
             reveal(selection)
         }
     }
 
-    /// Whether a point of the window is over the open list.
     func contains(_ point: NSPoint) -> Bool {
         surface.superview != nil && surface.bounds.contains(surface.convert(point, from: nil))
     }
@@ -195,7 +163,6 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         table.reloadData()
     }
 
-    /// Moves the selection by `step` rows, stopping at the ends.
     func move(_ step: Int) {
         guard !labels.isEmpty else { return }
         let row = max(0, min(labels.count - 1, selection + step))
@@ -204,7 +171,6 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         announce()
     }
 
-    /// Scrolls no further than brings `row` whole into view, so the rows shown stay whole ones.
     /// The table's own `scrollRowToVisible` stops 11 pt short of a row's foot in the glass (27.2).
     private func reveal(_ row: Int) {
         guard let scroll = table.enclosingScrollView else { return }
@@ -222,14 +188,12 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { Row() }
 
-    /// The chosen row's text is a menu's, white on the accent; the row left takes the text's colour again.
     func tableViewSelectionDidChange(_ notification: Notification) {
         table.enumerateAvailableRowViews { view, row in
             (view.view(atColumn: 0) as? NSTableCellView)?.textField?.attributedStringValue = label(row)
         }
     }
 
-    /// A row's label in the editor's font, what's typed of it heavier.
     private func label(_ row: Int) -> NSAttributedString {
         let colour: NSColor = row == table.selectedRow ? .alternateSelectedControlTextColor : .labelColor
         let label = NSMutableAttributedString(string: labels[row], attributes: [.font: font, .foregroundColor: colour, .paragraphStyle: Self.oneLine])
@@ -259,7 +223,6 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     private static let cellID = NSUserInterfaceItemIdentifier("completion")
 
-    /// An attributed label wraps unless its own style says otherwise.
     private static let oneLine: NSParagraphStyle = {
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingTail

@@ -5,7 +5,6 @@ import Foundation
 nonisolated struct ProjectInfo: Decodable, Identifiable {
     let id: String
     let name: String
-    /// Milliseconds since 1970.
     let mtime: Double
     let mainFile: String
 
@@ -23,18 +22,13 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
 }
 
 extension [TreeNode] {
-    /// Every entry, each folder before what it holds.
     var flattened: [TreeNode] { flatMap { [$0] + ($0.children ?? []).flattened } }
 }
 
-/// A project path's parts.
 nonisolated extension String {
-    /// "" at the project's top level.
     var parentFolder: String { (self as NSString).deletingLastPathComponent }
     var fileName: String { (self as NSString).lastPathComponent }
 
-    /// A name numbered as Finder numbers another of it, before its extension:
-    /// "untitled 2.tex", "untitled folder 2" (the core's `numbered`).
     func numbered(_ number: Int) -> String {
         guard let dot = lastIndex(of: "."), dot > startIndex else { return "\(self) \(number)" }
         return "\(self[..<dot]) \(number)\(self[dot...])"
@@ -43,13 +37,9 @@ nonisolated extension String {
 
 nonisolated struct TexStatus: Decodable {
     let available: Bool
-    /// latexmk's own version line.
     var version: String?
-    /// The TeX folder chosen in Settings; nil finds TeX automatically.
     var texDir: String?
-    /// The folder latexmk runs from.
     var found: String?
-    /// The TeXpresso program live preview runs, and the folder chosen for it in Settings.
     var texpresso: String?
     var texpressoDir: String?
 }
@@ -60,7 +50,6 @@ nonisolated struct ProjectSettings: Decodable {
     var shellEscape: Bool
     var stopOnFirstError: Bool
 
-    /// What `set_settings` does with a change, so it can show before the core answers.
     mutating func apply(_ change: SettingsChange) {
         switch change {
         case .mainFile(let path): mainFile = path
@@ -71,11 +60,9 @@ nonisolated struct ProjectSettings: Decodable {
     }
 }
 
-/// One of a project's settings, changed.
 nonisolated enum SettingsChange {
     case mainFile(String), engine(String), shellEscape(Bool), stopOnFirstError(Bool)
 
-    /// `set_settings`' patch.
     var patch: [String: any Sendable] {
         switch self {
         case .mainFile(let path): ["mainFile": path]
@@ -95,23 +82,19 @@ nonisolated struct LogItem: Decodable, Equatable {
     var isError: Bool { type == "error" }
 }
 
-/// A build's outcome. Builds run past errors, so a failed one may still have
-/// written a PDF; `stopped` means Stop, a newer build or quitting ended it.
+/// Builds run past errors, so a failed one may still have written a PDF; `stopped` means Stop, a newer build or quitting ended it.
 nonisolated struct CompileResult: Decodable {
     let ok: Bool
     let stopped: Bool
     let pdf: String?
-    /// True when this run wrote the advertised PDF, even if TeX reported errors.
     let pdfChanged: Bool
     let durationMs: Int
     let errors: [LogItem]
     let warnings: [LogItem]
     let log: String
 
-    /// Ended on its own without a clean run, as opposed to stopped.
     var failed: Bool { !ok && !stopped }
 
-    /// "1.2 s", in the user's locale.
     var durationText: String {
         Duration.milliseconds(durationMs)
             .formatted(.units(allowed: [.seconds], width: .narrow, fractionalPart: .show(length: 1)))
@@ -133,7 +116,6 @@ nonisolated struct SearchHit: Decodable, Identifiable {
     var id: String { "\(file):\(line):\(before.count)" }
 }
 
-/// The hits of one file, as the results list them.
 nonisolated struct SearchGroup: Identifiable {
     let file: String
     let hits: [SearchHit]
@@ -145,26 +127,22 @@ nonisolated struct FileText: Decodable {
     let text: String
 }
 
-/// A SyncTeX box in PDF points, origin at the page's top-left: the baseline
-/// point (h, v) and the box's width and height above it.
+/// In PDF points, origin at the page's top-left: the baseline point (h, v) and the box's width and height above it.
 nonisolated struct ForwardLoc: Decodable {
     let page: Double
     let h: Double?
     let v: Double?
     let width: Double?
     let height: Double?
-    /// Every matching line box, in page order, the box above among them; absent on those boxes.
     var matches: [ForwardLoc]? = nil
 }
 
 nonisolated struct InverseLoc: Decodable {
     let file: String
     let line: Int
-    /// The clicked letter's, in UTF-16 units.
     let column: Int?
 }
 
-/// `import_files`' result: the incoming paths that already exist here.
 /// Asked nothing about them, it writes nothing.
 nonisolated struct Imported: Decodable {
     nonisolated struct Clash: Decodable {
@@ -174,22 +152,18 @@ nonisolated struct Imported: Decodable {
     let existing: [Clash]
 }
 
-/// `rename_entry`'s normalized paths and main file.
 nonisolated struct RenameResult: Decodable {
     let from: String
     let to: String
     let mainFile: String
 }
 
-/// Remaps an entry and its descendants when a folder moves.
 func remapPath(_ path: String, from: String, to: String) -> String {
     if path == from { return to }
     if path.hasPrefix(from + "/") { return to + path.dropFirst(from.count) }
     return path
 }
 
-/// `work` in `slot` in place of what ran there, which is cancelled: only the latest of its kind
-/// carries on. Its task, for a caller that waits for it.
 func restart<T: Sendable>(_ slot: inout Task<T, Never>?, _ work: @escaping @MainActor () async -> T) -> Task<T, Never> {
     slot?.cancel()
     let task = Task { await work() }
@@ -197,8 +171,6 @@ func restart<T: Sendable>(_ slot: inout Task<T, Never>?, _ work: @escaping @Main
     return task
 }
 
-/// `work` once `delay` has passed, in `slot` in place of what waited there, which is cancelled:
-/// the next of its kind cancels this one, and one cancelled does nothing.
 func restart(_ slot: inout Task<Void, Never>?, after delay: Duration, _ work: @escaping @MainActor () async -> Void) {
     slot?.cancel()
     slot = Task {
@@ -207,20 +179,15 @@ func restart(_ slot: inout Task<Void, Never>?, after delay: Duration, _ work: @e
     }
 }
 
-/// A Move to Trash that Edit › Undo takes back, as Finder's does. The move goes through
-/// `FileManager`, which says where the Trash put the item (the core's trash doesn't). Undo
-/// puts it back and Redo trashes it again; each registers the other as its handler starts,
-/// so a stack's other entries survive the work that follows. The handlers hold the item:
-/// an undo manager doesn't retain its targets.
+/// The move goes through `FileManager`, which says where the Trash put the item (the core's trash doesn't). Each of Undo and
+/// Redo registers the other as its handler starts, so a stack's other entries survive the work that follows. The handlers
+/// hold the item: an undo manager doesn't retain its targets.
 final class UndoableTrash {
     let original: URL
     let name: String
-    /// Where the Trash put it.
     private var trashed: URL?
     private weak var undoManager: UndoManager?
-    /// Does the move, calling `recycle` where it belongs; false once it has failed and said so.
     private let trash: (UndoableTrash) async -> Bool
-    /// Runs once the item is back or gone again, for whatever lists it.
     private let changed: () async -> Void
     private let failed: (String, any Error) -> Void
 
@@ -236,7 +203,6 @@ final class UndoableTrash {
         self.failed = failed
     }
 
-    /// The move itself, for `trash` to call. An item already gone is left.
     func recycle() throws {
         guard FileManager.default.fileExists(atPath: original.path(percentEncoded: false)) else { return }
         var result: NSURL?
@@ -244,7 +210,6 @@ final class UndoableTrash {
         trashed = result as URL?
     }
 
-    /// The user's own Move to Trash.
     func moveToTrash() async {
         if await trash(self) { register(putBack) }
     }
@@ -254,12 +219,9 @@ final class UndoableTrash {
         undoManager?.setActionName(String(localized: "Move to Trash"))
     }
 
-    /// Undo and Redo, in the order asked: one asked while the last is still moving the item
-    /// waits for it, so an Undo can't find the item not yet back in the Trash (#36).
+    /// One asked while the last is still moving the item waits for it, so an Undo can't find the item not yet back in the Trash (#36).
     private var work: Task<Void, Never>?
 
-    /// Each registers the other as its handler starts, as an undo manager expects, and takes
-    /// both away if the move then fails.
     private func then(_ step: @escaping () async -> Bool) {
         let last = work
         work = Task {
@@ -290,7 +252,6 @@ final class UndoableTrash {
     }
 }
 
-/// The files the editor edits, by extension in any case: the core's own list (`TEXT_EXT`). Any other is previewed.
 func isTextFile(_ path: String) -> Bool {
     switch (path as NSString).pathExtension.lowercased() {
     case "tex", "bib", "cls", "sty", "bst", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "lua",
@@ -299,7 +260,6 @@ func isTextFile(_ path: String) -> Bool {
     }
 }
 
-/// LaTeX's own tools (the outline, Set as Main File) for `.tex`, in any case, as the core reads it.
 func isLaTeXFile(_ path: String) -> Bool {
     (path as NSString).pathExtension.lowercased() == "tex"
 }

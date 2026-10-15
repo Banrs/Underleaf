@@ -2,7 +2,6 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// The Mac's native key equivalents.
 @MainActor
 struct MenuCommandTests {
     @Test func noTwoCommandsShareAMacChord() {
@@ -14,7 +13,6 @@ struct MenuCommandTests {
         }
     }
 
-    /// With no project open, Find in Project… finds a project, while the window is the one in front.
     @Test func findInProjectSearchesTheProjectsOnHome() {
         let app = AppModel()
         app.mainWindowIsKey = true
@@ -23,8 +21,6 @@ struct MenuCommandTests {
         #expect(!app.isEnabled(.projectSearch, on: nil))
     }
 
-    /// Format's Bold, Italic, Underline and Inline Math are LaTeX's: off in another text file, where
-    /// the commands for any text stay on, and with no file. Go to Source Position needs only a PDF.
     @Test func theFormatCommandsAreLaTeXs() {
         let app = AppModel()
         let project = ProjectModel(id: "MenuCommandTests", app: app)
@@ -40,10 +36,8 @@ struct MenuCommandTests {
     }
 }
 
-/// The running app's menu bar (HIG, The menu bar).
 @MainActor
 struct MenuStructureTests {
-    /// Every item under `menu`, filled in as AppKit fills lazy menus before showing them.
     private func all(_ menu: NSMenu) -> [NSMenuItem] {
         menu.delegate?.menuNeedsUpdate?(menu)
         return menu.items.flatMap { [$0] + ($0.submenu.map(all) ?? []) }
@@ -59,9 +53,7 @@ struct MenuStructureTests {
         try #require(all(menu).first { $0.title == title }, "\(title)")
     }
 
-    /// The menus in the HIG's order, the Go commands in one menu, and no menu with icons on some of
-    /// a group's items and not others (HIG, Menus): macOS 27 shows the images the app asks for and
-    /// hides the system's, which the Edit menu leaves out of this.
+    /// macOS 27 shows the images the app asks for and hides the system's, which the Edit menu leaves out of this.
     @Test func theMenuBarFollowsTheGuidelines() throws {
         let titles = try #require(NSApp.mainMenu).items.map(\.title)
         #expect(Array(titles.dropFirst()) == ["File", "Edit", "Format", "View", "Go", "Insert", "Compile", "Window", "Help"])
@@ -80,9 +72,6 @@ struct MenuStructureTests {
         }
     }
 
-    /// Insert's maths items say what they put in; its symbols are grids of TeX's glyphs, in full
-    /// rows, each glyph with its command as help and its name and command for VoiceOver, and a
-    /// chosen one isn't marked.
     @Test func mathShowsWhatItInserts() throws {
         let insert = try menu("Insert")
         #expect(insert.items.prefix(4).map(\.subtitle) == ["$ … $", "\\[ … \\]", "\\begin{equation}", "\\begin{align}"])

@@ -76,6 +76,13 @@ impl Visit for Option<(usize, usize)> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The units scanners have read on this thread, for the tests to tell how
+    /// far a question read.
+    pub(crate) static READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The scan between two tokens: all it carries from the text before.
 #[derive(Clone, Default)]
 pub(crate) struct Scanner {
@@ -127,6 +134,8 @@ impl Scanner {
             mut i,
             mut reach,
         } = std::mem::take(self);
+        #[cfg(test)]
+        let from = i;
         let mut probe = 0;
         let n = src.len();
         while i < n.min(until) {
@@ -314,6 +323,8 @@ impl Scanner {
         for _ in &probes[probe..] {
             visit.at(groups(&stack));
         }
+        #[cfg(test)]
+        READ.with(|read| read.set(read.get() + (i - from)));
         *self = Scanner {
             stack,
             text_argument,
@@ -508,10 +519,62 @@ fn preview_tex(environment: Option<&str>, body: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::SourceDocument;
+    use super::{READ, SPACING};
+    use crate::{SourceDocument, TextRange};
 
     fn in_math(text: &str) -> bool {
         super::math_mode_at(&text.encode_utf16().collect::<Vec<_>>())
+    }
+
+    /// Whether 200 spelling and style questions near the end of `source`, between
+    /// edits, read it once to keep their points and then near each question only:
+    /// each of a question's three answers reads at most from the kept point before
+    /// it, less than twice their spacing, where from the start would be the text.
+    fn questions_near_the_end_read_near_them(source: &str) {
+        const QUESTIONS: usize = 200;
+        let len = source.encode_utf16().count();
+        let mut doc = SourceDocument::new(source);
+        let before = READ.get();
+        for k in 0..QUESTIONS {
+            let at = (len - 1_000 - k * 37) as u32;
+            doc.not_prose(at, 40);
+            doc.text_styles(TextRange {
+                start: at,
+                length: 3,
+            });
+            doc.insert_symbol(
+                "\\alpha",
+                TextRange {
+                    start: at,
+                    length: 0,
+                },
+            );
+            if k % 20 == 0 {
+                doc.edit(at + 500, 0, "x");
+            }
+        }
+        let read = READ.get() - before;
+        assert!(
+            read < len + QUESTIONS * 3 * 2 * SPACING,
+            "{read} units read of {len}"
+        );
+    }
+
+    #[test]
+    fn questions_about_a_long_text_read_only_near_them() {
+        // 2.8 million units, braces closed and paragraphs short: each question
+        // had read it all from the start, 52 s in a test build for these.
+        let source = "A paragraph with $x^2$ and \\textbf{bold \\emph{words}}.\n\n".repeat(50_000);
+        questions_near_the_end_read_near_them(&source);
+    }
+
+    #[test]
+    fn braces_nobody_closes_cost_no_more_as_they_pile_up() {
+        // 20,000 lines, a brace left open on each and no blank line: kept points
+        // had been dropped above 64 open groups, and each question read the
+        // whole text from the start, twice.
+        let source: String = (0..20_000).map(|n| format!("{{ line {n} word\n")).collect();
+        questions_near_the_end_read_near_them(&source);
     }
 
     #[test]

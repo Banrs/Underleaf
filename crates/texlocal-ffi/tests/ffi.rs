@@ -106,7 +106,11 @@ fn commands_round_trip_through_the_c_abi() {
             "analyze_project",
             Some(json!({ "id": "P", "file": "main.tex" }))
         )["ok"],
-        json!({ "outline": [{ "depth": 2, "title": "Intro", "line": 1, "file": "main.tex" }], "words": 3 })
+        json!({
+            "outline": [{ "depth": 2, "title": "Intro", "line": 1, "file": "main.tex" }],
+            "words": 3,
+            "tree": [{ "index": 0, "depth": 2, "title": "Intro", "line": 1, "file": "main.tex", "foldKey": "main.tex\t2:Intro#1" }]
+        })
     );
 
     // Errors come back as an envelope with the core's status, never a crash.
@@ -126,17 +130,7 @@ fn native_only_commands_resolve_absolute_paths() {
     let dir = tempfile::tempdir().unwrap();
     let handle = open_with_project(dir.path());
 
-    let raw = call(
-        handle,
-        "raw_path",
-        Some(json!({ "id": "P", "path": "img/a.png" })),
-    );
-    assert!(raw["ok"].as_str().unwrap().ends_with("a.png"));
-    let escape = call(
-        handle,
-        "raw_path",
-        Some(json!({ "id": "P", "path": "../../x" })),
-    );
+    let escape = call(handle, "project_root", Some(json!({ "id": "../x" })));
     assert_eq!(escape["status"], 400);
     let root = call(handle, "project_root", Some(json!({ "id": "P" })));
     assert!(root["ok"].as_str().unwrap().ends_with("P"));

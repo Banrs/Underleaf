@@ -2,15 +2,13 @@ import Accessibility
 import AppKit
 import SwiftUI
 
-/// Native PDFKit pages, with controls in the toolbar, find accessory and status bar.
 struct PDFPane: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
 
     var body: some View {
         if project.hasPDF {
-            // Under the toolbar and the status bar, as the source. Directly in the pane, not in another
-            // scroll view: PDFKit insets its own scrolling from the pane's safe area and rubber-bands
+            // Directly in the pane, not in another scroll view: PDFKit insets its own scrolling from the pane's safe area and rubber-bands
             // at its ends, which a scroll view around it takes over (27.2).
             PDFRepresentable(project: project)
                 .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
@@ -32,7 +30,6 @@ struct PDFPane: View {
                 GetMacTeXButton().buttonStyle(.borderedProminent)
             }
         } else if project.compiling {
-            // The status bar has the build's spinner, and the toolbar its Stop.
             ContentUnavailableView("Compiling…", systemImage: "richtext.page")
         } else if project.result?.failed == true {
             ContentUnavailableView {
@@ -59,7 +56,6 @@ struct PDFPane: View {
     }
 }
 
-/// The PDF's find bar. Its pane accessory keeps the field ready to focus.
 struct PDFFindBar: View {
     @Bindable var controller: PDFController
 
@@ -78,7 +74,6 @@ struct PDFFindBar: View {
             }
             .disabled(controller.matches.isEmpty)
             .fixedSize()
-            // The first to give way in a narrow pane.
             Text(label)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -86,8 +81,8 @@ struct PDFFindBar: View {
             Button("Done") { controller.closeFind() }
         }
         .lineLimit(1)
-        // VoiceOver's focus stays in the field, so it hears the count, or that there is none,
-        // from here, once it has settled: the typing and stepping that change it cancel the wait.
+        // VoiceOver's focus stays in the field, so it hears the count, or that there is none, from here, once it has settled:
+        // the typing and stepping that change it cancel the wait.
         .task(id: label) {
             guard !label.isEmpty, (try? await Task.sleep(for: .milliseconds(500))) != nil else { return }
             var spoken = AttributedString(label)
@@ -101,7 +96,6 @@ struct PDFFindBar: View {
     }
 }
 
-/// Toolbar scale choices; no preset is checked between the listed scales.
 struct ScaleMenuItems: View {
     let pdf: PDFController
 
@@ -117,7 +111,6 @@ struct ScaleMenuItems: View {
         }
     }
 
-    /// Choosing an already checked scale reapplies it.
     private func choice(_ inUse: Bool, apply: @escaping () -> Void) -> Binding<Bool> {
         Binding(get: { inUse }, set: { _ in apply() })
     }
@@ -132,8 +125,6 @@ enum PDFFind {
         String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery))
     }
 
-    /// The find bar's count for `query`'s matches: the chosen one, from 1, of all of them, with a
-    /// plus where more exist than were kept (`limited`).
     static func count(_ index: Int, of total: Int, limited: Bool, for query: String) -> String {
         if query.isEmpty { return "" }
         if total == 0 { return String(localized: "Not found") }
@@ -141,9 +132,8 @@ enum PDFFind {
         return String(localized: "\(index) of \(count)")
     }
 
-    /// The find text every app shares (the find pasteboard), which Use Selection for Find sets and
-    /// a text view's find bar reads, so ⌘E in one pane and ⌘G in the other find the same.
-    /// The tests' own, so they leave the user's alone.
+    /// The find text every app shares (the find pasteboard), so ⌘E in one pane and ⌘G in the other find the same;
+    /// the tests' own leaves the user's alone.
     static var board = NSPasteboard(name: .find)
 
     static var shared: String? {

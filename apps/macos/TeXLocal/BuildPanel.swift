@@ -1,14 +1,11 @@
 import SwiftUI
 
-/// What the build panel shows, by title: its bar's pop-up.
 enum PanelTab: String, CaseIterable {
     case issues = "Issues", log = "Build Log", texpresso = "Live Preview Log"
 }
 
-/// The build panel's state for a project: whether it shows, what it shows, and its bar's settings.
 @Observable
 final class BuildPanelModel {
-    /// TeXpresso's session, which follows its log while the panel shows it.
     private let texpresso: TeXpressoSession
 
     var shown = false {
@@ -17,12 +14,10 @@ final class BuildPanelModel {
             texpresso.showsLog = shown && tab == .texpresso
         }
     }
-    /// A failed build opened the panel, so the next clean one closes it; one the person opened stays.
     @ObservationIgnored private var openedByBuild = false
     var tab: PanelTab = .issues {
         didSet { texpresso.showsLog = shown && tab == .texpresso }
     }
-    /// The panel bar's filters over the issues and over the logs' lines, and whether warnings show.
     var issueFilter = ""
     var logFilter = ""
     var showsWarnings = true
@@ -31,29 +26,21 @@ final class BuildPanelModel {
         self.texpresso = texpresso
     }
 
-    /// The panel, open on `tab`. The issues include the core's fallback issue for a failed build.
     func show(_ tab: PanelTab) {
         self.tab = tab
         shown = true
     }
 
-    /// A build the person asked for failed: the panel opens on its issues.
     func openForFailedBuild() {
         if !shown { openedByBuild = true }
         show(.issues)
     }
 
-    /// A build the person asked for came out clean: the panel a failure opened closes, unless
-    /// it was turned to a log since.
     func closeAfterCleanBuild() {
         if openedByBuild, tab == .issues { shown = false }
     }
 }
 
-/// The build panel below the editors and their status bar: the build's issues or its whole log,
-/// ending at `BuildPanelBar` at the panel's foot, as Xcode's console at its bar, with a
-/// line between. On the editors' surface, as Xcode's console is on its editor's.
-/// No close button: the status bar's toggle and View › Hide Build Panel close it.
 struct BuildPanel: View {
     let project: ProjectModel
 
@@ -73,13 +60,10 @@ struct BuildPanel: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.textSurface)
-        // The bar's own line is the edge, the same over the list and over the logs, where SwiftUI
-        // draws none (an AppKit scroll view).
+        // The bar's own line is the edge, where SwiftUI draws none (an AppKit scroll view).
         .scrollEdgeEffectHidden(true, for: .bottom)
-        // In the panel's own content, not a split-item accessory, so the bar rides the panel's edge
-        // as the panel opens: AppKit shows a bottom accessory only once the pane has its height
-        // (27.2). A safe-area bar: in one a search field is the filled capsule it is in a toolbar,
-        // as Xcode's console filter; in a plain stack it is a form's outlined field (27.2).
+        // 27.2: in the panel's own content, not a split-item accessory, since AppKit shows a bottom accessory only once the pane
+        // has its height. A safe-area bar: in one a search field is the filled capsule it is in a toolbar; in a plain stack, an outlined field.
         .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 Divider()
@@ -124,10 +108,6 @@ struct BuildPanel: View {
     }
 }
 
-/// The bar at the panel's foot, as Xcode's console bar: what the panel shows, chosen from a
-/// pop-up as Xcode's console chooses its output, then that view's controls and filter. The panel's
-/// content ends at the line over it (`BuildPanel`), and it paints the panel's surface. Its row is
-/// the status bar's above it (`barRow`).
 struct BuildPanelBar: View {
     let project: ProjectModel
 
@@ -141,16 +121,12 @@ struct BuildPanelBar: View {
                 }
             }
             .pickerStyle(.menu)
-            // Borderless, as Xcode's console's output pop-up.
             .buttonStyle(.borderless)
             .labelsHidden()
             .fixedSize()
             .layoutPriority(1)
             Spacer(minLength: 0)
-            // The view's button before its filter, as Xcode's console bar's toggles before its
-            // filter: no icon on its own at the bar's end.
             if panel.tab == .issues {
-                // Dim with no warnings to hide, and in its place all the same.
                 Toggle(isOn: $panel.showsWarnings) {
                     Label("Warnings", systemImage: "exclamationmark.triangle")
                 }
@@ -175,8 +151,7 @@ struct BuildPanelBar: View {
         .background(.textSurface)
     }
 
-    /// Xcode's console filter: the regular 24 pt field in a bar of small controls. At the small
-    /// size a search field is an outlined box, and SwiftUI's change of size drops its symbol (27.2).
+    /// At the small size a search field is an outlined box, and SwiftUI's change of size drops its symbol (27.2).
     private func filter(_ text: Binding<String>) -> some View {
         SearchField(text: text, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
             .controlSize(.regular)
@@ -184,9 +159,6 @@ struct BuildPanelBar: View {
     }
 }
 
-/// The errors and warnings. Choosing one shows its line and leaves the keyboard
-/// in the list, as the outline does; a double-click or Return goes into the source.
-/// Rows are places in the build's issues, and the chosen one the project's, as the menus move it too.
 private struct IssueList: View {
     let items: [(offset: Int, element: LogItem)]
     let project: ProjectModel
@@ -196,7 +168,6 @@ private struct IssueList: View {
         ScrollViewReader { proxy in
             List(items, id: \.offset, selection: selection) { IssueRow(item: $0.element, chosen: $0.offset == project.chosenIssue) }
                 .listStyle(.inset)
-                // The panel's surface, the editors': a list's own is the window's, tinted by the wallpaper.
                 .scrollContentBackground(.hidden)
                 .accessibilityLabel("Issues")
                 .contextMenu(forSelectionType: Int.self) { rows in
@@ -212,10 +183,8 @@ private struct IssueList: View {
                 } primaryAction: { rows in
                     if let item = rows.first.flatMap(item) { open(item) }
                 }
-                // Edit › Copy copies the selected issue.
                 .copyable(project.chosenIssue.flatMap(item).map { [$0.message] } ?? [])
-                // The menus' choice may be out of sight, and the panel closed: a hidden list
-                // scrolls by its rows' estimated heights, so again as it comes up.
+                // The menus' choice may be out of sight, and the panel closed: a hidden list scrolls by its rows' estimated heights, so again as it comes up.
                 .onChange(of: project.chosenIssue) { _, place in
                     if let place { proxy.scrollTo(place) }
                 }
@@ -234,10 +203,8 @@ private struct IssueList: View {
     }
 }
 
-/// An error or warning: its message, and its location when the log names one.
 private struct IssueRow: View {
     let item: LogItem
-    /// The chosen row shows its whole message; the others' tooltips have theirs.
     var chosen = false
 
     var body: some View {
@@ -261,23 +228,18 @@ private struct IssueRow: View {
         .accessibilityValue(location(line: ", line ") ?? "")
     }
 
-    /// The file, and its line after `line`; nil when the log names none.
     private func location(line: String) -> String? {
         item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file }
     }
 }
 
-/// The log over the panel's bar: the text view is inset by the bar's height, so its last line and
-/// its scroller end at the bar's top. The bar's safe area reaches SwiftUI but not an AppKit scroll
-/// view, which takes the inset itself. With the bar's filter, only the lines with it in them, as
-/// Xcode's console filters its output.
+/// The text view is inset by the bar's height: the bar's safe area reaches SwiftUI but not an AppKit scroll view, which takes the inset itself.
 private struct LogPane: View {
     let text: String
     let filter: String
     var title = "Build Log"
-    /// The filter's lines, found off the main actor when the log or the filter changes: not on
-    /// every redraw of a log that can be megabytes. Nil until the first are in; until the next
-    /// are, the last non-empty ones stay, and an empty result is no answer to another filter.
+    /// Found off the main actor, not on every redraw of a log that can be megabytes. Until the next are in, the last non-empty
+    /// ones stay, and an empty result is no answer to another filter.
     @State private var filtered: (filter: String, lines: String)?
 
     var body: some View {
@@ -305,12 +267,10 @@ private struct LogPane: View {
     }
 }
 
-/// The build log in an NSTextView: a SwiftUI Text lays out megabyte logs whole on every change.
-/// It opens at its end, where the error usually is.
+/// A SwiftUI Text lays out megabyte logs whole on every change.
 struct LogTextView: NSViewRepresentable {
     let text: String
     var title = "Build Log"
-    /// The bar over the text view's foot (`LogPane`).
     var bottomInset: CGFloat = 0
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -325,8 +285,7 @@ struct LogTextView: NSViewRepresentable {
         return scroll
     }
 
-    /// The text last shown: an update that leaves the log as it was (another view or the
-    /// filter chosen) compares the same storage, without passes over a megabyte log.
+    /// An update that leaves the log as it was compares the same storage, without passes over a megabyte log.
     final class Coordinator {
         var shown: String?
     }
@@ -357,8 +316,7 @@ struct LogTextView: NSViewRepresentable {
         let origin = scroll.contentView.bounds.origin
         let followsTail = !scroll.isFindBarVisible && selections.allSatisfy { $0.length == 0 }
             && (shown.isEmpty || scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1)
-        // Append without invalidating the entire log's layout. A new build or
-        // bounded log rollover can replace it; keep reading position in either case.
+        // Append without invalidating the entire log's layout; a new build or bounded log rollover can replace it.
         let previousLength = (shown as NSString).length, new = text as NSString
         if previousLength > 0, text.utf16.starts(with: shown.utf16) {
             view.textStorage?.replaceCharacters(in: NSRange(location: previousLength, length: 0),

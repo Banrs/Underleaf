@@ -1,34 +1,27 @@
 import SwiftUI
 
-/// The projects, to search and open; New Project makes one from a template.
 struct HomeView: View {
     @Environment(AppModel.self) private var app
-    /// Single selection: every action here acts on one project.
     @State private var selection: ProjectInfo.ID?
     @State private var rename = InPlaceRename<ProjectInfo.ID>()
     @FocusState private var listFocused: Bool
     @FocusState private var searching: Bool
     @State private var query = ""
     @AppStorage("dismissedTeXTip") private var dismissedTeXTip = false
-    /// What has been opening or copying for over 300 ms: a quicker one shows nothing.
     @State private var slow: Set<String> = []
 
     var body: some View {
-        // Over the list, which runs on under it and the toolbar with one edge effect.
         Group {
             if let problem = app.libraryProblem { unavailable(problem) } else { list }
         }
         .safeAreaBar(edge: .top) {
             if app.tex?.available == false, !dismissedTeXTip { texMissing }
         }
-        // Projects, copied in, as the Open panel says; other items are left out. One
-        // opens; several stay listed under All Projects.
         .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in
             Task {
                 for url in urls { await app.importProject(from: url, open: urls.count == 1) }
             }
         }
-        // Named for what the window shows, not the app (HIG, Toolbars).
         .navigationTitle("Projects")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -42,7 +35,6 @@ struct HomeView: View {
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
         .searchFocused($searching)
-        // Edit › Find Project…
         .onChange(of: app.searchFocusToken) { searching = true }
         .task(id: app.opening) {
             do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
@@ -50,7 +42,6 @@ struct HomeView: View {
         }
     }
 
-    /// Instead of the list, with no alert as the app starts (HIG, Alerts).
     private func unavailable(_ problem: AppAlert) -> some View {
         ContentUnavailableView {
             Label(problem.title, systemImage: "externaldrive.badge.exclamationmark")
@@ -64,7 +55,6 @@ struct HomeView: View {
     private var list: some View {
         List(selection: $selection) {
             Section {
-                // An item being copied into the library, in the place its project will take.
                 ForEach(copying, id: \.self) { name in
                     ProjectLabel(detail: Text("Copying…"), progress: "Copying") { Text(name).font(.headline) }
                 }
@@ -89,7 +79,6 @@ struct HomeView: View {
         } primaryAction: { ids in
             if let id = ids.first { Task { await app.open(id) } }
         }
-        // Return opens the chosen project, as in Xcode's project list; double-clicking does too.
         .onKeyPress(.return) {
             guard rename.id == nil, let id = selection else { return .ignored }
             Task { await app.open(id) }
@@ -127,16 +116,13 @@ struct HomeView: View {
         Task { await app.rename(project, to: name) }
     }
 
-    /// Being opened or copied in for a while.
     private var working: Set<String> { slow.intersection(app.opening) }
 
-    /// Items being copied in, which are not projects yet.
     private var copying: [String] {
         let ids = Set(app.projects.map(\.id))
         return query.isEmpty ? app.opening.filter { working.contains($0) && !ids.contains($0) } : []
     }
 
-    /// Newest first, as the core lists them.
     private var shown: [ProjectInfo] {
         query.isEmpty ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
     }
@@ -159,8 +145,6 @@ struct HomeView: View {
     }
 }
 
-/// A project: its name over its main file and when it last changed.
-/// While renamed, a field takes the name's place; while it opens, a spinner follows.
 private struct ProjectRow: View {
     let project: ProjectInfo
     let working: Bool
@@ -180,8 +164,6 @@ private struct ProjectRow: View {
     }
 }
 
-/// What the project rows share: the document's icon, a name over a detail line, and a spinner
-/// with the accessibility name `progress` at the trailing edge while there is one.
 private struct ProjectLabel<Name: View>: View {
     let detail: Text
     let progress: String?
@@ -208,7 +190,6 @@ private struct ProjectLabel<Name: View>: View {
     }
 }
 
-/// A button, not a link, to match the actions beside it.
 struct GetMacTeXButton: View {
     @Environment(\.openURL) private var openURL
 
@@ -217,8 +198,6 @@ struct GetMacTeXButton: View {
     }
 }
 
-/// The guide to installing TeXpresso, which has to be built against the app's engine. A button,
-/// as Get MacTeX is, wherever TeXpresso is missing.
 struct TeXpressoGuideButton: View {
     @Environment(\.openURL) private var openURL
 
@@ -229,12 +208,9 @@ struct TeXpressoGuideButton: View {
     }
 }
 
-/// A template the core makes projects from (crates/texlocal-core templates.rs). The raw value is
-/// the core's id, which is what Settings stores.
 enum ProjectTemplate: String, CaseIterable, Identifiable {
     case blank, article, report, beamer
 
-    /// What a new project is made from until Settings says otherwise.
     static let standard = ProjectTemplate.article
 
     var id: String { rawValue }
@@ -249,7 +225,6 @@ enum ProjectTemplate: String, CaseIterable, Identifiable {
     }
 }
 
-/// Starts as the first Untitled not taken, as Finder numbers a new folder, so Create is ready at once.
 struct NewProjectSheet: View {
     @Environment(AppModel.self) private var app
     @State private var name: String
@@ -269,9 +244,8 @@ struct NewProjectSheet: View {
                     action: "Create", enabled: !trimmed.isEmpty, failure: { "Couldn’t Create “\(trimmed)”" }) {
             try await app.create(name: trimmed, template: template)
         } fields: {
-            // At a grouped form's trailing edge AppKit shows a space typed last only once a letter
-            // follows (27.2), so the text leads in a field as wide as the name: the row keeps it
-            // at its trailing edge, and each space moves the name as it is typed.
+            // At a grouped form's trailing edge AppKit shows a space typed last only once a letter follows (27.2), so the text leads in
+            // a field as wide as the name: the row keeps it at its trailing edge, and each space moves the name as it is typed.
             LabeledContent("Name") {
                 NameWidth {
                     TextField("Name", text: $name, prompt: Text("Required"))
@@ -288,9 +262,7 @@ struct NewProjectSheet: View {
     }
 }
 
-/// A field as wide as its text, up to the room the row offers, where a field takes all it is
-/// offered. Asked for its ideal it claims none, so a long name scrolls in its row and the form
-/// never moves it under its label as it is typed.
+/// Asked for its ideal it claims none, so a long name scrolls in its row and the form never moves it under its label as it is typed.
 private struct NameWidth: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let text = subviews[0].sizeThatFits(.unspecified).width
