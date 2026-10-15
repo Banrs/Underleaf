@@ -1,7 +1,6 @@
-//! Completion as web/src/editor.js `latexCompletions` offers it: an
-//! argument's labels, citations or environments, a bibliography entry's
-//! type, or a command. Commands are snippets, expanded here as CodeMirror's
-//! `snippet()` expands them, so an editor only places the text and its fields.
+//! Completion: an argument's labels, citations or environments, a
+//! bibliography entry's type, or a command. Commands are snippets, expanded
+//! here, so an editor only places the text and its fields.
 
 use std::sync::LazyLock;
 
@@ -65,7 +64,7 @@ pub fn completions(
     citations: &[String],
 ) -> Option<Completions> {
     let line = text.line_index(caret);
-    // As CodeMirror's matchBefore: the caret's line, at most 250 units back.
+    // The caret's line, at most 250 units back.
     let from = text.lines[line].max(caret.saturating_sub(250));
     let before = String::from_utf16_lossy(&text.units[from as usize..caret as usize]);
     let catalog = &*catalog::CATALOG;
@@ -130,9 +129,8 @@ fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) ->
     let (lower, ascii) = (typed.to_lowercase(), typed.is_ascii());
     // ASCII names, as the catalog's and most keys are, are compared in
     // place: lowercasing a copy of each, at every key typed, was most of a
-    // citation's offer. Others are lowercased whole, as JavaScript's
-    // toLowerCase does, which may lower a character to ASCII (the kelvin
-    // sign to k).
+    // citation's offer. Others are lowercased whole, by Unicode's full
+    // mapping, which may lower a character to ASCII (the kelvin sign to k).
     let starts = |n: &str| {
         if ascii && n.is_ascii() {
             let head = n.as_bytes().get(..typed.len());
@@ -268,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn keys_match_as_javascript_lowercases_them() {
+    fn keys_match_lowercased_whole() {
         let keys = ["Knuth84", "knuth86", "Émile", "émile2", "Kn"].map(String::from);
         let offered = |typed: &str| -> Vec<String> {
             let before = format!("\\cite{{{typed}");

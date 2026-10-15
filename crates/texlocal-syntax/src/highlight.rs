@@ -1,6 +1,6 @@
-//! Highlighting as CodeMirror's stex mode (@codemirror/legacy-modes) gives it,
-//! token for token: the web's editor runs that mode, so both editors colour
-//! a file alike. Line by line, each line starting from the state the one
+//! Highlighting by the rules of CodeMirror's stex mode
+//! (@codemirror/legacy-modes), token for token, whose token names the kinds
+//! keep. Line by line, each line starting from the state the one
 //! before left; those states are kept, so an edit re-reads only from its
 //! line, and only as far as asked.
 
@@ -351,7 +351,7 @@ fn is_digit(u: u16) -> bool {
     u < 128 && (u as u8).is_ascii_digit()
 }
 
-/// JavaScript's \w.
+/// ECMAScript's \w.
 fn word(u: u16) -> bool {
     u < 128 && ((u as u8).is_ascii_alphanumeric() || u == b'_' as u16)
 }
@@ -530,21 +530,21 @@ mod tests {
         // Each line opens a group nobody closes, under a command with a rule:
         // keeping each line's state and styling each word had been as slow
         // as the groups were deep, some 17 s in a release build for this.
-        let source: String = (0..20_000)
+        const LINES: usize = 20_000;
+        let source: String = (0..LINES)
             .map(|n| format!("{{ \\cite{{ line {n} word\n"))
             .collect();
-        let started = std::time::Instant::now();
+        crate::stack::WORK.set(0);
         let mut doc = SourceDocument::new(&source);
         let len = utf16(&source) as u32;
         let runs = doc.highlights(0, len);
         doc.edit(0, 0, "x");
         doc.highlights(len - 10, 10);
         assert_eq!(runs.last().map(|r| r.kind), Some(Argument));
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(5),
-            "{:?}",
-            started.elapsed()
-        );
+        // Each line is read twice, a few frames made or looked at for each
+        // however deep the stack is.
+        let work = crate::stack::WORK.get();
+        assert!(work <= 8 * LINES, "{work} frames for {LINES} lines");
         drop(doc); // a deep stack drops without overflowing
     }
 }

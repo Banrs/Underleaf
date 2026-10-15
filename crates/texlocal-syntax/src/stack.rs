@@ -4,6 +4,18 @@
 
 use std::sync::Arc;
 
+#[cfg(test)]
+thread_local! {
+    /// Frames made and visited on this thread: what deep stacks cost, counted
+    /// rather than timed.
+    pub(crate) static WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn work(_frames: usize) {
+    #[cfg(test)]
+    WORK.with(|work| work.set(work.get() + _frames));
+}
+
 pub(crate) struct Stack<T>(Option<Arc<Frame<T>>>);
 
 #[derive(Clone)]
@@ -26,6 +38,7 @@ impl<T> Default for Stack<T> {
 
 impl<T> Stack<T> {
     pub fn push(&mut self, item: T) {
+        work(1);
         let below = std::mem::take(self);
         *self = Stack(Some(Arc::new(Frame { item, below })));
     }
@@ -45,11 +58,15 @@ impl<T> Stack<T> {
     where
         T: Clone,
     {
-        self.0.as_mut().map(|frame| &mut Arc::make_mut(frame).item)
+        self.0.as_mut().map(|frame| {
+            work(1);
+            &mut Arc::make_mut(frame).item
+        })
     }
 
     fn frames(&self) -> impl Iterator<Item = &Frame<T>> {
         std::iter::successors(self.0.as_deref(), |frame| frame.below.0.as_deref())
+            .inspect(|_| work(1))
     }
 
     /// From the top down.

@@ -1,9 +1,9 @@
-//! LaTeX editing logic for the Mac's editor, as the web's editor has it:
-//! highlighting, completion and the editing commands, as ranges and edits for
-//! the editor to apply. The editor owns the text, its undo and its drawing; a
+//! LaTeX editing logic for the editors: highlighting, completion and the
+//! editing commands, as ranges and edits for the editor to apply. The editor owns the text, its undo and its drawing; a
 //! `SourceDocument` mirrors the text through the editor's edits and answers in
-//! UTF-16 offsets, which NSString and JavaScript both count in.
+//! UTF-16 offsets, which NSString, JavaScript and WinUI all count in.
 
+mod call;
 mod catalog;
 mod complete;
 mod edit;
@@ -15,6 +15,7 @@ mod style;
 
 use serde::{Deserialize, Serialize};
 
+pub use call::call;
 pub use complete::{Completion, CompletionKind, Completions, SnippetField};
 pub use highlight::{Highlight, HighlightKind};
 pub use maths::{MathPreview, math_mode_at};
@@ -122,6 +123,9 @@ pub struct SourceDocument {
     highlighter: highlight::Cache,
     /// Kept for the questions that read the text from its start.
     scans: maths::Scans,
+    /// The project's, which "completions" offers in `\ref{` and `\cite{`.
+    labels: Vec<String>,
+    citations: Vec<String>,
 }
 
 impl SourceDocument {
@@ -130,7 +134,16 @@ impl SourceDocument {
             text: Text::new(text),
             highlighter: highlight::Cache::default(),
             scans: maths::Scans::default(),
+            labels: Vec::new(),
+            citations: Vec::new(),
         }
+    }
+
+    /// The project's labels and citations, which `call`'s "completions"
+    /// offers until they are set again: kept here rather than sent with each
+    /// key's completions, a bibliography being thousands of keys.
+    pub fn set_symbols(&mut self, labels: Vec<String>, citations: Vec<String>) {
+        (self.labels, self.citations) = (labels, citations);
     }
 
     /// The editor replaced `length` units at `start` with `text`. A range
@@ -277,7 +290,7 @@ fn letter(u: u16) -> bool {
     u < 128 && (u as u8).is_ascii_alphabetic()
 }
 
-/// JavaScript's \s.
+/// ECMAScript's \s.
 fn space(u: u16) -> bool {
     matches!(u, 0x09..=0x0d | 0x20 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
 }

@@ -1,5 +1,4 @@
-//! The LaTeX the editors insert, complete and recognise (catalog.json, which
-//! the web's latex-data.js reads too).
+//! The LaTeX the editors insert, complete and recognise (catalog.json).
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -27,7 +26,7 @@ pub struct Catalog {
     pub text_commands: Vec<String>,
     /// The maths environments the preview renders.
     pub preview_environments: Vec<String>,
-    /// (name, web-only detail, snippet); "#{…}" marks a snippet field.
+    /// (name, a word for its kind, snippet); "#{…}" marks a snippet field.
     pub commands: Vec<(String, IgnoredAny, String)>,
 }
 

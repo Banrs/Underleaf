@@ -1,5 +1,5 @@
-//! The editing commands, as web/src/editor.js has them: comment toggling,
-//! indentation, heading levels and blocks.
+//! The editing commands: comment toggling, indentation, heading levels and
+//! blocks.
 
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
@@ -50,7 +50,7 @@ pub fn toggle_comment(text: &Text, selections: &[TextRange]) -> Vec<TextEdit> {
 }
 
 /// Two spaces more, or one two-column indent unit fewer, at the start of
-/// each line the selections touch (CodeMirror's indentMore and indentLess).
+/// each line the selections touch.
 pub fn indent(text: &Text, selections: &[TextRange], more: bool) -> Vec<TextEdit> {
     touched_lines(text, selections)
         .into_iter()
@@ -64,7 +64,7 @@ pub fn indent(text: &Text, selections: &[TextRange], more: bool) -> Vec<TextEdit
             if indent.is_empty() {
                 return None;
             }
-            // CodeMirror's default tab size is four columns.
+            // A tab is four columns.
             let columns = indent.iter().fold(0usize, |col, &u| {
                 if is(u, '\t') {
                     col + 4 - col % 4

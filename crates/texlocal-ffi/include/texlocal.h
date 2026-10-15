@@ -55,10 +55,12 @@ uint32_t tl_source_line_count(const TlSource *source);
 uint32_t *_Nullable tl_source_highlights(TlSource *source, uint32_t start, uint32_t length, size_t *_Nullable count);
 void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 
-/* "completions", "toggle_comment", "indent", "set_heading", "insert_block",
- * "insert_symbol", "math_at", "text_styles", "not_prose" or "text", with a
- * JSON object of arguments. Returns the result's JSON, or NULL for an unknown
- * command or arguments; free it with tl_free.
+/* A command of texlocal_syntax's SourceDocument::call (crates/texlocal-syntax
+ * src/call.rs), with a JSON object of arguments: "completions",
+ * "toggle_comment", "indent", "set_heading", "insert_block", "insert_symbol",
+ * "math_at", "text_styles", "not_prose", "text" and the rest it lists.
+ * Returns the result's JSON, or NULL for an unknown command or arguments;
+ * free it with tl_free.
  * "set_symbols" keeps the project's labels and citations, {"labels": [...],
  * "citations": [...]}, with the source, answering null: "completions" offers
  * them in \ref{ and \cite{ until they are set again. A new source has none. */

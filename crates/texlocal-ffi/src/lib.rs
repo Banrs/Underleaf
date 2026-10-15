@@ -14,11 +14,11 @@ use std::ffi::{CStr, CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 use texlocal_core::service::{Service, arg, string_arg};
 use texlocal_core::{CoreError, import, zipexport};
-use texlocal_syntax::{SourceDocument, TextRange};
+use texlocal_syntax::SourceDocument;
 
 pub struct TlHandle {
     runtime: tokio::runtime::Runtime,
@@ -190,15 +190,9 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
     });
 }
 
-/// A file's text as the editor has it (`texlocal_syntax::SourceDocument`),
-/// with the project's labels and citations, which its completions offer in
-/// `\ref{` and `\cite{`. The host sets them when they change, rather than
-/// sending them with every key's completions: a thesis's bibliography is
-/// thousands of keys.
+/// A file's text as the editor has it (`texlocal_syntax::SourceDocument`).
 pub struct TlSource {
     doc: SourceDocument,
-    labels: Vec<String>,
-    citations: Vec<String>,
 }
 
 /// UTF-8 text by its byte count, so a U+0000 in the editor's text reaches
@@ -219,8 +213,6 @@ unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
 pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSource {
     Box::into_raw(Box::new(TlSource {
         doc: SourceDocument::new(&unsafe { text_arg(text, len) }),
-        labels: Vec::new(),
-        citations: Vec::new(),
     }))
 }
 
@@ -302,28 +294,9 @@ pub unsafe extern "C" fn tl_source_free_runs(runs: *mut u32, count: usize) {
     }
 }
 
-/// The arguments the source's commands take, each what it needs.
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct SourceArgs {
-    caret: u32,
-    explicit: bool,
-    labels: Vec<String>,
-    citations: Vec<String>,
-    command: String,
-    id: String,
-    selection: TextRange,
-    selections: Vec<TextRange>,
-    more: bool,
-}
-
-/// The editing commands, as `texlocal_syntax::SourceDocument` has them:
-/// "completions", "toggle_comment", "indent", "set_heading", "insert_block",
-/// "insert_symbol", "math_at", "text_styles", "not_prose" (the
-/// `selection`'s) and "text"; and "set_symbols", whose `labels` and
-/// `citations` "completions" offers until they are set again (it answers
-/// null). Returns the result's JSON (free it with `tl_free`), or null for an
-/// unknown command or arguments.
+/// `texlocal_syntax::SourceDocument::call`'s commands, and
+/// `texlocal_syntax::call`'s. Returns the result's JSON (free it with
+/// `tl_free`), or null for an unknown command or arguments.
 ///
 /// # Safety
 /// As `tl_source_edit`; the strings are null or NUL-terminated.
@@ -334,29 +307,16 @@ pub unsafe extern "C" fn tl_source_call(
     args_json: *const c_char,
 ) -> *mut c_char {
     let call = |source: &mut TlSource| {
-        let a: SourceArgs = serde_json::from_str(unsafe { str_arg(args_json) }?).ok()?;
-        let doc = &mut source.doc;
-        Some(match unsafe { str_arg(command) }? {
-            "completions" => {
-                json_string(doc.completions(a.caret, a.explicit, &source.labels, &source.citations))
-            }
-            "toggle_comment" => json_string(doc.toggle_comment(&a.selections)),
-            "indent" => json_string(doc.indent(&a.selections, a.more)),
-            "set_heading" => json_string(doc.set_heading(a.caret, &a.command)),
-            "insert_block" => json_string(doc.insert_block(&a.id, a.selection)),
-            "insert_symbol" => json_string(doc.insert_symbol(&a.command, a.selection)),
-            "math_at" => json_string(doc.math_at(a.caret)),
-            "text_styles" => json_string(doc.text_styles(a.selection)),
-            "not_prose" => json_string(doc.not_prose(a.selection.start, a.selection.length)),
-            "text" => json_string(doc.text()),
-            "set_symbols" => {
-                (source.labels, source.citations) = (a.labels, a.citations);
-                json_string(())
-            }
-            _ => return None,
-        })
+        let (command, args) = unsafe { (str_arg(command)?, str_arg(args_json)?) };
+        source.doc.call(command, args)
     };
-    unsafe { on_source(source, None, call) }.unwrap_or(std::ptr::null_mut())
+    let answer = unsafe { on_source(source, None, call) };
+    answer.map_or(std::ptr::null_mut(), owned_string)
+}
+
+/// JSON never holds a NUL: it escapes one inside a string.
+fn owned_string(text: String) -> *mut c_char {
+    CString::new(text).map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
 /// Null is ignored.
