@@ -612,21 +612,29 @@ impl Service {
             }
             "synctex_inverse" => {
                 let root = root()?;
-                out(synctex::synctex_inverse_with_context(
+                // `text`, the clicked page's text, and `at`, the clicked character's UTF-16 index in it.
+                let click =
+                    arg::<Option<String>>(args, "text")?.zip(arg::<Option<usize>>(args, "at")?);
+                out(synctex::synctex_inverse(
                     &root,
                     arg(args, "page")?,
                     arg(args, "x")?,
                     arg(args, "y")?,
-                    arg::<Option<String>>(args, "word")?.as_deref(),
-                    arg(args, "offset")?,
-                    arg::<Option<String>>(args, "context")?.as_deref(),
-                    arg(args, "contextOffset")?,
+                    click.as_ref().map(|(text, at)| (text.as_str(), *at)),
                     self.live_pdf(&root, args)?.as_deref(),
                     &self.tool_paths().0,
                 )
                 .await?)
             }
             // ---------- logic the hosts used to hold ----------
+            // The word at `column` of a source line, in the `pages` ([{page, text, near}]) of a forward sync.
+            "synctex_match" => out(synctex::match_forward(
+                &root()?,
+                s("file")?,
+                arg(args, "line")?,
+                arg(args, "column")?,
+                &arg::<Vec<synctex::PdfPage>>(args, "pages")?,
+            )?),
             // The index in an `analyze_project` outline of the heading a line is under.
             "outline_current" => out(analyze::current_heading(
                 &arg::<Vec<analyze::Heading>>(args, "outline")?,
