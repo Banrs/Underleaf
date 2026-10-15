@@ -13,9 +13,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use ropey::Rope;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt};
 use tokio::process::ChildStdin;
 use tokio::sync::mpsc;
 
@@ -180,143 +181,37 @@ impl Output {
     }
 }
 
-/// A file's text as TeXpresso has it, in pieces of a few kilobytes that know their length
-/// in UTF-16 units: an edit the editor gives in those units finds its bytes from the
-/// pieces' lengths and one piece's text, however long the file.
-#[derive(Default)]
-struct Text {
-    pieces: Vec<Piece>,
-    bytes: usize,
-}
-struct Piece {
-    text: String,
-    units: usize,
-}
-const PIECE: usize = 2048;
-fn utf16_len(text: &str) -> usize {
-    if text.is_ascii() {
-        text.len()
-    } else {
-        text.chars().map(char::len_utf16).sum()
-    }
-}
-/// The byte offset of `units` UTF-16 units into `text`; None inside a character or past
-/// the end.
-fn byte_at(text: &str, units: usize) -> Option<usize> {
-    if text.is_ascii() {
-        return (units <= text.len()).then_some(units);
-    }
-    let mut seen = 0;
-    for (at, c) in text.char_indices() {
-        if seen >= units {
-            return (seen == units).then_some(at);
-        }
-        seen += c.len_utf16();
-    }
-    (seen == units).then_some(text.len())
-}
-/// In equal parts: a piece that typing has filled splits in half, with room in both.
-fn pieces(text: &str, into: &mut Vec<Piece>) {
-    let size = text.len().div_ceil(text.len().div_ceil(PIECE).max(1));
-    let mut rest = text;
-    while !rest.is_empty() {
-        let mut end = rest.len().min(size);
-        while !rest.is_char_boundary(end) {
-            end += 1;
-        }
-        let (piece, after) = rest.split_at(end);
-        into.push(Piece {
-            text: piece.to_owned(),
-            units: utf16_len(piece),
-        });
-        rest = after;
-    }
-}
+/// A file's text as TeXpresso has it: an edit the editor gives in UTF-16 units finds
+/// its bytes in the rope's index, however long the file.
+struct Text(Rope);
 impl Text {
     fn new(text: &str) -> Self {
-        let mut all = Vec::with_capacity(text.len() / PIECE + 1);
-        pieces(text, &mut all);
-        Self {
-            pieces: all,
-            bytes: text.len(),
-        }
+        Self(Rope::from_str(text))
+    }
+    fn bytes(&self) -> usize {
+        self.0.len_bytes()
     }
     fn string(&self) -> String {
-        let mut text = String::with_capacity(self.bytes);
-        self.pieces.iter().for_each(|p| text.push_str(&p.text));
-        text
+        String::from(&self.0)
     }
-    /// The piece `units` falls in or ends, and the bytes and units before that piece.
-    fn find(&self, units: usize) -> Option<(usize, usize, usize)> {
-        let (mut bytes, mut seen) = (0, 0);
-        for (index, piece) in self.pieces.iter().enumerate() {
-            if seen + piece.units >= units {
-                return Some((index, bytes, seen));
-            }
-            bytes += piece.text.len();
-            seen += piece.units;
-        }
-        (units == seen).then_some((self.pieces.len(), bytes, seen))
+    /// The character `units` UTF-16 units in; None inside a character or past the end.
+    fn char_at(&self, units: usize) -> Option<usize> {
+        let at = self.0.try_utf16_cu_to_char(units).ok()?;
+        (self.0.char_to_utf16_cu(at) == units).then_some(at)
     }
     /// The byte offset of a place given in UTF-16 units.
     fn byte_offset(&self, units: usize) -> Option<usize> {
-        let (index, bytes, seen) = self.find(units)?;
-        match self.pieces.get(index) {
-            Some(piece) => Some(bytes + byte_at(&piece.text, units - seen)?),
-            None => Some(bytes),
-        }
+        Some(self.0.char_to_byte(self.char_at(units)?))
     }
     /// Replaces `remove` UTF-16 units at `start` with `inserted`. The same in bytes, as
     /// TeXpresso takes it, or None (and nothing replaced) when the range isn't the text's.
     fn edit(&mut self, start: usize, remove: usize, inserted: &str) -> Option<(usize, usize)> {
-        let (first, bytes, seen) = self.find(start)?;
-        let from = match self.pieces.get(first) {
-            Some(piece) => byte_at(&piece.text, start - seen)?,
-            None => 0,
-        };
-        // Where the removed units end: in `last`, `to` bytes in.
-        let (mut last, mut to, mut left) = (first, from, remove);
-        let mut removed = 0;
-        while left > 0 {
-            let piece = self.pieces.get(last)?;
-            let rest = &piece.text[to..];
-            let units = if to == 0 {
-                piece.units
-            } else {
-                utf16_len(rest)
-            };
-            if left <= units {
-                let end = byte_at(rest, left)?;
-                removed += end;
-                to += end;
-                break;
-            }
-            left -= units;
-            removed += rest.len();
-            last += 1;
-            to = 0;
-        }
-        let mut joined = String::new();
-        if let Some(piece) = self.pieces.get(first) {
-            joined.push_str(&piece.text[..from]);
-        }
-        joined.push_str(inserted);
-        let mut end = first;
-        if let Some(piece) = self.pieces.get(last) {
-            joined.push_str(&piece.text[to..]);
-            end = last + 1;
-        }
-        // A small piece takes its neighbour along, so typing and deleting leave no crumbs.
-        if joined.len() < PIECE / 2 && end < self.pieces.len() {
-            joined.push_str(&self.pieces[end].text);
-            end += 1;
-        }
-        let mut replacement = Vec::new();
-        pieces(&joined, &mut replacement);
-        self.pieces
-            .splice(first..end.min(self.pieces.len()), replacement);
-        self.bytes = self.bytes - removed + inserted.len();
-        Some((bytes + from, removed))
+        let from = self.char_at(start)?;
+        let to = self.char_at(start.checked_add(remove)?)?;
+        let (offset, end) = (self.0.char_to_byte(from), self.0.char_to_byte(to));
+        self.0.remove(from..to);
+        self.0.insert(from, inserted);
+        Some((offset, end - offset))
     }
 }
 
@@ -884,15 +779,15 @@ impl Manager {
         let unfit = || CoreError::unfit(UNFIT);
         let path = files.paths.get(rel).ok_or_else(unfit)?;
         let held = files.texts.get_mut(path).ok_or_else(unfit)?;
-        if held.bytes + text.len() > MAX_FILE {
+        if held.bytes() + text.len() > MAX_FILE {
             return Err(CoreError::bad_request(TOO_LARGE));
         }
         if files.bytes + text.len() > MAX_TOTAL {
             return Err(CoreError::bad_request(TOO_MANY));
         }
-        let before = held.bytes;
+        let before = held.bytes();
         let (offset, removed) = held.edit(start, remove, text).ok_or_else(unfit)?;
-        files.bytes = files.bytes - before + held.bytes;
+        files.bytes = files.bytes - before + held.bytes();
         let mut messages = vec![json!(["change", path, offset, removed, text])];
         let edit = session.mark(&mut messages);
         session.send(&messages);
@@ -1087,41 +982,52 @@ async fn write_lines(
         }
     }
 }
-async fn read_output(mut reader: impl AsyncRead + Unpin, session: Arc<Session>, protocol: bool) {
-    let mut chunk = [0; 8192];
+async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, protocol: bool) {
+    let mut reader = tokio::io::BufReader::with_capacity(8192, reader);
+    // The line read so far, cut at MAX_MESSAGE: one longer is no message.
     let mut pending = Vec::new();
+    fn keep(pending: &mut Vec<u8>, bytes: &[u8]) {
+        let room = MAX_MESSAGE.saturating_sub(pending.len());
+        pending.extend_from_slice(&bytes[..bytes.len().min(room)]);
+    }
     loop {
-        let count = match reader.read(&mut chunk).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => n,
+        let chunk = match reader.fill_buf().await {
+            Ok([]) | Err(_) => break,
+            Ok(chunk) => chunk,
         };
+        let count = chunk.len();
         if !protocol {
             let mut state = lock(&session.state);
             let end = state.stderr.base + state.stderr.bytes.len() as u64;
-            state.stderr.append(end, &chunk[..count]);
+            state.stderr.append(end, chunk);
             session.bump(&mut state);
-            continue;
-        }
-        for byte in &chunk[..count] {
-            if *byte == b'\n' {
+        } else {
+            let mut rest = chunk;
+            while let Some(end) = memchr::memchr(b'\n', rest) {
+                keep(&mut pending, &rest[..end]);
                 if let Ok(message) = serde_json::from_slice::<Value>(&pending) {
-                    if message[0] == "reset-sync" {
-                        let files = lock(&session.files);
-                        let messages: Vec<_> = files
-                            .texts
-                            .iter()
-                            .map(|(p, t)| json!(["open", p, t.string()]))
-                            .collect();
-                        session.send(&messages);
-                    } else {
-                        apply_message(&session, &message);
-                    }
+                    receive(&session, &message);
                 }
                 pending.clear();
-            } else if pending.len() < MAX_MESSAGE {
-                pending.push(*byte);
+                rest = &rest[end + 1..];
             }
+            keep(&mut pending, rest);
         }
+        reader.consume(count);
+    }
+}
+/// A message from TeXpresso.
+fn receive(session: &Session, message: &Value) {
+    if message[0] == "reset-sync" {
+        let files = lock(&session.files);
+        let messages: Vec<_> = files
+            .texts
+            .iter()
+            .map(|(p, t)| json!(["open", p, t.string()]))
+            .collect();
+        session.send(&messages);
+    } else {
+        apply_message(session, message);
     }
 }
 fn apply_message(session: &Session, message: &Value) {
@@ -1246,6 +1152,45 @@ mod tests {
         output.truncate(0);
         output.append(0, "é".as_bytes());
         assert_eq!(output.text(), "é");
+    }
+
+    #[tokio::test]
+    async fn output_is_read_a_line_at_a_time_and_an_overlong_line_is_no_message() {
+        let session = Arc::new(Session {
+            token: "token".into(),
+            executable: PathBuf::new(),
+            main: "main.tex".into(),
+            pdf: None,
+            state: Mutex::new(State {
+                tree: None,
+                last_used: Instant::now(),
+                output: Output::default(),
+                log: Output::default(),
+                protocol_seen: false,
+                stderr: Output::default(),
+                error: None,
+                revision: 0,
+                pdf_version: 0,
+                settings: None,
+                spoken: false,
+                live: None,
+                feed: Feed::default(),
+                edits: 0,
+            }),
+            files: Mutex::default(),
+            lines: mpsc::unbounded_channel().0,
+            changed: tokio::sync::Notify::new(),
+            revision: Arc::default(),
+        });
+        // Over many reads, the long line's end among them.
+        let long = format!(r#"["append","out",3,"{}"]"#, "x".repeat(MAX_MESSAGE));
+        let text = format!(
+            "[\"append\",\"out\",0,\"rea\"]\n{long}\n[\"append\",\"out\",3,\"dy\"]\n[\"append\",\"log\",0,\"cut"
+        );
+        read_output(text.as_bytes(), Arc::clone(&session), true).await;
+        // The last line never ended.
+        let status = session.status();
+        assert_eq!((status.output.as_str(), status.log.as_str()), ("ready", ""));
     }
 
     #[cfg(unix)]
@@ -1713,6 +1658,7 @@ mod tests {
             }
             (seen == units).then_some(text.len())
         };
+        let utf16_len = |text: &str| text.encode_utf16().count();
         let mut plain = "aé😀b\n".repeat(900);
         let mut text = Text::new(&plain);
         let mut seed = 7u64;
@@ -1747,17 +1693,10 @@ mod tests {
                 plain.replace_range(from..to, &inserted);
                 units = units - remove + utf16_len(&inserted);
             }
-            assert_eq!(text.bytes, plain.len());
+            assert_eq!(text.bytes(), plain.len());
             assert_eq!(text.byte_offset(start), bytes_at(&plain, start));
         }
         assert_eq!(text.string(), plain);
-        assert!(
-            text.pieces
-                .iter()
-                .all(|p| p.units == utf16_len(&p.text) && p.text.len() <= PIECE + 3)
-        );
-        // Typing leaves no crumbs behind: the pieces stay a few kilobytes each.
-        assert!(text.pieces.len() <= plain.len() / (PIECE / 8) + 2);
         let units = utf16_len(&plain);
         assert_eq!(text.edit(units + 1, 0, "x"), None);
         assert_eq!(text.edit(units, 1, ""), None);

@@ -86,6 +86,8 @@ pub struct Service {
     /// not folded: ids are the names list_projects read from the folder, so
     /// every client spells a project as its folder is stored.
     edits: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// What `scan_symbols` read, so a scan after a save reads that file alone.
+    symbols: projects::SymbolCache,
 }
 
 fn upload_rel(dir: &str, name: &str) -> String {
@@ -110,6 +112,7 @@ impl Service {
             compile: CompileManager::default(),
             texpresso: crate::texpresso::Manager::default(),
             edits: Mutex::default(),
+            symbols: projects::SymbolCache::default(),
         }
     }
 
@@ -493,7 +496,7 @@ impl Service {
             // Without the project's lock: every write replaces a file in one
             // rename, so a scan reads each file whole, old or new, and an
             // autosave need not wait for it.
-            "scan_symbols" => out(projects::scan_symbols(&root()?)?),
+            "scan_symbols" => out(self.symbols.scan(&root()?)?),
             "analyze_project" => {
                 let root = root()?;
                 let main = settings::read_settings(&root).main_file;

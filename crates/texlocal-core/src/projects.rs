@@ -2,23 +2,23 @@
 //! dir; all returned paths use forward slashes.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 use std::time::UNIX_EPOCH;
 
 use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::BUILD_DIR;
-use crate::atomic;
+use crate::atomic::{self, Stamp};
 use crate::error::CoreError;
 use crate::paths::{fold_case, project_root, rel_key, safe_path, safe_write_path, sanitize_name};
 use crate::settings::{read_settings, write_settings};
 use crate::templates;
+use crate::{BUILD_DIR, lock};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -193,18 +193,31 @@ fn project_info(name: String, mtime: u64, main_file: String) -> ProjectInfo {
     }
 }
 
-/// A project's date as the library shows it: the newest of its folder's and
-/// its content files', as a folder's own date moves only when entries come
-/// or go directly in it, not when a file in it is saved or compiled.
+/// A project's date as the library shows it: the newest of its folders' and
+/// its top-level files', without a stat of every file on each listing. A
+/// folder's date moves as entries come, go or are renamed in it, which every
+/// save the app makes does, as it renames the new file into place; a file
+/// saved in place by another app, most often the main file at the top, moves
+/// only its own date. One saved in place in a subfolder shows once anything
+/// else moves a folder's date.
 fn newest(root: &Path, meta: &fs::Metadata) -> u64 {
-    let mut mtime = mtime_ms(meta);
-    let _ = visit_files(root, &mut |abs, _| {
-        if let Ok(meta) = fs::metadata(abs) {
-            mtime = mtime.max(mtime_ms(&meta));
+    fn walk(root: &Path, dir: &Path, newest: &mut u64) {
+        for entry in entries(root, dir).into_iter().flatten() {
+            if (entry.dir || dir == root)
+                && let Ok(meta) = fs::metadata(&entry.path)
+            {
+                *newest = (*newest).max(mtime_ms(&meta));
+            }
+            if entry.dir {
+                walk(root, &entry.path, newest);
+            }
         }
-        Ok(true)
-    });
-    mtime
+    }
+    let mut newest = mtime_ms(meta);
+    if let Ok(root) = dunce::canonicalize(root) {
+        walk(&root, &root, &mut newest);
+    }
+    newest
 }
 
 pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
@@ -627,35 +640,92 @@ fn parse_symbols(bytes: &[u8], ext: &str) -> Symbols {
     Symbols { citations, labels }
 }
 
+/// A project's labels and citations, read fresh.
 pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
-    let mut files = BTreeMap::new();
-    visit_files(root, &mut |abs, rel| {
-        let ext = ext_of(rel);
-        if (ext == "bib" || ext == "tex")
-            && let Some(bytes) = skip_unreadable(fs::read(abs))?
-        {
-            files.insert(rel.to_owned(), parse_symbols(&bytes, &ext));
-        }
-        Ok(true)
-    })?;
+    SymbolCache::default().scan(root)
+}
 
-    fn dedup<'a>(symbols: impl Iterator<Item = &'a String>) -> Vec<String> {
-        let mut seen = HashSet::new();
-        symbols
-            .filter(|symbol| seen.insert(*symbol))
-            .cloned()
-            .collect()
+/// The symbols of each .tex and .bib file of the projects scanned, by the
+/// file's stamp when it was read: a scan reads again only the files changed
+/// since, where every save would otherwise read the whole project.
+#[derive(Default)]
+pub struct SymbolCache(Mutex<HashMap<PathBuf, Files>>);
+
+/// A project's files' symbols, by project path, with the stamp each was read at.
+type Files = BTreeMap<String, (Stamp, Symbols)>;
+
+impl SymbolCache {
+    pub fn scan(&self, root: &Path) -> Result<Symbols, CoreError> {
+        // Taken out while the scan runs: one beside it starts afresh.
+        let mut known = lock(&self.0).remove(root).unwrap_or_default();
+        let mut files = Files::new();
+        visit_files(root, &mut |abs, rel| {
+            let ext = ext_of(rel);
+            if ext != "bib" && ext != "tex" {
+                return Ok(true);
+            }
+            // The stamp before the read: a write between them reads again.
+            let Some(meta) = skip_unreadable(fs::metadata(abs))? else {
+                return Ok(true);
+            };
+            let stamp = Stamp::of(&meta);
+            let symbols = match known.remove(rel) {
+                Some((seen, symbols)) if seen == stamp => symbols,
+                _ => match skip_unreadable(fs::read(abs))? {
+                    Some(bytes) => parse_symbols(&bytes, &ext),
+                    None => return Ok(true),
+                },
+            };
+            files.insert(rel.to_owned(), (stamp, symbols));
+            Ok(true)
+        })?;
+
+        fn dedup<'a>(symbols: impl Iterator<Item = &'a String>) -> Vec<String> {
+            let mut seen = HashSet::new();
+            symbols
+                .filter(|symbol| seen.insert(*symbol))
+                .cloned()
+                .collect()
+        }
+        // File-name order keeps completions stable, retaining the first occurrence.
+        let found = Symbols {
+            citations: dedup(files.values().flat_map(|(_, s)| &s.citations)),
+            labels: dedup(files.values().flat_map(|(_, s)| &s.labels)),
+        };
+        lock(&self.0).insert(root.to_path_buf(), files);
+        Ok(found)
     }
-    // File-name order keeps completions stable, retaining the first occurrence.
-    Ok(Symbols {
-        citations: dedup(files.values().flat_map(|s| &s.citations)),
-        labels: dedup(files.values().flat_map(|s| &s.labels)),
-    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::after_entry;
+    use super::{SymbolCache, after_entry};
+    use std::fs;
+
+    #[test]
+    fn a_scan_reads_again_only_the_files_changed_since() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, a) = (dir.path(), dir.path().join("a.tex"));
+        fs::write(&a, "\\label{one}").unwrap();
+        fs::write(root.join("b.tex"), "\\label{two}").unwrap();
+        let cache = SymbolCache::default();
+        assert_eq!(cache.scan(root).unwrap().labels, ["one", "two"]);
+        // Of the same length and date, it is as it was, and isn't read.
+        let date = fs::metadata(&a).unwrap().modified().unwrap();
+        fs::write(&a, "\\label{uno}").unwrap();
+        let file = fs::File::options().write(true).open(&a).unwrap();
+        file.set_modified(date).unwrap();
+        drop(file);
+        fs::write(root.join("b.tex"), "\\label{three}").unwrap();
+        fs::write(root.join("c.bib"), "@book{key,").unwrap();
+        assert_eq!(cache.scan(root).unwrap().labels, ["one", "three"]);
+        fs::remove_file(root.join("b.tex")).unwrap();
+        let found = cache.scan(root).unwrap();
+        assert_eq!(
+            (found.labels, found.citations),
+            (vec!["one".into()], vec!["key".into()])
+        );
+    }
 
     #[test]
     fn main_file_guards_compare_names_as_the_volume_does() {
