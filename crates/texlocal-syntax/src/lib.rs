@@ -12,6 +12,7 @@ mod maths;
 mod prose;
 mod stack;
 mod style;
+mod typing;
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +21,7 @@ pub use complete::{Completion, CompletionKind, Completions, SnippetField};
 pub use highlight::{Highlight, HighlightKind};
 pub use maths::{MathPreview, math_mode_at};
 pub use style::TextStyles;
+pub use typing::{Change, Completing, Keystroke, Style, Tab, map_selections};
 
 /// A range of the text, in UTF-16 units.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,7 +31,7 @@ pub struct TextRange {
 }
 
 /// Replace `length` units at `start` with `text`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextEdit {
     pub start: u32,
     pub length: u32,
@@ -126,6 +128,8 @@ pub struct SourceDocument {
     /// The project's, which "completions" offers in `\ref{` and `\cite{`.
     labels: Vec<String>,
     citations: Vec<String>,
+    /// The closers and snippet fields typing keeps between keys.
+    typing: typing::Typing,
 }
 
 impl SourceDocument {
@@ -136,6 +140,7 @@ impl SourceDocument {
             scans: maths::Scans::default(),
             labels: Vec::new(),
             citations: Vec::new(),
+            typing: typing::Typing::default(),
         }
     }
 
@@ -230,6 +235,85 @@ impl SourceDocument {
     pub fn text_styles(&mut self, selection: TextRange) -> TextStyles {
         let selection = clamp(selection, self.text.len());
         style::text_styles(&self.text, &mut self.scans, selection)
+    }
+
+    /// A character typed in place of the selection: a bracket closed for the
+    /// user (`auto_pair`) or stepped over, or none of that.
+    pub fn type_text(&mut self, selection: TextRange, typed: &str, auto_pair: bool) -> Keystroke {
+        let selection = clamp(selection, self.text.len());
+        self.typing
+            .type_text(&self.text, selection, typed, auto_pair)
+    }
+
+    /// Delete at the caret: an empty pair put in for the user goes whole,
+    /// and in the indentation it goes back to a two-column stop.
+    pub fn delete_backward(&mut self, selection: TextRange, auto_pair: bool) -> Keystroke {
+        let selection = clamp(selection, self.text.len());
+        self.typing
+            .delete_backward(&self.text, selection, auto_pair)
+    }
+
+    /// Return, keeping the line's indentation.
+    pub fn insert_newline(&mut self, selection: TextRange) -> Keystroke {
+        let selection = clamp(selection, self.text.len());
+        self.typing.insert_newline(&self.text, selection)
+    }
+
+    /// Where the bracket at `at` is matched, within 10,000 units.
+    pub fn partner(&self, at: u32) -> Option<u32> {
+        typing::partner(&self.text, at)
+    }
+
+    /// The editor changed `old` by `delta` units (`Typing::follow`).
+    pub fn follow(
+        &mut self,
+        old: TextRange,
+        delta: i64,
+        changing: Option<TextRange>,
+        mirroring: bool,
+    ) {
+        self.typing.follow(old, delta, changing, mirroring);
+    }
+
+    /// The editor's selection (its first) moved.
+    pub fn select(&mut self, selection: TextRange, mirroring: bool) {
+        self.typing.select(&self.text, selection, mirroring);
+    }
+
+    /// A completion's or block's fields, from `at`: the first to select.
+    pub fn start_snippet(&mut self, fields: &[SnippetField], at: u32) -> Option<TextRange> {
+        self.typing.start_snippet(fields, at)
+    }
+
+    /// Whether there was a snippet to end.
+    pub fn end_snippet(&mut self) -> bool {
+        self.typing.end_snippet()
+    }
+
+    /// Tab (`step` 1) or Shift-Tab (-1).
+    pub fn tab(&mut self, selections: &[TextRange], step: i64) -> Tab {
+        self.typing.tab(&self.text, selections, step)
+    }
+
+    /// What's typed in a snippet's field, for its other places.
+    pub fn mirror_snippet(&mut self) -> Vec<TextEdit> {
+        self.typing.mirror_snippet(&self.text)
+    }
+
+    /// Move Line Up or Down; none when a line has nowhere to go.
+    pub fn move_lines(&self, selections: &[TextRange], up: bool) -> Option<Change> {
+        typing::move_lines(&self.text, selections, up)
+    }
+
+    /// Bold, Italic or Underline, on or off.
+    pub fn toggle_style(&mut self, selections: &[TextRange], style: Style) -> Change {
+        let styles = self.text_styles(selections.first().copied().unwrap_or_default());
+        typing::toggle_style(&self.text, styles, selections, style)
+    }
+
+    /// The selection round a template's "$0".
+    pub fn wrap(&self, selections: &[TextRange], template: &str) -> Change {
+        typing::wrap(&self.text, selections, template)
     }
 
     /// The maths to preview at the caret, if it's in some.

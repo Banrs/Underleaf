@@ -7,12 +7,12 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::{SourceDocument, TextRange};
+use crate::{SnippetField, SourceDocument, Style, TextEdit, TextRange, map_selections};
 
-/// The arguments the document's first commands take, each what it needs;
-/// any left out are empty.
-#[derive(Deserialize, Default)]
-#[serde(default)]
+/// The arguments the document's commands take, each what it needs; any left
+/// out are empty, but for `autoPair` (true) and `step` (1).
+#[derive(Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 struct Args {
     caret: u32,
     explicit: bool,
@@ -23,6 +23,50 @@ struct Args {
     selection: TextRange,
     selections: Vec<TextRange>,
     more: bool,
+    /// What's typed.
+    text: String,
+    auto_pair: bool,
+    at: u32,
+    /// A change's range before it, and how many units longer it made it.
+    old: TextRange,
+    delta: i64,
+    changing: Option<TextRange>,
+    mirroring: bool,
+    fields: Vec<SnippetField>,
+    step: i64,
+    up: bool,
+    style: Option<Style>,
+    template: String,
+    edits: Vec<TextEdit>,
+}
+
+impl Default for Args {
+    fn default() -> Self {
+        Args {
+            caret: 0,
+            explicit: false,
+            labels: vec![],
+            citations: vec![],
+            command: String::new(),
+            id: String::new(),
+            selection: TextRange::default(),
+            selections: vec![],
+            more: false,
+            text: String::new(),
+            auto_pair: true,
+            at: 0,
+            old: TextRange::default(),
+            delta: 0,
+            changing: None,
+            mirroring: false,
+            fields: vec![],
+            step: 1,
+            up: false,
+            style: None,
+            template: String::new(),
+            edits: vec![],
+        }
+    }
 }
 
 fn json(value: impl serde::Serialize) -> Option<String> {
@@ -39,13 +83,24 @@ impl SourceDocument {
     /// "insert_block", "insert_symbol", "math_at", "text_styles",
     /// "not_prose" (the `selection`'s), "text", and "set_symbols", whose
     /// `labels` and `citations` "completions" offers until they are set
-    /// again (it answers null).
+    /// again (it answers null). Typing's (typing.rs), each the method of its
+    /// name: "type" (`selection`, `text`, `autoPair`), "delete_backward"
+    /// (`selection`, `autoPair`) and "insert_newline" (`selection`), each a
+    /// `Keystroke`; "partner" (`at`); "follow" (`old`, `delta`, `changing`,
+    /// `mirroring`) and "select" (`selection`, `mirroring`), which answer
+    /// null; "start_snippet" (`fields`, `at`), "end_snippet", "tab"
+    /// (`selections`, `step`), "mirror_snippet"; "move_lines" (`selections`,
+    /// `up`), "toggle_style" (`selections`, `style`: "bold", "italic" or
+    /// "underline"), "wrap" (`selections`, `template`) and "map_selections"
+    /// (`edits`, `selections`).
     pub fn call(&mut self, command: &str, args_json: &str) -> Option<String> {
         let value: Value = serde_json::from_str(args_json).ok()?;
         if !value.is_object() {
             return None;
         }
-        let a: Args = args(&value)?;
+        let Some(a) = args::<Args>(&value) else {
+            return call_with(command, &value);
+        };
         match command {
             "completions" => {
                 json(self.completions(a.caret, a.explicit, &self.labels, &self.citations))
@@ -63,6 +118,26 @@ impl SourceDocument {
                 self.set_symbols(a.labels, a.citations);
                 json(())
             }
+            "type" => json(self.type_text(a.selection, &a.text, a.auto_pair)),
+            "delete_backward" => json(self.delete_backward(a.selection, a.auto_pair)),
+            "insert_newline" => json(self.insert_newline(a.selection)),
+            "partner" => json(self.partner(a.at)),
+            "follow" => {
+                self.follow(a.old, a.delta, a.changing, a.mirroring);
+                json(())
+            }
+            "select" => {
+                self.select(a.selection, a.mirroring);
+                json(())
+            }
+            "start_snippet" => json(self.start_snippet(&a.fields, a.at)),
+            "end_snippet" => json(self.end_snippet()),
+            "tab" => json(self.tab(&a.selections, a.step)),
+            "mirror_snippet" => json(self.mirror_snippet()),
+            "move_lines" => json(self.move_lines(&a.selections, a.up)),
+            "toggle_style" => json(self.toggle_style(&a.selections, a.style?)),
+            "wrap" => json(self.wrap(&a.selections, &a.template)),
+            "map_selections" => json(map_selections(&a.edits, &a.selections)),
             _ => call_with(command, &value),
         }
     }
