@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::analyze;
+use crate::atomic::Stamp;
 use crate::compile::{self, CompileManager, TexStatus};
 use crate::paths::fold_case;
 use crate::projects;
@@ -210,7 +211,7 @@ impl Service {
     }
 
     /// The PATH for TeX's tools, and for TeXpresso's, with its chosen folder first.
-    fn tool_paths(&self) -> (String, String) {
+    pub(crate) fn tool_paths(&self) -> (String, String) {
         let (tex_dir, texpresso_dir) = self.app_folders();
         let tex = compile::tex_path(tex_dir.as_deref());
         let texpresso = match texpresso_dir {
@@ -366,6 +367,20 @@ impl Service {
         paths::safe_path(&self.project_root(id)?, rel)
     }
 
+    // ---------- project sessions (session/) ----------
+
+    /// Writes a project file's text under the project's lock; the file's
+    /// stamp as written, for the session to know its own write's change.
+    pub(crate) fn write_text(&self, id: &str, rel: &str, text: &str) -> Result<Stamp, CoreError> {
+        self.with_project(id, |root| {
+            projects::write_creating(&paths::safe_write_path(root, rel)?, text.as_bytes())
+        })
+    }
+
+    pub(crate) fn scan_symbols(&self, root: &Path) -> Result<projects::Symbols, CoreError> {
+        self.symbols.scan(root)
+    }
+
     // ---------- dispatch ----------
 
     /// Shared JSON command table for browser and native hosts. Raw bytes and
@@ -392,17 +407,10 @@ impl Service {
                         .unwrap_or_default(),
                     arg::<Option<String>>(args, "session")?.as_deref(),
                     &self.tool_paths().1,
-                    // The Mac app shows the document in its PDF pane.
-                    arg::<Option<bool>>(args, "pdf")?
-                        .unwrap_or(false)
-                        .then(|| -> Result<_, CoreError> {
-                            Ok(crate::texpresso::Pane {
-                                view: arg(args, "view")?,
-                                caret: arg(args, "caret")?,
-                            })
-                        })
-                        .transpose()?
-                        .as_ref(),
+                    &crate::texpresso::Pane {
+                        view: arg(args, "view")?,
+                        caret: arg(args, "caret")?,
+                    },
                 )
                 .await?),
             "texpresso_update" => out(self

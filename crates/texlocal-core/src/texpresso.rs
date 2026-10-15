@@ -4,7 +4,8 @@
 //! A build with Underleaf's patch (tools/texpresso) shows nothing itself: it writes the
 //! pages the client says it is showing as one-page PDFs the moment they are typeset again,
 //! and the whole document when a run has ended. `Manager::wait` hands those to the client
-//! as they come; `Manager::edit` takes a keystroke without waiting for anything.
+//! as they come; `Manager::edit` takes a keystroke without waiting for anything. A client
+//! always shows the document itself: TeXpresso's own window is no longer offered.
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -60,9 +61,9 @@ pub struct Caret {
     pub offset: usize,
 }
 
-/// A client that shows the document itself, in its own pane: the pages it shows there,
-/// from 0, and where its caret is, for a build with Underleaf's patch to have those pages
-/// first and a snapshot ready where the first key will land.
+/// The client's pane: the pages it shows there, from 0, and where its caret is, for a
+/// build with Underleaf's patch to have those pages first and a snapshot ready where the
+/// first key will land.
 #[derive(Debug, Default)]
 pub struct Pane {
     pub view: Option<(u32, u32)>,
@@ -257,8 +258,8 @@ struct Session {
     token: String,
     executable: PathBuf,
     main: String,
-    /// Where a patched build writes the document, when the client shows it.
-    pdf: Option<PathBuf>,
+    /// Where a patched build writes the document, in a folder of the session's own.
+    pdf: PathBuf,
     state: Mutex<State>,
     /// Never held across a wait: a keystroke takes it on the editor's own thread.
     files: Mutex<Files>,
@@ -298,7 +299,7 @@ impl Session {
         if let Some(tree) = state.tree.take() {
             // The viewer starts an engine: stopping just its parent leaks it.
             tree.kill();
-            remove_pdf_folder(self.pdf.as_deref());
+            remove_pdf_folder(&self.pdf);
             state.error = error;
             self.event(&mut state);
             if let Ok(mut files) = self.files.try_lock() {
@@ -375,17 +376,17 @@ impl Session {
     /// Whether to send what only a build that sends pages knows: it has said it is one,
     /// or nothing at all yet. Another would only report a command it doesn't know.
     fn sends_pages(&self, state: &State) -> bool {
-        self.pdf.is_some() && (state.live.is_some() || !state.spoken)
+        state.live.is_some() || !state.spoken
     }
 }
 impl Drop for Session {
     fn drop(&mut self) {
         self.stop(None);
-        remove_pdf_folder(self.pdf.as_deref());
+        remove_pdf_folder(&self.pdf);
     }
 }
-fn remove_pdf_folder(pdf: Option<&Path>) {
-    if let Some(folder) = pdf.and_then(Path::parent) {
+fn remove_pdf_folder(pdf: &Path) {
+    if let Some(folder) = pdf.parent() {
         let _ = fs::remove_dir_all(folder);
     }
 }
@@ -432,11 +433,9 @@ impl Manager {
     pub fn live_pdf(&self, root: &Path, token: &str) -> Result<PathBuf, CoreError> {
         let session = self.owned(&dunce::canonicalize(root)?, token)?;
         let state = lock(&session.state);
-        session
-            .pdf
-            .as_deref()
+        Some(&session.pdf)
             .filter(|pdf| state.pdf_version > 0 && pdf.with_extension("synctex").is_file())
-            .map(Path::to_path_buf)
+            .cloned()
             .ok_or_else(|| {
                 CoreError::not_found("TeXpresso hasn't written a document to sync with yet")
             })
@@ -500,15 +499,15 @@ impl Manager {
         }
         Ok(session.status())
     }
-    /// With a `pane`, a build with Underleaf's patch writes the document for it instead
-    /// of opening a window; upstream opens its window all the same.
+    /// A build with Underleaf's patch writes the document for the client's `pane`;
+    /// upstream opens its own window all the same.
     pub async fn start(
         &self,
         root: &Path,
         files: &[FileBuffer],
         expected: Option<&str>,
         path_env: &str,
-        pane: Option<&Pane>,
+        pane: &Pane,
     ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = dunce::canonicalize(root)?;
@@ -553,16 +552,11 @@ impl Manager {
         let token = crate::random_hex(16)?;
         // The session's own folder, for its owner alone: no build output or
         // other session shares it. The session removes it as it stops.
-        let pdf = match pane {
-            Some(_) => {
-                let folder = tempfile::Builder::new()
-                    .prefix("texlocal-texpresso-")
-                    .tempdir()?
-                    .keep();
-                Some(dunce::canonicalize(folder)?.join("live.pdf"))
-            }
-            None => None,
-        };
+        let folder = tempfile::Builder::new()
+            .prefix("texlocal-texpresso-")
+            .tempdir()?
+            .keep();
+        let pdf = dunce::canonicalize(folder)?.join("live.pdf");
         let mut command = tokio::process::Command::new(&executable);
         command
             .args(["-json", "-texlive", "-I"])
@@ -574,9 +568,7 @@ impl Manager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        if let Some(pdf) = &pdf {
-            command.env("TEXPRESSO_PDF_OUTPUT", pdf);
-        }
+        command.env("TEXPRESSO_PDF_OUTPUT", &pdf);
         // A Mac app runs with signals ignored or blocked that a child inherits across exec.
         // TeXpresso stops a stale TeX worker with SIGTERM, and ignored it never ends: the
         // snapshot waiting on it never resumes, and live preview stops at the first edit.
@@ -596,7 +588,7 @@ impl Manager {
         let (mut child, tree) = match Tree::spawn(&mut command) {
             Ok(spawned) => spawned,
             Err(err) => {
-                remove_pdf_folder(pdf.as_deref());
+                remove_pdf_folder(&pdf);
                 return failed(format!(
                     "Couldn't start TeXpresso: {err}. Check TEXLOCAL_TEXPRESSO and its dependencies."
                 ));
@@ -606,7 +598,7 @@ impl Manager {
         let stderr = child.stderr.take().unwrap();
         let (lines, queued) = mpsc::unbounded_channel();
         // Where the caret is in bytes, as TeXpresso counts, from the text just sent.
-        let caret = pane.and_then(|pane| pane.caret.as_ref()).and_then(|caret| {
+        let caret = pane.caret.as_ref().and_then(|caret| {
             let path = buffers.paths.get(&caret.path)?;
             let offset = buffers.texts.get(path)?.byte_offset(caret.offset)?;
             Some(json!(["caret", path, offset]))
@@ -686,7 +678,7 @@ impl Manager {
         // TeXpresso's idle reruns stay off: each starts TeX again from nothing after a pause
         // in typing and shows no page until it is over. A build that sends pages makes its
         // finishing passes beside the document.
-        if let Some((first, last)) = pane.and_then(|pane| pane.view) {
+        if let Some((first, last)) = pane.view {
             opened.push(json!(["view", first, last.max(first)]));
         }
         opened.extend(caret);
@@ -1045,7 +1037,7 @@ fn apply_message(session: &Session, message: &Value) {
         }
         // [page, index, path, mark]: one page, complete at a path in the session's folder.
         "page" => {
-            let folder = session.pdf.as_deref().and_then(Path::parent);
+            let folder = session.pdf.parent();
             let path = message[2].as_str().filter(|path| {
                 folder.is_some_and(|folder| Path::new(path).parent() == Some(folder))
             });
@@ -1063,25 +1055,23 @@ fn apply_message(session: &Session, message: &Value) {
         // [pdf, path, pages], and from a patched build [.., run, changed, mark]: the whole
         // document written to the path it was given.
         "pdf" => {
-            if let Some(pdf) = &session.pdf {
-                state.pdf_version += 1;
-                let changed = message[4].as_array().map(|ranges| {
-                    let page = |range: &Value, at: usize| range[at].as_u64().unwrap_or(0) as u32;
-                    ranges.iter().map(|r| [page(r, 0), page(r, 1)]).collect()
-                });
-                let document = Document {
-                    path: pdf.to_string_lossy().into_owned(),
-                    version: state.pdf_version,
-                    serial: session.event(state),
-                    pages: number(2).unwrap_or(0) as u32,
-                    run: message[3].as_str().map(str::to_owned),
-                    changed,
-                    edit: number(5).unwrap_or(0),
-                };
-                // The pages written before it are in it, and their own files are going.
-                state.feed.pages.clear();
-                state.feed.document = Some(document);
-            }
+            state.pdf_version += 1;
+            let changed = message[4].as_array().map(|ranges| {
+                let page = |range: &Value, at: usize| range[at].as_u64().unwrap_or(0) as u32;
+                ranges.iter().map(|r| [page(r, 0), page(r, 1)]).collect()
+            });
+            let document = Document {
+                path: session.pdf.to_string_lossy().into_owned(),
+                version: state.pdf_version,
+                serial: session.event(state),
+                pages: number(2).unwrap_or(0) as u32,
+                run: message[3].as_str().map(str::to_owned),
+                changed,
+                edit: number(5).unwrap_or(0),
+            };
+            // The pages written before it are in it, and their own files are going.
+            state.feed.pages.clear();
+            state.feed.document = Some(document);
             return;
         }
         "done" => {
@@ -1160,7 +1150,7 @@ mod tests {
             token: "token".into(),
             executable: PathBuf::new(),
             main: "main.tex".into(),
-            pdf: None,
+            pdf: PathBuf::new(),
             state: Mutex::new(State {
                 tree: None,
                 last_used: Instant::now(),
@@ -1261,7 +1251,7 @@ mod tests {
                 &main_buffer(original),
                 None,
                 &path_env,
-                Some(&Pane::default()),
+                &Pane::default(),
             )
             .await
             .unwrap();
@@ -1339,14 +1329,14 @@ mod tests {
         );
         assert_eq!(
             manager
-                .start(&root, &[], Some(token), &path_env, None)
+                .start(&root, &[], Some(token), &path_env, &Pane::default())
                 .await
                 .unwrap_err()
                 .status,
             409
         );
         let restarted = manager
-            .start(&root, &[], None, &path_env, None)
+            .start(&root, &[], None, &path_env, &Pane::default())
             .await
             .unwrap();
         assert!(restarted.running && restarted.revision > second.revision);
@@ -1369,7 +1359,7 @@ mod tests {
                 .is_none()
         );
         manager
-            .start(&root, &[], None, &path_env, None)
+            .start(&root, &[], None, &path_env, &Pane::default())
             .await
             .unwrap();
         manager.kill_all();
@@ -1381,7 +1371,7 @@ mod tests {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
         let live = manager
-            .start(&root, &[], None, &path_env, Some(&Pane::default()))
+            .start(&root, &[], None, &path_env, &Pane::default())
             .await
             .unwrap();
         let token = live.session.as_deref().unwrap();
@@ -1403,7 +1393,13 @@ mod tests {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
         let started = manager
-            .start(&root, &main_buffer("abc"), None, &path_env, None)
+            .start(
+                &root,
+                &main_buffer("abc"),
+                None,
+                &path_env,
+                &Pane::default(),
+            )
             .await
             .unwrap();
         let token = started.session.as_deref().unwrap();
@@ -1450,7 +1446,7 @@ mod tests {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
         let owner = manager
-            .start(&root, &[], None, &path_env, None)
+            .start(&root, &[], None, &path_env, &Pane::default())
             .await
             .unwrap();
         until(|| {
@@ -1471,9 +1467,8 @@ mod tests {
         until(|| !manager.status(&root, None, || &path_env).unwrap().running).await;
         let status = manager.status(&root, None, || &path_env).unwrap();
         assert_eq!(status.output, "ready");
-        // Not asked for, the stub's document isn't offered.
         let events = manager.wait(&root, token, 0, Duration::ZERO).await.unwrap();
-        assert!(events.pdf.is_none() && !events.running);
+        assert!(!events.running);
         assert!(status.error.unwrap().contains("exited"));
         // Killed descendants can remain zombies briefly while init reaps them.
         until(|| {
@@ -1489,7 +1484,7 @@ mod tests {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
         let started = manager
-            .start(&root, &[], None, &path_env, None)
+            .start(&root, &[], None, &path_env, &Pane::default())
             .await
             .unwrap();
         let session = manager.held(&started.session.unwrap()).unwrap();
@@ -1508,7 +1503,7 @@ mod tests {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
         let started = manager
-            .start(&root, &[], None, &path_env, None)
+            .start(&root, &[], None, &path_env, &Pane::default())
             .await
             .unwrap();
         let session = manager.held(&started.session.unwrap()).unwrap();
@@ -1533,7 +1528,7 @@ mod tests {
         let manager = Arc::new(Manager::default());
         assert!(!manager.status(&root, None, || &path_env).unwrap().running);
         let old = manager
-            .start(&root, &[], None, &path_env, None)
+            .start(&root, &[], None, &path_env, &Pane::default())
             .await
             .unwrap()
             .session
@@ -1544,7 +1539,13 @@ mod tests {
             let (manager, root, path_env) = (Arc::clone(&manager), root.clone(), path_env.clone());
             async move {
                 manager
-                    .start(&root, &main_buffer("owner B"), None, &path_env, None)
+                    .start(
+                        &root,
+                        &main_buffer("owner B"),
+                        None,
+                        &path_env,
+                        &Pane::default(),
+                    )
                     .await
                     .unwrap()
             }
@@ -1608,7 +1609,7 @@ mod tests {
         );
         assert_eq!(
             manager
-                .start(&root, &[], Some(&old), &path_env, None)
+                .start(&root, &[], Some(&old), &path_env, &Pane::default())
                 .await
                 .unwrap_err()
                 .status,
@@ -1617,7 +1618,7 @@ mod tests {
         manager.stop(&root).unwrap();
         assert!(!manager.status(&root, None, || &path_env).unwrap().running);
         let restarted = manager
-            .start(&root, &[], Some(&current), &path_env, None)
+            .start(&root, &[], Some(&current), &path_env, &Pane::default())
             .await
             .unwrap();
         assert!(restarted.running);
@@ -1632,7 +1633,13 @@ mod tests {
         );
         assert_eq!(
             manager
-                .start(&root, &[], restarted.session.as_deref(), &path_env, None)
+                .start(
+                    &root,
+                    &[],
+                    restarted.session.as_deref(),
+                    &path_env,
+                    &Pane::default()
+                )
                 .await
                 .unwrap_err()
                 .status,
@@ -1757,7 +1764,7 @@ mod tests {
             }),
         };
         let started = manager
-            .start(&root, &main_buffer("aé😀b"), None, &path_env, Some(&pane))
+            .start(&root, &main_buffer("aé😀b"), None, &path_env, &pane)
             .await
             .unwrap();
         let token = started.session.as_deref().unwrap();
@@ -1843,7 +1850,7 @@ mod tests {
                 &main_buffer("abc"),
                 None,
                 &path_env,
-                Some(&Pane::default()),
+                &Pane::default(),
             )
             .await
             .unwrap();
@@ -1939,7 +1946,7 @@ mod tests {
                 &main_buffer("abc"),
                 None,
                 &path_env,
-                Some(&Pane::default()),
+                &Pane::default(),
             )
             .await
             .unwrap();
