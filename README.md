@@ -7,14 +7,14 @@ A fully offline LaTeX editor — an Overleaf alternative that runs entirely on y
 > scheme, `~/TeXLocal` projects, `.texlocal.json` settings, and `TEXLOCAL_DATA`
 > — so existing installs and projects keep working.
 
-One Rust core, two clients:
+One Rust core, thin native hosts:
 
-- **macOS app** — AppKit and SwiftUI for macOS 27, in `apps/macos`.
-- **Browser version** — the `web/` UI served by `crates/texlocal-server` on
-  `127.0.0.1` only; never exposed to the network.
+- **macOS app** — AppKit and SwiftUI for macOS 27, in `apps/macos`. The editor is
+  native (TextKit), and the PDF is PDFKit's.
+- **Windows app** — a native WinUI 3 / Fluent app on the same core, in progress.
+- **Local server** — `crates/texlocal-server` serves the core's API on `127.0.0.1`
+  only, for a browser frontend still to be written.
 
-The macOS app's editor is native (TextKit over
-`crates/texlocal-syntax`), and it shows the PDF with PDFKit.
 [HANDOFF.md](HANDOFF.md) has the current status and architecture.
 
 ## Quick start
@@ -22,39 +22,55 @@ The macOS app's editor is native (TextKit over
 ```sh
 git clone https://github.com/Banrs/Underleaf.git
 cd Underleaf
-npm install
-npm run serve        # browser version: prints a local URL with a sign-in token
+open apps/macos/TeXLocal.xcodeproj    # Xcode 27; the build runs cargo itself
 ```
 
 You also need a TeX distribution — see [Requirements](#requirements).
 
 ## Features
 
-- **Projects** with templates (Article, Report, Beamer, Blank); the macOS app
-  also opens a folder, a `.zip` or a `.tex` from anywhere as a new project
-- **File tree** with folders, rename/delete, drag-and-drop import (a name that's
-  taken asks Replace / Keep Both / Stop), ZIP export
-- **LaTeX editor**: autocomplete for ~140 commands and ~40 environments, `\cite{}` completion from your `.bib` files and `\ref{}` completion from your `\label{}`s. The Mac offers System, Overleaf and TeXstudio syntax colours; the browser uses CodeMirror 6. The Mac app uses the stock find bar: ⌘F to find, ⌥⌘F to find and replace
-- **Live equation preview**: a KaTeX popup at the cursor inside `$…$`, `\[…\]`, or an equation/align/cases environment
-- **Mac toolbar**: Aa for text styles, Math for formulas and symbols, and an Insert menu for figures, tables, lists, references and links, plus a PDF zoom control; the same commands are in the menu bar, where File has Export as PDF… and Export Project as ZIP…, Go has Go to Line, Go to Page, Go to PDF Position, Go to Source Position and Go to Next and Previous Issue, and Compile has Clean Build Folder
-- **Web source bar**: undo/redo, text styles, math, symbols and insertions, with a project › file › section location row
+- **Projects** with templates (Article, Report, Beamer, Blank); the Mac app also opens a
+  folder, a `.zip` or a `.tex` from anywhere as a new project
+- **File tree** with folders, rename/delete, drag-and-drop import (a name that's taken asks
+  Replace / Keep Both / Stop), ZIP export; deletes go to the Trash
+- **LaTeX editor**: autocomplete for ~140 commands and ~40 environments, `\cite{}`
+  completion from your `.bib` files and `\ref{}` completion from your `\label{}`s, closing
+  brackets and snippets, and Overleaf, TeXstudio and System syntax colours. The stock find
+  bar: ⌘F to find, ⌥⌘F to find and replace
+- **Live equation preview**: a popover at the cursor inside `$…$`, `\[…\]`, or an
+  equation/align/cases environment, typeset by RaTeX
+- **Mac toolbar**: Compile (a symbol when narrow), Aa for text styles grouped as Notes'
+  is, Math for formulas and symbols, an Insert menu for figures, tables, lists, references
+  and links, and a PDF zoom control. The same commands are in the menu bar, where File has
+  Export as PDF… and Export Project as ZIP…, Go has Go to Line, Go to Page, Go to PDF
+  Position, Go to Source Position and Go to Next and Previous Issue, and Compile has Clean
+  Build Folder
 - **Auto-compile**: save-on-pause triggers a recompile; superseded runs are cancelled
 - **TeXpresso live preview** (optional, experimental): sends unsaved edits to a persistent
-  TeXpresso process. With [Underleaf's patch](tools/texpresso/), the Mac app shows the live
-  document in its PDF pane; otherwise TeXpresso opens its own window. Normal PDF builds stay
-  available. See [local setup and verification](docs/texpresso.md).
-- **File outline** in the sidebar that follows the section on screen, plus word and line counts
+  TeXpresso process; with [Underleaf's patch](tools/texpresso/) the Mac app shows the live
+  document in its PDF pane. Normal PDF builds stay available. See
+  [docs/texpresso.md](docs/texpresso.md).
+- **File outline** at the sidebar's foot that follows the section on screen, plus word and
+  line counts
 - **Project-wide search** with highlighted matches
 - **Compile** with latexmk — pdfLaTeX / XeLaTeX / LuaLaTeX, automatic BibTeX/biber reruns.
-  Builds carry on past errors, as Overleaf's do, so the PDF shows with every
-  error listed; a per-project **Stop on first error** setting halts instead,
-  and a running build can be stopped
-- **Issues and log**: parsed errors and warnings click through to the source; raw log view
-- **PDF preview**: pinch or ⌘-scroll zoom, fit width/height, page tracking, and **Find in PDF**
-- **SyncTeX both ways**
-- **One command model** for menus, shortcuts and toolbar buttons (titles, accelerators, enabled state). The Mac app's main shortcuts: ⇧⌘N new project, ⌘N new file, ⌘S save, ⌘Return compile, ⌘. stop, ⇧⌘K clean build folder, ⇧⌘F find in the project, ⌘L go to line, ⌥⌘G go to page, ⌥⌘J go to PDF position, ⌘' and ⌘" next and previous issue, ⌃⌘S sidebar, ⌥⌘P PDF, ⌥⌘I inspector, ⇧⌘Y build panel
-- **Deletes go to the Trash**
-- **Settings** (`⌘,`): the Mac app's window has five panes. General has the projects folder and the template and engine for new projects; Editor has the font, syntax colours, line numbers, closing brackets and completions; Compiling has Compile Automatically, jumping to the cursor's place after compiling and the TeX folder; PDF has the page colour; Live Preview has the TeXpresso (experimental) folder and where the preview shows (word count is in View). The browser version has interface appearance and scaling, editor font size, syntax colours, PDF paper and auto-compile. Per project, the TeX engine and Stop on first error
+  Builds carry on past errors, as Overleaf's do, so the PDF shows with every error listed;
+  a per-project **Stop on first error** setting halts instead, and a running build can be
+  stopped
+- **Issues and log**: parsed errors and warnings sit on their lines in the source and click
+  through to the panel; raw log view
+- **PDF preview**: pinch or ⌘-scroll zoom, fit width/height, page tracking, **Find in PDF**
+- **SyncTeX both ways**, to the word
+- **One command model** for menus, shortcuts and toolbar buttons. The Mac app's main
+  shortcuts: ⇧⌘N new project, ⌘N new file, ⌘S save, ⌘Return compile, ⌘. stop, ⇧⌘K clean
+  build folder, ⇧⌘F find in the project, ⌘L go to line, ⌥⌘G go to page, ⌥⌘J go to PDF
+  position, ⌘' and ⌘" next and previous issue, ⌃⌘S sidebar, ⌥⌘P PDF, ⌥⌘I inspector, ⇧⌘Y
+  build panel
+- **Settings** (`⌘,`): four panes. General has the projects folder and the template and
+  engine for new projects; Editor has the font, syntax colours, line numbers, closing
+  brackets and completions; Compiling has Compile Automatically, jumping to the cursor's
+  place after compiling and the TeX folder; Live Preview has the TeXpresso folder. Per
+  project, the TeX engine and Stop on first error
 
 ## Requirements
 
@@ -65,8 +81,7 @@ TeXLocal finds TeX on your `PATH` and in the usual install locations
 (`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`), or in a folder
 you choose in Settings.
 
-**To build from source:** Node.js ≥ 22.12 and Rust (stable); the macOS app
-also needs Xcode.
+**To build from source:** Rust (stable); the macOS app also needs Xcode 27.
 
 Projects are plain folders in `~/TeXLocal` — override with
 `TEXLOCAL_DATA=/path`. No databases, no lock-in.
@@ -74,29 +89,28 @@ Projects are plain folders in `~/TeXLocal` — override with
 ## Project structure
 
 ```
-crates/texlocal-core/    Projects, path safety, latexmk/SyncTeX, log parsing, ZIP
-                         export, and the JSON command service every host shares.
-crates/texlocal-syntax/  Highlighting, completion and editing commands: the Mac
-                         editor's mirror of a file's text.
-crates/texlocal-ffi/     C ABI the macOS app links (header in include/).
-crates/texlocal-server/  The browser version's local HTTP host.
-apps/macos/              AppKit and SwiftUI app.
-web/src/                 Frontend modules, bundled by esbuild into web/dist.
-docs/                    design-tokens.md (extracted Apple UI-kit values) ·
-                         texpresso.md (live preview) · web.md
+crates/texlocal-core/    Projects, path safety, latexmk/SyncTeX, log parsing, ZIP export,
+                         the JSON command service, and project sessions (saving, watching,
+                         building, issues, the TeXpresso client) with events to hosts.
+crates/texlocal-syntax/  Editor logic, free of I/O (also builds to wasm): highlighting,
+                         completion, typing transforms, snippets, themes, the symbol and
+                         template catalogue, heading styles, maths and glyphs as SVG (RaTeX).
+crates/texlocal-ffi/     C ABI: a static library for the Mac app, a dynamic one for the
+                         Windows app (header in include/).
+crates/texlocal-server/  Local HTTP host for the core's API.
+apps/macos/              AppKit and SwiftUI app, UI only.
+docs/                    core-api.md (the hosts' contract) · texpresso.md (live preview) ·
+                         design-tokens.md (editor themes and surfaces)
 tools/texpresso/         Builds and installs TeXpresso with Underleaf's patch.
-build.mjs                esbuild bundler and shared asset copy
-scripts/                 Version check, and the live preview's end-to-end check
 ```
 
 ## Development
 
 ```sh
-npm run build                 # bundle the frontend
-npm test                      # frontend tests (node --test)
-cargo test --workspace        # Rust tests
+cargo test --workspace        # the core builds and tests on Windows, macOS and Linux
+cargo run -p texlocal-server  # the API on 127.0.0.1, with a token printed at startup
 
-# macOS app (Xcode 27), after npm ci: the build runs cargo itself and copies from node_modules
+# macOS app (Xcode 27): the build runs cargo itself
 open apps/macos/TeXLocal.xcodeproj
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal build
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal test   # Swift Testing
@@ -106,19 +120,22 @@ These are full regression commands. For an individual change, select the affecte
 test files or Xcode methods; keep cursor, menu tracking and visual-material checks
 in native UI verification. `HANDOFF.md` records the current evidence and limits.
 
-Keep the version in `package.json`, the workspace `Cargo.toml` and the macOS
-project (`MARKETING_VERSION` in `apps/macos/project.yml` and the `.xcodeproj`)
-consistent. CI checks them with `node scripts/check-version.mjs`.
+CI (`.github/workflows/ci.yml`) runs Rust (fmt, clippy, tests) on Ubuntu and Windows and the
+Mac app's `xcodebuild test` on the `xcode-27` runner, each only when a path it builds from
+changed. `ci-ok` is the one check to require.
+
+Keep the version in the workspace `Cargo.toml` and the macOS project (`MARKETING_VERSION` in
+`apps/macos/project.yml` and the `.xcodeproj`) consistent.
 
 ## Security notes
 
-- The browser version binds `127.0.0.1` only, asks for its startup token in a
-  header on every request for project data (the page keeps it for its tab, never
-  in a cookie), rejects foreign Host and Origin headers, and may not be framed.
-- Project files are served with a sandbox CSP and `nosniff`, so a file in a project can never execute as a document on the app's origin.
+- The server binds `127.0.0.1` only, asks for its startup token in an `X-TeXLocal-Token`
+  header on every request for project data (never in a cookie), rejects foreign Host and
+  Origin headers, and may not be framed.
+- Project files are served with a sandbox CSP and `nosniff`, so a file in a project can never execute as a document on the server's origin.
 - `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). The macOS app turns it on per project; `.texlocal.json` is reserved and cannot be written through the generic file APIs.
 - A project's own `latexmkrc` (Perl that runs on every build) is read only when that project has shell escape on; your own (`~/.latexmkrc` or `~/.config/latexmk/latexmkrc`) always is.
 
 ## License
 
-MIT. Built with [CodeMirror 6](https://codemirror.net) (MIT), [PDF.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), [KaTeX](https://katex.org) (MIT), and [esbuild](https://esbuild.github.io) (MIT). LaTeX compilation is delegated to your local TeX distribution.
+MIT. Maths and symbols are typeset by RaTeX. LaTeX compilation is delegated to your local TeX distribution.
