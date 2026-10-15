@@ -27,7 +27,7 @@ looks right.
 apps/windows/
   TeXLocal.slnx
   Directory.Build.props        net10.0, nullable, LangVersion latest, TreatWarningsAsErrors
-  TeXLocal.Core/               class library, no WinUI: the bridge, and the cargo/DLL target
+  TeXLocal.Core/               class library, no WinUI, namespace TeXLocal.Bridge: the bridge, and the cargo/DLL target
     Native.cs                  [LibraryImport("texlocal_ffi")] declarations
     Core.cs                    Core: open, CallAsync, events, close
     Source.cs                  Source: a SafeHandle over TlSource
@@ -35,8 +35,8 @@ apps/windows/
   TeXLocal/                    the WinUI 3 app (unpackaged, self-contained)
     App.xaml(.cs), MainWindow.xaml(.cs)
     Pages/HomePage, WorkspacePage, SettingsPage (.xaml/.cs)
-    Controls/Sizer.cs, PdfView.xaml(.cs), SourceView.xaml(.cs)
-    Themes/Generic.xaml        card style, syntax ThemeDictionaries
+    Controls/Sizer.cs, RenameFlyout.xaml(.cs), PdfView.xaml(.cs), SourceView.xaml(.cs)
+    Themes/Generic.xaml        card styles, status button style, syntax ThemeDictionaries
   TeXLocal.Tests/              xUnit, against TeXLocal.Core only: the bridge and smoke behaviour
 ```
 
@@ -56,8 +56,9 @@ apps/windows/
 - **Data folder.** `TEXLOCAL_DATA`, else `%USERPROFILE%\TeXLocal` (the Mac's `~/TeXLocal`; outside
   OneDrive-redirected Documents, whose sync locks files mid-build).
 - **Host preferences** (theme, window bounds, sidebar width, Compile automatically) live in
-  `ApplicationData.GetForUnpackaged().LocalSettings`, as the Mac's in `UserDefaults`; validation of
-  shared preferences is a core gap.
+  `ApplicationData.GetForUnpackaged("TeXLocal", "TeXLocal").LocalSettings` (the registry, under
+  `HKCU\Software\Classes\Local Settings\Software\TeXLocal`), as the Mac's in `UserDefaults`;
+  validation of shared preferences is a core gap.
 - **The DLL.** `TeXLocal.Core.csproj` runs `cargo rustc -p texlocal-ffi --lib --release
   --crate-type cdylib` at the repository root (incremental: inputs `crates/**/*.rs`,
   `Cargo.lock`, `Cargo.toml`; output `target/release/texlocal_ffi.dll`; skipped with
@@ -68,12 +69,14 @@ apps/windows/
 
 | Need | Choice | Why not the alternative |
 |---|---|---|
-| Window, chrome | `Window` + `MicaBackdrop` (Base), WinUI `TitleBar` (Tall, 48) | Mica Alt is for tabs in the title bar; no hand-built caption |
+| Window, chrome | `Window` + `MicaBackdrop` (Base), WinUI `TitleBar` (`Height` 48 with `TitleBarHeightOption.Tall`; the control alone stays 32) | Mica Alt is for tabs in the title bar; no hand-built caption |
 | Pages | `Frame`: Home, Workspace, Settings; back via `TitleBar.IsBackButtonVisible` | `NavigationView` switches top-level sections, which this app hasn't |
 | Commands | `MenuBar` (File, Edit, Insert, View, Build) in a 40 row, Compile and Settings at its end | Notepad's model; a `CommandBar` can't hold Insert's and Section's depth. One model, not both |
 | Sidebar | `SplitView` (Inline ≥ 1008, Overlay below) holding a `TreeView`; width by `Sizer` | NavigationView is not a file tree |
-| Splitters | `Sizer`, ~30 lines: pointer capture, `SizeWestEast`/`SizeNorthSouth` cursor, arrow keys | Toolkit 8.2 pulls the 1.6 metapackage; 8.3 is preview. Move when 8.3 is stable |
+| Splitters | `Sizer` (a `Grid`: `Border` is sealed), ~50 lines: pointer capture, `SizeWestEast`/`SizeNorthSouth` cursor, arrow keys | Toolkit 8.2 pulls the 1.6 metapackage; 8.3 is preview. Move when 8.3 is stable |
 | Settings cards | One `Style` on `Grid` matching `SettingsCard` | Same reason: no Community Toolkit |
+| Subtle buttons | WinUI's own `SubtleButtonStyle` (Home's Settings; `StatusButtonStyle` is based on it) | No restyled `Button` |
+| Recycle Bin | `Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile`/`DeleteDirectory` with `SendToRecycleBin` (the shell's file operation) | `StorageFile`/`StorageFolder.DeleteAsync(Default)` deletes outright in an unpackaged app |
 | Source editor | `RichEditBox`, behind a one-day gate (M2); WinUIEdit 0.0.5 is plan B | Monaco needs WebView2; AvalonEdit is WPF |
 | PDF | M2: `Windows.Data.Pdf` renders pages into `Image`s in a `ScrollView`; M3: PDFium in the core for text | Windows.Data.Pdf has no text API |
 | Maths, palette | `TextBlock` in Cambria Math for single glyphs; `SvgImageSource` for RaTeX SVG | — |
@@ -145,7 +148,8 @@ minimum 800 × 500 (`OverlappedPresenter.PreferredMinimum*`); default 1280 × 80
   and Settings (E713, subtle) at the far right. A `ListView` of two-line items: 32px folder glyph
   in a fixed column, name in Body, main file · modified date in Caption secondary.
   `ContextFlyout`: Open, Rename (F2), Show in File Explorer, Export as ZIP…, Delete (Del). Empty:
-  centred 48 glyph, Subtitle "No projects yet", one Body line, New project. Missing TeX: an
+  centred 48 glyph, Subtitle "No projects yet", one Body line, New project (accent; the action
+  row's New project turns default meanwhile, so one accent shows). Missing TeX: an
   `InfoBar` (Warning) with a "Get TeX Live" link. Library unreadable: an `InfoBar` (Error) with
   Try again.
 - **Workspace**: TitleBar with back (to Home), pane toggle (sidebar), Title "TeXLocal", Subtitle
@@ -184,7 +188,8 @@ minimum 800 × 500 (`OverlappedPresenter.PreferredMinimum*`); default 1280 × 80
   `ms-settings:colors`), Projects (folder, Open in File Explorer), TeX (status, location:
   Automatic or Choose folder…), Editor and Compiling (M2/M3), About (an `Expander` last).
 - **Dialogs**: `ContentDialog` only for blocking decisions, specific verbs, primary on the left.
-  New project (Name; Create default; a taken name is shown under the box, dialog stays). Go to
+  New project (Name; Create default; the core numbers a taken name, "Thesis 2", and a name it
+  refuses is shown under the box, dialog stays). Go to
   line / page (`NumberBox`). File changed on disk: Save anyway, Revert, Cancel, **no default**.
   File gone: Save again (default), Close, Cancel. Delete project: Move to Recycle Bin, Cancel
   (default). Rename in place uses a `Flyout` with a `TextBox`, not a dialog.
@@ -194,7 +199,7 @@ minimum 800 × 500 (`OverlappedPresenter.PreferredMinimum*`); default 1280 × 80
 | Command | Key | | Command | Key |
 |---|---|---|---|---|
 | New file / New project | Ctrl+N / Ctrl+Shift+N | | Compile | Ctrl+Enter, F5 |
-| Open | Ctrl+O | | Stop | Shift+F5 |
+| Open folder / ZIP or TeX file | Ctrl+O / Ctrl+Shift+O | | Stop | Shift+F5 |
 | Save | Ctrl+S | | Next / previous issue | F8 / Shift+F8 |
 | Close project | Ctrl+W | | Go to line / page | Ctrl+G / Ctrl+Alt+G |
 | Settings | Ctrl+, | | Go to PDF position | Ctrl+Alt+J (double-click PDF: back) |
@@ -216,7 +221,7 @@ minimum 800 × 500 (`OverlappedPresenter.PreferredMinimum*`); default 1280 × 80
 | PDFKit | `Windows.Data.Pdf` → PDFium in the core |
 | NSTextFinder | Find bar over the editor (Notepad), `RichEditTextRange.FindText` |
 | KaTeX in WebKit | RaTeX SVG from the core in `SvgImageSource` |
-| Move to Trash | Recycle Bin: `StorageFolder.DeleteAsync(StorageDeleteOption.Default)` |
+| Move to Trash | Recycle Bin: `FileSystem.DeleteDirectory(…, RecycleOption.SendToRecycleBin)` |
 | Show in Finder | `explorer.exe /select,"path"` |
 | MacTeX tip | TeX Live tip (its Windows installer brings the Perl latexmk needs; MiKTeX's doesn't) |
 
@@ -224,17 +229,18 @@ minimum 800 × 500 (`OverlappedPresenter.PreferredMinimum*`); default 1280 × 80
 
 Logic the Windows app needs that belongs in a crate, not C#. Already on `main`: sessions and
 events, autosave, watcher, `analyze_project` tree with fold keys, `outline_current`, file kinds,
-`create_entry {free}`, `locate`, `get_ui_state`/`set_ui_state`, `synctex_match`.
+`create_entry {free}`, `locate`, `get_ui_state`/`set_ui_state`, `synctex_match`; and in
+texlocal-syntax (`tl_source_call`, `tl_syntax_call`): the typing transforms, `themes` /
+`theme_colors` / `legible` / `contrast`, `menus` (symbol groups, insert, maths, list and reference
+templates), `document_class` / `heading_styles`, and `math_svg` / `glyph_svg` through RaTeX.
 
-1. **Typing transforms** (`type`, `delete_backward`, `insert_newline`, `partner`, snippet fields,
-   `move_lines`, `toggle_style`, `wrap`) exist in texlocal-syntax at 9967eaa, not yet on `main`.
-2. **Catalogue command**: templates (Blank, Article, Report, Presentation), engines and their
-   labels, symbol groups, insert/maths/list/reference templates.
-3. **Themes**: the Overleaf, TeXstudio palettes by highlight kind, light and dark, with the 4.5:1
-   (7:1) contrast adjustment. The host maps only a high-contrast theme to `SystemColor*`.
-4. **Document class and heading styles** (`DocumentClass`, `HeadingStyles`).
-5. **Maths rendering**: `math_svg` via RaTeX (`ratex-svg` 0.1.14, `standalone` + `embed-fonts`,
-   `embed_glyphs`, `SvgColorSyntax::Rgb`), or a PNG through resvg if `SvgImageSource` falls short.
+1. (Landed: typing transforms.)
+2. **Catalogue command**: the project templates (Blank, Article, Report, Presentation) and the
+   engines, with their labels, for New project and the Build menu; `create_project` takes a
+   `template` id but nothing lists them. Until then New project uses the core's default.
+3. (Landed: themes. The host maps only a high-contrast theme to `SystemColor*`.)
+4. (Landed: document class and heading styles.)
+5. (Landed: maths as SVG; a PNG through resvg only if `SvgImageSource` falls short.)
 6. **PDF in the core**: PDFium (`pdfium-render` 0.9.4, `pdfium-win-x64` chromium/7881) giving page
    text with UTF-16 character boxes (search, selection, `synctex_match`, word-precise inverse),
    then rendered tiles as BGRA.
@@ -291,4 +297,8 @@ dotnet test TeXLocal.Tests -c Debug
 ```
 
 Run dev builds with a scratch `TEXLOCAL_DATA`, never next to an installed copy; drive them with UI
-Automation, not clicks. `TeXLocal.exe --smoke` opens Home, lists projects and exits 0 (CI).
+Automation, not clicks. `TeXLocal.exe --smoke` opens Home, lists projects and exits 0 (CI); a
+failure exits 1 and writes the reason to stderr. With the display asleep, a newly opened WinUI
+window never presents and captures come out black: wake it (`SetThreadExecutionState` with
+`ES_DISPLAY_REQUIRED`) before taking screenshots. Flyouts and dialogs are separate windows, which
+`PrintWindow` leaves out; capture the screen region for those.
