@@ -4,8 +4,7 @@
 //! A build with Underleaf's patch (tools/texpresso) shows nothing itself: it writes the
 //! pages the client says it is showing as one-page PDFs the moment they are typeset again,
 //! and the whole document when a run has ended. `Manager::wait` hands those to the client
-//! as they come; `Manager::edit` takes a keystroke without waiting for anything. A client
-//! always shows the document itself: TeXpresso's own window is no longer offered.
+//! as they come; `Manager::edit` takes a keystroke without waiting for anything.
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -227,7 +226,6 @@ struct Feed {
 }
 
 struct State {
-    /// TeXpresso and its engines, while it runs.
     tree: Option<Tree>,
     last_used: Instant,
     output: Output,
@@ -265,7 +263,6 @@ struct Session {
     files: Mutex<Files>,
     /// Lines for TeXpresso's stdin, written in order by the session's writer.
     lines: mpsc::UnboundedSender<Vec<u8>>,
-    /// Wakes `Manager::wait`.
     changed: tokio::sync::Notify,
     revision: Arc<AtomicU64>,
 }
@@ -907,7 +904,6 @@ fn common<T: PartialEq>(a: impl Iterator<Item = T>, b: impl Iterator<Item = T>) 
 /// Compared a block at a time, which compiles to one memcmp each: byte by
 /// byte, the whole of a large file would be a loop of single compares.
 const BLOCK: usize = 256;
-/// How many bytes two texts share at their start.
 fn common_prefix(a: &[u8], b: &[u8]) -> usize {
     let blocks = common(
         a.as_chunks::<BLOCK>().0.iter(),
@@ -916,7 +912,6 @@ fn common_prefix(a: &[u8], b: &[u8]) -> usize {
     let start = blocks * BLOCK;
     start + common(a[start..].iter(), b[start..].iter())
 }
-/// How many bytes two texts share at their end.
 fn common_suffix(a: &[u8], b: &[u8]) -> usize {
     let blocks = common(
         a.as_rchunks::<BLOCK>().1.iter().rev(),
@@ -1008,7 +1003,6 @@ async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, prot
         reader.consume(count);
     }
 }
-/// A message from TeXpresso.
 fn receive(session: &Session, message: &Value) {
     if message[0] == "reset-sync" {
         let files = lock(&session.files);

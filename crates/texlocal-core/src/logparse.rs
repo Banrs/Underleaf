@@ -453,17 +453,6 @@ mod tests {
     }
 
     #[test]
-    fn a_warning_stops_at_the_next_message() {
-        let log = "LaTeX Warning: First\n\
-                   Package x Warning: Second\n\
-                   ! Undefined control sequence.\n";
-        let items = parse_log(log, "main.tex");
-        assert_eq!(items[0].message, "First");
-        assert_eq!(items[1].message, "Second");
-        assert_eq!(items[2].kind, "error");
-    }
-
-    #[test]
     fn errors_in_generated_files_are_reported() {
         let log = "(build/main.bbl\n\
                    build/main.bbl:5: Misplaced alignment tab character &.\n\
@@ -475,24 +464,6 @@ mod tests {
         assert_eq!(items[0].file.as_deref(), Some("build/main.bbl"));
         assert_eq!(items[0].line, Some(5));
         assert_eq!(items[0].message, "Misplaced alignment tab character &.");
-    }
-
-    #[test]
-    fn lines_wrapped_at_79_columns_run_on() {
-        let log = "LaTeX Warning: Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on in\n\
-                   put line 3.\n\
-                   \n\
-                   ./main.tex:9: Missing number, treated as zero.\n\
-                   l.9 x\n";
-        let items = parse_log(log, "main.tex");
-        assert_eq!(items[0].line, Some(3));
-        assert!(items[0].message.ends_with("undefined on input line 3."));
-        // A line that wasn't wrapped still gets a space.
-        let items = parse_log(
-            "Package x Warning: First\n(x)                second on input line 2.\n",
-            "main.tex",
-        );
-        assert_eq!(items[0].message, "First second on input line 2.");
     }
 
     #[test]
@@ -555,23 +526,72 @@ mod tests {
     }
 
     #[test]
-    fn font_warnings_count_and_package_prefixes_go() {
-        let log = "LaTeX Font Warning: Font shape `OT1/nonexistentfam/m/n' undefined\n\
-                   (Font)              using `OT1/cmr/m/n' instead on input line 3.\n\
-                   \n\
-                   Package biblatex Warning: Please (re)run Biber on the file:\n\
-                   (biblatex)                main\n\
-                   (biblatex)                and rerun LaTeX afterwards.\n";
-        let items = parse_log(log, "main.tex");
-        assert_eq!(items[0].line, Some(3));
-        assert_eq!(
-            items[0].message,
-            "Font shape `OT1/nonexistentfam/m/n' undefined using `OT1/cmr/m/n' instead on input line 3."
-        );
-        assert_eq!(
-            items[1].message,
-            "Please (re)run Biber on the file: main and rerun LaTeX afterwards."
-        );
+    fn warnings_run_on_over_wrapped_and_continued_lines_and_stop_at_the_next_message() {
+        // The log, the line of its first item, and each item's kind and message.
+        type Case<'a> = (&'a str, Option<u32>, &'a [(&'a str, &'a str)]);
+        let cases: [Case; 5] = [
+            (
+                "LaTeX Warning: First\n\
+                 Package x Warning: Second\n\
+                 ! Undefined control sequence.\n",
+                None,
+                &[
+                    ("warning", "First"),
+                    ("warning", "Second"),
+                    ("error", "Undefined control sequence."),
+                ],
+            ),
+            // A line wrapped at 79 columns runs on without a space.
+            (
+                "LaTeX Warning: Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on in\n\
+                 put line 3.\n\
+                 \n\
+                 ./main.tex:9: Missing number, treated as zero.\n\
+                 l.9 x\n",
+                Some(3),
+                &[
+                    (
+                        "warning",
+                        "Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on input line 3.",
+                    ),
+                    ("error", "Missing number, treated as zero."),
+                ],
+            ),
+            // A line that wasn't wrapped still gets a space.
+            (
+                "Package x Warning: First\n(x)                second on input line 2.\n",
+                Some(2),
+                &[("warning", "First second on input line 2.")],
+            ),
+            (
+                "LaTeX Font Warning: Font shape `OT1/nonexistentfam/m/n' undefined\n\
+                 (Font)              using `OT1/cmr/m/n' instead on input line 3.\n",
+                Some(3),
+                &[(
+                    "warning",
+                    "Font shape `OT1/nonexistentfam/m/n' undefined using `OT1/cmr/m/n' instead on input line 3.",
+                )],
+            ),
+            (
+                "Package biblatex Warning: Please (re)run Biber on the file:\n\
+                 (biblatex)                main\n\
+                 (biblatex)                and rerun LaTeX afterwards.\n",
+                None,
+                &[(
+                    "warning",
+                    "Please (re)run Biber on the file: main and rerun LaTeX afterwards.",
+                )],
+            ),
+        ];
+        for (log, line, expected) in cases {
+            let items = parse_log(log, "main.tex");
+            let got: Vec<_> = items
+                .iter()
+                .map(|it| (it.kind, it.message.as_str()))
+                .collect();
+            assert_eq!(got, expected, "{log}");
+            assert_eq!(items[0].line, line, "{log}");
+        }
     }
 
     #[test]
@@ -592,6 +612,10 @@ mod tests {
             (Some("refs.bib"), Some(1), "I was expecting a `,' or a `}'")
         );
         assert_eq!(items[1].message, "BibTeX subsystem: syntax error");
+        // A BibTeX error takes its message from the line above its place.
+        let items = parse_blg("I couldn't open database file .bib\n---line 5 of file main.aux\n");
+        assert_eq!(items[0].message, "I couldn't open database file .bib");
+        assert_eq!(items[0].line, Some(5));
 
         let output = "Latexmk: Errors, so I did not complete making targets\n\
                       Collected error summary (may duplicate other messages):\n\
@@ -601,13 +625,6 @@ mod tests {
         let items = latexmk_errors(output);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].message, "biber main: Could not find main.bcf");
-    }
-
-    #[test]
-    fn a_bibtex_error_takes_its_message_from_the_line_above_its_place() {
-        let items = parse_blg("I couldn't open database file .bib\n---line 5 of file main.aux\n");
-        assert_eq!(items[0].message, "I couldn't open database file .bib");
-        assert_eq!(items[0].line, Some(5));
     }
 
     #[test]

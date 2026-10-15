@@ -257,15 +257,12 @@ fn folder_files(
 }
 
 /// File › Open: a folder, a .zip or a single file from anywhere, copied into
-/// a new project named after it ("Name 2" when that is taken), which is
-/// returned. A .tex brings its folder, named after that, for what it inputs,
-/// includes and cites, unless the folder can't be read, is larger than a
-/// project (Downloads, a home folder: more than 2000 files or one upload's
-/// bytes) or has no name a project can take: then the .tex comes alone. Only
-/// visible files come, as a drop brings them, and a top-level `build` stays
-/// behind as the old project's compile output. The main file is the chosen
-/// .tex, else the likeliest top-level one; with no TeX at all, the blank
-/// template's main.tex.
+/// a new project named after it ("Name 2" when that is taken). A .tex brings its folder,
+/// for what it inputs, includes and cites, unless that folder can't be read, is larger
+/// than a project (more than 2000 files or one upload's bytes) or has no name a project
+/// can take: then the .tex comes alone. Only visible files come, and a top-level `build`
+/// stays behind. The main file is the chosen .tex, else the likeliest top-level one, else
+/// the blank template's main.tex.
 pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
     import_project_within(service, src, IMPORT)
 }

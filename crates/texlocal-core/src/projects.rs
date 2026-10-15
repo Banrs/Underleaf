@@ -97,7 +97,6 @@ fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError
     }
 }
 
-/// An entry the project walks show, and its path from the project root.
 struct Entry {
     path: PathBuf,
     name: String,
@@ -204,13 +203,10 @@ fn project_info(name: String, mtime: u64, main_file: String) -> ProjectInfo {
     }
 }
 
-/// A project's date as the library shows it: the newest of its folders' and
-/// its top-level files', without a stat of every file on each listing. A
-/// folder's date moves as entries come, go or are renamed in it, which every
-/// save the app makes does, as it renames the new file into place; a file
-/// saved in place by another app, most often the main file at the top, moves
-/// only its own date. One saved in place in a subfolder shows once anything
-/// else moves a folder's date.
+/// A project's date as the library shows it: the newest of its folders' and top-level
+/// files', without a stat of every file. Every save the app makes renames a file into
+/// place and so moves its folder's date; a file saved in place by another app moves only
+/// its own, and in a subfolder shows once anything else moves a folder's date.
 fn newest(root: &Path, meta: &fs::Metadata) -> u64 {
     fn walk(root: &Path, dir: &Path, newest: &mut u64) {
         for entry in entries(root, dir).into_iter().flatten() {
@@ -561,7 +557,6 @@ fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
     Some(rest)
 }
 
-/// Whether `path` lies strictly inside the folder `dir`.
 fn is_under(path: &str, dir: &str) -> bool {
     after_entry(path, dir).is_some_and(|rest| !rest.is_empty())
 }
