@@ -1142,7 +1142,7 @@ enum SyntaxTheme: String, CaseIterable, Identifiable {
     private static var made: [SyntaxTheme: [NSColor]] = [:]
 
     /// The colours the System theme names, as AppKit has them.
-    private static let system: [String: NSColor] = [
+    private static let systemColors: [String: NSColor] = [
         "systemPink": .systemPink, "systemTeal": .systemTeal, "systemPurple": .systemPurple,
         "secondaryLabelColor": .secondaryLabelColor, "systemRed": .systemRed,
     ]
@@ -1153,7 +1153,7 @@ enum SyntaxTheme: String, CaseIterable, Identifiable {
         for name in NSColor.textAppearances {
             guard var args = NSColor.ground(name), let appearance = NSAppearance(named: name) else { continue }
             args["theme"] = rawValue
-            args["system"] = Self.system.mapValues { $0.rgba(in: appearance) }
+            args["system"] = Self.systemColors.mapValues { $0.rgba(in: appearance) }
             shades[name] = Syntax.call("theme_colors", args) as [[Double]]?
         }
         var shared: [String: NSColor] = [:]
