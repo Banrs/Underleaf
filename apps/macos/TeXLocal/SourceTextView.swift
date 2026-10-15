@@ -222,6 +222,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     struct LineIssue: Equatable {
         var isError: Bool
         var message: String
+        /// The core's line-end form of it.
+        var short: String
         var others: [String] = []
     }
 
@@ -529,7 +531,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let end = band.maxX - 1
         let room = end - (left + first.typographicBounds.maxX) - issueGap
         let view = view ?? IssueMessageView()
-        view.show(reported.message, others: reported.others.count, symbol: issueSymbols[reported.isError], font: issueFont)
+        view.show(reported.short, others: reported.others.count, symbol: issueSymbols[reported.isError], font: issueFont)
         if let fitted = view.fit(in: room) {
             let rect = NSRect(x: end - fitted.width, y: band.minY, width: fitted.width,
                               height: onPixels(top + first.typographicBounds.maxY + rowShift) - band.minY)
@@ -1083,10 +1085,8 @@ final class IssueMessageView: NSBox {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    /// The message on one line, without LaTeX's words for what the symbol says already.
+    /// `text` is the issue's short message, on one line.
     func show(_ text: String, others count: Int, symbol image: NSImage?, font: NSFont) {
-        var text = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        if text.hasPrefix("LaTeX Error: ") { text.removeFirst("LaTeX Error: ".count) }
         symbol.image = image
         message.font = font
         message.stringValue = text

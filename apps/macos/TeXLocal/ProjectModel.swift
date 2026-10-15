@@ -363,7 +363,7 @@ final class ProjectModel {
     }
 
     private func markIssues(_ event: IssuesEvent) {
-        let lines = Dictionary(event.lines.map { ($0.line, SourceTextView.LineIssue(isError: $0.error, message: $0.message, others: $0.others)) }) { $1 }
+        let lines = Dictionary(event.lines.map { ($0.line, SourceTextView.LineIssue(isError: $0.error, message: $0.message, short: $0.short, others: $0.others)) }) { $1 }
         lineIssues[event.path] = lines.isEmpty ? nil : lines
         if editor.path == event.path { editor.textView.issueLines = lines }
     }
@@ -1084,6 +1084,8 @@ nonisolated struct IssuesEvent: Decodable {
         let line: Int
         let error: Bool
         let message: String
+        /// On one line, without LaTeX's words for what the symbol says already.
+        let short: String
         let others: [String]
     }
 

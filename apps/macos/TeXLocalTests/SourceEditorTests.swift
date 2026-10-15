@@ -517,7 +517,7 @@ struct SourceEditorTests {
         let window = inWindow()
         open("one\ntwo\nthree", caret: 0)
         text.layoutSubtreeIfNeeded()
-        text.issueLines = [2: .init(isError: true, message: "Missing $ inserted")]
+        text.issueLines = [2: .init(isError: true, message: "Missing $ inserted", short: "Missing $ inserted")]
         var asked: [Int] = []
         text.issueClicked = { asked.append($0) }
         func click(line: Int, shift: Bool = false) throws {
@@ -543,7 +543,7 @@ struct SourceEditorTests {
     @Test func anIssuesBoxFitsItsRoom() throws {
         let font = NSFont.systemFont(ofSize: 13), symbol = try #require(NSImage(systemSymbolName: "xmark.octagon.fill", accessibilityDescription: nil))
         let box = IssueMessageView()
-        box.show("Paragraph ended before \\section was\n  complete", others: 0, symbol: symbol, font: font)
+        box.show("Paragraph ended before \\section was complete", others: 0, symbol: symbol, font: font)
         let whole = try #require(box.fit(in: 1000))
         #expect(!whole.cut && whole.width == whole.width.rounded())
         let cut = try #require(box.fit(in: whole.width - 40))
@@ -565,7 +565,7 @@ struct SourceEditorTests {
         let window = inWindow()
         defer { withExtendedLifetime(window) {} }
         open("one\nUse \\foo here.\n", caret: 0)
-        text.issueLines = [2: .init(isError: true, message: "Undefined control sequence: \\foo")]
+        text.issueLines = [2: .init(isError: true, message: "Undefined control sequence: \\foo", short: "Undefined control sequence: \\foo")]
         try layOut()
         let row = try #require(text.issueRows.first)
         let message = try #require(row.message)
@@ -575,7 +575,7 @@ struct SourceEditorTests {
     @Test func aClickOnAnIssuesMessageShowsTheIssue() throws {
         let window = inWindow()
         open("one\ntwo\nthree", caret: 5)
-        text.issueLines = [2: .init(isError: true, message: "Missing $ inserted")]
+        text.issueLines = [2: .init(isError: true, message: "Missing $ inserted", short: "Missing $ inserted")]
         try layOut()
         var asked: [Int] = []
         text.issueClicked = { asked.append($0) }
@@ -606,7 +606,8 @@ struct SourceEditorTests {
     @Test func theRotorsStepThroughHeadingsAndIssues() throws {
         open("a\n\\section{One}\nb\n\\section{Two}\nc", caret: 0)
         text.headings = { [(2, "One"), (4, "Two")] }
-        text.issueLines = [3: .init(isError: true, message: "Undefined control sequence"), 5: .init(isError: false, message: "Marked")]
+        text.issueLines = [3: .init(isError: true, message: "Undefined control sequence", short: "Undefined control sequence"),
+                           5: .init(isError: false, message: "Marked", short: "Marked")]
         let rotors = text.accessibilityCustomRotors()
         let headings = try #require(rotors.first { $0.type == .heading }), issues = try #require(rotors.first { $0.type == .custom })
         #expect(issues.label == "Issues")
