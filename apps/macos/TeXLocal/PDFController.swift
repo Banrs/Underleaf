@@ -536,17 +536,17 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         pendingReveal = nil
         revealing?.cancel()
         guard let document = view.document, let located = document.page(ifAt: Int(loc.page) - 1) else { return }
-        guard let source else { return show(loc, on: located, hit: nil) }
+        guard let source else { return showFound(loc, on: located, hit: nil) }
         let pages = syncPages(loc.matches ?? [loc], in: document)
         revealing = Task {
             let hit = try? await Core.shared.answer("synctex_match", ["id": source.id, "file": source.file, "line": source.line,
                                                                       "column": source.column, "pages": pages], as: PageHit.self)
             guard !Task.isCancelled, view.document === document else { return }
-            show(loc, on: located, hit: hit)
+            showFound(loc, on: located, hit: hit)
         }
     }
 
-    private func show(_ loc: ForwardLoc, on located: PDFPage, hit: PageHit?) {
+    private func showFound(_ loc: ForwardLoc, on located: PDFPage, hit: PageHit?) {
         var found: (page: PDFPage, selection: PDFSelection)?
         if let hit, hit.end > hit.start, let page = view.document?.page(ifAt: hit.page - 1),
            let selection = page.selection(for: NSRange(location: hit.start, length: hit.end - hit.start)) {
