@@ -1234,7 +1234,7 @@ impl Actor {
 /// The build's issues on `path`'s lines, as the editor marks them: the
 /// first issue of a line with the rest after it.
 fn issue_lines(issues: &[LogItem], path: &str) -> Vec<Value> {
-    let mut lines: BTreeMap<u32, (bool, String, Vec<String>)> = BTreeMap::new();
+    let mut lines: BTreeMap<u32, (&LogItem, Vec<String>)> = BTreeMap::new();
     for item in issues.iter().rev() {
         let (Some(file), Some(line)) = (&item.file, item.line) else {
             continue;
@@ -1242,23 +1242,23 @@ fn issue_lines(issues: &[LogItem], path: &str) -> Vec<Value> {
         if file != path {
             continue;
         }
-        let others = lines.remove(&line).map(|(_, message, mut others)| {
-            others.insert(0, message);
+        let others = lines.remove(&line).map(|(later, mut others)| {
+            others.insert(0, later.message.clone());
             others
         });
-        lines.insert(
-            line,
-            (
-                item.kind == "error",
-                item.message.clone(),
-                others.unwrap_or_default(),
-            ),
-        );
+        lines.insert(line, (item, others.unwrap_or_default()));
     }
     let lines = lines.into_iter();
     lines
-        .map(|(line, (error, message, others))| {
-            json!({ "line": line, "error": error, "message": message, "others": others })
+        .map(|(line, (item, others))| {
+            json!({
+                "line": line,
+                "error": item.kind == "error",
+                "message": item.message,
+                "short": item.short,
+                "command": item.command,
+                "others": others,
+            })
         })
         .collect()
 }

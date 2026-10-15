@@ -69,6 +69,8 @@ fn issue(kind: &'static str, line: u32, message: &str) -> LogItem {
         file: Some("main.tex".into()),
         line: Some(line),
         message: message.into(),
+        short: message.into(),
+        command: None,
     }
 }
 
