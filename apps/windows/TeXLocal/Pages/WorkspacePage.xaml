@@ -41,7 +41,7 @@
             </VisualStateGroup>
         </VisualStateManager.VisualStateGroups>
 
-        <Grid Padding="4,0,8,0" Background="Transparent">
+        <Grid Padding="4,0,12,0" Background="Transparent">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -67,6 +67,11 @@
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
                     </MenuFlyoutSubItem>
+                    <MenuFlyoutItem AccessKey="S" Click="OnSave" Text="Save">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="S" Modifiers="Control" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
                     <MenuFlyoutItem AccessKey="C" Click="OnClose" Text="Close project">
                         <MenuFlyoutItem.KeyboardAccelerators>
                             <KeyboardAccelerator Key="W" Modifiers="Control" />
@@ -74,10 +79,45 @@
                     </MenuFlyoutItem>
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem
-                        AccessKey="S"
+                        AccessKey="T"
                         Click="OnSettings"
                         KeyboardAcceleratorTextOverride="Ctrl+,"
                         Text="Settings" />
+                </MenuBarItem>
+                <MenuBarItem AccessKey="E" Title="Edit">
+                    <MenuFlyoutItem AccessKey="U" Click="OnUndo" KeyboardAcceleratorTextOverride="Ctrl+Z" Text="Undo" />
+                    <MenuFlyoutItem AccessKey="R" Click="OnRedo" KeyboardAcceleratorTextOverride="Ctrl+Y" Text="Redo" />
+                    <MenuFlyoutSeparator />
+                    <MenuFlyoutItem AccessKey="T" Click="OnCut" KeyboardAcceleratorTextOverride="Ctrl+X" Text="Cut" />
+                    <MenuFlyoutItem AccessKey="C" Click="OnCopy" KeyboardAcceleratorTextOverride="Ctrl+C" Text="Copy" />
+                    <MenuFlyoutItem AccessKey="P" Click="OnPaste" KeyboardAcceleratorTextOverride="Ctrl+V" Text="Paste" />
+                    <MenuFlyoutSeparator />
+                    <MenuFlyoutItem AccessKey="G" Click="OnGoToLine" Text="Go to line…">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="G" Modifiers="Control" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutItem AccessKey="A" Click="OnGoToPage" Text="Go to page…">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="G" Modifiers="Control,Menu" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutItem AccessKey="D" Click="OnForwardSync" Text="Go to PDF position">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="J" Modifiers="Control,Menu" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutSeparator />
+                    <MenuFlyoutItem AccessKey="N" Click="OnNextIssue" Text="Next issue">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="F8" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutItem AccessKey="V" Click="OnPreviousIssue" Text="Previous issue">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="F8" Modifiers="Shift" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
                 </MenuBarItem>
                 <MenuBarItem AccessKey="V" Title="View">
                     <ToggleMenuFlyoutItem
@@ -90,8 +130,91 @@
                             <KeyboardAccelerator Key="E" Modifiers="Control,Shift" />
                         </ToggleMenuFlyoutItem.KeyboardAccelerators>
                     </ToggleMenuFlyoutItem>
+                    <ToggleMenuFlyoutItem
+                        x:Name="PdfItem"
+                        AccessKey="P"
+                        Click="OnPdfPane"
+                        IsChecked="True"
+                        Text="PDF">
+                        <ToggleMenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="P" Modifiers="Control,Menu" />
+                        </ToggleMenuFlyoutItem.KeyboardAccelerators>
+                    </ToggleMenuFlyoutItem>
+                    <ToggleMenuFlyoutItem
+                        x:Name="IssuesItem"
+                        AccessKey="I"
+                        Click="OnIssuesPane"
+                        Text="Issues">
+                        <ToggleMenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="M" Modifiers="Control,Shift" />
+                        </ToggleMenuFlyoutItem.KeyboardAccelerators>
+                    </ToggleMenuFlyoutItem>
+                    <MenuFlyoutSeparator />
+                    <MenuFlyoutItem x:Name="ZoomInItem" AccessKey="Z" Click="OnZoomIn" Text="Zoom in">
+                        <MenuFlyoutItem.Icon>
+                            <FontIcon Glyph="&#xE8A3;" />
+                        </MenuFlyoutItem.Icon>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutItem x:Name="ZoomOutItem" AccessKey="O" Click="OnZoomOut" Text="Zoom out">
+                        <MenuFlyoutItem.Icon>
+                            <FontIcon Glyph="&#xE71F;" />
+                        </MenuFlyoutItem.Icon>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutItem x:Name="ActualSizeItem" AccessKey="A" Click="OnActualSize" Text="Actual size" />
+                    <MenuFlyoutItem AccessKey="W" Click="OnFitWidth" Text="Fit width" />
+                    <MenuFlyoutItem AccessKey="F" Click="OnFitPage" Text="Fit page" />
+                </MenuBarItem>
+                <MenuBarItem AccessKey="B" Title="Build">
+                    <MenuFlyoutItem x:Name="CompileItem" AccessKey="C" Click="OnCompile" Text="Compile">
+                        <MenuFlyoutItem.Icon>
+                            <FontIcon Glyph="&#xE768;" />
+                        </MenuFlyoutItem.Icon>
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="Enter" Modifiers="Control" />
+                            <KeyboardAccelerator Key="F5" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutItem x:Name="StopItem" AccessKey="S" Click="OnStop" Text="Stop">
+                        <MenuFlyoutItem.Icon>
+                            <FontIcon Glyph="&#xE71A;" />
+                        </MenuFlyoutItem.Icon>
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="F5" Modifiers="Shift" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutItem AccessKey="L" Click="OnClean" Text="Clean build folder" />
+                    <MenuFlyoutSeparator />
+                    <ToggleMenuFlyoutItem
+                        x:Name="AutoCompileItem"
+                        AccessKey="A"
+                        Click="OnAutoCompile"
+                        Text="Compile automatically" />
+                    <ToggleMenuFlyoutItem
+                        x:Name="ShellEscapeItem"
+                        AccessKey="E"
+                        Click="OnShellEscape"
+                        Text="Shell escape" />
+                    <ToggleMenuFlyoutItem
+                        x:Name="StopOnErrorItem"
+                        AccessKey="F"
+                        Click="OnStopOnError"
+                        Text="Stop on first error" />
                 </MenuBarItem>
             </MenuBar>
+            <Button
+                x:Name="CompileButton"
+                Grid.Column="1"
+                Width="112"
+                VerticalAlignment="Center"
+                AutomationProperties.Name="Compile"
+                Click="OnCompileButton"
+                Style="{StaticResource AccentButtonStyle}"
+                ToolTipService.ToolTip="Compile (Ctrl+Enter)">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon x:Name="CompileIcon" FontSize="16" Glyph="&#xE768;" />
+                    <TextBlock x:Name="CompileLabel" Text="Compile" />
+                </StackPanel>
+            </Button>
         </Grid>
 
         <SplitView
@@ -125,6 +248,7 @@
                         DragOver="OnDragOver"
                         Drop="OnDrop"
                         Expanding="OnExpanding"
+                        ItemInvoked="OnItemInvoked"
                         SelectionMode="Single">
                         <TreeView.ContextFlyout>
                             <MenuFlyout x:Name="TreeMenu" Opening="OnTreeMenuOpening">
@@ -210,21 +334,241 @@
             </SplitView.Pane>
 
             <Grid Style="{StaticResource ContentCardStyle}">
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
-                    <FontIcon
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition x:Name="IssuesRow" Height="0" />
+                </Grid.RowDefinitions>
+
+                <Grid x:Name="Panes">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition x:Name="EditorColumn" Width="*" MinWidth="280" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition x:Name="PdfColumn" Width="*" MinWidth="240" />
+                    </Grid.ColumnDefinitions>
+                    <controls:SourceView x:Name="Editor" Visibility="Collapsed" />
+                    <StackPanel
+                        x:Name="NoFile"
                         HorizontalAlignment="Center"
-                        FontSize="48"
-                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        Glyph="&#xE8A5;" />
-                    <TextBlock HorizontalAlignment="Center" Style="{StaticResource BodyTextBlockStyle}" Text="Choose a file in the sidebar." />
-                </StackPanel>
+                        VerticalAlignment="Center"
+                        Spacing="16">
+                        <FontIcon
+                            HorizontalAlignment="Center"
+                            FontSize="48"
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                            Glyph="&#xE8A5;" />
+                        <TextBlock HorizontalAlignment="Center" Style="{StaticResource BodyTextBlockStyle}" Text="Choose a file in the sidebar." />
+                    </StackPanel>
+                    <controls:Sizer
+                        x:Name="SplitSizer"
+                        Grid.Column="1"
+                        AutomationProperties.Name="Editor and PDF"
+                        DoubleTapped="OnSplitReset">
+                        <Rectangle
+                            Width="1"
+                            HorizontalAlignment="Center"
+                            Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                    </controls:Sizer>
+                    <controls:PdfView x:Name="Pdf" Grid.Column="2" />
+                </Grid>
+
+                <controls:Sizer
+                    x:Name="IssuesSizer"
+                    Grid.Row="1"
+                    AutomationProperties.Name="Issues height"
+                    Orientation="Horizontal"
+                    Visibility="Collapsed">
+                    <Rectangle
+                        Height="1"
+                        VerticalAlignment="Center"
+                        Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                </controls:Sizer>
+
+                <Grid x:Name="IssuesPanel" Grid.Row="2" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="48" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid Padding="8,0,12,0" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <SelectorBar x:Name="IssueTabs" VerticalAlignment="Center" SelectionChanged="OnIssueTab">
+                            <SelectorBarItem x:Name="IssuesTab" IsSelected="True" Text="Issues" />
+                            <SelectorBarItem x:Name="LogTab" Text="Build log" />
+                        </SelectorBar>
+                        <ToggleButton
+                            x:Name="WarningsToggle"
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            Checked="OnWarnings"
+                            Content="Warnings"
+                            IsChecked="True"
+                            IsEnabled="False"
+                            Unchecked="OnWarnings" />
+                        <Button
+                            Grid.Column="2"
+                            VerticalAlignment="Center"
+                            Click="OnCopyLog"
+                            Content="Copy log" />
+                    </Grid>
+                    <ListView
+                        x:Name="IssueList"
+                        Grid.Row="1"
+                        AutomationProperties.Name="Issues"
+                        DoubleTapped="OnIssueDoubleTapped"
+                        PreviewKeyDown="OnIssueKeyDown"
+                        SelectionMode="Single">
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="local:IssueItem">
+                                <Grid Padding="0,8" ColumnSpacing="12" AutomationProperties.Name="{x:Bind Message}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="16" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon
+                                        VerticalAlignment="Top"
+                                        FontSize="16"
+                                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                        Glyph="&#xE783;"
+                                        Visibility="{x:Bind IsError}" />
+                                    <FontIcon
+                                        VerticalAlignment="Top"
+                                        FontSize="16"
+                                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                        Glyph="&#xE7BA;"
+                                        Visibility="{x:Bind IsWarning}" />
+                                    <FontIcon
+                                        VerticalAlignment="Top"
+                                        FontSize="16"
+                                        Foreground="{ThemeResource SystemFillColorAttentionBrush}"
+                                        Glyph="&#xE946;"
+                                        Visibility="{x:Bind IsInfo}" />
+                                    <StackPanel Grid.Column="1" Spacing="2">
+                                        <TextBlock
+                                            MaxLines="2"
+                                            Style="{StaticResource BodyTextBlockStyle}"
+                                            Text="{x:Bind Message}"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="{x:Bind Place}"
+                                            Visibility="{x:Bind HasPlace}" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <TextBox
+                        x:Name="Log"
+                        Grid.Row="1"
+                        Margin="12,0,12,12"
+                        AutomationProperties.Name="Build log"
+                        FontFamily="Cascadia Mono, Consolas"
+                        FontSize="12"
+                        IsReadOnly="True"
+                        ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                        ScrollViewer.VerticalScrollBarVisibility="Auto"
+                        TextWrapping="NoWrap"
+                        Visibility="Collapsed" />
+                </Grid>
+
+                <InfoBar
+                    x:Name="BuildFailed"
+                    Margin="12"
+                    VerticalAlignment="Top"
+                    Severity="Error"
+                    Title="Build failed">
+                    <InfoBar.ActionButton>
+                        <Button Click="OnShowIssues" Content="Show issues" />
+                    </InfoBar.ActionButton>
+                </InfoBar>
                 <InfoBar
                     x:Name="Notice"
-                    Margin="16,12,16,0"
+                    Margin="12"
                     VerticalAlignment="Top"
                     Severity="Warning" />
             </Grid>
         </SplitView>
+
+        <Grid Grid.Row="2" Padding="8,0" Background="Transparent">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBlock
+                    x:Name="BuildState"
+                    MinWidth="240"
+                    Padding="8,0"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Text="No build yet"
+                    TextTrimming="CharacterEllipsis"
+                    Typography.NumeralAlignment="Tabular" />
+                <Button
+                    x:Name="IssueCounts"
+                    MinWidth="96"
+                    AutomationProperties.Name="Issues"
+                    Click="OnIssueCounts"
+                    Style="{StaticResource StatusButtonStyle}"
+                    ToolTipService.ToolTip="Issues (Ctrl+Shift+M)">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <FontIcon FontSize="12" Glyph="&#xE783;" />
+                        <TextBlock x:Name="ErrorCount" Style="{StaticResource CaptionTextBlockStyle}" Text="0" Typography.NumeralAlignment="Tabular" />
+                        <FontIcon Margin="8,0,0,0" FontSize="12" Glyph="&#xE7BA;" />
+                        <TextBlock x:Name="WarningCount" Style="{StaticResource CaptionTextBlockStyle}" Text="0" Typography.NumeralAlignment="Tabular" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
+                <Button
+                    x:Name="NotSaved"
+                    MinWidth="88"
+                    AutomationProperties.Name="Not saved"
+                    Click="OnSave"
+                    IsEnabled="False"
+                    Opacity="0"
+                    Style="{StaticResource StatusButtonStyle}"
+                    ToolTipService.ToolTip="Save (Ctrl+S)">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <FontIcon FontSize="12" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" />
+                        <TextBlock Foreground="{ThemeResource SystemFillColorCautionBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="Not saved" />
+                    </StackPanel>
+                </Button>
+                <Button
+                    x:Name="CaretButton"
+                    MinWidth="104"
+                    Click="OnGoToLine"
+                    Style="{StaticResource StatusButtonStyle}"
+                    ToolTipService.ToolTip="Go to line (Ctrl+G)">
+                    <TextBlock x:Name="CaretText" Style="{StaticResource CaptionTextBlockStyle}" Text="Ln 1, Col 1" Typography.NumeralAlignment="Tabular" />
+                </Button>
+                <Button
+                    x:Name="PageButton"
+                    MinWidth="104"
+                    Click="OnGoToPage"
+                    Style="{StaticResource StatusButtonStyle}"
+                    ToolTipService.ToolTip="Go to page (Ctrl+Alt+G)">
+                    <TextBlock x:Name="PageText" Style="{StaticResource CaptionTextBlockStyle}" Text="No PDF" Typography.NumeralAlignment="Tabular" />
+                </Button>
+                <TextBlock
+                    x:Name="ZoomText"
+                    MinWidth="56"
+                    Padding="8,0"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Text="100%"
+                    TextAlignment="Right"
+                    Typography.NumeralAlignment="Tabular" />
+            </StackPanel>
+        </Grid>
 
         <ContentDialog
             x:Name="ReplaceDialog"

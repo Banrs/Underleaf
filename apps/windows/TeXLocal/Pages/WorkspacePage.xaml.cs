@@ -17,6 +17,7 @@ public sealed class FileItem(TreeNode node, bool expanded, bool main, List<FileI
     public string Path => node.Path;
     public bool IsDir => node.Type == "dir";
     public bool IsTex => node.Kind == "tex";
+    public string? Kind => node.Kind;
     public bool IsExpanded { get; set; } = expanded;
     public bool IsMain => main;
     public List<FileItem>? Children => children;
@@ -58,6 +59,7 @@ public sealed partial class WorkspacePage : Page
             MainWindow.Prefs["sidebarWidth"] = Split.OpenPaneLength;
         };
         Split.RegisterPropertyChangedCallback(SplitView.DisplayModeProperty, (_, _) => ShowPane(Split.DisplayMode == SplitViewDisplayMode.Inline && sidebarWanted));
+        SetUpDocument();
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -65,15 +67,7 @@ public sealed partial class WorkspacePage : Page
         id = (string)e.Parameter;
         App.Window.TitleBar.Subtitle = id;
         Core.Event += OnEvent;
-        try
-        {
-            var opened = await Core.CallAsync<SessionOpened>("session_open", new { id, autoCompile = false });
-            (session, root) = (opened.Session, opened.Root);
-            mainFile = (await Core.CallAsync("get_settings", new { id })).GetProperty("mainFile").GetString() ?? "";
-            var ui = await Core.CallAsync("get_ui_state", new { id });
-            expanded = [.. ui.GetProperty("expandedFolders").EnumerateArray().Select(f => f.GetString()!)];
-            Show(opened.Tree);
-        }
+        try { await OpenSession(); }
         catch (CoreException ex)
         {
             await App.Alert("Can't open this project", ex.Message);
@@ -91,6 +85,7 @@ public sealed partial class WorkspacePage : Page
     {
         if (e.Session != session) return;
         if (e.Type == "tree") Show(e.Json.GetProperty("tree").Deserialize<TreeNode[]>(Core.Json)!);
+        else OnDocumentEvent(e);
     }
 
     void Show(TreeNode[] nodes, bool force = false)
@@ -134,6 +129,8 @@ public sealed partial class WorkspacePage : Page
     string TargetDir(FileItem? item) => item is null ? "" : item.IsDir ? item.Path : ParentOf(item.Path);
 
     static string ParentOf(string path) => path.LastIndexOf('/') is var i and > 0 ? path[..i] : "";
+
+    string Full(string path) => System.IO.Path.Combine(root, path.Replace('/', '\\'));
 
     static string Join(string dir, string name) => dir.Length == 0 ? name : $"{dir}/{name}";
 
@@ -280,17 +277,25 @@ public sealed partial class WorkspacePage : Page
 
     void OnSettings(object sender, RoutedEventArgs e) => App.Window.OpenSettings();
 
+    /// F6 and Shift+F6: sidebar, editor, PDF, issues, in turn.
     void OnNextRegion(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
         args.Handled = true;
-        for (var e = FocusManager.GetFocusedElement(XamlRoot) as DependencyObject; e is not null; e = VisualTreeHelper.GetParent(e))
-            if (e == Tree)
-            {
-                FileMenu.Focus(FocusState.Keyboard);
-                return;
-            }
-        if (!Split.IsPaneOpen) ShowPane(sidebarWanted = true);
-        Tree.Focus(FocusState.Keyboard);
+        UIElement[] regions = [Tree, Editor, Pdf, IssueList];
+        var at = -1;
+        for (var e = FocusManager.GetFocusedElement(XamlRoot) as DependencyObject; e is not null && at < 0; e = VisualTreeHelper.GetParent(e))
+            at = Array.IndexOf(regions, e);
+        var step = args.KeyboardAccelerator.Modifiers.HasFlag(Windows.System.VirtualKeyModifiers.Shift) ? regions.Length - 1 : 1;
+        for (var i = 1; i <= regions.Length; i++)
+        {
+            var next = regions[(Math.Max(at, 0) + i * step) % regions.Length];
+            if (next == Tree && !Split.IsPaneOpen) ShowPane(sidebarWanted = true);
+            if (next.Visibility != Visibility.Visible || next == IssueList && !panelOpen) continue;
+            if (next == Editor) Editor.Focus(FocusState.Keyboard);
+            else if (next == Pdf) Pdf.Focus(FocusState.Keyboard);
+            else next.Focus(FocusState.Keyboard);
+            return;
+        }
     }
 
     public void TogglePane()
