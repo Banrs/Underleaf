@@ -96,7 +96,6 @@
 			buildPhases = (
 				D0BFDCD8EC49557EEE2F31DA /* Build Rust core */,
 				4DB01B4638613538B369BFF0 /* Sources */,
-				848787D0905848F69BE833D8 /* Copy shared resources */,
 				A1C0FFEE0A55E7500000B003 /* Resources */,
 			);
 			buildRules = (
@@ -158,25 +157,6 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		848787D0905848F69BE833D8 /* Copy shared resources */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Copy shared resources";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"$SRCROOT/scripts/copy-resources.sh\"\n";
-		};
 		D0BFDCD8EC49557EEE2F31DA /* Build Rust core */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
