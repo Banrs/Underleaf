@@ -150,7 +150,6 @@ private struct CompilingSettings: View {
 
 private struct LivePreviewSettings: View {
     @Environment(AppModel.self) private var app
-    @AppStorage(LiveViewer.key) private var viewer = LiveViewer.pane
 
     var body: some View {
         Form {
@@ -167,12 +166,6 @@ private struct LivePreviewSettings: View {
                 }
                 // An app opened from the Finder sees no shell PATH.
                 ProgramFolder(program: .texpresso)
-                Picker(selection: $viewer) {
-                    ForEach(LiveViewer.allCases) { Text($0.title).tag($0) }
-                } label: {
-                    Text("Show Live Preview In")
-                    Text("Takes effect the next time Live Preview starts.")
-                }
             } footer: {
                 Text("Live Preview is experimental. It uses TeXpresso to update the PDF as you type, without compiling.")
                     .frame(maxWidth: .infinity, alignment: .leading)

@@ -162,9 +162,7 @@ struct StatusBar: View {
                 Label("PDF Out of Date", systemImage: "arrow.clockwise")
                     .hitTarget()
             }
-            .help(project.texpresso.active
-                ? "Live Preview updates its own window; compile to refresh this PDF"
-                : "The PDF is older than the source; compile to refresh it")
+            .help("The PDF is older than the source; compile to refresh it")
             .disabled(!app.isEnabled(.compileRun, on: project))
         }
     }

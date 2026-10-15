@@ -183,8 +183,6 @@ final class TeXpressoSession {
     @ObservationIgnored private var sentView: ClosedRange<Int>?
     @ObservationIgnored private var caret: TeXpressoCaret?
     @ObservationIgnored private var settling: Task<Void, Never>?
-    /// The document goes to the PDF pane, not TeXpresso's own window.
-    @ObservationIgnored private var inPane = true
 
     /// What a session starts with: the files it is sent, and where the first key will land, in
     /// one of them: TeX is ready there.
@@ -257,15 +255,13 @@ final class TeXpressoSession {
         acknowledged = false
         reset()
         queued = start
-        inPane = LiveViewer.current == .pane
         let current = generation
         enqueue { session in
             guard session.generation == current, !session.closed, let start = session.queued else { return }
             session.queued = nil
             do {
-                // A patched build writes the document for the PDF pane rather than opening a window;
-                // TeXpresso's own window, which draws with MuPDF, is the fallback Settings offers.
-                var arguments: [String: any Sendable] = ["id": session.id, "files": start.files.map { ["path": $0.path, "text": $0.text] }, "pdf": session.inPane]
+                // A patched build writes the document for the PDF pane rather than opening a window.
+                var arguments: [String: any Sendable] = ["id": session.id, "files": start.files.map { ["path": $0.path, "text": $0.text] }, "pdf": true]
                 if let view = session.viewed { arguments["view"] = [view.lowerBound, view.upperBound] }
                 if let caret = start.caret { arguments["caret"] = ["path": caret.path, "offset": caret.offset] as [String: any Sendable] }
                 if replacing {
@@ -433,7 +429,7 @@ final class TeXpressoSession {
     /// The pages the PDF pane shows, from 0: TeX typesets as far as the last of them first.
     func view(_ pages: ClosedRange<Int>) {
         viewed = pages
-        guard phase == .running, inPane, pages != sentView, let owner else { return }
+        guard phase == .running, pages != sentView, let owner else { return }
         sentView = pages
         try? calls.now("texpresso_view", ["session": owner, "first": pages.lowerBound, "last": pages.upperBound])
     }
@@ -442,7 +438,7 @@ final class TeXpressoSession {
     /// and the first key costs what the ones after it do.
     func caretMoved(_ path: String, _ offset: Int) {
         let moved = TeXpressoCaret(path: path, offset: offset)
-        guard phase == .running, inPane, caret != moved else { return }
+        guard phase == .running, caret != moved else { return }
         TeXLocal.restart(&settling, after: .milliseconds(150)) { [weak self] in
             guard let self, phase == .running, let owner, synced.contains(path), pending[path] == nil,
                   caret != moved else { return }
@@ -664,25 +660,5 @@ final class TeXpressoSession {
         reset()
         rejected.removeAll()
         if !closed { onEnded(restartable) }
-    }
-}
-
-/// Where live preview shows the document: the PDF pane, or TeXpresso's own window. Read as a
-/// session starts.
-nonisolated enum LiveViewer: String, CaseIterable, Identifiable {
-    case pane, window
-
-    static let key = "liveViewer"
-    static var current: Self {
-        UserDefaults.standard.string(forKey: key).flatMap(Self.init) ?? .pane
-    }
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .pane: "PDF Pane"
-        case .window: "TeXpresso’s Window"
-        }
     }
 }

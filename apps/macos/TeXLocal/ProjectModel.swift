@@ -55,7 +55,7 @@ final class ProjectModel {
     let pdf = PDFController()
     /// The build panel: whether it shows, and what.
     let panel: BuildPanelModel
-    /// TeXpresso's live preview, in the PDF pane or its own window; the last build's PDF comes back after it.
+    /// TeXpresso's live preview, in the PDF pane; the last build's PDF comes back after it.
     let texpresso: TeXpressoSession
     @ObservationIgnored private var liveRestartTask: Task<Void, Never>?
     @ObservationIgnored private var liveDiskTask: Task<Void, Never>?
