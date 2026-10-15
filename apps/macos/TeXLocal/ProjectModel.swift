@@ -68,27 +68,14 @@ final class ProjectModel {
 
     var importClash: ImportClash?
 
-    var expandedFolders: Set<String> {
-        didSet { UserDefaults.standard.set(expandedFolders.sorted(), forKey: Self.key("expandedFolders", id)) }
+    /// The sidebar's, which the core keeps in the project's settings and moves with a rename (`get_ui_state`, `set_ui_state`).
+    var expandedFolders: Set<String> = [] {
+        didSet { if expandedFolders != oldValue { saveUIState(["expandedFolders": expandedFolders.sorted()]) } }
     }
-    var foldedHeadings: Set<String> {
-        didSet { UserDefaults.standard.set(foldedHeadings.sorted(), forKey: Self.key("foldedHeadings", id)) }
+    var foldedHeadings: Set<String> = [] {
+        didSet { if foldedHeadings != oldValue { saveUIState(["foldedHeadings": foldedHeadings.sorted()]) } }
     }
-    private static let sidebarKeys = ["expandedFolders", "foldedHeadings"]
-    private static func key(_ name: String, _ id: String) -> String { "\(name).\(id)" }
-
-    static func moveSidebarState(from id: String, to new: String) {
-        let defaults = UserDefaults.standard
-        for name in sidebarKeys {
-            guard let value = defaults.object(forKey: key(name, id)) else { continue }
-            defaults.set(value, forKey: key(name, new))
-            defaults.removeObject(forKey: key(name, id))
-        }
-    }
-
-    static func forgetSidebarState(of id: String) {
-        for name in sidebarKeys { UserDefaults.standard.removeObject(forKey: key(name, id)) }
-    }
+    @ObservationIgnored private var showingUIState = false
 
     let search: ProjectSearch
 
@@ -111,9 +98,6 @@ final class ProjectModel {
         self.app = app
         search = ProjectSearch(id: id)
         tree = FileTree(id: id)
-        let defaults = UserDefaults.standard
-        expandedFolders = Set(defaults.stringArray(forKey: Self.key("expandedFolders", id)) ?? [])
-        foldedHeadings = Set(defaults.stringArray(forKey: Self.key("foldedHeadings", id)) ?? [])
         panel = BuildPanelModel(texpresso: texpresso)
         texpresso.onAlert = { [weak self] in self?.panel.show(.texpresso) }
         texpresso.onEnded = { [weak self] in Task { await self?.endLivePDF() } }
@@ -229,6 +213,7 @@ final class ProjectModel {
         async let pdfShown = showPDFOnDisk()
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
+            await readUIState()
             // With automatic builds and no PDF, the session starts one.
             let auto = autoCompile
             guard let opened = try await core.session("session_open", ["id": id, "autoCompile": auto], as: SessionOpened.self) else {
@@ -297,6 +282,19 @@ final class ProjectModel {
         if !livePDF, app?.showPDF == false { app?.showPDF = true }
         shown = .live(live.url)
         pdf.showLive(live.document, changed: live.changed, complete: live.complete)
+    }
+
+    /// In the order changed: on the session's queue, as a read of it is.
+    private func saveUIState(_ patch: [String: any Sendable]) {
+        guard !showingUIState, !closed else { return }
+        core.send("set_ui_state", ["id": id, "patch": patch])
+    }
+
+    private func readUIState() async {
+        guard let state = try? await core.session("get_ui_state", ["id": id], as: UIState.self), !closed else { return }
+        showingUIState = true
+        (expandedFolders, foldedHeadings) = (Set(state.expandedFolders), Set(state.foldedHeadings))
+        showingUIState = false
     }
 
     // MARK: - The session's events
@@ -892,8 +890,9 @@ final class ProjectModel {
         if moved { openPath = now }
         let mainChanged = result.mainFile != settings?.mainFile
         settings?.mainFile = result.mainFile
-        // The new name's kind is the tree's.
+        // The new name's kind is the tree's; the sidebar's state moved with it.
         await tree.reload()
+        await readUIState()
         if moved, let now, openPath == now, !closed {
             // A text file now previewed, or the other way: shown afresh.
             if isText(now) != wasText {
@@ -1055,6 +1054,7 @@ nonisolated struct SessionOpened: Decodable, Sendable {
 }
 
 nonisolated struct Located: Decodable, Sendable { let id, path: String }
+nonisolated struct UIState: Decodable, Sendable { let expandedFolders, foldedHeadings: [String] }
 nonisolated struct Saved: Decodable, Sendable { let saved: Bool }
 nonisolated struct Closed: Decodable, Sendable { let closed: Bool }
 nonisolated struct Ready: Decodable, Sendable { let ready: Bool }
