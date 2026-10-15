@@ -48,17 +48,17 @@ final class FormatMenu: NSObject, NSMenuDelegate {
     }
 
     private func levelItems() -> [NSMenuItem] {
-        let headings = project.headingStyles, current = project.headingLevel
-        return headings.levels.map { level in
-            let item = self.item(level.title) { [project] in project.editor.perform(.heading, level.command) }
-            let font = Self.font(headings.font(level))
+        let current = project.headingLevel
+        return project.headingStyles.map { style in
+            let item = self.item(style.title) { [project] in project.editor.perform(.heading, style.command) }
+            let font = Self.font(style.font)
             let title = NSMutableAttributedString()
-            if let marker = headings.marker(level) {
+            if let marker = style.marker {
                 title.append(NSAttributedString(string: marker + "\u{2002}", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
             }
-            title.append(NSAttributedString(string: level.title, attributes: [.font: font]))
+            title.append(NSAttributedString(string: style.title, attributes: [.font: font]))
             item.attributedTitle = title
-            item.state = level == current ? .on : .off
+            item.state = style.command == current.command ? .on : .off
             return item
         }
     }
@@ -66,7 +66,7 @@ final class FormatMenu: NSObject, NSMenuDelegate {
     private func insertItems() -> [NSMenuItem] {
         [item(MenuCommand.editMath.title) { [app, project] in app.perform(.editMath, on: project) },
          item(String(localized: "Display Math")) { [project] in project.editor.perform(.displayMath) }]
-            + listTemplates.filter { $0.symbol != nil }.map { template in item(template.title) { [project] in project.insert(template) } }
+            + Menus.shared.templates.list.filter { $0.symbol != nil }.map { template in item(template.title) { [project] in project.insert(template) } }
     }
 
     private func item(_ title: String, _ action: @escaping () -> Void) -> NSMenuItem {
@@ -87,7 +87,7 @@ final class FormatMenu: NSObject, NSMenuDelegate {
 
     /// A level at its weight and shape, its size LaTeX's scaled into a menu's range: \Huge's 2.5
     /// times the text comes out at 22 points, near Pages' Title.
-    private static func font(_ style: HeadingStyles.Font) -> NSFont {
+    private static func font(_ style: HeadingStyle.Font) -> NSFont {
         let size = (NSFont.systemFontSize * pow(style.scale, 0.58)).rounded()
         var descriptor = NSFont.systemFont(ofSize: size, weight: style.bold ? .bold : .regular).fontDescriptor
         switch style.shape {

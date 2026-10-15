@@ -75,17 +75,17 @@ struct MenuStructureTests {
     @Test func mathShowsWhatItInserts() throws {
         let insert = try menu("Insert")
         #expect(insert.items.prefix(4).map(\.subtitle) == ["$ … $", "\\[ … \\]", "\\begin{equation}", "\\begin{align}"])
-        for (title, symbols) in symbolGroups {
-            let rows = try #require(try item(title, in: insert).submenu).items.compactMap(\.submenu)
+        let groups = Menus.shared.symbolGroups
+        #expect(!groups.isEmpty)
+        for group in groups {
+            let rows = try #require(try item(group.title, in: insert).submenu).items.compactMap(\.submenu)
             #expect(rows.allSatisfy { $0.presentationStyle == .palette })
-            #expect(Set(rows.map(\.items.count)) == [SymbolItems.columns(symbols.count)], "\(title)")
+            #expect(Set(rows.map(\.items.count)) == [SymbolItems.columns(group.symbols.count)], "\(group.title)")
             let glyphs = rows.flatMap(\.items)
-            #expect(glyphs.map(\.toolTip) == symbols.map(\.1))
+            #expect(glyphs.map(\.toolTip) == group.symbols.map(\.command))
+            // The core's drawing, as a template the menu tints.
             #expect(glyphs.allSatisfy { $0.image?.isTemplate == true && $0.title.hasSuffix(", " + ($0.toolTip ?? "")) })
         }
-        // TeX's \epsilon and \phi, not \varepsilon's and \varphi's.
-        let greek = Dictionary(uniqueKeysWithValues: symbolGroups[0].1.map { ($0.1, $0.0) })
-        #expect(greek["\\epsilon"] == "ϵ" && greek["\\phi"] == "ϕ")
         let menu = NSHostingMenu(rootView: SymbolItems(project: nil))
         let row = try #require(all(menu).first { $0.submenu?.presentationStyle == .palette }?.submenu)
         row.performActionForItem(at: 1)

@@ -113,6 +113,13 @@ checkout still has it.
   session's source), autosaves, builds, watches the folder and runs Live Preview, and tells
   `ProjectModel` what changed in events (`Core.observe`, on the main queue in order). Session
   commands go one at a time on a queue of their own (`Core.session`, `Core.send`).
+- **The editor's logic is texlocal-syntax's**: each key asks the source (`tl_source_call`'s
+  `type`, `delete_backward`, `insert_newline`) for the edit to type instead, and each storage
+  edit and selection is told back (`follow`, `select`), so the closers put in and a snippet's
+  fields live in the core. The commands' edits (Move Line, Bold, wrapping), the themes' colours
+  (`theme_colors`), the menus' catalogue (`menus`), the class's headings (`heading_styles`) and
+  maths and symbols as SVG (`math_svg`, `glyph_svg`, drawn as NSImage) come from
+  `tl_syntax_call` (`Syntax`). The maths preview is set at 1.21 times the text.
 - **Live preview**: the session sends each edit on to TeXpresso and says where its pages are
   (`live_document`, `live_page`); `TeXpressoSession` reads them off the main actor, and each page
   is drawn over PDFKit's page at once (`LiveCanvas`, an IOSurface), over the part of

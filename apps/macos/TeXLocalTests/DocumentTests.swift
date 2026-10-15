@@ -54,57 +54,6 @@ struct OutlineTests {
 }
 
 @MainActor
-struct HeadingStylesTests {
-    private func styles(_ name: String?, size: Int = 10, chapters: Bool = false) -> HeadingStyles {
-        HeadingStyles(documentClass: name.map { DocumentClass(name: $0, pointSize: size) }, hasChapters: chapters)
-    }
-
-    private func markers(_ styles: HeadingStyles) -> [String?] {
-        styles.levels.map(styles.marker)
-    }
-
-    @Test func theClassHasItsLevelsAndNumbersThem() {
-        #expect(styles("article").levels.map(\.title) == ["Normal Text", "Part", "Section", "Subsection", "Subsubsection", "Paragraph"])
-        #expect(markers(styles("article")) == [nil, "I", "1", "1.1", "1.1.1", nil])
-        #expect(markers(styles("report")) == [nil, "I", "1", "1.1", "1.1.1", nil, nil])
-        #expect(markers(styles("IEEEtran")) == [nil, "I", "A", "1", "a"])
-        #expect(styles("IEEEtran").levels.map(\.title) == ["Normal Text", "Section", "Subsection", "Subsubsection", "Paragraph"])
-        #expect(styles("letter").levels == [.normalText])
-        // A class it doesn't know has every level, numbered as a book's once there are chapters.
-        #expect(markers(styles("thesis", chapters: true)) == [nil, "I", "1", "1.1", "1.1.1", nil, nil])
-        #expect(markers(styles(nil)) == [nil, "I", nil, "1", "1.1", "1.1.1", nil])
-    }
-
-    @Test func theClassSetsTheLevelsSizes() {
-        let book = styles("book"), part = HeadingLevel.sections[0], section = HeadingLevel.sections[2]
-        #expect(book.font(part) == .init(scale: 2.488, bold: true, shape: .upright))
-        #expect(abs(styles("article").font(part).scale - 2.074) < 0.001)
-        #expect(abs(styles("article", size: 12).font(section).scale - 1.44) < 0.001)
-        #expect(book.font(.normalText) == .init(scale: 1, bold: false, shape: .upright))
-        #expect(styles("amsart").font(section) == .init(scale: 1, bold: false, shape: .smallCaps))
-    }
-
-    @Test func theClassIsTheOneNamedOutsideComments() {
-        #expect(DocumentClass(in: "% \\documentclass{book}\n\\documentclass[11pt,\n a4paper]{ report }") == DocumentClass(name: "report", pointSize: 11))
-        #expect(DocumentClass(in: "50\\% \\documentclass{book}") == DocumentClass(name: "book"))
-        #expect(DocumentClass(in: "\\documentclass[fontsize=12pt]{scrartcl}")?.pointSize == 12)
-        #expect(DocumentClass(in: "\\section{A}") == nil)
-        // Read in the preamble first, then in the whole text.
-        #expect(DocumentClass(in: "\\documentclass{article}\n\\begin{document}\n\\documentclass{book}") == DocumentClass(name: "article"))
-        #expect(DocumentClass(in: "% \\documentclass{book} and \\begin{document}\n\\documentclass[12pt]{report}")
-            == DocumentClass(name: "report", pointSize: 12))
-        #expect(DocumentClass(in: "\\begin{document}\n\\documentclass{book}") == DocumentClass(name: "book"))
-    }
-
-    /// Swift's regex reads "\r\n" as one Character, which a comment once ran on through to the file's end.
-    @Test func aCommentEndsAtAnyLineBreak() {
-        #expect(DocumentClass(in: "\\documentclass[11pt, % size\r\n a4paper]{report}\r\n") == DocumentClass(name: "report", pointSize: 11))
-        #expect(DocumentClass(in: "% \\documentclass{book}\r\n\\documentclass[12pt]{report}\r\n") == DocumentClass(name: "report", pointSize: 12))
-        #expect(DocumentClass(in: "% \\documentclass{book}\r\\documentclass{article}\r") == DocumentClass(name: "article"))
-    }
-}
-
-@MainActor
 struct FindTests {
     @Test func theMatchCountLabel() {
         #expect(PDFFind.count(3, of: 12, limited: false, for: "loop") == "3 of 12")

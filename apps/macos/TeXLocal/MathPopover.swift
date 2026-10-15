@@ -1,30 +1,19 @@
 import AppKit
 import SwiftUI
-import WebKit
 
+/// The maths at the caret, as the core draws it (RaTeX's SVG, `math_svg`), drawn off the main actor as the caret moves.
 final class MathPopover {
     private let popover = NSPopover()
-    private let page = WebPage()
-    private let content: NSHostingController<MathView>
-    private var loaded = false
+    private let content = NSHostingController(rootView: MathView())
     private var wanted: (maths: MathPreview, size: CGFloat, rect: NSRect, view: NSView, edge: NSRectEdge)?
     private var rendered: (maths: MathPreview, size: CGFloat)?
     private var rendering = false
 
     init() {
-        content = NSHostingController(rootView: MathView(page: page))
         popover.behavior = .applicationDefined
         // It follows the caret in and out of maths as the person types: no motion each time.
         popover.animates = false
         popover.contentViewController = content
-        if let folder = Bundle.main.url(forResource: "KaTeX", withExtension: nil) {
-            // A failed load leaves it unloaded: no preview.
-            _ = Task {
-                for try await _ in page.load(html: Self.html, baseURL: folder) {}
-                loaded = true
-                update()
-            }
-        }
     }
 
     func show(_ maths: MathPreview, size: CGFloat, at rect: NSRect, of view: NSView, edge: NSRectEdge) {
@@ -50,63 +39,68 @@ final class MathPopover {
     }
 
     private func update() {
-        guard loaded, !rendering, let asked = wanted else { return }
+        guard !rendering, let asked = wanted else { return }
         rendered = nil
         rendering = true
+        // The maths a little larger than the text, at 1.21 times its size.
+        let em = asked.size * 1.21
         Task {
-            let box = try? await page.callJavaScript("return render(tex, display, size)",
-                arguments: ["tex": asked.maths.tex, "display": asked.maths.display, "size": asked.size]) as? [Double]
+            let drawing = await Self.draw(asked.maths.tex, display: asked.maths.display, size: Double(em))
             rendering = false
             guard let wanted else { return }
             // Skip intermediate requests.
             guard wanted.maths == asked.maths, wanted.size == asked.size else { update(); return }
-            guard let box, box.count == 2 else { return }
             rendered = (asked.maths, asked.size)
-            content.rootView.tex = asked.maths.tex
-            content.rootView.size = CGSize(width: box[0], height: box[1])
+            content.rootView = MathView(tex: asked.maths.tex, em: em, image: drawing.flatMap { NSImage(drawing: $0) })
             popover.contentSize = content.view.fittingSize
             present()
         }
     }
 
-    private static let html = """
-        <!doctype html><meta charset="utf-8">
-        <link rel="stylesheet" href="katex.min.css"><script src="katex.min.js"></script>
-        <style>
-          :root { color-scheme: light dark; }
-          html, body { margin: 0; background: transparent; color: -apple-system-label; }
-          #m { width: max-content; max-width: 560px; }
-          .katex-display { margin: 0; }
-        </style>
-        <div id="m"></div>
-        <script>
-          async function render(tex, display, size) {
-            const m = document.getElementById('m');
-            m.style.fontSize = size + 'px';
-            katex.render(tex, m, { displayMode: display, throwOnError: false, strict: false });
-            // Measured in KaTeX's fonts, which a layout starts loading.
-            m.getBoundingClientRect();
-            await document.fonts.ready;
-            const box = m.getBoundingClientRect();
-            return [Math.ceil(box.width), Math.ceil(box.height)];
-          }
-        </script>
-        """
+    @concurrent private nonisolated static func draw(_ tex: String, display: Bool, size: Double) async -> Syntax.Drawing? {
+        Syntax.call("math_svg", ["tex": tex, "display": display, "size": size])
+    }
 }
 
-/// Not focusable, or it takes the source's keyboard as it shows.
+extension NSImage {
+    /// The core's SVG at its size in points: its paths are drawn at the screen's scale, so they stay sharp.
+    convenience init?(drawing: Syntax.Drawing) {
+        guard let svg = drawing.svg, let width = drawing.width, let height = drawing.height else { return nil }
+        self.init(data: Data(svg.utf8))
+        size = NSSize(width: width, height: height)
+    }
+}
+
+/// Not focusable, or it takes the source's keyboard as it shows. Maths the core can't draw shows as its TeX, in red.
 struct MathView: View {
-    let page: WebPage
     var tex = ""
-    var size = CGSize.zero
+    var em: CGFloat = 0
+    var image: NSImage?
+
+    /// The widest a preview goes: longer maths is shown smaller.
+    private static let widest: CGFloat = 560
 
     var body: some View {
-        WebView(page).webViewContentBackground(.hidden).allowsHitTesting(false).focusable(false)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Math Preview")
-            .accessibilityValue(tex)
-            .frame(width: size.width, height: size.height)
-            .frame(minWidth: size.height)
-            .padding()
+        // At least a line of text high.
+        let line = (em * 1.2).rounded(.up)
+        Group {
+            if let image {
+                let scale = min(1, Self.widest / max(image.size.width, 1))
+                Image(nsImage: image)
+                    .renderingMode(.template)
+                    .resizable()
+                    .foregroundStyle(.primary)
+                    .frame(width: (image.size.width * scale).rounded(.up), height: (image.size.height * scale).rounded(.up))
+            } else {
+                Text(verbatim: tex).font(.system(size: em)).foregroundStyle(.red).lineLimit(1).frame(maxWidth: Self.widest)
+            }
+        }
+        .frame(minWidth: line, minHeight: line)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Math Preview")
+        .accessibilityValue(tex)
+        .focusable(false)
+        .allowsHitTesting(false)
+        .padding()
     }
 }
