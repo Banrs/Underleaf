@@ -94,8 +94,15 @@ struct Entry {
 }
 
 impl Entry {
+    /// Its path from the root, in forward slashes on Windows too, where no
+    /// name holds a backslash.
     fn rel<'a>(&'a self, root: &Path) -> std::borrow::Cow<'a, str> {
-        self.path.strip_prefix(root).unwrap().to_string_lossy()
+        let rel = self.path.strip_prefix(root).unwrap().to_string_lossy();
+        if cfg!(windows) {
+            rel.replace('\\', "/").into()
+        } else {
+            rel
+        }
     }
 }
 
@@ -129,7 +136,7 @@ fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> {
         let path = entry.path();
         // No directory links (cycles), nor any without a proven in-project target.
         let shown = if kind.is_symlink() {
-            fs::canonicalize(&path).is_ok_and(|t| t.starts_with(root) && t.is_file())
+            dunce::canonicalize(&path).is_ok_and(|t| t.starts_with(root) && t.is_file())
         } else {
             kind.is_file() || kind.is_dir()
         };
@@ -165,7 +172,7 @@ pub(crate) fn visit_files(
         Ok(true)
     }
 
-    let root = fs::canonicalize(root)?;
+    let root = dunce::canonicalize(root)?;
     walk(&root, &root, visit)?;
     Ok(())
 }
@@ -336,18 +343,28 @@ pub fn rename_project(
 }
 
 /// Whether a rename from `src` to `dest` would land on another entry. On a
-/// case-insensitive volume, the default on macOS, a case-only
+/// case-insensitive volume, the default on macOS and Windows, a case-only
 /// rename's destination already "exists" because it is `src` itself.
 fn occupied(src: &Path, dest: &Path) -> bool {
     fs::symlink_metadata(dest).is_ok() && !same_entry(src, dest)
 }
 
+/// Whether two paths name one entry, a link itself rather than its target.
+#[cfg(unix)]
 fn same_entry(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
         (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
         _ => false,
     }
+}
+
+/// Whether two paths name one entry. Windows' file identity is had only by
+/// opening the file, which follows a link, so a link is only ever itself.
+#[cfg(windows)]
+fn same_entry(a: &Path, b: &Path) -> bool {
+    let link = |path| fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
+    !link(a) && !link(b) && same_file::is_same_file(a, b).unwrap_or(false)
 }
 
 /// Delete to the platform's trash, so a mis-click is recoverable. A trash
@@ -387,7 +404,7 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
         Ok(nodes)
     }
 
-    let root = fs::canonicalize(root)?;
+    let root = dunce::canonicalize(root)?;
     walk(&root, &root)
 }
 
@@ -714,8 +731,8 @@ mod tests {
         );
         assert_eq!(after_entry("chapters2/main.tex", "chapters"), None);
         assert_eq!(after_entry("chapters", "chapters/main.tex"), None);
-        // On a Mac's case-insensitive volume, Main.tex is main.tex.
-        let insensitive = cfg!(target_os = "macos");
+        // On a Mac's or Windows' case-insensitive volume, Main.tex is main.tex.
+        let insensitive = cfg!(any(target_os = "macos", windows));
         assert_eq!(after_entry("main.tex", "Main.tex").is_some(), insensitive);
         assert_eq!(
             after_entry("Chapters/a.tex", "chapters"),

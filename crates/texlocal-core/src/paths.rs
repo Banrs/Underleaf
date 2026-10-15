@@ -43,7 +43,7 @@ fn ensure_existing_ancestor_within(
     target: &Path,
     escape_err: &str,
 ) -> Result<PathBuf, CoreError> {
-    let canonical_root = fs::canonicalize(root)?;
+    let canonical_root = dunce::canonicalize(root)?;
     let mut existing = target;
     loop {
         match fs::symlink_metadata(existing) {
@@ -63,7 +63,7 @@ fn ensure_existing_ancestor_within(
         }
     }
 
-    let resolved = fs::canonicalize(existing).map_err(|_| CoreError::bad_request(escape_err))?;
+    let resolved = dunce::canonicalize(existing).map_err(|_| CoreError::bad_request(escape_err))?;
     let Ok(inside) = resolved.strip_prefix(&canonical_root) else {
         return Err(CoreError::bad_request(escape_err));
     };
@@ -182,9 +182,10 @@ pub(crate) fn write_paths(root: &Path, rel: &str) -> Result<(PathBuf, PathBuf), 
     join_within(root, &segments, true)
 }
 
-/// A path as the volume compares it: macOS volumes usually ignore case.
+/// A path as the volume compares it: macOS and Windows volumes usually
+/// ignore case.
 pub(crate) fn fold_case(path: &str) -> String {
-    if cfg!(target_os = "macos") {
+    if cfg!(any(target_os = "macos", windows)) {
         path.to_lowercase()
     } else {
         path.to_owned()
@@ -213,8 +214,24 @@ pub fn safe_rel_file(root: &Path, rel: &str) -> Result<String, CoreError> {
     Ok(segments.join("/"))
 }
 
+/// A name for a new folder in the library: one name, without the characters
+/// the volume refuses in it (on Windows, also `<>:"|?*` and controls, and
+/// the dots and spaces at the end it drops).
 pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
-    let clean: String = name.trim().chars().filter(|&c| c != '/').take(80).collect();
+    let refused = |c: char| {
+        std::path::is_separator(c)
+            || c == '/'
+            || (cfg!(windows) && (c.is_control() || "<>:\"|?*".contains(c)))
+    };
+    let mut clean: String = name
+        .trim()
+        .chars()
+        .filter(|&c| !refused(c))
+        .take(80)
+        .collect();
+    if cfg!(windows) {
+        clean.truncate(clean.trim_end_matches(['.', ' ']).len());
+    }
     if clean.is_empty() || clean.starts_with('.') {
         return Err(CoreError::bad_request("Invalid name"));
     }

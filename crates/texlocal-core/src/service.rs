@@ -221,7 +221,9 @@ impl Service {
         let (tex_dir, texpresso_dir) = self.app_folders();
         let tex = compile::tex_path(tex_dir.as_deref());
         let texpresso = match texpresso_dir {
-            Some(dir) => format!("{}:{tex}", dir.to_string_lossy()),
+            Some(dir) => {
+                compile::join_path(std::iter::once(dir).chain(std::env::split_paths(&tex)))
+            }
             None => tex.clone(),
         };
         (tex, texpresso)
@@ -242,7 +244,7 @@ impl Service {
     pub async fn set_texpresso_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
         let chosen = dir.map(str::trim).filter(|d| !d.is_empty()).map(Path::new);
         if let Some(dir) = chosen
-            && (!dir.is_absolute() || !crate::texpresso::executable_file(&dir.join("texpresso")))
+            && compile::program_at(&dir.join("texpresso")).is_none()
         {
             return Err(CoreError::bad_request(NO_TEXPRESSO));
         }

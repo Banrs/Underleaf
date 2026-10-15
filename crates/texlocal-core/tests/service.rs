@@ -401,13 +401,29 @@ fn served_files_are_found_through_the_project_boundary() {
     assert!(service.raw_path("P", "../../secret").is_err());
 }
 
+/// A stand-in program `name` in `dir` that prints `line`: a shell script, or
+/// a batch file on Windows. Its path.
+fn fake_program(dir: &Path, name: &str, line: &str) -> std::path::PathBuf {
+    std::fs::create_dir_all(dir).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let exe = dir.join(name);
+        std::fs::write(&exe, format!("#!/bin/sh\necho '{line}'\n")).unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        exe
+    }
+    #[cfg(windows)]
+    {
+        let exe = dir.join(format!("{name}.bat"));
+        std::fs::write(&exe, format!("@echo {line}\r\n")).unwrap();
+        exe
+    }
+}
+
 /// A folder holding a stand-in `latexmk` that prints a version.
 fn fake_tex(dir: &Path) -> String {
-    std::fs::create_dir_all(dir).unwrap();
-    let exe = dir.join("latexmk");
-    std::fs::write(&exe, "#!/bin/sh\necho 'Latexmk, stub 1.0'\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    fake_program(dir, "latexmk", "Latexmk, stub 1.0");
     dir.to_string_lossy().into_owned()
 }
 
@@ -450,10 +466,7 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
     assert_eq!(refused.status, 400);
     assert!(call(&service, "status", json!({})).await["texpressoDir"].is_null());
 
-    let exe = empty.path().join("texpresso");
-    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let exe = fake_program(empty.path(), "texpresso", "");
     let status = call(
         &service,
         "set_texpresso_dir",
@@ -466,7 +479,7 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
     );
     assert_eq!(status["texDir"], bin);
     if std::env::var_os("TEXLOCAL_TEXPRESSO").is_none() {
-        let exe = std::fs::canonicalize(&exe).unwrap();
+        let exe = dunce::canonicalize(&exe).unwrap();
         assert_eq!(status["texpresso"], exe.to_string_lossy().as_ref());
     }
 
@@ -527,11 +540,7 @@ async fn status_reports_the_current_tex_choice() {
     assert_eq!(chosen["found"], bin);
 
     // An update in the same folder is reflected without another folder choice.
-    std::fs::write(
-        tex.path().join("latexmk"),
-        "#!/bin/sh\necho 'Latexmk, stub 2.0'\n",
-    )
-    .unwrap();
+    fake_program(tex.path(), "latexmk", "Latexmk, stub 2.0");
     let updated = call(&service, "status", json!({})).await;
     assert_eq!(updated["version"], "Latexmk, stub 2.0");
     assert_eq!(updated["texDir"], bin);

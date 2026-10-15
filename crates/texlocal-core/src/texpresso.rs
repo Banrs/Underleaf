@@ -7,7 +7,6 @@
 //! as they come; `Manager::edit` takes a keystroke without waiting for anything.
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -20,6 +19,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::ChildStdin;
 use tokio::sync::mpsc;
 
+use crate::atomic::Stamp;
+use crate::compile::{Tree, find_tool, program_at};
 use crate::{BUILD_DIR, CoreError, SETTINGS_FILE, lock, paths, settings, tail};
 
 const MAX_FILE: usize = 8 * 1024 * 1024;
@@ -33,7 +34,11 @@ const LEASE: Duration = Duration::from_secs(120);
 const UNREAD: Duration = Duration::from_secs(60);
 /// The longest `wait` waits, well inside the lease it renews.
 const MAX_WAIT: Duration = Duration::from_secs(60);
-const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
+const MISSING: &str = if cfg!(windows) {
+    "TeXpresso wasn't found. Choose the folder it's in, in Settings."
+} else {
+    "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin."
+};
 const REPLACED: &str =
     "Another window started TeXpresso for this project. Start TeXpresso again to preview here.";
 const TOO_MANY: &str = "Too many files for TeXpresso (limit 256 files / 64 MB).";
@@ -326,7 +331,8 @@ struct Feed {
 }
 
 struct State {
-    pid: Option<u32>,
+    /// TeXpresso and its engines, while it runs.
+    tree: Option<Tree>,
     last_used: Instant,
     output: Output,
     log: Output,
@@ -336,7 +342,7 @@ struct State {
     revision: u64,
     pdf_version: u64,
     /// The settings file as last seen, by `settings_stamp`.
-    settings: Stamp,
+    settings: Option<Stamp>,
     /// Whether TeXpresso has said anything, and the page protocol it said it speaks.
     spoken: bool,
     live: Option<u32>,
@@ -390,13 +396,13 @@ impl Session {
         if seen != stamp && settings::read_settings(root).main_file != self.main {
             self.stop(Some("The main file changed. Start TeXpresso again.".into()));
         }
-        lock(&self.state).pid.is_some()
+        lock(&self.state).tree.is_some()
     }
     fn stop(&self, error: Option<String>) {
         let mut state = lock(&self.state);
-        if let Some(pid) = state.pid.take() {
+        if let Some(tree) = state.tree.take() {
             // The viewer starts an engine: stopping just its parent leaks it.
-            crate::compile::kill_pid_tree(pid);
+            tree.kill();
             remove_pdf_folder(self.pdf.as_deref());
             state.error = error;
             self.event(&mut state);
@@ -418,8 +424,8 @@ impl Session {
             log = tail(&log, MAX_OUTPUT).to_owned();
         }
         Status {
-            available: executable_file(&self.executable),
-            running: state.pid.is_some(),
+            available: program_at(&self.executable).is_some(),
+            running: state.tree.is_some(),
             output: state.output.text(),
             log,
             error: state.error.clone(),
@@ -432,7 +438,7 @@ impl Session {
         let new = |serial: u64| serial > after;
         Events {
             seq: feed.seq,
-            running: state.pid.is_some(),
+            running: state.tree.is_some(),
             error: state.error.clone(),
             live: state.live,
             revision: state.revision,
@@ -517,7 +523,7 @@ impl Manager {
         path_env: &str,
     ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
-        let root = fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         let Some(session) = self.session(&root, token)? else {
             return Ok(self.idle(path_env));
         };
@@ -529,7 +535,7 @@ impl Manager {
     }
     /// The live document the client's session last wrote, which has its SyncTeX beside it.
     pub fn live_pdf(&self, root: &Path, token: &str) -> Result<PathBuf, CoreError> {
-        let session = self.owned(&fs::canonicalize(root)?, token)?;
+        let session = self.owned(&dunce::canonicalize(root)?, token)?;
         let state = lock(&session.state);
         session
             .pdf
@@ -563,7 +569,7 @@ impl Manager {
         }
     }
     pub fn stop(&self, root: &Path) -> Result<(), CoreError> {
-        let root = fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         let session = lock(&self.sessions).get(&root).cloned();
         if let Some(session) = session {
             session.stop(None);
@@ -590,7 +596,7 @@ impl Manager {
         token: Option<&str>,
         path_env: impl FnOnce() -> P,
     ) -> Result<Status, CoreError> {
-        let root = fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         let Some(session) = self.session(&root, token)? else {
             return Ok(self.idle(path_env().as_ref()));
         };
@@ -610,7 +616,7 @@ impl Manager {
         pane: Option<&Pane>,
     ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
-        let root = fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         // Automatic restart may only replace the same owner; an explicit user
         // Start omits the expectation to deliberately take over the project.
         if let Some(token) = expected {
@@ -647,15 +653,18 @@ impl Manager {
         };
         let build = paths::safe_path(&root, BUILD_DIR)?;
         fs::create_dir_all(&build)?;
-        let build = fs::canonicalize(build)?;
+        let build = dunce::canonicalize(build)?;
         self.stop(&root)?;
         let token = crate::random_hex(16)?;
-        // The session's own folder: no build output or other session shares it.
+        // The session's own folder, for its owner alone: no build output or
+        // other session shares it. The session removes it as it stops.
         let pdf = match pane {
             Some(_) => {
-                let folder = std::env::temp_dir().join(format!("texlocal-texpresso-{token}"));
-                fs::DirBuilder::new().mode(0o700).create(&folder)?;
-                Some(fs::canonicalize(folder)?.join("live.pdf"))
+                let folder = tempfile::Builder::new()
+                    .prefix("texlocal-texpresso-")
+                    .tempdir()?
+                    .keep();
+                Some(dunce::canonicalize(folder)?.join("live.pdf"))
             }
             None => None,
         };
@@ -666,7 +675,6 @@ impl Manager {
             .arg(&main_path)
             .current_dir(&root)
             .env("PATH", path_env)
-            .process_group(0)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -678,6 +686,7 @@ impl Manager {
         // TeXpresso stops a stale TeX worker with SIGTERM, and ignored it never ends: the
         // snapshot waiting on it never resumes, and live preview stops at the first edit.
         // SAFETY: only async-signal-safe calls, between fork and exec.
+        #[cfg(unix)]
         unsafe {
             command.pre_exec(|| {
                 for signal in 1..32 {
@@ -689,8 +698,8 @@ impl Manager {
                 Ok(())
             });
         }
-        let mut child = match command.spawn() {
-            Ok(child) => child,
+        let (mut child, tree) = match Tree::spawn(&mut command) {
+            Ok(spawned) => spawned,
             Err(err) => {
                 remove_pdf_folder(pdf.as_deref());
                 return failed(format!(
@@ -717,7 +726,7 @@ impl Manager {
             changed: tokio::sync::Notify::new(),
             revision: Arc::clone(&self.revision),
             state: Mutex::new(State {
-                pid: child.id(),
+                tree: Some(tree),
                 last_used: Instant::now(),
                 output: Output::default(),
                 log: Output::default(),
@@ -801,7 +810,7 @@ impl Manager {
         brief: bool,
     ) -> Result<Updated, CoreError> {
         let _request = self.requests.lock().await;
-        let root = fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         let session = self.owned(&root, token)?;
         let updated = |edit| Updated {
             edit,
@@ -868,7 +877,7 @@ impl Manager {
         {
             let mut state = lock(&session.state);
             state.last_used = Instant::now();
-            if state.pid.is_none() {
+            if state.tree.is_none() {
                 return Ok(0);
             }
         }
@@ -929,7 +938,7 @@ impl Manager {
         after: u64,
         timeout: Duration,
     ) -> Result<Events, CoreError> {
-        let root = fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         let session = self.owned(&root, token)?;
         session.renew(&root);
         let deadline = tokio::time::Instant::now() + timeout.min(MAX_WAIT);
@@ -944,7 +953,7 @@ impl Manager {
                 // A `seq` from another session is no place in this one's events.
                 let after = if after > state.feed.seq { 0 } else { after };
                 if state.feed.seq > after
-                    || state.pid.is_none()
+                    || state.tree.is_none()
                     || tokio::time::Instant::now() >= deadline
                 {
                     return Ok(session.events(&state, after));
@@ -955,7 +964,7 @@ impl Manager {
     }
     pub async fn rescan(&self, root: &Path, token: &str) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
-        let root = fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         let session = self.owned(&root, token)?;
         if session.renew(&root) {
             session.send(&[json!(["rescan"])]);
@@ -964,20 +973,12 @@ impl Manager {
     }
 }
 
-pub(crate) fn executable_file(path: &Path) -> bool {
-    path.is_absolute()
-        && fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-}
 /// TEXLOCAL_TEXPRESSO, for development, else `texpresso` on the path.
 pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
     if let Some(override_path) = std::env::var_os("TEXLOCAL_TEXPRESSO").filter(|p| !p.is_empty()) {
-        let path = PathBuf::from(override_path);
-        return executable_file(&path).then_some(path);
+        return program_at(Path::new(&override_path));
     }
-    std::env::split_paths(path_env)
-        .map(|p| p.join("texpresso"))
-        .find(|p| executable_file(p))
-        .and_then(|p| fs::canonicalize(p).ok())
+    find_tool("texpresso", path_env).and_then(|p| dunce::canonicalize(p).ok())
 }
 /// A buffer's path as TeXpresso opens it: through any link, from the
 /// resolved `root`; found once per session, as `known` keeps it.
@@ -1004,13 +1005,13 @@ fn validate_buffer(
     }
     Ok(path)
 }
-/// The settings file's identity, size and date, or None while it is
-/// missing: every write the app makes replaces it, so a changed main file
-/// shows here for one stat, where reading and parsing it would take more.
-type Stamp = Option<(u64, i64, i64, u64)>;
-fn settings_stamp(root: &Path) -> Stamp {
-    let meta = fs::metadata(root.join(SETTINGS_FILE)).ok()?;
-    Some((meta.ino(), meta.mtime(), meta.mtime_nsec(), meta.len()))
+/// The settings file's stamp, or None while it is missing: every write the
+/// app makes replaces it, so a changed main file shows here for one stat,
+/// where reading and parsing it would take more.
+fn settings_stamp(root: &Path) -> Option<Stamp> {
+    fs::metadata(root.join(SETTINGS_FILE))
+        .ok()
+        .map(|meta| Stamp::of(&meta))
 }
 fn check_limits(files: usize, bytes: usize) -> Result<(), CoreError> {
     if files > MAX_FILES || bytes > MAX_TOTAL {
@@ -1018,33 +1019,31 @@ fn check_limits(files: usize, bytes: usize) -> Result<(), CoreError> {
     }
     Ok(())
 }
-/// How many bytes two runs share at their start, one at a time.
-fn common(a: impl Iterator<Item = u8>, b: impl Iterator<Item = u8>) -> usize {
+/// How many items two runs share at their start.
+fn common<T: PartialEq>(a: impl Iterator<Item = T>, b: impl Iterator<Item = T>) -> usize {
     a.zip(b).take_while(|(a, b)| a == b).count()
 }
-/// How many bytes two texts share at their start, a block at a time.
+/// Compared a block at a time, which compiles to one memcmp each: byte by
+/// byte, the whole of a large file would be a loop of single compares.
+const BLOCK: usize = 256;
+/// How many bytes two texts share at their start.
 fn common_prefix(a: &[u8], b: &[u8]) -> usize {
-    const BLOCK: usize = 256;
-    let blocks = a
-        .chunks_exact(BLOCK)
-        .zip(b.chunks_exact(BLOCK))
-        .take_while(|(a, b)| a == b)
-        .count();
-    let start = blocks * BLOCK;
-    start + common(a[start..].iter().copied(), b[start..].iter().copied())
-}
-fn common_suffix(a: &[u8], b: &[u8]) -> usize {
-    const BLOCK: usize = 256;
-    let blocks = a
-        .rchunks_exact(BLOCK)
-        .zip(b.rchunks_exact(BLOCK))
-        .take_while(|(a, b)| a == b)
-        .count();
-    let (a, b) = (
-        &a[..a.len() - blocks * BLOCK],
-        &b[..b.len() - blocks * BLOCK],
+    let blocks = common(
+        a.as_chunks::<BLOCK>().0.iter(),
+        b.as_chunks::<BLOCK>().0.iter(),
     );
-    blocks * BLOCK + common(a.iter().rev().copied(), b.iter().rev().copied())
+    let start = blocks * BLOCK;
+    start + common(a[start..].iter(), b[start..].iter())
+}
+/// How many bytes two texts share at their end.
+fn common_suffix(a: &[u8], b: &[u8]) -> usize {
+    let blocks = common(
+        a.as_rchunks::<BLOCK>().1.iter().rev(),
+        b.as_rchunks::<BLOCK>().1.iter().rev(),
+    );
+    let end = blocks * BLOCK;
+    let (a, b) = (&a[..a.len() - end], &b[..b.len() - end]);
+    end + common(a.iter().rev(), b.iter().rev())
 }
 // Both boundaries must be UTF-8 boundaries even when differing codepoints
 // share leading or trailing bytes.
@@ -1255,7 +1254,9 @@ mod tests {
         assert_eq!(output.text(), "é");
     }
 
+    #[cfg(unix)]
     fn setup() -> (tempfile::TempDir, PathBuf, String) {
+        use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("project");
         let bin = tmp.path().join("bin");
@@ -1272,7 +1273,9 @@ mod tests {
         fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
         (tmp, root, bin.to_string_lossy().into_owned())
     }
+    #[cfg(unix)]
     const SOON: Duration = Duration::from_secs(3);
+    #[cfg(unix)]
     async fn until(mut check: impl FnMut() -> bool) {
         tokio::time::timeout(SOON, async {
             while !check() {
@@ -1282,6 +1285,7 @@ mod tests {
         .await
         .expect("stub made progress");
     }
+    #[cfg(unix)]
     fn commands(tmp: &tempfile::TempDir) -> Vec<Value> {
         fs::read_to_string(tmp.path().join("commands"))
             .unwrap_or_default()
@@ -1290,6 +1294,7 @@ mod tests {
             .collect()
     }
     /// The first document the session hands its client.
+    #[cfg(unix)]
     async fn first_document(manager: &Manager, root: &Path, token: &str) -> Document {
         let mut events = manager.wait(root, token, 0, SOON).await.unwrap();
         while events.pdf.is_none() {
@@ -1297,6 +1302,7 @@ mod tests {
         }
         events.pdf.unwrap()
     }
+    #[cfg(unix)]
     #[tokio::test]
     async fn persistent_vfs_protocol_validates_paths_and_reconstructs_unicode() {
         let (tmp, root, path_env) = setup();
@@ -1324,7 +1330,7 @@ mod tests {
         let token = first.session.as_deref().unwrap();
         // The session's own, outside the project: never a build's output.
         let pdf = PathBuf::from(first_document(&manager, &root, token).await.path);
-        assert!(pdf.ends_with("live.pdf") && !pdf.starts_with(fs::canonicalize(&root).unwrap()));
+        assert!(pdf.ends_with("live.pdf") && !pdf.starts_with(dunce::canonicalize(&root).unwrap()));
         assert_eq!(
             fs::read(root.join(BUILD_DIR).join("texpresso-live.pdf")).unwrap(),
             b"normal build"
@@ -1334,7 +1340,7 @@ mod tests {
         let opened = sent.iter().find(|c| c[0] == "open").unwrap();
         assert_eq!(
             opened[1],
-            fs::canonicalize(root.join("main.tex"))
+            dunce::canonicalize(root.join("main.tex"))
                 .unwrap()
                 .to_string_lossy()
                 .as_ref()
@@ -1430,6 +1436,7 @@ mod tests {
         manager.kill_all();
         assert!(!manager.status(&root, None, || &path_env).unwrap().running);
     }
+    #[cfg(unix)]
     #[tokio::test]
     async fn the_live_pdf_folder_goes_with_its_session() {
         let (_tmp, root, path_env) = setup();
@@ -1442,6 +1449,7 @@ mod tests {
         let pdf = PathBuf::from(first_document(&manager, &root, token).await.path);
         let folder = pdf.parent().unwrap().to_owned();
         // In a shared temporary folder, for its owner alone.
+        use std::os::unix::fs::PermissionsExt;
         let mode = fs::metadata(&folder).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
         manager
@@ -1450,6 +1458,7 @@ mod tests {
             .unwrap();
         assert!(!folder.exists());
     }
+    #[cfg(unix)]
     #[tokio::test]
     async fn edits_follow_one_another_and_a_new_main_file_stops_the_session() {
         let (tmp, root, path_env) = setup();
@@ -1496,6 +1505,7 @@ mod tests {
         assert!(status.error.unwrap().contains("main file changed"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn unexpected_exit_retains_output_and_stops_engine_group() {
         let (tmp, root, path_env) = setup();
@@ -1534,6 +1544,7 @@ mod tests {
         })
         .await;
     }
+    #[cfg(unix)]
     #[tokio::test]
     async fn abandoned_session_lease_expires_without_polling() {
         let (_tmp, root, path_env) = setup();
@@ -1552,6 +1563,7 @@ mod tests {
         assert!(!status.running);
         assert!(status.error.unwrap().contains("expired"));
     }
+    #[cfg(unix)]
     #[tokio::test]
     async fn backtracked_tex_log_excludes_historical_process_stderr() {
         let (_tmp, root, path_env) = setup();
@@ -1575,6 +1587,7 @@ mod tests {
         session.stop(Some("TeXpresso exited".into()));
         assert!(session.status().log.contains(diagnostic));
     }
+    #[cfg(unix)]
     #[tokio::test]
     async fn replacement_rejects_queued_stale_edits_cleanup_and_lease_renewal() {
         let (_tmp, root, path_env) = setup();
@@ -1611,7 +1624,7 @@ mod tests {
         assert_ne!(old, current);
         assert_eq!(stale_edit.await.unwrap().unwrap_err().status, 409);
         let session = manager
-            .owned(&fs::canonicalize(&root).unwrap(), &current)
+            .owned(&dunce::canonicalize(&root).unwrap(), &current)
             .unwrap();
         let before = Instant::now() - Duration::from_secs(60);
         session.state.lock().unwrap().last_used = before;
@@ -1649,7 +1662,8 @@ mod tests {
         );
         assert!(session.state.lock().unwrap().last_used > before);
         assert_eq!(
-            session.files.lock().unwrap().texts[&fs::canonicalize(root.join("main.tex")).unwrap()]
+            session.files.lock().unwrap().texts
+                [&dunce::canonicalize(root.join("main.tex")).unwrap()]
                 .string(),
             "owner B"
         );
@@ -1770,6 +1784,7 @@ mod tests {
     /// A stub that speaks as a build with Underleaf's patch does: it says so first, writes
     /// "the document", answers each numbered edit with page 1 and that the view shows it,
     /// and a request for a finishing pass with a new document.
+    #[cfg(unix)]
     fn setup_live() -> (tempfile::TempDir, PathBuf, String) {
         let (tmp, root, path_env) = setup();
         let stub = tmp.path().join("bin/texpresso");
@@ -1788,6 +1803,7 @@ mod tests {
         )).unwrap();
         (tmp, root, path_env)
     }
+    #[cfg(unix)]
     fn main_buffer(text: &str) -> Vec<FileBuffer> {
         vec![FileBuffer {
             path: "main.tex".into(),
@@ -1795,6 +1811,7 @@ mod tests {
         }]
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_keystroke_goes_as_bytes_at_once_and_one_that_does_not_fit_is_refused() {
         let (tmp, root, path_env) = setup_live();
@@ -1811,7 +1828,7 @@ mod tests {
             .await
             .unwrap();
         let token = started.session.as_deref().unwrap();
-        let path = fs::canonicalize(root.join("main.tex")).unwrap();
+        let path = dunce::canonicalize(root.join("main.tex")).unwrap();
         // Four units in: after a, é and the pair, seven bytes in.
         assert_eq!(manager.edit(token, "main.tex", 4, 0, "X").unwrap(), 1);
         assert_eq!(manager.edit(token, "main.tex", 1, 3, "").unwrap(), 2);
@@ -1884,6 +1901,7 @@ mod tests {
         assert_eq!(manager.edit(token, "main.tex", 0, 0, "x").unwrap(), 0);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn waiting_hands_over_the_latest_of_each_page_and_ends_with_the_session() {
         let (_tmp, root, path_env) = setup_live();
@@ -1978,6 +1996,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_build_that_only_writes_the_document_is_sent_nothing_it_does_not_know() {
         let (tmp, root, path_env) = setup();
