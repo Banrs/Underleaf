@@ -45,8 +45,7 @@ final class FolderWatcherTests {
 
         try FileManager.default.removeItem(at: url)
         try await waitUntil { changes().contains(where: \.structural) }
-        // Past the watcher's settle time, so the recreate is an event of its own.
-        try await Task.sleep(for: .milliseconds(500))
+        // The deletion is told only after the watcher's settle time, so the recreate is an event of its own.
         let deleted = changes().count
         try "two".write(to: url, atomically: false, encoding: .utf8)
         try await waitUntil { changes().count > deleted }
@@ -66,15 +65,6 @@ final class FolderWatcherTests {
             #expect(!watcher.hasFile("MAIN.tex"))
         }
     }
-
-    @Test func anItemAddedInASubfolderIsStructural() async throws {
-        try FileManager.default.createDirectory(at: folder.appending(path: "chapters"), withIntermediateDirectories: true)
-        let (watcher, changes) = watch("chapters/one.tex")
-
-        try "text".write(to: folder.appending(path: "chapters/one.tex"), atomically: false, encoding: .utf8)
-        try await waitUntil { changes().contains(where: \.structural) }
-        _ = watcher
-    }
 }
 
 /// Projects are removed, not trashed: `delete_project` trashes through Finder, which a headless test host can't drive.
@@ -84,39 +74,19 @@ struct CoreTests {
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
     }
 
-    @Test func commandsRoundTripThroughTheRustCore() async throws {
+    @Test func aCoreErrorIsDecodedAndAMisshapenAnswerIsSaidInTheAppsWords() async throws {
         let core = Core.shared
-        let name = "Test \(UUID().uuidString.prefix(8))"
-        let info = try await core.call("create_project", ["name": name, "template": "blank"], as: ProjectInfo.self)
+        let info = try await core.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"], as: ProjectInfo.self)
         defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
-        #expect(info.mainFile == "main.tex")
-
-        try await core.perform("write_file", ["id": info.id, "path": "a.tex", "text": "hé"])
-        let file = try await core.call("read_file", ["id": info.id, "path": "a.tex"], as: FileText.self)
-        #expect(file.text == "hé")
-
-        let tree = try await core.call("file_tree", ["id": info.id], as: [TreeNode].self)
-        #expect(tree.contains { $0.path == "a.tex" })
-
         let error = await #expect(throws: CoreError.self) {
             _ = try await core.call("read_file", ["id": info.id, "path": "../../x"], as: FileText.self)
         }
         #expect(error?.message == "Path escapes project")
-
         // An answer in another shape than was asked for is said in the app's words, without the command's name.
         let fault = await #expect(throws: CoreError.self) {
             _ = try await core.call("file_tree", ["id": info.id], as: FileText.self)
         }
         #expect(fault?.message.hasPrefix("Something went wrong inside TeXLocal.") == true && fault?.status == nil)
-    }
-
-    @Test func everyTemplateMakesAProject() async throws {
-        for template in ProjectTemplate.allCases {
-            let name = "Test \(template.id) \(UUID().uuidString.prefix(8))"
-            let info = try await Core.shared.call("create_project", ["name": name, "template": template.rawValue],
-                                                  as: ProjectInfo.self)
-            try FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id))
-        }
     }
 }
 

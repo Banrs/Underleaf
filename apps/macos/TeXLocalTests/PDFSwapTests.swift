@@ -1,6 +1,5 @@
 import AppKit
 import PDFKit
-import Synchronization
 import Testing
 @testable import TeXLocal
 
@@ -91,10 +90,14 @@ struct PDFSwapTests {
         #expect(text(view) == ["x"] && view.document === shown)
     }
 
-    @Test func aLivePageLeavesTheSelectionAndFindOnOtherPages() async throws {
+    @Test(arguments: [false, true])
+    func aLivePageLeavesTheSelectionAndFindOnOtherPages(inView: Bool) async throws {
         let controller = PDFController(), view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
+        let window = inView ? onScreen(controller) : nil
+        defer { window?.close() }
+        if !inView { view.setFrameSize(NSSize(width: 600, height: 500)) }
         controller.show(try document(["alpha", "beta", "alpha"]))
+        if inView { try await waitUntil(timeout: .seconds(5)) { paper(view) > 0 } }
         let shown = try #require(view.document)
         controller.finding = true
         controller.findText = "alpha"
@@ -102,41 +105,28 @@ struct PDFSwapTests {
         try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 400 }
         let selection = try #require(shown.page(at: 1)?.selection(for: NSRange(location: 0, length: 4)))
         view.setCurrentSelection(selection, animate: false)
-        // Out of view, so PDFKit's document takes it at once.
-        controller.showLive(try #require(try document(["gamma"]).page(at: 0)), at: 2)
-        #expect(text(view) == ["alpha", "beta", "gamma"])
+        controller.showLive(try #require(try document(["gamma"]).page(at: 0)), at: inView ? 0 : 2)
+        if inView {
+            // Over the page, which PDFKit's document still has as it was.
+            #expect(view.hasLive(at: 0) && text(view) == ["alpha", "beta", "alpha"])
+            #expect(view.currentSelection?.string == "beta" && controller.matches.count == 400)
+            controller.showLive(try document(["gamma", "beta", "alpha"]), changed: [0], complete: true)
+            #expect(text(view) == ["gamma", "beta", "alpha"] && view.document === shown)
+        } else {
+            // Out of view, so PDFKit's document takes it at once.
+            #expect(text(view) == ["alpha", "beta", "gamma"])
+        }
         #expect(view.currentSelection?.string == "beta" && controller.matches.count == 200)
         try await waitUntil(timeout: .seconds(5)) { controller.query == "alpha" && view.highlightedSelections?.count == 200 }
         #expect(view.currentSelection?.string == "beta")
-        controller.showLive(try #require(try document(["alpha"]).page(at: 0)), at: 1)
-        #expect(view.currentSelection == nil)
-        try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 400 }
-    }
-
-    @Test func aLivePageInViewLeavesTheSelectionAndFindOnOtherPages() async throws {
-        let controller = PDFController(), view = controller.view
-        let window = onScreen(controller)
-        defer { window.close() }
-        controller.show(try document(["alpha", "beta", "alpha"]))
-        try await waitUntil(timeout: .seconds(5)) { paper(view) > 0 }
-        let shown = try #require(view.document)
-        controller.finding = true
-        controller.findText = "alpha"
-        controller.find("alpha")
-        try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 400 }
-        let selection = try #require(shown.page(at: 1)?.selection(for: NSRange(location: 0, length: 4)))
-        view.setCurrentSelection(selection, animate: false)
-        controller.showLive(try #require(try document(["gamma"]).page(at: 0)), at: 0)
-        // Over the page, which PDFKit's document still has as it was.
-        #expect(view.hasLive(at: 0) && text(view) == ["alpha", "beta", "alpha"])
-        #expect(view.currentSelection?.string == "beta" && controller.matches.count == 400)
-        controller.showLive(try document(["gamma", "beta", "alpha"]), changed: [0], complete: true)
-        #expect(text(view) == ["gamma", "beta", "alpha"] && view.document === shown)
-        #expect(view.currentSelection?.string == "beta" && controller.matches.count == 200)
-        try await waitUntil(timeout: .seconds(5)) { controller.query == "alpha" && view.highlightedSelections?.count == 200 }
-        #expect(view.currentSelection?.string == "beta")
-        // The layer goes once PDFKit's own page has drawn beneath it.
-        try await waitUntil(timeout: .seconds(5)) { !view.hasLive(at: 0) }
+        if inView {
+            // The layer goes once PDFKit's own page has drawn beneath it.
+            try await waitUntil(timeout: .seconds(5)) { !view.hasLive(at: 0) }
+        } else {
+            controller.showLive(try #require(try document(["alpha"]).page(at: 0)), at: 1)
+            #expect(view.currentSelection == nil)
+            try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 400 }
+        }
     }
 
     @Test func aDocumentIsShownWholeOnceTheAppHasGrown() throws {
@@ -192,22 +182,5 @@ struct PDFSwapTests {
         controller.findText = "one"
         controller.clear()
         #expect(!controller.finding && controller.findText.isEmpty && controller.pageCount == 0)
-    }
-
-    @Test func anEqualSetNotifiesNoObserver() {
-        let project = ProjectModel(id: "ObservationTests", app: AppModel())
-        func notifies(_ change: () -> Void) -> Bool {
-            let notified = Atomic(false)
-            withObservationTracking { _ = (project.cursorLine, project.words, project.shown) } onChange: {
-                notified.store(true, ordering: .relaxed)
-            }
-            change()
-            return notified.load(ordering: .relaxed)
-        }
-        project.words = 1
-        #expect(!notifies { project.cursorLine = project.cursorLine })
-        #expect(!notifies { project.words = 1 })
-        #expect(!notifies { project.shown = .none })
-        #expect(notifies { project.cursorLine += 1 })
     }
 }

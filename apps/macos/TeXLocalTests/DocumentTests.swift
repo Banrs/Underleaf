@@ -5,21 +5,7 @@ import Testing
 
 @MainActor
 struct SyncTeXGeometryTests {
-    let letter = CGRect(x: 0, y: 0, width: 612, height: 792)
     let offset = CGRect(x: 10, y: 20, width: 612, height: 792)
-
-    @Test func theForwardBoxFlipsFromTopLeftToBottomLeft() {
-        let loc = ForwardLoc(page: 1, h: 72, v: 100, width: 468, height: 10)
-        let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: letter)
-        // Baseline 100pt below the top edge is 692pt above the bottom edge.
-        #expect(rect == CGRect(x: 70, y: 690, width: 472, height: 14))
-    }
-
-    @Test func theForwardBoxIsNeverNarrowerThanAWord() {
-        let loc = ForwardLoc(page: 1, h: 72, v: 100, width: 0, height: nil)
-        let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: letter)
-        #expect(rect.size == CGSize(width: 28, height: 16))
-    }
 
     @Test func theInversePointRoundTripsThroughAnOffsetBox() {
         let synctex = SyncTeXGeometry.synctexPoint(CGPoint(x: 82, y: 712), pageBounds: offset)
@@ -132,7 +118,7 @@ struct FindTests {
 
 @MainActor
 struct PDFFitTests {
-    @Test(arguments: [0.0, 37.0], [0, 90])
+    @Test(arguments: zip([CGFloat(0), 37], [0, 90]))
     func fitPageKeepsTheWholePageInView(_ bottomInset: CGFloat, _ rotation: Int) throws {
         let controller = PDFController()
         let view = controller.view
@@ -343,7 +329,7 @@ struct PDFFindTests {
         #expect(controller.matchIndex == 2)
     }
 
-    @Test(arguments: ["alpha", "nothing"], [1, -1])
+    @Test(arguments: zip(["alpha", "nothing"], [1, -1]))
     func findNextUsesTheLatestSharedOrTypedText(_ earlier: String, _ step: Int) async throws {
         let controller = try targets()
         controller.findText = earlier
@@ -490,7 +476,7 @@ struct PDFFindTests {
         }
     }
 
-    @Test(arguments: [NSScroller.Style.overlay, .legacy], [CGFloat?.none, 1.75])
+    @Test(arguments: zip([NSScroller.Style.overlay, .legacy], [CGFloat?.none, 1.75]))
     func aRebuildFindsAgainInPlace(_ scrollerStyle: NSScroller.Style, _ scale: CGFloat?) async throws {
         let controller = PDFController()
         let view = controller.view

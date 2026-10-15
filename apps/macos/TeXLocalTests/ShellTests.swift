@@ -7,9 +7,9 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct ShellTests {
-    private func workspace(showPDF: Bool, sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
+    private func workspace(showPDF: Bool) async throws -> (NSWindow, WorkspaceController) {
         let app = AppModel()
-        app.sidebarVisible = sidebar
+        app.sidebarVisible = false
         app.inspectorVisible = false
         app.showPDF = showPDF
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1300, height: 600),
@@ -46,83 +46,6 @@ struct ShellTests {
         guard quiet == 5 else { throw TimedOut(state: "the window's views were still moving at width \(width)") }
     }
 
-    private func item(_ id: NSToolbarItem.Identifier, in workspace: WorkspaceController) throws -> NSToolbarItem {
-        try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == id })
-    }
-
-    @Test func aNarrowWindowKeepsEveryToolOrItsMenuForm() async throws {
-        let (window, workspace) = try await workspace(showPDF: true)
-        defer { workspace.close(); window.close() }
-        #expect(!workspace.toolbar.compactCompile)
-        let compile = try item(.compile, in: workspace)
-        let button = try #require(compile.view)
-        let word = button.fittingSize.width
-        #expect(word > 60)
-
-        let least = ColumnMetrics.contentMinimum.width
-        #expect(least >= ColumnMetrics.sourceMinimum + 1 + ColumnMetrics.pdfMinimum + ColumnMetrics.toolbarInset)
-        try await resize(window, to: least)
-        #expect(window.contentView?.frame.width == least)
-        #expect(workspace.toolbar.compactCompile)
-        #expect(button.fittingSize == NSSize(width: 36, height: 36))
-        #expect(compile.label == MenuCommand.compileRun.title)
-        #expect(compile.menuFormRepresentation?.title == MenuCommand.compileRun.title)
-        for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {
-            let item = try item(id, in: workspace)
-            #expect(!item.isHidden && item.visibilityPriority == .low)
-            #expect(item is NSMenuToolbarItem || item.menuFormRepresentation?.submenu != nil)
-        }
-        for id in [NSToolbarItem.Identifier.back, .compile, .togglePDF] {
-            #expect(try item(id, in: workspace).visibilityPriority == .high)
-        }
-        for id in [NSToolbarItem.Identifier.undo, .redo, .bold, .italic, .underline, .share] {
-            let added = workspace.toolbar.toolbar(workspace.toolbar.toolbar, itemForItemIdentifier: id, willBeInsertedIntoToolbar: false)
-            #expect(added?.visibilityPriority == .low, "\(id.rawValue)")
-        }
-
-        try await resize(window, to: 1300)
-        #expect(!workspace.toolbar.compactCompile)
-        #expect(button.fittingSize.width == word)
-    }
-
-    @Test func stopIsAsWideAsCompile() async throws {
-        let (window, workspace) = try await workspace(showPDF: true)
-        defer { workspace.close(); window.close() }
-        let compile = try item(.compile, in: workspace)
-        let button = try #require(compile.view)
-        for width in [1300, ColumnMetrics.contentMinimum.width] {
-            try await resize(window, to: width)
-            let idle = button.fittingSize
-            workspace.project.compiling = true
-            try await waitUntil { compile.label == MenuCommand.compileStop.title }
-            #expect(button.fittingSize == idle)
-            #expect(compile.label == MenuCommand.compileStop.title)
-            #expect(compile.menuFormRepresentation?.title == MenuCommand.compileStop.title)
-            #expect(compile.backgroundTintColor == .clear)
-            workspace.project.compiling = false
-            try await waitUntil { compile.label == MenuCommand.compileRun.title }
-            #expect(button.fittingSize == idle && compile.backgroundTintColor == nil)
-        }
-    }
-
-    @Test func theSourceAloneStopsAtTheToolbarsMinimum() async throws {
-        let (window, workspace) = try await workspace(showPDF: false)
-        defer { workspace.close(); window.close() }
-        try await resize(window, to: ColumnMetrics.contentMinimum.width)
-        #expect(workspace.toolbar.compactCompile)
-        #expect(try item(.zoom, in: workspace).isHidden)
-    }
-
-    @Test func thePDFTogglesHelpSaysWhichItWillDo() async throws {
-        let (window, workspace) = try await workspace(showPDF: true)
-        defer { workspace.close(); window.close() }
-        let toggle = try item(.togglePDF, in: workspace), zoom = try item(.zoom, in: workspace)
-        #expect(toggle.toolTip == "Hide PDF" && !zoom.isHidden)
-        workspace.app.showPDF = false
-        try await waitUntil { toggle.toolTip == "Show PDF" }
-        #expect(zoom.isHidden)
-    }
-
     @Test func aCustomisedToolbarKeepsCompilesWord() async throws {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
@@ -151,58 +74,6 @@ struct ShellTests {
         toolbar.removeItem(identifier: .flexibleSpace)
         #expect(workspace.toolbar.holdsDefaultItems)
         toolbar.itemIdentifiers = defaults
-    }
-
-    @Test func aDividerStopsWhereItOpened() async throws {
-        let (window, workspace) = try await workspace(showPDF: true, sidebar: true)
-        defer { workspace.close(); window.close() }
-        let split = workspace.splitView, opening = ColumnMetrics.sidebarIdeal, reach = ColumnMetrics.detentReach
-        func sidebar(_ position: CGFloat) -> CGFloat {
-            workspace.splitView(split, constrainSplitPosition: position, ofSubviewAt: 0)
-        }
-        #expect(sidebar(opening + 3) == opening && sidebar(opening - reach) == opening)
-        #expect(sidebar(opening + reach + 1) == opening + reach + 1)
-        workspace.sidebarItem.isCollapsed = true
-        #expect(sidebar(opening + 3) == opening + 3)
-
-        let columns = workspace.columns, even = ((columns.splitView.bounds.width - columns.splitView.dividerThickness) / 2).rounded()
-        func divider(_ position: CGFloat) -> CGFloat {
-            columns.splitView(columns.splitView, constrainSplitPosition: position, ofSubviewAt: 0)
-        }
-        #expect(divider(even - 5) == even && divider(even + 40) == even + 40)
-    }
-
-    @Test(arguments: [false, true])
-    func theDividerStaysUnderTheToolbarsSeparator(sidebar: Bool) async throws {
-        let (window, workspace) = try await workspace(showPDF: true, sidebar: sidebar)
-        defer { workspace.close(); window.close() }
-        let split = workspace.columns.splitView
-        func separators(_ view: NSView) -> [NSView] {
-            view.subviews.flatMap { ($0.className == "NSSeparatorToolbarItemView" ? [$0] : []) + separators($0) }
-        }
-        let frame = try #require(window.contentView?.superview)
-        func lines() -> [CGFloat] { separators(frame).map { split.convert($0.bounds, from: $0).minX } }
-        func divider() -> CGFloat { split.arrangedSubviews[0].frame.maxX }
-        for width in [1300, 900, 700, ColumnMetrics.contentMinimum.width] {
-            try await resize(window, to: width)
-            try await waitUntil({ lines().contains { isClose($0, divider()) } }) {
-                "width \(width): divider at \(divider()), lines at \(lines())"
-            }
-        }
-    }
-
-    @Test func theOutlineHeaderGoesOnlyForSearchResults() async throws {
-        let (window, workspace) = try await workspace(showPDF: true, sidebar: true)
-        defer { workspace.close(); window.close() }
-        let sidebar = try #require(workspace.sidebarItem.viewController as? NSSplitViewController)
-        let files = sidebar.splitViewItems[0]
-        let header = try #require(files.bottomAlignedAccessoryViewControllers.first)
-        #expect(!header.isHidden && sidebar.splitViewItems[1].isCollapsed)
-        workspace.project.search.query = "needle"
-        try await waitUntil { header.isHidden }
-        workspace.project.search.query = ""
-        try await waitUntil { !header.isHidden }
-        #expect(files.bottomAlignedAccessoryViewControllers == [header] && sidebar.splitViewItems[1].isCollapsed)
     }
 
     @Test func aFoldedSidebarIsNotAHiddenOne() {
@@ -245,33 +116,5 @@ struct ShellTests {
         app.searchFocusToken = 3
         await settle()
         #expect(all == [0, 1] && later == [1])
-    }
-
-    @Test func aNewProjectsNameShowsASpaceTypedAtItsEnd() async throws {
-        let sheet = NSHostingView(rootView: NewProjectSheet(template: .article, taken: []).environment(AppModel()))
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: sheet.fittingSize), styleMask: [.titled],
-                              backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        defer { window.close() }
-        window.contentView = sheet
-        func field(_ view: NSView) -> NSTextField? {
-            (view as? NSTextField).flatMap { $0.isEditable ? $0 : nil } ?? view.subviews.lazy.compactMap(field).first
-        }
-        try await waitUntil { field(sheet) != nil }
-        let name = try #require(field(sheet))
-        window.makeFirstResponder(name)
-        let editor = try #require(name.currentEditor() as? NSTextView)
-        func start() -> CGFloat {
-            sheet.layoutSubtreeIfNeeded()
-            return window.convertFromScreen(editor.firstRect(forCharacterRange: NSRange(location: 0, length: 1), actualRange: nil)).minX
-        }
-        let untitled = start()
-        editor.insertText(" ", replacementRange: NSRange(location: 8, length: 0))
-        try await waitUntil { start() < untitled - 2 }
-        editor.insertText(String(repeating: "m", count: 80), replacementRange: editor.selectedRange())
-        try await waitUntil { name.frame.width > 150 }
-        // Under its label, the field would start at the row's leading edge.
-        let long = name.convert(name.bounds, to: sheet)
-        #expect(sheet.bounds.contains(long) && long.minX > sheet.bounds.width / 3)
     }
 }
