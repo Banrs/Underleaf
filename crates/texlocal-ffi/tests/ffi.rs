@@ -1,14 +1,17 @@
 // Round trips through the C ABI exactly as a native host drives it.
 
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use texlocal_ffi::{
-    TlHandle, TlSource, tl_call, tl_close, tl_free, tl_open, tl_source_call, tl_source_edit,
-    tl_source_free, tl_source_free_runs, tl_source_highlights, tl_source_line_at,
-    tl_source_line_count, tl_source_line_start, tl_source_new,
+    TlHandle, TlSource, tl_call, tl_call_async, tl_close, tl_free, tl_open, tl_session_source,
+    tl_set_listener, tl_source_call, tl_source_edit, tl_source_free, tl_source_free_runs,
+    tl_source_highlights, tl_source_line_at, tl_source_line_count, tl_source_line_start,
+    tl_source_new, tl_source_reload,
 };
 
 /// The JSON a call answered, read and handed back to the library to free; None
@@ -420,4 +423,79 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
         assert_eq!(tl_source_line_count(source), 2);
         tl_source_free(source);
     }
+}
+
+/// What a C host's callback collects: each JSON text it was handed.
+extern "C" fn collect(ctx: *mut c_void, json: *const c_char) {
+    let seen = unsafe { &*(ctx as *const Mutex<Vec<Value>>) };
+    let json = unsafe { CStr::from_ptr(json) }.to_str().unwrap();
+    seen.lock()
+        .unwrap()
+        .push(serde_json::from_str(json).unwrap());
+}
+
+fn until(seen: &Mutex<Vec<Value>>, found: impl Fn(&Value) -> bool) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(value) = seen.lock().unwrap().iter().find(|v| found(v)) {
+            return value.clone();
+        }
+        assert!(Instant::now() < deadline, "{:?}", seen.lock().unwrap());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() {
+    let dir = tempfile::tempdir().unwrap();
+    let handle = open_with_project(dir.path());
+    let events: Box<Mutex<Vec<Value>>> = Box::default();
+    let ctx = &*events as *const Mutex<Vec<Value>> as *mut c_void;
+    unsafe { tl_set_listener(handle, Some(collect), ctx) };
+    let opened = call(handle, "session_open", Some(json!({ "id": "P" })));
+    let session = opened["ok"]["session"].as_u64().unwrap();
+    let args = json!({ "session": session, "path": "main.tex" });
+    let text = call(handle, "session_open_document", Some(args))["ok"]["text"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let path = CString::new("main.tex").unwrap();
+    let source = unsafe { tl_session_source(handle, session, path.as_ptr()) };
+    assert!(!source.is_null());
+    let missing = CString::new("other.tex").unwrap();
+    assert!(unsafe { tl_session_source(handle, session, missing.as_ptr()) }.is_null());
+    let added = "% note\n";
+    unsafe { tl_source_edit(source, 0, 0, added.as_ptr(), added.len()) };
+    // The highlighting reads the session's text.
+    let mut count = 0;
+    let runs = unsafe { tl_source_highlights(source, 0, 6, &mut count) };
+    assert_eq!(count, 3);
+    unsafe { tl_source_free_runs(runs, count) };
+    let saved = call(handle, "session_save", Some(json!({ "session": session })));
+    assert_eq!(saved["ok"]["saved"], true);
+    let disk = std::fs::read_to_string(dir.path().join("P/main.tex")).unwrap();
+    assert_eq!(disk, format!("{added}{text}"));
+    until(&events, |e| e["type"] == "saved" && e["session"] == session);
+    // A reload is the disk's text, not an edit to save.
+    unsafe { tl_source_reload(source, b"x".as_ptr(), 1) };
+    let state = call(handle, "session_state", Some(json!({ "session": session })));
+    assert_eq!(state["ok"]["documents"][0]["dirty"], false);
+    unsafe { tl_source_free(source) };
+    // Without blocking: the answer comes to the callback.
+    let answers: Box<Mutex<Vec<Value>>> = Box::default();
+    let answered = &*answers as *const Mutex<Vec<Value>> as *mut c_void;
+    let command = CString::new("session_state").unwrap();
+    let args = CString::new(json!({ "session": session }).to_string()).unwrap();
+    unsafe {
+        tl_call_async(
+            handle,
+            command.as_ptr(),
+            args.as_ptr(),
+            Some(collect),
+            answered,
+        )
+    };
+    let answer = until(&answers, |_| true);
+    assert!(answer["ok"]["documents"].is_array());
+    unsafe { tl_close(handle) };
 }
