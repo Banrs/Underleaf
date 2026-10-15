@@ -14,13 +14,21 @@ final class ProjectModel {
     private(set) var initialLoadComplete = false
     var openPath: String?
     var outline: [OutlineItem] = []
+    private(set) var outlineTree: [OutlineNode] = []
+    /// `outline` as `outline_current` takes it.
+    @ObservationIgnored private var headings: [[String: any Sendable]] = []
     var documentClass: DocumentClass?
     @ObservationIgnored private var classFile: String?
     var words: Int?
     var cursorLine = 1
     var cursorColumn = 0
     @ObservationIgnored var topLine = 1
-    private(set) var topHeading: Int?
+    @ObservationIgnored private(set) var topHeading: Int?
+    /// The outline's row for where the writer is: the caret's heading, or the top line's once a scroll passes a heading.
+    private(set) var currentHeading: Int?
+    @ObservationIgnored private var currentLine = 1
+    @ObservationIgnored private var caretMoved = false
+    @ObservationIgnored private(set) var findingHeadings: Task<Void, Never>?
 
     @ObservationIgnored private(set) var session: UInt64?
     @ObservationIgnored private var root: URL?
@@ -173,13 +181,15 @@ final class ProjectModel {
             guard let self else { return }
             cursorLine = line
             cursorColumn = column
+            (currentLine, caretMoved) = (line, true)
+            findHeadings()
             liveCaret()
         }
         editor.textView.composing = { [weak self] composing in self?.composing(composing) }
         editor.onScroll = { [weak self] line in
             guard let self else { return }
             topLine = line
-            topHeading = Outline.current(outline, file: openPath, line: line)
+            findHeadings()
         }
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
         editor.textView.issueClicked = { [weak self] line in
@@ -465,7 +475,10 @@ final class ProjectModel {
         analysis?.cancel()
         guard isLaTeX, let path = openPath else {
             outline = []
+            outlineTree = []
+            headings = []
             words = nil
+            findHeadings()
             return
         }
         analysis = Task {
@@ -476,7 +489,10 @@ final class ProjectModel {
                 item.id = index
                 return item
             }
+            outlineTree = doc.tree
+            headings = doc.outline.map(\.heading)
             words = doc.words
+            findHeadings()
             // The class changes with the main file only.
             guard let main = settings?.mainFile, main == path || main != classFile,
                   let text = main == path ? editor.document?.text
@@ -485,6 +501,30 @@ final class ProjectModel {
             documentClass = DocumentClass(in: text)
             classFile = main
         }
+    }
+
+    /// A scroll makes the top line's heading the current one only as it passes a heading, and a caret's move wins over a
+    /// scroll at the same time.
+    private func findHeadings() {
+        let top = topLine
+        findingHeadings?.cancel()
+        findingHeadings = Task {
+            let atTop = await heading(at: top)
+            guard !Task.isCancelled else { return }
+            if atTop != topHeading {
+                topHeading = atTop
+                if !caretMoved { currentLine = top }
+            }
+            caretMoved = false
+            var current = atTop
+            if currentLine != top { current = await heading(at: currentLine) }
+            if !Task.isCancelled, current != currentHeading { currentHeading = current }
+        }
+    }
+
+    private func heading(at line: Int) async -> Int? {
+        guard !headings.isEmpty else { return nil }
+        return try? await core.answer("outline_current", ["outline": headings, "file": openPath, "line": line], as: Int.self)
     }
 
     private func readText(_ path: String) async throws -> String {

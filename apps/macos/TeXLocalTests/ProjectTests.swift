@@ -323,14 +323,17 @@ final class ProjectFlowTests {
     @Test func theOutlineFollowsTheTopHeadingOnly() async throws {
         let project = try await opened("\\section{A}\n1\n2\n\\section{B}\n3").project
         try await waitUntil { project.outline.count == 2 }
-        let scrolled = project.editor.onScroll
-        scrolled(2)
+        let scrolled = { (line: Int) in
+            project.editor.onScroll(line)
+            await project.findingHeadings?.value
+        }
+        await scrolled(2)
         let told = OSAllocatedUnfairLock(initialState: false)
-        withObservationTracking { _ = project.topHeading } onChange: { told.withLock { $0 = true } }
-        scrolled(3)
+        withObservationTracking { _ = project.currentHeading } onChange: { told.withLock { $0 = true } }
+        await scrolled(3)
         #expect(!told.withLock { $0 } && project.topLine == 3)
-        scrolled(4)
-        #expect(told.withLock { $0 } && project.topHeading == project.outline[1].id)
+        await scrolled(4)
+        #expect(told.withLock { $0 } && project.currentHeading == project.outline[1].id && project.topHeading == project.outline[1].id)
         await app.close()
     }
 

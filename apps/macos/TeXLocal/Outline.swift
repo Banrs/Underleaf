@@ -1,13 +1,28 @@
-nonisolated struct OutlineNode: Identifiable {
+/// A heading with what nests under it, as `analyze_project`'s `tree` has it; `foldKey` names its fold in the project's
+/// saved state.
+nonisolated struct OutlineNode: Identifiable, Decodable, Sendable {
     let item: OutlineItem
     let children: [OutlineNode]?
     let foldKey: String
 
     var id: Int { item.id }
     var descendants: [OutlineNode] { (children ?? []).flatMap { [$0] + $0.descendants } }
+
+    private enum CodingKeys: String, CodingKey {
+        case index, foldKey, children
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        var item = try OutlineItem(from: decoder)
+        item.id = try container.decode(Int.self, forKey: .index)
+        self.item = item
+        foldKey = try container.decode(String.self, forKey: .foldKey)
+        children = try container.decodeIfPresent([OutlineNode].self, forKey: .children)
+    }
 }
 
-nonisolated struct OutlineItem: Identifiable, Hashable, Decodable {
+nonisolated struct OutlineItem: Identifiable, Hashable, Decodable, Sendable {
     var id = 0
     let level: Int
     let title: String
@@ -23,35 +38,13 @@ nonisolated struct OutlineItem: Identifiable, Hashable, Decodable {
     var displayTitle: String { isUntitled ? "Untitled \(kind)" : title }
 
     var kind: String { HeadingLevel.atDepth(level)?.title ?? "Section" }
+
+    /// As `outline_current` takes it.
+    var heading: [String: any Sendable] { ["depth": level, "title": title, "line": line, "file": file] }
 }
 
-nonisolated struct Analysis: Decodable {
+nonisolated struct Analysis: Decodable, Sendable {
     let outline: [OutlineItem]
     let words: Int
-}
-
-enum Outline {
-    /// A subsection before any section sits flush rather than under a missing parent.
-    static func tree(_ outline: [OutlineItem]) -> [OutlineNode] {
-        var index = 0
-        var seen: [String: Int] = [:]
-        func nested(under level: Int) -> [OutlineNode] {
-            var nodes: [OutlineNode] = []
-            while index < outline.count, outline[index].level > level {
-                let item = outline[index]
-                index += 1
-                let key = "\(item.file)\t\(item.level):\(item.title)"
-                seen[key, default: 0] += 1
-                let kids = nested(under: item.level)
-                nodes.append(OutlineNode(item: item, children: kids.isEmpty ? nil : kids, foldKey: "\(key)#\(seen[key]!)"))
-            }
-            return nodes
-        }
-        return nested(under: -1)
-    }
-
-    /// Above its first there's none, since where the file is read in isn't known.
-    static func current(_ outline: [OutlineItem], file: String?, line: Int) -> Int? {
-        outline.lastIndex { $0.file == file && $0.line <= line }
-    }
+    let tree: [OutlineNode]
 }

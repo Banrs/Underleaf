@@ -335,14 +335,10 @@ extension View {
 /// Folded to its section header, the pane is held at the header's height (`WorkspaceController.foldOutline`).
 struct OutlineList: View {
     let project: ProjectModel
-    /// The caret's line when both change, as its `onChange` runs second.
-    @State private var line = 1
 
     var body: some View {
         // The rows only when the current heading changes, not at each line the caret moves to.
-        OutlineRows(project: project, current: Outline.current(project.outline, file: project.openPath, line: line))
-            .onChange(of: project.topHeading) { line = project.topLine }
-            .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
+        OutlineRows(project: project, current: project.currentHeading)
     }
 }
 
@@ -367,7 +363,7 @@ private struct OutlineRows: View {
         ScrollViewReader { proxy in
             List(selection: selection) {
                 Section(isExpanded: expanded) {
-                    TreeRows(nodes: Outline.tree(outline), children: \.children, isExpanded: { node in
+                    TreeRows(nodes: project.outlineTree, children: \.children, isExpanded: { node in
                         disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
                     }) { node in
                         HeadingRow(item: node.item).equatable().tag(node.id)
