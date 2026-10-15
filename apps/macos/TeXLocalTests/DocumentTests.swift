@@ -77,27 +77,20 @@ struct OutlineTests {
     }
 }
 
-/// Aa's levels: those the main file's class has, numbered and set as it sets them.
+/// Aa's levels: those the main file's class has, set as it sets them.
 @MainActor
 struct HeadingStylesTests {
-    private func styles(_ name: String?, size: Int = 10, chapters: Bool = false) -> HeadingStyles {
-        HeadingStyles(documentClass: name.map { DocumentClass(name: $0, pointSize: size) }, hasChapters: chapters)
+    private func styles(_ name: String?, size: Int = 10) -> HeadingStyles {
+        HeadingStyles(documentClass: name.map { DocumentClass(name: $0, pointSize: size) })
     }
 
-    private func markers(_ styles: HeadingStyles) -> [String?] {
-        styles.levels.map(styles.marker)
-    }
-
-    @Test func theClassHasItsLevelsAndNumbersThem() {
+    @Test func theClassHasItsLevels() {
         #expect(styles("article").levels.map(\.title) == ["Normal Text", "Part", "Section", "Subsection", "Subsubsection", "Paragraph"])
-        #expect(markers(styles("article")) == [nil, "I", "1", "1.1", "1.1.1", nil])
-        #expect(markers(styles("report")) == [nil, "I", "1", "1.1", "1.1.1", nil, nil])
-        #expect(markers(styles("IEEEtran")) == [nil, "I", "A", "1", "a"])
+        #expect(styles("report").levels == HeadingLevel.all)
         #expect(styles("IEEEtran").levels.map(\.title) == ["Normal Text", "Section", "Subsection", "Subsubsection", "Paragraph"])
         #expect(styles("letter").levels == [.normalText])
-        // A class it doesn't know has every level, numbered as a book's once there are chapters.
-        #expect(markers(styles("thesis", chapters: true)) == [nil, "I", "1", "1.1", "1.1.1", nil, nil])
-        #expect(markers(styles(nil)) == [nil, "I", nil, "1", "1.1", "1.1.1", nil])
+        // A class it doesn't know has every level.
+        #expect(styles("thesis").levels == HeadingLevel.all && styles(nil).levels == HeadingLevel.all)
     }
 
     /// LaTeX's sizes against the text's, at the class's size option.

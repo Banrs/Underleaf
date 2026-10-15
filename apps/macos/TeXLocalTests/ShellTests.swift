@@ -124,6 +124,20 @@ struct ShellTests {
         #expect(zoom.isHidden)
     }
 
+    /// Aa is a pull-down of the styles, Inline Math and the class's levels, each level in its font,
+    /// all off with no LaTeX file open.
+    @Test func formatIsAPullDownOfStylesAndLevels() async throws {
+        let (window, workspace) = try await workspace(showPDF: true)
+        defer { workspace.close(); window.close() }
+        let menu = try #require(try item(.format, in: workspace) as? NSMenuToolbarItem).menu
+        menu.delegate?.menuNeedsUpdate?(menu)
+        let items = menu.items.filter { !$0.isSeparatorItem }
+        #expect(items.map(\.title) == [MenuCommand.editBold, .editItalic, .editUnderline, .editMath].map(\.title) + HeadingLevel.all.map(\.title))
+        #expect(items.allSatisfy { !$0.isEnabled })
+        let fonts = items.suffix(HeadingLevel.all.count).compactMap { $0.attributedTitle?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont }
+        #expect(fonts.count == HeadingLevel.all.count && fonts[1].pointSize > fonts[0].pointSize)
+    }
+
     /// A divider dragged near where it opened stops there: the sidebar at its opening width, source
     /// and PDF at the split a double-click on their divider restores. Out of reach, it goes where
     /// it is dragged, and a hidden sidebar has nowhere to stop.

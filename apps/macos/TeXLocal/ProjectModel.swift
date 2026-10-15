@@ -217,9 +217,9 @@ final class ProjectModel {
 
     /// Only LaTeX has an outline, a word count and the LaTeX tools.
     var isLaTeX: Bool { openPath.map(isLaTeXFile) ?? false }
-    /// The levels the main file's class has, how it numbers and sets them.
+    /// The levels the main file's class has, and how it sets them.
     var headingStyles: HeadingStyles {
-        HeadingStyles(documentClass: documentClass, hasChapters: outline.contains { $0.level == 1 })
+        HeadingStyles(documentClass: documentClass)
     }
 
     var headingLevel: HeadingLevel {

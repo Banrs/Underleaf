@@ -37,7 +37,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private var pdf: PDFController { project.pdf }
     private weak var workspace: WorkspaceController?
     /// Aa's.
-    private lazy var format = FormatPopover(app: app, project: project)
+    private lazy var format = FormatMenu(app: app, project: project)
     /// What the items show; `watch` sets only what differs from it.
     private var applied: State?
     private var closed = false
@@ -58,7 +58,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func close() {
         closed = true
-        format.popover.close()
     }
 
     // ---------- items ----------
@@ -239,21 +238,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { items })
     }
 
-    /// Aa opens its popover (`FormatPopover`); the overflow menu has the same as a menu.
+    /// Aa's pull-down (`FormatMenu`), off outside LaTeX, as Math and Insert (`configure`).
     private func formatItem() -> NSToolbarItem {
+        let item = NSMenuToolbarItem(itemIdentifier: .format)
         // Notes' words, from its strings (27.2).
-        let item = button(.format, "Format", "textformat", #selector(showFormat(_:)), help: "Choose a style to apply to text")
-        let form = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
-        form.submenu = menu(Group { [app, project] in
-            ForEach([MenuCommand.editBold, .editItalic, .editUnderline], id: \.self) { command in
-                Button(command.title) { app.perform(command, on: project) }
-            }
-            Divider()
-            SectionLevelItems(project: project)
-        })
-        item.menuFormRepresentation = form
-        // Off outside LaTeX, as Math and Insert (`configure`).
-        item.autovalidates = false
+        item.label = "Format"
+        item.toolTip = "Choose a style to apply to text"
+        item.image = symbol("textformat", "Format")
+        item.menu = format.makeMenu()
+        item.showsIndicator = false
         return item
     }
 
@@ -349,11 +342,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     @objc private func back() { perform(.projectClose) }
-
-    /// A toolbar button's action comes from its item, as `insertTemplate`'s does (27.2).
-    @objc private func showFormat(_ item: NSToolbarItem) {
-        format.toggle(relativeTo: item)
-    }
 
     @objc private func bold() { perform(.editBold) }
 
