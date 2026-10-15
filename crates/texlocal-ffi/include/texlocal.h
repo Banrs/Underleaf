@@ -83,14 +83,28 @@ uint32_t tl_source_line_count(const TlSource *source);
 uint32_t *_Nullable tl_source_highlights(TlSource *source, uint32_t start, uint32_t length, size_t *_Nullable count);
 void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 
-/* "completions", "toggle_comment", "indent", "set_heading", "insert_block",
- * "insert_symbol", "math_at", "text_styles", "not_prose" or "text", with a
- * JSON object of arguments. Returns the result's JSON, or NULL for an unknown
- * command or arguments; free it with tl_free.
+/* A command of texlocal_syntax's SourceDocument::call (crates/texlocal-syntax
+ * src/call.rs), with a JSON object of arguments: "completions",
+ * "toggle_comment", "indent", "set_heading", "insert_block", "insert_symbol",
+ * "math_at", "text_styles", "not_prose", "text" and the rest it lists.
+ * Returns the result's JSON, or NULL for an unknown command or arguments;
+ * free it with tl_free.
  * "set_symbols" keeps the project's labels and citations, {"labels": [...],
  * "citations": [...]}, with the source, answering null: "completions" offers
  * them in \ref{ and \cite{ until they are set again. A new source has none. */
 char *_Nullable tl_source_call(const TlSource *source, const char *command, const char *args_json);
+
+/* A command of texlocal_syntax::call, which needs no source, on any thread:
+ * "themes", "theme_colors", "legible", "contrast", "menus",
+ * "document_class", "heading_styles", and maths as SVG:
+ * "math_svg" {"tex", "display", "size" (points, default 13), "color" ([r, g,
+ * b, a], 0-1, default black)} and "glyph_svg" {"command", "size" (19),
+ * "side" (24), "color"} answer {"svg", "width", "height", "baseline"} in
+ * points (baseline from the top) or {"error": why}; the SVG holds only
+ * <path> and <rect>. Returns the result's JSON, or NULL for an unknown
+ * command or arguments; free it with tl_free. tl_source_call answers these
+ * too. */
+char *_Nullable tl_syntax_call(const char *command, const char *args_json);
 
 void tl_source_free(TlSource *_Nullable source);
 

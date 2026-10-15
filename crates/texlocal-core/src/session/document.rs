@@ -14,6 +14,8 @@ struct Text {
     source: SourceDocument,
     /// Rises with each edit and reload: the session saves and previews by it.
     version: u64,
+    /// The scan last given to `source`, whose completions offer it.
+    symbols: Option<Arc<Symbols>>,
 }
 
 struct Cell {
@@ -39,6 +41,7 @@ impl Document {
             text: Mutex::new(Text {
                 source: SourceDocument::new(text),
                 version: 0,
+                symbols: None,
             }),
             tx,
             symbols,
@@ -64,6 +67,7 @@ impl Document {
     pub fn reload(&self, text: &str) {
         let mut held = lock(&self.0.text);
         held.source = SourceDocument::new(text);
+        held.symbols = None;
         held.version += 1;
         let _ = self.0.tx.send(Msg::Reloaded {
             doc: self.0.id,
@@ -73,7 +77,18 @@ impl Document {
 
     /// Runs `body` on the text; nothing else reads or edits it meanwhile.
     pub fn with<T>(&self, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
-        body(&mut lock(&self.0.text).source)
+        let symbols = self.symbols();
+        let mut held = lock(&self.0.text);
+        if !held
+            .symbols
+            .as_ref()
+            .is_some_and(|s| Arc::ptr_eq(s, &symbols))
+        {
+            let (labels, citations) = (symbols.labels.clone(), symbols.citations.clone());
+            held.source.set_symbols(labels, citations);
+            held.symbols = Some(symbols);
+        }
+        body(&mut held.source)
     }
 
     /// The project's labels and citations, which completions offer.

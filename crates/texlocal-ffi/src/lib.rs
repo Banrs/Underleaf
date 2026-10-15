@@ -19,13 +19,13 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 use texlocal_core::events::{Hub, Listener};
 use texlocal_core::service::{Service, arg, string_arg};
 use texlocal_core::session::{Document, Sessions};
 use texlocal_core::{CoreError, import, zipexport};
-use texlocal_syntax::{SourceDocument, TextRange};
+use texlocal_syntax::SourceDocument;
 
 pub struct TlHandle {
     runtime: tokio::runtime::Runtime,
@@ -56,8 +56,8 @@ impl Host {
                 zipexport::export_zip(&root, Path::new(s("dest")?))?;
                 Ok(Value::Null)
             }
-            // On quit, while a compile call may still be in flight — which rules
-            // out tl_close — stop the latexmk trees that would otherwise outlive
+            // On quit, while a compile call may still be in flight â€” which rules
+            // out tl_close â€” stop the latexmk trees that would otherwise outlive
             // the app.
             "kill_all" => {
                 service.kill_all();
@@ -248,7 +248,7 @@ pub unsafe extern "C" fn tl_call_async(
 }
 
 /// Sets the function the core's events go to, one JSON object at a time
-/// (`{"type": …, "session": …, …}`), in order, on a thread of the core's
+/// (`{"type": â€¦, "session": â€¦, â€¦}`), in order, on a thread of the core's
 /// own; null removes it. Returns once no call to the previous one is running.
 ///
 /// # Safety
@@ -327,36 +327,20 @@ pub unsafe extern "C" fn tl_session_source(
         })
 }
 
-/// A file's text as the editor has it (`texlocal_syntax::SourceDocument`),
-/// with the project's labels and citations, which its completions offer in
-/// `\ref{` and `\cite{`.
+/// A file's text as the editor has it (`texlocal_syntax::SourceDocument`):
+/// the host's own, or a session's document.
 pub struct TlSource(Source);
 
 enum Source {
-    /// The host's own: it sets the symbols when they change, rather than
-    /// sending them with every key's completions, a thesis's bibliography
-    /// being thousands of keys.
-    Own {
-        doc: SourceDocument,
-        labels: Vec<String>,
-        citations: Vec<String>,
-    },
-    /// A session's document, with the symbols the session scanned.
+    Own(Box<SourceDocument>),
     Session(Document),
 }
 
 impl TlSource {
-    fn with<T>(&mut self, body: impl FnOnce(&mut SourceDocument, &[String], &[String]) -> T) -> T {
+    fn with<T>(&mut self, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
         match &mut self.0 {
-            Source::Own {
-                doc,
-                labels,
-                citations,
-            } => body(doc, labels, citations),
-            Source::Session(document) => {
-                let symbols = document.symbols();
-                document.with(|doc| body(doc, &symbols.labels, &symbols.citations))
-            }
+            Source::Own(doc) => body(doc),
+            Source::Session(document) => document.with(body),
         }
     }
 }
@@ -377,11 +361,9 @@ unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
 /// `text` is null (empty) or `len` bytes of UTF-8.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSource {
-    Box::into_raw(Box::new(TlSource(Source::Own {
-        doc: SourceDocument::new(&unsafe { text_arg(text, len) }),
-        labels: Vec::new(),
-        citations: Vec::new(),
-    })))
+    Box::into_raw(Box::new(TlSource(Source::Own(Box::new(
+        SourceDocument::new(&unsafe { text_arg(text, len) }),
+    )))))
 }
 
 /// The editor replaced `length` units at `start` with `text`. Each call on
@@ -402,7 +384,7 @@ pub unsafe extern "C" fn tl_source_edit(
     let text = unsafe { text_arg(text, len) };
     unsafe {
         on_source(source, (), |source| match &mut source.0 {
-            Source::Own { doc, .. } => doc.edit(start, length, &text),
+            Source::Own(doc) => doc.edit(start, length, &text),
             Source::Session(document) => document.edit(start, length, &text),
         })
     }
@@ -418,7 +400,7 @@ pub unsafe extern "C" fn tl_source_reload(source: *mut TlSource, text: *const u8
     let text = unsafe { text_arg(text, len) };
     unsafe {
         on_source(source, (), |source| match &mut source.0 {
-            Source::Own { doc, .. } => *doc = SourceDocument::new(&text),
+            Source::Own(doc) => **doc = SourceDocument::new(&text),
             Source::Session(document) => document.reload(&text),
         })
     }
@@ -428,33 +410,21 @@ pub unsafe extern "C" fn tl_source_reload(source: *mut TlSource, text: *const u8
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_line_at(source: *const TlSource, offset: u32) -> u32 {
-    unsafe {
-        on_source(source, 0, |source| {
-            source.with(|doc, _, _| doc.line_at(offset))
-        })
-    }
+    unsafe { on_source(source, 0, |source| source.with(|doc| doc.line_at(offset))) }
 }
 
 /// # Safety
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_line_start(source: *const TlSource, line: u32) -> u32 {
-    unsafe {
-        on_source(source, 0, |source| {
-            source.with(|doc, _, _| doc.line_start(line))
-        })
-    }
+    unsafe { on_source(source, 0, |source| source.with(|doc| doc.line_start(line))) }
 }
 
 /// # Safety
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_line_count(source: *const TlSource) -> u32 {
-    unsafe {
-        on_source(source, 0, |source| {
-            source.with(|doc, _, _| doc.line_count())
-        })
-    }
+    unsafe { on_source(source, 0, |source| source.with(|doc| doc.line_count())) }
 }
 
 /// The highlighted runs of the lines a range touches, as start, length and
@@ -476,7 +446,7 @@ pub unsafe extern "C" fn tl_source_highlights(
     };
     let runs: Box<[u32]> = unsafe {
         on_source(source, Box::default(), |source| {
-            let runs = source.with(|doc, _, _| doc.highlights(start, length));
+            let runs = source.with(|doc| doc.highlights(start, length));
             let runs = runs.into_iter();
             runs.flat_map(|h| [h.start, h.length, h.kind as u32])
                 .collect()
@@ -496,28 +466,9 @@ pub unsafe extern "C" fn tl_source_free_runs(runs: *mut u32, count: usize) {
     }
 }
 
-/// The arguments the source's commands take, each what it needs.
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct SourceArgs {
-    caret: u32,
-    explicit: bool,
-    labels: Vec<String>,
-    citations: Vec<String>,
-    command: String,
-    id: String,
-    selection: TextRange,
-    selections: Vec<TextRange>,
-    more: bool,
-}
-
-/// The editing commands, as `texlocal_syntax::SourceDocument` has them:
-/// "completions", "toggle_comment", "indent", "set_heading", "insert_block",
-/// "insert_symbol", "math_at", "text_styles", "not_prose" (the
-/// `selection`'s) and "text"; and "set_symbols", whose `labels` and
-/// `citations` "completions" offers until they are set again (it answers
-/// null). Returns the result's JSON (free it with `tl_free`), or null for an
-/// unknown command or arguments.
+/// `texlocal_syntax::SourceDocument::call`'s commands, and
+/// `texlocal_syntax::call`'s. Returns the result's JSON (free it with
+/// `tl_free`), or null for an unknown command or arguments.
 ///
 /// # Safety
 /// As `tl_source_edit`; the strings are null or NUL-terminated.
@@ -528,43 +479,37 @@ pub unsafe extern "C" fn tl_source_call(
     args_json: *const c_char,
 ) -> *mut c_char {
     let call = |source: &mut TlSource| {
-        let a: SourceArgs = serde_json::from_str(unsafe { str_arg(args_json) }?).ok()?;
-        let command = unsafe { str_arg(command) }?;
-        if command == "set_symbols" {
-            // A session's document has the symbols its session scans.
-            if let Source::Own {
-                labels, citations, ..
-            } = &mut source.0
-            {
-                (*labels, *citations) = (a.labels, a.citations);
-            }
-            return Some(json_string(()));
-        }
-        source.with(|doc, labels, citations| answer(doc, command, a, labels, citations))
+        let (command, args) = unsafe { (str_arg(command)?, str_arg(args_json)?) };
+        source.with(|doc| doc.call(command, args))
     };
-    unsafe { on_source(source, None, call) }.unwrap_or(std::ptr::null_mut())
+    let answer = unsafe { on_source(source, None, call) };
+    answer.map_or(std::ptr::null_mut(), owned_string)
 }
 
-fn answer(
-    doc: &mut SourceDocument,
-    command: &str,
-    a: SourceArgs,
-    labels: &[String],
-    citations: &[String],
-) -> Option<*mut c_char> {
-    Some(match command {
-        "completions" => json_string(doc.completions(a.caret, a.explicit, labels, citations)),
-        "toggle_comment" => json_string(doc.toggle_comment(&a.selections)),
-        "indent" => json_string(doc.indent(&a.selections, a.more)),
-        "set_heading" => json_string(doc.set_heading(a.caret, &a.command)),
-        "insert_block" => json_string(doc.insert_block(&a.id, a.selection)),
-        "insert_symbol" => json_string(doc.insert_symbol(&a.command, a.selection)),
-        "math_at" => json_string(doc.math_at(a.caret)),
-        "text_styles" => json_string(doc.text_styles(a.selection)),
-        "not_prose" => json_string(doc.not_prose(a.selection.start, a.selection.length)),
-        "text" => json_string(doc.text()),
-        _ => return None,
-    })
+/// JSON never holds a NUL: it escapes one inside a string.
+fn owned_string(text: String) -> *mut c_char {
+    CString::new(text).map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
+/// `texlocal_syntax::call`'s commands, which need no source: the themes,
+/// the menus' catalogue, a class's headings, and maths and symbols as SVG
+/// ("math_svg", "glyph_svg"). Any thread. Returns the result's JSON (free it
+/// with `tl_free`), or null for an unknown command or arguments.
+///
+/// # Safety
+/// The strings are null or NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_syntax_call(
+    command: *const c_char,
+    args_json: *const c_char,
+) -> *mut c_char {
+    let call = || {
+        let (command, args) = unsafe { (str_arg(command)?, str_arg(args_json)?) };
+        texlocal_syntax::call(command, args)
+    };
+    caught(call)
+        .flatten()
+        .map_or(std::ptr::null_mut(), owned_string)
 }
 
 /// Null is ignored.
