@@ -319,6 +319,27 @@ fn owned_string(text: String) -> *mut c_char {
     CString::new(text).map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// `texlocal_syntax::call`'s commands, which need no source: the themes,
+/// the menus' catalogue, a class's headings, and maths and symbols as SVG
+/// ("math_svg", "glyph_svg"). Any thread. Returns the result's JSON (free it
+/// with `tl_free`), or null for an unknown command or arguments.
+///
+/// # Safety
+/// The strings are null or NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_syntax_call(
+    command: *const c_char,
+    args_json: *const c_char,
+) -> *mut c_char {
+    let call = || {
+        let (command, args) = unsafe { (str_arg(command)?, str_arg(args_json)?) };
+        texlocal_syntax::call(command, args)
+    };
+    caught(call)
+        .flatten()
+        .map_or(std::ptr::null_mut(), owned_string)
+}
+
 /// Null is ignored.
 ///
 /// # Safety

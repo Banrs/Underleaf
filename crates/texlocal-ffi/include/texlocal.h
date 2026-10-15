@@ -66,6 +66,18 @@ void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
  * them in \ref{ and \cite{ until they are set again. A new source has none. */
 char *_Nullable tl_source_call(const TlSource *source, const char *command, const char *args_json);
 
+/* A command of texlocal_syntax::call, which needs no source, on any thread:
+ * "themes", "theme_colors", "legible", "contrast", "menus",
+ * "document_class", "heading_styles", and maths as SVG:
+ * "math_svg" {"tex", "display", "size" (points, default 13), "color" ([r, g,
+ * b, a], 0-1, default black)} and "glyph_svg" {"command", "size" (19),
+ * "side" (24), "color"} answer {"svg", "width", "height", "baseline"} in
+ * points (baseline from the top) or {"error": why}; the SVG holds only
+ * <path> and <rect>. Returns the result's JSON, or NULL for an unknown
+ * command or arguments; free it with tl_free. tl_source_call answers these
+ * too. */
+char *_Nullable tl_syntax_call(const char *command, const char *args_json);
+
 void tl_source_free(TlSource *_Nullable source);
 
 #pragma clang assume_nonnull end

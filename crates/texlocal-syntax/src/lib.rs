@@ -11,6 +11,7 @@ pub mod headings;
 mod highlight;
 mod maths;
 mod prose;
+pub mod render;
 mod stack;
 mod style;
 pub mod theme;

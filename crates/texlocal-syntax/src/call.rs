@@ -7,9 +7,9 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::headings;
 use crate::theme::{self, Rgba};
 use crate::{SnippetField, SourceDocument, Style, TextEdit, TextRange, map_selections};
+use crate::{headings, render};
 
 /// The arguments the document's commands take, each what it needs; any left
 /// out are empty, but for `autoPair` (true) and `step` (1).
@@ -153,12 +153,43 @@ impl SourceDocument {
 /// heading levels and symbol groups; "document_class" (`text`), the class a
 /// main file names, or null; "heading_styles" (`class`, `pointSize`,
 /// `hasChapters`), the levels the class has, as it sets and numbers them.
+/// "math_svg" (`tex`, `display`, `size`, `color`) and "glyph_svg"
+/// (`command`, `size`, `side`, `color`): `render::MathSvg`, or
+/// {"error": why}.
 pub fn call(command: &str, args_json: &str) -> Option<String> {
     let value: Value = serde_json::from_str(args_json).ok()?;
     if !value.is_object() {
         return None;
     }
     call_with(command, &value)
+}
+
+#[derive(Deserialize)]
+struct Maths {
+    #[serde(default)]
+    tex: String,
+    #[serde(default)]
+    display: bool,
+    #[serde(default)]
+    command: String,
+    size: Option<f64>,
+    side: Option<f64>,
+    color: Option<Rgba>,
+}
+
+/// An SVG, or why there's none.
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum Rendered {
+    Svg(render::MathSvg),
+    Error { error: String },
+}
+
+fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
+    json(match result {
+        Ok(svg) => Rendered::Svg(svg),
+        Err(error) => Rendered::Error { error },
+    })
 }
 
 #[derive(Deserialize)]
@@ -175,6 +206,16 @@ fn call_with(command: &str, value: &Value) -> Option<String> {
     let string = |key: &str| value.get(key).and_then(Value::as_str);
     match command {
         "themes" => json(theme::THEMES),
+        "math_svg" | "glyph_svg" => {
+            let m: Maths = args(value)?;
+            let color = m.color.unwrap_or([0.0, 0.0, 0.0, 1.0]);
+            rendered(if command == "math_svg" {
+                render::math_svg(&m.tex, m.display, m.size.unwrap_or(13.0), color)
+            } else {
+                let (size, side) = (m.size.unwrap_or(19.0), m.side.unwrap_or(24.0));
+                render::glyph_svg(&m.command, size, side, color)
+            })
+        }
         "menus" => json(crate::catalog::menus()),
         "document_class" => json(headings::document_class(string("text")?)),
         "heading_styles" => {
@@ -262,6 +303,17 @@ mod tests {
             levels,
             r#"[{"title":"Normal Text","command":"","font":{"scale":1.0,"bold":false,"shape":"upright"},"marker":null}]"#
         );
+        let maths = super::call(
+            "math_svg",
+            r#"{"tex": "x^2", "size": 10, "color": [1, 0, 0, 1]}"#,
+        );
+        let maths: serde_json::Value = serde_json::from_str(&maths.unwrap()).unwrap();
+        assert!(maths["svg"].as_str().unwrap().starts_with("<svg"));
+        assert!(maths["width"].as_f64().unwrap() > 0.0 && maths["baseline"].as_f64().is_some());
+        let error = super::call("math_svg", r#"{"tex": "x^"}"#).unwrap();
+        assert!(error.starts_with(r#"{"error":"#), "{error}");
+        let glyph = super::call("glyph_svg", r#"{"command": "\\alpha"}"#).unwrap();
+        assert!(glyph.contains(r#""width":24.0,"height":24.0"#), "{glyph}");
         // A document answers them too.
         assert!(SourceDocument::new("").call("themes", "{}").is_some());
     }
