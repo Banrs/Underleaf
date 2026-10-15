@@ -160,20 +160,24 @@ struct ShellTests {
         #expect(divider(even - 5) == even && divider(even + 40) == even + 40)
     }
 
-    /// The File Outline's header is at the files' foot from the first, over an outline folded for
-    /// a file that has none, and away only while search results have the sidebar.
-    @Test func theOutlineHeaderGoesOnlyForSearchResults() async throws {
+    /// The File Outline is at the sidebar's foot from the first, folded to its header, a status
+    /// bar's height, for a file that has no outline, and away only while search results have
+    /// the sidebar.
+    @Test func theOutlineFoldsToItsHeaderAndGoesOnlyForSearchResults() async throws {
         let (window, workspace) = try await workspace(showPDF: true, sidebar: true)
         defer { workspace.close(); window.close() }
         let sidebar = try #require(workspace.sidebarItem.viewController as? NSSplitViewController)
-        let files = sidebar.splitViewItems[0]
-        let header = try #require(files.bottomAlignedAccessoryViewControllers.first)
-        #expect(!header.isHidden && sidebar.splitViewItems[1].isCollapsed)
+        let outline = sidebar.splitViewItems[1]
+        func folded() -> Bool {
+            window.layoutIfNeeded()
+            return !outline.isCollapsed && isClose(outline.viewController.view.frame.height, BarMetrics.height)
+        }
+        try await waitUntil(folded)
         workspace.project.search.query = "needle"
-        try await waitUntil { header.isHidden }
+        try await waitUntil { outline.isCollapsed }
         workspace.project.search.query = ""
-        try await waitUntil { !header.isHidden }
-        #expect(files.bottomAlignedAccessoryViewControllers == [header] && sidebar.splitViewItems[1].isCollapsed)
+        try await waitUntil(folded)
+        #expect(outline.maximumThickness == BarMetrics.height)
     }
 
     /// A sidebar the window folded is still the user's shown sidebar: it isn't saved as hidden,

@@ -11,14 +11,8 @@ struct FilesList: View {
     @FocusState private var listFocused: Bool
 
     var body: some View {
-        // The File Outline's header is the files' bottom bar: they scroll on beneath it, under
-        // SwiftUI's hard edge and its hairline. Its height is the pane's bottom safe area, which
-        // follows the header's as it folds.
-        GeometryReader { geometry in
-            // Two lists: one list diffed from the tree to grouped hits and back keeps stale rows.
-            Group { if project.search.isSearching { results } else { files } }
-                .modifier(HeaderEdge(height: geometry.safeAreaInsets.bottom))
-        }
+        // Two lists: one list diffed from the tree to grouped hits and back keeps stale rows.
+        Group { if project.search.isSearching { results } else { files } }
             // Each search reads every file in the project; it waits for typing to pause.
             .task(id: project.search.query) {
                 if project.search.isSearching { try? await Task.sleep(for: PDFFind.debounce) }
@@ -373,8 +367,9 @@ extension View {
     }
 }
 
-/// The project's sections from its main file, in a pane under `OutlineHeader`, which
-/// folds it away. Takes no drops: files go into the list above.
+/// The project's sections from its main file, in a pane at the sidebar's foot under the
+/// system's collapsible section header, which folds the pane to itself (`WorkspaceController`).
+/// Takes no drops: files go into the list above.
 struct OutlineList: View {
     let project: ProjectModel
     /// The line the selection follows: the caret's or the top line, whichever
@@ -391,6 +386,7 @@ struct OutlineList: View {
 
 /// The outline's list, with `current` its source's heading.
 private struct OutlineRows: View {
+    @Environment(AppModel.self) private var app
     let project: ProjectModel
     let current: Int?
     @Environment(\.sidebarRowSize) private var rowSize
@@ -407,35 +403,46 @@ private struct OutlineRows: View {
             chosen = id
             project.reveal(outline[id])
         })
+        // A file that isn't LaTeX has no outline to open: the header stays, folded and dim.
+        let outlined = project.isLaTeX
+        let expanded = Binding(get: { outlined && !app.outlineCollapsed }, set: { app.outlineCollapsed = !$0 })
         ScrollViewReader { proxy in
             List(selection: selection) {
-                TreeRows(nodes: Outline.tree(outline), children: \.children, isExpanded: { node in
-                    disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
-                }) { node in
-                    HeadingRow(item: node.item).equatable().tag(node.id)
-                        // The selected row (the source's heading, or the one just chosen) is
-                        // shown again, as when the source has been scrolled away; a click on
-                        // any other is the selection's, and a double-click's second the list's
-                        // primary action's, which goes into the source.
-                        .simultaneousGesture(TapGesture().onEnded {
-                            guard NSApp.currentEvent?.clickCount ?? 1 < 2, node.id == current || node.id == chosen else { return }
-                            chosen = node.id == current ? nil : node.id
-                            project.reveal(node.item)
-                        })
+                Section(isExpanded: expanded) {
+                    TreeRows(nodes: Outline.tree(outline), children: \.children, isExpanded: { node in
+                        disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
+                    }) { node in
+                        HeadingRow(item: node.item).equatable().tag(node.id)
+                            // The selected row (the source's heading, or the one just chosen) is
+                            // shown again, as when the source has been scrolled away; a click on
+                            // any other is the selection's, and a double-click's second the list's
+                            // primary action's, which goes into the source.
+                            .simultaneousGesture(TapGesture().onEnded {
+                                guard NSApp.currentEvent?.clickCount ?? 1 < 2, node.id == current || node.id == chosen else { return }
+                                chosen = node.id == current ? nil : node.id
+                                project.reveal(node.item)
+                            })
+                    }
+                    if outline.isEmpty { Text("No Sections").foregroundStyle(.secondary) }
+                } header: {
+                    // The whole row folds and unfolds, not only the chevron the system shows on hover.
+                    Button { expanded.wrappedValue.toggle() } label: {
+                        Text("File Outline")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!outlined)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
                 }
             }
             .listStyle(.sidebar)
             .accessibilityLabel("File Outline")
-            // The header above stands for a section's, so the list's room over its first
-            // row goes; the scroller keeps to what shows.
-            .contentMargins(.top, sidebarListRoom, for: .scrollIndicators)
-            .padding(.top, -sidebarListRoom)
-            .clipped()
+            // Folded, the pane is the header's height, which is a little less than the list's own.
+            .scrollDisabled(!expanded.wrappedValue)
             // A step under the files' rows: a table of contents under a list.
             .environment(\.sidebarRowSize, rowSize == .large ? .medium : .small)
-            .overlay {
-                if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") }
-            }
             // Return or a double-click goes into the source there, as in the search results.
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
                 guard let id = ids.first, outline.indices.contains(id) else { return }
@@ -452,56 +459,6 @@ private struct OutlineRows: View {
     }
 }
 
-/// The File Outline's header: the system's collapsible sidebar section (so it folds and
-/// shows its chevron on hover; its button gives VoiceOver the state), with no rows, at the
-/// files' foot so it stays put over the outline. Its whole row folds and unfolds.
-/// Folded, it lines up with the status bar; open, the first heading follows at the
-/// Files section's own spacing.
-struct OutlineHeader: View {
-    @Environment(AppModel.self) private var app
-
-    /// A sidebar section header's row (measured, 27.2).
-    private static let row: CGFloat = 19
-    /// Centred in the status bar's height, as folded, and kept there open.
-    private static let top = (BarMetrics.height - row) / 2
-    static let openHeight = top + row
-
-    var body: some View {
-        // A file that isn't LaTeX has no outline to open: the header stays, folded and dim.
-        let outlined = app.project?.isLaTeX == true
-        let expanded = Binding(get: { outlined && !app.outlineCollapsed }, set: { app.outlineCollapsed = !$0 })
-        List {
-            Section(isExpanded: expanded) {
-            } header: {
-                Button { expanded.wrappedValue.toggle() } label: {
-                    Text("File Outline")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                // The button covers the system's disclosure, so it tells VoiceOver the state.
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
-            }
-        }
-        .listStyle(.sidebar)
-        .disabled(!outlined)
-        // The sidebar's own material shows through, as behind the lists either side.
-        .scrollContentBackground(.hidden)
-        .scrollDisabled(true)
-        .frame(height: sidebarListRoom + Self.row + sidebarListRoom, alignment: .top)
-        // AppKit animates the bar's height with the split; the header keeps one
-        // size and one place under the line.
-        .offset(y: Self.top - sidebarListRoom)
-        .frame(height: Self.openHeight, alignment: .top)
-        .clipped()
-    }
-}
-
-/// The room a sidebar list leaves over its first row and under its last, inside its
-/// table (measured, 27.2); `contentMargins` doesn't reach it.
-private let sidebarListRoom: CGFloat = 10
-
 /// A heading in the file outline. Equatable: as a plain view, a heading that
 /// takes the place of a leaf and has subheadings opens closed (27.2).
 private struct HeadingRow: View, Equatable {
@@ -517,35 +474,5 @@ private struct HeadingRow: View, Equatable {
             // For scrollTo, inside the row: on it, the list would take it for the row's
             // identity, and a heading that gains subheadings would keep a leaf's closed state.
             .id(item.id)
-    }
-}
-
-/// The File Outline header's edge on the files: the hard edge where the header is, the header's
-/// region the list's own, in place of the one its accessory gives the pane, which would double it.
-/// The bar here is a blank the accessory's content sits over; SwiftUI draws the edge only under a
-/// bar that draws something itself (measured 2026-10-06: not under `Color.clear`, a `Spacer` or a
-/// hidden view, and only after a later layout, if at all), so the blank is a fill the eye can't see.
-struct HeaderEdge: ViewModifier {
-    /// The header's; none, no edge.
-    let height: CGFloat
-    @Environment(\.displayScale) private var displayScale
-
-    func body(content: Content) -> some View {
-        content
-            .safeAreaBar(edge: .bottom, spacing: 0) { Rectangle().fill(.white.opacity(0.001)).frame(height: height) }
-            .scrollEdgeEffectStyle(.hard, for: .bottom)
-            .scrollEdgeEffectHidden(height == 0, for: .bottom)
-            .ignoresSafeArea(.container, edges: .bottom)
-            // The hard edge's line is a device pixel in the separator's colour, in the row over the
-            // bar (27.2), and the window's lines are a point: the rest of the point over it, so it
-            // meets the status bar's line at its weight. The overlay ends where the bar begins.
-            .overlay(alignment: .bottom) {
-                if height > 0, displayScale > 1 {
-                    Rectangle().fill(.separator)
-                        .frame(height: BarMetrics.line - 1 / displayScale)
-                        .padding(.bottom, 1 / displayScale)
-                        .allowsHitTesting(false)
-                }
-            }
     }
 }
