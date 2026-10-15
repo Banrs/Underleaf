@@ -15,7 +15,15 @@ final class FileTree {
         self.id = id
     }
 
-    func node(at path: String) -> TreeNode? { nodes.flattened.first { $0.path == path } }
+    /// Down the folders on its way only: the open file's kind is asked for as views draw.
+    func node(at path: String) -> TreeNode? {
+        var level = nodes
+        while let next = level.first(where: { path == $0.path || path.hasPrefix($0.path + "/") }) {
+            if next.path == path { return next }
+            level = next.children ?? []
+        }
+        return nil
+    }
 
     /// A read that started before the last one taken is dropped: a folder change's read ending after a new file's would take away the row its name is being typed in.
     func read() async throws {

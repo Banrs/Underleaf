@@ -103,6 +103,7 @@ struct PDFFitTests {
         project.pdf.setScale(view.maxScaleFactor)
         #expect(!app.isEnabled(.viewZoomIn, on: project))
         #expect(app.isEnabled(.viewZoomOut, on: project))
+        project.tree.show(.sources)
         project.openPath = "references.bib"
         #expect(!app.isEnabled(.syncForward, on: project))
         project.openPath = "main.tex"

@@ -67,7 +67,7 @@ struct FilesList: View {
                         Button(MenuCommand.fileNew.title) { create(NewEntry(directory: false, folder: node.path)) }
                         Button(MenuCommand.fileNewFolder.title) { create(NewEntry(directory: true, folder: node.path)) }
                         Divider()
-                    } else if isLaTeXFile(node.path) {
+                    } else if node.kind == .tex {
                         Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
                             .disabled(node.path == project.settings?.mainFile)
                         Divider()
@@ -215,7 +215,7 @@ struct FilesList: View {
                 }
             }
         } icon: {
-            Image(systemName: fileSymbol(node.path, directory: node.isDirectory))
+            Image(systemName: node.symbol)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
@@ -287,17 +287,17 @@ private func disclosure(_ set: ReferenceWritableKeyPath<ProjectModel, Set<String
 
 #Preview("File tree") {
     @Previewable @State var expanded: Set<String> = ["figures"]
-    let file = { (path: String) in TreeNode(type: "file", name: path.fileName, path: path, children: nil) }
+    let file = { (path: String, kind: FileKind) in TreeNode(type: "file", name: path.fileName, path: path, kind: kind, children: nil) }
     List {
         Section("Files") {
             TreeRows(nodes: [
                 TreeNode(type: "dir", name: "figures", path: "figures",
-                         children: [file("figures/plot.pdf"), file("figures/diagram.png")]),
-                file("main.tex"), file("references.bib"),
+                         children: [file("figures/plot.pdf", .pdf), file("figures/diagram.png", .image)]),
+                file("main.tex", .tex), file("references.bib", .bib),
             ], children: \.children, isExpanded: { node in
                 Binding(get: { expanded.contains(node.path) }, set: { if $0 { expanded.insert(node.path) } else { expanded.remove(node.path) } })
             }) { node in
-                Label(node.name, systemImage: fileSymbol(node.path, directory: node.isDirectory))
+                Label(node.name, systemImage: node.symbol)
             }
         }
     }

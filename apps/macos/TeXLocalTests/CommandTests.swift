@@ -26,6 +26,7 @@ struct MenuCommandTests {
         let project = ProjectModel(id: "MenuCommandTests", app: app)
         let latex = [MenuCommand.editBold, .editItalic, .editUnderline, .editMath]
         #expect(!(latex + [.editComment, .syncInverse]).contains { app.isEnabled($0, on: project) })
+        project.tree.show(.sources)
         project.openPath = "references.bib"
         #expect(!latex.contains { app.isEnabled($0, on: project) } && app.isEnabled(.editComment, on: project))
         project.openPath = "main.tex"

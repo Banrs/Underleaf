@@ -2,7 +2,6 @@ import Accessibility
 import AppKit
 import Observation
 import PDFKit
-import UniformTypeIdentifiers
 
 /// A project's window state over the core's session for it (docs/core-api.md), which owns its documents' text, saves,
 /// builds, conflicts with other apps, the folder's watcher and Live Preview, and says what changed in events.
@@ -12,7 +11,11 @@ final class ProjectModel {
     var settings: ProjectSettings?
     let tree: FileTree
     private(set) var initialLoadComplete = false
-    var openPath: String?
+    var openPath: String? {
+        didSet { if openPath != oldValue { openKindChanged() } }
+    }
+    /// The open file's, from the tree; kept while the tree hasn't the file yet (a rename) or has it no longer (gone).
+    private(set) var openKind: FileKind?
     var outline: [OutlineItem] = []
     private(set) var outlineTree: [OutlineNode] = []
     /// `outline` as `outline_current` takes it.
@@ -118,7 +121,10 @@ final class ProjectModel {
             guard let self, let session else { return nil }
             return try? await core.session("session_live_status", ["session": session], as: TeXpressoStatus.self)
         }
-        tree.onChange = { [weak self] in self?.analyze() }
+        tree.onChange = { [weak self] in
+            self?.openKindChanged()
+            self?.analyze()
+        }
         texpresso.showDocument = { [weak self] in self?.showLive($0) }
         texpresso.showPage = { [weak self] page, index in
             if self?.livePDF == true { self?.pdf.showLive(page, at: index) }
@@ -128,7 +134,7 @@ final class ProjectModel {
         pdf.buildBehindLive = { [weak self] in self.flatMap { $0.livePDF ? $0.buildPDF : nil } }
     }
 
-    var isLaTeX: Bool { openPath.map(isLaTeXFile) ?? false }
+    var isLaTeX: Bool { openKind == .tex }
     var headingStyles: [HeadingStyle] {
         HeadingStyle.styles(of: documentClass, hasChapters: outline.contains { $0.level == 1 })
     }
@@ -136,7 +142,17 @@ final class ProjectModel {
     var headingLevel: HeadingLevel {
         outline.first { $0.file == openPath && $0.line == cursorLine }.flatMap { HeadingLevel.atDepth($0.level) } ?? .normalText
     }
-    var editsText: Bool { openPath.map(isTextFile) ?? false }
+    var editsText: Bool { openKind?.isText == true }
+
+    private func openKindChanged() {
+        guard let openPath else {
+            openKind = nil
+            return
+        }
+        if let kind = tree.node(at: openPath)?.kind, kind != openKind { openKind = kind }
+    }
+
+    private func isText(_ path: String) -> Bool { tree.node(at: path)?.kind?.isText == true }
 
     /// After a save that failed, or Cancel in an alert about the file on disk: the status bar's Not Saved.
     var saveFailure: String? {
@@ -362,7 +378,7 @@ final class ProjectModel {
 
     private func filesChanged(_ event: PathsEvent) {
         if let openPath, !editsText, event.paths.contains(openPath) { previewVersion += 1 }
-        if event.paths.contains(where: isLaTeXFile) { analyze() }
+        if event.paths.contains(where: { tree.node(at: $0)?.kind == .tex }) { analyze() }
     }
 
     @discardableResult
@@ -384,12 +400,14 @@ final class ProjectModel {
             if path != openPath {
                 guard let session else { return }
                 do {
+                    // A file made a moment ago may not be in the tree yet.
+                    if tree.node(at: path) == nil { await tree.reload() }
                     // Read first and closed last, with nothing awaited between the close and the switch.
-                    if isTextFile(path) {
+                    if isText(path) {
                         _ = try await core.session("session_open_document", ["session": session, "path": path], as: FileText.self)
                     }
                     guard !Task.isCancelled, !closed else { return }
-                    if let was = openPath, isTextFile(was) {
+                    if let was = openPath, editsText {
                         guard await closeDocument(was), !closed else { return }
                     }
                     show(path, focus: focus)
@@ -405,8 +423,9 @@ final class ProjectModel {
     /// Its text as the session's document has it now, whatever reloads came while it opened.
     private func show(_ path: String, focus: Bool) {
         openPath = path
+        openKind = tree.node(at: path)?.kind
         analyze()
-        guard isTextFile(path) else { return }
+        guard editsText else { return }
         guard let session, let source = SourceDocument(session: session, path: path) else {
             openPath = nil
             return
@@ -447,9 +466,8 @@ final class ProjectModel {
     }
 
     private func dropped(_ url: URL) -> SourceTextView.FileDrop? {
-        guard let path = projectPath(url), tree.node(at: path)?.isDirectory == false else { return nil }
-        let type = UTType(filenameExtension: url.pathExtension)
-        if isLaTeX, type?.conforms(to: .image) == true || type?.conforms(to: .pdf) == true {
+        guard let path = projectPath(url), let node = tree.node(at: path), !node.isDirectory else { return nil }
+        if isLaTeX, node.kind == .image || node.kind == .pdf {
             return .insert("\\includegraphics{\(path)}")
         }
         return .open { [weak self] in Task { await self?.open(path) } }
@@ -825,24 +843,16 @@ final class ProjectModel {
 
     func createEntry(in folder: String, directory: Bool) async -> String? {
         let name = directory ? "untitled folder" : "untitled.tex"
-        var made: String?
+        let made: String
         do {
-            for number in 1... {
-                let free = number == 1 ? name : name.numbered(number)
-                let path = folder.isEmpty ? free : "\(folder)/\(free)"
-                do {
-                    try await core.perform("create_entry", ["id": id, "path": path, "dir": directory])
-                    made = path
-                    break
-                } catch let error as CoreError where error.status == 409 {
-                    continue
-                }
-            }
+            // A taken name is numbered on ("untitled 2.tex").
+            made = try await core.call("create_entry", ["id": id, "path": folder.isEmpty ? name : "\(folder)/\(name)", "dir": directory,
+                                                        "free": true], as: PathEvent.self).path
         } catch {
             if !closed { report(error, "Couldn’t Create “\(name)”") }
             return nil
         }
-        guard let made, !closed else { return nil }
+        guard !closed else { return nil }
         await tree.reload()
         if !directory { await open(made, focus: false) }
         return made
@@ -867,7 +877,7 @@ final class ProjectModel {
     /// The session saves first and moves its open documents; the editor keeps its text and undo under the new name.
     private func performRename(_ from: String, to: String) async -> RenameResult? {
         guard to != from, let session, !closed else { return nil }
-        let before = openPath
+        let (before, wasText) = (openPath, editsText)
         let renamed: RenameResult?
         do {
             renamed = try await core.session("session_rename", ["session": session, "from": from, "to": to], as: RenameResult.self)
@@ -877,21 +887,23 @@ final class ProjectModel {
         }
         guard let result = renamed, !closed else { return nil }
         editor.rename(from: result.from, to: result.to)
-        if let before, case let now = remapPath(before, from: result.from, to: result.to), now != before,
-           openPath == before || openPath == now {
-            openPath = now
+        let now = before.map { remapPath($0, from: result.from, to: result.to) }
+        let moved = now != before && (openPath == before || openPath == now)
+        if moved { openPath = now }
+        let mainChanged = result.mainFile != settings?.mainFile
+        settings?.mainFile = result.mainFile
+        // The new name's kind is the tree's.
+        await tree.reload()
+        if moved, let now, openPath == now, !closed {
             // A text file now previewed, or the other way: shown afresh.
-            if isTextFile(now) != isTextFile(before) {
-                if isTextFile(before) { _ = await closeDocument(now) }
+            if isText(now) != wasText {
+                if wasText { _ = await closeDocument(now) }
                 if openPath == now { clearOpenFile() }
                 await open(now, focus: false)
             } else {
                 analyze()
             }
         }
-        let mainChanged = result.mainFile != settings?.mainFile
-        settings?.mainFile = result.mainFile
-        await tree.reload()
         if mainChanged, !closed { mainFileChanged() }
         return result
     }
@@ -1055,7 +1067,7 @@ nonisolated struct DocumentState: Decodable, Equatable {
 }
 
 nonisolated struct ReloadEvent: Decodable { let path, text: String }
-nonisolated struct PathEvent: Decodable { let path: String }
+nonisolated struct PathEvent: Decodable, Sendable { let path: String }
 nonisolated struct RenamedEvent: Decodable { let from, to: String }
 nonisolated struct ConflictEvent: Decodable { let path, kind: String }
 nonisolated struct TreeEvent: Decodable { let tree: [TreeNode] }

@@ -579,7 +579,6 @@ final class ProjectFlowTests {
         #expect(await project.createEntry(in: "untitled folder", directory: false) == "untitled folder/untitled.tex")
         #expect(project.tree.nodes.flattened.contains { $0.path == "untitled folder/untitled.tex" })
         #expect(exists(folder.appending(path: "untitled folder 2")) && exists(folder.appending(path: "untitled folder/untitled.tex")))
-        #expect(".latexmkrc".numbered(2) == ".latexmkrc 2")
         #expect(app.alert == nil)
         await app.close()
     }

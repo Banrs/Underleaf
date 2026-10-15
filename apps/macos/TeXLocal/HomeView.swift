@@ -234,7 +234,7 @@ struct NewProjectSheet: View {
     init(template: ProjectTemplate, taken: [String]) {
         _template = State(initialValue: template)
         let names = Set(taken.map { $0.lowercased() })
-        _name = State(initialValue: (1...).lazy.map { $0 == 1 ? "Untitled" : "Untitled".numbered($0) }.first { !names.contains($0.lowercased()) } ?? "Untitled")
+        _name = State(initialValue: (1...).lazy.map { $0 == 1 ? "Untitled" : "Untitled \($0)" }.first { !names.contains($0.lowercased()) } ?? "Untitled")
     }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
