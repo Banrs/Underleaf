@@ -2,6 +2,24 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+            <StaticResource x:Key="SyntaxCommandBrush" ResourceKey="AccentTextFillColorPrimaryBrush" />
+            <StaticResource x:Key="SyntaxCommentBrush" ResourceKey="TextFillColorSecondaryBrush" />
+            <StaticResource x:Key="SyntaxInvalidBrush" ResourceKey="SystemFillColorCriticalBrush" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+            <StaticResource x:Key="SyntaxCommandBrush" ResourceKey="AccentTextFillColorPrimaryBrush" />
+            <StaticResource x:Key="SyntaxCommentBrush" ResourceKey="TextFillColorSecondaryBrush" />
+            <StaticResource x:Key="SyntaxInvalidBrush" ResourceKey="SystemFillColorCriticalBrush" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="SyntaxCommandBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="SyntaxCommentBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="SyntaxInvalidBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
     <!-- Columns: 20 (icon), * (header and description), Auto (control). -->
     <Style x:Key="SettingsCardStyle" TargetType="Grid">
         <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
@@ -13,9 +31,11 @@
         <Setter Property="ColumnSpacing" Value="16" />
     </Style>
 
-    <!-- Status bar segments (M2): WinUI's own subtle button, at the status bar's height. -->
+    <!-- Status bar segments: WinUI's own subtle button, at the status bar's height. -->
     <Style x:Key="StatusButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
         <Setter Property="Padding" Value="8,0" />
+        <Setter Property="Margin" Value="0,2" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
         <Setter Property="VerticalAlignment" Value="Stretch" />
     </Style>
 

@@ -74,4 +74,24 @@ public sealed class CoreTests : IDisposable
         var calls = Enumerable.Range(0, 20).Select(_ => core.CallAsync("list_projects"));
         Assert.Equal(20, (await Task.WhenAll(calls)).Length);
     }
+
+    [Fact]
+    public void SourceOffsetsAreUtf16()
+    {
+        const string text = "a\U0001F600\\b\nx";
+        using var source = Source.New(text);
+        var x = text.IndexOf('x');
+        Assert.Equal(2, source.LineAt(x));
+        Assert.Equal(x, source.LineStart(2));
+        Assert.Contains(source.Highlights(0, text.Length), run => run.Kind == 0 && run.Start == 3);
+    }
+
+    [Fact]
+    public void EditMovesLines()
+    {
+        using var source = Source.New("abc");
+        var lines = source.LineCount;
+        source.Edit(3, 0, "\ny");
+        Assert.Equal(lines + 1, source.LineCount);
+    }
 }
