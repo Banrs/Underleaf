@@ -2,7 +2,6 @@ import Foundation
 import os
 import TeXLocalCore
 
-/// Rust's syntax mirror through `tl_source_*`; offsets count UTF-16 units.
 final class SourceDocument {
     private let raw: OpaquePointer
 
@@ -21,12 +20,10 @@ final class SourceDocument {
         text.withUTF8 { tl_source_edit(raw, UInt32(range.location), UInt32(range.length), $0.baseAddress, $0.count) }
     }
 
-    /// The line an offset is on, from 1.
     func line(at offset: Int) -> Int {
         Int(tl_source_line_at(raw, UInt32(offset)))
     }
 
-    /// Where a line (from 1) starts; past the last line, the last line's start.
     func lineStart(_ line: Int) -> Int {
         Int(tl_source_line_start(raw, UInt32(max(1, line))))
     }
@@ -44,59 +41,45 @@ final class SourceDocument {
         }
     }
 
-    /// What a spelling checker passes over where a range is: maths, literal code, and the names
-    /// commands take (packages, citations, labels, files), each from its start, however far
-    /// before the range.
+    /// Each from its start, however far before the range.
     func notProse(in range: NSRange) -> [NSRange] {
         let ranges: [[String: Int]] = call("not_prose", ["selection": Self.json(range)]) ?? []
         return ranges.map { NSRange(location: $0["start"] ?? 0, length: $0["length"] ?? 0) }
     }
 
-    /// What to offer at the caret, if anything; `explicit` when the user
-    /// asked, which offers commands after a bare backslash too.
     func completions(caret: Int, explicit: Bool) -> Completions? {
         call("completions", ["caret": caret, "explicit": explicit])
     }
 
-    /// The project's labels and citations, which completions offer in `\ref{` and `\cite{`
-    /// until they are set again: kept with the mirror, not sent with each key's completions,
-    /// a bibliography being thousands of keys. A new document has none.
+    /// Kept with the mirror, not sent with each key's completions, a bibliography being thousands of keys.
     func setSymbols(_ symbols: Symbols) {
         tl_free(send("set_symbols", ["labels": symbols.labels, "citations": symbols.citations]))
     }
 
-    /// "%" comments on or off for the lines the selections touch, in order.
     func toggleComment(_ selections: [NSRange]) -> [TextEdit] {
         call("toggle_comment", ["selections": selections.map(Self.json)]) ?? []
     }
 
-    /// Two spaces more, or up to two fewer, at the start of each line the selections touch.
     func indent(_ selections: [NSRange], more: Bool) -> [TextEdit] {
         call("indent", ["selections": selections.map(Self.json), "more": more]) ?? []
     }
 
-    /// The caret's line as a heading of `command` ("section"), or as text given "".
     func setHeading(caret: Int, command: String) -> Insertion? {
         call("set_heading", ["caret": caret, "command": command])
     }
 
-    /// A block by its id in the core's catalog; nil for an id it hasn't.
     func insertBlock(_ id: String, replacing selection: NSRange) -> Insertion? {
         call("insert_block", ["id": id, "selection": Self.json(selection)])
     }
 
-    /// A maths symbol's command, between dollars outside maths.
     func insertSymbol(_ command: String, replacing selection: NSRange) -> Insertion? {
         call("insert_symbol", ["command": command, "selection": Self.json(selection)])
     }
 
-    /// The bold, italic and underline the whole selection is in, each as the
-    /// edits that unwrap the command giving it.
     func textStyles(_ selection: NSRange) -> TextStyles {
         call("text_styles", ["selection": Self.json(selection)]) ?? TextStyles()
     }
 
-    /// The maths the caret is in or just after, to preview.
     func mathAt(caret: Int) -> MathPreview? {
         call("math_at", ["caret": caret])
     }
@@ -109,7 +92,6 @@ final class SourceDocument {
         ["start": range.location, "length": range.length]
     }
 
-    /// The command's JSON answer, to free with `tl_free`, or nil.
     private func send(_ command: String, _ args: [String: Any]) -> UnsafeMutablePointer<CChar>? {
         guard let json = try? JSONSerialization.data(withJSONObject: args) else { return nil }
         return tl_source_call(raw, command, String(decoding: json, as: UTF8.self))
@@ -117,8 +99,7 @@ final class SourceDocument {
 
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "source")
 
-    /// Nil for a null answer, which some commands give for none. No answer, or one in another shape
-    /// than was asked for, is a fault of the app's own or the core's, logged as Core logs one.
+    /// Nil for a null answer, which some commands give for none. No answer, or one in another shape than was asked for, is a fault of the app's own or the core's, logged as Core logs one.
     private func call<T: Decodable>(_ command: String, _ args: [String: Any]) -> T? {
         guard let out = send(command, args) else {
             Self.log.error("\(command, privacy: .public): no answer")
@@ -134,12 +115,10 @@ final class SourceDocument {
     }
 }
 
-/// What a run of the source is (crates/texlocal-syntax `HighlightKind`, in its order).
 enum HighlightKind: UInt32 {
     case command, argument, mathDelimiter, mathIdentifier, number, comment, invalid, stringLiteral, builtin
 }
 
-/// Replace `length` units at `start` with `text`.
 nonisolated struct TextEdit: Decodable, Equatable {
     var start: Int
     var length: Int
@@ -152,43 +131,36 @@ nonisolated struct TextEdit: Decodable, Equatable {
     var range: NSRange { NSRange(location: start, length: length) }
 }
 
-/// The styles a selection is in (crates/texlocal-syntax `TextStyles`).
 nonisolated struct TextStyles: Decodable, Equatable {
     var bold: [TextEdit]?
     var italic: [TextEdit]?
     var underline: [TextEdit]?
 }
 
-/// An edit, where the caret goes after it, and where Tab goes in a block.
 nonisolated struct Insertion: Decodable {
     var edit: TextEdit
     var caret: Int
     var fields: [SnippetField]
 }
 
-/// Completions for the text from `start` to the caret, which they replace.
 nonisolated struct Completions: Decodable {
     var start: Int
-    /// What every item is: the list the core drew them from.
     var kind: CompletionKind
     var items: [Completion]
 }
 
 nonisolated struct Completion: Decodable {
     var label: String
-    /// What goes in, with its fields' defaults.
     var text: String
     var fields: [SnippetField]
 }
 
-/// Maths to preview: where it starts, its TeX as KaTeX reads it, and whether it's displayed.
 nonisolated struct MathPreview: Decodable, Equatable {
     var start: Int
     var tex: String
     var display: Bool
 }
 
-/// A snippet field; repeated indices link fields across an insertion.
 nonisolated struct SnippetField: Decodable {
     var start: Int
     var length: Int

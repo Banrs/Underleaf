@@ -4,19 +4,14 @@ import TeXLocalCore
 
 nonisolated struct CoreError: LocalizedError {
     let message: String
-    /// The core's HTTP-style code: 409 for a name already taken.
     var status: Int?
     var errorDescription: String? { message }
 }
 
-/// The Rust core through its C ABI (crates/texlocal-ffi), JSON in and out.
-/// `tl_call` blocks for as long as the command runs (minutes, for a compile),
-/// so calls run on a GCD thread: the cooperative pool must never block.
+/// `tl_call` blocks for as long as the command runs (minutes, for a compile), so calls run on a GCD thread: the cooperative pool must never block.
 final class Core {
     static let shared = Core()
 
-    /// Where projects live: crates/texlocal-core `default_data_dir`'s rule,
-    /// `TEXLOCAL_DATA` when set and non-empty, else ~/TeXLocal.
     static let libraryFolder: URL = {
         let environment = ProcessInfo.processInfo.environment
         if let dir = environment["TEXLOCAL_DATA"], !dir.isEmpty {
@@ -32,13 +27,10 @@ final class Core {
         init(_ raw: OpaquePointer) { self.raw = raw }
     }
 
-    /// Nil when the library folder can't be opened; Home says so.
     private var handle: Handle? = Core.open()
     var isOpen: Bool { handle != nil }
 
-    /// The library folder's path as a person reads it, their home folder a tilde: "~/TeXLocal".
     static let libraryPath = (libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
-    /// What to do about a library folder that can't be opened, in Home's words and in a call's made all the same.
     static let libraryAdvice = "Make sure you can create and write to \(libraryPath), then try again."
     private static let unavailable = CoreError(message: "TeXLocal can’t open its projects folder. \(libraryAdvice)")
 
@@ -48,7 +40,6 @@ final class Core {
         libraryFolder.withUnsafeFileSystemRepresentation { tl_open($0) }.map(Handle.init)
     }
 
-    /// Opens the library folder again, once what stopped it is put right.
     func reopen() {
         if handle == nil { handle = Self.open() }
     }
@@ -66,12 +57,10 @@ final class Core {
         let status: Int?
     }
 
-    /// Accepts any JSON, for commands whose result is not needed.
     private nonisolated struct Ignored: Decodable, Sendable {
         init(from decoder: any Decoder) throws {}
     }
 
-    /// On the calling thread, for as long as the command runs.
     private nonisolated static func answer<T: Decodable>(_ handle: Handle, _ command: String, _ json: String) throws -> T? {
         do {
             let envelope = try JSONDecoder().decode(Envelope<T>.self, from: run(handle, command, json))
@@ -84,20 +73,16 @@ final class Core {
 
     private nonisolated static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "core")
 
-    /// No answer, or one in another shape than was asked for, is a fault of the app's own or the
-    /// core's: the log has the command and what was wrong with its answer, and an alert has neither.
     private nonisolated static func fault(_ command: String, _ problem: String) -> CoreError {
         log.error("\(command, privacy: .public): \(problem, privacy: .public)")
         return CoreError(message: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
     }
 
-    /// A command's arguments: JSON's strings, numbers, booleans, null (a nil) and collections of them.
     private nonisolated static func json(_ args: [String: any Sendable]) throws -> String {
         String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
     }
 
-    /// The arguments are taken to the GCD thread to be encoded there: escaping a whole
-    /// document's text for an autosave took 3 ms of the main actor's time per megabyte.
+    /// The arguments are encoded on the GCD thread: escaping a whole document's text for an autosave took 3 ms of the main actor's time per megabyte.
     private func result<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable], as: T.Type) async throws -> T? {
         guard let handle else { throw Self.unavailable }
         return try await withCheckedThrowingContinuation { done in
@@ -107,13 +92,11 @@ final class Core {
         }
     }
 
-    /// A command the core answers at once, where it's asked: a keystroke's edit doesn't wait for a thread.
     func now(_ command: String, _ args: [String: any Sendable]) throws {
         guard let handle else { throw Self.unavailable }
         let _: Ignored? = try Self.answer(handle, command, try Self.json(args))
     }
 
-    /// A command that waits, for a thread of the caller's own to block in.
     func waiting<T: Decodable & Sendable>(_ command: String, as: T.Type) -> @Sendable ([String: any Sendable]) throws -> T {
         { [handle, unavailable = Self.unavailable] args in
             guard let handle else { throw unavailable }
@@ -131,7 +114,7 @@ final class Core {
         _ = try await result(command, args, as: Ignored.self)
     }
 
-    /// Stops running compiles. Synchronous: it runs as the app quits.
+    /// Synchronous: it runs as the app quits.
     func killAll() {
         guard let handle else { return }
         _ = Core.run(handle, "kill_all", "{}")

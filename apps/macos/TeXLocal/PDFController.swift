@@ -2,7 +2,6 @@ import PDFKit
 import SwiftUI
 import Synchronization
 
-/// PDF view state and actions for the toolbar, find bar and menus.
 @Observable
 final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// Read whole: the next build rewrites the file in place.
@@ -15,46 +14,34 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     @ObservationIgnored let view = SyncPDFView()
     @ObservationIgnored private var magnification: NSKeyValueObservation?
     @ObservationIgnored private weak var watched: NSScrollView?
-    /// Its clip view's scrolling, watched for as long as the token is held.
     @ObservationIgnored private var scrolling: NotificationCenter.ObservationToken?
-    /// One-based, as the status bar shows it.
     private(set) var page = 0
-    /// The page a reopened project's first PDF opens at.
     @ObservationIgnored var restorePage: Int?
-    /// A forward search's spot, until the view has a size to show it in.
     @ObservationIgnored private var pendingReveal: (loc: ForwardLoc, word: SyncTeXWord?)?
     private(set) var pageCount = 0
-    /// The find bar shows. Opened empty, it takes the system's find text, as a text view's find bar does.
     var finding = false {
         didSet { if finding, !oldValue, findText.isEmpty { findText = PDFFind.shared ?? "" } }
     }
-    /// Can be ahead of the query the matches are for.
     var findText = ""
     @ObservationIgnored let findField = FieldHandle()
-    /// The query the matches are for, normalised.
     private(set) var query = ""
     private(set) var matches: [PDFSelection] = []
     private(set) var matchIndex = 0
-    /// More matches than `PDFFind.maxMatches` were found.
     private(set) var limited = false
     private(set) var scale: CGFloat = 1
     var zoomLabel: String { Self.label(scale) }
-    /// The limit's, for the toolbar to reserve.
     var widestZoomLabel: String { Self.label(Self.maxScale) }
     var canZoomIn: Bool { scale < Self.maxScale }
     var canZoomOut: Bool { scale > Self.minScale }
-    /// 10% to 800%: PDFKit would go to 10,000%, and the toolbar's scale reserves a three-digit
-    /// label's width (`widestZoomLabel`).
+    /// PDFKit would go to 10,000%; the toolbar's scale reserves a three-digit label's width.
     private static let minScale: CGFloat = 0.1
     private static let maxScale: CGFloat = 8
     private static func label(_ scale: CGFloat) -> String {
         Double(scale).formatted(.percent.precision(.fractionLength(0)))
     }
-    /// How the page is fitted to the view, or nil at a set scale.
     enum Fit { case width, page }
     private(set) var fit: Fit? = .width
 
-    /// The fit or scale, kept with the project for its next opening, as Preview keeps a document's.
     nonisolated enum Zoom: Codable, Equatable {
         case fitWidth, fitPage, scale(Double)
     }
@@ -67,13 +54,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         }
     }
 
-    /// The zoom a reopened project's first PDF opens at.
     @ObservationIgnored var restoreZoom: Zoom?
 
     override init() {
         super.init()
-        // The editor's text background beside it, so source and PDF are one surface; the PDF's
-        // paper keeps its own colors.
         view.backgroundColor = .untintedTextBackground
         view.autoScales = true
         view.onResize = { [weak self] in
@@ -90,8 +74,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(scaleChanged), name: .PDFViewScaleChanged, object: view)
     }
 
-    /// PDFKit's scroll view, once there is a document, and again should PDFKit make another:
-    /// each step of a pinch is its magnification, and a scroll its clip view's bounds.
     private func watchScrollView() {
         guard let scrollView = view.pageScrollView, scrollView !== watched else { return }
         watched = scrollView
@@ -105,12 +87,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     @objc private func pageChanged() {
         guard let document = view.document, let page = view.currentPage else { return }
-        // The page it was at may have just left the document.
         if let number = document.number(of: page) { self.page = number }
         pageCount = document.pageCount
     }
 
-    /// The pages showing, from 0, which live preview typesets first; told as they change.
     @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
     @ObservationIgnored private var toldPages: ClosedRange<Int>?
 
@@ -131,8 +111,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         if view.liveScaleChanged { dropLive() }
         guard view.document != nil, view.hasShownArea else { return }
         scale = view.scaleFactor
-        // Any other scale than the fitted one (a pinch, a zoom command) ends fitting. A pinch keeps
-        // autoScales on until it ends: one back at the width fits again, one ending off it doesn't.
+        // A pinch keeps autoScales on until it ends: one back at the width fits again, one ending off it doesn't.
         if view.autoScales, abs(view.scaleFactor - view.scaleFactorForSizeToFit) < 0.001 {
             fit = .width
         } else if fit == .width || (fit == .page && abs(view.scaleFactor - pageScale) > 0.001) {
@@ -140,9 +119,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         }
     }
 
-    /// The whole page, as Pages' and Keynote's Fit Page: the smaller of the scales that fit
-    /// its width (PDFKit's own) and its height, with its page-break margins, which scale
-    /// with it, in the height it shows in.
     private var pageScale: CGFloat {
         guard let page = view.currentPage else { return view.scaleFactor }
         let margins = view.pageBreakMargins, box = page.bounds(for: view.displayBox)
@@ -163,20 +139,14 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         if zoomIn { view.zoomIn(nil) } else { view.zoomOut(nil) }
     }
 
-    /// One-based, as the page shows it; clamped to the document.
     func go(toPage number: Int) {
         guard let document = view.document, let page = document.page(ifAt: min(max(number, 1), document.pageCount) - 1) else { return }
         view.go(to: page)
     }
 
-    /// The last build's PDF on disk while the pane shows Live Preview's document in its place;
-    /// nil while the document showing is the build's own.
     @ObservationIgnored var buildBehindLive: () -> URL? = { nil }
 
-    /// The build's PDF: the document showing, which is whole in memory, or during Live Preview
-    /// the build's file, since the one showing is then TeXpresso's (XeTeX's whatever the
-    /// project's engine, with the pages past an error left from before). Scaled down to the sheet
-    /// where its pages are larger (A4 on US Letter). The operation keeps the document (27.2).
+    /// During Live Preview the build's file, since the document showing is TeXpresso's. The operation keeps the document (27.2).
     func print(title: String) {
         Task {
             let document = if let url = buildBehindLive() { await Self.loadDocument(url) } else { view.document }
@@ -194,7 +164,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         }
     }
 
-    /// In a continuous single-page layout, auto-scaling fits the page width.
     func fitWidth() {
         fit = .width
         view.autoScales = true
@@ -235,15 +204,12 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         search?.document.cancelFindString()
     }
 
-    /// Once typing pauses: the field's text, unless it is what's being searched or was found.
     func findTyped() {
         guard PDFFind.normalize(findText) != search?.query ?? query else { return }
-        // What's typed is the find text everywhere, as in a text view's find bar.
         PDFFind.shared = PDFFind.normalize(findText)
         find(findText)
     }
 
-    /// During rebuild, keep the selected match and page where possible.
     func find(_ value: String, keepingPlace: Bool = false) {
         guard let document = view.document else { return }
         let query = PDFFind.normalize(value)
@@ -253,12 +219,11 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         guard !query.isEmpty else { return found(query, [], keepingPlace: keepingPlace) }
         document.delegate = self
         search = (document, query, keepingPlace, [])
-        // As Safari's and Mail's Find: "Godel" finds "Gödel", as typed without the accent.
+        // As Safari's and Mail's Find: "Godel" finds "Gödel".
         document.beginFindString(query, withOptions: [.caseInsensitive, .diacriticInsensitive])
     }
 
-    /// The search under way, if any, is over. Cancelling posts its end at once, unheard as
-    /// `search` is cleared first.
+    /// Cancelling posts its end at once, unheard as `search` is cleared first.
     private func cancelSearch() {
         let document = search?.document
         search = nil
@@ -279,7 +244,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         found(search.query, search.found, keepingPlace: search.keepingPlace)
     }
 
-    /// The count stays the last query's until its search ends.
     private func found(_ query: String, _ all: [PDFSelection], keepingPlace: Bool) {
         self.query = query
         matches = Array(all.prefix(PDFFind.maxMatches))
@@ -291,16 +255,12 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         matches.forEach { $0.color = .findHighlightColor }
         view.highlightedSelections = matches.isEmpty ? nil : matches
         if matches.isEmpty { view.clearSelection() }
-        // Use Selection for Find stays at the selection, which is its match; so does a search
-        // again over live pages, whose selection is still there unless its page went.
+        // Use Selection for Find stays at the selection, which is its match; so does a search again over live pages.
         if !keepingPlace || view.currentSelection == nil { selectMatch(scrolling: start.map { $0.step != 0 } ?? !keepingPlace) }
     }
 
-    /// Where Find Next or Use Selection for Find starts once its search ends: the match at the
-    /// anchor (step 0), or the next or previous one from it, as a text view's find goes on from its selection.
     @ObservationIgnored private var startFrom: (anchor: Position, step: Int)?
 
-    /// A place in reading order, as a tuple compares: the page, then down it, then across.
     private typealias Position = (page: Int, down: CGFloat, across: CGFloat)
 
     private func position(_ selection: PDFSelection) -> Position? {
@@ -309,7 +269,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         return (page: document.index(for: page), down: -box.maxY, across: box.minX)
     }
 
-    /// The selection, or the top of what shows.
     private var anchor: Position? {
         view.currentSelection.flatMap(position) ?? shownPlace.map { (page: $0.index, down: -$0.point.y, across: $0.point.x) }
     }
@@ -323,12 +282,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         }
     }
 
-    /// Edit › Find › Find Next and Find Previous: through the matches, or, with none, a search for
-    /// the system's find text going on from the selection, as TextEdit's does after Use Selection for Find.
     var canFindNext: Bool { view.document != nil && (!matches.isEmpty || !(PDFFind.shared ?? "").isEmpty) }
 
-    /// Typing the field's delay hasn't searched yet wins; else the system's find text, which
-    /// another pane's Use Selection for Find may have changed since this pane searched.
     func findNext(_ step: Int) {
         let typed = PDFFind.normalize(findText)
         let pending = !typed.isEmpty && typed != (search?.query ?? query)
@@ -342,8 +297,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         find(text)
     }
 
-    /// Edit › Find › Use Selection for Find: the selection becomes the system's find text and is
-    /// searched for, its matches marked from it on, without moving away.
     var canUseSelectionForFind: Bool { !(view.currentSelection?.string ?? "").isEmpty }
 
     func useSelectionForFind() {
@@ -355,7 +308,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         find(text)
     }
 
-    /// Clear highlights; return focus to the PDF only when the bar had it.
     func closeFind() {
         let fromBar = findField.hasFocus
         finding = false
@@ -364,27 +316,18 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         if fromBar { view.window?.makeFirstResponder(view) }
     }
 
-    /// Counts the documents shown, rebuilds included: a rebuild's pages go into the
-    /// document already showing.
     @ObservationIgnored private(set) var shownVersion = 0
 
-    /// The app's memory when a document was last shown whole. PDFKit keeps the objects of every
-    /// page a document takes from another for that document's life (27.2: some 0.12 MB a page
-    /// of a build, megabytes for a live page with its fonts), and only a new document frees them.
-    /// What they hold is not the size of their files, in either direction: a small live page
-    /// brings whole fonts, and a long document's one page a fraction of its file. So the meter is
-    /// the app's own growth.
+    /// PDFKit keeps the objects of every page a document takes from another for that document's life (27.2), and only a
+    /// new document frees them; so the meter is the app's own memory growth.
     @ObservationIgnored private var memoryAtWhole = UInt64.max
-    /// So once the app has grown by half a gigabyte since, the next document is shown whole.
     private var hasGrown: Bool {
         let now = memory()
         return now > memoryAtWhole && now - memoryAtWhole > 512 << 20
     }
 
-    /// The app's memory now; a test's own count, to grow at will.
     @ObservationIgnored var memory: () -> UInt64 = { PDFController.footprint }
 
-    /// As Activity Monitor counts it; none where it can't be read.
     private static var footprint: UInt64 {
         var usage = rusage_info_current()
         let read = withUnsafeMutablePointer(to: &usage) {
@@ -393,10 +336,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         return read == 0 ? usage.ri_phys_footprint : 0
     }
 
-    /// A rebuilt PDF at the same place and zoom. Its pages replace those showing, in the same
-    /// document: a new document shows only PDFKit's background until its pages draw, a few
-    /// frames later (27.2), and each build would flash the pane. One does once in a long while,
-    /// for the memory the replaced pages hold (`memoryAtWhole`).
+    /// A rebuild's pages replace those showing in the same document: a new document shows only PDFKit's background
+    /// until its pages draw, a few frames later (27.2). Once in a while a whole one frees the memory the replaced pages hold.
     func show(_ document: PDFDocument) {
         shownVersion += 1
         liveWaiting.removeAll()
@@ -408,7 +349,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let scale = view.scaleFactor
         view.removeMark()
         if view.document != nil {
-            // The matches and the selection are on the pages going.
             cancelSearch()
             view.clearSelection()
             view.highlightedSelections = nil
@@ -434,11 +374,9 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
             restorePageIfReady()
         }
         pageChanged()
-        // A rebuild uses the field's current text, which may be ahead of the last result.
         if finding { find(findText, keepingPlace: true) }
     }
 
-    /// The top of what shows, as a page's index and a point on it.
     private var shownPlace: (index: Int, point: CGPoint)? {
         guard let destination = view.shownDestination, let page = destination.page, let document = view.document else { return nil }
         return (index: document.index(for: page), point: destination.point)
@@ -457,7 +395,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         }
     }
 
-    /// No PDF, as before the first: the pane shows its empty state, without the find bar.
     func clear() {
         shownVersion += 1
         liveSettling?.cancel()
@@ -473,31 +410,24 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         (page, pageCount) = (0, 0)
     }
 
-    // ---------- live preview ----------
+    // MARK: - Live preview
 
-    /// Live pages showing over PDFKit's, which hasn't been given them yet, by index.
     @ObservationIgnored private var liveWaiting: [Int: PDFPage] = [:]
     @ObservationIgnored private var liveSettling: Task<Void, Never>?
     @ObservationIgnored private var liveClearing: Task<Void, Never>?
-    /// A whole live document's pages that PDFKit's has yet to take, a few at a time.
     @ObservationIgnored private var liveBacklog: (document: PDFDocument, pages: IndexSet, complete: Bool)?
 
-    /// A page as TeXpresso has just typeset it, in place of the one at `index`. It shows at once,
-    /// drawn over PDFKit's page; PDFKit's document takes it once the typing pauses, so a key
-    /// costs one drawing, and the selection, Find and the place stay as they are meanwhile.
+    /// Drawn over PDFKit's page; PDFKit's document takes it once the typing pauses, so a key costs one drawing.
     func showLive(_ page: PDFPage, at index: Int) {
         guard let shown = view.document?.page(ifAt: index) else { return }
         liveWaiting[index] = page
-        // The whole document's page for here is older than this one.
         liveBacklog?.pages.remove(index)
         guard view.showLive(page, over: shown, at: index) else { return settleLive() }
         liveClearing?.cancel()
-        // Only if the whole document doesn't bring this page first, as it does 300 ms after the
-        // last key: the page would go into PDFKit's document twice, for the same pixels.
+        // Only if the whole document doesn't bring this page first (300 ms after the last key): it would go into PDFKit's document twice.
         restart(&liveSettling, after: .seconds(1)) { [weak self] in self?.settleLive() }
     }
 
-    /// PDFKit's document takes the live pages it hasn't been given.
     private func settleLive() {
         guard let document = view.document, !liveWaiting.isEmpty else { return }
         var gone: Set<PDFPage> = []
@@ -512,23 +442,16 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         replaced(gone)
     }
 
-    /// The pane has scrolled. A live page is drawn only where its page showed, so PDFKit's
-    /// document takes the waiting ones now, for what comes into view: once the scroll's own
-    /// event is over, as PDFKit scrolls too while its document takes a page.
+    /// A live page is drawn only where its page showed, so PDFKit takes the waiting ones for what comes into view.
     private func scrolled() {
         guard !liveWaiting.isEmpty else { return }
         Task { [weak self] in self?.settleLive() }
     }
 
-    /// A whole live document, in which only the pages in `changed` differ from the one before
-    /// (nil: any may). PDFKit's document takes those and no others, a few milliseconds' worth at
-    /// a time, so the selection, Find's matches on the other pages and the place stay, and a
-    /// long document doesn't stop the typing. Not `complete`, TeX stopped short of the end, and
-    /// the pages past where it stopped stay as they were.
+    /// Only the pages in `changed` differ (nil: any may); PDFKit's document takes those a few milliseconds' worth at a time so a long document doesn't stop the typing.
     func showLive(_ document: PDFDocument, changed: IndexSet?, complete: Bool) {
         // Whole too once the pages taken hold too much (`memoryAtWhole`), if it is all there.
         guard let shown = view.document, var pages = changed, !(complete && hasGrown) else { return show(document) }
-        // An earlier document's pages still to come are in this one too.
         if let liveBacklog { pages.formUnion(liveBacklog.pages) }
         if shown.pageCount < document.pageCount { pages.insert(integersIn: shown.pageCount..<document.pageCount) }
         pages.formIntersection(IndexSet(integersIn: 0..<document.pageCount))
@@ -572,9 +495,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         replaced(gone)
     }
 
-    /// Pages of the document have been replaced or have gone. What was on them goes with them,
-    /// and no more: the selection and a mark elsewhere stay, and Find's other matches stay
-    /// marked while the document is searched again.
     private func replaced(_ gone: Set<PDFPage>) {
         guard !gone.isEmpty else { return }
         clearLiveLater()
@@ -589,20 +509,17 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
             view.highlightedSelections = kept.isEmpty ? nil : kept
         }
         guard finding else { return }
-        // A search under way has read some of the pages that went.
         cancelSearch()
         find(findText, keepingPlace: true)
     }
 
-    /// The layers go once PDFKit has drawn its own pages' tiles and faded them in beneath (27.2),
-    /// unless a newer live page is on one by then.
+    /// The layers go once PDFKit has drawn its own pages' tiles and faded them in beneath (27.2).
     private func clearLiveLater() {
         restart(&liveClearing, after: .milliseconds(400)) { [weak self] in
             if let self, liveWaiting.isEmpty { view.removeLive() }
         }
     }
 
-    /// The pages have moved or changed size under the live layers: PDFKit's own show at once.
     private func dropLive() {
         liveSettling?.cancel()
         settleLive()
@@ -627,9 +544,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         go(toPage: number)
     }
 
-    /// A forward search's spot a third of the way down the view, the source's word
-    /// marked as Find marks a match; or SyncTeX's box, when the word can't be told
-    /// from its neighbours or the find bar holds the selection.
     func reveal(_ loc: ForwardLoc, word: SyncTeXWord?) {
         guard view.hasShownArea else {
             pendingReveal = (loc, word)
@@ -641,12 +555,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let match = word.flatMap { document.match(for: $0, near: loc.matches ?? [loc]) }
         let page = match?.page ?? locatedPage
         let rect = match?.rect ?? SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
-        // A destination lands below the toolbar, a rect under it.
         view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
         if let selection = match?.selection, !finding {
             view.removeMark()
             selection.color = .findHighlightColor
-            // PDFKit's bounce, which Reduce Motion leaves out.
             view.setCurrentSelection(selection, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         } else {
             view.flash(rect, on: page)
@@ -661,19 +573,15 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     private func selectMatch(scrolling: Bool = true) {
         guard matches.indices.contains(matchIndex), let match = matches[matchIndex].copy() as? PDFSelection else { return }
-        // A copy without Find's colour, which PDFKit draws as the selection, over the mark every
-        // match has: the chosen one is told from the others without the bounce too, which is
-        // over in a moment and which Reduce Motion leaves out.
+        // A copy without Find's colour, which PDFKit draws as the selection, over the mark every match has.
         match.color = nil
         view.setCurrentSelection(match, animate: scrolling && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         if scrolling { view.scrollSelectionToVisible(nil) }
     }
 
-    /// A SyncTeX point on a line of text: SyncTeX resolves only points on a glyph
-    /// box, and the page centre is usually whitespace.
+    /// SyncTeX resolves only points on a glyph box, and the page centre is usually whitespace.
     func sourcePoint() -> (page: Int, point: CGPoint)? {
         guard let document = view.document else { return nil }
-        // "The text you are looking at": the first line at or below a fifth of the way down.
         let probe = CGPoint(x: view.bounds.midX, y: view.bounds.maxY - view.safeAreaInsets.top - view.shownHeight * 0.2)
         guard let page = view.page(for: probe, nearest: true), let number = document.number(of: page) else { return nil }
         let bounds = page.bounds(for: view.displayBox)
@@ -691,13 +599,11 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     }
 }
 
-/// A double-click goes to the source, as one in the source comes here, once PDFKit has selected the word.
 final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var onInverse: (_ page: Int, _ point: CGPoint, _ word: SyncTeXWord?) -> Void = { _, _, _ in }
     var onResize: () -> Void = {}
     private let pagesDark = Atomic(false)
 
-    /// Set only to the other paper (`PDFController.setDarkPaper`).
     var darkPaper = false {
         didSet {
             pagesDark.store(darkPaper, ordering: .relaxed)
@@ -707,17 +613,13 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         }
     }
 
-    /// PDFKit's scroll view, which isn't in its interface: its document view leads to it once
-    /// there is a document.
+    /// PDFKit's scroll view isn't in its interface: its document view leads to it.
     var pageScrollView: NSScrollView? { documentView?.enclosingScrollView }
 
-    /// The knob is over the page, whose paper it is told from, whatever the window's appearance.
     func matchScroller() {
         pageScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark
     }
 
-    /// Zooming ends fitting first, by PDFKit's own menu items as by the app's: a view still
-    /// fitting fits its width again at its next resize.
     override func zoomIn(_ sender: Any?) {
         autoScales = false
         super.zoomIn(sender)
@@ -734,7 +636,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
                        dark: pagesDark.load(ordering: .relaxed)) { page.draw(with: .cropBox, to: context) }
     }
 
-    /// The page as `draw` draws it, on white paper, or dark with its colours kept.
     private nonisolated static func drawPaper(_ box: CGRect, to context: CGContext, dark: Bool, page draw: () -> Void) {
         context.saveGState()
         defer { context.restoreGState() }
@@ -755,24 +656,18 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         context.endTransparencyLayer()
     }
 
-    // ---------- live preview ----------
+    // MARK: - Live preview
 
-    /// Live preview's pages as TeXpresso typesets them, each drawn over PDFKit's own: a page given
-    /// to PDFKit fades in over an eighth of a second (27.2), and a layer's contents change in one
-    /// frame. The layers are in PDFKit's document view, so they scroll and magnify with the pages.
+    /// A page given to PDFKit fades in over an eighth of a second (27.2), and a layer's contents change in one frame.
     private let liveCanvas = LiveCanvas()
     private var liveLayers: [Int: CALayer] = [:]
-    /// The scale the layers were drawn at: PDFKit's is its scroll view's magnification, which a pinch changes step by step.
     private var liveScale: CGFloat = 0
     private var shownScale: CGFloat { pageScrollView?.magnification ?? scaleFactor }
     var liveScaleChanged: Bool { !liveLayers.isEmpty && shownScale != liveScale }
 
-    /// Draws `page` over `shown`, the page at `index`, on the pixels PDFKit's own tiles take: it
-    /// rounds a page's frame to the display's pixels and draws at the view's scale from the
-    /// frame's corner (27.2), so PDFKit's page can take the layer's place unseen. Only the part
-    /// of the page in view is drawn: the whole of it grows with the square of the zoom, to half
-    /// a gigabyte for A4 at 800% on a 2x display, and it is drawn at every key. False for a
-    /// page that isn't showing, which has no frame to draw in.
+    /// PDFKit rounds a page's frame to the display's pixels and draws at the view's scale from the frame's corner (27.2),
+    /// so its page can take the layer's place unseen. Only the part in view is drawn: the whole grows with the square of
+    /// the zoom, to half a gigabyte for A4 at 800% on a 2x display.
     func showLive(_ page: PDFPage, over shown: PDFPage, at index: Int) -> Bool {
         guard let documentView, let window, let overlay = overlays.object(forKey: shown), overlay.window != nil else { return false }
         let visible = overlay.visibleRect
@@ -781,19 +676,16 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
             liveCanvas.frame = documentView.bounds
             documentView.addSubview(liveCanvas)
         }
-        // The overlay's frame is PDFKit's page's, and its points count from the page's corner.
         // PDFKit's scale is its scroll view's magnification: the size on screen is the one in the window.
         let onScreen = overlay.convert(overlay.bounds, to: nil).size, pixel = window.backingScaleFactor
         let box = page.bounds(for: .cropBox), scale = scaleFactor * pixel
-        // The page in the display's pixels, one of them in the overlay's points, and the pixels in view.
         let whole = CGSize(width: (onScreen.width * pixel).rounded(), height: (onScreen.height * pixel).rounded())
         let unit = CGSize(width: overlay.bounds.width / (onScreen.width * pixel), height: overlay.bounds.height / (onScreen.height * pixel))
         let part = CGRect(x: (visible.minX - overlay.bounds.minX) / unit.width, y: (visible.minY - overlay.bounds.minY) / unit.height,
                           width: visible.width / unit.width, height: visible.height / unit.height)
             .integral.intersection(CGRect(origin: .zero, size: whole))
         let width = Int(part.width), height = Int(part.height)
-        // Drawn into a surface the window server takes as it is: a bitmap of the layer's own is
-        // drawn again into the display's colours as it goes to the screen, 3 ms for a page (27.2).
+        // Drawn into a surface the window server takes as it is: a bitmap of the layer's own is redrawn into the display's colours on its way to the screen (27.2).
         guard width >= 1, height >= 1,
               let surface = IOSurface(properties: [.width: width, .height: height, .bytesPerElement: 4,
                                                    .pixelFormat: kCVPixelFormatType_32BGRA]),
@@ -810,7 +702,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
             return layer
         }()
         layer.contents = surface
-        // As many pixels from the page's corner as the part is, and as many as the bitmap has.
         layer.frame = liveCanvas.convert(CGRect(x: overlay.bounds.minX + part.minX * unit.width, y: overlay.bounds.minY + part.minY * unit.height,
                                                 width: part.width * unit.width, height: part.height * unit.height), from: overlay)
         liveScale = shownScale
@@ -819,11 +710,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     private nonisolated static let liveSpace = CGColorSpace(name: CGColorSpace.sRGB)!
 
-    /// The surface's upper and lower halves at once, each in a context on its own rows of it,
-    /// by Core Graphics itself: most of a page's time is its fonts', which each live page
-    /// brings anew, and PDFKit draws a page for one caller at a time (27.2). A page whose box
-    /// PDFKit would turn or move is drawn in one, by PDFKit. The surface's corner is `corner`,
-    /// in pixels from the page's.
+    /// Halves drawn at once by Core Graphics itself: most of a page's time is its fonts', and PDFKit draws a page for
+    /// one caller at a time (27.2). A page whose box PDFKit would turn or move is drawn in one, by PDFKit.
     private nonisolated static func drawLive(_ page: PDFPage, to surface: IOSurface, box: CGRect, scale: CGFloat, from corner: CGPoint,
                                              dark: Bool) {
         // Drawing a page is safe from any thread, as PDFKit's own tiles are drawn.
@@ -846,24 +734,19 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         }
     }
 
-    /// A live page is drawn over the page at `index`.
     func hasLive(at index: Int) -> Bool { liveLayers[index] != nil }
 
-    /// The page at `index` has gone, and what was drawn over it.
     func removeLive(at index: Int) {
         liveLayers.removeValue(forKey: index)?.removeFromSuperlayer()
     }
 
-    /// PDFKit's own pages show again: they have the live ones' content, or the pages have moved.
     func removeLive() {
         for layer in liveLayers.values { layer.removeFromSuperlayer() }
         liveLayers.removeAll()
     }
 
-    /// Forward search's mark with its wait and fade, in its page's overlay rather than on the
-    /// page: an annotation would be printed and read by VoiceOver.
+    /// In the page's overlay rather than an annotation, which would be printed and read by VoiceOver.
     private(set) var mark: (page: PDFPage, rect: CGRect, view: NSView, fading: Task<Void, Never>)?
-    /// The overlays PDFKit has asked for, which it keeps while their pages show.
     private let overlays = NSMapTable<PDFPage, NSView>.weakToWeakObjects()
 
     override init(frame: NSRect) {
@@ -873,8 +756,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    /// Marks `rect` on `page` for 2.2 seconds, then fades it out, as Find's indicator goes. A fade
-    /// is what the HIG puts in motion's place, so Reduce Motion keeps it.
+    /// A fade is what the HIG puts in motion's place, so Reduce Motion keeps it.
     func flash(_ rect: CGRect, on page: PDFPage) {
         removeMark()
         let view = MarkView(onDarkPaper: darkPaper)
@@ -888,7 +770,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         if let overlay = overlays.object(forKey: page) { place(view, at: rect, on: page, in: overlay) }
     }
 
-    /// A new search's or document's place is elsewhere: the last mark goes at once.
     func removeMark() {
         mark?.fading.cancel()
         mark?.view.removeFromSuperview()
@@ -902,7 +783,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         return overlay
     }
 
-    /// The pages' dark edges follow the paper, the zoom and the display's pixels.
     func fitPageEdges() {
         for case let overlay as PageOverlay in overlays.objectEnumerator()?.allObjects ?? [] {
             overlay.dark = darkPaper
@@ -919,7 +799,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         if let mark, mark.page === page { place(mark.view, at: mark.rect, on: page, in: overlay) }
     }
 
-    /// An overlay spans the page's box, unrotated (PDFKit rotates the overlay itself).
+    /// Unrotated: PDFKit rotates the overlay itself.
     private func place(_ mark: NSView, at rect: CGRect, on page: PDFPage, in overlay: NSView) {
         let box = page.bounds(for: displayBox)
         let x = overlay.bounds.width / box.width, y = overlay.bounds.height / box.height
@@ -937,9 +817,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) }
     }
 
-    /// SwiftUI reassigns unchanged frames during layout. PDFView would refit the width and undo
-    /// a pinch while auto-scaling is still active: in its own `setFrame:`, whatever the size, so
-    /// `setFrameSize`'s check below doesn't stand in for this one (27.2).
+    /// SwiftUI reassigns unchanged frames during layout; PDFView would refit the width and undo a pinch in its own
+    /// `setFrame:` while auto-scaling is active (27.2).
     override var frame: NSRect {
         get { super.frame }
         set { if newValue != super.frame { super.frame = newValue } }
@@ -948,8 +827,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     override func setFrameSize(_ newSize: NSSize) {
         // SwiftUI reassigns the same frame on scroll; only a new size counts.
         guard newSize != frame.size else { return }
-        // At the document start, width changes or Fit Page can lose the first
-        // page's visible top beneath the toolbar; restore it after resizing.
+        // At the document start, width changes or Fit Page can lose the first page's visible top beneath the toolbar.
         let widthChanged = newSize.width != frame.width
         let atStart = hasShownArea && atDocumentStart
         super.setFrameSize(newSize)
@@ -959,22 +837,19 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         }
     }
 
-    /// Allow the scaled page-break margin when checking the first page's top.
     private var atDocumentStart: Bool {
         guard let page = document?.page(at: 0) else { return false }
         let top = convert(CGPoint(x: 0, y: page.bounds(for: displayBox).maxY), from: page).y
         return top <= bounds.maxY - safeAreaInsets.top + pageBreakMargins.top * scaleFactor
     }
 
-    /// Use the visible top below the bars; `currentDestination` lies behind them.
+    /// `currentDestination` lies behind the bars.
     var shownDestination: PDFDestination? {
         let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
         return page(for: top, nearest: true).map { PDFDestination(page: $0, at: convert(top, to: $0)) }
     }
 
-    /// A double-click whose pointer has moved by the time PDFKit's own handling returns was
-    /// dragged on, to select by words, and isn't one to go to the source by: the keyboard would
-    /// leave the selection just made. A slip of the hand of a few points is still a click.
+    /// A double-click whose pointer has moved by the time PDFKit's handling returns was dragged on to select by words.
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
         guard event.clickCount == 2, let up = window?.mouseLocationOutsideOfEventStream else { return }
@@ -982,18 +857,14 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         if abs(up.x - down.x) <= 4, abs(up.y - down.y) <= 4 { goToSource(at: convert(down, from: nil)) }
     }
 
-    /// Edit › Find › Jump to Selection, which the window answers for the pages (`MainWindowController`):
-    /// the selection in the middle of what shows, as a text view centres its own.
     func jumpToSelection() {
         guard let selection = currentSelection, let page = selection.pages.first else { return }
         let box = selection.bounds(for: page)
         go(to: PDFDestination(page: page, at: CGPoint(x: box.minX, y: box.midY + shownHeight / 2 / scaleFactor)))
     }
 
-    /// Go to Source Position for the clicked point, above PDFKit's own items.
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event)
-        // The app fixes the page layout, and scrolling turns the pages.
         menu?.keep([#selector(copy(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:))])
         guard let menu, document != nil else { return menu }
         let item = NSMenuItem(title: MenuCommand.syncInverse.title, action: #selector(goToSource(_:)), keyEquivalent: "")
@@ -1015,7 +886,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 }
 
-/// The live pages' layers, over PDFKit's pages in its document view; it takes no clicks.
 private final class LiveCanvas: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -1030,11 +900,9 @@ private final class LiveCanvas: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-/// A page's overlay, which takes no clicks: the PDF view keeps them all.
 private final class PageOverlay: NSView {
-    /// On dark paper, a black edge a device pixel either side of the page's. PDFKit lays a white
-    /// layer under each page's tiles, and where the page's edge falls inside a pixel, both are
-    /// part of that pixel and the white shows through the inverted tile as a light line (27.2).
+    /// On dark paper, PDFKit's white layer under each page's tiles shows through the inverted tile as a light line
+    /// where the page's edge falls inside a pixel (27.2); a black edge covers it.
     private let edge = CALayer()
     var dark = false
 
@@ -1066,9 +934,6 @@ private final class PageOverlay: NSView {
     }
 }
 
-/// The square annotation the mark once was, as PDFKit drew it: Find's colour as a fill
-/// and, over it, a 1 pt border at half the fill's strength. With Increase Contrast the
-/// border stands out from the paper at WCAG's 3:1 for graphics.
 private final class MarkView: NSView {
     private let paper: NSColor
 
@@ -1109,8 +974,7 @@ struct PDFRepresentable: NSViewRepresentable {
 }
 
 extension PDFPage {
-    /// PDFKit's characterIndex is inaccurate for pdfTeX's T1 fonts on 27.2;
-    /// measure each letter's selection to retain the clicked source occurrence.
+    /// PDFKit's characterIndex is inaccurate for pdfTeX's T1 fonts on 27.2; each letter's selection is measured instead.
     func syncWord(at point: CGPoint) -> SyncTeXWord? {
         // PDFKit's word lookup crashes on a page whose document has gone (it holds it weakly).
         guard document != nil, let word = selectionForWord(at: point), let text = word.string, let context = string else { return nil }
@@ -1121,7 +985,6 @@ extension PDFPage {
         return SyncTeXWord(text: text, offset: offset ?? 0, context: context, contextOffset: range.location)
     }
 
-    /// Hyperlinks stay active without hyperref's visible annotation boxes.
     nonisolated func hideLinkBorders() {
         for annotation in annotations where annotation.type == "Link" {
             let border = PDFBorder()
@@ -1132,21 +995,18 @@ extension PDFPage {
 }
 
 extension PDFDocument {
-    /// Nil outside the document, where `page(at:)` is documented to raise.
+    /// `page(at:)` raises outside the document.
     func page(ifAt index: Int) -> PDFPage? {
         (0..<pageCount).contains(index) ? page(at: index) : nil
     }
 
-    /// One-based, as the status bar and SyncTeX count; nil for a page that has left the
-    /// document, which PDFKit answers with `NSNotFound`.
+    /// PDFKit answers NSNotFound for a page that has left the document.
     func number(of page: PDFPage) -> Int? {
         let index = index(for: page)
         return index == NSNotFound ? nil : index + 1
     }
 
-    /// Another document's pages in place of these, each put in before the one it replaces is
-    /// taken out, so the document is never shorter than the place being read. Links within it
-    /// lead to the pages here.
+    /// Each put in before the one it replaces is taken out, so the document is never shorter than the place being read.
     func replacePages(with other: PDFDocument) {
         let pages = (0..<other.pageCount).compactMap { other.page(at: $0)?.copy() as? PDFPage }
         let old = pageCount
@@ -1172,8 +1032,6 @@ extension PDFDocument {
 
     typealias SyncMatch = (page: PDFPage, rect: CGRect, selection: PDFSelection)
 
-    /// Align the source line with rendered text first, so equal words retain their occurrence.
-    /// SyncTeX boxes delimit the fallback when commands prevent an exact text alignment.
     func match(for word: SyncTeXWord, near locations: [ForwardLoc]) -> SyncMatch? {
         guard !locations.isEmpty, pageCount > 0 else { return nil }
         let first = max(0, Int(locations.lazy.map(\.page).min()!) - 2)
@@ -1212,7 +1070,6 @@ extension PDFDocument {
             let exact = SyncText.matches(source.letters, in: letters).compactMap { start -> (target: SyncMatch, distance: CGFloat, anchor: CGFloat)? in
                 guard let anchor = rect(at: start, length: 1), let end = rect(at: start + source.letters.count - 1, length: 1),
                       let target = rect(at: start + at, length: target.count) else { return nil }
-                // Both context ends constrain rotations of identical sentences across paragraphs.
                 return (target, distance(target), distance(anchor) + distance(end))
             }
             if let best = exact.min(by: { a, b in a.distance == b.distance ? a.anchor < b.anchor : a.distance < b.distance }) {
@@ -1238,7 +1095,6 @@ extension PDFDocument {
     }
 }
 
-/// Comparison ignores layout whitespace, punctuation and font ligatures, while keeping glyph ranges.
 private nonisolated struct SyncText {
     var letters: [Character] = []
     var ranges: [NSRange] = []
@@ -1272,15 +1128,12 @@ private nonisolated struct SyncText {
 }
 
 private extension PDFView {
-    /// The height clear of the toolbar, find bar and bottom status bar.
     var shownHeight: CGFloat { bounds.height - safeAreaInsets.top - safeAreaInsets.bottom }
 
-    /// A hidden or collapsed pane has none, and a destination can't land in it.
     var hasShownArea: Bool { bounds.width > 0 && shownHeight > 0 }
 }
 
 extension NSMenu {
-    /// Keep word actions before Cut/Copy, then only allowed actions or submenus.
     func keep(_ actions: Set<Selector>) {
         func kept(_ item: NSMenuItem) -> Bool {
             item.action.map(actions.contains) == true || item.submenu?.items.contains(where: kept) == true

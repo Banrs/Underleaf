@@ -2,7 +2,6 @@ import Foundation
 import Testing
 @testable import TeXLocal
 
-/// Where a path is after its entry or a folder above it is renamed.
 @MainActor
 struct RemapPathTests {
     @Test func theOpenFileMovesWithItsFolder() {
@@ -15,7 +14,6 @@ struct RemapPathTests {
     }
 }
 
-/// A file is what its extension says, in any case: what the editor edits, and the symbol beside its name.
 @MainActor
 struct FileKindTests {
     @Test func theExtensionSaysWhatAFileIs() {
@@ -29,7 +27,6 @@ struct FileKindTests {
     }
 }
 
-/// Work in a task slot: the latest of its kind carries on, and work put off runs once, after its delay.
 @MainActor
 struct TaskSlotTests {
     @Test(.timeLimit(.minutes(1)))
@@ -55,7 +52,6 @@ struct TaskSlotTests {
     }
 }
 
-/// The projects screen's and the sidebar's rename in place.
 @MainActor
 struct InPlaceRenameTests {
     @Test func aRenameEndsOnceWithItsNewName() {
@@ -64,8 +60,7 @@ struct InPlaceRenameTests {
         rename.name = "  start.tex "
         #expect(rename.end("ch/intro.tex", from: "intro.tex") == "start.tex")
         #expect(rename.id == nil)
-        // Return, then the field losing focus as it goes: the second finds
-        // the rename over.
+        // Return, then the field losing focus as it goes: the second finds the rename over.
         #expect(rename.end("ch/intro.tex", from: "intro.tex") == nil)
     }
 

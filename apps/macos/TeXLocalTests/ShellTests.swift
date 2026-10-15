@@ -3,12 +3,10 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// The window's panes and the toolbar over them. One at a time: AppKit keeps toolbars of one
-/// identifier alike, so a tool taken out of one window's is out of every window's.
+/// One at a time: AppKit keeps toolbars of one identifier alike, so a tool taken out of one window's is out of every window's.
 @Suite(.serialized)
 @MainActor
 struct ShellTests {
-    /// A workspace in a window on screen, the inspector hidden, and the sidebar unless asked for.
     private func workspace(showPDF: Bool, sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
         let app = AppModel()
         app.sidebarVisible = sidebar
@@ -21,10 +19,8 @@ struct ShellTests {
         let workspace = WorkspaceController(app: app, project: ProjectModel(id: "ShellTests", app: app),
                                             size: window.contentLayoutRect.size)
         window.contentViewController = workspace
-        // As the app's window has them (`MainWindowController`).
         window.contentMinSize = ColumnMetrics.contentMinimum
-        // Neither loaded nor saved: this host shares the app's saved toolbar, and Compile's form
-        // goes by which tools the toolbar holds.
+        // Neither loaded nor saved: this host shares the app's saved toolbar, and Compile's form goes by which tools the toolbar holds.
         workspace.toolbar.toolbar.autosavesConfiguration = false
         window.toolbar = workspace.toolbar.toolbar
         window.orderFront(nil)
@@ -32,8 +28,7 @@ struct ShellTests {
         return (window, workspace)
     }
 
-    /// The models reach the panes a turn later, and the panes' frames the toolbar at layout: it
-    /// waits, a turn at a time, until no view in the window has moved for a few.
+    /// Waits, a turn at a time, until no view in the window has moved for a few.
     private func resize(_ window: NSWindow, to width: CGFloat) async throws {
         func frames(_ view: NSView) -> String {
             "\(view.frame)" + view.subviews.map(frames).joined()
@@ -55,9 +50,6 @@ struct ShellTests {
         try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == id })
     }
 
-    /// A wide window has Compile as its word. At its narrowest the panes are at their least
-    /// or wider, Compile is its symbol, and nothing has left the toolbar but for its overflow
-    /// menu, where each tool that can go has a menu form.
     @Test func aNarrowWindowKeepsEveryToolOrItsMenuForm() async throws {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
@@ -67,13 +59,10 @@ struct ShellTests {
         let word = button.fittingSize.width
         #expect(word > 60)
 
-        // The least a drag of the window's edge gets to: the toolbar's, which the panes' own
-        // (with their divider, at most a point) fit in, so they don't hold the window wider.
         let least = ColumnMetrics.contentMinimum.width
         #expect(least >= ColumnMetrics.sourceMinimum + 1 + ColumnMetrics.pdfMinimum + ColumnMetrics.toolbarInset)
         try await resize(window, to: least)
         #expect(window.contentView?.frame.width == least)
-        // Compile as its symbol, a circle, still Compile to the overflow menu and VoiceOver.
         #expect(workspace.toolbar.compactCompile)
         #expect(button.fittingSize == NSSize(width: 36, height: 36))
         #expect(compile.label == MenuCommand.compileRun.title)
@@ -86,7 +75,6 @@ struct ShellTests {
         for id in [NSToolbarItem.Identifier.back, .compile, .togglePDF] {
             #expect(try item(id, in: workspace).visibilityPriority == .high)
         }
-        // The tools Customize Toolbar can add are among the first to go.
         for id in [NSToolbarItem.Identifier.undo, .redo, .bold, .italic, .underline, .share] {
             let added = workspace.toolbar.toolbar(workspace.toolbar.toolbar, itemForItemIdentifier: id, willBeInsertedIntoToolbar: false)
             #expect(added?.visibilityPriority == .low, "\(id.rawValue)")
@@ -97,9 +85,6 @@ struct ShellTests {
         #expect(button.fittingSize.width == word)
     }
 
-    /// Stop, with the build's spinner, is as wide as Compile was, as its word and as its symbol:
-    /// the tools beside it stay where they are as a build starts and ends. The overflow menu and
-    /// VoiceOver have Stop by name.
     @Test func stopIsAsWideAsCompile() async throws {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
@@ -120,7 +105,6 @@ struct ShellTests {
         }
     }
 
-    /// With the PDF hidden the window is no narrower: its toolbar holds it there.
     @Test func theSourceAloneStopsAtTheToolbarsMinimum() async throws {
         let (window, workspace) = try await workspace(showPDF: false)
         defer { workspace.close(); window.close() }
@@ -129,7 +113,6 @@ struct ShellTests {
         #expect(try item(.zoom, in: workspace).isHidden)
     }
 
-    /// The PDF toggle's help tag says which it will do, as View's item, and Zoom goes with the column.
     @Test func thePDFTogglesHelpSaysWhichItWillDo() async throws {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
@@ -140,10 +123,6 @@ struct ShellTests {
         #expect(zoom.isHidden)
     }
 
-    /// Compile's room is reckoned from the default tools' widths. In a toolbar customised to
-    /// others it keeps its word, where the default one has it as its symbol, and AppKit's overflow
-    /// menu acts alone, until the window is too narrow for the word beside the tools that never
-    /// leave. With the default tools back, it is its symbol again.
     @Test func aCustomisedToolbarKeepsCompilesWord() async throws {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
@@ -174,9 +153,6 @@ struct ShellTests {
         toolbar.itemIdentifiers = defaults
     }
 
-    /// A divider dragged near where it opened stops there: the sidebar at its opening width, source
-    /// and PDF at the split a double-click on their divider restores. Out of reach, it goes where
-    /// it is dragged, and a hidden sidebar has nowhere to stop.
     @Test func aDividerStopsWhereItOpened() async throws {
         let (window, workspace) = try await workspace(showPDF: true, sidebar: true)
         defer { workspace.close(); window.close() }
@@ -196,9 +172,6 @@ struct ShellTests {
         #expect(divider(even - 5) == even && divider(even + 40) == even + 40)
     }
 
-    /// The source|PDF divider stands under the toolbar's separator from the widest window to the
-    /// narrowest, sidebar open or shut: where a section's tools stop the separator, the divider
-    /// goes to it (`joinDivider`).
     @Test(arguments: [false, true])
     func theDividerStaysUnderTheToolbarsSeparator(sidebar: Bool) async throws {
         let (window, workspace) = try await workspace(showPDF: true, sidebar: sidebar)
@@ -218,8 +191,6 @@ struct ShellTests {
         }
     }
 
-    /// The File Outline's header is at the files' foot from the first, over an outline folded for
-    /// a file that has none, and away only while search results have the sidebar.
     @Test func theOutlineHeaderGoesOnlyForSearchResults() async throws {
         let (window, workspace) = try await workspace(showPDF: true, sidebar: true)
         defer { workspace.close(); window.close() }
@@ -234,8 +205,6 @@ struct ShellTests {
         #expect(files.bottomAlignedAccessoryViewControllers == [header] && sidebar.splitViewItems[1].isCollapsed)
     }
 
-    /// A sidebar the window folded is still the user's shown sidebar: it isn't saved as hidden,
-    /// View offers to show it, and showing it unfolds it.
     @Test func aFoldedSidebarIsNotAHiddenOne() {
         let app = AppModel()
         let project = ProjectModel(id: "ShellTests", app: app)
@@ -251,7 +220,6 @@ struct ShellTests {
         app.sidebarVisible = true
     }
 
-    /// A menu's PDF action shows the column and goes to the workspace at once.
     @Test func aPDFRequestShowsTheColumnAndReachesTheWorkspace() {
         let app = AppModel()
         app.showPDF = false
@@ -262,8 +230,6 @@ struct ShellTests {
         #expect(app.showPDF && asked == 2)
     }
 
-    /// A track applies each new value once, not a change that leaves the value as it was, and
-    /// the first only where it is asked for.
     @Test func aTrackAppliesEachNewValueOnce() async throws {
         let app = AppModel()
         var all: [Int] = [], later: [Int] = []
@@ -281,8 +247,6 @@ struct ShellTests {
         #expect(all == [0, 1] && later == [1])
     }
 
-    /// A space typed at the end of a new project's name moves the name at once, and a name
-    /// longer than its row scrolls in the row, beside its label and inside the sheet.
     @Test func aNewProjectsNameShowsASpaceTypedAtItsEnd() async throws {
         let sheet = NSHostingView(rootView: NewProjectSheet(template: .article, taken: []).environment(AppModel()))
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: sheet.fittingSize), styleMask: [.titled],
@@ -297,7 +261,6 @@ struct ShellTests {
         let name = try #require(field(sheet))
         window.makeFirstResponder(name)
         let editor = try #require(name.currentEditor() as? NSTextView)
-        /// Where the name starts, in the window.
         func start() -> CGFloat {
             sheet.layoutSubtreeIfNeeded()
             return window.convertFromScreen(editor.firstRect(forCharacterRange: NSRange(location: 0, length: 1), actualRange: nil)).minX

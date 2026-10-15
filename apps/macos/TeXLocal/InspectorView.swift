@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// The inspector: the project's build settings. The file's word count and the last build
-/// show in the status bar and the build panel, so it doesn't repeat them.
 struct InspectorView: View {
     let project: ProjectModel
     @Environment(AppModel.self) private var app
@@ -10,8 +8,7 @@ struct InspectorView: View {
         Form {
             Section("Project") {
                 let texFiles = project.tree.nodes.flattened.filter { !$0.isDirectory && isLaTeXFile($0.path) }.map(\.path)
-                // The current value is always a choice, before the settings come (nil) or the
-                // main file is in the file list: a selection with no tag is a SwiftUI fault.
+                // The current value is always a choice, before the settings come (nil) or the main file is in the file list: a selection with no tag is a SwiftUI fault.
                 let main = project.settings?.mainFile
                 Picker("Main File", selection: Binding(get: { main }, set: { new in
                     if let new { Task.immediate { await project.setMainFile(new) } }
@@ -26,10 +23,8 @@ struct InspectorView: View {
                        project.settings?.stopOnFirstError ?? false)
                 Button("Clean Build Folder") { Task { await project.cleanBuildFolder() } }
             }
-            // Settings arrive from the core after the project opens.
             .disabled(project.settings == nil)
             Section {
-                // As Compile › Live Preview: on while this window's session is live.
                 Toggle(isOn: Binding(get: { project.texpresso.active },
                                      set: { $0 ? project.startTeXpresso() : project.stopTeXpresso() })) {
                     Text("Live Preview")
@@ -57,8 +52,6 @@ struct InspectorView: View {
     }
 }
 
-/// The engine, in the inspector and the Compile menu: the current one is always a choice, before
-/// the settings come (nil) too, as a selection no tag matches is a SwiftUI fault. Dimmed until they come.
 struct EnginePicker: View {
     let project: ProjectModel?
 

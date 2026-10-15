@@ -1,42 +1,25 @@
 import SwiftUI
 
-/// The bars' numbers, Xcode's, measured (2026-10-06). Most are the UI kit's too: 36 is an
-/// extra-large control and also 8 + a small control (20) + 8, 14 is the sidebar's content inset
-/// and 9 the toolbar button group's gap. 16.5, 12, 17 and 16 have no kit symbol.
 enum BarMetrics {
-    /// A toolbar control's height, which the status bar, the build panel's bar and the folded
-    /// File Outline's header share.
     static let height: CGFloat = 36
-    /// The line over a bar: a point, as the window's splits' dividers and as Xcode's (27.1), in a
-    /// row of its own above the bar's height.
     static let line: CGFloat = 1
-    /// The status bar's edges: 14 pt in to its first item, and the toggle's symbol 17.5 pt from
-    /// the right edge, 3.5 pt of which its target beyond the glyph makes up.
     static let leading: CGFloat = 14
     static let trailing: CGFloat = 16.5
-    /// Between a bar's items, and between its groups of them.
     static let spacing: CGFloat = 9
     static let groupSpacing: CGFloat = 16
-    /// The build panel's bar, as Xcode's console bar: its pop-up's text 16 pt in, its last
-    /// control's glyph 17 pt from the edge.
     static let consoleLeading: CGFloat = 12
     static let consoleTrailing: CGFloat = 17
-    /// The HIG's 20 × 20 pt least target for a borderless button, a small control's height.
     static let target: CGFloat = 20
-    /// The line before the toggle: as tall as the toggle's symbol.
     static let dividerHeight: CGFloat = 12
 }
 
-/// Status below source and PDF, which scroll on beneath it, the same whether the build panel
-/// shows or not. Page uses PDFKit numbering, which can differ from LaTeX; the engine appears
-/// elsewhere.
+/// Page uses PDFKit numbering, which can differ from LaTeX.
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     let project: ProjectModel
 
     var body: some View {
-        // Under a narrower window the bar says less, then says it shorter.
         ViewThatFits(in: .horizontal) {
             content(.full).labelStyle(.titleAndIcon)
             content(.symbols).labelStyle(.iconOnly)
@@ -45,8 +28,7 @@ struct StatusBar: View {
         .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
         // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`).
         .padding(.top, BarMetrics.line)
-        // No ground of its own: AppKit's scroll edge lies under the bar (`buildArea`), and draws
-        // no line, so the bar has its own.
+        // No ground of its own: AppKit's scroll edge lies under the bar (`buildArea`) and draws no line, so the bar has its own.
         .overlay(alignment: .top) { Divider() }
         .monospacedDigit()
         .buttonStyle(.borderless)
@@ -64,7 +46,6 @@ struct StatusBar: View {
             Button {
                 if showingIssues { project.panel.shown = false } else { project.panel.show(.issues) }
             } label: {
-                // The last to give way: its text shortens only where nothing else can.
                 buildStatus.fixedSize(horizontal: detail != .short, vertical: true).hitTarget()
             }
             .help(showingIssues ? "Hide issues" : "Show issues")
@@ -77,13 +58,11 @@ struct StatusBar: View {
                 .help("Show the Live Preview log")
             }
             if let reason = project.saveFailure {
-                // An autosave's failure, here until a save succeeds; saving again says why in an alert.
                 Button { Task { await project.saveEdits() } } label: {
                     Label("Not Saved", systemImage: "exclamationmark.triangle.fill")
                         .symbolRenderingMode(.multicolor)
                         .hitTarget()
                 }
-                // A fragment, as the bar's other help tags: the reason without its full stop.
                 .help("\(reason.hasSuffix(".") ? String(reason.dropLast()) : reason); save again")
             }
             if let notice = project.notices.current {
@@ -94,7 +73,6 @@ struct StatusBar: View {
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
             HStack(spacing: BarMetrics.groupSpacing) {
                 if project.editsText {
-                    // The caret's place; Go to Line from it.
                     Button { app.perform(.editGotoLine, on: project) } label: {
                         place(detail, "Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)",
                               short: "\(project.cursorLine):\(project.cursorColumn + 1)",
@@ -118,15 +96,11 @@ struct StatusBar: View {
                 }
             }
             .fixedSize()
-            // Xcode's line before the toggle, 9 pt either side.
             if project.editsText || pages {
                 Divider().frame(height: BarMetrics.dividerHeight)
             }
             Toggle(isOn: Bindable(project.panel).shown) {
-                // Only as tall as the HIG's least target: its symbol sits at Xcode's gaps, at the body
-                // size, the nearest to Xcode's 12.5 pt symbol beside 11 pt text (measured 2026-10-06).
-                // Its state is the accent colour alone: with Differentiate Without Colour the off
-                // state is the plain square, without the panel's filled third.
+                // Its state is the accent colour alone: with Differentiate Without Colour the off state is the plain square, without the panel's filled third.
                 Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
                       ? "square" : "inset.filled.bottomthird.square")
                     .font(.body)
@@ -138,8 +112,6 @@ struct StatusBar: View {
         }
     }
 
-    /// The caret's or the page's place, in words until the bar must shorten it to figures, which
-    /// then carry the words for VoiceOver.
     private func place(_ detail: Detail, _ full: LocalizedStringKey, short: String,
                        spoken: LocalizedStringKey) -> some View {
         Group {
@@ -148,7 +120,6 @@ struct StatusBar: View {
         .hitTarget()
     }
 
-    /// The PDF shown isn't the source's: edits since its build, or a failed build after it.
     @ViewBuilder
     private var freshness: some View {
         if project.showsLastSuccessfulBuild {
@@ -172,7 +143,6 @@ struct StatusBar: View {
     private var buildStatus: some View {
         HStack {
             if project.compiling {
-                // The toolbar's Stop has the build's one spinner.
                 Text("Compiling…")
             } else if let result = project.result {
                 if result.stopped {
@@ -180,7 +150,6 @@ struct StatusBar: View {
                 } else if result.ok {
                     badge("Build Succeeded · \(result.durationText)", "checkmark.circle.fill", .green)
                 } else {
-                    // The error count folds into the failure, so its symbol shows once.
                     badge(project.errorCount == 0 ? "Build Failed" : "Build Failed · ^[\(project.errorCount) Error](inflect: true)",
                           "xmark.octagon.fill")
                 }
@@ -194,14 +163,11 @@ struct StatusBar: View {
                 badge("\(project.warningCount)", "exclamationmark.triangle.fill", spoken: "^[\(project.warningCount) warning](inflect: true)")
             }
         }
-        // A build starting or ending crossfades its status, as Compile's button changes form, and
-        // under Reduce Motion too, where the HIG has a crossfade stand for motion; nothing here
-        // moves with typing.
+        // A build starting or ending crossfades its status, also under Reduce Motion, where the HIG has a crossfade stand for motion.
         .animation(.easeInOut(duration: 0.2), value: project.compiling)
     }
 
-    /// `spoken` is what the short `title` stands for, as the title itself, so VoiceOver and
-    /// Voice Control name the badge "3 errors", not "3".
+    /// `spoken` is what the short `title` stands for, so VoiceOver and Voice Control name the badge "3 errors", not "3".
     private func badge(_ title: LocalizedStringKey, _ systemImage: String, _ color: Color? = nil,
                        spoken: LocalizedStringKey? = nil) -> some View {
         Label {
@@ -217,8 +183,6 @@ struct StatusBar: View {
 }
 
 extension View {
-    /// A bar's row, as Xcode's: small controls and subheadline text on one line, in from the
-    /// bar's edges, 36 pt high under its line (8 + a small control + 8).
     func barRow(leading: CGFloat, trailing: CGFloat) -> some View {
         font(.subheadline).controlSize(.small).lineLimit(1)
             .padding(.leading, leading).padding(.trailing, trailing).frame(height: BarMetrics.height)
