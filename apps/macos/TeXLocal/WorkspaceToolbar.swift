@@ -385,16 +385,15 @@ private final class ShareItem: NSSharingServicePickerToolbarItem {
 
 /// Zoom's segments, which keep one width as the scale changes, as a pop-up keeps its widest
 /// item's: otherwise the capsule, and the items after it, move. The percentage keeps tabular
-/// digits in whatever font the toolbar gives the control, in the widest label's width.
+/// digits in whatever font the toolbar gives the control, in the widest label's width, measured
+/// once for each size of that font, at the layout after it is set.
 private final class ZoomControl: NSSegmentedControl {
-    var widestLabel = "" { didSet { reserveWidth() } }
+    var widestLabel = ""
+    private var measuredSize: CGFloat?
 
     override var font: NSFont? {
         get { super.font }
-        set {
-            super.font = newValue.map { .monospacedDigitSystemFont(ofSize: $0.pointSize, weight: .regular) }
-            reserveWidth()
-        }
+        set { super.font = newValue.map { .monospacedDigitSystemFont(ofSize: $0.pointSize, weight: .regular) } }
     }
 
     /// AppKit gives the control the size's own font.
@@ -402,18 +401,13 @@ private final class ZoomControl: NSSegmentedControl {
         didSet { font = font }
     }
 
-    private var reserving = false
-
-    /// After the change that asks for it: inside the toolbar's own update, as it sets the font
-    /// on showing a hidden item, the control's size lags each change by one, and the round trip
-    /// below widened the scale each time the PDF came back (27.2).
-    private func reserveWidth() {
-        guard !reserving else { return }
-        reserving = true
-        Task { [weak self] in
-            self?.reserving = false
-            self?.measure()
-        }
+    /// Not as the font is set: inside the toolbar's own update the control's size lags each change
+    /// by one (27.2).
+    override func layout() {
+        super.layout()
+        guard let size = font?.pointSize, size != measuredSize else { return }
+        measuredSize = size
+        measure()
     }
 
     /// A set width gets the same margins as a label's own: the widest label's width, less them.
