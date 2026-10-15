@@ -902,7 +902,7 @@ private final class MarkView: NSView {
         let find = NSColor.findHighlightColor
         layer?.backgroundColor = find.withAlphaComponent(0.4).cgColor
         layer?.borderColor = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-            ? find.legibleAsText(in: .aqua).cgColor : find.withAlphaComponent(0.2).cgColor
+            ? find.legibleAsText(in: .aqua, ratio: 3).cgColor : find.withAlphaComponent(0.2).cgColor
         layer?.borderWidth = 1
     }
 }

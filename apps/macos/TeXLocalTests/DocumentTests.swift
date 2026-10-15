@@ -338,7 +338,13 @@ struct PDFFindTests {
         controller.reveal(ForwardLoc(page: 1, h: box.minX, v: page.bounds(for: .cropBox).maxY - box.minY, width: box.width, height: box.height),
                           from: SyncSource(id: info.id, file: info.mainFile, line: 1, column: column))
         let second = NSRange(try #require(rendered.ranges(of: "echo").last), in: rendered)
-        try await waitUntil { controller.view.currentSelection?.range(at: 0, on: page) == second }
+        let whole: [[String: any Sendable]] = [["page": 1, "text": rendered, "near": [[0, (rendered as NSString).length]]]]
+        let hit = try await Core.shared.answer("synctex_match", ["id": info.id, "file": info.mainFile, "line": 1, "column": column,
+                                                                "pages": whole], as: PageHit.self)
+        #expect(hit.map { NSRange(location: $0.start, length: $0.end - $0.start) } == second)
+        try await waitUntil(timeout: .seconds(5)) { controller.view.currentSelection?.range(at: 0, on: page) == second } state: {
+            "selection \(String(describing: controller.view.currentSelection?.range(at: 0, on: page))), mark \(controller.view.mark != nil), text \(rendered.debugDescription)"
+        }
     }
 
     private func shows(_ page: PDFPage?, in controller: PDFController) -> Bool {

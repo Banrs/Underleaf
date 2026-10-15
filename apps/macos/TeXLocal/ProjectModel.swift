@@ -464,10 +464,9 @@ final class ProjectModel {
     }
 
     private func dropped(_ url: URL) -> SourceTextView.FileDrop? {
-        guard let path = projectPath(url), let node = tree.node(at: path), !node.isDirectory else { return nil }
-        if isLaTeX, node.kind == .image || node.kind == .pdf {
-            return .insert("\\includegraphics{\(path)}")
-        }
+        guard let path = projectPath(url), let kind = tree.node(at: path)?.kind else { return nil }
+        let drop: DropText? = Syntax.call("drop_text", ["path": path, "kind": kind.rawValue, "into": openKind?.rawValue ?? ""])
+        if let insert = drop?.insert { return .insert(insert) }
         return .open { [weak self] in Task { await self?.open(path) } }
     }
 
@@ -1091,4 +1090,9 @@ nonisolated struct IssuesEvent: Decodable {
 
     let path: String
     let lines: [Line]
+}
+
+/// What a file dropped on the open one inserts there (`drop_text`); none means it opens.
+private nonisolated struct DropText: Decodable {
+    let insert: String?
 }

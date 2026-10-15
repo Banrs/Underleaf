@@ -27,9 +27,11 @@ extension NSColor {
         return .adapting(resolved, fallback: self)
     }
 
-    func legibleAsText(in name: NSAppearance.Name) -> NSColor {
+    /// `ratio` in place of the text's 4.5:1 (7:1 with Increase Contrast), as for a non-text mark's 3:1.
+    func legibleAsText(in name: NSAppearance.Name, ratio: Double? = nil) -> NSColor {
         guard var args = Self.ground(name), let appearance = NSAppearance(named: name) else { return self }
         args["color"] = rgba(in: appearance)
+        if let ratio { args["ratio"] = ratio }
         let legible: [Double]? = Syntax.call("legible", args)
         return legible.map { Self.srgb($0) } ?? self
     }

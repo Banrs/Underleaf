@@ -155,7 +155,7 @@ private struct WindowModals: ViewModifier {
                     .fileDialogConfirmationLabel("Open")
                     .fileDialogMessage("Choose a project folder, a .tex file or a .zip. TeXLocal copies it into the projects folder.")
             }
-            .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0, taken: app.projects.map(\.name)) }
+            .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0) }
             .alert($app.alert)
     }
 }

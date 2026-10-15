@@ -231,10 +231,9 @@ struct NewProjectSheet: View {
     @State private var template: ProjectTemplate
     @FocusState private var nameFocused: Bool
 
-    init(template: ProjectTemplate, taken: [String]) {
+    init(template: ProjectTemplate) {
         _template = State(initialValue: template)
-        let names = Set(taken.map { $0.lowercased() })
-        _name = State(initialValue: (1...).lazy.map { $0 == 1 ? "Untitled" : "Untitled \($0)" }.first { !names.contains($0.lowercased()) } ?? "Untitled")
+        _name = State(initialValue: (try? Core.shared.now("free_project_name", [:], as: FreeName.self))?.name ?? "Untitled")
     }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
@@ -281,4 +280,9 @@ private struct NameWidth: Layout {
                    working: false, rename: InPlaceRename(), ended: {}) {}
     }
     .listStyle(.inset)
+}
+
+/// The first of "Untitled", "Untitled 2", and so on that no project has.
+private nonisolated struct FreeName: Decodable {
+    let name: String
 }
