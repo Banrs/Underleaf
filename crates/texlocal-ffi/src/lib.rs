@@ -39,6 +39,21 @@ struct Host {
 }
 
 impl Host {
+    /// `call`, the answer handed to `deliver`, which makes the host's copy of it. A new
+    /// session's events are held until `deliver` returns, so none comes before the answer.
+    fn call_then<T, F>(&self, command: &str, args: &Value, deliver: F) -> T
+    where
+        F: FnOnce(Result<Value, CoreError>) -> T,
+    {
+        match self
+            .runtime
+            .block_on(self.sessions.call_then(command, args, deliver))
+        {
+            Ok(delivered) => delivered,
+            Err(deliver) => deliver(self.call(command, args)),
+        }
+    }
+
     /// Absolute-path commands belong to the in-process host. Only the shared
     /// commands are forwarded to `Service::call`, which the browser exposes.
     fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
@@ -176,14 +191,17 @@ pub unsafe extern "C" fn tl_call(
     command: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {
-    let result = caught(|| {
+    let made = caught(|| {
         let handle =
             unsafe { handle.as_ref() }.ok_or_else(|| CoreError::bad_request("No handle"))?;
         let (command, args) = unsafe { command_args(command, args_json) }?;
-        handle.host.call(command, &args)
+        // The envelope is made inside the call: a new session's events wait for it.
+        Ok(handle
+            .host
+            .call_then(command, &args, |result| json_string(envelope(result))))
     })
     .unwrap_or_else(|| Err(CoreError::internal("The command panicked")));
-    json_string(envelope(result))
+    made.unwrap_or_else(|err| json_string(envelope(Err(err))))
 }
 
 /// # Safety
@@ -239,11 +257,14 @@ pub unsafe extern "C" fn tl_call_async(
     let parsed = parsed.map(|(command, args)| (command.to_owned(), args));
     let host = Arc::clone(&handle.host);
     handle.runtime.spawn_blocking(move || {
-        let result = parsed.and_then(|(command, args)| {
-            caught(|| host.call(&command, &args))
-                .unwrap_or_else(|| Err(CoreError::internal("The command panicked")))
+        // `done` is called inside the call: a new session's events wait for it to return.
+        let answered = caught(|| match &parsed {
+            Ok((command, args)) => host.call_then(command, args, reply),
+            Err(err) => reply(Err(err.clone())),
         });
-        reply(result);
+        if answered.is_none() {
+            reply(Err(CoreError::internal("The command panicked")));
+        }
     });
 }
 
@@ -307,7 +328,9 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
 /// The document session `session` has open at `path` (`session_open_document`),
 /// as a source the editor edits and highlights: each edit is the session's
 /// too. Null if the session hasn't it open. Free it with `tl_source_free`,
-/// which leaves the document open.
+/// which leaves the document open. The document's typing state (the brackets
+/// closed for the user, a snippet's fields) starts empty for each source
+/// handed out, so one shown again keeps nothing from an earlier visit.
 ///
 /// # Safety
 /// `handle` came from `tl_open` and is not closed; `path` is null or NUL-terminated.
@@ -323,6 +346,8 @@ pub unsafe extern "C" fn tl_session_source(
     caught(|| handle.host.sessions.document(session, path))
         .flatten()
         .map_or(std::ptr::null_mut(), |document| {
+            // A visit's closers and snippet are over with it.
+            document.reset_typing();
             Box::into_raw(Box::new(TlSource(Source::Session(document))))
         })
 }

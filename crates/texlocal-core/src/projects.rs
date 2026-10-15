@@ -259,6 +259,40 @@ pub fn create_project(
     finish_project(clean, &root, main_file)
 }
 
+/// What a new project is called when the user has not said.
+pub const UNTITLED: &str = "Untitled";
+
+/// The first free name in the series "Untitled", "Untitled 2", … (from
+/// `base`, if given): one no entry of the library has, however it is spelled
+/// where the volume ignores case. It creates nothing, so a host can offer it
+/// as the name to edit; `create_project` numbers past anything taken since.
+pub fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, CoreError> {
+    let clean = sanitize_name(base.unwrap_or(UNTITLED))?;
+    let taken: HashSet<String> = match fs::read_dir(data_dir) {
+        Ok(entries) => entries
+            .map(|entry| entry.map(|e| fold_case(&e.file_name().to_string_lossy())))
+            .collect::<Result<_, _>>()?,
+        Err(err) if err.kind() == ErrorKind::NotFound => HashSet::new(),
+        Err(err) => return Err(err.into()),
+    };
+    Ok((1..)
+        .map(|n| match n {
+            1 => clean.clone(),
+            n => format!("{clean} {n}"),
+        })
+        .find(|name| !taken.contains(&fold_case(name)))
+        .expect("a free name"))
+}
+
+/// `create_project` under the first free name from `free_project_name`.
+pub fn create_free_project(
+    data_dir: &Path,
+    base: Option<&str>,
+    template: &str,
+) -> Result<ProjectInfo, CoreError> {
+    create_project(data_dir, &free_project_name(data_dir, base)?, template)
+}
+
 /// A new, empty project folder for `name`, or "name 2" and so on when that
 /// is taken, as Finder numbers copies; and the name it got.
 pub(crate) fn new_project_dir(data_dir: &Path, name: &str) -> Result<(String, PathBuf), CoreError> {

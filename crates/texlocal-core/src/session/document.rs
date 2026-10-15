@@ -75,6 +75,12 @@ impl Document {
         });
     }
 
+    /// Forgets the closers and snippet typing kept: the editor is about to
+    /// show the document again, and what an earlier visit left isn't the new one's.
+    pub fn reset_typing(&self) {
+        lock(&self.0.text).source.reset_typing();
+    }
+
     /// Runs `body` on the text; nothing else reads or edits it meanwhile.
     pub fn with<T>(&self, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
         let symbols = self.symbols();
