@@ -1,0 +1,113 @@
+<UserControl
+    x:Class="TeXLocal.Controls.SourceView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <UserControl.Resources>
+        <Style x:Key="NumberStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextAlignment" Value="Right" />
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorTertiaryBrush}" />
+        </Style>
+        <Style x:Key="CurrentNumberStyle" TargetType="TextBlock" BasedOn="{StaticResource NumberStyle}">
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+        </Style>
+        <DataTemplate x:Key="ErrorBox">
+            <Border
+                Padding="4,0,8,0"
+                Background="{ThemeResource SystemFillColorCriticalBackgroundBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="4">
+                <Grid ColumnSpacing="4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon
+                        VerticalAlignment="Center"
+                        FontSize="16"
+                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                        Glyph="&#xE783;" />
+                    <TextBlock
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        TextTrimming="CharacterEllipsis"
+                        TextWrapping="NoWrap" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+        <DataTemplate x:Key="WarningBox">
+            <Border
+                Padding="4,0,8,0"
+                Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="4">
+                <Grid ColumnSpacing="4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon
+                        VerticalAlignment="Center"
+                        FontSize="16"
+                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                        Glyph="&#xE7BA;" />
+                    <TextBlock
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        TextTrimming="CharacterEllipsis"
+                        TextWrapping="NoWrap" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Grid Visibility="Collapsed">
+            <Rectangle x:Name="PaperInk" Fill="{ThemeResource SolidBackgroundFillColorBaseBrush}" />
+            <Rectangle x:Name="TextInk" Fill="{ThemeResource TextFillColorPrimaryBrush}" />
+            <Rectangle x:Name="CommandInk" Fill="{ThemeResource SyntaxCommandBrush}" />
+            <Rectangle x:Name="CommentInk" Fill="{ThemeResource SyntaxCommentBrush}" />
+            <Rectangle x:Name="InvalidInk" Fill="{ThemeResource SyntaxInvalidBrush}" />
+        </Grid>
+
+        <Canvas x:Name="Gutter" Width="48" />
+        <Canvas x:Name="Backdrop" Grid.Column="1">
+            <Rectangle x:Name="CurrentLine" Fill="{ThemeResource SubtleFillColorSecondaryBrush}" />
+        </Canvas>
+        <RichEditBox
+            x:Name="Editor"
+            Grid.Column="1"
+            AcceptsReturn="True"
+            AutomationProperties.Name="Source"
+            ClipboardCopyFormat="PlainText"
+            DisabledFormattingAccelerators="All"
+            FontFamily="Cascadia Mono, Consolas"
+            FontSize="14"
+            IsSpellCheckEnabled="False"
+            IsTextPredictionEnabled="False"
+            TextWrapping="Wrap">
+            <RichEditBox.Resources>
+                <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                <Thickness x:Key="TextControlBorderThemeThickness">0</Thickness>
+                <Thickness x:Key="TextControlBorderThemeThicknessFocused">0</Thickness>
+            </RichEditBox.Resources>
+        </RichEditBox>
+        <Canvas x:Name="Overlay" Grid.Column="1" />
+    </Grid>
+</UserControl>
