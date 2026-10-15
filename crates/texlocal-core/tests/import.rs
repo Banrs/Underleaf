@@ -4,8 +4,9 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use texlocal_core::import::import_project;
-use texlocal_core::projects::file_tree;
+use serde_json::json;
+use texlocal_core::import::{Conflict, Imported, import_files, import_project};
+use texlocal_core::projects::{create_project, file_tree};
 use texlocal_core::service::{Service, UPLOAD_MAX_BYTES};
 use zip::write::SimpleFileOptions;
 
@@ -221,5 +222,91 @@ fn zip_entries_named_from_the_current_folder_or_with_backslashes_arrive() {
         assert_eq!(info.main_file, "main.tex");
         let root = service.data_dir.join(&info.id);
         assert_eq!(names(&root), ["figs/a.png", "main.tex"]);
+    }
+}
+
+/// A service whose library holds one blank project, "P".
+fn with_project(dir: &Path) -> Service {
+    let service = Service::new(dir.join("data"));
+    fs::create_dir_all(&service.data_dir).unwrap();
+    create_project(&service.data_dir, "P", "blank").unwrap();
+    service
+}
+
+fn saved(imported: &Imported) -> Vec<String> {
+    let mut saved = imported.saved.clone();
+    saved.sort();
+    saved
+}
+
+#[test]
+fn dropped_files_and_folders_import_into_the_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = with_project(dir.path());
+    let drop = dir.path().join("drop");
+    fs::create_dir_all(drop.join("figs/sub")).unwrap();
+    fs::write(drop.join("figs/a.png"), b"a").unwrap();
+    fs::write(drop.join("figs/sub/b.png"), b"b").unwrap();
+    fs::write(drop.join("notes.tex"), b"n").unwrap();
+
+    let paths = [drop.join("figs"), drop.join("notes.tex")];
+    let out = import_files(&service, "P", "in", &paths, None).unwrap();
+    assert_eq!(
+        saved(&out),
+        ["in/figs/a.png", "in/figs/sub/b.png", "in/notes.tex"]
+    );
+    let root = service.data_dir.join("P");
+    assert_eq!(fs::read(root.join("in/figs/sub/b.png")).unwrap(), b"b");
+
+    // A batch that would collide fails before anything is written.
+    let twice = [drop.join("notes.tex"), drop.join("notes.tex")];
+    let refused = import_files(&service, "P", "again", &twice, None);
+    assert_eq!(refused.unwrap_err().status, 400);
+    assert!(!root.join("again").exists());
+}
+
+#[test]
+fn a_drop_onto_existing_files_asks_first_and_can_keep_both_and_a_dropped_link_is_followed() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = with_project(dir.path());
+    let drop = dir.path().join("drop");
+    fs::create_dir_all(drop.join("figs/.git")).unwrap();
+    fs::write(drop.join("figs/.git/HEAD"), b"ref").unwrap();
+    fs::write(drop.join("figs/.DS_Store"), b"x").unwrap();
+    fs::write(drop.join("figs/a.png"), b"a").unwrap();
+    fs::write(drop.join("main.tex"), b"new").unwrap();
+    let paths = [drop.join("figs"), drop.join("main.tex")];
+
+    // Without an answer nothing is written; the clash is reported.
+    let asked = import_files(&service, "P", "", &paths, None).unwrap();
+    assert_eq!(
+        serde_json::to_value(&asked).unwrap(),
+        json!({ "saved": [], "existing": [{ "path": "main.tex", "keepBoth": "main 2.tex" }] })
+    );
+    let root = service.data_dir.join("P");
+    let original = fs::read(root.join("main.tex")).unwrap();
+
+    let kept = import_files(&service, "P", "", &paths, Some(Conflict::KeepBoth)).unwrap();
+    // Hidden files inside a dropped folder stay behind.
+    assert_eq!(saved(&kept), ["figs/a.png", "main 2.tex"]);
+    assert_eq!(fs::read(root.join("main.tex")).unwrap(), original);
+    assert_eq!(fs::read(root.join("main 2.tex")).unwrap(), b"new");
+
+    // A dropped link names what it points at; links inside a folder are left.
+    #[cfg(unix)]
+    {
+        let elsewhere = dir.path().join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::write(elsewhere.join("plot.png"), b"p").unwrap();
+        let drop = dir.path().join("linked-drop");
+        fs::create_dir_all(drop.join("pics")).unwrap();
+        let plot = elsewhere.join("plot.png");
+        std::os::unix::fs::symlink(&plot, drop.join("plot-link.png")).unwrap();
+        std::os::unix::fs::symlink(&plot, drop.join("pics/inner.png")).unwrap();
+        fs::write(drop.join("pics/real.png"), b"r").unwrap();
+        let paths = [drop.join("plot-link.png"), drop.join("pics")];
+        let out = import_files(&service, "P", "", &paths, None).unwrap();
+        assert_eq!(saved(&out), ["pics/real.png", "plot-link.png"]);
+        assert_eq!(fs::read(root.join("plot-link.png")).unwrap(), b"p");
     }
 }

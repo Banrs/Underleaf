@@ -559,7 +559,6 @@ impl Service {
                 .compile
                 .compile(&root()?, self.tex_dir().as_deref())
                 .await?),
-            // Reports whether a build was running.
             "stop_compile" => out(self.compile.stop(&root()?)),
             // Stops a running build first; the next build starts from nothing.
             "clean_build" => out(self.compile.clean(&root()?).await?),
@@ -591,7 +590,6 @@ impl Service {
                 )
                 .await?)
             }
-            // ---------- logic the hosts used to hold ----------
             // The word at `column` of a source line, in the `pages` ([{page, text, near}]) of a forward sync.
             "synctex_match" => out(synctex::match_forward(
                 &root()?,

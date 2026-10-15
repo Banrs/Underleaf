@@ -534,31 +534,28 @@ mod tests {
     }
 
     #[test]
-    fn inverse_tells_repeated_words_apart_by_the_text_round_them() {
-        let source = "echo first, echo second, echo third.";
-        for (at, _) in source.match_indices("echo") {
-            assert_eq!(
-                inverse(source, 1, source, at),
-                Some((1, column(source, at)))
-            );
+    fn inverse_tells_repeated_words_apart_across_pdf_line_wraps_and_formatting() {
+        // The source and the page text it comes out as: the same, wrapped, or
+        // with commands that print nothing and columns of UTF-16 units.
+        let same = "echo first, echo second, echo third.";
+        let cases = [
+            (same, same),
+            (
+                "The same echo repeats. The same echo repeats. The same echo repeats.",
+                "The same echo\nrepeats. The same\necho repeats. The same echo repeats.",
+            ),
+            (
+                "🙂 \\emph{echo} first, echo second, \\textbf{echo} third.",
+                "🙂 echo first, echo second, echo third.",
+            ),
+        ];
+        for (source, pdf) in cases {
+            for ((s, _), (p, _)) in source.match_indices("echo").zip(pdf.match_indices("echo")) {
+                assert_eq!(inverse(source, 1, pdf, p), Some((1, column(source, s))));
+            }
         }
         // Nothing round the word to tell the copies apart.
         assert_eq!(inverse("echo echo", 1, "echo", 0), None);
-    }
-
-    #[test]
-    fn inverse_tracks_repeated_sentences_across_pdf_line_wraps_and_formatting() {
-        let source = "The same echo repeats. The same echo repeats. The same echo repeats.";
-        let pdf = "The same echo\nrepeats. The same\necho repeats. The same echo repeats.";
-        for ((s, _), (p, _)) in source.match_indices("echo").zip(pdf.match_indices("echo")) {
-            assert_eq!(inverse(source, 1, pdf, p), Some((1, column(source, s))));
-        }
-        // Commands print nothing, and columns count UTF-16 units.
-        let source = "🙂 \\emph{echo} first, echo second, \\textbf{echo} third.";
-        let pdf = "🙂 echo first, echo second, echo third.";
-        for ((s, _), (p, _)) in source.match_indices("echo").zip(pdf.match_indices("echo")) {
-            assert_eq!(inverse(source, 1, pdf, p), Some((1, column(source, s))));
-        }
     }
 
     #[test]

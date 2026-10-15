@@ -36,7 +36,7 @@ pub use document::Document;
 pub(crate) use engine::{Engine, ServiceEngine};
 use watch::Change;
 
-/// The session's waits, as the Mac app had them.
+/// The session's waits.
 #[derive(Debug, Clone)]
 pub(crate) struct Timings {
     /// From the last edit to the autosave.

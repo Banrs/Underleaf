@@ -50,7 +50,6 @@ fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
         .map(|entry| entry.path())
 }
 
-/// Where TeX Live installs each year's release.
 fn texlive_root() -> PathBuf {
     if cfg!(windows) {
         let mut root = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
@@ -173,7 +172,6 @@ pub(crate) struct Tree {
 }
 
 impl Tree {
-    /// Spawn `command` as the root of a tree of its own.
     pub(crate) fn spawn(
         command: &mut tokio::process::Command,
     ) -> std::io::Result<(tokio::process::Child, Tree)> {
@@ -521,7 +519,6 @@ enum End {
     Exited(i32),
     TimedOut,
     Stopped,
-    /// latexmk couldn't be started, for this reason.
     Unstarted(String),
 }
 

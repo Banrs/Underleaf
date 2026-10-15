@@ -72,11 +72,10 @@ fn ensure_existing_ancestor_within(
     Ok(inside.join(suffix).components().collect())
 }
 
-/// Resolve a project id to its directory under `data_dir`, rejecting escapes,
-/// symlink aliases outside the data directory, and missing projects. A project
-/// is one folder directly under `data_dir`, as list_projects reports it: a
-/// nested id would let the project commands rename, trash or compile a folder
-/// inside another project.
+/// Resolve a project id to its directory under `data_dir`, rejecting escapes, symlink
+/// aliases outside it and missing projects. A project is one folder directly under
+/// `data_dir`, as list_projects reports it: a nested id would let project commands
+/// rename, trash or compile a folder inside another project.
 pub fn project_root(data_dir: &Path, id: &str) -> Result<PathBuf, CoreError> {
     let root = data_dir.join(project_name(id)?);
     if !root.is_dir() {

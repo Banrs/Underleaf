@@ -1263,7 +1263,6 @@ fn issue_lines(issues: &[LogItem], path: &str) -> Vec<Value> {
         .collect()
 }
 
-/// `path` is `dir` or inside it.
 fn within(path: &str, dir: &str) -> bool {
     path.strip_prefix(dir)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
