@@ -152,7 +152,7 @@ struct NewEntry: Equatable {
 
 enum PDFAction {
     case zoomIn, zoomOut, actualSize, fitWidth, fitPage, goToPage(Int), find, inverseFromView
-    case reveal(ForwardLoc, SyncTeXWord?)
+    case reveal(ForwardLoc, SyncSource?)
 }
 
 extension AppModel {

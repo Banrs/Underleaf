@@ -279,22 +279,11 @@ struct SourceEditorTests {
         #expect(text.document.text == text.string)
     }
 
-    @Test func syncTeXGoesToTheWord() {
+    @Test func syncTeXGoesToTheWordAndTellsAUTF16Column() {
         open("Ünï words \\word, the word\nnext", caret: 1)
-        #expect(editor.currentSyncWord?.text == "Ünï")
         editor.reveal(line: 1, column: 21, focus: false)
         #expect(text.selectedRange() == NSRange(location: 21, length: 4))
-        #expect(editor.currentSyncWord?.text == "word")
-    }
-
-    @Test func syncTeXRetainsTheClickedOccurrenceAndUTF16Column() throws {
-        let source = "before\n😀 echo echo echo\n"
-        let range = (source as NSString).range(of: "echo", options: .backwards)
-        open(source, caret: range.location + 2)
-        let word = try #require(editor.currentSyncWord)
-        #expect(word.text == "echo" && word.offset == 2)
-        #expect(word.context == "😀 echo echo echo\n")
-        #expect(word.contextOffset == 13)
+        open("before\n😀 echo echo echo\n", caret: 22, path: "b.tex")
         #expect(editor.currentLine == 2 && editor.currentColumn == 15)
     }
 

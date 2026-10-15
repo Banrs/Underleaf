@@ -138,6 +138,27 @@ nonisolated struct InverseLoc: Decodable {
     let column: Int?
 }
 
+/// Where a forward search began, for the core to find its word in the PDF's text (`synctex_match`); the column in UTF-16.
+nonisolated struct SyncSource: Sendable {
+    let id: String
+    let file: String
+    let line: Int
+    let column: Int
+}
+
+/// That word in a page's text: its UTF-16 range there.
+nonisolated struct PageHit: Decodable, Sendable {
+    let page: Int
+    let start: Int
+    let end: Int
+}
+
+/// A click on a page for `synctex_inverse`: the page's text, and the clicked letter's UTF-16 index in it.
+nonisolated struct PageClick: Equatable, Sendable {
+    let text: String
+    let at: Int
+}
+
 /// Asked nothing about them, it writes nothing.
 nonisolated struct Imported: Decodable {
     nonisolated struct Clash: Decodable {

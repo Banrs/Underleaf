@@ -745,7 +745,7 @@ final class ProjectModel {
 
     func forwardSync(quietly: Bool = false) async {
         guard let path = openPath else { return }
-        let (line, column, word) = (editor.currentLine, editor.currentColumn, editor.currentSyncWord)
+        let (line, column) = (editor.currentLine, editor.currentColumn)
         let live = livePDF, args = syncArguments(["id": id, "file": path, "line": line, "column": column])
         await restart(&syncTask) { [self] in
             guard await save(reporting: !quietly), !Task.isCancelled, !closed, openPath == path else { return }
@@ -754,7 +754,7 @@ final class ProjectModel {
             do {
                 let loc = try await core.call("synctex_forward", args, as: ForwardLoc.self)
                 guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, livePDF == live else { return }
-                app?.requestPDF(.reveal(loc, word))
+                app?.requestPDF(.reveal(loc, SyncSource(id: id, file: path, line: line, column: column)))
             } catch {
                 if !quietly, !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Line in the PDF") }
             }
@@ -766,12 +766,12 @@ final class ProjectModel {
         return arguments.merging(["live": true, "session": token]) { $1 }
     }
 
-    func inverseSync(page: Int, x: Double, y: Double, word: SyncTeXWord? = nil) async {
+    /// With the click, the core finds the clicked word in the source lines round SyncTeX's.
+    func inverseSync(page: Int, x: Double, y: Double, click: PageClick? = nil) async {
         await restart(&syncTask) { [self] in
             do {
-                // A nil word bridges as null, which the core reads as none.
-                let args = syncArguments(["id": id, "page": page, "x": x, "y": y, "word": word?.text, "offset": word?.offset,
-                                          "context": word?.context, "contextOffset": word?.contextOffset])
+                // A nil click bridges as null, which the core reads as none.
+                let args = syncArguments(["id": id, "page": page, "x": x, "y": y, "text": click?.text, "at": click?.at])
                 let loc = try await core.call("synctex_inverse", args, as: InverseLoc.self)
                 guard !Task.isCancelled, !closed else { return }
                 await open(loc.file, line: loc.line, column: loc.column)

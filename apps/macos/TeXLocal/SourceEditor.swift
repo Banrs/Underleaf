@@ -1,13 +1,6 @@
 import AppKit
 import SwiftUI
 
-nonisolated struct SyncTeXWord: Equatable, Sendable {
-    let text: String
-    let offset: Int
-    let context: String
-    let contextOffset: Int
-}
-
 final class SourceEditor: NSObject, NSTextViewDelegate {
     let textView = SourceTextView.plainDocument()
     let scrollView = NSScrollView()
@@ -121,20 +114,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     var currentLine: Int {
         textView.document.line(at: textView.selectedRange().location)
-    }
-
-    var currentSyncWord: SyncTeXWord? {
-        let source = textView.text
-        let position = textView.selectedRange().location
-        let caret = NSRange(location: position, length: 0)
-        let range = textView.selectionRange(forProposedRange: caret, granularity: .selectByWord)
-        let selected = source.substring(with: range)
-        let word = selected.trimmingCharacters(in: .alphanumerics.inverted)
-        guard !word.isEmpty else { return nil }
-        let start = range.location + (selected as NSString).range(of: word).location
-        let line = source.lineRange(for: caret)
-        return SyncTeXWord(text: word, offset: min(max(position - start, 0), (word as NSString).length - 1),
-                           context: source.substring(with: line), contextOffset: start - line.location)
     }
 
     var currentColumn: Int { textView.selectedRange().location - textView.document.lineStart(currentLine) }
