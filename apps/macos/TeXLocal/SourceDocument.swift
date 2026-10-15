@@ -73,10 +73,6 @@ final class SourceDocument {
         call("toggle_comment", ["selections": selections.map(Self.json)]) ?? []
     }
 
-    func indent(_ selections: [NSRange], more: Bool) -> [TextEdit] {
-        call("indent", ["selections": selections.map(Self.json), "more": more]) ?? []
-    }
-
     func setHeading(caret: Int, command: String) -> Insertion? {
         call("set_heading", ["caret": caret, "command": command])
     }

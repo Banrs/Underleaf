@@ -24,7 +24,8 @@ struct SymbolItems: View {
 
     var body: some View {
         ForEach(Menus.shared.symbolGroups, id: \.title) { group in
-            let symbols = group.symbols, columns = Self.columns(symbols.count)
+            let symbols = group.symbols
+            let columns = Self.columns(symbols.count)
             Menu(group.title) {
                 ForEach(Array(stride(from: 0, to: symbols.count, by: columns)), id: \.self) { start in
                     // A palette row, which shows its items' images: text alone draws blank (27.2).

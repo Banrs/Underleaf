@@ -38,15 +38,20 @@ final class Core {
 
     private static func open() -> Handle? {
         guard let raw = libraryFolder.withUnsafeFileSystemRepresentation({ tl_open($0) }) else { return nil }
-        // On a thread of the core's, the text valid only during the call: copied, then taken on the main queue in the order sent.
-        let listener: TlCallback = { _, json in
+        listen(raw)
+        return Handle(raw)
+    }
+
+    /// Nonisolated, so the C callback formed here is too: one formed in a main-actor context would be taken as the main
+    /// actor's and trap on the core's thread. The text, valid only during the call, is copied, then taken on the main queue
+    /// in the order sent.
+    private nonisolated static func listen(_ raw: OpaquePointer) {
+        tl_set_listener(raw, { _, json in
             let event = Data(bytes: json, count: strlen(json))
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { Core.shared.receive(event) }
             }
-        }
-        tl_set_listener(raw, listener, nil)
-        return Handle(raw)
+        }, nil)
     }
 
     func reopen() {

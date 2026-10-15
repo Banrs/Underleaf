@@ -73,7 +73,7 @@ final class TeXpressoSession {
     @ObservationIgnored var showDocument: (LiveDocument) -> Void = { _ in }
     @ObservationIgnored var showPage: (PDFPage, Int) -> Void = { _, _ in }
     @ObservationIgnored var shownPages: () -> Int = { 0 }
-    @ObservationIgnored var readStatus: () async -> TeXpressoStatus? = { nil }
+    @ObservationIgnored var readStatus: @MainActor () async -> TeXpressoStatus? = { nil }
     @ObservationIgnored var showsLog = false {
         didSet {
             if showsLog { fetchStatus() } else if oldValue, phase == .stopped { acknowledged = true }
