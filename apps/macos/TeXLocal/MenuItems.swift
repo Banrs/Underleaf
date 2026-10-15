@@ -5,9 +5,12 @@ struct SectionLevelItems: View {
     let project: ProjectModel?
 
     var body: some View {
-        ForEach(project?.headingStyles.levels ?? HeadingLevel.all, id: \.self) { level in
-            Toggle(level.title, isOn: Binding(get: { project?.headingLevel == level },
-                                              set: { _ in project?.editor.perform(.heading, level.command) }))
+        let headings = project?.headingStyles
+        ForEach(headings?.levels ?? HeadingLevel.all, id: \.self) { level in
+            // Numbered as Aa's are (`FormatMenu`).
+            Toggle(headings?.marker(level).map { "\($0)\u{2002}\(level.title)" } ?? level.title,
+                   isOn: Binding(get: { project?.headingLevel == level },
+                                 set: { _ in project?.editor.perform(.heading, level.command) }))
         }
     }
 }
