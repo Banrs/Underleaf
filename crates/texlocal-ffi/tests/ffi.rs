@@ -319,6 +319,49 @@ fn until(seen: &Mutex<Vec<Value>>, found: impl Fn(&Value) -> bool) -> Value {
 }
 
 #[test]
+fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let handle = open_with_project(dir.path());
+    let empty = json!({ "id": "P", "path": "main.tex", "text": "" });
+    call(handle, "write_file", Some(empty));
+    let opened = call(handle, "session_open", Some(json!({ "id": "P" })));
+    let session = opened["ok"]["session"].as_u64().unwrap();
+    let args = json!({ "session": session, "path": "main.tex" });
+    call(handle, "session_open_document", Some(args));
+    let path = CString::new("main.tex").unwrap();
+    unsafe {
+        let source = tl_session_source(handle, session, path.as_ptr());
+        // The editor closed a bracket for the user at the start of the file.
+        let typed = json!({ "selection": { "start": 0, "length": 0 }, "text": "{" });
+        let key = source_call(source, "type", typed).unwrap();
+        assert_eq!(key["edit"]["text"], "{}");
+        tl_source_edit(source, 0, 0, b"{}".as_ptr(), 2);
+        let followed = json!({ "old": { "start": 0, "length": 0 }, "delta": 2 });
+        source_call(source, "follow", followed);
+        // Typing its closer steps over it.
+        let closing = json!({ "selection": { "start": 1, "length": 0 }, "text": "}" });
+        let key = source_call(source, "type", closing).unwrap();
+        assert_eq!(key["selection"]["start"], 2);
+        tl_source_free(source);
+
+        // A bracket closed in one visit is only text in the next.
+        let source = tl_session_source(handle, session, path.as_ptr());
+        let typed = json!({ "selection": { "start": 2, "length": 0 }, "text": "(" });
+        source_call(source, "type", typed);
+        tl_source_edit(source, 2, 0, b"()".as_ptr(), 2);
+        let followed = json!({ "old": { "start": 2, "length": 0 }, "delta": 2 });
+        source_call(source, "follow", followed);
+        tl_source_free(source);
+        let source = tl_session_source(handle, session, path.as_ptr());
+        let closing = json!({ "selection": { "start": 3, "length": 0 }, "text": ")" });
+        let key = source_call(source, "type", closing).unwrap();
+        assert_eq!(key["selection"], Value::Null, "the closer was forgotten");
+        tl_source_free(source);
+    }
+    unsafe { tl_close(handle) };
+}
+
+#[test]
 fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() {
     let dir = tempfile::tempdir().unwrap();
     let handle = open_with_project(dir.path());

@@ -34,7 +34,9 @@ typedef void (*TlCallback)(void *_Nullable ctx, const char *json);
 
 /* tl_call without blocking: the command runs on a core thread, which then
  * calls done with the envelope tl_call would return. A NULL done runs the
- * command for its effect alone. */
+ * command for its effect alone. For session_open, no event of the new
+ * session reaches the listener until done has returned (tl_call: until it
+ * returns), so the host has the session's id before any event names it. */
 void tl_call_async(const TlHandle *handle, const char *command, const char *_Nullable args_json,
                    TlCallback _Nullable done, void *_Nullable ctx);
 
@@ -57,7 +59,9 @@ typedef struct TlSource TlSource;
 /* The document a session has open at path (session_open_document): its
  * edits are the session's, which saves and previews them, and "set_symbols"
  * does nothing, as the session sets them. NULL if it isn't open. Free with
- * tl_source_free, which leaves the document open. */
+ * tl_source_free, which leaves the document open. Each source starts with
+ * no typing state: the brackets closed for the user and a snippet's fields
+ * from an earlier visit are forgotten. */
 TlSource *_Nullable tl_session_source(const TlHandle *handle, uint64_t session, const char *path);
 
 /* Text is len bytes of UTF-8, so it may hold U+0000; bytes that aren't UTF-8
@@ -95,8 +99,11 @@ void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 char *_Nullable tl_source_call(const TlSource *source, const char *command, const char *args_json);
 
 /* A command of texlocal_syntax::call, which needs no source, on any thread:
- * "themes", "theme_colors", "legible", "contrast", "menus",
- * "document_class", "heading_styles", and maths as SVG:
+ * "themes", "theme_colors", "legible" ({"color", "background", "fill",
+ * "increaseContrast"?, "ratio"? (4.5, 7 with increaseContrast)}), "contrast",
+ * "menus", "document_class", "heading_styles", "drop_text" ({"path", "kind",
+ * "into"? ("tex")} answers {"insert": LaTeX} or {"open": true}, or null for a
+ * folder), and maths as SVG:
  * "math_svg" {"tex", "display", "size" (points, default 13), "color" ([r, g,
  * b, a], 0-1, default black)} and "glyph_svg" {"command", "size" (19),
  * "side" (24), "color"} answer {"svg", "width", "height", "baseline"} in

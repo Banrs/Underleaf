@@ -16,8 +16,9 @@ Windows loads `texlocal_ffi.dll`):
 | `tl_call(h, command, args_json)` | Blocking, JSON in, `{"ok": value}` or `{"error": message, "status": code}` out; free with `tl_free`. Never on the UI thread. |
 | `tl_call_async(h, command, args_json, done, ctx)` | The same on a core thread; `done(ctx, envelope_json)` gets the envelope. `done` may be NULL. |
 | `tl_set_listener(h, listener, ctx)` | Events, below. NULL removes it; it returns once no call to the old listener runs. |
-| `tl_session_source(h, session, path)` | A session's open document as a `TlSource` (see Documents). Free with `tl_source_free`. |
+| `tl_session_source(h, session, path)` | A session's open document as a `TlSource` (see Documents). Free with `tl_source_free`. Each source handed out starts with no typing state: the brackets the editor closed and a snippet's fields from an earlier visit are forgotten (`reset_typing`, below, does the same by hand). |
 | `tl_source_*` | Highlighting, completions and editing commands on a source, as before; `tl_source_reload` takes a reloaded text. |
+| `tl_syntax_call(command, args_json)` | Commands that need no source: themes and colours, menus, maths as SVG, and `drop_text` (below). |
 
 Callbacks are plain C: `void (*)(void *ctx, const char *json)`, UTF-8 JSON valid only during
 the call. The browser server calls `Sessions::call` and `Hub::set_listener` directly, and can
@@ -27,6 +28,16 @@ forward events as they come (SSE or WebSocket).
 
 - Events arrive one at a time, in order, on one thread of the core's. Hop to the UI thread;
   never block in the listener.
+- **No event of a session reaches the listener before the answer to that session's
+  `session_open`.** A new session's events (an `autoCompile` build's `build`, the `symbols`
+  scan, a `tree`) are held by the core until the answer has been handed over, then go out
+  in the order they were made; a host needs no buffering by id. "Handed over" is exact for
+  `tl_call_async`: the hold ends when `done` returns, so a `done` that queues the answer
+  for the UI thread queues it before any event. With `tl_call` the hold ends as the call
+  returns, so the host's own code after it may still run alongside the first events: open
+  with `tl_call_async` if the order matters to it. The browser
+  server's `Sessions::call` holds until the answer is produced; `Sessions::call_then`
+  takes a `deliver` closure and holds until it returns.
 - `tl_call` may be called from any thread, several at once. `session_*` commands are quick
   (they never wait for a build or TeXpresso to finish), but go through the session's queue:
   keep them off the UI thread or use `tl_call_async`.
@@ -79,6 +90,28 @@ All take `session` (except `session_open`). Results are the `ok` value.
 Every other command (`file_tree`, `read_file`, `analyze_project`, `synctex_*`,
 `get_ui_state`, …) is the service's, unchanged. With live preview on, pass
 `live: true, session: <live.token>` to the SyncTeX commands.
+
+`session_open` first: its answer comes before any event of the session (see Threading).
+The session keeps no analysis of the project (`analyze_project` depends on the file
+shown, and the host asks again after each `saved`), so there is no `session_outline_current`:
+a host keeps the outline it last got and asks `outline_current {outline, file, line}`.
+
+## Commands that fill small gaps
+
+Service commands (`tl_call`; the browser's too):
+
+| Command | Arguments | Result | Notes |
+|---|---|---|---|
+| `create_project` | `name`, `template?` (article), `free?` | the project (`{id, name, mtime, mainFile}`) | With `free: true`, `name` may be left out (“Untitled”) and the project takes the first free name of the series “Untitled”, “Untitled 2”, … as `free_project_name` finds it; `id`/`name` say which. A name taken (in any case, where the volume ignores case) is numbered past, as for `create_entry {free: true}`; a name the path rules refuse is 400. Without `free` a name is required (and is numbered past when taken, as before). |
+| `free_project_name` | `name?` (“Untitled”) | `{name}` | The name `create_project {free: true}` would try, creating nothing: for the New Project field to offer. |
+
+Syntax commands (`tl_syntax_call`, and `tl_source_call` too), JSON in, JSON out:
+
+| Command | Arguments | Result | Notes |
+|---|---|---|---|
+| `drop_text` | `path`, `kind`, `into?` ("tex") | `{"insert": "\\includegraphics{path}"}`, `{"open": true}` or `null` | What a project file dropped on the editor does. `path` is the file's project path and `kind` its `file_tree` kind (`image`, `pdf`, `tex`, …; a folder has none: `null`, nothing happens). `into` is the kind of the file dropped on. An `image` or `pdf` dropped on a `tex` file inserts `\includegraphics{path}` at the caret; any other file opens (`{"open": true}`). The path is written as given. |
+| `legible` | `color`, `background`, `fill`, `increaseContrast?`, `ratio?` | `[r, g, b, a]` | The colour raised to a contrast `ratio` against the background and the current line. Without `ratio`: 4.5, or 7 with `increaseContrast`. With `ratio`, `increaseContrast` is ignored; a PDF find border under Increase Contrast wants `ratio: 3.0`. |
+| `reset_typing` | (a source's) | null | Forgets the closers and snippet fields typing keeps on that source. `tl_session_source` does so for each source it hands out, so a host rarely needs this. |
 
 ## Events
 

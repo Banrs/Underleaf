@@ -472,13 +472,35 @@ impl Service {
                 .set_tex_dir(arg::<Option<String>>(args, "dir")?.as_deref())
                 .await?),
             "list_projects" => out(projects::list_projects(&self.data_dir)?),
-            "create_project" => out(projects::create_project(
-                &self.data_dir,
-                s("name")?,
-                arg::<Option<String>>(args, "template")?
-                    .as_deref()
-                    .unwrap_or("article"),
-            )?),
+            // With `free`, `name` may be left out ("Untitled") and is the series' first free
+            // name ("Untitled 2", …) as `free_project_name` finds it. The project made is
+            // answered, so its `id` is the name it got.
+            "create_project" => {
+                let template = arg::<Option<String>>(args, "template")?;
+                let template = template.as_deref().unwrap_or("article");
+                if arg::<Option<bool>>(args, "free")?.unwrap_or(false) {
+                    let name = arg::<Option<String>>(args, "name")?;
+                    out(projects::create_free_project(
+                        &self.data_dir,
+                        name.as_deref(),
+                        template,
+                    )?)
+                } else {
+                    out(projects::create_project(
+                        &self.data_dir,
+                        s("name")?,
+                        template,
+                    )?)
+                }
+            }
+            // The name `create_project {free: true}` would try, creating nothing: for a host to
+            // offer in its New Project field.
+            "free_project_name" => Ok(json!({
+                "name": projects::free_project_name(
+                    &self.data_dir,
+                    arg::<Option<String>>(args, "name")?.as_deref(),
+                )?
+            })),
             // The new name's lock too: of two renames to one name, the second
             // waits and finds it taken.
             "rename_project" => {

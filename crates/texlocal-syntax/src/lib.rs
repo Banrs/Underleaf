@@ -288,6 +288,12 @@ impl SourceDocument {
         self.typing.start_snippet(fields, at)
     }
 
+    /// Forgets the closers and snippet fields typing keeps, as when the
+    /// editor shows the document again: they belong to a visit, not to the text.
+    pub fn reset_typing(&mut self) {
+        self.typing = typing::Typing::default();
+    }
+
     /// Whether there was a snippet to end.
     pub fn end_snippet(&mut self) -> bool {
         self.typing.end_snippet()

@@ -39,6 +39,40 @@ async fn labels(service: &Service) -> Value {
 }
 
 #[tokio::test]
+async fn a_free_project_name_is_the_next_untitled() {
+    let (_dir, service) = service();
+    // Nothing made: the series starts at "Untitled".
+    let name = call(&service, "free_project_name", json!({})).await;
+    assert_eq!(name, json!({ "name": "Untitled" }));
+    let mut made = Vec::new();
+    for _ in 0..3 {
+        let args = json!({ "free": true, "template": "blank" });
+        made.push(call(&service, "create_project", args).await);
+    }
+    let ids: Vec<_> = made.iter().map(|info| info["id"].clone()).collect();
+    assert_eq!(ids, ["Untitled", "Untitled 2", "Untitled 3"]);
+    assert_eq!(made[2]["name"], "Untitled 3");
+    // A gap is filled first, and a name asked for is numbered the same way.
+    std::fs::remove_dir_all(service.data_dir.join("Untitled 2")).unwrap();
+    let next = call(&service, "free_project_name", json!({})).await;
+    assert_eq!(next, json!({ "name": "Untitled 2" }));
+    let args = json!({ "free": true, "name": "untitled" });
+    let from_taken = call(&service, "create_project", args).await;
+    let case_insensitive = cfg!(any(target_os = "macos", windows));
+    let expected = if case_insensitive {
+        "untitled 2"
+    } else {
+        "untitled"
+    };
+    assert_eq!(from_taken["id"], expected);
+    // Names the path rules refuse are refused, not numbered.
+    let bad = json!({ "free": true, "name": ".hidden" });
+    assert_eq!(status_of(&service, "create_project", bad).await, 400);
+    // Without `free` a name is still required.
+    assert_eq!(status_of(&service, "create_project", json!({})).await, 400);
+}
+
+#[tokio::test]
 async fn dispatch_round_trips_project_and_file_commands() {
     let (_dir, service) = service();
     let info = call(
