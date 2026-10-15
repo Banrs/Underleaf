@@ -135,7 +135,25 @@ async fn settings_patches_and_main_file_renames_preserve_both_changes() {
 async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     let (_dir, service) = with_project();
 
-    assert_eq!(status_of(&service, "no_such_command", json!({})).await, 404);
+    // Byte and absolute-path operations are methods, not commands.
+    for command in [
+        "no_such_command",
+        "upload_file",
+        "export_project",
+        "save_pdf_as",
+        "pdf_path",
+        "raw_path",
+    ] {
+        assert_eq!(
+            status_of(&service, command, json!({ "id": "P" })).await,
+            404,
+            "{command}"
+        );
+    }
+    let raw = service.raw_path("P", "img/a.png").unwrap();
+    assert!(raw.ends_with("P/img/a.png"));
+    assert_eq!(service.pdf_path("P").unwrap().extension().unwrap(), "pdf");
+    assert!(service.raw_path("P", "../../secret").is_err());
     // Missing and mistyped arguments, and paths the boundary refuses, which
     // apply through the dispatch exactly as through the methods.
     for (command, args) in [
@@ -173,99 +191,65 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     assert!(!main["text"].as_str().unwrap().is_empty());
 }
 
+/// `scan_symbols` is cached by file stamp: a save, an outside edit, a removal
+/// and a link retargeted to a file of the same stamp must each show.
 #[tokio::test]
-async fn byte_and_absolute_path_operations_are_not_reachable_by_name() {
-    let (_dir, service) = service();
-    for command in [
-        "upload_file",
-        "export_project",
-        "save_pdf_as",
-        "pdf_path",
-        "raw_path",
-    ] {
-        assert_eq!(
-            status_of(&service, command, json!({ "id": "P" })).await,
-            404,
-            "{command}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn writes_update_symbol_completions() {
-    let (_dir, service) = with_project();
-    call(
-        &service,
-        "write_file",
-        json!({ "id": "P", "path": "a.tex", "text": "\\label{one}" }),
-    )
-    .await;
-    assert_eq!(labels(&service).await, json!(["one"]));
-
-    // Same length: the new label must still replace the previous one.
-    call(
-        &service,
-        "write_file",
-        json!({ "id": "P", "path": "a.tex", "text": "\\label{two}" }),
-    )
-    .await;
-    assert_eq!(labels(&service).await, json!(["two"]));
-}
-
-#[tokio::test]
-async fn external_symbol_files_are_found_and_removed_without_a_service_write() {
+async fn symbol_completions_follow_the_files_however_they_change() {
     let (dir, service) = with_project();
     let root = dir.path().join("P");
+    let write = |text: &'static str| {
+        call(
+            &service,
+            "write_file",
+            json!({ "id": "P", "path": "a.tex", "text": text }),
+        )
+    };
     assert_eq!(labels(&service).await, json!([]));
+    write("\\label{one}").await;
+    assert_eq!(labels(&service).await, json!(["one"]));
+    // Same length: the new label must still replace the previous one. Without
+    // inodes (Windows) the stamp is the clock's, which ticks every few ms.
+    tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+    write("\\label{two}").await;
+    assert_eq!(labels(&service).await, json!(["two"]));
 
+    // Files the service did not write are found and, removed, are gone.
     std::fs::write(root.join("external.tex"), "\\label{outside}").unwrap();
-    assert_eq!(labels(&service).await, json!(["outside"]));
-
+    assert_eq!(labels(&service).await, json!(["two", "outside"]));
     std::fs::remove_file(root.join("external.tex")).unwrap();
+    std::fs::remove_file(root.join("a.tex")).unwrap();
     assert_eq!(labels(&service).await, json!([]));
-}
 
-#[cfg(unix)]
-#[tokio::test]
-async fn app_writes_update_in_project_symbol_links() {
-    let (dir, service) = with_project();
-    let root = dir.path().join("P");
-    std::fs::write(root.join("real.tex"), "\\label{one}").unwrap();
-    std::os::unix::fs::symlink(root.join("real.tex"), root.join("link.tex")).unwrap();
-    assert_eq!(labels(&service).await, json!(["one"]));
+    #[cfg(unix)]
+    {
+        std::fs::write(root.join("real.tex"), "\\label{one}").unwrap();
+        std::os::unix::fs::symlink(root.join("real.tex"), root.join("link.tex")).unwrap();
+        assert_eq!(labels(&service).await, json!(["one"]));
+        // An app write to the target shows through the link.
+        let args = json!({ "id": "P", "path": "real.tex", "text": "\\label{two}" });
+        call(&service, "write_file", args).await;
+        assert_eq!(labels(&service).await, json!(["two"]));
 
-    call(
-        &service,
-        "write_file",
-        json!({ "id": "P", "path": "real.tex", "text": "\\label{two}" }),
-    )
-    .await;
-    assert_eq!(labels(&service).await, json!(["two"]));
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn retargeted_symbol_link_uses_its_new_contents_even_with_the_same_stamp() {
-    let (dir, service) = with_project();
-    let root = dir.path().join("P");
-    let first_target = root.join("first.txt");
-    let second_target = root.join("second.txt");
-    let link = root.join("link.tex");
-    std::fs::write(&first_target, "\\label{one}").unwrap();
-    std::fs::write(&second_target, "\\label{two}").unwrap();
-    let fixed_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
-    for target in [&first_target, &second_target] {
-        std::fs::File::open(target)
-            .unwrap()
-            .set_times(std::fs::FileTimes::new().set_modified(fixed_time))
-            .unwrap();
+        std::fs::remove_file(root.join("real.tex")).unwrap();
+        std::fs::remove_file(root.join("link.tex")).unwrap();
+        let first_target = root.join("first.txt");
+        let second_target = root.join("second.txt");
+        let link = root.join("link.tex");
+        std::fs::write(&first_target, "\\label{one}").unwrap();
+        std::fs::write(&second_target, "\\label{two}").unwrap();
+        let fixed_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        for target in [&first_target, &second_target] {
+            std::fs::File::open(target)
+                .unwrap()
+                .set_times(std::fs::FileTimes::new().set_modified(fixed_time))
+                .unwrap();
+        }
+        std::os::unix::fs::symlink(&first_target, &link).unwrap();
+        assert_eq!(labels(&service).await, json!(["one"]));
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&second_target, &link).unwrap();
+        assert_eq!(labels(&service).await, json!(["two"]));
     }
-    std::os::unix::fs::symlink(&first_target, &link).unwrap();
-    assert_eq!(labels(&service).await, json!(["one"]));
-
-    std::fs::remove_file(&link).unwrap();
-    std::os::unix::fs::symlink(&second_target, &link).unwrap();
-    assert_eq!(labels(&service).await, json!(["two"]));
 }
 
 #[test]
@@ -392,15 +376,6 @@ fn a_link_to_a_folder_in_the_project_is_a_folder_an_upload_goes_into() {
     assert_eq!(std::fs::read(root.join("figs/a.png")).unwrap(), b"png");
 }
 
-#[test]
-fn served_files_are_found_through_the_project_boundary() {
-    let (_dir, service) = with_project();
-    let raw = service.raw_path("P", "img/a.png").unwrap();
-    assert!(raw.ends_with("P/img/a.png"));
-    assert_eq!(service.pdf_path("P").unwrap().extension().unwrap(), "pdf");
-    assert!(service.raw_path("P", "../../secret").is_err());
-}
-
 /// A stand-in program `name` in `dir` that prints `line`: a shell script, or
 /// a batch file on Windows. Its path.
 fn fake_program(dir: &Path, name: &str, line: &str) -> std::path::PathBuf {
@@ -428,7 +403,7 @@ fn fake_tex(dir: &Path) -> String {
 }
 
 #[tokio::test]
-async fn set_tex_dir_accepts_only_a_folder_with_latexmk() {
+async fn set_tex_dir_accepts_a_folder_with_latexmk_or_a_tex_root_above_one() {
     let (_dir, service) = service();
     let tex = TempDir::new().unwrap();
 
@@ -446,6 +421,12 @@ async fn set_tex_dir_accepts_only_a_folder_with_latexmk() {
 
     let bin = fake_tex(&tex.path().join("bin").join("x"));
     let status = call(&service, "set_tex_dir", json!({ "dir": bin })).await;
+    assert_eq!(status["texDir"], bin);
+
+    // A picked TeX root resolves to its bin folder.
+    let root = TempDir::new().unwrap();
+    let bin = fake_tex(&root.path().join("bin").join("universal-darwin"));
+    let status = call(&service, "set_tex_dir", json!({ "dir": root.path() })).await;
     assert_eq!(status["texDir"], bin);
 }
 
@@ -489,21 +470,21 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
 }
 
 #[tokio::test]
-async fn set_tex_dir_resolves_a_picked_tex_root_to_its_bin_folder() {
-    let (_dir, service) = service();
-    let root = TempDir::new().unwrap();
-    let bin = fake_tex(&root.path().join("bin").join("universal-darwin"));
-
-    let status = call(&service, "set_tex_dir", json!({ "dir": root.path() })).await;
-    assert_eq!(status["texDir"], bin);
-}
-
-#[tokio::test]
 async fn the_tex_dir_persists_in_the_data_dir_and_clears_to_automatic() {
-    let (dir, service) = service();
+    let (dir, service) = with_project();
     let tex = TempDir::new().unwrap();
     let bin = fake_tex(tex.path());
     call(&service, "set_tex_dir", json!({ "dir": bin })).await;
+
+    // The settings file is not listed as a project.
+    let listed = call(&service, "list_projects", json!({})).await;
+    let ids: Vec<&str> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["P"]);
 
     // Another host on the same data dir sees the same choice.
     let other = Service::new(dir.path().to_path_buf());
@@ -548,27 +529,6 @@ async fn status_reports_the_current_tex_choice() {
     let automatic = call(&service, "set_tex_dir", json!({ "dir": null })).await;
     assert_eq!(automatic["texDir"], Value::Null);
     assert_ne!(automatic["version"], "Latexmk, stub 1.0");
-}
-
-#[tokio::test]
-async fn the_app_settings_file_is_not_listed_as_a_project() {
-    let (_dir, service) = with_project();
-    let tex = TempDir::new().unwrap();
-    call(
-        &service,
-        "set_tex_dir",
-        json!({ "dir": fake_tex(tex.path()) }),
-    )
-    .await;
-
-    let listed = call(&service, "list_projects", json!({})).await;
-    let ids: Vec<&str> = listed
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| p["id"].as_str().unwrap())
-        .collect();
-    assert_eq!(ids, ["P"]);
 }
 
 #[tokio::test]

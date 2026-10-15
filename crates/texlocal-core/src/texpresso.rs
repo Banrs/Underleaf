@@ -1231,9 +1231,39 @@ mod tests {
         }
         events.pdf.unwrap()
     }
+    /// A session on `root` with `files` open.
+    #[cfg(unix)]
+    async fn begin(manager: &Manager, root: &Path, path_env: &str, files: &[FileBuffer]) -> Status {
+        let pane = Pane::default();
+        manager
+            .start(root, files, None, path_env, &pane)
+            .await
+            .unwrap()
+    }
+    /// Starts again, claiming to be the owner `token`.
+    #[cfg(unix)]
+    async fn restart(
+        manager: &Manager,
+        root: &Path,
+        path_env: &str,
+        token: &str,
+    ) -> Result<Status, CoreError> {
+        manager
+            .start(root, &[], Some(token), path_env, &Pane::default())
+            .await
+    }
+    /// The status code of a refusal.
+    #[cfg(unix)]
+    fn refused<T>(result: Result<T, CoreError>) -> u16 {
+        match result {
+            Ok(_) => panic!("accepted"),
+            Err(error) => error.status,
+        }
+    }
     #[cfg(unix)]
     #[tokio::test]
     async fn persistent_vfs_protocol_validates_paths_and_reconstructs_unicode() {
+        use std::os::unix::fs::PermissionsExt;
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
         let original = "prefix é😀 suffix";
@@ -1245,21 +1275,16 @@ mod tests {
             "normal build",
         )
         .unwrap();
-        let first = manager
-            .start(
-                &root,
-                &main_buffer(original),
-                None,
-                &path_env,
-                &Pane::default(),
-            )
-            .await
-            .unwrap();
+        let first = begin(&manager, &root, &path_env, &main_buffer(original)).await;
         assert!(first.running && first.available);
         let token = first.session.as_deref().unwrap();
         // The session's own, outside the project: never a build's output.
         let pdf = PathBuf::from(first_document(&manager, &root, token).await.path);
         assert!(pdf.ends_with("live.pdf") && !pdf.starts_with(dunce::canonicalize(&root).unwrap()));
+        // In a shared temporary folder, for its owner alone.
+        let folder = pdf.parent().unwrap().to_owned();
+        let mode = fs::metadata(&folder).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
         assert_eq!(
             fs::read(root.join(BUILD_DIR).join("texpresso-live.pdf")).unwrap(),
             b"normal build"
@@ -1327,18 +1352,12 @@ mod tests {
                 .unwrap()
                 .running
         );
+        assert!(!folder.exists());
         assert_eq!(
-            manager
-                .start(&root, &[], Some(token), &path_env, &Pane::default())
-                .await
-                .unwrap_err()
-                .status,
+            refused(restart(&manager, &root, &path_env, token).await),
             409
         );
-        let restarted = manager
-            .start(&root, &[], None, &path_env, &Pane::default())
-            .await
-            .unwrap();
+        let restarted = begin(&manager, &root, &path_env, &[]).await;
         assert!(restarted.running && restarted.revision > second.revision);
         manager
             .update(
@@ -1358,50 +1377,16 @@ mod tests {
                 .error
                 .is_none()
         );
-        manager
-            .start(&root, &[], None, &path_env, &Pane::default())
-            .await
-            .unwrap();
+        begin(&manager, &root, &path_env, &[]).await;
         manager.kill_all();
         assert!(!manager.status(&root, None, || &path_env).unwrap().running);
-    }
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn the_live_pdf_folder_goes_with_its_session() {
-        let (_tmp, root, path_env) = setup();
-        let manager = Manager::default();
-        let live = manager
-            .start(&root, &[], None, &path_env, &Pane::default())
-            .await
-            .unwrap();
-        let token = live.session.as_deref().unwrap();
-        let pdf = PathBuf::from(first_document(&manager, &root, token).await.path);
-        let folder = pdf.parent().unwrap().to_owned();
-        // In a shared temporary folder, for its owner alone.
-        use std::os::unix::fs::PermissionsExt;
-        let mode = fs::metadata(&folder).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o700);
-        manager
-            .stop_request(&root, Some(token), &path_env)
-            .await
-            .unwrap();
-        assert!(!folder.exists());
     }
     #[cfg(unix)]
     #[tokio::test]
     async fn edits_follow_one_another_and_a_new_main_file_stops_the_session() {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
-        let started = manager
-            .start(
-                &root,
-                &main_buffer("abc"),
-                None,
-                &path_env,
-                &Pane::default(),
-            )
-            .await
-            .unwrap();
+        let started = begin(&manager, &root, &path_env, &main_buffer("abc")).await;
         let token = started.session.as_deref().unwrap();
         let changes = || -> Vec<Value> {
             let sent = commands(&tmp).into_iter();
@@ -1445,10 +1430,7 @@ mod tests {
     async fn unexpected_exit_retains_output_and_stops_engine_group() {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
-        let owner = manager
-            .start(&root, &[], None, &path_env, &Pane::default())
-            .await
-            .unwrap();
+        let owner = begin(&manager, &root, &path_env, &[]).await;
         until(|| {
             fs::read_to_string(tmp.path().join("engine.pid")).is_ok()
                 && manager.status(&root, None, || &path_env).unwrap().output == "ready"
@@ -1480,14 +1462,21 @@ mod tests {
     }
     #[cfg(unix)]
     #[tokio::test]
-    async fn abandoned_session_lease_expires_without_polling() {
+    async fn the_log_follows_backtracking_and_an_abandoned_lease_ends_the_session_unpolled() {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
-        let started = manager
-            .start(&root, &[], None, &path_env, &Pane::default())
-            .await
-            .unwrap();
+        let started = begin(&manager, &root, &path_env, &[]).await;
         let session = manager.held(&started.session.unwrap()).unwrap();
+        // Backtracking drops TeX's log, and the process's historical stderr is
+        // not put in its place.
+        let diagnostic = "Undefined control sequence";
+        let stderr = diagnostic.as_bytes();
+        session.state.lock().unwrap().stderr.append(0, stderr);
+        apply_message(&session, &json!(["append", "log", 0, diagnostic]));
+        assert!(session.status().log.contains(diagnostic));
+        apply_message(&session, &json!(["truncate", "log", 0]));
+        assert!(!session.status().log.contains(diagnostic));
+
         session.state.lock().unwrap().last_used = Instant::now() - LEASE;
         // The session looks at its lease every five seconds of tokio's clock, which
         // goes straight to its next look once nothing else has work.
@@ -1496,29 +1485,7 @@ mod tests {
         let status = manager.status(&root, None, || &path_env).unwrap();
         assert!(!status.running);
         assert!(status.error.unwrap().contains("expired"));
-    }
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn backtracked_tex_log_excludes_historical_process_stderr() {
-        let (_tmp, root, path_env) = setup();
-        let manager = Manager::default();
-        let started = manager
-            .start(&root, &[], None, &path_env, &Pane::default())
-            .await
-            .unwrap();
-        let session = manager.held(&started.session.unwrap()).unwrap();
-        let diagnostic = "Undefined control sequence";
-        session
-            .state
-            .lock()
-            .unwrap()
-            .stderr
-            .append(0, diagnostic.as_bytes());
-        apply_message(&session, &json!(["append", "log", 0, diagnostic]));
-        assert!(session.status().log.contains(diagnostic));
-        apply_message(&session, &json!(["truncate", "log", 0]));
-        assert!(!session.status().log.contains(diagnostic));
-        session.stop(Some("TeXpresso exited".into()));
+        // Ended, the log has that stderr after all.
         assert!(session.status().log.contains(diagnostic));
     }
     #[cfg(unix)]
@@ -1527,28 +1494,15 @@ mod tests {
         let (_tmp, root, path_env) = setup();
         let manager = Arc::new(Manager::default());
         assert!(!manager.status(&root, None, || &path_env).unwrap().running);
-        let old = manager
-            .start(&root, &[], None, &path_env, &Pane::default())
+        let old = begin(&manager, &root, &path_env, &[])
             .await
-            .unwrap()
             .session
             .unwrap();
         // B's Start reaches the queue before A's delayed edit.
         let blocked = manager.requests.lock().await;
         let replacement = tokio::spawn({
             let (manager, root, path_env) = (Arc::clone(&manager), root.clone(), path_env.clone());
-            async move {
-                manager
-                    .start(
-                        &root,
-                        &main_buffer("owner B"),
-                        None,
-                        &path_env,
-                        &Pane::default(),
-                    )
-                    .await
-                    .unwrap()
-            }
+            async move { begin(&manager, &root, &path_env, &main_buffer("owner B")).await }
         });
         tokio::task::yield_now().await;
         let stale_edit = tokio::spawn({
@@ -1562,87 +1516,46 @@ mod tests {
         drop(blocked);
         let current = replacement.await.unwrap().session.unwrap();
         assert_ne!(old, current);
-        assert_eq!(stale_edit.await.unwrap().unwrap_err().status, 409);
+        assert_eq!(refused(stale_edit.await.unwrap()), 409);
         let session = manager
             .owned(&dunce::canonicalize(&root).unwrap(), &current)
             .unwrap();
         let before = Instant::now() - Duration::from_secs(60);
         session.state.lock().unwrap().last_used = before;
+        let stale = Some(old.as_str());
+        assert_eq!(refused(manager.status(&root, stale, || &path_env)), 409);
+        assert_eq!(refused(manager.rescan(&root, &old).await), 409);
         assert_eq!(
-            manager
-                .status(&root, Some(&old), || &path_env)
-                .unwrap_err()
-                .status,
-            409
-        );
-        assert_eq!(manager.rescan(&root, &old).await.unwrap_err().status, 409);
-        assert_eq!(
-            manager
-                .stop_request(&root, Some(&old), &path_env)
-                .await
-                .unwrap_err()
-                .status,
+            refused(manager.stop_request(&root, stale, &path_env).await),
             409
         );
         // An idle tab can inspect B, but neither inspection nor A extends its lease.
-        assert_eq!(
-            manager
-                .status(&root, None, || &path_env)
-                .unwrap()
-                .session
-                .as_deref(),
-            Some(current.as_str())
-        );
+        let inspected = manager.status(&root, None, || &path_env).unwrap();
+        assert_eq!(inspected.session.as_deref(), Some(current.as_str()));
         assert_eq!(session.state.lock().unwrap().last_used, before);
-        assert!(
-            manager
-                .status(&root, Some(&current), || &path_env)
-                .unwrap()
-                .running
-        );
+        let owned = manager.status(&root, Some(&current), || &path_env);
+        assert!(owned.unwrap().running);
         assert!(session.state.lock().unwrap().last_used > before);
+        let main = dunce::canonicalize(root.join("main.tex")).unwrap();
         assert_eq!(
-            session.files.lock().unwrap().texts
-                [&dunce::canonicalize(root.join("main.tex")).unwrap()]
-                .string(),
+            session.files.lock().unwrap().texts[&main].string(),
             "owner B"
         );
         assert_eq!(
-            manager
-                .start(&root, &[], Some(&old), &path_env, &Pane::default())
-                .await
-                .unwrap_err()
-                .status,
+            refused(restart(&manager, &root, &path_env, &old).await),
             409
         );
         manager.stop(&root).unwrap();
         assert!(!manager.status(&root, None, || &path_env).unwrap().running);
-        let restarted = manager
-            .start(&root, &[], Some(&current), &path_env, &Pane::default())
-            .await
-            .unwrap();
+        let restarted = restart(&manager, &root, &path_env, &current).await.unwrap();
         assert!(restarted.running);
         assert_ne!(restarted.session.as_deref(), Some(current.as_str()));
         // Deliberately selected global Stop remains available to an inspecting tab.
-        assert!(
-            !manager
-                .stop_request(&root, None, &path_env)
-                .await
-                .unwrap()
-                .running
-        );
+        let stopped = manager.stop_request(&root, None, &path_env).await;
+        assert!(!stopped.unwrap().running);
+        let token = restarted.session.as_deref().unwrap();
         assert_eq!(
-            manager
-                .start(
-                    &root,
-                    &[],
-                    restarted.session.as_deref(),
-                    &path_env,
-                    &Pane::default()
-                )
-                .await
-                .unwrap_err()
-                .status,
+            refused(restart(&manager, &root, &path_env, token).await),
             409
         );
     }
@@ -1844,16 +1757,7 @@ mod tests {
     async fn waiting_hands_over_the_latest_of_each_page_and_ends_with_the_session() {
         let (_tmp, root, path_env) = setup_live();
         let manager = Arc::new(Manager::default());
-        let started = manager
-            .start(
-                &root,
-                &main_buffer("abc"),
-                None,
-                &path_env,
-                &Pane::default(),
-            )
-            .await
-            .unwrap();
+        let started = begin(&manager, &root, &path_env, &main_buffer("abc")).await;
         let token = started.session.clone().unwrap();
         let wait = |after: u64, timeout: Duration| {
             let (manager, root, token) = (Arc::clone(&manager), root.clone(), token.clone());
@@ -1940,16 +1844,7 @@ mod tests {
     async fn a_build_that_only_writes_the_document_is_sent_nothing_it_does_not_know() {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
-        let started = manager
-            .start(
-                &root,
-                &main_buffer("abc"),
-                None,
-                &path_env,
-                &Pane::default(),
-            )
-            .await
-            .unwrap();
+        let started = begin(&manager, &root, &path_env, &main_buffer("abc")).await;
         let token = started.session.as_deref().unwrap();
         let mut events = manager.wait(&root, token, 0, SOON).await.unwrap();
         while events.pdf.is_none() {

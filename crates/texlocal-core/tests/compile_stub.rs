@@ -116,15 +116,6 @@ async fn compile_happy_path_parses_the_log_it_wrote() {
 }
 
 #[tokio::test]
-async fn an_unchanged_compile_leaves_latexmk_free_to_skip_the_engine() {
-    let (_tmp, root, mgr) = setup(RECORD_ARGS);
-    compile(&mgr, &root).await;
-
-    let passed = args(&root);
-    assert!(!passed.contains(&"-g".into()), "{passed:?}");
-}
-
-#[tokio::test]
 async fn an_incremental_no_op_keeps_the_existing_warnings() {
     let (_tmp, root, mgr) = setup(
         "#!/bin/sh\nmkdir -p build\nif [ ! -f build/main.pdf ]; then\n  printf 'LaTeX Warning: Reference missing on input line 3.\\n' > build/main.log\n  printf 'fake' > build/main.pdf\nfi\nexit 0\n",
@@ -140,17 +131,23 @@ async fn an_incremental_no_op_keeps_the_existing_warnings() {
     assert_eq!(second.warnings.len(), 1);
 }
 
+/// latexmk's record (.fdb_latexmk) stays after a good run and goes with a
+/// failed, cancelled or stopped one, so the next run starts afresh.
 #[tokio::test]
-async fn a_failed_run_forgets_latexmks_record_so_the_next_starts_afresh() {
+async fn latexmks_record_is_kept_by_a_good_run_and_forgotten_by_any_other_end() {
+    let (_tmp, root, mgr) = setup(
+        "#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nprintf 'fake' > build/main.pdf\nexit 0\n",
+    );
+    assert!(compile(&mgr, &root).await.ok);
+    assert!(root.join("build/main.fdb_latexmk").exists());
+
     let (_tmp, root, mgr) =
         setup("#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nexit 12\n");
     let result = compile(&mgr, &root).await;
     assert!(!result.ok);
     assert!(!root.join("build/main.fdb_latexmk").exists());
-}
 
-#[tokio::test]
-async fn a_cancelled_run_forgets_latexmks_record_before_the_next_can_start() {
+    // Cancelled, before the next can start.
     let (_tmp, root, mgr) = setup(
         "#!/bin/sh
 mkdir -p build
@@ -164,10 +161,8 @@ sleep 20
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     assert!(!record.exists());
-}
 
-#[tokio::test]
-async fn a_build_stopped_by_a_rename_forgets_latexmks_record() {
+    // Stopped by a rename.
     let (tmp, service) = stub_service(
         "#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nsleep 20\n",
         &["one"],
@@ -184,15 +179,6 @@ async fn a_build_stopped_by_a_rename_forgets_latexmks_record() {
     let result = build.await.unwrap().unwrap();
     assert_eq!(result["stopped"], true);
     assert!(!tmp.path().join("uno/build/main.fdb_latexmk").exists());
-}
-
-#[tokio::test]
-async fn a_good_run_keeps_latexmks_record() {
-    let (_tmp, root, mgr) = setup(
-        "#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nprintf 'fake' > build/main.pdf\nexit 0\n",
-    );
-    assert!(compile(&mgr, &root).await.ok);
-    assert!(root.join("build/main.fdb_latexmk").exists());
 }
 
 #[tokio::test]
@@ -294,65 +280,65 @@ async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
 }
 
 #[tokio::test]
-async fn a_new_compile_supersedes_the_in_flight_one() {
-    let (_tmp, root, mgr) = setup(
-        "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else touch started; sleep 20; fi\n",
-    );
-    let mgr = Arc::new(mgr);
+async fn a_new_compile_supersedes_the_in_flight_one_and_a_third_the_replacement_before_it_spawns() {
+    {
+        let (_tmp, root, mgr) = setup(
+            "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else touch started; sleep 20; fi\n",
+        );
+        let mgr = Arc::new(mgr);
 
-    let first = in_flight(&mgr, &root);
-    appears(&root.join("started"), "first latexmk did not start").await;
-    fs::write(root.join("fast"), "").unwrap();
+        let first = in_flight(&mgr, &root);
+        appears(&root.join("started"), "first latexmk did not start").await;
+        fs::write(root.join("fast"), "").unwrap();
 
-    let second = compile(&mgr, &root).await;
-    let first = first.await.unwrap();
+        let second = compile(&mgr, &root).await;
+        let first = first.await.unwrap();
 
-    assert!(second.ok, "superseding compile should succeed");
-    assert!(!first.ok, "superseded compile should be killed");
-    assert_eq!(first.pdf, None);
-    assert_eq!(
-        fs::read_to_string(root.join("build/main.pdf")).unwrap(),
-        "new"
-    );
-}
-
-#[tokio::test]
-async fn a_third_compile_can_supersede_a_replacement_before_it_spawns() {
-    let (_tmp, root, mgr) = setup(
-        r#"#!/bin/sh
+        assert!(second.ok, "superseding compile should succeed");
+        assert!(!first.ok, "superseded compile should be killed");
+        assert_eq!(first.pdf, None);
+        assert_eq!(
+            fs::read_to_string(root.join("build/main.pdf")).unwrap(),
+            "new"
+        );
+    }
+    {
+        let (_tmp, root, mgr) = setup(
+            r#"#!/bin/sh
 case "$*" in
   *-lualatex*) mkdir -p build; printf 'third' > build/main.pdf; exit 0 ;;
   *-xelatex*) touch replacement_started; sleep 20 ;;
   *) touch started; sleep 20 ;;
 esac
 "#,
-    );
-    let mgr = Arc::new(mgr);
-    let first = in_flight(&mgr, &root);
-    appears(&root.join("started"), "first latexmk did not start").await;
-    // Each build reads the engine as it is asked for, which tells the three apart.
-    let engine = |engine: &str| write_settings(&root, &json!({ "engine": engine })).unwrap();
-    engine("xelatex");
-    let mut second = Box::pin(mgr.compile(&root, None));
-    // Poll just until it waits on the first build, then register the third
-    // without letting the first release the build directory in between.
-    waits(second.as_mut()).await;
-    engine("lualatex");
+        );
+        let mgr = Arc::new(mgr);
+        let first = in_flight(&mgr, &root);
+        appears(&root.join("started"), "first latexmk did not start").await;
+        // Each build reads the engine as it is asked for, which tells the three apart.
+        let engine = |engine: &str| write_settings(&root, &json!({ "engine": engine })).unwrap();
+        engine("xelatex");
+        let mut second = Box::pin(mgr.compile(&root, None));
+        // Poll just until it waits on the first build, then register the third
+        // without letting the first release the build directory in between.
+        waits(second.as_mut()).await;
+        engine("lualatex");
 
-    let (third, second, first) = tokio::time::timeout(Duration::from_secs(5), async {
-        let (third, second, first) = tokio::join!(mgr.compile(&root, None), second, first,);
-        (third.unwrap(), second.unwrap(), first.unwrap())
-    })
-    .await
-    .expect("compile generations deadlocked");
-    assert!(third.ok);
-    assert!(!second.ok);
-    assert!(!first.ok);
-    assert!(!root.join("replacement_started").exists());
-    assert_eq!(
-        fs::read_to_string(root.join("build/main.pdf")).unwrap(),
-        "third"
-    );
+        let (third, second, first) = tokio::time::timeout(Duration::from_secs(5), async {
+            let (third, second, first) = tokio::join!(mgr.compile(&root, None), second, first,);
+            (third.unwrap(), second.unwrap(), first.unwrap())
+        })
+        .await
+        .expect("compile generations deadlocked");
+        assert!(third.ok);
+        assert!(!second.ok);
+        assert!(!first.ok);
+        assert!(!root.join("replacement_started").exists());
+        assert_eq!(
+            fs::read_to_string(root.join("build/main.pdf")).unwrap(),
+            "third"
+        );
+    }
 }
 
 #[tokio::test]
@@ -407,28 +393,25 @@ fn args(root: &Path) -> Vec<String> {
     args.split_whitespace().map(str::to_string).collect()
 }
 
+/// An unchanged compile leaves latexmk free to skip the engine (no -g); a build
+/// compiles past errors unless the project stops on the first; and -norc turns
+/// off every rc file latexmk would read by itself, the project's included,
+/// which only a trusted project (shell escape) keeps.
 #[tokio::test]
-async fn a_build_compiles_past_errors_unless_the_project_stops_on_the_first() {
+async fn latexmk_is_given_the_arguments_the_settings_call_for() {
     let (_tmp, root, mgr) = setup(RECORD_ARGS);
     compile(&mgr, &root).await;
     let passed = args(&root);
+    assert!(!passed.contains(&"-g".into()), "{passed:?}");
     assert!(passed.contains(&"-f".into()), "{passed:?}");
     assert!(!passed.contains(&"-halt-on-error".into()), "{passed:?}");
+    assert!(passed.contains(&"-norc".into()), "{passed:?}");
 
     write_settings(&root, &json!({ "stopOnFirstError": true })).unwrap();
     compile(&mgr, &root).await;
     let passed = args(&root);
     assert!(passed.contains(&"-halt-on-error".into()), "{passed:?}");
     assert!(!passed.contains(&"-f".into()), "{passed:?}");
-}
-
-#[tokio::test]
-async fn a_projects_own_latexmkrc_runs_only_with_shell_escape() {
-    // -norc turns off every rc file latexmk would read by itself, the
-    // project's included; a trusted project keeps them.
-    let (_tmp, root, mgr) = setup(RECORD_ARGS);
-    compile(&mgr, &root).await;
-    assert!(args(&root).contains(&"-norc".into()));
 
     write_settings(&root, &json!({ "shellEscape": true })).unwrap();
     compile(&mgr, &root).await;
@@ -496,13 +479,18 @@ async fn a_failure_the_log_doesnt_explain_names_latexmks_summary() {
 }
 
 #[tokio::test]
-async fn stopping_a_build_ends_that_projects_build_only_and_says_so() {
+async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     let (tmp, service) = stub_service(
         "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else touch started; sleep 20; fi\n",
-        &["one", "two"],
+        &["one", "two", "three"],
     );
-    let (one, two) = (build(&service, "one"), build(&service, "two"));
-    for id in ["one", "two"] {
+    let ids = ["one", "two", "three"];
+    let (one, two, three) = (
+        build(&service, "one"),
+        build(&service, "two"),
+        build(&service, "three"),
+    );
+    for id in ids {
         appears(
             &tmp.path().join(id).join("started"),
             "latexmk did not start",
@@ -522,8 +510,8 @@ async fn stopping_a_build_ends_that_projects_build_only_and_says_so() {
     assert_eq!(one["ok"], false);
     assert!(started.elapsed() < Duration::from_secs(10));
     assert!(
-        !two.is_finished(),
-        "the other project's build was stopped too"
+        !two.is_finished() && !three.is_finished(),
+        "another project's build was stopped too"
     );
 
     // The project builds again after a Stop.
@@ -539,34 +527,27 @@ async fn stopping_a_build_ends_that_projects_build_only_and_says_so() {
 
     assert_eq!(stop("one").await.unwrap(), false, "nothing is running");
 
-    // Quitting stops the rest, and they say so too.
-    service.compile.kill_all();
-    assert_eq!(two.await.unwrap().unwrap()["stopped"], true);
-}
-
-#[tokio::test]
-async fn renaming_a_project_stops_its_build() {
-    let (tmp, service) = stub_service("#!/bin/sh\ntouch started\nsleep 20\n", &["one"]);
-    let build = build(&service, "one");
-    appears(&tmp.path().join("one/started"), "latexmk did not start").await;
-
-    // A rename refused leaves the build running.
+    // A rename refused leaves the build running; one that goes ahead stops it.
     create_project(tmp.path(), "taken", "blank").unwrap();
     let refused = service
-        .call("rename_project", &json!({ "id": "one", "name": "taken" }))
+        .call("rename_project", &json!({ "id": "two", "name": "taken" }))
         .await;
     assert_eq!(refused.unwrap_err().status, 409);
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(!build.is_finished());
+    assert!(!two.is_finished());
 
     let started = Instant::now();
     service
-        .call("rename_project", &json!({ "id": "one", "name": "uno" }))
+        .call("rename_project", &json!({ "id": "two", "name": "uno" }))
         .await
         .unwrap();
-    let result = build.await.unwrap().unwrap();
-    assert_eq!(result["stopped"], true);
+    assert_eq!(two.await.unwrap().unwrap()["stopped"], true);
     assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(!three.is_finished());
+
+    // Quitting stops the rest, and they say so too.
+    service.compile.kill_all();
+    assert_eq!(three.await.unwrap().unwrap()["stopped"], true);
 }
 
 #[tokio::test]
