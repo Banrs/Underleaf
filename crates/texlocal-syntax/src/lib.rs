@@ -12,6 +12,7 @@ mod maths;
 mod prose;
 mod stack;
 mod style;
+pub mod theme;
 mod typing;
 
 use serde::{Deserialize, Serialize};

@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::theme::{self, Rgba};
 use crate::{SnippetField, SourceDocument, Style, TextEdit, TextRange, map_selections};
 
 /// The arguments the document's commands take, each what it needs; any left
@@ -143,7 +144,11 @@ impl SourceDocument {
     }
 }
 
-/// The commands that need no document.
+/// The commands that need no document: "themes", the themes' colours;
+/// "theme_colors", a theme's (`theme`, its id) legible in an appearance
+/// (`theme::Appearance`'s fields), by highlight kind; "legible" (`color`,
+/// `background`, `fill`, `increaseContrast`), one colour raised so; and
+/// "contrast" (`a`, `b`), WCAG's ratio.
 pub fn call(command: &str, args_json: &str) -> Option<String> {
     let value: Value = serde_json::from_str(args_json).ok()?;
     if !value.is_object() {
@@ -152,9 +157,37 @@ pub fn call(command: &str, args_json: &str) -> Option<String> {
     call_with(command, &value)
 }
 
-fn call_with(command: &str, _value: &Value) -> Option<String> {
-    #[allow(clippy::match_single_binding)]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Legible {
+    color: Rgba,
+    background: Rgba,
+    fill: Rgba,
+    #[serde(default)]
+    increase_contrast: bool,
+}
+
+fn call_with(command: &str, value: &Value) -> Option<String> {
+    let string = |key: &str| value.get(key).and_then(Value::as_str);
     match command {
+        "themes" => json(theme::THEMES),
+        "theme_colors" => {
+            let theme = theme::theme(string("theme")?)?;
+            json(theme::theme_colors(theme, &args(value)?))
+        }
+        "legible" => {
+            let a: Legible = args(value)?;
+            json(theme::legible(
+                a.color,
+                a.background,
+                a.fill,
+                a.increase_contrast,
+            ))
+        }
+        "contrast" => {
+            let [a, b]: [Rgba; 2] = [args(value.get("a")?)?, args(value.get("b")?)?];
+            json(theme::contrast(a, b))
+        }
         _ => None,
     }
 }
@@ -174,5 +207,30 @@ mod tests {
         assert_eq!(doc.call("no such command", "{}"), None);
         assert_eq!(doc.call("text", "[]"), None);
         assert_eq!(doc.call("indent", r#"{"selections": 3}"#), None);
+    }
+
+    #[test]
+    fn colours_answer_by_name() {
+        let themes = super::call("themes", "{}").unwrap();
+        assert!(themes.starts_with(
+            r#"[{"id":"overleaf","title":"Overleaf","command":{"light":[0.0,0.0,1.0,1.0]"#
+        ));
+        let light = r#"{"theme": "texstudio", "dark": false, "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0.08]}"#;
+        let colors: Vec<[f64; 4]> =
+            serde_json::from_str(&super::call("theme_colors", light).unwrap()).unwrap();
+        assert_eq!(colors.len(), 9);
+        assert_eq!(
+            super::call("theme_colors", r#"{"theme": "solarized"}"#),
+            None
+        );
+        let black = r#"{"color": [0, 0, 0, 1], "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0]}"#;
+        assert_eq!(
+            super::call("legible", black).as_deref(),
+            Some("[0.0,0.0,0.0,1.0]")
+        );
+        let ratio = super::call("contrast", r#"{"a": [0, 0, 0, 1], "b": [1, 1, 1, 1]}"#).unwrap();
+        assert_eq!(ratio, "21.0");
+        // A document answers them too.
+        assert!(SourceDocument::new("").call("themes", "{}").is_some());
     }
 }
