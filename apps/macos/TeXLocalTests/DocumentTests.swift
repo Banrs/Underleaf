@@ -342,9 +342,12 @@ struct PDFFindTests {
         let hit = try await Core.shared.answer("synctex_match", ["id": info.id, "file": info.mainFile, "line": 1, "column": column,
                                                                 "pages": whole], as: PageHit.self)
         #expect(hit.map { NSRange(location: $0.start, length: $0.end - $0.start) } == second)
-        try await waitUntil(timeout: .seconds(5)) { controller.view.currentSelection?.range(at: 0, on: page) == second } state: {
-            "selection \(String(describing: controller.view.currentSelection?.range(at: 0, on: page))), mark \(controller.view.mark != nil), text \(rendered.debugDescription)"
-        }
+        // PDFKit's selection of a word that ends a row takes the row's break along.
+        try await waitUntil {
+            let selection = controller.view.currentSelection
+            return selection?.range(at: 0, on: page).location == second.location
+                && selection?.string?.trimmingCharacters(in: .whitespacesAndNewlines) == "echo"
+        } state: { "selection \(String(describing: controller.view.currentSelection?.range(at: 0, on: page)))" }
     }
 
     private func shows(_ page: PDFPage?, in controller: PDFController) -> Bool {
