@@ -120,6 +120,13 @@ checkout still has it.
   (`theme_colors`), the menus' catalogue (`menus`), the class's headings (`heading_styles`) and
   maths and symbols as SVG (`math_svg`, `glyph_svg`, drawn as NSImage) come from
   `tl_syntax_call` (`Syntax`). The maths preview is set at 1.21 times the text.
+- **The helpers are the core's too**: SyncTeX finds the word, not only the line (`synctex_match`
+  takes the text of the pages round SyncTeX's boxes; `synctex_inverse` the clicked page's text
+  and letter). The File Outline's tree and fold keys come with `analyze_project`, its current
+  heading from `outline_current`; a file's kind with `file_tree`; a free “untitled” name from
+  `create_entry`; the issue boxes' one-line message as `short`. The sidebar's open folders and
+  folded headings are saved in the project's settings (`get_ui_state`, `set_ui_state`), not
+  UserDefaults, so they go with the project.
 - **Live preview**: the session sends each edit on to TeXpresso and says where its pages are
   (`live_document`, `live_page`); `TeXpressoSession` reads them off the main actor, and each page
   is drawn over PDFKit's page at once (`LiveCanvas`, an IOSurface), over the part of
