@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="TeXLocal.Core/TeXLocal.Core.csproj" />
+  <Project Path="TeXLocal/TeXLocal.csproj" />
+  <Project Path="TeXLocal.Tests/TeXLocal.Tests.csproj" />
+</Solution>

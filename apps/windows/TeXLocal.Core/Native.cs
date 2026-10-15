@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace TeXLocal.Core;
+namespace TeXLocal.Bridge;
 
 internal static unsafe partial class Native
 {

@@ -1,9 +1,9 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
-using static TeXLocal.Core.Native;
+using static TeXLocal.Bridge.Native;
 
-namespace TeXLocal.Core;
+namespace TeXLocal.Bridge;
 
 public readonly record struct HighlightRun(int Start, int Length, int Kind);
 
