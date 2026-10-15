@@ -11,8 +11,6 @@ struct ShellTests {
     /// A workspace in a window on screen, the inspector hidden, and the sidebar unless asked for.
     private func workspace(showPDF: Bool, sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
         let app = AppModel()
-        app.sidebarVisible = sidebar
-        app.inspectorVisible = false
         app.showPDF = showPDF
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1300, height: 600),
                               styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
@@ -21,6 +19,9 @@ struct ShellTests {
         let workspace = WorkspaceController(app: app, project: ProjectModel(id: "ShellTests", app: app),
                                             size: window.contentLayoutRect.size)
         window.contentViewController = workspace
+        // Over what the split's autosave, which this host shares with the app, restored.
+        workspace.sidebarItem.isCollapsed = !sidebar
+        workspace.inspectorItem.isCollapsed = true
         // As the app's window has them (`MainWindowController`).
         window.contentMinSize = ColumnMetrics.contentMinimum
         // Neither loaded nor saved: this host shares the app's saved toolbar.
@@ -180,21 +181,22 @@ struct ShellTests {
         #expect(outline.maximumThickness == BarMetrics.height)
     }
 
-    /// A sidebar the window folded is still the user's shown sidebar: it isn't saved as hidden,
-    /// View offers to show it, and showing it unfolds it.
-    @Test func aFoldedSidebarIsNotAHiddenOne() {
-        let app = AppModel()
-        let project = ProjectModel(id: "ShellTests", app: app)
-        app.sidebarVisible = true
-        app.sidebarFolded = true
-        #expect(app.sidebarVisible && !app.sidebarShown)
-        #expect(UserDefaults.standard.bool(forKey: DefaultsKey.sidebarVisible))
+    /// The side columns are the split's: View's titles follow their panes however they shut, and
+    /// View's toggles open and shut the panes.
+    @Test func viewsTitlesFollowTheSideColumns() async throws {
+        let (window, workspace) = try await workspace(showPDF: true, sidebar: true)
+        defer { workspace.close(); window.close() }
+        let app = workspace.app, project = workspace.project
+        #expect(app.title(.viewToggleSidebar, on: project) == "Hide Sidebar")
+        #expect(app.title(.viewToggleInspector, on: project) == "Show Inspector")
+        workspace.sidebarItem.isCollapsed = true
         #expect(app.title(.viewToggleSidebar, on: project) == "Show Sidebar")
         app.perform(.viewToggleSidebar, on: project)
-        #expect(app.sidebarShown && !app.sidebarFolded)
-        app.perform(.viewToggleSidebar, on: project)
-        #expect(!app.sidebarVisible && !UserDefaults.standard.bool(forKey: DefaultsKey.sidebarVisible))
-        app.sidebarVisible = true
+        try await waitUntil { !workspace.sidebarItem.isCollapsed }
+        #expect(app.title(.viewToggleSidebar, on: project) == "Hide Sidebar")
+        app.perform(.viewToggleInspector, on: project)
+        try await waitUntil { !workspace.inspectorItem.isCollapsed }
+        #expect(app.title(.viewToggleInspector, on: project) == "Hide Inspector")
     }
 
     /// A menu's PDF action shows the column and goes to the workspace at once.

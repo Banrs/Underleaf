@@ -65,7 +65,7 @@ final class WorkspaceController: RestoredSplitViewController {
     private var sourceItem: NSSplitViewItem!
     private var pdfItem: NSSplitViewItem!
     private var panelItem: NSSplitViewItem!
-    private var inspectorItem: NSSplitViewItem!
+    private(set) var inspectorItem: NSSplitViewItem!
     /// Source and PDF, with their status bar, over the build panel.
     private var areaItem: NSSplitViewItem!
     private var sidebarSearch: NSSplitViewItemAccessoryViewController!
@@ -111,38 +111,19 @@ final class WorkspaceController: RestoredSplitViewController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// The autosave restores which panes were collapsed as each split loads, but
-    /// the models say which show: those they hide collapse at once, and the tracks
-    /// (`watch`) bring back those they show at their sizes. The model follows the
-    /// side columns from here on.
+    /// The autosave restores which panes were collapsed as each split loads. The side columns are
+    /// the split's alone, saved by it, folded and brought back by AppKit as the window narrows and
+    /// widens; the menus are told as they open and shut, whoever asked.
     override func viewDidLoad() {
         super.viewDidLoad()
-        if !app.sidebarVisible { sidebarItem.isCollapsed = true }
-        if !app.inspectorVisible { inspectorItem.isCollapsed = true }
         collapses = [
-            follow(sidebarItem) { [unowned self] visible in
-                fold(visible, shown: \.sidebarVisible, folded: \.sidebarFolded)
-            },
+            follow(sidebarItem) { [unowned self] in app.sidebarShown = $0 },
             follow(inspectorItem) { [unowned self] visible in
                 if visible { mount(inspectorItem.viewController, true) }
-                fold(visible, shown: \.inspectorVisible, folded: \.inspectorFolded)
+                app.inspectorShown = visible
             },
             follow(pdfItem) { [unowned self] _ in fitColumns() },
         ]
-    }
-
-    /// A side column that shut without the model's asking was dragged shut, which hides it, or
-    /// folded by a window too narrow for it, which doesn't: AppKit brings that one back as the
-    /// window widens, and the model keeps it as shown.
-    private func fold(_ visible: Bool, shown: ReferenceWritableKeyPath<AppModel, Bool>,
-                      folded: ReferenceWritableKeyPath<AppModel, Bool>) {
-        let dragged = NSApp.currentEvent?.type == .leftMouseDragged && view.window?.inLiveResize != true
-        if visible || dragged {
-            if app[keyPath: folded] { app[keyPath: folded] = false }
-            if app[keyPath: shown] != visible { app[keyPath: shown] = visible }
-        } else if app[keyPath: shown], !app[keyPath: folded] {
-            app[keyPath: folded] = true
-        }
     }
 
     /// The PDF the model hides goes once the columns have been laid out in the window (`buildArea`).
@@ -188,15 +169,15 @@ final class WorkspaceController: RestoredSplitViewController {
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.minimumThickness = ColumnMetrics.sidebarMinimum
-        sidebarItem.isCollapsed = !app.sidebarVisible
         sidebarSearch = accessory(SearchField(text: Bindable(project.search).query, prompt: "Search Project", handle: searchField))
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
         addSplitViewItem(sidebarItem)
     }
 
     private func buildArea(size: CGSize) {
-        let sidebarWidth = app.sidebarVisible ? ColumnMetrics.sidebarIdeal : 0
-        let inspectorWidth = app.inspectorVisible ? inspectorItem.minimumThickness : 0
+        // As a first launch opens: the autosave puts the columns as they were afterwards.
+        let sidebarWidth = sidebarItem.isCollapsed ? 0 : ColumnMetrics.sidebarIdeal
+        let inspectorWidth = inspectorItem.isCollapsed ? 0 : inspectorItem.minimumThickness
         let panes = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
         let pdfWidth = min((panes * ColumnMetrics.pdfShare).rounded(), panes - ColumnMetrics.sourceMinimum)
         panelHeight = max(ColumnMetrics.panelMinimum, (size.height * ColumnMetrics.panelShare).rounded())
@@ -248,10 +229,11 @@ final class WorkspaceController: RestoredSplitViewController {
         addSplitViewItem(areaItem)
     }
 
-    /// AppKit's fixed inspector width fits its settings and facts.
+    /// AppKit's fixed inspector width fits its settings and facts. Hidden until shown once: the
+    /// autosave brings it back as it was.
     private func buildInspector() {
-        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project), mounted: app.inspectorVisible))
-        inspectorItem.isCollapsed = !app.inspectorVisible
+        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project), mounted: false))
+        inspectorItem.isCollapsed = true
         // As the sidebar: a window too narrow for it folds it, and brings it back.
         inspectorItem.canCollapseFromWindowResize = true
     }
@@ -259,14 +241,14 @@ final class WorkspaceController: RestoredSplitViewController {
     /// The panes that collapse.
     private var panes: [NSSplitViewItem] { [sidebarItem, outlineItem, pdfItem, panelItem, inspectorItem] }
 
-    /// The toolbar's toggles go through the model, as the menu's do, so the panes animate as
-    /// `setCollapsed` runs them and the inspector's content leaves once it has shut.
+    /// The toolbar's toggles and the menu's go through `setCollapsed`, so the panes animate and the
+    /// inspector's content leaves once it has shut.
     override func toggleSidebar(_ sender: Any?) {
-        app.sidebarShown.toggle()
+        setCollapsed(sidebarItem, !sidebarItem.isCollapsed)
     }
 
     override func toggleInspector(_ sender: Any?) {
-        app.inspectorShown.toggle()
+        setCollapsed(inspectorItem, !inspectorItem.isCollapsed)
     }
 
     /// A pane: SwiftUI whose sizes stay out of Auto Layout, so the split item's
@@ -310,8 +292,6 @@ final class WorkspaceController: RestoredSplitViewController {
     private func watch() {
         let app = app, project = project, pdf = pdf
         watches = [
-            track({ app.sidebarShown }) { [weak self] visible in if let self { setCollapsed(sidebarItem, !visible) } },
-            track({ app.inspectorShown }) { [weak self] visible in if let self { setCollapsed(inspectorItem, !visible) } },
             // Until the workspace appears, `viewDidAppear` has it.
             track({ app.showPDF }) { [weak self] visible in if let self, appeared { setCollapsed(pdfItem, !visible) } },
             track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
@@ -320,11 +300,15 @@ final class WorkspaceController: RestoredSplitViewController {
             track({ app.searchFocusToken }, initial: false) { [weak self] _ in self?.focusSearch() },
         ]
         app.performPDF = { [weak self] in self?.performPDF($0) }
+        app.showSideColumn = { [weak self] column, shown in
+            guard let self else { return }
+            setCollapsed(column == .sidebar ? sidebarItem : inspectorItem, !shown)
+        }
     }
 
     /// A pane as it shuts or opens, whoever asked: the model, a drag or the window.
     private func follow(_ item: NSSplitViewItem, _ shown: @escaping @MainActor (Bool) -> Void) -> NSKeyValueObservation {
-        item.observe(\.isCollapsed, options: .new) { _, change in
+        item.observe(\.isCollapsed, options: [.initial, .new]) { _, change in
             guard let collapsed = change.newValue else { return }
             MainActor.assumeIsolated { shown(!collapsed) }
         }
@@ -482,8 +466,7 @@ final class WorkspaceController: RestoredSplitViewController {
         paneFrames = nil
         watches.forEach { $0.cancel() }
         app.performPDF = nil
-        // The next workspace's columns are AppKit's to fold afresh: it brings back only what it folded.
-        (app.sidebarFolded, app.inspectorFolded) = (false, false)
+        app.showSideColumn = nil
         collapses = []
         toolbar.close()
     }
@@ -560,20 +543,6 @@ final class WorkspaceController: RestoredSplitViewController {
                 }
             }
         }
-    }
-}
-
-extension AppModel {
-    /// The side columns as the window has them: the user's choice, unless the window folded one.
-    /// Showing a folded one unfolds it.
-    var sidebarShown: Bool {
-        get { sidebarVisible && !sidebarFolded }
-        set { (sidebarVisible, sidebarFolded) = (newValue, false) }
-    }
-
-    var inspectorShown: Bool {
-        get { inspectorVisible && !inspectorFolded }
-        set { (inspectorVisible, inspectorFolded) = (newValue, false) }
     }
 }
 
