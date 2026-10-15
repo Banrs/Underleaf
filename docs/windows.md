@@ -34,7 +34,7 @@ apps/windows/
     Models.cs                  records for the JSON the views read (web-case)
   TeXLocal/                    the WinUI 3 app (unpackaged, self-contained)
     App.xaml(.cs), MainWindow.xaml(.cs)
-    Pages/HomePage, WorkspacePage, SettingsPage (.xaml/.cs)
+    Pages/HomePage, WorkspacePage, SettingsPage (.xaml/.cs); WorkspacePage.Document.cs (editor, builds, issues, PDF, SyncTeX)
     Controls/Sizer.cs, RenameFlyout.xaml(.cs), PdfView.xaml(.cs), SourceView.xaml(.cs)
     Themes/Generic.xaml        card styles, status button style, syntax ThemeDictionaries
   TeXLocal.Tests/              xUnit, against TeXLocal.Core only: the bridge and smoke behaviour
@@ -77,8 +77,29 @@ apps/windows/
 | Settings cards | One `Style` on `Grid` matching `SettingsCard` | Same reason: no Community Toolkit |
 | Subtle buttons | WinUI's own `SubtleButtonStyle` (Home's Settings; `StatusButtonStyle` is based on it) | No restyled `Button` |
 | Recycle Bin | `Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile`/`DeleteDirectory` with `SendToRecycleBin` (the shell's file operation) | `StorageFile`/`StorageFolder.DeleteAsync(Default)` deletes outright in an unpackaged app |
-| Source editor | `RichEditBox`, behind a one-day gate (M2); WinUIEdit 0.0.5 is plan B | Monaco needs WebView2; AvalonEdit is WPF |
-| PDF | M2: `Windows.Data.Pdf` renders pages into `Image`s in a `ScrollView`; M3: PDFium in the core for text | Windows.Data.Pdf has no text API |
+| Source editor | `RichEditBox`; passed the M2 gate (below), so WinUIEdit is not used | Monaco needs WebView2; AvalonEdit is WPF |
+| PDF | `Windows.Data.Pdf` renders pages into `Image`s in a `StackPanel` in a `ScrollViewer`, zoomed by sizing the pages; M3: PDFium in the core for text | Windows.Data.Pdf has no text API. `ScrollView` keeps a stale extent after its content resizes and `ItemsRepeater` estimates unrealized page heights, so scroll positions (SyncTeX, keeping the place) came out wrong with both |
+
+**Editor gate (M2)**, on a generated 5,000-line, 269 KB `.tex` (sections, maths, comments), Debug
+build, 200% display:
+
+- (a) Coloured visible lines: first frame 12–53 ms after the text is set (the core's highlights go
+  in as RTF with a colour table, the first 200 lines first); the rest is in by 0.4–0.6 s, during
+  which input waits. Plain `SetText` plus range colouring took 3.6 s for the whole document.
+- (b) Keystroke to recoloured line: median 6.1–6.8 ms, p95 10.2–10.8 ms, max 11.4 ms (95 typed
+  keys; `Stopwatch` around the `TextChanged` handler: `GetText`, the diff, `tl_source_edit`,
+  colouring the edited lines, the gutter).
+- (c) 20 edits at 20 places, undone and redone: text exact on disk both ways, colours right, redo
+  stack intact. WinUI's document has no Text Object Model access (`ITextDocument` and
+  `ITextDocument2` are not reachable by `QueryInterface`), so undo can't be suspended. Instead the
+  whole text is coloured when it is set (no undo history), each edit's recolouring goes into that
+  edit's `BeginUndoGroup`/`EndUndoGroup`, and Ctrl+Z / Ctrl+Y run through the editor, which skips
+  colouring while RichEdit restores text and colours together. A group spans a typed word and ends
+  at a non-letter, a deletion or a caret move. Reloading the text (disk change, theme change)
+  clears the undo history.
+- (d) IME: Microsoft Pinyin (no Japanese IME is installed on the test machine; changing system
+  languages was out of bounds): composition kept the autosave waiting (`session_composing`), and
+  the committed text was edited and saved.
 | Maths, palette | `TextBlock` in Cambria Math for single glyphs; `SvgImageSource` for RaTeX SVG | — |
 | Issues | `ListView`; one `InfoBar` for a failed build | A list of InfoBars is too heavy |
 | Pickers | `Microsoft.Windows.Storage.Pickers` with `AppWindow.Id` | No HWND interop |
@@ -167,20 +188,25 @@ minimum 800 × 500 (`OverlappedPresenter.PreferredMinimum*`); default 1280 × 80
   text area; the caret is its focus indicator. Gutter numbers `TextFillColorTertiaryBrush`, the
   caret's `...Primary`; current line `SubtleFillColorSecondaryBrush`. Issue boxes at line ends:
   `Border` CornerRadius 4, `SystemFillColorCriticalBackgroundBrush` / `...CautionBackgroundBrush`,
-  16 glyph, Caption message, trimmed.
+  16 glyph, Caption message, trimmed. RichEdit draws colours without alpha, so translucent syntax
+  inks (`TextFillColorSecondary` for comments) are laid over `SolidBackgroundFillColorBase` first;
+  and it drops colours given before its template is applied, so the first file waits for that.
 - **PDF** (Edge's viewer): pages as white paper, square corners, 1px `CardStrokeColorDefaultBrush`,
   12 apart, centred; the reserved 4px `ProgressBar` at the pane's top edge; the last good render
-  stays up during builds.
+  stays up during builds. Before a first build, a centred Body line in secondary text says where
+  the PDF will appear. The first PDF opens at fit width when the page is wider than the pane.
 - **Status bar** (Notepad): 32 tall on Mica, Caption, `TextFillColorSecondaryBrush`. Left: build
-  state (MinWidth 160), issue counts button (E783 n, E7BA m; toggles the panel). Right: Not saved
+  state (MinWidth 240, so "Built in 12.3 s · Preview out of date" never pushes the next segment;
+  empty when a PDF is shown but nothing was built this session), issue counts button (E783 n, E7BA m; toggles the panel). Right: Not saved
   (Caution, reserved slot), words, `Ln 12, Col 4` (opens Go to line), `Page 3 of 10` (opens Go to
   page), zoom %. Buttons through lightweight styling only: `ButtonBackground`
   `SubtleFillColorTransparentBrush`, `ButtonBackgroundPointerOver` `SubtleFillColorSecondaryBrush`.
-- **Issues panel**: `SelectorBar` (Issues, Build log; Live preview log later) and a Warnings
-  `ToggleButton` and Copy log at its end. Issues `ListView`: 16 severity glyph coloured
+- **Issues panel**: a 48 header row (the `SelectorBar`'s selection pill is cut off at 40):
+  `SelectorBar` (Issues, Build log; Live preview log later) and a Warnings `ToggleButton` and Copy
+  log at its end. Issues `ListView`: 16 severity glyph coloured
   Critical/Caution/Attention, Body message, Caption `file.tex:42`; Enter or double-click goes
   there. Build log: read-only `TextBox`, Cascadia Mono 12. A failed manual build opens the panel
-  and shows an `InfoBar` (Error, "Build failed", action Show log), opened only on a settled result.
+  and shows an `InfoBar` (Error, "Build failed", action Show issues), opened only on a settled result.
 - **Settings** (Windows Settings): full page, back in the TitleBar, "Settings" title, single
   column. Cards: `Grid` style, `MinHeight` 68, padding 16, 20 header icon, Body header, Caption
   description, control at the right. `ToggleSwitch` for on/off, `ComboBox` for choices, apply at
@@ -190,7 +216,8 @@ minimum 800 × 500 (`OverlappedPresenter.PreferredMinimum*`); default 1280 × 80
 - **Dialogs**: `ContentDialog` only for blocking decisions, specific verbs, primary on the left.
   New project (Name; Create default; the core numbers a taken name, "Thesis 2", and a name it
   refuses is shown under the box, dialog stays). Go to
-  line / page (`NumberBox`). File changed on disk: Save anyway, Revert, Cancel, **no default**.
+  line / page (`NumberBox`). File changed on disk: Save anyway, Revert, Cancel, **no default**
+  (and keyboard focus starts on Cancel, since `ContentDialog` otherwise focuses the first button).
   File gone: Save again (default), Close, Cancel. Delete project: Move to Recycle Bin, Cancel
   (default). Rename in place uses a `Flyout` with a `TextBox`, not a dialog.
 
@@ -255,8 +282,13 @@ templates), `document_class` / `heading_styles`, and `math_svg` / `glyph_svg` th
 11. **Source sync**: `tl_source_sync(s, text)` answering the changed range, since `RichEditBox`
     reports no edit range; until then the editor diffs common prefix and suffix.
 12. **Live preview on Windows**: below.
-13. Conditional on the M2 gate: an undo stack in the core, if RichEdit's undo can't keep colouring
-    out; fold ranges, if folding is wanted before WinUIEdit.
+13. The M2 gate passed without an undo stack in the core. Still wanted: fold ranges, if folding is
+    wanted in RichEdit.
+14. **Issue indices on lines**: the `issues` event's lines don't say which issue (index into
+    `errors` + `warnings`) they show, so a click on a line-end box looks up the first issue with
+    that file and line before `session_choose_issue`.
+15. **PDF path**: `session_open` answers an absolute `pdf` and `build_finished`'s `result.pdf` is
+    project-relative, and there is no `pdf_path` command; the host joins the session's `root`.
 
 ## Live preview on Windows
 
@@ -302,3 +334,9 @@ failure exits 1 and writes the reason to stderr. With the display asleep, a newl
 window never presents and captures come out black: wake it (`SetThreadExecutionState` with
 `ES_DISPLAY_REQUIRED`) before taking screenshots. Flyouts and dialogs are separate windows, which
 `PrintWindow` leaves out; capture the screen region for those.
+
+UI Automation reaches most of the workspace (Invoke, Toggle, SelectionItem, Value, Text and
+Scroll patterns; keys for accelerators), but two gestures have no pattern: double-clicking a PDF
+page (inverse SyncTeX) and double-clicking an issue row. Test those with a mouse double-click sent
+to a point that `WindowFromPoint` confirms is inside the dev build's window. A `ToggleButton`
+toggled through UIA raises `Checked`/`Unchecked`, not `Click`, so handlers listen to those.
