@@ -228,7 +228,7 @@ final class ProjectModel {
             root = URL(filePath: opened.root, directoryHint: .isDirectory)
             // The tree as it opened, before any event's newer one.
             tree.show(opened.tree)
-            core.observe(opened.session) { [weak self] type, event in self?.handle(type, event) }
+            core.observe(opened.session) { [weak self] type, event, live in self?.handle(type, event, live) }
             let restored = saved?.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
             await analysis?.value
@@ -299,7 +299,7 @@ final class ProjectModel {
 
     // MARK: - The session's events
 
-    private func handle(_ type: String, _ event: Data) {
+    private func handle(_ type: String, _ event: Data, _ live: LiveRead?) {
         guard !closed else { return }
         func decoded<T: Decodable>(_ kind: T.Type) -> T? { Core.decode(kind, event, type) }
         switch type {
@@ -316,8 +316,7 @@ final class ProjectModel {
         case "tree": if let listed = decoded(TreeEvent.self) { treeChanged(listed) }
         case "files_changed": if let changed = decoded(PathsEvent.self) { filesChanged(changed) }
         case "live": if let state = decoded(LiveState.self) { texpresso.receive(state) }
-        case "live_document": if let document = decoded(LiveDocumentEvent.self) { texpresso.receive(document) }
-        case "live_page": if let page = decoded(LivePageEvent.self) { texpresso.receive(page) }
+        case "live_document", "live_page": if let live { texpresso.receive(live) }
         case "live_restarted": notices.note(String(localized: "Live Preview Restarted"))
         default: break
         }

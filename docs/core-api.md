@@ -27,7 +27,9 @@ forward events as they come (SSE or WebSocket).
 ### Threading
 
 - Events arrive one at a time, in order, on one thread of the core's. Hop to the UI thread;
-  never block in the listener.
+  never wait in the listener. Work that only delays the events after it may be done there:
+  the Mac app reads a `live_page`'s or `live_document`'s PDF before its one hop to the main
+  queue.
 - **No event of a session reaches the listener before the answer to that session's
   `session_open`.** A new session's events (an `autoCompile` build's `build`, the `symbols`
   scan, a `tree`) are held by the core until the answer has been handed over, then go out

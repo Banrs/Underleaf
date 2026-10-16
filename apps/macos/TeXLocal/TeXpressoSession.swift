@@ -39,6 +39,24 @@ nonisolated struct LivePageEvent: Decodable, Sendable {
     let serial: Int
 }
 
+/// A live event's PDF, read on the core's event thread so the main queue gets it ready to draw, in one hop: the page's
+/// one-page PDF, or the whole document; nil inside where the file couldn't be read. Nil for any other event.
+nonisolated enum LiveRead: Sendable {
+    case document(LiveDocument?)
+    case page(LivePage?)
+
+    private struct Head: Decodable { let type: String }
+
+    init?(_ event: Data) {
+        let decoder = JSONDecoder()
+        switch try? decoder.decode(Head.self, from: event).type {
+        case "live_document": self = .document((try? decoder.decode(LiveDocumentEvent.self, from: event)).flatMap(TeXpressoSession.read))
+        case "live_page": self = .page((try? decoder.decode(LivePageEvent.self, from: event)).flatMap(TeXpressoSession.read))
+        default: return nil
+        }
+    }
+}
+
 /// Made off the main actor and handed to it, which alone uses it from then on.
 nonisolated struct LiveDocument: @unchecked Sendable {
     let url: URL
@@ -159,88 +177,48 @@ final class TeXpressoSession {
 
     // MARK: - Its PDFs
 
-    private nonisolated struct Batch: Sendable {
-        var document: LiveDocumentEvent?
-        var pages: [Int: LivePageEvent] = [:]
-        var isEmpty: Bool { document == nil && pages.isEmpty }
-    }
-
-    /// What came while the last was being read: the latest document and each page's latest.
-    @ObservationIgnored private var batch = Batch()
-    @ObservationIgnored private var reading = false
-    @ObservationIgnored private var generation = 0
     @ObservationIgnored private var missed = false
     @ObservationIgnored private var documentShown = false
     @ObservationIgnored private var waiting: [Int: LivePage] = [:]
 
     private func reset() {
-        generation += 1
-        batch = Batch()
         waiting.removeAll()
         (missed, documentShown) = (false, false)
     }
 
-    func receive(_ event: LiveDocumentEvent) {
+    /// A live PDF as `Core` read it where the event arrived, in the order the session sent them.
+    func receive(_ read: LiveRead) {
         guard active else { return }
-        var document = event
-        // The one not shown is skipped, so its changes are this one's too.
-        if let skipped = batch.document?.changed, let changed = document.changed {
-            document.changed = changed + skipped
-        } else if batch.document != nil {
-            document.changed = nil
+        switch read {
+        case .document(nil):
+            missed = true
+        case .document(var document?):
+            // After a document that wasn't read, any page may differ from what shows.
+            if missed, document.changed != nil { document.changed = IndexSet(integersIn: 0..<document.document.pageCount) }
+            missed = false
+            show(document)
+        case .page(let page):
+            if let page { show(page) }
         }
-        batch.document = document
-        batch.pages = batch.pages.filter { $0.value.serial > document.serial }
-        readBatch()
-    }
-
-    func receive(_ event: LivePageEvent) {
-        guard active, (batch.pages[event.page]?.serial ?? -1) < event.serial else { return }
-        batch.pages[event.page] = event
-        readBatch()
-    }
-
-    private func readBatch() {
-        guard !reading, !batch.isEmpty else { return }
-        reading = true
-        let taken = batch, whole = missed, current = generation
-        batch = Batch()
-        Task {
-            let read = await Self.read(taken, whole: whole)
-            reading = false
-            if current == generation {
-                if taken.document != nil { missed = read.document == nil }
-                if let document = read.document { show(document) }
-                for page in read.pages { show(page) }
-            }
-            readBatch()
-        }
-    }
-
-    @concurrent private nonisolated static func read(_ batch: Batch, whole: Bool) async -> (document: LiveDocument?, pages: [LivePage]) {
-        let document = batch.document.flatMap { read($0, whole: whole) }
-        return (document, batch.pages.values.sorted { $0.page < $1.page }.compactMap { read($0) })
     }
 
     /// The file is complete when it is named, and replaced by another of its name, never rewritten: mapped, it is read as its
     /// pages are drawn and stays whole when its name goes. It has no links to see to: the engine writes its pages through
     /// MuPDF's PDF device, which carries no annotations.
-    private nonisolated static func read(_ event: LiveDocumentEvent, whole: Bool) -> LiveDocument? {
+    fileprivate nonisolated static func read(_ event: LiveDocumentEvent) -> LiveDocument? {
         let url = URL(filePath: event.path)
         guard let data = try? Data(contentsOf: url, options: .alwaysMapped), let document = PDFDocument(data: data),
               document.pageCount > 0 else { return nil }
-        var changed = event.changed.map { ranges in
+        let changed = event.changed.map { ranges in
             ranges.reduce(into: IndexSet()) { set, range in
                 if range.count == 2, range[0] <= range[1] { set.insert(integersIn: range[0]...range[1]) }
             }
         }
-        // After a document that wasn't read, any page may differ from what shows.
-        if whole, changed != nil { changed = IndexSet(integersIn: 0..<document.pageCount) }
         return LiveDocument(url: url, document: document, serial: event.serial, changed: changed, complete: event.complete)
     }
 
     /// Nil for a file already gone: TeXpresso keeps a page's last two, and a newer one is coming.
-    private nonisolated static func read(_ event: LivePageEvent) -> LivePage? {
+    fileprivate nonisolated static func read(_ event: LivePageEvent) -> LivePage? {
         guard let data = try? Data(contentsOf: URL(filePath: event.path), options: .alwaysMapped),
               let page = PDFDocument(data: data)?.page(at: 0) else { return nil }
         return LivePage(index: event.page, serial: event.serial, page: page)

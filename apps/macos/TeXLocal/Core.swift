@@ -44,12 +44,13 @@ final class Core {
 
     /// Nonisolated, so the C callback formed here is too: one formed in a main-actor context would be taken as the main
     /// actor's and trap on the core's thread. The text, valid only during the call, is copied, then taken on the main queue
-    /// in the order sent.
+    /// in the order sent. Live Preview's PDF is read here first, so its page goes to the main queue ready to draw.
     private nonisolated static func listen(_ raw: OpaquePointer) {
         tl_set_listener(raw, { _, json in
             let event = Data(bytes: json, count: strlen(json))
+            let live = LiveRead(event)
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { Core.shared.receive(event) }
+                MainActor.assumeIsolated { Core.shared.receive(event, live) }
             }
         }, nil)
     }
@@ -173,32 +174,33 @@ final class Core {
         let session: UInt64
     }
 
-    private var observers: [UInt64: (String, Data) -> Void] = [:]
+    typealias Observer = (_ type: String, _ event: Data, _ live: LiveRead?) -> Void
+    private var observers: [UInt64: Observer] = [:]
     /// A session's first events can come before `session_open` has answered with its number: they wait for its observer.
-    private var early: [UInt64: [(String, Data)]] = [:]
+    private var early: [UInt64: [(String, Data, LiveRead?)]] = [:]
     private var newest: UInt64 = 0
 
-    func observe(_ session: UInt64, _ observer: @escaping (_ type: String, _ event: Data) -> Void) {
+    func observe(_ session: UInt64, _ observer: @escaping Observer) {
         observers[session] = observer
         newest = max(newest, session)
         let waiting = early.removeValue(forKey: session) ?? []
         // Sessions are numbered in order: one older than an observed one that has none was closed before it was observed.
         early = early.filter { $0.key > newest }
-        for (type, event) in waiting { observer(type, event) }
+        for (type, event, live) in waiting { observer(type, event, live) }
     }
 
     func forget(_ session: UInt64) {
         observers[session] = nil
     }
 
-    private func receive(_ event: Data) {
+    private func receive(_ event: Data, _ live: LiveRead?) {
         guard let head = try? JSONDecoder().decode(EventHead.self, from: event) else {
             return Self.log.error("An event the app can't read: \(String(decoding: event.prefix(200), as: UTF8.self), privacy: .public)")
         }
         if let observer = observers[head.session] {
-            observer(head.type, event)
+            observer(head.type, event, live)
         } else if head.session > newest {
-            early[head.session, default: []].append((head.type, event))
+            early[head.session, default: []].append((head.type, event, live))
         }
     }
 
