@@ -27,25 +27,22 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     /// Renamed as the defaults change: a layout saved under an earlier name would bring back or lack items.
     let toolbar = NSToolbar(identifier: "Workspace 5")
     /// Compile as its symbol, which the workspace sets where its word would be the first tool without room.
-    var compactCompile: Bool {
-        get { fit.compact }
-        set { if fit.compact != newValue { fit.compact = newValue } }
+    var compactCompile = false {
+        didSet { if compactCompile != oldValue { apply(state) } }
     }
-    private let fit = Fit()
-    @Observable final class Fit { var compact = false }
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
-    private weak var workspace: WorkspaceController?
+    /// Set by the workspace that owns the toolbar, as it has finished initialising.
+    weak var workspace: WorkspaceController?
     private lazy var format = FormatPopover(app: app, project: project)
     private var applied: State?
     private var customized: NSKeyValueObservation?
     private var closed = false
 
-    init(app: AppModel, project: ProjectModel, workspace: WorkspaceController) {
+    init(app: AppModel, project: ProjectModel) {
         self.app = app
         self.project = project
-        self.workspace = workspace
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
@@ -285,17 +282,21 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         State(isLaTeX: project.isLaTeX,
               hasPDF: project.hasPDF, canShare: project.buildPDF != nil, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
-              compiling: project.compiling, canCompile: canCompile, compactCompile: fit.compact)
+              compiling: project.compiling, canCompile: canCompile, compactCompile: compactCompile)
     }
 
     /// A column resizing refits the PDF during layout, and an async `track` would set the new scale a pass later:
-    /// the toolbar would draw each frame of a sidebar's animation twice.
+    /// the toolbar would draw each frame of a sidebar's animation twice. The workspace's `compactCompile` is no model
+    /// state, so its setter applies the state itself.
     private func watch() {
         guard !closed else { return }
-        let state = withObservationTracking(options: .didSet) { state } onChange: { [weak self] _ in
+        apply(withObservationTracking(options: .didSet) { state } onChange: { [weak self] _ in
             MainActor.assumeIsolated { self?.watch() }
-        }
-        guard state != applied else { return }
+        })
+    }
+
+    private func apply(_ state: State) {
+        guard !closed, state != applied else { return }
         for item in toolbar.items { configure(item, state, from: applied) }
         applied = state
     }

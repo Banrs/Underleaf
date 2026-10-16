@@ -1,0 +1,141 @@
+import AppKit
+import PDFKit
+
+extension NSView {
+    /// TextKit and PDFKit still receive tracking events just inside the panes and replace the divider cursor,
+    /// so only the actual divider hit target may choose the resize cursor.
+    @discardableResult
+    func updateDividerCursor(with event: NSEvent) -> Bool {
+        guard let window, window.isKeyWindow, let workspace = window.contentView, let content = workspace.superview,
+              let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)) else { return false }
+        // Toolbar cursor tracking owns views outside the workspace content.
+        guard hit.isDescendant(of: workspace) else { return true }
+        if let split = hit as? NSSplitView, split.isVertical, split.arrangedSubviews.count == 2,
+           split.arrangedSubviews.allSatisfy({ !split.isSubviewCollapsed($0) }), isDescendant(of: split) {
+            let position = split.arrangedSubviews[0].frame.maxX
+            var directions: NSHorizontalDirection.Set = []
+            if position > split.minPossiblePositionOfDivider(at: 0) { directions.insert(.left) }
+            if position < split.maxPossiblePositionOfDivider(at: 0) { directions.insert(.right) }
+            guard !directions.isEmpty else { return false }
+            NSCursor.columnResize(directions: directions).set()
+            return true
+        }
+        // NSTextView also receives mouse moves over its overlay scroller and, while first responder, over the PDF.
+        if hit is NSScroller { NSCursor.arrow.set(); return true }
+        if let pdf = sequence(first: hit, next: \.superview).first(where: { $0 is PDFView }) as? PDFView,
+           self is NSTextView || NSCursor.isResizingColumn {
+            pdf.setCursorFor(pdf.areaOfInterest(forMouse: event))
+            return true
+        }
+        // Crossing the overlap need not enter a new pane tracking area: return a lingering resize cursor to the real hit view.
+        if NSCursor.isResizingColumn {
+            if hit is NSTextView || hit is NSTextField { NSCursor.iBeam.set() }
+            else { NSCursor.arrow.set() }
+        }
+        return false
+    }
+}
+
+extension NSCursor {
+    static var isResizingColumn: Bool {
+        current == .columnResize || current == .columnResize(directions: .left) || current == .columnResize(directions: .right)
+    }
+}
+
+/// AppKit has no split detents: a drag that comes near `detent`, a divider's opening position, stops there, with the alignment haptic as it arrives.
+class DetentSplitViewController: NSSplitViewController {
+    var loaded: () -> Void = {}
+    var detent: (_ divider: Int) -> CGFloat? = { _ in nil }
+    /// A divider that takes no drag, and so shows no resize cursor.
+    var fixed: (_ divider: Int) -> Bool = { _ in false }
+
+    init(splitView: NSSplitView = NSSplitView()) {
+        super.init(nibName: nil, bundle: nil)
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        self.splitView = splitView
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        loaded()
+    }
+
+    /// 27.2: NSSplitViewController declares this, as the split's delegate, without implementing it, so there is no super to call.
+    override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
+                            ofSubviewAt dividerIndex: Int) -> CGFloat {
+        guard let detent = detent(dividerIndex),
+              abs(proposedPosition - detent) <= ColumnMetrics.detentReach else { return proposedPosition }
+        // Once, as the divider arrives: not on each step of a drag held there.
+        let pane = splitView.arrangedSubviews[dividerIndex].frame
+        if abs((splitView.isVertical ? pane.maxX : pane.maxY) - detent) >= 0.5 {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
+        }
+        return detent
+    }
+
+    override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
+                            forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
+        fixed(dividerIndex) ? .zero
+            : super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect, ofDividerAt: dividerIndex)
+    }
+}
+
+/// Files over the File Outline. The files' scroll-edge hairline over the outline's header stands for the divider: AppKit has
+/// no thin divider that draws no line, so the divider's own, under the header, isn't drawn, and it takes drags at the hairline.
+final class SidebarSplitViewController: DetentSplitViewController {
+    weak var header: NSSplitViewItemAccessoryViewController?
+
+    private final class SplitView: NSSplitView {
+        override func drawDivider(in rect: NSRect) {}
+    }
+
+    init() {
+        super.init(splitView: SplitView())
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
+                            forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
+        let rect = super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect,
+                                   ofDividerAt: dividerIndex)
+        // Folded, the outline opens only from its header.
+        guard let header, !header.isHidden, splitViewItems.last?.isCollapsed == false else { return .zero }
+        // The header's top, in the split view's flipped coordinates.
+        let line = header.view.convert(header.view.bounds, to: splitView).minY
+        return rect.offsetBy(dx: 0, dy: line - drawnRect.minY)
+    }
+}
+
+final class ColumnsSplitView: NSSplitView {
+    override func drawDivider(in rect: NSRect) {
+        var shown = rect
+        // Short of the bar and the line over it, at its foot: a split view is flipped.
+        shown.size.height -= BarMetrics.height + BarMetrics.line
+        super.drawDivider(in: shown)
+    }
+
+    /// 27.2: the items' preferred fractions, AppKit's own way, land the divider somewhere else each time.
+    override func mouseDown(with event: NSEvent) {
+        // On the divider, which takes presses 2 pt either side of its line: a pane passes up its own.
+        let past = convert(event.locationInWindow, from: nil).x - (arrangedSubviews.first?.frame.maxX ?? 0)
+        guard event.clickCount == 2, -2...dividerThickness + 2 ~= past, arrangedSubviews.allSatisfy({ !isSubviewCollapsed($0) }) else {
+            return super.mouseDown(with: event)
+        }
+        setPosition(openingPosition, ofDividerAt: 0)
+    }
+
+    var openingPosition: CGFloat {
+        ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded()
+    }
+}
+
+extension NSView {
+    /// Every view under this one whose class has the name.
+    func descendants(named name: String) -> [NSView] {
+        subviews.flatMap { ($0.className == name ? [$0] : []) + $0.descendants(named: name) }
+    }
+}
