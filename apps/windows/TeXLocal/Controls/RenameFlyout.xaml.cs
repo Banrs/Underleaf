@@ -6,7 +6,7 @@ using Windows.System;
 
 namespace TeXLocal.Controls;
 
-/// Rename in place: a name box and Rename; the core's refusal shows under the box.
+/// Rename in place: a name box and Rename; the core's refusal shows as the box's description.
 public sealed partial class RenameFlyout : Flyout
 {
     Func<string, Task>? rename;
@@ -19,16 +19,16 @@ public sealed partial class RenameFlyout : Flyout
         this.rename = rename;
         original = name;
         Box.Text = name;
+        Box.Description = null;
         var stem = name.LastIndexOf('.');
         Box.Select(0, stem > 0 ? stem : name.Length);
         Commit.IsEnabled = false;
-        Error.Visibility = Visibility.Collapsed;
         ShowAt(target);
     }
 
     void OnTextChanged(object sender, TextChangedEventArgs e)
     {
-        Error.Visibility = Visibility.Collapsed;
+        Box.Description = null;
         Commit.IsEnabled = Box.Text.Trim() is { Length: > 0 } t && t != original;
     }
 
@@ -47,10 +47,6 @@ public sealed partial class RenameFlyout : Flyout
             await rename!(Box.Text.Trim());
             Hide();
         }
-        catch (CoreException ex)
-        {
-            Error.Text = ex.Message;
-            Error.Visibility = Visibility.Visible;
-        }
+        catch (CoreException ex) { Box.Description = ex.Message; }
     }
 }

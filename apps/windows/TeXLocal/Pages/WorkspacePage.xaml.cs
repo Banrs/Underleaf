@@ -53,16 +53,16 @@ public sealed partial class WorkspacePage : Page
         NavigationCacheMode = NavigationCacheMode.Required;
         foreach (var item in TreeMenu.Items)
             foreach (var key in item.KeyboardAccelerators) key.ScopeOwner = Tree;
-        Split.OpenPaneLength = MainWindow.Pref("sidebarWidth", 280.0);
+        Split.OpenPaneLength = Prefs.SidebarWidth;
         PaneSizer.Delta += d =>
         {
             Split.OpenPaneLength = Math.Clamp(Split.OpenPaneLength + d, 200, 480);
-            MainWindow.Prefs["sidebarWidth"] = Split.OpenPaneLength;
+            Prefs.SidebarWidth = Split.OpenPaneLength;
         };
         Split.RegisterPropertyChangedCallback(SplitView.DisplayModeProperty, (_, _) => ShowPane(Split.DisplayMode == SplitViewDisplayMode.Inline && sidebarWanted));
         SetUpDocument();
         ShowEditorPrefs();
-        EditorPrefs.Changed += ShowEditorPrefs;
+        Prefs.EditorChanged += ShowEditorPrefs;
         Loaded += (_, _) =>
         {
             // An InfoBar open while the page sat cached under Settings keeps the old theme's state colours.
@@ -78,8 +78,10 @@ public sealed partial class WorkspacePage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         id = (string)e.Parameter;
-        App.Window.TitleBar.Subtitle = id;
-        ShowSearchBox(true);
+        App.Window.SetProject(id);
+        App.Window.Search.TextChanged += OnSearchChanged;
+        App.Window.Search.QuerySubmitted += OnSearchSubmitted;
+        App.Window.Search.KeyDown += OnSearchKey;
         if (session != 0) return;
         Core.Event += OnEvent;
         try { await OpenSession(); }
@@ -98,9 +100,12 @@ public sealed partial class WorkspacePage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
-        ShowSearchBox(false);
+        App.Window.Search.TextChanged -= OnSearchChanged;
+        App.Window.Search.QuerySubmitted -= OnSearchSubmitted;
+        App.Window.Search.KeyDown -= OnSearchKey;
         if (e.SourcePageType == typeof(SettingsPage)) return;
-        EditorPrefs.Changed -= ShowEditorPrefs;
+        App.Window.Search.Text = "";
+        Prefs.EditorChanged -= ShowEditorPrefs;
         Core.Event -= OnEvent;
         if (session != 0) _ = Core.CallAsync("session_close", new { session });
     }
@@ -108,8 +113,8 @@ public sealed partial class WorkspacePage : Page
     /// Settings › Editor, which changes while this page waits under Settings.
     void ShowEditorPrefs()
     {
-        Editor.SetLook(EditorPrefs.Font, EditorPrefs.FontSize, EditorPrefs.Theme);
-        (Editor.AutoPair, Editor.AutoComplete) = (EditorPrefs.AutoPair, EditorPrefs.AutoComplete);
+        Editor.SetLook(Prefs.EditorFont, Prefs.EditorFontSize, Prefs.EditorTheme);
+        (Editor.AutoPair, Editor.AutoComplete) = (Prefs.AutoPair, Prefs.AutoComplete);
     }
 
     void OnEvent(CoreEvent e)
@@ -237,7 +242,7 @@ public sealed partial class WorkspacePage : Page
 
     void OnReveal(object sender, RoutedEventArgs e)
     {
-        if (Target is { } item) App.Reveal($"/select,\"{System.IO.Path.Combine(root, item.Path.Replace('/', '\\'))}\"");
+        if (Target is { } item) App.Reveal(System.IO.Path.Combine(root, item.Path.Replace('/', '\\')), select: true);
     }
 
     async void OnDelete(object sender, RoutedEventArgs e)

@@ -1,4 +1,3 @@
-using System.Reflection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
@@ -9,108 +8,87 @@ using TeXLocal.Bridge;
 
 namespace TeXLocal.Pages;
 
+/// Changes apply at once; there is no Save.
 public sealed partial class SettingsPage : Page
 {
     const string Sample = "\\section{Results}\n% Measured at room temperature\nThe energy is $E = mc^2$, as \\cite{einstein} found.";
-    readonly double[] sizes = [.. new double[] { 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28 }.Append(EditorPrefs.FontSize).Distinct().Order()];
-    bool ready;
+    readonly double[] sizes = [.. new double[] { 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28 }.Append(Prefs.EditorFontSize).Distinct().Order()];
 
     public SettingsPage()
     {
         InitializeComponent();
-        FolderText.Text = Core.DefaultDataDir;
-        VersionText.Text = typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0];
-        ThemeBox.SelectedIndex = MainWindow.Pref("theme", 0);
-
-        var families = EditorPrefs.MonospaceFamilies();
-        string[] fonts = families.Contains(EditorPrefs.Font) ? families : [.. families, EditorPrefs.Font];
-        FontBox.ItemsSource = fonts;
-        FontBox.SelectedIndex = Array.IndexOf(fonts, EditorPrefs.Font);
+        About.Description = $"Version {typeof(App).Assembly.GetName().Version?.ToString(3)} · MIT License";
+        ThemeBox.SelectedIndex = Prefs.Theme;
+        var families = Prefs.MonospaceFamilies();
+        FontBox.ItemsSource = families.Contains(Prefs.EditorFont) ? families : [.. families, Prefs.EditorFont];
+        FontBox.SelectedItem = Prefs.EditorFont;
         SizeBox.ItemsSource = sizes;
-        SizeBox.SelectedIndex = Array.IndexOf(sizes, EditorPrefs.FontSize);
-        SyntaxBox.ItemsSource = EditorPrefs.Themes.Select(t => t.Title).ToArray();
-        SyntaxBox.SelectedIndex = Array.FindIndex(EditorPrefs.Themes, t => t.Id == EditorPrefs.Theme);
-        PairSwitch.IsOn = EditorPrefs.AutoPair;
-        CompleteSwitch.IsOn = EditorPrefs.AutoComplete;
+        SizeBox.SelectedIndex = Array.IndexOf(sizes, Prefs.EditorFontSize);
+        SyntaxBox.ItemsSource = Prefs.Themes;
+        SyntaxBox.SelectedValue = Prefs.EditorTheme;
+        PairSwitch.IsOn = Prefs.AutoPair;
+        CompleteSwitch.IsOn = Prefs.AutoComplete;
+
+        ThemeBox.SelectionChanged += (_, _) =>
+        {
+            Prefs.Theme = ThemeBox.SelectedIndex;
+            App.Window.ApplyTheme((ElementTheme)Prefs.Theme);
+        };
+        FontBox.SelectionChanged += OnLook;
+        SizeBox.SelectionChanged += OnLook;
+        SyntaxBox.SelectionChanged += OnLook;
+        PairSwitch.Toggled += (_, _) => Prefs.AutoPair = PairSwitch.IsOn;
+        CompleteSwitch.Toggled += (_, _) => Prefs.AutoComplete = CompleteSwitch.IsOn;
         Loaded += (_, _) => ShowPreview();
         ActualThemeChanged += (_, _) => DispatcherQueue.TryEnqueue(ShowPreview);
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
-        if (App.Core is { } core) Show(await core.CallAsync<TexStatus>("status"));
-        ready = true;
+        if (App.Core is { } core) ShowTex(await core.CallAsync<TexStatus>("status"));
     }
 
-    void Show(TexStatus status)
+    void OnOpenFolder(object sender, RoutedEventArgs e) => App.Reveal(Core.DefaultDataDir);
+
+    async void OnAutomatic(object sender, RoutedEventArgs e) => await SetTexDir(null);
+
+    async void OnChooseTex(object sender, RoutedEventArgs e)
     {
-        TexIcon.Glyph = status.Available ? "\uE73E" : "\uE7BA";
-        TexTitle.Text = status.Available ? "TeX found" : "TeX isn't installed";
-        TexDetail.Text = status.Available
-            ? string.Join(" · ", new[] { status.Version, status.Found }.Where(s => !string.IsNullOrEmpty(s)))
-            : "TeXLocal compiles with TeX Live.";
-        TexLink.Visibility = status.Available ? Visibility.Collapsed : Visibility.Visible;
-        ready = false;
-        LocationBox.SelectedIndex = status.TexDir is null ? 0 : 1;
-        ready = true;
+        if (await new FolderPicker(App.Window.AppWindow.Id).PickSingleFolderAsync() is { } picked) await SetTexDir(picked.Path);
     }
 
-    void OnTheme(object sender, SelectionChangedEventArgs e)
+    /// Sets the folder latexmk runs from (null: find it), then shows what the core reports, whatever happened.
+    async Task SetTexDir(string? dir)
     {
-        MainWindow.Prefs["theme"] = ThemeBox.SelectedIndex;
-        App.Window.ApplyTheme((ElementTheme)ThemeBox.SelectedIndex);
-    }
-
-    void OnOpenFolder(object sender, RoutedEventArgs e) => App.Reveal($"\"{Core.DefaultDataDir}\"");
-
-    async void OnLocation(object sender, SelectionChangedEventArgs e)
-    {
-        if (!ready || App.Core is not { } core) return;
-        string? dir = null;
-        if (LocationBox.SelectedIndex == 1)
-        {
-            dir = (await new FolderPicker(App.Window.AppWindow.Id).PickSingleFolderAsync())?.Path;
-            if (dir is null)
-            {
-                Show(await core.CallAsync<TexStatus>("status"));
-                return;
-            }
-        }
-        try { Show(await core.CallAsync<TexStatus>("set_tex_dir", new { dir })); }
+        if (App.Core is not { } core) return;
+        try { await core.CallAsync("set_tex_dir", new { dir }); }
         catch (CoreException ex) { await App.Alert("Can't use this folder", ex.Message); }
+        ShowTex(await core.CallAsync<TexStatus>("status"));
     }
 
-    void OnFont(object sender, SelectionChangedEventArgs e)
+    void ShowTex(TexStatus status)
     {
-        if (FontBox.SelectedItem is string font) EditorPrefs.Font = font;
+        TexMissing.IsOpen = !status.Available;
+        TexText.Text = status.Available ? string.Join(" · ", new[] { status.Version, status.Found }.Where(s => !string.IsNullOrEmpty(s))) : "Not found";
+        AutomaticButton.Visibility = status.TexDir is null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    void OnLook(object sender, SelectionChangedEventArgs e)
+    {
+        (Prefs.EditorFont, Prefs.EditorFontSize) = ((string)FontBox.SelectedItem, sizes[SizeBox.SelectedIndex]);
+        if (SyntaxBox.SelectedValue is string theme) Prefs.EditorTheme = theme;
         ShowPreview();
     }
-
-    void OnFontSize(object sender, SelectionChangedEventArgs e)
-    {
-        if (SizeBox.SelectedIndex >= 0) EditorPrefs.FontSize = sizes[SizeBox.SelectedIndex];
-        ShowPreview();
-    }
-
-    void OnSyntaxTheme(object sender, SelectionChangedEventArgs e)
-    {
-        if (SyntaxBox.SelectedIndex >= 0) EditorPrefs.Theme = EditorPrefs.Themes[SyntaxBox.SelectedIndex].Id;
-        ShowPreview();
-    }
-
-    void OnAutoPair(object sender, RoutedEventArgs e) => EditorPrefs.AutoPair = PairSwitch.IsOn;
-
-    void OnAutoComplete(object sender, RoutedEventArgs e) => EditorPrefs.AutoComplete = CompleteSwitch.IsOn;
 
     /// The sample in the editor's font, coloured as the editor colours it.
     void ShowPreview()
     {
         if (!IsLoaded) return;
-        Preview.FontFamily = new FontFamily(EditorPrefs.Font);
-        Preview.FontSize = EditorPrefs.FontSize;
+        Preview.FontFamily = new FontFamily(Prefs.EditorFont);
+        Preview.FontSize = Prefs.EditorFontSize;
         var paper = ((SolidColorBrush)PaperInk.Fill).Color;
         var secondary = EditorPrefs.Over(((SolidColorBrush)SecondaryInk.Fill).Color, paper);
-        var inks = EditorPrefs.Colors(EditorPrefs.Theme, ActualTheme == ElementTheme.Dark, paper, ((SolidColorBrush)LineInk.Fill).Color, secondary);
+        var inks = EditorPrefs.Colors(Prefs.EditorTheme, ActualTheme == ElementTheme.Dark, paper, ((SolidColorBrush)LineInk.Fill).Color, secondary);
         using var source = Source.New(Sample);
         Preview.Inlines.Clear();
         var at = 0;

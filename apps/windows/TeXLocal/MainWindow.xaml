@@ -22,12 +22,34 @@
             <TitleBar.IconSource>
                 <ImageIconSource ImageSource="ms-appx:///Assets/TeXLocal.png" />
             </TitleBar.IconSource>
+            <!-- The project's search, as VS Code's Command Center. A fixed width rather than Stretch: the bar lets clicks
+                 through its whole content presenter, and it drops the title (compact) when the box doesn't fit. -->
+            <TitleBar.Content>
+                <AutoSuggestBox
+                    x:Name="Search"
+                    Width="440"
+                    x:FieldModifier="public"
+                    AutomationProperties.Name="Search in project"
+                    Visibility="Collapsed">
+                    <AutoSuggestBox.QueryIcon>
+                        <FontIcon Glyph="&#xE721;" />
+                    </AutoSuggestBox.QueryIcon>
+                </AutoSuggestBox>
+            </TitleBar.Content>
+            <TitleBar.RightHeader>
+                <Button
+                    x:Name="SettingsButton"
+                    Width="40"
+                    Height="32"
+                    AutomationProperties.Name="Settings"
+                    Click="OnSettings"
+                    Style="{StaticResource SubtleButtonStyle}"
+                    ToolTipService.ToolTip="Settings (Ctrl+,)">
+                    <FontIcon FontSize="16" Glyph="&#xE713;" />
+                </Button>
+            </TitleBar.RightHeader>
         </TitleBar>
 
-        <Frame
-            x:Name="Pages"
-            Grid.Row="1"
-            Background="Transparent"
-            Navigated="OnNavigated" />
+        <Frame x:Name="Pages" Grid.Row="1" Background="Transparent" Navigated="OnNavigated" />
     </Grid>
 </Window>

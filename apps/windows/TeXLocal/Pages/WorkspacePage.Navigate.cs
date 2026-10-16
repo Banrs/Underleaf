@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
+using Microsoft.UI.Xaml.Input;
 using TeXLocal.Bridge;
 
 namespace TeXLocal.Pages;
@@ -33,13 +34,6 @@ public sealed class ResultGroup(string file, IEnumerable<ResultItem> items) : Li
 /// Results; and the word count. Outline, words and hits are the core's (analyze_project, outline_current, search_project).
 public sealed partial class WorkspacePage
 {
-    readonly AutoSuggestBox searchBox = new()
-    {
-        PlaceholderText = "Search in project",
-        Width = 440,
-        VerticalAlignment = VerticalAlignment.Center,
-        QueryIcon = new FontIcon { Glyph = "\uE721" },
-    };
     Microsoft.UI.Dispatching.DispatcherQueueTimer? searchTimer, caretTimer;
     Analysis? analysis;
     List<OutlineItem> outline = [];
@@ -49,7 +43,6 @@ public sealed partial class WorkspacePage
 
     void SetUpNavigation()
     {
-        AutomationProperties.SetName(searchBox, "Search in project");
         searchTimer = DispatcherQueue.CreateTimer();
         searchTimer.Interval = TimeSpan.FromMilliseconds(250);
         searchTimer.IsRepeating = false;
@@ -58,25 +51,6 @@ public sealed partial class WorkspacePage
         caretTimer.Interval = TimeSpan.FromMilliseconds(150);
         caretTimer.IsRepeating = false;
         caretTimer.Tick += (_, _) => CaretSettled();
-        searchBox.TextChanged += (_, e) =>
-        {
-            if (e.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
-            searchTimer.Stop();
-            searchTimer.Start();
-        };
-        searchBox.QuerySubmitted += async (_, _) =>
-        {
-            searchTimer.Stop();
-            await Search();
-            if (Results.Visibility == Visibility.Visible) Results.Focus(FocusState.Keyboard);
-        };
-        searchBox.KeyDown += (_, e) =>
-        {
-            if (e.Key != Windows.System.VirtualKey.Escape || searchBox.Text.Length == 0) return;
-            searchBox.Text = "";
-            _ = Search();
-            e.Handled = true;
-        };
         Editor.CaretMoved += () =>
         {
             caretTimer.Stop();
@@ -84,7 +58,29 @@ public sealed partial class WorkspacePage
         };
     }
 
-    void ShowSearchBox(bool show) => App.Window.TitleBar.Content = show ? searchBox : null;
+    static AutoSuggestBox SearchBox => App.Window.Search;
+
+    void OnSearchChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs e)
+    {
+        if (e.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
+        searchTimer!.Stop();
+        searchTimer.Start();
+    }
+
+    async void OnSearchSubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs e)
+    {
+        searchTimer!.Stop();
+        await Search();
+        if (Results.Visibility == Visibility.Visible) Results.Focus(FocusState.Keyboard);
+    }
+
+    void OnSearchKey(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Escape || SearchBox.Text.Length == 0) return;
+        SearchBox.Text = "";
+        _ = Search();
+        e.Handled = true;
+    }
 
     void OnSideTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowSide();
 
@@ -178,11 +174,11 @@ public sealed partial class WorkspacePage
 
     void PersistFolds() => _ = Core.CallAsync("set_ui_state", new { id, patch = new { foldedHeadings = folded.Order() } });
 
-    void OnFindInProject(object sender, RoutedEventArgs e) => searchBox.Focus(FocusState.Keyboard);
+    void OnFindInProject(object sender, RoutedEventArgs e) => SearchBox.Focus(FocusState.Keyboard);
 
     async Task Search()
     {
-        var query = searchBox.Text.Trim();
+        var query = SearchBox.Text.Trim();
         var generation = ++searches;
         if (query.Length == 0)
         {
@@ -208,7 +204,7 @@ public sealed partial class WorkspacePage
         if (!Split.IsPaneOpen) ShowPane(sidebarWanted = true);
         SideTabs.SelectedItem = ResultsTab;
         ShowSide();
-        var peer = FrameworkElementAutomationPeer.FromElement(searchBox) ?? FrameworkElementAutomationPeer.CreatePeerForElement(searchBox);
+        var peer = FrameworkElementAutomationPeer.FromElement(SearchBox) ?? FrameworkElementAutomationPeer.CreatePeerForElement(SearchBox);
         var spoken = hits.Length switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" };
         peer.RaiseNotificationEvent(AutomationNotificationKind.ActionCompleted, AutomationNotificationProcessing.ImportantMostRecent, spoken, "search");
     }

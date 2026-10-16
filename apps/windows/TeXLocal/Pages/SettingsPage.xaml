@@ -2,284 +2,113 @@
     x:Class="TeXLocal.Pages.SettingsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:bridge="using:TeXLocal.Bridge"
+    xmlns:controls="using:TeXLocal.Controls"
     Background="Transparent">
 
-    <Grid Style="{StaticResource ContentCardStyle}">
-        <ScrollViewer>
-            <StackPanel
-                MaxWidth="1064"
-                Padding="36,0,36,36"
-                Spacing="4">
-                <TextBlock Margin="0,24,0,0" Style="{StaticResource TitleTextBlockStyle}" Text="Settings" />
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock
+            MaxWidth="1064"
+            Padding="36,24,36,0"
+            AutomationProperties.HeadingLevel="Level1"
+            Style="{StaticResource TitleTextBlockStyle}"
+            Text="Settings" />
 
-                <TextBlock Margin="1,30,0,6" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Appearance" />
-                <Grid Style="{StaticResource SettingsCardStyle}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="20" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon FontSize="20" Glyph="&#xE790;" />
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="App theme" />
-                        <HyperlinkButton
-                            Margin="-12,0,0,0"
-                            Padding="12,2"
-                            Content="Windows colour settings"
-                            NavigateUri="ms-settings:colors" />
-                    </StackPanel>
-                    <ComboBox
-                        x:Name="ThemeBox"
-                        Grid.Column="2"
-                        MinWidth="200"
-                        VerticalAlignment="Center"
-                        AutomationProperties.Name="App theme"
-                        SelectionChanged="OnTheme">
+        <ScrollViewer Grid.Row="1">
+            <StackPanel MaxWidth="1064" Padding="36,0,36,36" Spacing="4">
+                <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="Appearance" />
+                <controls:Card Glyph="&#xE790;" Header="App theme">
+                    <controls:Card.Description>
+                        <HyperlinkButton Padding="0" Content="Windows colour settings" FontSize="12" NavigateUri="ms-settings:colors" />
+                    </controls:Card.Description>
+                    <ComboBox x:Name="ThemeBox" MinWidth="200" AutomationProperties.Name="App theme">
                         <x:String>Use system setting</x:String>
                         <x:String>Light</x:String>
                         <x:String>Dark</x:String>
                     </ComboBox>
-                </Grid>
+                </controls:Card>
 
-                <TextBlock Margin="1,30,0,6" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Projects" />
-                <Grid Style="{StaticResource SettingsCardStyle}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="20" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon FontSize="20" Glyph="&#xE8B7;" />
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Projects folder" />
+                <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="Projects" />
+                <controls:Card Glyph="&#xE8B7;" Header="Projects folder">
+                    <controls:Card.Description>
                         <TextBlock
-                            x:Name="FolderText"
-                            ToolTipService.ToolTip="{x:Bind FolderText.Text}"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Text="{x:Bind bridge:Core.DefaultDataDir}"
                             TextTrimming="CharacterEllipsis"
-                            TextWrapping="NoWrap" />
-                    </StackPanel>
-                    <Button
-                        Grid.Column="2"
-                        VerticalAlignment="Center"
-                        Click="OnOpenFolder"
-                        Content="Open in File Explorer" />
-                </Grid>
+                            ToolTipService.ToolTip="{x:Bind bridge:Core.DefaultDataDir}" />
+                    </controls:Card.Description>
+                    <Button Click="OnOpenFolder" Content="Open in File Explorer" />
+                </controls:Card>
 
-                <TextBlock Margin="1,30,0,6" Style="{StaticResource BodyStrongTextBlockStyle}" Text="TeX" />
-                <Grid Style="{StaticResource SettingsCardStyle}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="20" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon
-                        x:Name="TexIcon"
-                        FontSize="20"
-                        Glyph="&#xE946;" />
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock x:Name="TexTitle" Style="{StaticResource BodyTextBlockStyle}" Text="Looking for TeX…" />
+                <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="TeX" />
+                <!-- Collapsed while closed, so a closed bar leaves no gap. -->
+                <InfoBar
+                    x:Name="TexMissing"
+                    Title="TeX isn't installed"
+                    IsClosable="False"
+                    Message="TeXLocal compiles with TeX Live."
+                    Severity="Warning"
+                    Visibility="{x:Bind TexMissing.IsOpen, Mode=OneWay}">
+                    <InfoBar.ActionButton>
+                        <HyperlinkButton Content="Get TeX Live" NavigateUri="https://tug.org/texlive/windows.html" />
+                    </InfoBar.ActionButton>
+                </InfoBar>
+                <controls:Card Glyph="&#xE838;" Header="TeX location">
+                    <controls:Card.Description>
                         <TextBlock
-                            x:Name="TexDetail"
-                            ToolTipService.ToolTip="{x:Bind TexDetail.Text, Mode=OneWay}"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Style="{StaticResource CaptionTextBlockStyle}"
+                            x:Name="TexText"
+                            Text="Looking for TeX…"
                             TextTrimming="CharacterEllipsis"
-                            TextWrapping="NoWrap" />
+                            ToolTipService.ToolTip="{x:Bind TexText.Text, Mode=OneWay}" />
+                    </controls:Card.Description>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="AutomaticButton" Click="OnAutomatic" Content="Use automatic" Visibility="Collapsed" />
+                        <Button Click="OnChooseTex" Content="Choose folder…" />
                     </StackPanel>
-                    <HyperlinkButton
-                        x:Name="TexLink"
-                        Grid.Column="2"
-                        VerticalAlignment="Center"
-                        Content="Get TeX Live"
-                        NavigateUri="https://tug.org/texlive/windows.html"
-                        Visibility="Collapsed" />
-                </Grid>
-                <Grid Style="{StaticResource SettingsCardStyle}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="20" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon FontSize="20" Glyph="&#xE838;" />
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Location" />
-                        <TextBlock
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Style="{StaticResource CaptionTextBlockStyle}"
-                            Text="Where TeXLocal finds latexmk"
-                            TextWrapping="Wrap" />
-                    </StackPanel>
-                    <ComboBox
-                        x:Name="LocationBox"
-                        Grid.Column="2"
-                        MinWidth="200"
-                        VerticalAlignment="Center"
-                        AutomationProperties.Name="TeX location"
-                        SelectionChanged="OnLocation">
-                        <x:String>Automatic</x:String>
-                        <x:String>Custom folder</x:String>
-                    </ComboBox>
-                </Grid>
+                </controls:Card>
 
-                <TextBlock Margin="1,30,0,6" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Editor" />
-                <Grid Style="{StaticResource SettingsCardStyle}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="20" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon FontSize="20" Glyph="&#xE8D2;" />
-                    <TextBlock
-                        Grid.Column="1"
-                        VerticalAlignment="Center"
-                        Style="{StaticResource BodyTextBlockStyle}"
-                        Text="Font" />
-                    <ComboBox
-                        x:Name="FontBox"
-                        Grid.Column="2"
-                        MinWidth="200"
-                        VerticalAlignment="Center"
-                        AutomationProperties.Name="Font"
-                        SelectionChanged="OnFont" />
-                </Grid>
-                <Grid Style="{StaticResource SettingsCardStyle}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="20" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon FontSize="20" Glyph="&#xE8E9;" />
-                    <TextBlock
-                        Grid.Column="1"
-                        VerticalAlignment="Center"
-                        Style="{StaticResource BodyTextBlockStyle}"
-                        Text="Font size" />
-                    <ComboBox
-                        x:Name="SizeBox"
-                        Grid.Column="2"
-                        MinWidth="200"
-                        VerticalAlignment="Center"
-                        AutomationProperties.Name="Font size"
-                        SelectionChanged="OnFontSize" />
-                </Grid>
-                <Grid Style="{StaticResource SettingsCardStyle}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="20" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon FontSize="20" Glyph="&#xE771;" />
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Theme" />
-                        <TextBlock
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Style="{StaticResource CaptionTextBlockStyle}"
-                            Text="Colours for commands, maths and comments, in light and dark"
-                            TextWrapping="Wrap" />
-                    </StackPanel>
+                <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="Editor" />
+                <controls:Card Glyph="&#xE8D2;" Header="Font">
+                    <ComboBox x:Name="FontBox" MinWidth="200" AutomationProperties.Name="Font" />
+                </controls:Card>
+                <controls:Card Glyph="&#xE8E9;" Header="Font size">
+                    <ComboBox x:Name="SizeBox" MinWidth="200" AutomationProperties.Name="Font size" />
+                </controls:Card>
+                <controls:Card Description="Colours for commands, maths and comments, in light and dark" Glyph="&#xE771;" Header="Theme">
                     <ComboBox
                         x:Name="SyntaxBox"
-                        Grid.Column="2"
                         MinWidth="200"
-                        VerticalAlignment="Center"
                         AutomationProperties.Name="Editor theme"
-                        SelectionChanged="OnSyntaxTheme" />
-                </Grid>
-                <Grid Style="{StaticResource SettingsCardStyle}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="20" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <!-- The editor's background and current line, which the core makes the colours legible on. -->
-                    <Grid Visibility="Collapsed">
-                        <Rectangle x:Name="PaperInk" Fill="{ThemeResource SolidBackgroundFillColorBaseBrush}" />
-                        <Rectangle x:Name="LineInk" Fill="{ThemeResource SubtleFillColorSecondaryBrush}" />
-                        <Rectangle x:Name="SecondaryInk" Fill="{ThemeResource TextFillColorSecondaryBrush}" />
+                        DisplayMemberPath="Title"
+                        SelectedValuePath="Id" />
+                </controls:Card>
+                <!-- The editor's own surface, as Terminal draws its preview. -->
+                <Border
+                    Padding="16"
+                    Background="{ThemeResource LayerFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{ThemeResource ControlCornerRadius}">
+                    <Grid>
+                        <!-- The editor's background, current line and secondary text, which the core makes the colours legible on. -->
+                        <Rectangle x:Name="PaperInk" Fill="{ThemeResource SolidBackgroundFillColorBaseBrush}" Visibility="Collapsed" />
+                        <Rectangle x:Name="LineInk" Fill="{ThemeResource SubtleFillColorSecondaryBrush}" Visibility="Collapsed" />
+                        <Rectangle x:Name="SecondaryInk" Fill="{ThemeResource TextFillColorSecondaryBrush}" Visibility="Collapsed" />
+                        <TextBlock x:Name="Preview" TextWrapping="Wrap" />
                     </Grid>
-                    <TextBlock
-                        x:Name="Preview"
-                        Grid.Column="1"
-                        VerticalAlignment="Center"
-                        AutomationProperties.Name="Preview"
-                        TextWrapping="Wrap" />
-                </Grid>
-                <Grid Style="{StaticResource SettingsCardStyle}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="20" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon FontSize="20" Glyph="&#xE765;" />
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Close brackets automatically" />
-                        <TextBlock
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Style="{StaticResource CaptionTextBlockStyle}"
-                            Text="Typing (, [ or { adds its partner"
-                            TextWrapping="Wrap" />
-                    </StackPanel>
-                    <ToggleSwitch
-                        x:Name="PairSwitch"
-                        Grid.Column="2"
-                        MinWidth="0"
-                        VerticalAlignment="Center"
-                        AutomationProperties.Name="Close brackets automatically"
-                        Toggled="OnAutoPair" />
-                </Grid>
-                <Grid Style="{StaticResource SettingsCardStyle}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="20" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon FontSize="20" Glyph="&#xE765;" />
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Suggest completions while typing" />
-                        <TextBlock
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Style="{StaticResource CaptionTextBlockStyle}"
-                            Text="When off, press Ctrl+Space to see suggestions"
-                            TextWrapping="Wrap" />
-                    </StackPanel>
-                    <ToggleSwitch
-                        x:Name="CompleteSwitch"
-                        Grid.Column="2"
-                        MinWidth="0"
-                        VerticalAlignment="Center"
-                        AutomationProperties.Name="Suggest completions while typing"
-                        Toggled="OnAutoComplete" />
-                </Grid>
+                </Border>
+                <controls:Card Description="Typing (, [ or { adds its partner" Glyph="&#xE943;" Header="Close brackets automatically">
+                    <ToggleSwitch x:Name="PairSwitch" MinWidth="0" AutomationProperties.Name="Close brackets automatically" />
+                </controls:Card>
+                <controls:Card Description="When off, press Ctrl+Space to see suggestions" Glyph="&#xE8FD;" Header="Suggest completions while typing">
+                    <ToggleSwitch x:Name="CompleteSwitch" MinWidth="0" AutomationProperties.Name="Suggest completions while typing" />
+                </controls:Card>
 
-                <TextBlock Margin="1,30,0,6" Style="{StaticResource BodyStrongTextBlockStyle}" Text="About" />
-                <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                    <Expander.Header>
-                        <Grid Padding="0,16" ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="20" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Image
-                                Width="20"
-                                Height="20"
-                                Source="ms-appx:///Assets/TeXLocal.png" />
-                            <StackPanel Grid.Column="1">
-                                <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="TeXLocal" />
-                                <TextBlock
-                                    x:Name="VersionText"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Style="{StaticResource CaptionTextBlockStyle}" />
-                            </StackPanel>
-                        </Grid>
-                    </Expander.Header>
-                    <StackPanel Padding="36,0,0,0" Spacing="4">
-                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="A local LaTeX editor with live preview." />
-                        <TextBlock
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Style="{StaticResource CaptionTextBlockStyle}"
-                            Text="Licensed under the MIT License." />
-                    </StackPanel>
-                </Expander>
+                <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="About" />
+                <controls:Card x:Name="About" Glyph="&#xE946;" Header="TeXLocal" />
             </StackPanel>
         </ScrollViewer>
     </Grid>

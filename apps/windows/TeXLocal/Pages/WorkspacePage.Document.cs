@@ -35,13 +35,13 @@ public sealed partial class WorkspacePage
 
     void SetUpDocument()
     {
-        AutoCompileItem.IsChecked = MainWindow.Pref("autoCompile", true);
+        AutoCompileItem.IsChecked = Prefs.AutoCompile;
         foreach (var item in (MenuFlyoutItem[])[ZoomInItem, ZoomOutItem, ActualSizeItem])
         {
             var key = item == ZoomInItem ? (VirtualKey)187 : item == ZoomOutItem ? (VirtualKey)189 : VirtualKey.Number0;
             item.KeyboardAccelerators.Add(new KeyboardAccelerator { Key = key, Modifiers = VirtualKeyModifiers.Control, ScopeOwner = Pdf });
         }
-        var ratio = MainWindow.Pref("splitRatio", 0.5);
+        var ratio = Prefs.SplitRatio;
         SetSplit(ratio);
         SplitSizer.Delta += d =>
         {
@@ -55,7 +55,7 @@ public sealed partial class WorkspacePage
         {
             var height = Math.Clamp(IssuesRow.ActualHeight - d, 120, Math.Max(ActualHeight / 2, 120));
             IssuesRow.Height = new GridLength(height);
-            MainWindow.Prefs["issuesHeight"] = height;
+            Prefs.IssuesHeight = height;
         };
 
         SetUpNavigation();
@@ -87,7 +87,7 @@ public sealed partial class WorkspacePage
         ratio = Math.Clamp(ratio, 0.1, 0.9);
         EditorColumn.Width = new GridLength(ratio, GridUnitType.Star);
         PdfColumn.Width = new GridLength(1 - ratio, GridUnitType.Star);
-        MainWindow.Prefs["splitRatio"] = ratio;
+        Prefs.SplitRatio = ratio;
     }
 
     void OnSplitReset(object sender, DoubleTappedRoutedEventArgs e) => SetSplit(0.5);
@@ -241,7 +241,7 @@ public sealed partial class WorkspacePage
     void ShowPanel(bool open)
     {
         panelOpen = IssuesItem.IsChecked = open;
-        IssuesRow.Height = new GridLength(open ? MainWindow.Pref("issuesHeight", 200.0) : 0);
+        IssuesRow.Height = new GridLength(open ? Prefs.IssuesHeight : 0);
         IssuesSizer.Visibility = IssuesPanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         if (open && Editor.Path is not null) Editor.ScrollToCaret();
     }
@@ -263,7 +263,7 @@ public sealed partial class WorkspacePage
         var show = PdfItem.IsChecked;
         Pdf.Visibility = SplitSizer.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         PdfColumn.MinWidth = show ? 240 : 0;
-        PdfColumn.Width = show ? new GridLength(1 - MainWindow.Pref("splitRatio", 0.5), GridUnitType.Star) : new GridLength(0);
+        PdfColumn.Width = show ? new GridLength(1 - Prefs.SplitRatio, GridUnitType.Star) : new GridLength(0);
     }
 
     void OnIssueTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
@@ -498,7 +498,7 @@ public sealed partial class WorkspacePage
 
     void OnAutoCompile(object sender, RoutedEventArgs e)
     {
-        MainWindow.Prefs["autoCompile"] = AutoCompileItem.IsChecked;
+        Prefs.AutoCompile = AutoCompileItem.IsChecked;
         _ = Core.CallAsync("session_set_options", new { session, autoCompile = AutoCompileItem.IsChecked && texAvailable });
     }
 

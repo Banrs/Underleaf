@@ -1,13 +1,11 @@
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
 using TeXLocal.Controls;
+using Windows.System;
 
 namespace TeXLocal.Pages;
 
@@ -15,122 +13,87 @@ public sealed partial class HomePage : Page
 {
     readonly RenameFlyout rename = new();
     ProjectInfo? target;
-    bool loading;
+    string? focus;
+    bool loading, again;
 
-    public HomePage()
-    {
-        InitializeComponent();
-        // The menu acts on the card it was opened for; F2 and Del on the focused card.
-        foreach (var item in ProjectMenu.Items)
-            foreach (var key in item.KeyboardAccelerators)
-            {
-                key.ScopeOwner = List;
-                key.Invoked += (_, _) => target = ProjectMenu.IsOpen ? target : Focused;
-            }
-    }
+    public HomePage() => InitializeComponent();
 
     public static string Caption(string mainFile, long mtime) =>
         $"{mainFile} · {DateTimeOffset.FromUnixTimeMilliseconds(mtime).LocalDateTime:g}";
 
     public static string MoreName(string name) => $"More options for {name}";
 
-    static Core? Core => App.Core;
+    static Core Core => App.Core!;
+    static MainWindow Window => App.Window;
+
+    /// The project of a row, or of an element in one (the More button).
+    ProjectInfo? ProjectOf(object? element) =>
+        element is ListViewItem row ? List.ItemFromContainer(row) as ProjectInfo : (element as FrameworkElement)?.DataContext as ProjectInfo;
+
     ProjectInfo? Focused => XamlRoot is { } root ? ProjectOf(FocusManager.GetFocusedElement(root)) : null;
-    MainWindow Window => App.Window;
 
-    /// The project of the card an element is in (a card's DataContext isn't its item).
-    ProjectInfo? ProjectOf(object? element)
-    {
-        for (var e = element as DependencyObject; e is not null; e = VisualTreeHelper.GetParent(e))
-            if (e is ListViewItem card) return List.ItemFromContainer(card) as ProjectInfo;
-        return null;
-    }
+    protected override void OnNavigatedTo(NavigationEventArgs e) => Refresh();
 
-    protected override void OnNavigatedTo(NavigationEventArgs e)
+    /// The projects and TeX's status again: on arrival, and whenever the window comes back to the front.
+    public void Refresh()
     {
         Reload();
         _ = CheckTex();
     }
 
-    /// Lists the projects again, keeping keyboard focus on the card it was on (or on `focus`).
-    public async void Reload(string? focus = null)
+    /// Lists the projects again, keeping keyboard focus on its row (or moving it to project `id`). A call made while
+    /// one runs runs again after it.
+    async void Reload(string? id = null)
     {
-        if (loading) return;
+        focus = id ?? focus;
+        if (loading)
+        {
+            again = true;
+            return;
+        }
         loading = true;
-        try
+        do
         {
-            if (!App.OpenCore()) throw new CoreException(0, "");
-            var projects = await Core!.CallAsync<ProjectInfo[]>("list_projects");
-            if (List.ItemsSource is not ProjectInfo[] shown || !shown.SequenceEqual(projects))
+            again = false;
+            var error = App.OpenCore() ? null : App.CoreError ?? "";
+            ProjectInfo[] projects = [];
+            if (error is null)
+                try { projects = await Core.CallAsync<ProjectInfo[]>("list_projects"); }
+                catch (CoreException ex) { error = ex.Message; }
+            LibraryError.Message = error ?? "";
+            LibraryError.IsOpen = error is not null;
+            if (error is null) Show(projects);
+            if (App.Smoke) App.ExitSmoke(error is null ? 0 : 1, error);
+        } while (again);
+        loading = false;
+    }
+
+    void Show(ProjectInfo[] projects)
+    {
+        var id = focus ?? Focused?.Id;
+        focus = null;
+        if (List.ItemsSource is not ProjectInfo[] shown || !shown.SequenceEqual(projects))
+        {
+            List.ItemsSource = projects;
+            if (projects.FirstOrDefault(p => p.Id == id) is { } p)
             {
-                focus ??= Focused?.Id;
-                List.ItemsSource = projects;
-                if (projects.FirstOrDefault(p => p.Id == focus) is { } p)
-                {
-                    List.UpdateLayout();
-                    (List.ContainerFromItem(p) as Control)?.Focus(FocusState.Programmatic);
-                }
+                List.UpdateLayout();
+                (List.ContainerFromItem(p) as Control)?.Focus(FocusState.Programmatic);
             }
-            LibraryError.IsOpen = false;
-            ShowEmpty(projects.Length == 0);
-            if (App.Smoke) App.ExitSmoke(0);
         }
-        catch (CoreException ex)
-        {
-            LibraryError.IsOpen = true;
-            ShowEmpty(false);
-            if (App.Smoke) App.ExitSmoke(1, ex.Message);
-        }
-        finally { loading = false; }
+        var empty = projects.Length == 0;
+        Empty.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        List.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
+        // One accent on the page: the empty state's New project while it shows.
+        NewButton.Style = (Style)Application.Current.Resources[empty ? "DefaultButtonStyle" : "AccentButtonStyle"];
     }
 
     async Task CheckTex()
     {
-        if (Core is null) return;
-        var status = await Core.CallAsync<TexStatus>("status");
-        TexMissing.IsOpen = !status.Available;
-    }
-
-    void ShowEmpty(bool empty)
-    {
-        Empty.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
-        List.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
-        NewButton.Style = (Style)Application.Current.Resources[empty ? "DefaultButtonStyle" : "AccentButtonStyle"];
+        if (App.Core is { } core) TexMissing.IsOpen = !(await core.CallAsync<TexStatus>("status")).Available;
     }
 
     void OnRetry(object sender, RoutedEventArgs e) => Reload();
-
-    void OnSettings(object sender, RoutedEventArgs e) => Window.OpenSettings();
-
-    async void OnNew(object sender, RoutedEventArgs e)
-    {
-        if (Core is null) return;
-        NameBox.Text = "";
-        NameError.Text = "";
-        if (await NewDialog.ShowAsync() == ContentDialogResult.Primary && NewDialog.Tag is string id)
-            Window.OpenProject(id);
-    }
-
-    void OnNameChanged(object sender, TextChangedEventArgs e)
-    {
-        NameError.Text = "";
-        NewDialog.IsPrimaryButtonEnabled = NameBox.Text.Trim().Length > 0;
-    }
-
-    async void OnCreate(ContentDialog sender, ContentDialogButtonClickEventArgs args)
-    {
-        var deferral = args.GetDeferral();
-        try
-        {
-            sender.Tag = (await Core!.CallAsync<ProjectInfo>("create_project", new { name = NameBox.Text.Trim() })).Id;
-        }
-        catch (CoreException ex)
-        {
-            args.Cancel = true;
-            NameError.Text = ex.Message;
-        }
-        finally { deferral.Complete(); }
-    }
 
     void OnOpenFolder(object sender, RoutedEventArgs e) => Window.OpenFolder();
 
@@ -138,71 +101,92 @@ public sealed partial class HomePage : Page
 
     void OnItemClick(object sender, ItemClickEventArgs e) => Window.OpenProject(((ProjectInfo)e.ClickedItem).Id);
 
-    void OnContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args) =>
-        AutomationProperties.SetName(args.ItemContainer, ((ProjectInfo)args.Item).Name);
-
-    void OnContextRequested(UIElement sender, ContextRequestedEventArgs args)
+    /// New project, as File Explorer's New folder: a free name, selected for typing over; a refusal under the box.
+    async void OnNew(object sender, RoutedEventArgs e)
     {
-        args.Handled = true;
-        if (ProjectOf(args.OriginalSource) is not { } p || List.ContainerFromItem(p) is not FrameworkElement card) return;
-        target = p;
-        ProjectMenu.ShowAt(card, args.TryGetPosition(card, out var at)
-            ? new FlyoutShowOptions { Position = at }
-            : new FlyoutShowOptions { Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft });
-    }
-
-    void OnMore(object sender, RoutedEventArgs e)
-    {
-        target = ProjectOf(sender);
-        ProjectMenu.ShowAt((Button)sender, new FlyoutShowOptions { Placement = FlyoutPlacementMode.BottomEdgeAlignedRight });
-    }
-
-    void OnOpenItem(object sender, RoutedEventArgs e)
-    {
-        if (target is { } p) Window.OpenProject(p.Id);
-    }
-
-    void OnRenameItem(object sender, RoutedEventArgs e)
-    {
-        if (target is not { } p || List.ContainerFromItem(p) is not FrameworkElement card) return;
-        rename.Show(card, p.Name, async name =>
+        if (App.Core is null) return;
+        var box = new TextBox { Header = "Name", Width = 360 };
+        try { box.Text = (await Core.CallAsync("free_project_name")).GetProperty("name").GetString() ?? ""; }
+        catch (CoreException) { }
+        var dialog = new ContentDialog
         {
-            var renamed = await Core!.CallAsync<ProjectInfo>("rename_project", new { id = p.Id, name });
-            Reload(renamed.Id);
-        });
+            Title = "New project",
+            Content = box,
+            PrimaryButtonText = "Create",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        string? id = null;
+        dialog.Opened += (_, _) => box.SelectAll();
+        box.TextChanged += (_, _) => box.Description = null;
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            var deferral = args.GetDeferral();
+            try { id = (await Core.CallAsync<ProjectInfo>("create_project", new { name = box.Text.Trim() })).Id; }
+            catch (CoreException ex)
+            {
+                args.Cancel = true;
+                box.Description = ex.Message;
+            }
+            finally { deferral.Complete(); }
+        };
+        if (await App.Show(dialog) == ContentDialogResult.Primary && id is not null) Window.OpenProject(id);
     }
 
-    async void OnRevealItem(object sender, RoutedEventArgs e)
+    void OnMenuOpening(object sender, object e) => target = ProjectOf(((MenuFlyout)sender).Target);
+
+    void OnKey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
-        if (target is { } p) App.Reveal($"\"{(await Core!.CallAsync("project_root", new { id = p.Id })).GetString()}\"");
+        if (Focused is not { } p) return;
+        args.Handled = true;
+        if (sender.Key == VirtualKey.F2) Rename(p);
+        else Delete(p);
     }
+
+    void OnOpenItem(object sender, RoutedEventArgs e) => Window.OpenProject(target!.Id);
+
+    void OnRenameItem(object sender, RoutedEventArgs e) => Rename(target!);
+
+    async void OnRevealItem(object sender, RoutedEventArgs e) => App.Reveal(await Root(target!));
+
+    void OnDeleteItem(object sender, RoutedEventArgs e) => Delete(target!);
 
     async void OnExportItem(object sender, RoutedEventArgs e)
     {
-        if (target is not { } p) return;
+        var p = target!;
         var picker = new FileSavePicker(Window.AppWindow.Id) { SuggestedFileName = p.Name };
         picker.FileTypeChoices.Add("ZIP archive", [".zip"]);
-        var picked = await picker.PickSaveFileAsync();
-        if (picked is null) return;
-        try { await Core!.CallAsync("export_zip", new { id = p.Id, dest = picked.Path }); }
+        if (await picker.PickSaveFileAsync() is not { } picked) return;
+        try { await Core.CallAsync("export_zip", new { id = p.Id, dest = picked.Path }); }
         catch (CoreException ex) { await App.Alert("Can't export", ex.Message); }
     }
 
-    async void OnDeleteItem(object sender, RoutedEventArgs e)
+    static async Task<string> Root(ProjectInfo p) => (await Core.CallAsync("project_root", new { id = p.Id })).GetString()!;
+
+    /// Renames in place, at the row's name, as File Explorer does.
+    void Rename(ProjectInfo p)
     {
-        if (target is not { } p) return;
-        DeleteDialog.Title = $"Delete “{p.Name}”?";
-        if (await DeleteDialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if ((List.ContainerFromItem(p) as ListViewItem)?.ContentTemplateRoot is FrameworkElement row && row.FindName("NameText") is FrameworkElement name)
+            rename.Show(name, p.Name, async to => Reload((await Core.CallAsync<ProjectInfo>("rename_project", new { id = p.Id, name = to })).Id));
+    }
+
+    async void Delete(ProjectInfo p)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = $"Delete “{p.Name}”?",
+            Content = "The project folder moves to the Recycle Bin.",
+            PrimaryButtonText = "Move to Recycle Bin",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await App.Show(dialog) != ContentDialogResult.Primary) return;
         try
         {
-            await Core!.CallAsync("stop_compile", new { id = p.Id });
-            var root = (await Core.CallAsync("project_root", new { id = p.Id })).GetString()!;
-            await App.Recycle(root);
+            await Core.CallAsync("stop_compile", new { id = p.Id });
+            await App.Recycle(await Root(p));
         }
-        catch (Exception ex)
-        {
-            await App.Alert("Can't delete this project", ex.Message);
-        }
+        catch (Exception ex) { await App.Alert("Can't delete this project", ex.Message); }
         Reload();
     }
 }
