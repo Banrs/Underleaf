@@ -1,7 +1,7 @@
 import Foundation
 
 /// What the menus and the toolbar put in, the section levels and the maths symbols: the core's catalogue
-/// (texlocal-syntax's catalog.json), which every frontend's menus are made from.
+/// (its syntax module's catalog.json), which every frontend's menus are made from.
 nonisolated struct Menus: Decodable, Sendable {
     nonisolated struct Templates: Decodable, Sendable {
         let math: [Template]

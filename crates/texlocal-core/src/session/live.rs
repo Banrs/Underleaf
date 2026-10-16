@@ -109,10 +109,9 @@ impl Actor {
 
     /// `alert`: an error the host hasn't been shown yet.
     pub fn publish_live(&mut self, alert: bool) {
-        let state = self.live_state();
+        let mut state = self.live_state();
         if state != self.live.shown || alert {
             self.live.shown = state.clone();
-            let mut state = state;
             state["alert"] = alert.into();
             self.emit("live", state);
         }

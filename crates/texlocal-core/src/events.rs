@@ -81,6 +81,9 @@ impl Hub {
             .unwrap_or_else(PoisonError::into_inner) = listener;
     }
 
+    /// An event from outside any session, for tests: sessions send through
+    /// their own `Emitter`.
+    #[cfg(test)]
     pub fn emit(&self, event: Value) {
         self.send(Item::Event(event));
     }

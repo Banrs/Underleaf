@@ -2,8 +2,9 @@ import Foundation
 import os
 import TeXLocalCore
 
-/// The editor's text as texlocal-syntax's `SourceDocument` mirrors it, and what it answers about it: highlighting,
-/// completion, the editing commands, and typing's brackets, indentation and snippet fields, kept between keys.
+/// The editor's text as the core's syntax module's `SourceDocument` mirrors it, and what it answers about it:
+/// highlighting, completion, the editing commands, and typing's brackets, indentation and snippet fields, kept between
+/// keys.
 final class SourceDocument {
     private let raw: OpaquePointer
 
@@ -193,8 +194,8 @@ final class SourceDocument {
     }
 }
 
-/// texlocal-syntax's commands that need no document (`tl_syntax_call`): the themes' colours, the menus' catalogue,
-/// a class's headings, and maths as SVG. On any thread.
+/// The core's syntax module's commands that need no document (`tl_syntax_call`): the themes' colours, the menus'
+/// catalogue, a class's headings, and maths as SVG. On any thread.
 nonisolated enum Syntax {
     static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "source")
 

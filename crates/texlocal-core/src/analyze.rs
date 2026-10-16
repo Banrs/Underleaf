@@ -10,22 +10,19 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::paths;
-
-const LEVELS: [&str; 6] = [
-    "part",
-    "chapter",
-    "section",
-    "subsection",
-    "subsubsection",
-    "paragraph",
-];
+use crate::syntax::catalog::{CATALOG, alternation};
 
 static COMMENT_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*%").unwrap());
 static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(^|[^\\])%.*$").unwrap());
 // Headings, inputs and their literal boundaries in reading order. Consume other
 // control sequences too, so an escaped slash cannot start a command.
 static TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"%|\\(?:(?P<heading>part|chapter|section|subsection|subsubsection|paragraph)\*?\s*(?:\[[^\]]*\])?\s*\{|(?:input|include|subfile)\s*\{(?P<braced>[^{}%]+)\}|input\s+(?P<bare>[^{}\\%\s]+)|begin\s*\{(?P<literal>verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}|verb\*?(?P<delimiter>[^A-Za-z])|[A-Za-z]+|.)").unwrap()
+    let headings = alternation(CATALOG.heading_levels.iter().map(|level| &level.command));
+    let literals = alternation(&CATALOG.verbatim_environments);
+    Regex::new(&format!(
+        r"%|\\(?:(?P<heading>{headings})\*?\s*(?:\[[^\]]*\])?\s*\{{|(?:input|include|subfile)\s*\{{(?P<braced>[^{{}}%]+)\}}|input\s+(?P<bare>[^{{}}\\%\s]+)|begin\s*\{{(?P<literal>{literals})\}}|verb\*?(?P<delimiter>[^A-Za-z])|[A-Za-z]+|.)"
+    ))
+    .unwrap()
 });
 static COMMAND: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])?").unwrap());
@@ -195,10 +192,11 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
                     heading_on_line = true;
                     if let Some(title) = brace_group(code) {
                         into.outline.push(Heading {
-                            depth: LEVELS
+                            depth: CATALOG
+                                .heading_levels
                                 .iter()
-                                .position(|l| *l == heading.as_str())
-                                .unwrap_or(2),
+                                .position(|level| level.command == heading.as_str())
+                                .expect("a heading level of the catalog"),
                             title: plain_title(title),
                             line: index + 1,
                             file: Some(file.clone()),

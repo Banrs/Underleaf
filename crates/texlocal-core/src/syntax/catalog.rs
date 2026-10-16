@@ -12,7 +12,8 @@ pub struct Catalog {
     pub blocks: BTreeMap<String, String>,
     pub environments: Vec<String>,
     pub bib_entry_types: Vec<String>,
-    /// Sectioning commands, outermost first.
+    /// The sectioning commands the editor recognises, outermost first: the
+    /// heading levels, then `subparagraph`, which the menus don't offer.
     pub sections: Vec<String>,
     pub cite_commands: Vec<String>,
     pub ref_commands: Vec<String>,
@@ -102,10 +103,26 @@ pub static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
 });
 
 /// A list as a regex alternation: `a|b|c`.
-pub fn alternation(names: &[String]) -> String {
+pub fn alternation<S: AsRef<str>>(names: impl IntoIterator<Item = S>) -> String {
     names
-        .iter()
-        .map(|n| regex::escape(n))
+        .into_iter()
+        .map(|n| regex::escape(n.as_ref()))
         .collect::<Vec<_>>()
         .join("|")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CATALOG;
+
+    #[test]
+    fn the_sections_are_the_heading_levels_then_subparagraph() {
+        let mut commands: Vec<&str> = CATALOG
+            .heading_levels
+            .iter()
+            .map(|level| level.command.as_str())
+            .collect();
+        commands.push("subparagraph");
+        assert_eq!(CATALOG.sections, commands);
+    }
 }
