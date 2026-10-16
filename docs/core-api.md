@@ -104,6 +104,7 @@ Service commands (`tl_call`; the browser's too):
 |---|---|---|---|
 | `create_project` | `name`, `template?` (article), `free?` | the project (`{id, name, mtime, mainFile}`) | With `free: true`, `name` may be left out (“Untitled”) and the project takes the first free name of the series “Untitled”, “Untitled 2”, … as `free_project_name` finds it; `id`/`name` say which. A name taken (in any case, where the volume ignores case) is numbered past, as for `create_entry {free: true}`; a name the path rules refuse is 400. Without `free` a name is required (and is numbered past when taken, as before). |
 | `free_project_name` | `name?` (“Untitled”) | `{name}` | The name `create_project {free: true}` would try, creating nothing: for the New Project field to offer. |
+| `search_project` | `id`, `query` | `[{file, line, column, length, before, match, after}]` | The project's text files, case folded, one hit per line (its first match), at most 100. `line` counts from 1; `column` (from 0) and `length` place the match in its line in UTF-16 units of the line as written, for the editor to select. `match` is the text as written; `before` (up to 24 characters, “…” when cut) and `after` (up to 60) surround it. |
 
 Syntax commands (`tl_syntax_call`, and `tl_source_call` too), JSON in, JSON out:
 

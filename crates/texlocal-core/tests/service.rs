@@ -107,6 +107,8 @@ async fn dispatch_round_trips_project_and_file_commands() {
     )
     .await;
     assert_eq!(hits[0]["file"], "sec/a.tex");
+    assert_eq!(hits[0]["column"], 6);
+    assert_eq!(hits[0]["length"], 6);
 
     let tree = call(&service, "file_tree", json!({ "id": id })).await;
     assert!(tree.as_array().unwrap().iter().any(|n| n["name"] == "sec"));
