@@ -33,7 +33,7 @@ struct Fake {
     updates: Mutex<Vec<(String, String)>>,
     edits: Mutex<Vec<(String, usize, usize, String)>>,
     /// What the next edits answer; Ok once none is left.
-    edit_answers: Mutex<VecDeque<Result<u64, CoreError>>>,
+    edit_answers: Mutex<VecDeque<Result<(), CoreError>>>,
     news: Mutex<Option<Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<News>>>>>,
     news_tx: Mutex<Option<mpsc::UnboundedSender<News>>>,
     tokens: Mutex<u64>,
@@ -80,9 +80,7 @@ fn news(running: bool) -> Events {
         seq: 1,
         running,
         error: None,
-        live: Some(1),
         revision: 1,
-        synced: 0,
         pdf: None,
         pages: Vec::new(),
         done: None,
@@ -161,9 +159,9 @@ impl Engine for Fake {
         path: String,
         text: String,
         _token: String,
-    ) -> Fut<Result<u64, CoreError>> {
+    ) -> Fut<Result<(), CoreError>> {
         self.updates.lock().unwrap().push((path, text));
-        Box::pin(async { Ok(1) })
+        Box::pin(async { Ok(()) })
     }
 
     fn live_edit(
@@ -173,13 +171,13 @@ impl Engine for Fake {
         start: usize,
         remove: usize,
         text: &str,
-    ) -> Result<u64, CoreError> {
+    ) -> Result<(), CoreError> {
         let answer = self.edit_answers.lock().unwrap().pop_front();
         if answer.as_ref().is_none_or(Result::is_ok) {
             let edit = (path.to_owned(), start, remove, text.to_owned());
             self.edits.lock().unwrap().push(edit);
         }
-        answer.unwrap_or(Ok(1))
+        answer.unwrap_or(Ok(()))
     }
 
     fn live_view(&self, _token: &str, _first: u32, _last: u32) {
@@ -763,10 +761,7 @@ async fn a_stopped_run_is_halted_only_once_it_has_lasted_a_second() {
     let mut rig = Rig::new(false).await;
     live(&rig).await;
     let stopped = |run: &str| Events {
-        done: Some(RunEnd {
-            pages: 1,
-            run: run.into(),
-        }),
+        done: Some(RunEnd { run: run.into() }),
         ..news(true)
     };
     rig.fake.send_news(Ok(stopped("stopped")));
@@ -791,7 +786,6 @@ async fn documents_and_pages_go_to_the_host() {
         pages: 4,
         run: Some("complete".into()),
         changed: Some(vec![[1, 1]]),
-        edit: 0,
     };
     rig.fake.send_news(Ok(Events {
         pdf: Some(document),

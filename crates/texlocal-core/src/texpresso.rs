@@ -12,10 +12,10 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ropey::Rope;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt};
 use tokio::process::ChildStdin;
@@ -30,12 +30,9 @@ const MAX_FILES: usize = 256;
 const MAX_TOTAL: usize = 64 * 1024 * 1024;
 const MAX_OUTPUT: usize = 128 * 1024;
 const MAX_MESSAGE: usize = 2 * 1024 * 1024;
-const LEASE: Duration = Duration::from_secs(120);
 /// How long TeXpresso may leave what it was sent unread before the session is given up:
 /// it reads nothing while it makes its TeX formats, five seconds and more the first time.
 const UNREAD: Duration = Duration::from_secs(60);
-/// The longest `wait` waits, well inside the lease it renews.
-const MAX_WAIT: Duration = Duration::from_secs(60);
 const MISSING: &str = if cfg!(windows) {
     "TeXpresso wasn't found. Choose the folder it's in, in Settings."
 } else {
@@ -48,14 +45,14 @@ const TOO_LARGE: &str = "TeXpresso takes files of up to 8 MB.";
 const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
 const INVALID: &str = "A file sent to TeXpresso has an invalid path or text.";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct FileBuffer {
     pub path: String,
     pub text: String,
 }
 
 /// A place in a file, in UTF-16 units as the editors count.
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct Caret {
     pub path: String,
     pub offset: usize,
@@ -82,19 +79,17 @@ pub struct Status {
 }
 
 /// A page typeset again, alone in a PDF that is complete on disk.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct PageUpdate {
     /// From 0.
     pub page: u32,
     pub path: String,
     /// Rises with every event of the session: a later page or document has a higher one.
     pub serial: u64,
-    /// The last edit (`Manager::edit`'s number) the page shows.
-    pub edit: u64,
 }
 
 /// The whole document, complete on disk, its SyncTeX beside it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct Document {
     pub path: String,
     /// Rises by one with each document the session writes.
@@ -108,39 +103,23 @@ pub struct Document {
     /// Ranges of pages, first and last, that differ from the document before; None from a
     /// build that doesn't say, when any may.
     pub changed: Option<Vec<[u32; 2]>>,
-    pub edit: u64,
 }
 
 /// A run of TeX that is over.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct RunEnd {
-    pub pages: u32,
     /// `complete` or `stopped`, as `Document::run`.
     pub run: String,
 }
 
-/// `Manager::update`'s answer: the edit's number, 0 when the text is as TeXpresso has it,
-/// and the session's status unless the client asked for the number alone.
-#[derive(Debug, Serialize)]
-pub struct Updated {
-    pub edit: u64,
-    #[serde(flatten)]
-    pub status: Option<Status>,
-}
-
 /// What is new for a client since the `seq` it last had (`Manager::wait`).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct Events {
     pub seq: u64,
     pub running: bool,
     pub error: Option<String>,
-    /// 1 from a build that sends pages as they change; None from one that only writes the
-    /// whole document, known once the first document has come.
-    pub live: Option<u32>,
     /// `Status::revision`: when it has risen, the log or output may have changed.
     pub revision: u64,
-    /// The last edit whose effect on the pages in view has been sent, changed or not.
-    pub synced: u64,
     /// The document, when a new one was written; it comes before `pages`.
     pub pdf: Option<Document>,
     /// The latest of each page written since `pdf`, lowest page first.
@@ -223,12 +202,10 @@ struct Feed {
     pages: BTreeMap<u32, PageUpdate>,
     document: Option<Document>,
     done: Option<(u64, RunEnd)>,
-    synced: u64,
 }
 
 struct State {
     tree: Option<Tree>,
-    last_used: Instant,
     output: Output,
     log: Output,
     protocol_seen: bool,
@@ -238,12 +215,12 @@ struct State {
     pdf_version: u64,
     /// The settings file as last seen, by `settings_stamp`.
     settings: Option<Stamp>,
-    /// Whether TeXpresso has said anything, and the page protocol it said it speaks.
+    /// Whether TeXpresso has said anything.
     spoken: bool,
+    /// The page protocol it said it speaks: 1 from a build that sends pages as they change,
+    /// None from one that only writes the whole document.
     live: Option<u32>,
     feed: Feed,
-    /// Edits sent, each followed by its number for TeXpresso to say what shows it.
-    edits: u64,
 }
 #[derive(Default)]
 struct Files {
@@ -279,15 +256,11 @@ impl Session {
         self.changed.notify_waiters();
         state.feed.seq
     }
-    /// For its owner: renew the lease, and stop if the main file has changed
-    /// since the start. Whether it still runs.
-    fn renew(&self, root: &Path) -> bool {
+    /// For its owner: whether it still runs, stopped first if the main file has
+    /// changed since the start.
+    fn still_running(&self, root: &Path) -> bool {
         let stamp = settings_stamp(root);
-        let seen = {
-            let mut state = lock(&self.state);
-            state.last_used = Instant::now();
-            std::mem::replace(&mut state.settings, stamp)
-        };
+        let seen = std::mem::replace(&mut lock(&self.state).settings, stamp);
         if seen != stamp && settings::read_settings(root).main_file != self.main {
             self.stop(Some("The main file changed. Start TeXpresso again.".into()));
         }
@@ -335,9 +308,7 @@ impl Session {
             seq: feed.seq,
             running: state.tree.is_some(),
             error: state.error.clone(),
-            live: state.live,
             revision: state.revision,
-            synced: feed.synced,
             pdf: feed.document.clone().filter(|d| new(d.serial)),
             pages: feed
                 .pages
@@ -361,16 +332,6 @@ impl Session {
         }
         // A writer that has gone has stopped the session, or is about to.
         let _ = self.lines.send(lines);
-    }
-    /// The number of a new edit, with the message that has a build that sends pages say
-    /// when they show it.
-    fn mark(&self, messages: &mut Vec<Value>) -> u64 {
-        let mut state = lock(&self.state);
-        state.edits += 1;
-        if self.sends_pages(&state) {
-            messages.push(json!(["mark", state.edits]));
-        }
-        state.edits
     }
     /// Whether to send what only a build that sends pages knows: it has said it is one,
     /// or nothing at all yet. Another would only report a command it doesn't know.
@@ -409,19 +370,11 @@ impl Manager {
             session.stop(None);
         }
     }
-    /// None is reserved for an explicitly requested global Stop. Automatic
-    /// cleanup always supplies the owner's token.
-    pub async fn stop_request(
-        &self,
-        root: &Path,
-        token: Option<&str>,
-        path_env: &str,
-    ) -> Result<Status, CoreError> {
+    /// The owner's Stop.
+    pub async fn stop_request(&self, root: &Path, token: &str) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = dunce::canonicalize(root)?;
-        let Some(session) = self.session(&root, token)? else {
-            return Ok(self.idle(path_env));
-        };
+        let session = self.owned(&root, token)?;
         session.stop(None);
         // Explicit Stop ends ownership too; internal host invalidation
         // uses stop(root), retaining identity for a conditional restart.
@@ -482,9 +435,9 @@ impl Manager {
             session: None,
         }
     }
-    /// Inspection does not acquire ownership or renew the viewer's lease. The
-    /// PATH is built only when no session answers: a client polls this while
-    /// its session runs, and the PATH reads the app's settings and TeX's folders.
+    /// Without a token, inspection: it doesn't acquire ownership. The PATH is built
+    /// only when no session answers: a client polls this while its session runs, and
+    /// the PATH reads the app's settings and TeX's folders.
     pub fn status<P: AsRef<str>>(
         &self,
         root: &Path,
@@ -496,7 +449,7 @@ impl Manager {
             return Ok(self.idle(path_env().as_ref()));
         };
         if token.is_some() {
-            session.renew(&root);
+            session.still_running(&root);
         }
         Ok(session.status())
     }
@@ -624,7 +577,6 @@ impl Manager {
             revision: Arc::clone(&self.revision),
             state: Mutex::new(State {
                 tree: Some(tree),
-                last_used: Instant::now(),
                 output: Output::default(),
                 log: Output::default(),
                 protocol_seen: false,
@@ -636,7 +588,6 @@ impl Manager {
                 spoken: false,
                 live: None,
                 feed: Feed::default(),
-                edits: 0,
             }),
         });
         {
@@ -664,25 +615,16 @@ impl Manager {
                 }
             }
             let _cleanup = Cleanup(weak.clone());
-            loop {
-                tokio::select! {
-                    result = child.wait() => {
-                        if let Some(session) = weak.upgrade() {
-                            let error = match result {
-                                Ok(status) if status.success() => None,
-                                result => Some(format!("TeXpresso exited ({}). Check its log and start TeXpresso again.",
-                                    result.map(|s| s.to_string()).unwrap_or_else(|e| e.to_string()))),
-                            };
-                            session.stop(error);
-                        }
-                        break;
-                    }
-                    _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                        let Some(session) = weak.upgrade() else { break; };
-                        let expired = lock(&session.state).last_used.elapsed() >= LEASE;
-                        if expired { session.stop(Some("The TeXpresso session expired. Start TeXpresso again.".into())); }
-                    }
-                }
+            let result = child.wait().await;
+            if let Some(session) = weak.upgrade() {
+                let error = match result {
+                    Ok(status) if status.success() => None,
+                    result => Some(format!(
+                        "TeXpresso exited ({}). Check its log and start TeXpresso again.",
+                        result.map_or_else(|e| e.to_string(), |s| s.to_string())
+                    )),
+                };
+                session.stop(error);
             }
         });
         // TeXpresso's idle reruns stay off: each starts TeX again from nothing after a pause
@@ -697,26 +639,20 @@ impl Manager {
     }
     /// The whole text of a file: sent as the change from the buffer TeXpresso has, or
     /// whole when it has none. It is also what repairs a copy `edit` refused to change.
-    /// `brief` leaves the status, and the log in it, out of the answer.
     pub async fn update(
         &self,
         root: &Path,
         rel: &str,
         text: &str,
         token: &str,
-        brief: bool,
-    ) -> Result<Updated, CoreError> {
+    ) -> Result<(), CoreError> {
         let _request = self.requests.lock().await;
         let root = dunce::canonicalize(root)?;
         let session = self.owned(&root, token)?;
-        let updated = |edit| Updated {
-            edit,
-            status: (!brief).then(|| session.status()),
-        };
-        if !session.renew(&root) {
-            return Ok(updated(0));
+        if !session.still_running(&root) {
+            return Ok(());
         }
-        let edit = {
+        {
             let mut files = lock(&session.files);
             let files = &mut *files;
             let path = validate_buffer(&root, rel, text, &files.paths)?;
@@ -727,36 +663,25 @@ impl Manager {
                 files.bytes - held + text.len(),
             )?;
             let message = match previous.as_deref().map(|previous| delta(previous, text)) {
-                Some((_, 0, "")) => None,
+                Some((_, 0, "")) => return Ok(()),
                 Some((offset, remove, inserted)) => {
-                    Some(json!(["change", path, offset, remove, inserted]))
+                    json!(["change", path, offset, remove, inserted])
                 }
-                None => Some(json!(["open", path, text])),
+                None => json!(["open", path, text]),
             };
-            match message {
-                Some(message) => {
-                    let mut messages = vec![message];
-                    let edit = session.mark(&mut messages);
-                    session.send(&messages);
-                    files.paths.insert(rel.to_owned(), path.clone());
-                    files.bytes = files.bytes - held + text.len();
-                    files.texts.insert(path, Text::new(text));
-                    edit
-                }
-                None => 0,
-            }
-        };
-        if edit > 0 {
-            session.bump(&mut lock(&session.state));
+            session.send(&[message]);
+            files.paths.insert(rel.to_owned(), path.clone());
+            files.bytes = files.bytes - held + text.len();
+            files.texts.insert(path, Text::new(text));
         }
-        Ok(updated(edit))
+        session.bump(&mut lock(&session.state));
+        Ok(())
     }
     /// A keystroke, as the editor has it: `remove` UTF-16 units at `start` of a file the
     /// session has, replaced by `text`. It waits for nothing (no disk, no TeXpresso), so
-    /// the editor can call it where the edit is made. Its number, which `Events::synced`
-    /// reaches when the pages in view show it; 0 for a session that has ended. An edit
-    /// that doesn't fit the session's copy is refused with status 412 and changes nothing:
-    /// `update` with the whole text then puts both right.
+    /// the editor can call it where the edit is made. A session that has ended takes it as
+    /// nothing. An edit that doesn't fit the session's copy is refused with status 412 and
+    /// changes nothing: `update` with the whole text then puts both right.
     pub fn edit(
         &self,
         token: &str,
@@ -764,19 +689,15 @@ impl Manager {
         start: usize,
         remove: usize,
         text: &str,
-    ) -> Result<u64, CoreError> {
+    ) -> Result<(), CoreError> {
         let session = self.held(token)?;
         if text.contains('\0') {
             return Err(CoreError::bad_request(INVALID));
         }
         let mut files = lock(&session.files);
         let files = &mut *files;
-        {
-            let mut state = lock(&session.state);
-            state.last_used = Instant::now();
-            if state.tree.is_none() {
-                return Ok(0);
-            }
+        if lock(&session.state).tree.is_none() {
+            return Ok(());
         }
         let unfit = || CoreError::unfit(UNFIT);
         let path = files.paths.get(rel).ok_or_else(unfit)?;
@@ -790,10 +711,8 @@ impl Manager {
         let before = held.bytes();
         let (offset, removed) = held.edit(start, remove, text).ok_or_else(unfit)?;
         files.bytes = files.bytes - before + held.bytes();
-        let mut messages = vec![json!(["change", path, offset, removed, text])];
-        let edit = session.mark(&mut messages);
-        session.send(&messages);
-        Ok(edit)
+        session.send(&[json!(["change", path, offset, removed, text])]);
+        Ok(())
     }
     /// The pages the client shows, from 0: a patched build typesets as far as the last of
     /// them first, and sends each as it changes.
@@ -819,45 +738,34 @@ impl Manager {
         }
         Ok(())
     }
-    /// Waits until the session has something a client at `after` hasn't had (`Events`),
-    /// it ends, or `timeout` passes, and answers with what is new; other calls go on
-    /// meanwhile. `after` is the `seq` of the last answer, 0 at first.
-    pub async fn wait(
-        &self,
-        root: &Path,
-        token: &str,
-        after: u64,
-        timeout: Duration,
-    ) -> Result<Events, CoreError> {
+    /// Waits until the session has something a client at `after` hasn't had (`Events`) or
+    /// it ends, and answers with what is new; other calls go on meanwhile. `after` is the
+    /// `seq` of the last answer, 0 at first.
+    pub async fn wait(&self, root: &Path, token: &str, after: u64) -> Result<Events, CoreError> {
         let root = dunce::canonicalize(root)?;
         let session = self.owned(&root, token)?;
-        session.renew(&root);
-        let deadline = tokio::time::Instant::now() + timeout.min(MAX_WAIT);
+        session.still_running(&root);
         loop {
             let changed = session.changed.notified();
             tokio::pin!(changed);
             // Listening before the look: an event in between isn't missed.
             changed.as_mut().enable();
             {
-                let mut state = lock(&session.state);
-                state.last_used = Instant::now();
+                let state = lock(&session.state);
                 // A `seq` from another session is no place in this one's events.
                 let after = if after > state.feed.seq { 0 } else { after };
-                if state.feed.seq > after
-                    || state.tree.is_none()
-                    || tokio::time::Instant::now() >= deadline
-                {
+                if state.feed.seq > after || state.tree.is_none() {
                     return Ok(session.events(&state, after));
                 }
             }
-            let _ = tokio::time::timeout_at(deadline, changed).await;
+            changed.await;
         }
     }
     pub async fn rescan(&self, root: &Path, token: &str) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = dunce::canonicalize(root)?;
         let session = self.owned(&root, token)?;
-        if session.renew(&root) {
+        if session.still_running(&root) {
             session.send(&[json!(["rescan"])]);
         }
         Ok(session.status())
@@ -1042,7 +950,7 @@ fn apply_message(session: &Session, message: &Value) {
             session.event(state);
             return;
         }
-        // [page, index, path, mark]: one page, complete at a path in the session's folder.
+        // [page, index, path, ..]: one page, complete at a path in the session's folder.
         "page" => {
             let folder = session.pdf.as_deref().and_then(Path::parent);
             let path = message[2].as_str().filter(|path| {
@@ -1053,13 +961,12 @@ fn apply_message(session: &Session, message: &Value) {
                     page: page as u32,
                     path: path.to_owned(),
                     serial: session.event(state),
-                    edit: number(3).unwrap_or(0),
                 };
                 state.feed.pages.insert(update.page, update);
             }
             return;
         }
-        // [pdf, path, pages], and from a patched build [.., run, changed, mark]: the whole
+        // [pdf, path, pages], and from a patched build [.., run, changed, ..]: the whole
         // document written to the path it was given.
         "pdf" => {
             let Some(pdf) = &session.pdf else {
@@ -1077,27 +984,19 @@ fn apply_message(session: &Session, message: &Value) {
                 pages: number(2).unwrap_or(0) as u32,
                 run: message[3].as_str().map(str::to_owned),
                 changed,
-                edit: number(5).unwrap_or(0),
             };
             // The pages written before it are in it, and their own files are going.
             state.feed.pages.clear();
             state.feed.document = Some(document);
             return;
         }
+        // [done, pages, run]
         "done" => {
-            if let (Some(pages), Some(run)) = (number(1), message[2].as_str()) {
+            if let Some(run) = message[2].as_str() {
                 let end = RunEnd {
-                    pages: pages as u32,
                     run: run.to_owned(),
                 };
                 state.feed.done = Some((session.event(state), end));
-            }
-            return;
-        }
-        "synced" => {
-            if let Some(edit) = number(1) {
-                state.feed.synced = edit;
-                session.event(state);
             }
             return;
         }
@@ -1121,6 +1020,8 @@ fn apply_message(session: &Session, message: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::time::Instant;
     #[test]
     fn unicode_deltas_reconstruct_text() {
         let pairs = [
@@ -1163,7 +1064,6 @@ mod tests {
             pdf: None,
             state: Mutex::new(State {
                 tree: None,
-                last_used: Instant::now(),
                 output: Output::default(),
                 log: Output::default(),
                 protocol_seen: false,
@@ -1175,7 +1075,6 @@ mod tests {
                 spoken: false,
                 live: None,
                 feed: Feed::default(),
-                edits: 0,
             }),
             files: Mutex::default(),
             lines: mpsc::unbounded_channel().0,
@@ -1235,9 +1134,9 @@ mod tests {
     /// The first document the session hands its client.
     #[cfg(unix)]
     async fn first_document(manager: &Manager, root: &Path, token: &str) -> Document {
-        let mut events = manager.wait(root, token, 0, SOON).await.unwrap();
+        let mut events = manager.wait(root, token, 0).await.unwrap();
         while events.pdf.is_none() {
-            events = manager.wait(root, token, events.seq, SOON).await.unwrap();
+            events = manager.wait(root, token, events.seq).await.unwrap();
         }
         events.pdf.unwrap()
     }
@@ -1310,12 +1209,11 @@ mod tests {
                 .as_ref()
         );
         assert_eq!(opened[2], original);
-        let second = manager
-            .update(&root, "main.tex", updated, token, false)
+        manager
+            .update(&root, "main.tex", updated, token)
             .await
             .unwrap();
-        assert_eq!(second.edit, 1);
-        let second = second.status.unwrap();
+        let second = manager.status(&root, Some(token), || &path_env).unwrap();
         assert!(second.running && second.revision > first.revision);
         until(|| commands(&tmp).iter().any(|c| c[0] == "change")).await;
         let sent = commands(&tmp);
@@ -1335,33 +1233,16 @@ mod tests {
             fs::read_to_string(root.join("main.tex")).unwrap(),
             "disk text"
         );
-        assert!(
-            manager
-                .update(&root, "../escape.tex", "bad", token, false)
-                .await
-                .is_err()
-        );
-        assert!(
-            manager
-                .update(&root, "build/out.tex", "bad", token, false)
-                .await
-                .is_err()
-        );
-        assert!(
-            manager
-                .update(&root, "main.tex", &"x".repeat(MAX_FILE + 1), token, true)
-                .await
-                .is_err()
-        );
+        for (path, text) in [
+            ("../escape.tex", "bad"),
+            ("build/out.tex", "bad"),
+            ("main.tex", &"x".repeat(MAX_FILE + 1)),
+        ] {
+            assert!(manager.update(&root, path, text, token).await.is_err());
+        }
         manager.rescan(&root, token).await.unwrap();
         until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
-        assert!(
-            !manager
-                .stop_request(&root, Some(token), &path_env)
-                .await
-                .unwrap()
-                .running
-        );
+        assert!(!manager.stop_request(&root, token).await.unwrap().running);
         assert!(!folder.exists());
         assert_eq!(
             refused(restart(&manager, &root, &path_env, token).await),
@@ -1369,14 +1250,9 @@ mod tests {
         );
         let restarted = begin(&manager, &root, &path_env, &[]).await;
         assert!(restarted.running && restarted.revision > second.revision);
+        let token = restarted.session.as_deref().unwrap();
         manager
-            .update(
-                &root,
-                "main.tex",
-                "EXIT_CLEAN",
-                restarted.session.as_deref().unwrap(),
-                true,
-            )
+            .update(&root, "main.tex", "EXIT_CLEAN", token)
             .await
             .unwrap();
         until(|| !manager.status(&root, None, || &path_env).unwrap().running).await;
@@ -1407,11 +1283,10 @@ mod tests {
         let mut text = String::from("abc");
         for edit in ["abXc", "aXc", "aXc", "aXcd"] {
             let sent = changes().len();
-            let updated = manager
-                .update(&root, "main.tex", edit, token, true)
+            manager
+                .update(&root, "main.tex", edit, token)
                 .await
                 .unwrap();
-            assert!(updated.status.is_none() && (updated.edit > 0) == (text != edit));
             if text != edit {
                 until(|| changes().len() > sent).await;
                 let change = changes().pop().unwrap();
@@ -1425,12 +1300,11 @@ mod tests {
 
         fs::write(root.join("other.tex"), "").unwrap();
         crate::settings::write_settings(&root, &json!({ "mainFile": "other.tex" })).unwrap();
-        let status = manager
-            .update(&root, "main.tex", "abc", token, false)
+        manager
+            .update(&root, "main.tex", "abc", token)
             .await
-            .unwrap()
-            .status
             .unwrap();
+        let status = manager.status(&root, None, || &path_env).unwrap();
         assert!(!status.running);
         assert!(status.error.unwrap().contains("main file changed"));
     }
@@ -1453,13 +1327,13 @@ mod tests {
             .unwrap();
         let token = owner.session.as_deref().unwrap();
         manager
-            .update(&root, "main.tex", "EXIT_STUB", token, false)
+            .update(&root, "main.tex", "EXIT_STUB", token)
             .await
             .unwrap();
         until(|| !manager.status(&root, None, || &path_env).unwrap().running).await;
         let status = manager.status(&root, None, || &path_env).unwrap();
         assert_eq!(status.output, "ready");
-        let events = manager.wait(&root, token, 0, Duration::ZERO).await.unwrap();
+        let events = manager.wait(&root, token, 0).await.unwrap();
         assert!(!events.running);
         assert!(status.error.unwrap().contains("exited"));
         // Killed descendants can remain zombies briefly while init reaps them.
@@ -1486,12 +1360,12 @@ mod tests {
         manager.view(token, 0, 1).unwrap();
         manager.caret(token, "main.tex", 1).unwrap();
         manager
-            .update(&root, "main.tex", "EXIT_CLEAN", token, false)
+            .update(&root, "main.tex", "EXIT_CLEAN", token)
             .await
             .unwrap();
         until(|| !manager.status(&root, None, || &path_env).unwrap().running).await;
         // Its stub printed a document all the same, with no path to write it to.
-        let events = manager.wait(&root, token, 0, Duration::ZERO).await.unwrap();
+        let events = manager.wait(&root, token, 0).await.unwrap();
         assert!(events.pdf.is_none() && events.pages.is_empty());
         let sent = commands(&tmp);
         assert!(sent.iter().any(|c| c.to_string().contains("EXIT_CLEAN")));
@@ -1502,7 +1376,7 @@ mod tests {
     }
     #[cfg(unix)]
     #[tokio::test]
-    async fn the_log_follows_backtracking_and_an_abandoned_lease_ends_the_session_unpolled() {
+    async fn the_log_follows_backtracking_and_has_the_programs_own_output_once_it_fails() {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
         let started = begin(&manager, &root, &path_env, &[]).await;
@@ -1517,20 +1391,15 @@ mod tests {
         apply_message(&session, &json!(["truncate", "log", 0]));
         assert!(!session.status().log.contains(diagnostic));
 
-        session.state.lock().unwrap().last_used = Instant::now() - LEASE;
-        // The session looks at its lease every five seconds of tokio's clock, which
-        // goes straight to its next look once nothing else has work.
-        tokio::time::pause();
-        tokio::time::sleep(Duration::from_millis(5100)).await;
+        session.stop(Some("TeXpresso exited".into()));
         let status = manager.status(&root, None, || &path_env).unwrap();
-        assert!(!status.running);
-        assert!(status.error.unwrap().contains("expired"));
-        // Ended, the log has that stderr after all.
+        assert!(!status.running && status.error.is_some());
+        // Ended with an error, the log has that stderr after all.
         assert!(session.status().log.contains(diagnostic));
     }
     #[cfg(unix)]
     #[tokio::test]
-    async fn replacement_rejects_queued_stale_edits_cleanup_and_lease_renewal() {
+    async fn replacement_rejects_queued_stale_edits_and_a_stop_ends_ownership() {
         let (_tmp, root, path_env) = setup();
         let manager = Arc::new(Manager::default());
         assert!(!manager.status(&root, None, || &path_env).unwrap().running);
@@ -1547,11 +1416,7 @@ mod tests {
         tokio::task::yield_now().await;
         let stale_edit = tokio::spawn({
             let (manager, root, old) = (Arc::clone(&manager), root.clone(), old.clone());
-            async move {
-                manager
-                    .update(&root, "main.tex", "stale A", &old, false)
-                    .await
-            }
+            async move { manager.update(&root, "main.tex", "stale A", &old).await }
         });
         drop(blocked);
         let current = replacement.await.unwrap().session.unwrap();
@@ -1560,22 +1425,15 @@ mod tests {
         let session = manager
             .owned(&dunce::canonicalize(&root).unwrap(), &current)
             .unwrap();
-        let before = Instant::now() - Duration::from_secs(60);
-        session.state.lock().unwrap().last_used = before;
         let stale = Some(old.as_str());
         assert_eq!(refused(manager.status(&root, stale, || &path_env)), 409);
         assert_eq!(refused(manager.rescan(&root, &old).await), 409);
-        assert_eq!(
-            refused(manager.stop_request(&root, stale, &path_env).await),
-            409
-        );
-        // An idle tab can inspect B, but neither inspection nor A extends its lease.
+        assert_eq!(refused(manager.stop_request(&root, &old).await), 409);
+        // Without a token, B can be looked at.
         let inspected = manager.status(&root, None, || &path_env).unwrap();
         assert_eq!(inspected.session.as_deref(), Some(current.as_str()));
-        assert_eq!(session.state.lock().unwrap().last_used, before);
         let owned = manager.status(&root, Some(&current), || &path_env);
         assert!(owned.unwrap().running);
-        assert!(session.state.lock().unwrap().last_used > before);
         let main = dunce::canonicalize(root.join("main.tex")).unwrap();
         assert_eq!(
             session.files.lock().unwrap().texts[&main].string(),
@@ -1590,10 +1448,10 @@ mod tests {
         let restarted = restart(&manager, &root, &path_env, &current).await.unwrap();
         assert!(restarted.running);
         assert_ne!(restarted.session.as_deref(), Some(current.as_str()));
-        // Deliberately selected global Stop remains available to an inspecting tab.
-        let stopped = manager.stop_request(&root, None, &path_env).await;
-        assert!(!stopped.unwrap().running);
+        // The owner's Stop ends its ownership too.
         let token = restarted.session.as_deref().unwrap();
+        let stopped = manager.stop_request(&root, token).await;
+        assert!(!stopped.unwrap().running);
         assert_eq!(
             refused(restart(&manager, &root, &path_env, token).await),
             409
@@ -1675,21 +1533,21 @@ mod tests {
     }
 
     /// A stub that speaks as a build with Underleaf's patch does: it says so first, writes
-    /// "the document", answers each numbered edit with page 1 and that the view shows it,
-    /// and a request for a finishing pass with a new document.
+    /// "the document", answers each change with page 1 in a file of its own, and a request
+    /// for a finishing pass with a new document.
     #[cfg(unix)]
     fn setup_live() -> (tempfile::TempDir, PathBuf, String) {
         let (tmp, root, path_env) = setup();
         let stub = tmp.path().join("bin/texpresso");
         fs::write(&stub, format!(
             concat!(
-                "#!/bin/sh\ndir=${{TEXPRESSO_PDF_OUTPUT%/*}}\n",
+                "#!/bin/sh\ndir=${{TEXPRESSO_PDF_OUTPUT%/*}}\nn=0\n",
                 "printf '[\"live\",1]\\n[\"pdf\",\"%s\",3,\"partial\",[[0,2]],0]\\n' \"$TEXPRESSO_PDF_OUTPUT\"\n",
                 "while IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> '{}'\n",
                 "  case \"$line\" in\n",
-                "    '[\"mark\",'*) n=${{line#*,}}; n=${{n%]}}\n",
-                "      printf '[\"page\",1,\"%s/page-1-%s.pdf\",%s]\\n[\"synced\",%s]\\n' \"$dir\" \"$n\" \"$n\" \"$n\";;\n",
-                "    *rerun-once*) printf '[\"pdf\",\"%s\",4,\"complete\",[[1,1],[3,3]],9]\\n[\"done\",4,\"complete\"]\\n' \"$TEXPRESSO_PDF_OUTPUT\";;\n",
+                "    '[\"change\",'*) n=$((n + 1))\n",
+                "      printf '[\"page\",1,\"%s/page-1-%s.pdf\",0]\\n' \"$dir\" \"$n\";;\n",
+                "    *rerun-once*) printf '[\"pdf\",\"%s\",4,\"complete\",[[1,1],[3,3]],0]\\n[\"done\",4,\"complete\"]\\n' \"$TEXPRESSO_PDF_OUTPUT\";;\n",
                 "  esac\ndone\n"
             ),
             tmp.path().join("commands").display()
@@ -1723,11 +1581,11 @@ mod tests {
         let token = started.session.as_deref().unwrap();
         let path = dunce::canonicalize(root.join("main.tex")).unwrap();
         // Four units in: after a, é and the pair, seven bytes in.
-        assert_eq!(manager.edit(token, "main.tex", 4, 0, "X").unwrap(), 1);
-        assert_eq!(manager.edit(token, "main.tex", 1, 3, "").unwrap(), 2);
+        manager.edit(token, "main.tex", 4, 0, "X").unwrap();
+        manager.edit(token, "main.tex", 1, 3, "").unwrap();
         manager.view(token, 5, 4).unwrap();
         manager.caret(token, "main.tex", 2).unwrap();
-        until(|| commands(&tmp).len() >= 9).await;
+        until(|| commands(&tmp).len() >= 7).await;
         let sent = commands(&tmp);
         assert_eq!(
             sent[1..],
@@ -1735,9 +1593,7 @@ mod tests {
                 json!(["view", 2, 3]),
                 json!(["caret", path, 7]),
                 json!(["change", path, 7, 0, "X"]),
-                json!(["mark", 1]),
                 json!(["change", path, 1, 6, ""]),
-                json!(["mark", 2]),
                 json!(["view", 5, 5]),
                 json!(["caret", path, 2]),
             ]
@@ -1771,25 +1627,22 @@ mod tests {
             409
         );
         // The whole text puts the copy right, sent as the change from what TeXpresso has.
-        let repaired = manager
-            .update(&root, "main.tex", "aXb😀", token, true)
+        manager
+            .update(&root, "main.tex", "aXb😀", token)
             .await
             .unwrap();
-        assert_eq!(repaired.edit, 3);
-        assert_eq!(manager.edit(token, "main.tex", 5, 0, "!").unwrap(), 4);
-        until(|| commands(&tmp).len() >= 13).await;
+        manager.edit(token, "main.tex", 5, 0, "!").unwrap();
+        until(|| commands(&tmp).len() >= 9).await;
         assert_eq!(
-            commands(&tmp)[9..],
+            commands(&tmp)[7..],
             [
                 json!(["change", path, 3, 0, "😀"]),
-                json!(["mark", 3]),
                 json!(["change", path, 7, 0, "!"]),
-                json!(["mark", 4]),
             ]
         );
-        // A session that has ended takes no edit, and says so with no number.
+        // A session that has ended takes an edit as nothing, and refuses none.
         manager.stop(&root).unwrap();
-        assert_eq!(manager.edit(token, "main.tex", 0, 0, "x").unwrap(), 0);
+        manager.edit(token, "main.tex", 0, 0, "x").unwrap();
     }
 
     #[cfg(unix)]
@@ -1799,82 +1652,87 @@ mod tests {
         let manager = Arc::new(Manager::default());
         let started = begin(&manager, &root, &path_env, &main_buffer("abc")).await;
         let token = started.session.clone().unwrap();
-        let wait = |after: u64, timeout: Duration| {
+        let wait = |after: u64| {
             let (manager, root, token) = (Arc::clone(&manager), root.clone(), token.clone());
-            async move { manager.wait(&root, &token, after, timeout).await.unwrap() }
+            async move { manager.wait(&root, &token, after).await.unwrap() }
         };
+        // Waits that answer nothing within `SOON` are a failure.
+        let soon = |after: u64| {
+            let wait = wait(after);
+            async move { tokio::time::timeout(SOON, wait).await.expect("an answer") }
+        };
+        let session = manager.held(&token).unwrap();
         // The build says what it speaks, then the first document.
-        let mut events = wait(0, SOON).await;
+        let mut events = soon(0).await;
         while events.pdf.is_none() {
-            events = wait(events.seq, SOON).await;
+            events = soon(events.seq).await;
         }
-        let first = wait(0, SOON).await;
-        assert_eq!(first.live, Some(1));
+        let first = soon(0).await;
+        assert_eq!(lock(&session.state).live, Some(1));
         let document = first.pdf.unwrap();
         assert_eq!((document.version, document.pages), (1, 3));
         assert_eq!(document.run.as_deref(), Some("partial"));
         assert_eq!(document.changed, Some(vec![[0, 2]]));
         assert!(first.pages.is_empty() && first.done.is_none() && first.running);
 
-        // Nothing new: the wait lasts its time, and other calls go on meanwhile.
+        // Nothing new: the wait goes on, and other calls go on meanwhile.
         let began = Instant::now();
-        let waiting = tokio::spawn(wait(first.seq, Duration::from_secs(20)));
+        let waiting = tokio::spawn(wait(first.seq));
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!waiting.is_finished());
-        assert_eq!(manager.edit(&token, "main.tex", 3, 0, "d").unwrap(), 1);
-        assert_eq!(manager.edit(&token, "main.tex", 4, 0, "e").unwrap(), 2);
+        manager.edit(&token, "main.tex", 3, 0, "d").unwrap();
+        manager.edit(&token, "main.tex", 4, 0, "e").unwrap();
         let mut events = waiting.await.unwrap();
         assert!(began.elapsed() < SOON && events.seq > first.seq);
-        while events.synced < 2 {
-            events = wait(events.seq, SOON).await;
+        let second = |events: &Events| events.pages.iter().any(|p| p.path.ends_with("-2.pdf"));
+        while !second(&events) {
+            events = soon(events.seq).await;
         }
         // Two edits wrote page 1 twice: a client that was away has only the later.
-        let all = wait(0, SOON).await;
+        let all = soon(0).await;
         assert_eq!(all.pages.len(), 1);
         let page = &all.pages[0];
         let folder = PathBuf::from(&document.path).parent().unwrap().to_owned();
-        assert_eq!((page.page, page.edit), (1, 2));
+        assert_eq!(page.page, 1);
         assert_eq!(PathBuf::from(&page.path), folder.join("page-1-2.pdf"));
         assert!(page.serial > document.serial && all.pdf.unwrap().serial == document.serial);
-        // And one that has seen it is told nothing twice.
-        let quiet = wait(all.seq, Duration::from_millis(60)).await;
-        assert!(quiet.pages.is_empty() && quiet.pdf.is_none() && quiet.seq == all.seq);
-        assert_eq!(quiet.synced, 2);
+        // And one that has seen it is told nothing twice: its wait goes on.
+        let quiet = tokio::time::timeout(Duration::from_millis(60), wait(all.seq)).await;
+        assert!(quiet.is_err());
 
         // A new document takes the place of the pages before it: the stub writes one when
         // asked for a finishing pass, as upstream's build does.
-        manager.held(&token).unwrap().send(&[json!(["rerun-once"])]);
-        let mut events = wait(all.seq, SOON).await;
+        session.send(&[json!(["rerun-once"])]);
+        let mut events = soon(all.seq).await;
         while events.done.is_none() {
-            events = wait(all.seq, SOON).await;
+            events = soon(all.seq).await;
         }
         let document = events.pdf.unwrap();
-        assert_eq!((document.version, document.pages, document.edit), (2, 4, 9));
+        assert_eq!((document.version, document.pages), (2, 4));
         assert_eq!(document.run.as_deref(), Some("complete"));
         assert_eq!(document.changed, Some(vec![[1, 1], [3, 3]]));
         assert!(events.pages.is_empty());
-        let done = events.done.unwrap();
-        assert_eq!((done.pages, done.run.as_str()), (4, "complete"));
+        assert_eq!(events.done.unwrap().run, "complete");
 
         // A page file from outside the session's folder is nobody's page.
-        let session = manager.held(&token).unwrap();
-        apply_message(&session, &json!(["page", 0, "/etc/passwd", 1]));
-        assert!(wait(events.seq, Duration::ZERO).await.pages.is_empty());
+        apply_message(&session, &json!(["page", 0, "/etc/passwd", 0]));
+        assert!(
+            session
+                .events(&lock(&session.state), events.seq)
+                .pages
+                .is_empty()
+        );
 
         // Stopping answers the wait at once.
-        let waiting = tokio::spawn(wait(events.seq, Duration::from_secs(20)));
+        let waiting = tokio::spawn(wait(events.seq));
         tokio::time::sleep(Duration::from_millis(30)).await;
         let began = Instant::now();
         manager.stop(&root).unwrap();
         let ended = waiting.await.unwrap();
         assert!(!ended.running && began.elapsed() < Duration::from_secs(1));
-        assert!(!wait(ended.seq, Duration::from_secs(20)).await.running);
+        assert!(!soon(ended.seq).await.running);
         assert_eq!(
-            manager
-                .wait(&root, "stale", 0, Duration::ZERO)
-                .await
-                .unwrap_err()
-                .status,
+            manager.wait(&root, "stale", 0).await.unwrap_err().status,
             409
         );
     }
@@ -1886,18 +1744,12 @@ mod tests {
         let manager = Manager::default();
         let started = begin(&manager, &root, &path_env, &main_buffer("abc")).await;
         let token = started.session.as_deref().unwrap();
-        let mut events = manager.wait(&root, token, 0, SOON).await.unwrap();
-        while events.pdf.is_none() {
-            events = manager.wait(&root, token, events.seq, SOON).await.unwrap();
-        }
         // No word of pages before the document: the build is an older one.
-        let document = events.pdf.unwrap();
-        assert_eq!(
-            (events.live, document.version, document.pages),
-            (None, 1, 1)
-        );
+        let document = first_document(&manager, &root, token).await;
+        let live = lock(&manager.held(token).unwrap().state).live;
+        assert_eq!((live, document.version, document.pages), (None, 1, 1));
         assert!(document.run.is_none() && document.changed.is_none());
-        assert_eq!(manager.edit(token, "main.tex", 3, 0, "d").unwrap(), 1);
+        manager.edit(token, "main.tex", 3, 0, "d").unwrap();
         manager.view(token, 0, 1).unwrap();
         manager.caret(token, "main.tex", 1).unwrap();
         until(|| commands(&tmp).iter().any(|c| c[0] == "change")).await;

@@ -12,6 +12,7 @@ use tokio::time::Instant;
 use super::Msg;
 use super::actor::{Actor, Later};
 use crate::CoreError;
+use crate::projects::file_kind;
 use crate::texpresso::{Caret, Events, FileBuffer, Pane, Status};
 
 const DIDNT_START: &str =
@@ -336,7 +337,7 @@ impl Actor {
                 .engine
                 .live_edit(&owner, path, start as usize, length as usize, text);
             match sent {
-                Ok(_) => return,
+                Ok(()) => return,
                 Err(error) if error.status == 409 => return self.fail(error),
                 // Refused, so the copy is a step behind: the whole text puts it right, or says why not.
                 Err(_) => {
@@ -383,7 +384,7 @@ impl Actor {
                 self.engine
                     .live_update(self.root.clone(), path.clone(), text.clone(), owner);
             match update.await {
-                Ok(_) => {
+                Ok(()) => {
                     self.live.rejected.remove(&path);
                     if self.live.pending.is_empty() {
                         self.live.failure = None;
@@ -624,15 +625,9 @@ impl Actor {
     }
 }
 
-/// The files the editor opens as text, as the Mac app's `isTextFile` has them.
-pub(crate) fn is_text_file(path: &str) -> bool {
-    let ext = path
-        .rsplit_once('.')
-        .map_or("", |(_, ext)| ext)
-        .to_ascii_lowercase();
-    const TEXT: &[&str] = &[
-        "tex", "bib", "cls", "sty", "bst", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "lua",
-        "py", "r", "dat", "def", "clo", "tikz",
-    ];
-    !path.rsplit('/').next().unwrap_or(path).starts_with('.') && TEXT.contains(&ext.as_str())
+/// The files the editor opens as text, as the Mac app's `isTextFile` has them: those
+/// `file_kind` gives as text, but for hidden ones.
+fn is_text_file(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    !name.starts_with('.') && matches!(file_kind(name), "tex" | "bib" | "text")
 }

@@ -15,8 +15,7 @@ view or caret, and the PDF pane keeps the last build's PDF.
 
 The core's session owns the TeXpresso client (`crates/texlocal-core/src/session/live.rs`
 over `src/texpresso.rs`); hosts use `session_live_*` commands and `live*` events
-(`docs/core-api.md`). Without a session, the stateless `texpresso_*` commands drive the
-client directly.
+(`docs/core-api.md`).
 
 ## Install
 
@@ -47,12 +46,15 @@ quits when its input closes.
 
 - The client says which pages are in view (`["view", first, last]`). A change is typeset as
   far as those, and each page that changed is written at once with MuPDF's PDF writer as a
-  one-page PDF beside the document and reported (`["page", index, path, edit]`). TeX's
+  one-page PDF beside the document and reported (`["page", index, path, mark]`). TeX's
   Type 1 fonts are written as CFF copies so PDFKit draws them.
 - When typing pauses the rest is typeset and the whole document is written (to a `.part`
   file, renamed when complete) with its SyncTeX beside it (`live.synctex`), reported as
-  `["pdf", path, pages, run, changed, edit]`: the pages that changed, and whether TeX
+  `["pdf", path, pages, run, changed, mark]`: the pages that changed, and whether TeX
   reached the end or stopped on an error.
+- A client may number its edits (`["mark", n]`): each page and document then carries the
+  last number it shows, and `["synced", n]` says when the pages in view show it. The core
+  sends none, so `mark` is 0.
 - References and contents are brought up to date by finishing passes in a second TeX, which
   takes the first one's place when done and is dropped by a keystroke. TeXpresso's own idle
   reruns stay off.
@@ -88,8 +90,7 @@ in `crates/texlocal-core/src/session/tests.rs`, which run with `cargo test --wor
   `hyperref` links work again in a build's PDF.
 - A normal Compile is still needed for final output and bibliography tools; live sessions
   include the normal build directory for existing auxiliary files.
-- Sessions are temporary. Closing the project stops them, and a client that goes two minutes
-  without polling or updating expires. Starting live in another window replaces the
-  previous session, whose late requests cannot affect the new one.
+- Sessions are temporary: closing the project stops them. Starting live in another window
+  replaces the previous session, whose late requests cannot affect the new one.
 - Host validation failures, such as a file over 8 MB, stay visible until that file is
   accepted and do not block other files.

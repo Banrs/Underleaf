@@ -5,7 +5,6 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::CoreError;
 use crate::compile::CompileResult;
@@ -13,9 +12,6 @@ use crate::service::Service;
 use crate::texpresso::{Events, FileBuffer, Pane, Status};
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
-
-/// The longest a live preview's wait for news lasts before it asks again.
-const WAIT: Duration = Duration::from_secs(30);
 
 pub(crate) trait Engine: Send + Sync {
     fn compile(&self, root: PathBuf) -> Fut<Result<CompileResult, CoreError>>;
@@ -34,7 +30,7 @@ pub(crate) trait Engine: Send + Sync {
         path: String,
         text: String,
         token: String,
-    ) -> Fut<Result<u64, CoreError>>;
+    ) -> Fut<Result<(), CoreError>>;
     fn live_edit(
         &self,
         token: &str,
@@ -42,7 +38,7 @@ pub(crate) trait Engine: Send + Sync {
         start: usize,
         remove: usize,
         text: &str,
-    ) -> Result<u64, CoreError>;
+    ) -> Result<(), CoreError>;
     fn live_view(&self, token: &str, first: u32, last: u32);
     fn live_caret(&self, token: &str, path: &str, offset: usize);
     fn live_wait(&self, root: PathBuf, token: String, after: u64)
@@ -96,12 +92,9 @@ impl Engine for ServiceEngine {
         path: String,
         text: String,
         token: String,
-    ) -> Fut<Result<u64, CoreError>> {
+    ) -> Fut<Result<(), CoreError>> {
         let service = Arc::clone(&self.0);
-        Box::pin(async move {
-            let updated = service.texpresso.update(&root, &path, &text, &token, true);
-            Ok(updated.await?.edit)
-        })
+        Box::pin(async move { service.texpresso.update(&root, &path, &text, &token).await })
     }
 
     fn live_edit(
@@ -111,7 +104,7 @@ impl Engine for ServiceEngine {
         start: usize,
         remove: usize,
         text: &str,
-    ) -> Result<u64, CoreError> {
+    ) -> Result<(), CoreError> {
         self.0.texpresso.edit(token, path, start, remove, text)
     }
 
@@ -130,18 +123,12 @@ impl Engine for ServiceEngine {
         after: u64,
     ) -> Fut<Result<Events, CoreError>> {
         let service = Arc::clone(&self.0);
-        Box::pin(async move { service.texpresso.wait(&root, &token, after, WAIT).await })
+        Box::pin(async move { service.texpresso.wait(&root, &token, after).await })
     }
 
     fn live_stop(&self, root: PathBuf, token: String) -> Fut<Result<Status, CoreError>> {
         let service = Arc::clone(&self.0);
-        Box::pin(async move {
-            let path_env = service.tool_paths().1;
-            let stop = service
-                .texpresso
-                .stop_request(&root, Some(&token), &path_env);
-            stop.await
-        })
+        Box::pin(async move { service.texpresso.stop_request(&root, &token).await })
     }
 
     fn live_rescan(&self, root: PathBuf, token: String) -> Fut<Result<Status, CoreError>> {
