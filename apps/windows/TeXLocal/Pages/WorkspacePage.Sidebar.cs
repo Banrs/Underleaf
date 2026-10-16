@@ -145,21 +145,13 @@ public sealed partial class WorkspacePage
 
     void SaveFolds() => _ = Core.CallAsync("set_ui_state", new { id, patch = new { expandedFolders = expanded.Order(), foldedHeadings = folded.Order() } });
 
-    async void OnInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
+    async void OnInvoked(TreeView sender, TreeViewItemInvokedEventArgs args) => await ((args.InvokedItem as NavItem)?.Target switch
     {
-        switch ((args.InvokedItem as NavItem)?.Target)
-        {
-            case TreeNode { Type: not "dir" } node:
-                await OpenDocument(node.Path, node.Kind);
-                break;
-            case OutlineNode { File: { } file } heading:
-                await Reveal(file, heading.Line);
-                break;
-            case SearchHit hit:
-                await Reveal(hit.File, hit.Line, hit.Column, hit.Length);
-                break;
-        }
-    }
+        TreeNode { Type: not "dir" } node => OpenDocument(node.Path, node.Kind),
+        OutlineNode { File: { } file } heading => Reveal(file, heading.Line),
+        SearchHit hit => Reveal(hit.File, hit.Line, hit.Column, hit.Length),
+        _ => Task.CompletedTask,
+    });
 
     // MARK: the outline
 

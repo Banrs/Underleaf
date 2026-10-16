@@ -42,10 +42,11 @@ public sealed partial class WorkspacePage : Page
     bool texAvailable, compiling, outdated, sidebarWanted = true;
     double ratio = Prefs.SplitRatio;
     CompileResult? result;
-    IssueItem[] issues = [];
+    UIElement? beforeMenu;
 
     static Core Core => App.Core!;
     bool Inline => Split.DisplayMode == SplitViewDisplayMode.Inline;
+    LogItem[] BuildIssues => result is null ? [] : [.. result.Errors, .. result.Warnings];
 
     public WorkspacePage()
     {
@@ -95,8 +96,7 @@ public sealed partial class WorkspacePage : Page
         };
         Editor.IssueInvoked += line =>
         {
-            LogItem[] all = result is null ? [] : [.. result.Errors, .. result.Warnings];
-            var index = Array.FindIndex(all, i => i.File == Editor.Path && i.Line == line.Line);
+            var index = Array.FindIndex(BuildIssues, i => i.File == Editor.Path && i.Line == line.Line);
             if (index >= 0) GoToIssue("session_choose_issue", new { session, index });
         };
         Pdf.ViewMoved += ShowPage;
@@ -105,7 +105,6 @@ public sealed partial class WorkspacePage : Page
             var at = await Core.CallAsync<InverseSync>("synctex_inverse", new { id, page, x, y });
             await Reveal(at.File, at.Line, at.Column ?? 0);
         });
-        // In code: the XAML compiler fails on an x:Bind to Shortcut.Scope.
         foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem]) Shortcut.SetScope(item, Editor);
         Shortcut.SetScope(RenameItem, FilesTree);
         Shortcut.SetScope(DeleteItem, FilesTree);
@@ -167,7 +166,6 @@ public sealed partial class WorkspacePage : Page
     {
         texAvailable = (await Core.CallAsync<TexStatus>("status")).Available;
         CompileButton.IsEnabled = CompileItem.IsEnabled = texAvailable;
-        if (!texAvailable) ToolTipService.SetToolTip(CompileButton, "TeX isn't installed");
         var opened = await Core.CallAsync<SessionOpened>("session_open", new { id, autoCompile = Prefs.AutoCompile && texAvailable });
         (session, root) = (opened.Session, opened.Root);
         var settings = await Core.CallAsync("get_settings", new { id });
@@ -180,11 +178,8 @@ public sealed partial class WorkspacePage : Page
         ShowTree(opened.Tree);
         if (opened.Pdf is { } pdf) await Pdf.Load(Full(pdf));
         ShowBuild();
-        if (Find(FilesTree.ItemsSource as List<NavItem>, i => i.Key == mainFile)?.Target is TreeNode { Type: not "dir" } main)
-        {
-            Select(FilesTree, i => i.Key == mainFile);
-            await OpenDocument(main.Path, main.Kind);
-        }
+        Select(FilesTree, i => i.Key == mainFile);
+        if (Picked is { Type: not "dir" } main) await OpenDocument(main.Path, main.Kind);
     }
 
     void OnEvent(CoreEvent e)
@@ -220,11 +215,7 @@ public sealed partial class WorkspacePage : Page
                 (compiling, outdated) = (ev.Compiling, ev.Outdated);
                 ShowBuild();
                 break;
-            case "build_finished":
-                Finished(ev.Result!, ev.Auto, ev.Announce);
-                outdated = ev.Outdated;
-                ShowBuild();
-                break;
+            case "build_finished": Finished(ev); break;
         }
     }
 
@@ -309,16 +300,15 @@ public sealed partial class WorkspacePage : Page
 
     // MARK: builds and issues
 
-    void Finished(CompileResult done, bool auto, bool announce)
+    void Finished(DocEvent ev)
     {
-        result = done;
-        issues = [.. done.Errors.Concat(done.Warnings).Select((item, i) => new IssueItem(i, item))];
+        var done = result = ev.Result!;
         (ErrorCount.Text, WarningCount.Text) = ($"{done.Errors.Length}", $"{done.Warnings.Length}");
         WarningsToggle.IsEnabled = done.Warnings.Length > 0;
         Log.Text = done.Log.ReplaceLineEndings("\r");
         ShowIssues();
         var failed = !done.Ok && !done.Stopped;
-        if (failed && !auto)
+        if (failed && !ev.Auto)
         {
             BuildFailed.Message = done.Errors.FirstOrDefault()?.Short ?? "";
             BuildFailed.IsOpen = true;
@@ -326,8 +316,10 @@ public sealed partial class WorkspacePage : Page
             IssueTabs.SelectedItem = IssuesTab;
             IssueList.SelectedIndex = IssueList.Items.Count > 0 ? 0 : -1;
         }
-        if (announce) Announce(BuildState, failed ? $"Build failed, {done.Errors.Length} {(done.Errors.Length == 1 ? "error" : "errors")}" : "Build succeeded", "build");
+        if (ev.Announce) Announce(BuildState, failed ? $"Build failed, {done.Errors.Length} {(done.Errors.Length == 1 ? "error" : "errors")}" : "Build succeeded", "build");
         if (done.Pdf is { } pdf && (done.PdfChanged || Pdf.PageCount == 0)) _ = Pdf.Load(Full(pdf));
+        outdated = ev.Outdated;
+        ShowBuild();
     }
 
     void ShowBuild()
@@ -335,7 +327,7 @@ public sealed partial class WorkspacePage : Page
         CompileIcon.Glyph = compiling ? "\uE71A" : "\uE768";
         CompileLabel.Text = compiling ? "Stop" : "Compile";
         AutomationProperties.SetName(CompileButton, CompileLabel.Text);
-        if (texAvailable) ToolTipService.SetToolTip(CompileButton, compiling ? "Stop (Shift+F5)" : "Compile (Ctrl+Enter)");
+        ToolTipService.SetToolTip(CompileButton, !texAvailable ? "TeX isn't installed" : compiling ? "Stop (Shift+F5)" : "Compile (Ctrl+Enter)");
         StopItem.IsEnabled = Pdf.Compiling = compiling;
         var state = compiling ? "Compiling…"
             : result is null ? (Pdf.PageCount > 0 ? "" : "No build yet")
@@ -345,14 +337,13 @@ public sealed partial class WorkspacePage : Page
         BuildState.Text = outdated && !compiling && result is not null ? $"{state} · Preview out of date" : state;
     }
 
-    /// The issues, without warnings while they're hidden.
     void ShowIssues()
     {
-        IssueList.ItemsSource = WarningsToggle.IsChecked == true ? issues : issues.Where(i => i.IsError).ToArray();
+        var all = BuildIssues.Select((item, i) => new IssueItem(i, item));
+        IssueList.ItemsSource = (WarningsToggle.IsChecked == true ? all : all.Where(i => i.IsError)).ToArray();
         ShowIssueTab();
     }
 
-    /// The tab's list or log, its control in the header's slot, and the Issues tab's note when there are none.
     void ShowIssueTab()
     {
         if (Log is null) return;
@@ -415,11 +406,8 @@ public sealed partial class WorkspacePage : Page
 
     void OnCompileButton(object sender, RoutedEventArgs e) => (compiling ? (RoutedEventHandler)OnStop : OnCompile)(sender, e);
 
-    void OnCompile(object sender, RoutedEventArgs e)
-    {
-        if (texAvailable) Run("Can't compile", () => Core.CallAsync("session_compile", new { session }));
-    }
-
+    /// Compile and its keys are disabled while TeX is missing.
+    void OnCompile(object sender, RoutedEventArgs e) => Run("Can't compile", () => Core.CallAsync("session_compile", new { session }));
     void OnStop(object sender, RoutedEventArgs e) => Run("Can't stop the build", () => Core.CallAsync("session_stop_compile", new { session }));
     void OnClean(object sender, RoutedEventArgs e) => Run("Can't clean the build folder", () => Core.CallAsync("session_clean", new { session }));
 
@@ -488,20 +476,14 @@ public sealed partial class WorkspacePage : Page
             (IssuesPanel, IssuesItem.IsChecked, () => (Log.Visibility == Visibility.Visible ? (Control)Log : IssueList).Focus(FocusState.Keyboard)),
         ];
         var back = args.KeyboardAccelerator.Modifiers.HasFlag(Windows.System.VirtualKeyModifiers.Shift);
-        var at = -1;
-        for (var e = FocusManager.GetFocusedElement(XamlRoot) as DependencyObject; e is not null && at < 0; e = VisualTreeHelper.GetParent(e))
-            at = Array.FindIndex(regions, r => r.Area == e);
+        var focused = FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
+        var at = Array.FindIndex(regions, r => focused is not null && Within(focused, r.Area));
         if (at < 0) at = back ? 0 : regions.Length - 1;
         for (var i = 1; i <= regions.Length; i++)
-        {
-            var (_, shown, focus) = regions[(at + i * (back ? regions.Length - 1 : 1)) % regions.Length];
-            if (shown && focus()) return;
-        }
+            if (regions[(at + i * (back ? regions.Length - 1 : 1)) % regions.Length] is (_, true, var focus) && focus()) return;
     }
 
     // MARK: dialogs and commands
-
-    UIElement? beforeMenu;
 
     /// A Win32 menu gives focus back to the window's control when it closes; MenuBar leaves it on its own item,
     /// where typing goes nowhere. So focus that comes back to the bar from a menu, flyout or dialog goes on to

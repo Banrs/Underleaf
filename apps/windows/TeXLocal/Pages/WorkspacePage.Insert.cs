@@ -25,8 +25,7 @@ public sealed class PaletteGroup(string title, IEnumerable<PaletteItem> items) :
 /// symbols as RaTeX draws them (glyph_svg).
 public sealed partial class WorkspacePage
 {
-    static Menus? catalogue;
-    static Menus Catalogue => catalogue ??= Source.SyntaxCall<Menus>("menus", new { })!;
+    static readonly Menus Catalogue = Source.SyntaxCall<Menus>("menus", new { })!;
     List<PaletteGroup> symbols = [];
     Color inked;
 
@@ -145,7 +144,6 @@ public sealed partial class WorkspacePage
         }
     }
 
-    /// The groups with the symbols whose command has the filter's text.
     void ShowSymbols()
     {
         var filter = SymbolFilter.Text.Trim();
