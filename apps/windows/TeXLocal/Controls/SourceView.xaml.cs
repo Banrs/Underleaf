@@ -176,33 +176,16 @@ public sealed partial class SourceView : UserControl
         return null;
     }
 
-    /// RichEdit ignores alpha, so a translucent ink is laid over the theme's base background first.
-    Color Of(Rectangle r)
-    {
-        var (c, under) = (((SolidColorBrush)r.Fill).Color, ((SolidColorBrush)PaperInk.Fill).Color);
-        byte Mix(byte a, byte b) => (byte)((a * c.A + b * (255 - c.A)) / 255);
-        return Color.FromArgb(255, Mix(c.R, under.R), Mix(c.G, under.G), Mix(c.B, under.B));
-    }
+    /// A theme brush's colour as RichEdit can draw it, over the editor's background.
+    Color Of(Rectangle r) => EditorPrefs.Over(((SolidColorBrush)r.Fill).Color, ((SolidColorBrush)PaperInk.Fill).Color);
 
-    static double[] Rgba(Color c) => [c.R / 255.0, c.G / 255.0, c.B / 255.0, c.A / 255.0];
-
-    /// The theme's colours raised by the core to legibility on this background and current line, by highlight kind; a
-    /// high-contrast theme keeps every kind in the window text colour. The System theme's secondary text is Windows'.
+    /// The theme's colours raised by the core to legibility on this background and current line, by highlight kind.
     void Inks()
     {
         ink = Of(TextInk);
         inked = ActualTheme;
-        static byte Byte(double v) => (byte)Math.Round(Math.Clamp(v, 0, 1) * 255);
-        var colours = new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast ? null
-            : Source.SyntaxCall<double[][]>("theme_colors", new
-            {
-                theme,
-                dark = ActualTheme == ElementTheme.Dark,
-                background = Rgba(((SolidColorBrush)PaperInk.Fill).Color),
-                fill = Rgba(((SolidColorBrush)CurrentLine.Fill).Color),
-                system = new Dictionary<string, double[]> { ["secondaryLabelColor"] = Rgba(Of(SecondaryInk)) },
-            });
-        kinds = [.. (colours ?? []).Select(c => Color.FromArgb(255, Byte(c[0]), Byte(c[1]), Byte(c[2])))];
+        kinds = EditorPrefs.Colors(theme, ActualTheme == ElementTheme.Dark, ((SolidColorBrush)PaperInk.Fill).Color,
+            ((SolidColorBrush)CurrentLine.Fill).Color, Of(SecondaryInk));
     }
 
     /// Completes once the whole text is in. RichEdit drops the text's colours if it gets them before
@@ -288,8 +271,9 @@ public sealed partial class SourceView : UserControl
     {
         var rtf = new StringBuilder(to - from + (to - from) / 4 + 128);
         rtf.Append(@"{\rtf1\ansi{\colortbl;");
-        foreach (var c in kinds) rtf.Append($@"\red{c.R}\green{c.G}\blue{c.B};");
-        rtf.Append('}');
+        foreach (var c in kinds.Append(ink)) rtf.Append($@"\red{c.R}\green{c.G}\blue{c.B};");
+        // Plain text in the ink, not RichEdit's automatic colour, which follows the control's state.
+        rtf.Append($@"}}\cf{kinds.Length + 1} ");
         var at = from;
         foreach (var run in source?.Highlights(from, to - from) ?? [])
         {
@@ -730,7 +714,7 @@ public sealed partial class SourceView : UserControl
         {
             shownMath = maths;
             var em = Editor.FontSize * 1.21;
-            var color = Rgba(ink);
+            var color = EditorPrefs.Rgba(ink);
             var drawn = await Task.Run(() => Source.SyntaxCall<MathSvg>("math_svg", new { tex = maths.Tex, display = maths.Display, size = em, color }));
             if (shownMath != maths) return;
             await ShowMaths(drawn, maths.Tex);
@@ -863,6 +847,8 @@ public sealed partial class SourceView : UserControl
         {
             Mirror(start, removed, inserted, !restored);
             if (!restored && (removed > 0 || inserted.Length != 1 || !char.IsLetterOrDigit(inserted[0]))) NextUndoGroup();
+            // RichEdit moved the selection before its text was read: the caret's line is the new text's.
+            CaretMoved?.Invoke();
         }
         before = Selected;
         if (reoffer)
