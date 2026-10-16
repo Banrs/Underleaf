@@ -9,64 +9,65 @@
     <Grid Style="{StaticResource ContentCardStyle}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TextBlock Margin="36,24,36,0" Style="{StaticResource TitleTextBlockStyle}" Text="Projects" />
+        <StackPanel MaxWidth="1064" Padding="36,0,36,0">
+            <TextBlock Margin="0,24,0,0" Style="{StaticResource TitleTextBlockStyle}" Text="Projects" />
 
-        <Grid Grid.Row="1" Margin="36,16,36,0">
-            <StackPanel Orientation="Horizontal" Spacing="8">
+            <Grid Margin="0,16,0,0">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button
+                        x:Name="NewButton"
+                        AutomationProperties.Name="New project"
+                        Click="OnNew"
+                        Style="{StaticResource AccentButtonStyle}">
+                        <Button.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="N" Modifiers="Control,Shift" />
+                        </Button.KeyboardAccelerators>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon FontSize="16" Glyph="&#xE710;" />
+                            <TextBlock Text="New project" />
+                        </StackPanel>
+                    </Button>
+                    <DropDownButton Content="Open">
+                        <DropDownButton.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="O" Modifiers="Control" />
+                        </DropDownButton.KeyboardAccelerators>
+                        <DropDownButton.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                                <MenuFlyoutItem Click="OnOpenFolder" Text="Folder…">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8B7;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Click="OnOpenFile" Text="ZIP or TeX file…">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8A5;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </DropDownButton.Flyout>
+                    </DropDownButton>
+                </StackPanel>
                 <Button
-                    x:Name="NewButton"
-                    AutomationProperties.Name="New project"
-                    Click="OnNew"
-                    Style="{StaticResource AccentButtonStyle}">
-                    <Button.KeyboardAccelerators>
-                        <KeyboardAccelerator Key="N" Modifiers="Control,Shift" />
-                    </Button.KeyboardAccelerators>
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon FontSize="16" Glyph="&#xE710;" />
-                        <TextBlock Text="New project" />
-                    </StackPanel>
+                    HorizontalAlignment="Right"
+                    AutomationProperties.Name="Settings"
+                    Click="OnSettings"
+                    Style="{StaticResource SubtleButtonStyle}"
+                    ToolTipService.ToolTip="Settings (Ctrl+,)">
+                    <FontIcon FontSize="16" Glyph="&#xE713;" />
                 </Button>
-                <DropDownButton Content="Open">
-                    <DropDownButton.KeyboardAccelerators>
-                        <KeyboardAccelerator Key="O" Modifiers="Control" />
-                    </DropDownButton.KeyboardAccelerators>
-                    <DropDownButton.Flyout>
-                        <MenuFlyout Placement="BottomEdgeAlignedLeft">
-                            <MenuFlyoutItem Click="OnOpenFolder" Text="Folder…">
-                                <MenuFlyoutItem.Icon>
-                                    <FontIcon Glyph="&#xE8B7;" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                            <MenuFlyoutItem Click="OnOpenFile" Text="ZIP or TeX file…">
-                                <MenuFlyoutItem.Icon>
-                                    <FontIcon Glyph="&#xE8A5;" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                        </MenuFlyout>
-                    </DropDownButton.Flyout>
-                </DropDownButton>
-            </StackPanel>
-            <Button
-                HorizontalAlignment="Right"
-                AutomationProperties.Name="Settings"
-                Click="OnSettings"
-                Style="{StaticResource SubtleButtonStyle}"
-                ToolTipService.ToolTip="Settings (Ctrl+,)">
-                <FontIcon FontSize="16" Glyph="&#xE713;" />
-            </Button>
-        </Grid>
+            </Grid>
 
-        <StackPanel Grid.Row="2" Margin="36,12,36,0" Spacing="8">
+            <!-- Collapsed while closed, so a closed bar leaves no gap. -->
             <InfoBar
                 x:Name="LibraryError"
                 Title="Can't open the projects folder"
+                Margin="0,12,0,0"
                 IsClosable="False"
-                Severity="Error">
+                Severity="Error"
+                Visibility="{x:Bind LibraryError.IsOpen, Mode=OneWay}">
                 <InfoBar.ActionButton>
                     <Button Click="OnRetry" Content="Try again" />
                 </InfoBar.ActionButton>
@@ -74,26 +75,34 @@
             <InfoBar
                 x:Name="TexMissing"
                 Title="TeX isn't installed"
+                Margin="0,12,0,0"
                 IsClosable="False"
                 Message="TeXLocal compiles with TeX Live."
-                Severity="Warning">
+                Severity="Warning"
+                Visibility="{x:Bind TexMissing.IsOpen, Mode=OneWay}">
                 <InfoBar.ActionButton>
                     <HyperlinkButton Content="Get TeX Live" NavigateUri="https://tug.org/texlive/windows.html" />
                 </InfoBar.ActionButton>
             </InfoBar>
         </StackPanel>
 
+        <!-- Full width so the scroll bar sits at the page's edge; the cards keep to the header's column (1064 less the padding). -->
         <ListView
             x:Name="List"
-            Grid.Row="3"
-            Margin="16,8,16,0"
-            Padding="0,0,0,24"
+            Grid.Row="1"
+            Padding="36,12,36,32"
             AutomationProperties.Name="Projects"
+            ContainerContentChanging="OnContainerContentChanging"
             ContextRequested="OnContextRequested"
             IsItemClickEnabled="True"
             ItemClick="OnItemClick"
-            ContainerContentChanging="OnContainerContentChanging"
-            SelectionMode="Single">
+            ItemContainerStyle="{StaticResource CardListViewItemStyle}"
+            SelectionMode="None">
+            <ListView.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <ItemsStackPanel MaxWidth="992" />
+                </ItemsPanelTemplate>
+            </ListView.ItemsPanel>
             <ListView.ContextFlyout>
                 <MenuFlyout x:Name="ProjectMenu">
                     <MenuFlyoutItem Click="OnOpenItem" Text="Open">
@@ -132,14 +141,20 @@
             </ListView.ContextFlyout>
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="bridge:ProjectInfo">
-                    <Grid Padding="0,10">
+                    <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="48" />
+                            <ColumnDefinition Width="32" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <FontIcon HorizontalAlignment="Left" FontSize="32" Glyph="&#xE8B7;" />
+                        <FontIcon VerticalAlignment="Center" FontSize="32" Glyph="&#xE8B7;" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                            <TextBlock
+                                Style="{StaticResource BodyTextBlockStyle}"
+                                Text="{x:Bind Name}"
+                                TextTrimming="CharacterEllipsis"
+                                TextWrapping="NoWrap"
+                                ToolTipService.ToolTip="{x:Bind Name}" />
                             <TextBlock
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                 Style="{StaticResource CaptionTextBlockStyle}"
@@ -147,6 +162,15 @@
                                 TextTrimming="CharacterEllipsis"
                                 TextWrapping="NoWrap" />
                         </StackPanel>
+                        <Button
+                            Grid.Column="2"
+                            VerticalAlignment="Center"
+                            AutomationProperties.Name="{x:Bind local:HomePage.MoreName(Name)}"
+                            Click="OnMore"
+                            Style="{StaticResource SubtleButtonStyle}"
+                            ToolTipService.ToolTip="More options">
+                            <FontIcon FontSize="16" Glyph="&#xE712;" />
+                        </Button>
                     </Grid>
                 </DataTemplate>
             </ListView.ItemTemplate>
@@ -154,7 +178,7 @@
 
         <StackPanel
             x:Name="Empty"
-            Grid.Row="3"
+            Grid.Row="1"
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
             Spacing="8"
