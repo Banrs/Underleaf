@@ -432,6 +432,30 @@ fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
     assert!(hits.iter().all(|h| h.file == "many.tex"));
 }
 
+/// An editor host selects the match itself, so a hit places it in UTF-16
+/// units of the line as written, not of its lowercased copy.
+#[test]
+fn a_hit_places_its_match_in_utf16_units_of_the_line() {
+    let data = data_dir();
+    let root = project(data.path(), "search-place");
+    let hit = |text: &str, query: &str| {
+        fs::write(root.join("main.tex"), text).unwrap();
+        let mut hits = search_project(&root, query, 50).unwrap();
+        assert_eq!(hits.len(), 1, "{text:?}");
+        let hit = hits.remove(0);
+        (hit.line, hit.column, hit.length, hit.matched)
+    };
+    // The first match on its line.
+    let place = hit("intro\nthe brown, brown fox\n", "brown");
+    assert_eq!(place, (2, 4, 5, "brown".into()));
+    // An emoji is two units; so is a match's character beyond the BMP.
+    let place = hit("\u{1F600} see a\u{1D538}b\n", "a\u{1D538}b");
+    assert_eq!(place, (1, 7, 4, "a\u{1D538}b".into()));
+    // İ, ẞ and the Kelvin sign shrink in UTF-8 as they lowercase.
+    let place = hit("İ \u{212A} \u{1F600} GRÖẞE und\n", "größe");
+    assert_eq!(place, (1, 7, 5, "GRÖẞE".into()));
+}
+
 /// Only the project's own top-level build/ is compile output. A `build` deeper
 /// in the tree is the author's: file_tree lists it and export_zip archives it,
 /// so search and the symbol scan must see it too.
