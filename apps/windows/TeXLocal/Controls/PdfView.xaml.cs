@@ -1,141 +1,124 @@
 using System.Runtime.InteropServices.WindowsRuntime;
-using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
+using TeXLocal.Bridge;
 using Windows.Data.Pdf;
+using Windows.Foundation;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 using Windows.System;
-using Windows.UI.Core;
 using Windows.UI.ViewManagement;
 
 namespace TeXLocal.Controls;
 
-/// A page: white paper sized to the PDF page × zoom, its rendering, and an overlay for the SyncTeX box.
-public sealed class PageItem
-{
-    readonly Image image = new() { Stretch = Stretch.Fill };
-    Windows.Foundation.Size size;
-    double zoom = 1;
-
-    public readonly Border Box;
-    public readonly Canvas Overlay = new();
-
-    public PageItem(Style style)
-    {
-        Box = new Border { Style = style, Child = new Grid { Children = { image, Overlay } } };
-    }
-
-    public double Height => size.Height * zoom;
-    public double PageWidth => size.Width;
-    public ImageSource? Bitmap => image.Source;
-    public int Rendered { get; private set; }
-
-    public void Set(int number, Windows.Foundation.Size page, double factor)
-    {
-        size = page;
-        AutomationProperties.SetName(Box, $"Page {number}");
-        Zoom(factor);
-    }
-
-    public void Zoom(double factor)
-    {
-        zoom = factor;
-        (Box.Width, Box.Height) = (size.Width * zoom, size.Height * zoom);
-    }
-
-    public void Show(ImageSource? bitmap, int width)
-    {
-        image.Source = bitmap;
-        Rendered = width;
-    }
-}
-
-/// The build's PDF through Windows.Data.Pdf, which renders pages and nothing else. Zoom sizes the
-/// pages (layout zoom), so page coordinates are page DIPs × zoom.
+/// The build's PDF through Windows.Data.Pdf, which renders pages and nothing else. The pages keep
+/// their size in DIPs and the ScrollViewer zooms them; once the view settles, the pages near it are
+/// drawn again at the pixels they're shown at.
 public sealed partial class PdfView : UserControl
 {
-    const double Gap = 12, PointToDip = 96.0 / 72, MinZoom = 0.25, MaxZoom = 4;
-    readonly List<PageItem> items = [];
-    readonly Microsoft.UI.Dispatching.DispatcherQueueTimer settle;
+    /// A page's paper, its rendering, the canvas for its SyncTeX box, and its size in DIPs.
+    sealed record Page(Border Box, Image Image, Canvas Marks, Size Size)
+    {
+        public int Rendered => (Image.Source as BitmapImage)?.DecodePixelWidth ?? 0;
+    }
+
+    enum Fit { None, Width, Page }
+
+    /// Gap: round and between the pages. Edge: from the content's edge to a page, past its 1px stroke.
+    const double Gap = 12, Edge = Gap + 1, PointToDip = 96.0 / 72;
+    Page[] pages = [];
+    double[] tops = [];
+    Size largest;
     PdfDocument? document;
-    double zoom = 1;
+    Fit fit = Fit.Width;
+    (int Number, Point At)? source;
+    Canvas? marked;
     int loads;
     bool rendering, again;
 
     public event Action? ViewMoved;
-    /// A double-click on a page: its number from 1 and the point in TeX points from its top left.
+    /// A page from 1 and a point on it in TeX points from its top left: a double-click, or Go to source position.
     public event Action<int, double, double>? Inverse;
 
     public PdfView()
     {
         InitializeComponent();
-        settle = DispatcherQueue.CreateTimer();
-        settle.Interval = TimeSpan.FromMilliseconds(150);
-        settle.IsRepeating = false;
-        settle.Tick += (_, _) => Render(true);
         Scroller.ViewChanged += (_, e) =>
         {
             ViewMoved?.Invoke();
-            Render(!e.IsIntermediate);
+            if (!e.IsIntermediate) Render();
         };
-        Scroller.SizeChanged += (_, _) =>
+        Scroller.SizeChanged += (_, _) => Refit(fit);
+        // A zoom of the reader's own ends the fit: Ctrl+wheel, or a pinch that changed it. Not a
+        // final ViewChanged, which can still report the zoom of a fit superseded mid-resize.
+        Scroller.AddHandler(PointerWheelChangedEvent, new PointerEventHandler((_, e) =>
         {
-            Pages.MinWidth = Math.Max(Scroller.ViewportWidth - 2 * Gap, 0);
-            Render(false);
+            if (pages.Length > 0 && e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control)) fit = Fit.None;
+        }), true);
+        Scroller.DirectManipulationCompleted += (_, _) =>
+        {
+            if (pages.Length > 0 && Math.Abs(Zoom - FitZoom(largest)) > 0.001) fit = Fit.None;
         };
-        Scroller.AddHandler(PointerWheelChangedEvent, new PointerEventHandler(OnWheel), true);
-        Scroller.AddHandler(DoubleTappedEvent, new DoubleTappedEventHandler(OnDoubleTapped), true);
-        Loaded += (_, _) => XamlRoot.Changed += (_, _) => Render(true);
+        foreach (var percent in (int[])[50, 75, 100, 125, 150, 200])
+        {
+            var item = new RadioMenuFlyoutItem { Text = $"{percent}%", GroupName = "Zoom", Tag = percent / 100.0 };
+            item.Click += (_, _) => ZoomTo(percent / 100.0);
+            Menu.Items.Add(item);
+        }
+        Loaded += (_, _) => XamlRoot.Changed += OnRootChanged;
+        Unloaded += (_, _) => XamlRoot?.Changed -= OnRootChanged;
     }
 
     public new bool Focus(FocusState state) => Scroller.Focus(state);
+    public bool Compiling { set => Progress.Visibility = value ? Visibility.Visible : Visibility.Collapsed; }
+    public int PageCount => pages.Length;
+    public double Zoom => Scroller.ZoomFactor;
+    public MenuFlyout ZoomMenu => Menu;
 
-    public bool Compiling { set => Progress.Opacity = value ? 1 : 0; }
-    public int PageCount => items.Count;
-    public double Zoom => zoom;
+    /// The page at the view's vertical centre, from 1.
+    public int CurrentPage => pages.Length == 0 ? 0 : PageAt(tops, (Scroller.VerticalOffset + Scroller.ViewportHeight / 2) / Zoom) + 1;
 
-    /// The page at the viewport's vertical centre, from 1.
-    public int CurrentPage => items.Count == 0 ? 0 : PageAt(Scroller.VerticalOffset + Scroller.ViewportHeight / 2) + 1;
-
-    double Top(int index)
+    /// The last page whose top is at or above a y in the content's DIPs.
+    static int PageAt(double[] tops, double y)
     {
-        var y = Gap;
-        for (var i = 0; i < index && i < items.Count; i++) y += items[i].Height + Gap;
-        return y;
+        var i = Array.BinarySearch(tops, y);
+        return Math.Clamp(i < 0 ? ~i - 1 : i, 0, tops.Length - 1);
     }
 
-    int PageAt(double y)
+    /// The pages in a view whose top is at a content y, and one each side.
+    (int First, int Last) Near(double[] tops, double y, double zoom) =>
+        (Math.Max(PageAt(tops, y) - 1, 0), Math.Min(PageAt(tops, y + Scroller.ViewportHeight / zoom) + 1, tops.Length - 1));
+
+    int Pixels(double width, double zoom) => (int)Math.Min(Math.Ceiling(width * zoom * (XamlRoot?.RasterizationScale ?? 1)), 4096);
+
+    /// Draws the pages near a view at the zoom's pixels, and releases the pages further away.
+    async Task Draw(PdfDocument doc, Page[] on, double[] at, double y, double zoom)
     {
-        var top = Gap;
-        for (var i = 0; i < items.Count; i++)
+        var (first, last) = Near(at, y, zoom);
+        for (var i = 0; i < on.Length; i++)
         {
-            top += items[i].Height + Gap;
-            if (y < top) return i;
+            if (i < first - 1 || i > last + 1) on[i].Image.Source = null;
+            var width = Pixels(on[i].Size.Width, zoom);
+            if (i < first || i > last || on[i].Rendered == width) continue;
+            using var page = doc.GetPage((uint)i);
+            using var stream = new InMemoryRandomAccessStream();
+            await page.RenderToStreamAsync(stream, new PdfPageRenderOptions { DestinationWidth = (uint)width, BitmapEncoderId = BitmapEncoder.BmpEncoderId });
+            // At the drawn width: XAML would otherwise decode to the layout size, which leaves out the zoom.
+            var bitmap = new BitmapImage { DecodePixelType = DecodePixelType.Physical, DecodePixelWidth = width };
+            await bitmap.SetSourceAsync(stream);
+            on[i].Image.Source = bitmap;
         }
-        return Math.Max(items.Count - 1, 0);
     }
 
-    int Pixels(double pageWidth) => (int)Math.Ceiling(pageWidth * zoom * (XamlRoot?.RasterizationScale ?? 1));
-
-    static async Task<BitmapImage> Draw(PdfDocument from, int index, int width)
-    {
-        using var page = from.GetPage((uint)index);
-        using var stream = new InMemoryRandomAccessStream();
-        await page.RenderToStreamAsync(stream, new PdfPageRenderOptions { DestinationWidth = (uint)width, BitmapEncoderId = BitmapEncoder.BmpEncoderId });
-        var bitmap = new BitmapImage();
-        await bitmap.SetSourceAsync(stream);
-        return bitmap;
-    }
-
-    /// Draws the pages in view and one each side: missing ones always, sharper ones once a zoom settles.
-    async void Render(bool sharpen)
+    /// Draws for the view as it is now, one pass at a time: a call during a pass runs another after it.
+    async void Render()
     {
         if (rendering)
         {
@@ -148,30 +131,14 @@ public sealed partial class PdfView : UserControl
             do
             {
                 again = false;
-                if (document is not { } doc || items.Count == 0) return;
-                var first = Math.Max(PageAt(Scroller.VerticalOffset) - 1, 0);
-                var last = Math.Min(PageAt(Scroller.VerticalOffset + Scroller.ViewportHeight) + 1, items.Count - 1);
-                for (var i = 0; i < items.Count; i++)
-                {
-                    var item = items[i];
-                    if (i < first - 2 || i > last + 2)
-                    {
-                        if (item.Bitmap is not null) item.Show(null, 0);
-                        continue;
-                    }
-                    var width = Pixels(item.PageWidth);
-                    if (i < first || i > last || item.Bitmap is not null && (!sharpen || item.Rendered == width)) continue;
-                    var bitmap = await Draw(doc, i, width);
-                    if (doc != document) break;
-                    item.Show(bitmap, width);
-                }
+                if (document is { } doc) await Draw(doc, pages, tops, Scroller.VerticalOffset / Zoom, Zoom);
             } while (again);
         }
         finally { rendering = false; }
     }
 
-    /// Shows a PDF, keeping the place: the new pages in view are drawn before the swap, and a
-    /// file that can't be read leaves the last good render up.
+    /// Shows a PDF from a copy, which leaves the file free for the next build. It keeps the place, the
+    /// new pages in view are drawn before the swap, and a file that can't be read leaves the last good render up.
     public async Task Load(string path)
     {
         var load = ++loads;
@@ -184,163 +151,160 @@ public sealed partial class PdfView : UserControl
             next = await PdfDocument.LoadFromStreamAsync(stream);
         }
         catch (Exception) { return; }
-        if (load != loads) return;
+        if (load != loads || next.PageCount == 0) return;
 
-        var sizes = new Windows.Foundation.Size[next.PageCount];
-        for (var i = 0; i < sizes.Length; i++)
+        var fresh = new Page[next.PageCount];
+        var at = new double[fresh.Length];
+        for (var i = 0; i < fresh.Length; i++)
         {
             using var page = next.GetPage((uint)i);
-            sizes[i] = page.Size;
+            fresh[i] = Paper(i + 1, page.Size);
+            at[i] = i == 0 ? Edge : at[i - 1] + fresh[i - 1].Size.Height + 2 + Gap;
         }
-        if (sizes.Length == 0) return;
-        var fresh = items.Count == 0;
-        if (fresh && sizes[0].Width + 2 * Gap > Scroller.ViewportWidth)
-            zoom = Math.Clamp((Scroller.ViewportWidth - 2 * Gap) / sizes.Max(s => s.Width), MinZoom, MaxZoom);
-        var (anchor, within) = Place();
-        anchor = Math.Min(anchor, sizes.Length - 1);
-
-        var drawn = new Dictionary<int, (BitmapImage, int)>();
-        var first = Math.Max(anchor - 1, 0);
-        for (var i = first; i <= first + 3 && i < sizes.Length; i++)
+        var most = new Size(fresh.Max(p => p.Size.Width), fresh.Max(p => p.Size.Height));
+        var zoom = fit == Fit.None || Scroller.ViewportWidth == 0 ? Zoom : FitZoom(most);
+        // The same page at the top of the view, and as far down it.
+        var y = 0.0;
+        if (pages.Length > 0)
         {
-            var width = Pixels(sizes[i].Width);
-            drawn[i] = (await Draw(next, i, width), width);
+            var top = Scroller.VerticalOffset / Zoom;
+            var old = PageAt(tops, top);
+            var i = Math.Min(old, fresh.Length - 1);
+            y =at[i] + (top - tops[old]) / pages[old].Size.Height * fresh[i].Size.Height;
         }
+        await Draw(next, fresh, at, y, zoom);
         if (load != loads) return;
 
-        document = next;
-        Empty.Visibility = Visibility.Collapsed;
-        while (items.Count > sizes.Length)
-        {
-            Pages.Children.Remove(items[^1].Box);
-            items.RemoveAt(items.Count - 1);
-        }
-        for (var i = 0; i < sizes.Length; i++)
-        {
-            if (i == items.Count)
-            {
-                items.Add(new PageItem((Style)Resources["PageStyle"]));
-                Pages.Children.Add(items[i].Box);
-            }
-            items[i].Set(i + 1, sizes[i], zoom);
-            var (bitmap, width) = drawn.TryGetValue(i, out var d) ? d : (null, 0);
-            items[i].Show(bitmap, width);
-        }
-        Restore(anchor, within);
-        Render(true);
-        ViewMoved?.Invoke();
+        Show(next, fresh, at);
+        largest = most;
+        Scroller.ChangeView(fit == Fit.None ? null : 0, y * zoom, (float)zoom, true);
     }
 
-    /// The page at the top of the view and how far down it the view starts, as a fraction.
-    (int Page, double Within) Place()
+    /// A page's paper, which the panel's resources style. Its own coordinates are its DIPs at any zoom.
+    Page Paper(int number, Size size)
     {
-        if (items.Count == 0) return (0, 0);
-        var page = PageAt(Scroller.VerticalOffset);
-        return (page, (Scroller.VerticalOffset - Top(page)) / items[page].Height);
-    }
-
-    void Restore(int page, double within, double? x = null)
-    {
-        Scroller.UpdateLayout();
-        var y = Top(page) + within * items[page].Height;
-        Scroller.ChangeView(x ?? Scroller.HorizontalOffset, y, null, true);
+        var image = new Image { Stretch = Stretch.Fill };
+        AutomationProperties.SetName(image, $"Page {number}");
+        var marks = new Canvas();
+        var grid = new Grid { Width = size.Width, Height = size.Height, Children = { image, marks } };
+        var box = new Border { Child = grid };
+        box.DoubleTapped += (_, e) =>
+        {
+            var p = e.GetPosition(grid);
+            Inverse?.Invoke(number, p.X / PointToDip, p.Y / PointToDip);
+            e.Handled = true;
+        };
+        return new Page(box, image, marks, size);
     }
 
     public void Clear()
     {
         loads++;
-        document = null;
-        items.Clear();
+        Show(null, [], []);
+    }
+
+    void Show(PdfDocument? next, Page[] shown, double[] at)
+    {
+        (document, pages, tops, marked) = (next, shown, at, null);
         Pages.Children.Clear();
-        Empty.Visibility = Visibility.Visible;
+        foreach (var page in shown) Pages.Children.Add(page.Box);
+        Empty.Visibility = shown.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         ViewMoved?.Invoke();
     }
 
     public void ZoomTo(double factor)
     {
-        factor = Math.Clamp(factor, MinZoom, MaxZoom);
-        if (items.Count == 0 || factor == zoom) return;
-        var (page, within) = Place();
-        var centre = (Scroller.HorizontalOffset + Scroller.ViewportWidth / 2 - Gap) * factor / zoom + Gap - Scroller.ViewportWidth / 2;
-        zoom = factor;
-        foreach (var item in items) item.Zoom(zoom);
-        Restore(page, within, Math.Max(centre, 0));
-        ViewMoved?.Invoke();
-        settle.Start();
+        if (pages.Length == 0) return;
+        fit = Fit.None;
+        var zoom = Math.Clamp(factor, Scroller.MinZoomFactor, Scroller.MaxZoomFactor);
+        // About the view's centre across.
+        var centre = Scroller.TransformToVisual(Pages).TransformPoint(new Point(Scroller.ViewportWidth / 2, 0)).X;
+        View(zoom, Math.Max(centre * zoom - Scroller.ViewportWidth / 2, 0));
     }
 
-    public void ZoomBy(double step) => ZoomTo(zoom * step);
+    public void ZoomBy(double step) => ZoomTo(Zoom * step);
+    public void FitWidth() => Refit(Fit.Width);
+    /// The page at the view's centre, whole, with its top edge at the view's.
+    public void FitPage() => Refit(Fit.Page, pages.Length == 0 ? null : tops[CurrentPage - 1] - Edge);
 
-    double Widest => items.Max(p => p.PageWidth);
-
-    public void FitWidth()
+    /// The zoom at which the widest page fills the view across, and with Fit page the tallest one down.
+    double FitZoom(Size most)
     {
-        if (items.Count > 0) ZoomTo((Scroller.ViewportWidth - 2 * Gap) / Widest);
+        var zoom = Scroller.ViewportWidth / (most.Width + 2 * Edge);
+        if (fit == Fit.Page) zoom = Math.Min(zoom, Scroller.ViewportHeight / (most.Height + 2 * Edge));
+        return Math.Clamp(zoom, Scroller.MinZoomFactor, Scroller.MaxZoomFactor);
     }
 
-    public void FitPage()
+    /// Sets a fit, which holds as the view resizes until a zoom of the reader's own.
+    void Refit(Fit mode, double? y = null)
     {
-        if (items.Count == 0) return;
-        var page = CurrentPage - 1;
-        var tallest = items.Max(p => p.Height) / zoom;
-        ZoomTo(Math.Min((Scroller.ViewportWidth - 2 * Gap) / Widest, (Scroller.ViewportHeight - 2 * Gap) / tallest));
-        Scroller.ChangeView(null, Top(page) - Gap, null, true);
+        fit = mode;
+        if (fit != Fit.None && pages.Length > 0 && Scroller.ViewportWidth > 0) View(FitZoom(largest), 0, y);
     }
+
+    /// Zooms with a content y at the top of the view: by default the one there now.
+    void View(double zoom, double? across, double? y = null) =>
+        Scroller.ChangeView(across, (y ?? Scroller.VerticalOffset / Zoom) * zoom, (float)zoom, true);
 
     public void GoToPage(int number)
     {
-        if (items.Count == 0) return;
-        Scroller.ChangeView(null, Top(Math.Clamp(number, 1, items.Count) - 1) - Gap, null);
+        if (pages.Length > 0) Scroller.ChangeView(null, (tops[Math.Clamp(number, 1, pages.Length) - 1] - Edge) * Zoom, null);
     }
 
-    void OnWheel(object sender, PointerRoutedEventArgs e)
+    /// Scrolls a SyncTeX point a third of the way down the view, and across only when its box is out
+    /// of view, then flashes the box. With no box from the core it only scrolls (core gap 10).
+    public void Reveal(ForwardSync at)
     {
-        if (!InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(CoreVirtualKeyStates.Down)) return;
-        ZoomBy(e.GetCurrentPoint(Scroller).Properties.MouseWheelDelta > 0 ? 1.1 : 1 / 1.1);
+        if (at.Page < 1 || at.Page > pages.Length) return;
+        var page = pages[(int)at.Page - 1];
+        var (x, y, width, height) = ((at.H ?? 0) * PointToDip, (at.V ?? 0) * PointToDip, (at.Width ?? 0) * PointToDip, (at.Height ?? 0) * PointToDip);
+        var view = page.Marks.TransformToVisual(Scroller).TransformPoint(new Point(x, y));
+        double? across = view.X < 0 || view.X + width * Zoom > Scroller.ViewportWidth ? Math.Max(Scroller.HorizontalOffset + view.X - 2 * Gap, 0) : null;
+        Scroller.ChangeView(across, Math.Max(Scroller.VerticalOffset + view.Y - Scroller.ViewportHeight / 3, 0), null);
+        if (at.Width is null || at.Height is null) return;
+
+        marked?.Children.Clear();
+        var box = new Rectangle { Width = width, Height = height };
+        Canvas.SetLeft(box, x);
+        Canvas.SetTop(box, y - height);
+        (marked = page.Marks).Children.Add(box);
+        var fade = new DoubleAnimation { To = 0, BeginTime = TimeSpan.FromSeconds(2), Duration = TimeSpan.FromMilliseconds(new UISettings().AnimationsEnabled ? 333 : 0) };
+        Storyboard.SetTarget(fade, box);
+        Storyboard.SetTargetProperty(fade, "Opacity");
+        new Storyboard { Children = { fade } }.Begin();
+    }
+
+    // At the right-click, or from the keyboard a third of the way down the view's centre.
+    void OnContextRequested(UIElement sender, ContextRequestedEventArgs e)
+    {
+        if (pages.Length == 0) return;
+        var point = e.TryGetPosition(Scroller, out var p) ? p : new Point(Scroller.ViewportWidth / 2, Scroller.ViewportHeight / 3);
+        var i = PageAt(tops, (Scroller.VerticalOffset + point.Y) / Zoom);
+        var at = Scroller.TransformToVisual(pages[i].Marks).TransformPoint(point);
+        source = new Rect(new Point(), pages[i].Size).Contains(at) ? (i + 1, at) : null;
+        Menu.ShowAt(Scroller, new FlyoutShowOptions { Position = point });
         e.Handled = true;
     }
 
-    /// Scrolls a SyncTeX point (TeX points from the page's top left) a third of the way down, and
-    /// flashes its box when there is one.
-    public void Reveal(int number, double h, double v, double? width, double? height)
+    void OnMenuOpening(object sender, object e)
     {
-        if (number < 1 || number > items.Count) return;
-        var index = number - 1;
-        var scale = PointToDip * zoom;
-        Scroller.UpdateLayout();
-        var left = Gap + Math.Max((Pages.ActualWidth - items[index].Box.Width) / 2, 0) + h * scale;
-        var right = left + (width ?? 0) * scale;
-        double? x = left < Scroller.HorizontalOffset || right > Scroller.HorizontalOffset + Scroller.ViewportWidth ? Math.Max(left - 2 * Gap, 0) : null;
-        Scroller.ChangeView(x, Math.Max(Top(index) + v * scale - Scroller.ViewportHeight / 3, 0), null);
-        if (width is not { } w || height is not { } ht) return;
-        var overlay = items[index].Overlay;
-        var box = new Rectangle { Width = w * scale, Height = ht * scale, Style = (Style)Resources["SyncBox"] };
-        Canvas.SetLeft(box, h * scale);
-        Canvas.SetTop(box, (v - ht) * scale);
-        overlay.Children.Add(box);
-        var fade = new DoubleAnimation
-        {
-            To = 0,
-            BeginTime = TimeSpan.FromSeconds(1),
-            Duration = new UISettings().AnimationsEnabled ? TimeSpan.FromMilliseconds(333) : TimeSpan.Zero,
-        };
-        Storyboard.SetTarget(fade, box);
-        Storyboard.SetTargetProperty(fade, "Opacity");
-        var story = new Storyboard { Children = { fade } };
-        story.Completed += (_, _) => overlay.Children.Remove(box);
-        story.Begin();
+        // Go to source position only from a page, not from the status bar's zoom button.
+        if (Menu.Target != Scroller) source = null;
+        SourceItem.Visibility = SourceRule.Visibility = source is null ? Visibility.Collapsed : Visibility.Visible;
+        FitWidthItem.IsChecked = fit == Fit.Width;
+        FitPageItem.IsChecked = fit == Fit.Page;
+        foreach (var item in Menu.Items.OfType<RadioMenuFlyoutItem>())
+            if (item.Tag is double zoom) item.IsChecked = fit == Fit.None && Math.Abs(Zoom - zoom) < 0.001;
     }
 
-    void OnDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    void OnGoToSource(object sender, RoutedEventArgs e)
     {
-        for (var at = e.OriginalSource as DependencyObject; at is not null && at != Scroller; at = VisualTreeHelper.GetParent(at))
-        {
-            var index = items.FindIndex(p => p.Box == at);
-            if (index < 0) continue;
-            var point = e.GetPosition(items[index].Box.Child);
-            Inverse?.Invoke(index + 1, point.X / PointToDip / zoom, point.Y / PointToDip / zoom);
-            e.Handled = true;
-            return;
-        }
+        if (source is (var number, var at)) Inverse?.Invoke(number, at.X / PointToDip, at.Y / PointToDip);
     }
+
+    void OnZoomIn(object sender, RoutedEventArgs e) => ZoomBy(1.25);
+    void OnZoomOut(object sender, RoutedEventArgs e) => ZoomBy(0.8);
+    void OnFitWidth(object sender, RoutedEventArgs e) => FitWidth();
+    void OnFitPage(object sender, RoutedEventArgs e) => FitPage();
+    void OnRootChanged(XamlRoot sender, XamlRootChangedEventArgs e) => Render();
 }

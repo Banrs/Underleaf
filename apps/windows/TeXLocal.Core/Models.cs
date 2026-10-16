@@ -1,19 +1,21 @@
 namespace TeXLocal.Bridge;
 
 /// <param name="Mtime">Milliseconds since the epoch; list_projects sorts newest first.</param>
-public sealed record ProjectInfo(string Id, string Name, long Mtime, string MainFile);
+public sealed record ProjectInfo(string Id, string Name, long Mtime, string MainFile)
+{
+    public override string ToString() => Name;
+}
 
 /// <param name="Type">file or dir.</param>
 /// <param name="Kind">tex, bib, image, pdf, text or other; null for a folder.</param>
 public sealed record TreeNode(string Type, string Name, string Path, string? Kind, TreeNode[]? Children);
 
 /// <param name="Found">The folder the working latexmk runs from.</param>
-/// <param name="Texpresso">The TeXpresso program live preview would run.</param>
-public sealed record TexStatus(bool Available, string? Version, string? TexDir, string? Found, string? Texpresso, string? TexpressoDir);
+public sealed record TexStatus(bool Available, string? Version, string? TexDir, string? Found);
 
 public sealed record SessionOpened(ulong Session, string Root, string? Pdf, TreeNode[] Tree);
 
-public sealed record Clash(string Path, string KeepBoth);
+public sealed record Clash(string Path);
 
 public sealed record Imported(string[] Saved, Clash[] Existing);
 
@@ -21,7 +23,8 @@ public sealed record Imported(string[] Saved, Clash[] Existing);
 public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short, string? Command);
 
 /// <param name="Pdf">Relative to the project root.</param>
-public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, string? Pdf, LogItem[] Errors, LogItem[] Warnings, string Log);
+/// <param name="PdfChanged">True only when this run finished and wrote the PDF it returns.</param>
+public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, string? Pdf, LogItem[] Errors, LogItem[] Warnings, string Log, bool PdfChanged);
 
 /// An `issues` event's line: the first issue on it, and the messages of the rest.
 public sealed record IssueLine(int Line, bool Error, string Message, string Short, string? Command, string[] Others);
@@ -64,7 +67,7 @@ public sealed record MathPreview(int Start, string Tex, bool Display);
 public sealed record TextStyles(TextEdit[]? Bold, TextEdit[]? Italic, TextEdit[]? Underline);
 
 /// RaTeX's SVG and its size in the points of the size asked for, or why there's none.
-public sealed record MathSvg(string? Svg, double Width, double Height, double Baseline, string? Error);
+public sealed record MathSvg(string? Svg, double Width, double Height, string? Error);
 
 /// <param name="Depth">0 for \part to 5 for \paragraph.</param>
 /// <param name="Title">Plain text, "(untitled)" when empty.</param>

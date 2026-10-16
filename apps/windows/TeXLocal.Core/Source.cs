@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
 using static TeXLocal.Bridge.Native;
 
@@ -12,11 +11,7 @@ public sealed unsafe class Source : SafeHandle
 {
     internal Source(nint handle) : base(0, true) => SetHandle(handle);
 
-    public static Source New(string text)
-    {
-        var bytes = Encoding.UTF8.GetBytes(text);
-        fixed (byte* t = bytes) return new Source(tl_source_new(t, (nuint)bytes.Length));
-    }
+    public static Source New(string text) => new(tl_source_new(text, Bytes(text)));
 
     public override bool IsInvalid => handle == 0;
 
@@ -26,18 +21,8 @@ public sealed unsafe class Source : SafeHandle
         return true;
     }
 
-    public void Edit(int start, int length, string text)
-    {
-        var bytes = Encoding.UTF8.GetBytes(text);
-        fixed (byte* t = bytes) tl_source_edit(handle, (uint)start, (uint)length, t, (nuint)bytes.Length);
-    }
-
-    public void Reload(string text)
-    {
-        var bytes = Encoding.UTF8.GetBytes(text);
-        fixed (byte* t = bytes) tl_source_reload(handle, t, (nuint)bytes.Length);
-    }
-
+    public void Edit(int start, int length, string text) => tl_source_edit(handle, (uint)start, (uint)length, text, Bytes(text));
+    public void Reload(string text) => tl_source_reload(handle, text, Bytes(text));
     public int LineAt(int offset) => (int)tl_source_line_at(handle, (uint)offset);
     public int LineStart(int line) => (int)tl_source_line_start(handle, (uint)line);
     public int LineCount => (int)tl_source_line_count(handle);
@@ -46,33 +31,24 @@ public sealed unsafe class Source : SafeHandle
     {
         nuint count;
         var runs = tl_source_highlights(handle, (uint)start, (uint)length, &count);
-        try
-        {
-            var result = new HighlightRun[(int)count / 3];
-            for (var i = 0; i < result.Length; i++)
-                result[i] = new((int)runs[3 * i], (int)runs[3 * i + 1], (int)runs[3 * i + 2]);
-            return result;
-        }
+        // Three u32s a run (start, length, kind), as HighlightRun lays them out.
+        try { return MemoryMarshal.Cast<uint, HighlightRun>(new ReadOnlySpan<uint>(runs, (int)count)).ToArray(); }
         finally { tl_source_free_runs(runs, count); }
     }
 
-    public string? Call(string cmd, object args)
-    {
-        fixed (byte* c = Utf8(cmd))
-        fixed (byte* a = Utf8(JsonSerializer.Serialize(args, Core.Json)))
-            return Take(tl_source_call(handle, c, a));
-    }
+    public string? Call(string cmd, object args) => Take(tl_source_call(handle, cmd, JsonSerializer.Serialize(args, Core.Json)));
 
     /// A document command's answer; default for null or none.
-    public T? Call<T>(string cmd, object args) => Call(cmd, args) is { } json ? JsonSerializer.Deserialize<T>(json, Core.Json) : default;
+    public T? Call<T>(string cmd, object args) => Parse<T>(tl_source_call(handle, cmd, JsonSerializer.Serialize(args, Core.Json)));
 
-    /// texlocal-syntax's commands that need no document: themes, menus, headings, maths.
-    public static T? SyntaxCall<T>(string cmd, object args)
+    /// texlocal-syntax's commands that need no document: themes, menus, headings, maths. Any thread.
+    public static T? SyntaxCall<T>(string cmd, object args) => Parse<T>(tl_syntax_call(cmd, JsonSerializer.Serialize(args, Core.Json)));
+
+    /// Reads the core's UTF-8 answer and frees it.
+    static T? Parse<T>(nint json)
     {
-        string? json;
-        fixed (byte* c = Utf8(cmd))
-        fixed (byte* a = Utf8(JsonSerializer.Serialize(args, Core.Json)))
-            json = Take(tl_syntax_call(c, a));
-        return json is null ? default : JsonSerializer.Deserialize<T>(json, Core.Json);
+        if (json == 0) return default;
+        try { return JsonSerializer.Deserialize<T>(MemoryMarshal.CreateReadOnlySpanFromNullTerminated((byte*)json), Core.Json); }
+        finally { tl_free(json); }
     }
 }

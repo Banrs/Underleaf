@@ -13,7 +13,7 @@ public sealed class CoreTests : IDisposable
     public void Dispose()
     {
         core.Dispose();
-        try { Directory.Delete(dir, true); } catch (IOException) { }
+        try { Directory.Delete(dir, true); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 
     [Fact]
@@ -37,15 +37,13 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
-    public async Task ProjectRoundTrip()
+    public async Task NamesRoundTripAsUtf8()
     {
-        var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Probe" });
-        Assert.Contains(await core.CallAsync<ProjectInfo[]>("list_projects"), p => p.Name == "Probe");
-        var renamed = await core.CallAsync<ProjectInfo>("rename_project", new { id = made.Id, name = "Probe 2" });
-        Assert.Equal("Probe 2", renamed.Name);
-        var tree = await core.CallAsync<TreeNode[]>("file_tree", new { id = renamed.Id });
-        Assert.Contains(tree, n => n.Path == "main.tex");
-        Assert.True(Directory.Exists((await core.CallAsync("project_root", new { id = renamed.Id })).GetString()));
+        const string name = "Thèse ✓ 😀";
+        var made = await core.CallAsync<ProjectInfo>("create_project", new { name });
+        Assert.Equal(name, made.Name);
+        Assert.Contains(await core.CallAsync<ProjectInfo[]>("list_projects"), p => p.Id == made.Id && p.Name == name);
+        Assert.True(Directory.Exists(Path.Combine(dir, made.Id)));
     }
 
     [Fact]
@@ -87,11 +85,37 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void MathsRenderAsSvg()
+    {
+        var maths = Source.SyntaxCall<MathSvg>("math_svg", new { tex = "x^2", display = false, size = 14.0, color = new[] { 0.0, 0.0, 0.0, 1.0 } });
+        Assert.StartsWith("<svg", maths?.Svg);
+        Assert.True(maths!.Width > 0);
+    }
+
+    [Fact]
+    public void NullAnswersAreDefault()
+    {
+        using var source = Source.New("x");
+        Assert.Null(source.Call<MathPreview>("math_at", new { caret = 0 }));
+        Assert.Null(source.Call<TextStyles>("no_such_command", new { }));
+    }
+
+    [Fact]
     public void EditMovesLines()
     {
         using var source = Source.New("abc");
         var lines = source.LineCount;
         source.Edit(3, 0, "\ny");
         Assert.Equal(lines + 1, source.LineCount);
+    }
+
+    [Fact]
+    public void TextsPassWhole()
+    {
+        using var source = Source.New("a\0é");
+        source.Edit(3, 0, "\0\U0001F600");
+        Assert.Equal("a\0é\0\U0001F600", source.Call<string>("text", new { }));
+        source.Reload("");
+        Assert.Equal("", source.Call<string>("text", new { }));
     }
 }

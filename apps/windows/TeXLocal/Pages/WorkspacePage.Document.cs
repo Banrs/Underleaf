@@ -35,13 +35,12 @@ public sealed partial class WorkspacePage
 
     void SetUpDocument()
     {
-        AutoCompileItem.IsChecked = Prefs.AutoCompile;
-        foreach (var item in (MenuFlyoutItem[])[ZoomInItem, ZoomOutItem, ActualSizeItem])
-        {
-            var key = item == ZoomInItem ? (VirtualKey)187 : item == ZoomOutItem ? (VirtualKey)189 : VirtualKey.Number0;
-            item.KeyboardAccelerators.Add(new KeyboardAccelerator { Key = key, Modifiers = VirtualKeyModifiers.Control, ScopeOwner = Pdf });
-        }
-        var ratio = Prefs.SplitRatio;
+        AutoCompileItem.IsChecked = MainWindow.Pref("autoCompile", true);
+        // Wherever the focus is, since the editor has no zoom of its own; the keypad's + and - too.
+        var zoomKeys = new[] { (ZoomInItem, (VirtualKey)187), (ZoomInItem, VirtualKey.Add), (ZoomOutItem, (VirtualKey)189),
+            (ZoomOutItem, VirtualKey.Subtract), (ActualSizeItem, VirtualKey.Number0) };
+        foreach (var (item, key) in zoomKeys) item.KeyboardAccelerators.Add(new KeyboardAccelerator { Key = key, Modifiers = VirtualKeyModifiers.Control });
+        var ratio = MainWindow.Pref("splitRatio", 0.5);
         SetSplit(ratio);
         SplitSizer.Delta += d =>
         {
@@ -189,7 +188,7 @@ public sealed partial class WorkspacePage
             IssueList.SelectedIndex = IssueList.Items.Count > 0 ? 0 : -1;
         }
         if (announce) Announce(failed ? $"Build failed, {done.Errors.Length} {(done.Errors.Length == 1 ? "error" : "errors")}" : "Build succeeded");
-        if (done.Pdf is { } pdf) await Pdf.Load(Full(pdf));
+        if (done.Pdf is { } pdf && (done.PdfChanged || Pdf.PageCount == 0)) await Pdf.Load(Full(pdf));
     }
 
     void Announce(string text)
@@ -452,7 +451,7 @@ public sealed partial class WorkspacePage
         try
         {
             var at = await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file, line, column });
-            Pdf.Reveal((int)at.Page, at.H ?? 0, at.V ?? 0, at.Width, at.Height);
+            Pdf.Reveal(at);
         }
         catch (CoreException) { }
     }

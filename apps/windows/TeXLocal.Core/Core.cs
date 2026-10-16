@@ -12,6 +12,7 @@ public sealed class CoreException(int status, string message) : Exception(messag
 
 public sealed record CoreEvent(string Type, ulong Session, JsonElement Json);
 
+/// The core: commands answer on its threads, and events are posted to the thread `post` runs on.
 public sealed class Core : IDisposable
 {
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -36,18 +37,15 @@ public sealed class Core : IDisposable
 
     unsafe Core(nint handle, Action<Action> post)
     {
-        this.handle = handle;
-        this.post = post;
+        (this.handle, this.post) = (handle, post);
         self = GCHandle.Alloc(this);
         tl_set_listener(handle, &Listen, GCHandle.ToIntPtr(self));
     }
 
-    public static unsafe Core Open(string dataDir, Action<Action> post)
+    public static Core Open(string dataDir, Action<Action> post)
     {
-        nint h;
-        fixed (byte* d = Utf8(dataDir)) h = tl_open(d);
-        if (h == 0) throw new CoreException(0, $"Can't open {dataDir}");
-        return new Core(h, post);
+        var h = tl_open(dataDir);
+        return h == 0 ? throw new CoreException(0, $"Can't open {dataDir}") : new Core(h, post);
     }
 
     public unsafe Task<JsonElement> CallAsync(string command, object? args = null)
@@ -55,21 +53,22 @@ public sealed class Core : IDisposable
         ObjectDisposedException.ThrowIf(disposed, this);
         var pending = new Pending(this);
         Interlocked.Increment(ref inFlight);
-        fixed (byte* c = Utf8(command))
-        fixed (byte* a = Utf8(args is null ? null : JsonSerializer.Serialize(args, Json)))
-            tl_call_async(handle, c, a, &Done, GCHandle.ToIntPtr(GCHandle.Alloc(pending)));
+        tl_call_async(handle, command, args is null ? null : JsonSerializer.Serialize(args, Json), &Done, GCHandle.ToIntPtr(GCHandle.Alloc(pending)));
         return pending.Task;
     }
 
     public async Task<T> CallAsync<T>(string command, object? args = null) =>
         (await CallAsync(command, args)).Deserialize<T>(Json)!;
 
-    public unsafe Source? SessionSource(ulong session, string path)
+    public Source? SessionSource(ulong session, string path)
     {
-        nint s;
-        fixed (byte* p = Utf8(path)) s = tl_session_source(handle, session, p);
+        var s = tl_session_source(handle, session, path);
         return s == 0 ? null : new Source(s);
     }
+
+    /// Straight from the core's UTF-8 into an element that owns its data.
+    static unsafe JsonElement Parse(byte* json) =>
+        JsonSerializer.Deserialize<JsonElement>(MemoryMarshal.CreateReadOnlySpanFromNullTerminated(json), Json);
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static unsafe void Done(nint ctx, byte* json)
@@ -79,9 +78,8 @@ public sealed class Core : IDisposable
         gc.Free();
         try
         {
-            using var doc = JsonDocument.Parse(Marshal.PtrToStringUTF8((nint)json)!);
-            var root = doc.RootElement;
-            if (root.TryGetProperty("ok", out var ok)) pending.SetResult(ok.Clone());
+            var root = Parse(json);
+            if (root.TryGetProperty("ok", out var ok)) pending.SetResult(ok);
             else pending.SetException(new CoreException(
                 root.TryGetProperty("status", out var s) ? s.GetInt32() : 500,
                 root.TryGetProperty("error", out var e) ? e.GetString() ?? "" : ""));
@@ -93,11 +91,11 @@ public sealed class Core : IDisposable
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static unsafe void Listen(nint ctx, byte* json)
     {
+        // Nothing may throw into the core's thread.
         try
         {
             var core = (Core)GCHandle.FromIntPtr(ctx).Target!;
-            using var doc = JsonDocument.Parse(Marshal.PtrToStringUTF8((nint)json)!);
-            var root = doc.RootElement.Clone();
+            var root = Parse(json);
             var ev = new CoreEvent(
                 root.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "",
                 root.TryGetProperty("session", out var s) && s.ValueKind == JsonValueKind.Number ? s.GetUInt64() : 0,
@@ -107,12 +105,13 @@ public sealed class Core : IDisposable
         catch (Exception) { }
     }
 
+    /// Stops the builds first, so the answers in flight arrive before the core closes.
     public unsafe void Dispose()
     {
         if (disposed) return;
         disposed = true;
         tl_set_listener(handle, null, 0);
-        fixed (byte* c = Utf8("kill_all")) tl_free(tl_call(handle, c, null));
+        tl_free(tl_call(handle, "kill_all", null));
         SpinWait.SpinUntil(() => Volatile.Read(ref inFlight) == 0, TimeSpan.FromSeconds(5));
         tl_close(handle);
         self.Free();

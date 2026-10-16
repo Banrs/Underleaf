@@ -3,31 +3,33 @@ using System.Text;
 
 namespace TeXLocal.Bridge;
 
+/// texlocal_ffi's C API. Strings go as NUL-terminated UTF-8; a text with its length in bytes may hold NULs too.
 internal static unsafe partial class Native
 {
     const string Lib = "texlocal_ffi";
+    const StringMarshalling Utf8 = StringMarshalling.Utf8;
 
-    [LibraryImport(Lib)] public static partial nint tl_open(byte* dataDir);
-    [LibraryImport(Lib)] public static partial nint tl_call(nint h, byte* cmd, byte* args);
-    [LibraryImport(Lib)] public static partial void tl_call_async(nint h, byte* cmd, byte* args, delegate* unmanaged[Cdecl]<nint, byte*, void> done, nint ctx);
+    [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial nint tl_open(string dataDir);
+    [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial nint tl_call(nint h, string cmd, string? args);
+    [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial void tl_call_async(nint h, string cmd, string? args, delegate* unmanaged[Cdecl]<nint, byte*, void> done, nint ctx);
     [LibraryImport(Lib)] public static partial void tl_set_listener(nint h, delegate* unmanaged[Cdecl]<nint, byte*, void> listener, nint ctx);
     [LibraryImport(Lib)] public static partial void tl_free(nint p);
     [LibraryImport(Lib)] public static partial void tl_close(nint h);
-    [LibraryImport(Lib)] public static partial nint tl_session_source(nint h, ulong session, byte* path);
-    [LibraryImport(Lib)] public static partial nint tl_source_new(byte* text, nuint len);
-    [LibraryImport(Lib)] public static partial void tl_source_edit(nint s, uint start, uint length, byte* text, nuint len);
-    [LibraryImport(Lib)] public static partial void tl_source_reload(nint s, byte* text, nuint len);
+    [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial nint tl_session_source(nint h, ulong session, string path);
+    [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial nint tl_source_new(string text, nuint len);
+    [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial void tl_source_edit(nint s, uint start, uint length, string text, nuint len);
+    [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial void tl_source_reload(nint s, string text, nuint len);
     [LibraryImport(Lib)] public static partial uint tl_source_line_at(nint s, uint offset);
     [LibraryImport(Lib)] public static partial uint tl_source_line_start(nint s, uint line);
     [LibraryImport(Lib)] public static partial uint tl_source_line_count(nint s);
     [LibraryImport(Lib)] public static partial uint* tl_source_highlights(nint s, uint start, uint length, nuint* count);
     [LibraryImport(Lib)] public static partial void tl_source_free_runs(uint* runs, nuint count);
-    [LibraryImport(Lib)] public static partial nint tl_source_call(nint s, byte* cmd, byte* args);
+    [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial nint tl_source_call(nint s, string cmd, string args);
     [LibraryImport(Lib)] public static partial void tl_source_free(nint s);
-    [LibraryImport(Lib)] public static partial nint tl_syntax_call(byte* cmd, byte* args);
+    [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial nint tl_syntax_call(string cmd, string args);
 
-    /// NUL-terminated UTF-8, or null for a null string.
-    public static byte[]? Utf8(string? s) => s is null ? null : Encoding.UTF8.GetBytes(s + '\0');
+    /// A text's length as the calls that take one count it: in UTF-8 bytes.
+    public static nuint Bytes(string text) => (nuint)Encoding.UTF8.GetByteCount(text);
 
     /// Takes a string the core allocated, freeing it.
     public static string? Take(nint p)
