@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import TeXLocal
 
@@ -328,6 +329,20 @@ struct SourceEditorTests {
         #expect(text.offered != nil)
         text.setSelectedRange(NSRange(location: 0, length: 0))
         #expect(text.offered == nil)
+    }
+
+    /// The list is a view over the editor's text, and nothing in it takes the keyboard: a click chooses a row, and the
+    /// text view goes on typing and moving through the rows.
+    @Test func theCompletionListNeverTakesTheKeyboard() throws {
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
+        open("\\")
+        text.insertText("b", replacementRange: typed)
+        _ = try #require(text.offered)
+        let list = try #require(editor.scrollView.subviews.first { $0 is NSHostingView<CompletionRowsView> })
+        list.layoutSubtreeIfNeeded()
+        func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
+        #expect(all(list).count > 1 && !all(list).contains { $0.acceptsFirstResponder })
     }
 
     /// The session's autosave waits while marked (IME) text shows; the text itself is the mirror's at every step.
