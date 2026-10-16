@@ -261,7 +261,8 @@ secondary text at margin 16,12 is enough.
   row template: a 16 glyph, Body text (a search match SemiBold), a trailing count, line number or
   main-file star, and the full text in a ToolTip. Where a tab has nothing to show, a Body note in
   secondary text. Files: glyphs by kind (folder E8B7, tex E8A5, bib E8F1, image E91B, pdf EA90,
-  else E7C3), the main file with a trailing E735; files dropped from File Explorer are imported
+  else E7C3), the main file with a trailing E735, the open file selected (also one opened from the
+  outline or a search, once Files shows); files dropped from File Explorer are imported
   where they land (a clash asks Replace, Keep both, Cancel). Its context menu, with File Explorer's
   icons: New file, New folder, Set as main file, Rename (F2), Show in File Explorer, Delete (Del,
   disabled on the main file). Outline: the headings of the document the shown file belongs to

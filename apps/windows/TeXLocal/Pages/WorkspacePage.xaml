@@ -383,6 +383,7 @@
                         x:Name="Log"
                         Grid.Row="1"
                         Margin="12,0,12,12"
+                        AcceptsReturn="True"
                         AutomationProperties.Name="Build log"
                         FontFamily="Cascadia Mono, Consolas"
                         FontSize="12"

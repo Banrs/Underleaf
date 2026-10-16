@@ -409,11 +409,19 @@ public sealed partial class SourceView : UserControl
         edits++;
         if (colour) Colour(source.LineAt(start), source.LineAt(start + inserted.Length));
         if (mirroring || source.Call<TextEdit[]>("mirror_snippet", new { }) is not { Length: > 0 } mirrors) return;
-        var (from, to) = (Document.Selection.StartPosition, Document.Selection.EndPosition);
+        // The typing stays where it was, moved only by copies put in before it.
+        var (from, to, end) = (Document.Selection.StartPosition, Document.Selection.EndPosition, lastEnd);
         mirroring = true;
-        foreach (var edit in mirrors) Put(edit.Start, edit.Length, edit.Text);
+        foreach (var edit in mirrors)
+        {
+            Put(edit.Start, edit.Length, edit.Text);
+            var delta = edit.Text.Length - edit.Length;
+            if (edit.Start + edit.Length <= from) (from, to) = (from + delta, to + delta);
+            if (edit.Start + edit.Length <= end) end += delta;
+        }
         mirroring = false;
         Document.Selection.SetRange(from, to);
+        lastEnd = end;
     }
 
     /// One undo step: the edits from the last, then the first selection after them.

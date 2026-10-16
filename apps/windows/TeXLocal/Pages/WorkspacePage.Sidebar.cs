@@ -44,6 +44,7 @@ public sealed partial class WorkspacePage
     string treeJson = "", searched = "";
     string? searchError;
     int searches;
+    bool fileUnshown;
     Analysis? analysis;
     NavItem? caretHeading;
 
@@ -121,7 +122,21 @@ public sealed partial class WorkspacePage
         SideNote.Visibility = Vis(SideNote.Text.Length > 0);
     }
 
-    void OnSideTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowSide();
+    void OnSideTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        ShowSide();
+        if (fileUnshown) SelectShownFile();
+    }
+
+    /// The open file selected in Files, as Explorer's tree follows the open document: once it's opened from the
+    /// outline or a search, and only while Files shows, as for the outline.
+    void SelectShownFile()
+    {
+        fileUnshown = FilesTree.Visibility != Visibility.Visible;
+        if (fileUnshown || Editor.Path is not { } path || (FilesTree.SelectedItem as NavItem)?.Key == path) return;
+        FilesTree.UpdateLayout();
+        Select(FilesTree, i => i.Key == path);
+    }
 
     void OnShowOutline(object sender, RoutedEventArgs e)
     {

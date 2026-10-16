@@ -241,6 +241,7 @@ public sealed partial class WorkspacePage : Page
             Editor.SetIssues(issueLines.GetValueOrDefault(path, []));
             ShowSaved();
             ShowCaret();
+            SelectShownFile();
             _ = Analyze();
             return true;
         }
