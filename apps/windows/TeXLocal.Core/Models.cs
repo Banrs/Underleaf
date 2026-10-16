@@ -65,3 +65,38 @@ public sealed record TextStyles(TextEdit[]? Bold, TextEdit[]? Italic, TextEdit[]
 
 /// RaTeX's SVG and its size in the points of the size asked for, or why there's none.
 public sealed record MathSvg(string? Svg, double Width, double Height, double Baseline, string? Error);
+
+/// <param name="Depth">0 for \part to 5 for \paragraph.</param>
+/// <param name="Title">Plain text, "(untitled)" when empty.</param>
+public sealed record Heading(int Depth, string Title, int Line, string? File);
+
+/// A heading and what nests under it; FoldKey names its fold in the project's UI state.
+public sealed record OutlineNode(int Index, int Depth, string Title, int Line, string? File, string FoldKey, OutlineNode[]? Children);
+
+/// analyze_project: the outline in reading order, the words, and the outline as a tree.
+public sealed record Analysis(Heading[] Outline, int Words, OutlineNode[] Tree);
+
+/// <param name="Column">Where the match starts in its line, in UTF-16 units from 0.</param>
+public sealed record SearchHit(string File, int Line, int Column, int Length, string Before, string Match, string After);
+
+public sealed record DocumentClass(string Name, int PointSize);
+
+/// <param name="Shape">upright, italic or smallCaps.</param>
+public sealed record HeadingFont(double Scale, bool Bold, string Shape);
+
+/// A level the class has, as it sets and numbers it; Normal Text first, with no command.
+public sealed record HeadingStyle(string Title, string Command, HeadingFont Font, string? Marker);
+
+/// A block of the catalogue's by id, or with Inline a command around "$0" (wrap's template).
+public sealed record Template(string Title, string Body, string? Symbol, bool Inline);
+
+public sealed record Templates(Template[] Math, Template[] Insert, Template[] List, Template[] References);
+
+public sealed record HeadingLevel(string Title, string Command);
+
+public sealed record MathSymbol(string Glyph, string Command);
+
+public sealed record SymbolGroup(string Title, MathSymbol[] Symbols);
+
+/// The catalogue the Insert menu and the palette are made from.
+public sealed record Menus(Templates Templates, HeadingLevel[] HeadingLevels, SymbolGroup[] SymbolGroups);

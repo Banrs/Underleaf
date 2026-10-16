@@ -125,6 +125,132 @@
                 Opacity="0" />
         </Canvas>
 
+        <!-- Find and replace over the text, as Notepad's. -->
+        <Border
+            x:Name="FindBar"
+            Grid.Column="1"
+            Margin="0,8,24,0"
+            Padding="4"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Top"
+            Style="{StaticResource SurfaceStyle}"
+            Translation="0,0,16"
+            Visibility="Collapsed">
+            <Border.Shadow>
+                <ThemeShadow />
+            </Border.Shadow>
+            <Grid ColumnSpacing="4" RowSpacing="4">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" MinWidth="96" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button
+                    x:Name="ReplaceToggle"
+                    Width="32"
+                    Height="32"
+                    Padding="0"
+                    AutomationProperties.Name="Show replace"
+                    Click="OnReplaceToggle"
+                    Style="{StaticResource SubtleButtonStyle}"
+                    ToolTipService.ToolTip="Show replace (Ctrl+H)">
+                    <FontIcon x:Name="ReplaceChevron" FontSize="12" Glyph="&#xE76C;" />
+                </Button>
+                <TextBox
+                    x:Name="FindBox"
+                    Grid.Column="1"
+                    AutomationProperties.Name="Find"
+                    KeyDown="OnFindKeyDown"
+                    PlaceholderText="Find"
+                    TextChanged="OnFindChanged" />
+                <TextBlock
+                    x:Name="FindCount"
+                    Grid.Column="2"
+                    MinWidth="64"
+                    Padding="4,0"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    TextAlignment="Center"
+                    Typography.NumeralAlignment="Tabular" />
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4">
+                    <Button
+                        Width="32"
+                        Height="32"
+                        Padding="0"
+                        AutomationProperties.Name="Find previous"
+                        Click="OnFindPrevious"
+                        Style="{StaticResource SubtleButtonStyle}"
+                        ToolTipService.ToolTip="Find previous (Shift+F3)">
+                        <FontIcon FontSize="16" Glyph="&#xE74A;" />
+                    </Button>
+                    <Button
+                        Width="32"
+                        Height="32"
+                        Padding="0"
+                        AutomationProperties.Name="Find next"
+                        Click="OnFindNext"
+                        Style="{StaticResource SubtleButtonStyle}"
+                        ToolTipService.ToolTip="Find next (F3)">
+                        <FontIcon FontSize="16" Glyph="&#xE74B;" />
+                    </Button>
+                </StackPanel>
+                <Button
+                    Grid.Column="4"
+                    Width="32"
+                    Height="32"
+                    Padding="0"
+                    AutomationProperties.Name="Find options"
+                    Style="{StaticResource SubtleButtonStyle}"
+                    ToolTipService.ToolTip="Find options">
+                    <FontIcon FontSize="16" Glyph="&#xE71C;" />
+                    <Button.Flyout>
+                        <MenuFlyout Placement="BottomEdgeAlignedRight">
+                            <ToggleMenuFlyoutItem x:Name="MatchCase" Click="OnFindChanged" Text="Match case" />
+                            <ToggleMenuFlyoutItem x:Name="WholeWord" Click="OnFindChanged" Text="Whole word" />
+                        </MenuFlyout>
+                    </Button.Flyout>
+                </Button>
+                <Button
+                    Grid.Column="5"
+                    Width="32"
+                    Height="32"
+                    Padding="0"
+                    AutomationProperties.Name="Close find"
+                    Click="OnFindClose"
+                    Style="{StaticResource SubtleButtonStyle}"
+                    ToolTipService.ToolTip="Close (Esc)">
+                    <FontIcon FontSize="16" Glyph="&#xE711;" />
+                </Button>
+                <TextBox
+                    x:Name="ReplaceBox"
+                    Grid.Row="1"
+                    Grid.Column="1"
+                    AutomationProperties.Name="Replace"
+                    KeyDown="OnFindKeyDown"
+                    PlaceholderText="Replace"
+                    Visibility="Collapsed" />
+                <StackPanel
+                    x:Name="ReplaceButtons"
+                    Grid.Row="1"
+                    Grid.Column="2"
+                    Grid.ColumnSpan="4"
+                    Orientation="Horizontal"
+                    Spacing="4"
+                    Visibility="Collapsed">
+                    <Button Click="OnReplace" Content="Replace" />
+                    <Button Click="OnReplaceAll" Content="Replace all" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
         <Popup x:Name="MathPopup" Grid.Column="1">
             <Border
                 x:Name="MathSurface"

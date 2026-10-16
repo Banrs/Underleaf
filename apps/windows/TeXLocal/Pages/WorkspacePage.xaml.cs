@@ -77,6 +77,7 @@ public sealed partial class WorkspacePage : Page
     {
         id = (string)e.Parameter;
         App.Window.TitleBar.Subtitle = id;
+        ShowSearchBox(true);
         if (session != 0) return;
         Core.Event += OnEvent;
         try { await OpenSession(); }
@@ -95,6 +96,7 @@ public sealed partial class WorkspacePage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        ShowSearchBox(false);
         if (e.SourcePageType == typeof(SettingsPage)) return;
         Core.Event -= OnEvent;
         if (session != 0) _ = Core.CallAsync("session_close", new { session });
