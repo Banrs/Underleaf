@@ -2,7 +2,7 @@ import PDFKit
 import SwiftUI
 
 @Observable
-final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
+final class PDFController: NSObject {
     /// Read whole: the next build rewrites the file in place.
     @concurrent nonisolated static func loadDocument(_ url: URL) async -> sending PDFDocument? {
         guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
@@ -11,6 +11,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     }
 
     @ObservationIgnored let view = SyncPDFView()
+    let find: PDFFind
     @ObservationIgnored private var magnification: NSKeyValueObservation?
     @ObservationIgnored private weak var watched: NSScrollView?
     @ObservationIgnored private var scrolling: NotificationCenter.ObservationToken?
@@ -19,15 +20,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     @ObservationIgnored private var pendingReveal: (loc: ForwardLoc, source: SyncSource?)?
     @ObservationIgnored private var revealing: Task<Void, Never>?
     private(set) var pageCount = 0
-    var finding = false {
-        didSet { if finding, !oldValue, findText.isEmpty { findText = PDFFind.shared ?? "" } }
-    }
-    var findText = ""
-    @ObservationIgnored let findField = FieldHandle()
-    private(set) var query = ""
-    private(set) var matches: [PDFSelection] = []
-    private(set) var matchIndex = 0
-    private(set) var limited = false
     private(set) var scale: CGFloat = 1
     var zoomLabel: String { Self.label(scale) }
     var widestZoomLabel: String { Self.label(Self.maxScale) }
@@ -57,6 +49,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     @ObservationIgnored var restoreZoom: Zoom?
 
     override init() {
+        find = PDFFind(view: view)
         super.init()
         view.backgroundColor = .untintedTextBackground
         view.autoScales = true
@@ -177,126 +170,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         fit = .page
     }
 
-    /// PDFKit searches off the main thread; the first query extracts page text.
-    @ObservationIgnored private var search: (document: PDFDocument, query: String, keepingPlace: Bool, found: [PDFSelection])?
-
-    isolated deinit {
-        search?.document.delegate = nil
-        search?.document.cancelFindString()
-    }
-
-    func findTyped() {
-        guard PDFFind.normalize(findText) != search?.query ?? query else { return }
-        PDFFind.shared = PDFFind.normalize(findText)
-        find(findText)
-    }
-
-    func find(_ value: String, keepingPlace: Bool = false) {
-        guard let document = view.document else { return }
-        let query = PDFFind.normalize(value)
-        // A rebuild can start this query before the field's typing delay ends.
-        guard search?.document !== document || search?.query != query else { return }
-        cancelSearch()
-        guard !query.isEmpty else { return found(query, [], keepingPlace: keepingPlace) }
-        document.delegate = self
-        search = (document, query, keepingPlace, [])
-        // As Safari's and Mail's Find: "Godel" finds "Gödel".
-        document.beginFindString(query, withOptions: [.caseInsensitive, .diacriticInsensitive])
-    }
-
-    /// Cancelling posts its end at once, unheard as `search` is cleared first.
-    private func cancelSearch() {
-        let document = search?.document
-        search = nil
-        document?.cancelFindString()
-    }
-
-    // PDFKit delivers document-find delegate callbacks on the main thread.
-    func documentDidFindMatch(_ note: Notification) {
-        guard note.object as? PDFDocument === search?.document,
-              let match = note.userInfo?[PDFDocumentFoundSelectionKey] as? PDFSelection else { return }
-        search?.found.append(match)
-        if search?.found.count ?? 0 > PDFFind.maxMatches { search?.document.cancelFindString() }
-    }
-
-    func documentDidEndDocumentFind(_ note: Notification) {
-        guard let search, note.object as? PDFDocument === search.document else { return }
-        self.search = nil
-        found(search.query, search.found, keepingPlace: search.keepingPlace)
-    }
-
-    private func found(_ query: String, _ all: [PDFSelection], keepingPlace: Bool) {
-        self.query = query
-        matches = Array(all.prefix(PDFFind.maxMatches))
-        limited = all.count > matches.count
-        if !keepingPlace || matchIndex >= matches.count { matchIndex = 0 }
-        let start = startFrom
-        startFrom = nil
-        if let start, !matches.isEmpty { matchIndex = index(from: start.anchor, step: start.step) }
-        matches.forEach { $0.color = .findHighlightColor }
-        view.highlightedSelections = matches.isEmpty ? nil : matches
-        if matches.isEmpty { view.clearSelection() }
-        // Use Selection for Find stays at the selection, which is its match; so does a search again over live pages.
-        if !keepingPlace || view.currentSelection == nil { selectMatch(scrolling: start.map { $0.step != 0 } ?? !keepingPlace) }
-    }
-
-    @ObservationIgnored private var startFrom: (anchor: Position, step: Int)?
-
-    private typealias Position = (page: Int, down: CGFloat, across: CGFloat)
-
-    private func position(_ selection: PDFSelection) -> Position? {
-        guard let document = view.document, let page = selection.pages.first else { return nil }
-        let box = selection.bounds(for: page)
-        return (page: document.index(for: page), down: -box.maxY, across: box.minX)
-    }
-
-    private var anchor: Position? {
-        view.currentSelection.flatMap(position) ?? shownPlace.map { (page: $0.index, down: -$0.point.y, across: $0.point.x) }
-    }
-
-    private func index(from anchor: Position, step: Int) -> Int {
-        let places = matches.map { position($0) }
-        switch step {
-        case 0: return places.firstIndex { $0.map { $0 >= anchor } ?? false } ?? 0
-        case 1...: return places.firstIndex { $0.map { $0 > anchor } ?? false } ?? 0
-        default: return places.lastIndex { $0.map { $0 < anchor } ?? false } ?? matches.count - 1
-        }
-    }
-
-    var canFindNext: Bool { view.document != nil && (!matches.isEmpty || !(PDFFind.shared ?? "").isEmpty) }
-
-    func findNext(_ step: Int) {
-        let typed = PDFFind.normalize(findText)
-        let pending = !typed.isEmpty && typed != (search?.query ?? query)
-        let text = pending ? typed : PDFFind.shared.map(PDFFind.normalize) ?? typed
-        guard !text.isEmpty else { return }
-        if !matches.isEmpty, text == query, search == nil { return self.step(step) }
-        if pending { PDFFind.shared = text }
-        finding = true
-        findText = text
-        startFrom = anchor.map { ($0, step) }
-        find(text)
-    }
-
-    var canUseSelectionForFind: Bool { !(view.currentSelection?.string ?? "").isEmpty }
-
-    func useSelectionForFind() {
-        guard let selection = view.currentSelection, let text = selection.string, !text.isEmpty else { return }
-        PDFFind.shared = text
-        finding = true
-        findText = text
-        startFrom = position(selection).map { ($0, 0) }
-        find(text)
-    }
-
-    func closeFind() {
-        let fromBar = findField.hasFocus
-        finding = false
-        findText = ""
-        find("")
-        if fromBar { view.window?.makeFirstResponder(view) }
-    }
-
     @ObservationIgnored private(set) var shownVersion = 0
 
     /// PDFKit keeps the objects of every page a document takes from another for that document's life (27.2), and only a
@@ -325,12 +198,12 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         (liveBacklog, liveMissed) = (nil, false)
         clearLiveLater()
         // Read before the swap: a page keeps its document only weakly.
-        let place = restorePage == nil ? shownPlace : nil
+        let place = restorePage == nil ? view.shownPlace : nil
         let autoScales = view.autoScales
         let scale = view.scaleFactor
         view.removeMark()
         if view.document != nil {
-            cancelSearch()
+            find.cancel()
             view.clearSelection()
             view.highlightedSelections = nil
         }
@@ -355,12 +228,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
             restorePageIfReady()
         }
         pageChanged()
-        if finding { find(findText, keepingPlace: true) }
-    }
-
-    private var shownPlace: (index: Int, point: CGPoint)? {
-        guard let destination = view.shownDestination, let page = destination.page, let document = view.document else { return nil }
-        return (index: document.index(for: page), point: destination.point)
+        find.rerun()
     }
 
     private func go(to place: (index: Int, point: CGPoint)) {
@@ -383,11 +251,9 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         liveWaiting.removeAll()
         (liveBacklog, liveMissed) = (nil, false)
         view.removeLive()
-        (finding, findText) = (false, "")
         view.removeMark()
-        cancelSearch()
+        find.reset()
         view.document = nil
-        (query, matches, matchIndex, limited, startFrom) = ("", [], 0, false, nil)
         (page, pageCount) = (0, 0)
     }
 
@@ -520,16 +386,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         if view.currentSelection?.pages.contains(where: gone.contains) == true { view.clearSelection() }
         if let mark = view.mark, gone.contains(mark.page) { view.removeMark() }
         pageChanged()
-        let kept = matches.filter { !$0.pages.contains(where: gone.contains) }
-        if kept.count != matches.count {
-            let chosen = matches.indices.contains(matchIndex) ? matches[matchIndex] : nil
-            matches = kept
-            matchIndex = chosen.flatMap { kept.firstIndex(of: $0) } ?? min(matchIndex, max(0, kept.count - 1))
-            view.highlightedSelections = kept.isEmpty ? nil : kept
-        }
-        guard finding else { return }
-        cancelSearch()
-        find(findText, keepingPlace: true)
+        find.pagesReplaced(gone)
     }
 
     /// The layers go once PDFKit has drawn its own pages' tiles and faded them in beneath (27.2).
@@ -593,7 +450,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let rect = found.map { $0.selection.bounds(for: $0.page) }
             ?? SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
         view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
-        if let selection = found?.selection, !finding {
+        if let selection = found?.selection, !find.isOpen {
             view.removeMark()
             selection.color = .findHighlightColor
             view.setCurrentSelection(selection, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
@@ -622,20 +479,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
             }
             return ["page": number, "text": text, "near": near]
         }
-    }
-
-    func step(_ delta: Int) {
-        guard !matches.isEmpty else { return }
-        matchIndex = (matchIndex + delta + matches.count) % matches.count
-        selectMatch()
-    }
-
-    private func selectMatch(scrolling: Bool = true) {
-        guard matches.indices.contains(matchIndex), let match = matches[matchIndex].copy() as? PDFSelection else { return }
-        // A copy without Find's colour, which PDFKit draws as the selection, over the mark every match has.
-        match.color = nil
-        view.setCurrentSelection(match, animate: scrolling && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-        if scrolling { view.scrollSelectionToVisible(nil) }
     }
 
     /// SyncTeX resolves only points on a glyph box, and the page centre is usually whitespace.

@@ -230,7 +230,7 @@ final class WorkspaceController: DetentSplitViewController {
 
         pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project), width: pdfWidth))
         pdfItem.minimumThickness = ColumnMetrics.pdfMinimum
-        pdfFind = accessory(PDFFindBar(controller: pdf), hidden: true)
+        pdfFind = accessory(PDFFindBar(find: pdf.find), hidden: true)
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
 
         columns.splitView.autosaveName = "Columns"
@@ -363,7 +363,7 @@ final class WorkspaceController: DetentSplitViewController {
             track({ app.showPDF }) { [weak self] visible in if let self, appeared { setCollapsed(pdfItem, !visible) } },
             track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
             track({ app.outlineState(of: project) }) { [weak self] in self?.setOutline($0) },
-            track({ pdf.finding }) { [weak self] finding in if let self { setHidden(pdfFind, !finding) } },
+            track({ pdf.find.isOpen }) { [weak self] finding in if let self { setHidden(pdfFind, !finding) } },
             track({ app.searchFocusToken }, initial: false) { [weak self] _ in self?.focusSearch() },
         ]
         app.performPDF = { [weak self] in self?.performPDF($0) }
@@ -537,11 +537,11 @@ final class WorkspaceController: DetentSplitViewController {
         case .showFindInterface:
             return { [weak self] in self?.showPDFFind() }
         case .nextMatch, .previousMatch:
-            guard pdf.canFindNext else { return nil }
-            return { [pdf] in pdf.findNext(action == .nextMatch ? 1 : -1) }
+            guard pdf.find.canNext else { return nil }
+            return { [find = pdf.find] in find.next(action == .nextMatch ? 1 : -1) }
         case .setSearchString:
-            guard pdf.canUseSelectionForFind else { return nil }
-            return { [pdf] in pdf.useSelectionForFind() }
+            guard pdf.find.canUseSelection else { return nil }
+            return { [find = pdf.find] in find.useSelection() }
         default:
             return nil
         }
@@ -557,9 +557,9 @@ final class WorkspaceController: DetentSplitViewController {
     }
 
     private func showPDFFind() {
-        pdf.finding = true
+        pdf.find.isOpen = true
         setHidden(pdfFind, false)
-        focusField(pdf.findField, in: pdfFind)
+        focusField(pdf.find.field, in: pdfFind)
     }
 
     // MARK: - The menus' PDF requests

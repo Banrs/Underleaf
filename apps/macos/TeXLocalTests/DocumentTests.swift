@@ -203,10 +203,10 @@ struct PDFFindTests {
     @Test func useSelectionForFindStaysAtTheSelection() async throws {
         let controller = try targets()
         try select("target", onPage: 1, in: controller)
-        #expect(controller.canUseSelectionForFind)
-        controller.useSelectionForFind()
-        try await waitUntil(timeout: .seconds(5)) { controller.query == "target" && controller.matches.count == 3 }
-        #expect(controller.matchIndex == 1 && controller.finding && PDFFind.shared == "target")
+        #expect(controller.find.canUseSelection)
+        controller.find.useSelection()
+        try await waitUntil(timeout: .seconds(5)) { controller.find.query == "target" && controller.find.matches.count == 3 }
+        #expect(controller.find.matchIndex == 1 && controller.find.isOpen && PDFFind.shared == "target")
     }
 
     @Test func jumpToSelectionShowsTheSelection() throws {
@@ -223,82 +223,82 @@ struct PDFFindTests {
     @Test func findNextGoesOnFromTheSelection() async throws {
         let controller = try targets()
         PDFFind.shared = "target"
-        #expect(controller.canFindNext)
+        #expect(controller.find.canNext)
         try select("beta", onPage: 1, in: controller)
-        controller.findNext(1)
-        try await waitUntil(timeout: .seconds(5)) { controller.query == "target" && controller.matches.count == 3 }
-        #expect(controller.matchIndex == 1)
-        controller.findNext(1)
-        #expect(controller.matchIndex == 2)
-        controller.closeFind()
+        controller.find.next(1)
+        try await waitUntil(timeout: .seconds(5)) { controller.find.query == "target" && controller.find.matches.count == 3 }
+        #expect(controller.find.matchIndex == 1)
+        controller.find.next(1)
+        #expect(controller.find.matchIndex == 2)
+        controller.find.close()
         try select("alpha", onPage: 0, in: controller)
-        controller.findNext(-1)
-        try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 3 }
-        #expect(controller.matchIndex == 2)
+        controller.find.next(-1)
+        try await waitUntil(timeout: .seconds(5)) { controller.find.matches.count == 3 }
+        #expect(controller.find.matchIndex == 2)
     }
 
     @Test(arguments: zip(["alpha", "nothing"], [1, -1]))
     func findNextUsesTheLatestSharedOrTypedText(_ earlier: String, _ step: Int) async throws {
         let controller = try targets()
-        controller.findText = earlier
-        controller.findTyped()
-        try await waitUntil(timeout: .seconds(5)) { controller.query == earlier && controller.matches.count == (earlier == "alpha" ? 1 : 0) }
+        controller.find.text = earlier
+        controller.find.typed()
+        try await waitUntil(timeout: .seconds(5)) { controller.find.query == earlier && controller.find.matches.count == (earlier == "alpha" ? 1 : 0) }
         PDFFind.shared = "target"
-        controller.findNext(step)
-        try await waitUntil(timeout: .seconds(5)) { controller.query == "target" && controller.matches.count == 3 }
-        #expect(controller.findText == "target")
+        controller.find.next(step)
+        try await waitUntil(timeout: .seconds(5)) { controller.find.query == "target" && controller.find.matches.count == 3 }
+        #expect(controller.find.text == "target")
 
-        controller.findText = "gamma"
-        controller.findTyped()
+        controller.find.text = "gamma"
+        controller.find.typed()
         try #require(controller.view.document?.isFinding == true)
         PDFFind.shared = "target" // Another pane changes it while gamma is still being searched.
-        controller.findNext(step)
-        #expect(controller.findText == "target")
+        controller.find.next(step)
+        #expect(controller.find.text == "target")
         try await waitUntil(timeout: .seconds(5)) { controller.view.document?.isFinding == false }
-        #expect(controller.query == "target" && controller.matches.count == 3)
+        #expect(controller.find.query == "target" && controller.find.matches.count == 3)
 
-        controller.findText = "gamma" // Its typing debounce has not fired yet.
-        controller.findNext(step)
-        try await waitUntil(timeout: .seconds(5)) { controller.query == "gamma" && controller.matches.count == 1 }
-        #expect(controller.findText == "gamma" && PDFFind.shared == "gamma")
+        controller.find.text = "gamma" // Its typing debounce has not fired yet.
+        controller.find.next(step)
+        try await waitUntil(timeout: .seconds(5)) { controller.find.query == "gamma" && controller.find.matches.count == 1 }
+        #expect(controller.find.text == "gamma" && PDFFind.shared == "gamma")
     }
 
     @Test func rebuildSearchesCurrentFindText() async throws {
         let first = try textPDF(["old result"])
         let second = try textPDF(["new result"])
         let controller = shown(first)
-        controller.finding = true
-        controller.findText = "old"
-        controller.find("old")
+        controller.find.isOpen = true
+        controller.find.text = "old"
+        controller.find.search("old")
         try await waitUntil(timeout: .seconds(5)) {
-            controller.query == "old" && controller.matches.first?.pages.first?.string?.contains("old") == true
+            controller.find.query == "old" && controller.find.matches.first?.pages.first?.string?.contains("old") == true
         }
 
         // The field changed, but its debounce has not started a new search yet.
-        controller.findText = "new"
+        controller.find.text = "new"
         controller.show(second)
         try await waitUntil(timeout: .seconds(5)) {
-            controller.query == "new" && controller.matches.first?.pages.first?.string?.contains("new") == true
+            controller.find.query == "new" && controller.find.matches.first?.pages.first?.string?.contains("new") == true
         } state: {
-            "query \(controller.query), matches \(controller.matches.count)"
+            "query \(controller.find.query), matches \(controller.find.matches.count)"
         }
-        #expect(controller.matches.count == 1)
+        #expect(controller.find.matches.count == 1)
     }
 
     @Test func typingBackKeepsTheFieldsMatches() async throws {
         let controller = shown(try textPDF(["a ab a"]))
-        controller.finding = true
-        controller.findText = "a"
-        controller.findTyped()
-        try await waitUntil { controller.query == "a" && controller.matches.count == 3 }
-        controller.findText = "ab"
-        controller.findTyped()
-        controller.findText = "a"
-        controller.findTyped()
-        try await waitUntil { controller.query == "a" && controller.matches.count == 3 }
+        controller.find.isOpen = true
+        controller.find.text = "a"
+        controller.find.typed()
+        try await waitUntil { controller.find.query == "a" && controller.find.matches.count == 3 }
+        controller.find.text = "ab"
+        controller.find.typed()
+        controller.find.text = "a"
+        controller.find.typed()
+        try await waitUntil { controller.find.query == "a" && controller.find.matches.count == 3 }
         // The longer search, had it gone on, would have ended by now.
         try await Task.sleep(for: .milliseconds(300))
-        #expect(controller.query == "a" && controller.matches.count == 3)
+        #expect(controller.find.query == "a" && controller.find.matches.count == 3)
     }
 
     @Test func aClickSendsThePagesTextAndTheLetter() throws {
@@ -353,7 +353,7 @@ struct PDFFindTests {
     /// PDFKit searches off the main thread and posts what it finds to the main queue.
     private func found(_ controller: PDFController) async throws {
         try await waitUntil(timeout: .seconds(5)) {
-            !controller.matches.isEmpty && controller.matches.allSatisfy { shows($0.pages.first, in: controller) }
+            !controller.find.matches.isEmpty && controller.find.matches.allSatisfy { shows($0.pages.first, in: controller) }
         }
     }
 
@@ -366,11 +366,11 @@ struct PDFFindTests {
         let first = try textPDF(["needle", "filler", "needle", "needle"])
         controller.show(first)
         if let scale { controller.setScale(scale) }
-        controller.finding = true
-        controller.findText = "needle"
-        controller.find(controller.findText)
+        controller.find.isOpen = true
+        controller.find.text = "needle"
+        controller.find.search(controller.find.text)
         try await found(controller)
-        controller.step(1)
+        controller.find.advance(by: 1)
         view.layoutDocumentView()
         let shown = try #require(view.document)
         let page = shown.index(for: try #require(view.currentPage))
@@ -383,10 +383,10 @@ struct PDFFindTests {
             view.layoutDocumentView()
             try await found(controller)
 
-            #expect(controller.finding)
-            #expect(controller.matches.count == 4)
-            #expect(controller.matchIndex == 1)
-            #expect(view.currentSelection?.pages.first === controller.matches[1].pages.first)
+            #expect(controller.find.isOpen)
+            #expect(controller.find.matches.count == 4)
+            #expect(controller.find.matchIndex == 1)
+            #expect(view.currentSelection?.pages.first === controller.find.matches[1].pages.first)
             #expect(view.document === shown)
             #expect(shown.index(for: try #require(view.currentPage)) == page)
             let current = try #require(view.documentView).visibleRect

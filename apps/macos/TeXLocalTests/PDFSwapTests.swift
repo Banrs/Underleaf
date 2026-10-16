@@ -117,25 +117,25 @@ struct PDFSwapTests {
         controller.show(try document(["alpha", "beta", "alpha"]))
         if inView { try await waitUntil(timeout: .seconds(5)) { paper(view) > 0 } }
         let shown = try #require(view.document)
-        controller.finding = true
-        controller.findText = "alpha"
-        controller.find("alpha")
-        try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 400 }
+        controller.find.isOpen = true
+        controller.find.text = "alpha"
+        controller.find.search("alpha")
+        try await waitUntil(timeout: .seconds(5)) { controller.find.matches.count == 400 }
         let selection = try #require(shown.page(at: 1)?.selection(for: NSRange(location: 0, length: 4)))
         view.setCurrentSelection(selection, animate: false)
         controller.showLive(try #require(try document(["gamma"]).page(at: 0)), at: inView ? 0 : 2)
         if inView {
             // Over the page, which PDFKit's document still has as it was.
             #expect(view.hasLive(at: 0) && text(view) == ["alpha", "beta", "alpha"])
-            #expect(view.currentSelection?.string == "beta" && controller.matches.count == 400)
+            #expect(view.currentSelection?.string == "beta" && controller.find.matches.count == 400)
             controller.showLive(try document(["gamma", "beta", "alpha"]), changed: [0], complete: true)
             #expect(text(view) == ["gamma", "beta", "alpha"] && view.document === shown)
         } else {
             // Out of view, so PDFKit's document takes it at once.
             #expect(text(view) == ["alpha", "beta", "gamma"])
         }
-        #expect(view.currentSelection?.string == "beta" && controller.matches.count == 200)
-        try await waitUntil(timeout: .seconds(5)) { controller.query == "alpha" && view.highlightedSelections?.count == 200 }
+        #expect(view.currentSelection?.string == "beta" && controller.find.matches.count == 200)
+        try await waitUntil(timeout: .seconds(5)) { controller.find.query == "alpha" && view.highlightedSelections?.count == 200 }
         #expect(view.currentSelection?.string == "beta")
         if inView {
             // The layer goes once PDFKit's own page has drawn beneath it.
@@ -143,7 +143,7 @@ struct PDFSwapTests {
         } else {
             controller.showLive(try #require(try document(["alpha"]).page(at: 0)), at: 1)
             #expect(view.currentSelection == nil)
-            try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 400 }
+            try await waitUntil(timeout: .seconds(5)) { controller.find.matches.count == 400 }
         }
     }
 
@@ -196,9 +196,9 @@ struct PDFSwapTests {
     @Test func clearingThePDFClosesItsFind() throws {
         let controller = PDFController()
         controller.show(try document(["one"]))
-        controller.finding = true
-        controller.findText = "one"
+        controller.find.isOpen = true
+        controller.find.text = "one"
         controller.clear()
-        #expect(!controller.finding && controller.findText.isEmpty && controller.pageCount == 0)
+        #expect(!controller.find.isOpen && controller.find.text.isEmpty && controller.pageCount == 0)
     }
 }

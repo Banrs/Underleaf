@@ -241,6 +241,12 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         return page(for: top, nearest: true).map { PDFDestination(page: $0, at: convert(top, to: $0)) }
     }
 
+    /// `shownDestination` as its page's index and its point.
+    var shownPlace: (index: Int, point: CGPoint)? {
+        guard let destination = shownDestination, let page = destination.page, let document else { return nil }
+        return (index: document.index(for: page), point: destination.point)
+    }
+
     /// A double-click whose pointer has moved by the time PDFKit's handling returns was dragged on to select by words.
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)

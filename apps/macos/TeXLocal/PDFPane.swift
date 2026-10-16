@@ -76,28 +76,28 @@ struct PDFRepresentable: NSViewRepresentable {
 }
 
 struct PDFFindBar: View {
-    @Bindable var controller: PDFController
+    @Bindable var find: PDFFind
 
     var body: some View {
         // For the query the matches are for, which the field can be ahead of.
-        let label = PDFFind.count(controller.matchIndex + 1, of: controller.matches.count, limited: controller.limited, for: controller.query)
+        let label = PDFFind.count(find.matchIndex + 1, of: find.matches.count, limited: find.limited, for: find.query)
         HStack {
-            SearchField(text: $controller.findText, prompt: "Find in PDF", handle: controller.findField,
-                        step: controller.findNext, close: controller.closeFind)
+            SearchField(text: $find.text, prompt: "Find in PDF", handle: find.field,
+                        step: find.next, close: find.close)
                 .frame(minWidth: 100, maxWidth: .infinity)
             ControlGroup {
-                Button("Previous Match", systemImage: "chevron.backward") { controller.findNext(-1) }
+                Button("Previous Match", systemImage: "chevron.backward") { find.next(-1) }
                     .help("Go to the previous match")
-                Button("Next Match", systemImage: "chevron.forward") { controller.findNext(1) }
+                Button("Next Match", systemImage: "chevron.forward") { find.next(1) }
                     .help("Go to the next match")
             }
-            .disabled(controller.matches.isEmpty)
+            .disabled(find.matches.isEmpty)
             .fixedSize()
             Text(label)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
                 .layoutPriority(-1)
-            Button("Done") { controller.closeFind() }
+            Button("Done") { find.close() }
         }
         .lineLimit(1)
         // VoiceOver's focus stays in the field, so it hears the count, or that there is none, from here, once it has settled:
@@ -108,9 +108,9 @@ struct PDFFindBar: View {
             spoken.accessibilitySpeechAnnouncementPriority = .low
             AccessibilityNotification.Announcement(spoken).post()
         }
-        .task(id: controller.findText) {
+        .task(id: find.text) {
             try? await Task.sleep(for: PDFFind.debounce)
-            if !Task.isCancelled { controller.findTyped() }
+            if !Task.isCancelled { find.typed() }
         }
     }
 }
@@ -135,36 +135,6 @@ struct ScaleMenuItems: View {
     }
 }
 
-enum PDFFind {
-    static let maxQuery = 256
-    static let maxMatches = 5000
-    static let debounce: Duration = .milliseconds(200)
-
-    static func normalize(_ query: String) -> String {
-        String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery))
-    }
-
-    static func count(_ index: Int, of total: Int, limited: Bool, for query: String) -> String {
-        if query.isEmpty { return "" }
-        if total == 0 { return String(localized: "Not found") }
-        let count = "\(total.formatted())\(limited ? "+" : "")"
-        return String(localized: "\(index) of \(count)")
-    }
-
-    /// The find text every app shares (the find pasteboard), so ⌘E in one pane and ⌘G in the other find the same;
-    /// the tests' own leaves the user's alone.
-    static var board = NSPasteboard(name: .find)
-
-    static var shared: String? {
-        get { board.string(forType: .string) }
-        set {
-            guard let newValue, !newValue.isEmpty, newValue != shared else { return }
-            board.clearContents()
-            board.setString(newValue, forType: .string)
-        }
-    }
-}
-
 enum PDFPaper: String, CaseIterable, Identifiable {
     case white, dark, auto
 
@@ -182,6 +152,6 @@ enum PDFPaper: String, CaseIterable, Identifiable {
 }
 
 #Preview("Find bar") {
-    PDFFindBar(controller: PDFController())
+    PDFFindBar(find: PDFController().find)
         .frame(width: 480)
 }
