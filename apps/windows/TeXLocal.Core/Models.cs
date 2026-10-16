@@ -30,3 +30,38 @@ public sealed record IssueLine(int Line, bool Error, string Message, string Shor
 public sealed record ForwardSync(double Page, double? H, double? V, double? Width, double? Height);
 
 public sealed record InverseSync(string File, int Line, int? Column);
+
+/// UTF-16 offsets, as the editor counts.
+public sealed record SourceRange(int Start, int Length)
+{
+    public int End => Start + Length;
+}
+
+public sealed record TextEdit(int Start, int Length, string Text);
+
+/// What a key does in place of the editor's default: an edit, where the selection goes, a bracket's partner to show,
+/// and what the completion list does (keep, offer or close). With neither edit nor selection the editor types as usual.
+public sealed record Keystroke(TextEdit? Edit, SourceRange? Selection, int? Partner, string Completions);
+
+/// Edits applied from the last as one undo step, and the selections after them.
+public sealed record Change(TextEdit[] Edits, SourceRange[] Selections);
+
+/// Tab: a snippet's field to select, or without a snippet the lines' indentation.
+public sealed record Tabbing(SourceRange? Field, TextEdit[] Edits);
+
+public sealed record SnippetField(int Start, int Length, int Index);
+
+public sealed record Completion(string Label, string Text, SnippetField[] Fields);
+
+/// <param name="Kind">command, environment, label, citation or entryType.</param>
+public sealed record Completions(int Start, string Kind, Completion[] Items);
+
+public sealed record Insertion(TextEdit Edit, int Caret, SnippetField[] Fields);
+
+public sealed record MathPreview(int Start, string Tex, bool Display);
+
+/// Each style the whole selection has, as the edits that would take it off.
+public sealed record TextStyles(TextEdit[]? Bold, TextEdit[]? Italic, TextEdit[]? Underline);
+
+/// RaTeX's SVG and its size in the points of the size asked for, or why there's none.
+public sealed record MathSvg(string? Svg, double Width, double Height, double Baseline, string? Error);

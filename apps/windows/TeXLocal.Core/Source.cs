@@ -63,6 +63,9 @@ public sealed unsafe class Source : SafeHandle
             return Take(tl_source_call(handle, c, a));
     }
 
+    /// A document command's answer; default for null or none.
+    public T? Call<T>(string cmd, object args) => Call(cmd, args) is { } json ? JsonSerializer.Deserialize<T>(json, Core.Json) : default;
+
     /// texlocal-syntax's commands that need no document: themes, menus, headings, maths.
     public static T? SyntaxCall<T>(string cmd, object args)
     {
