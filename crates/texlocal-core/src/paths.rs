@@ -191,6 +191,33 @@ pub(crate) fn fold_case(path: &str) -> String {
     }
 }
 
+/// Whether `path` is the entry `entry` or inside it, both forward-slash project
+/// paths with names spelt as the core listed or made them: open documents'
+/// paths, and the paths a rename or delete names.
+pub(crate) fn within(path: &str, entry: &str) -> bool {
+    path.strip_prefix(entry)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// What follows the entry `entry` in `path`, both forward-slash project
+/// paths, with names compared as the volume compares them (`fold_case`), for a
+/// path as a user or the settings file spells it, such as the main file: ""
+/// for the entry itself, "/…" for a path inside it, None for any other.
+pub(crate) fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
+    let mut rest = path;
+    for (i, name) in entry.split('/').enumerate() {
+        if i > 0 {
+            rest = rest.strip_prefix('/')?;
+        }
+        let end = rest.find('/').unwrap_or(rest.len());
+        if fold_case(&rest[..end]) != fold_case(name) {
+            return None;
+        }
+        rest = &rest[end..];
+    }
+    Some(rest)
+}
+
 /// The normalized forward-slash spelling of a user-supplied project path, for
 /// comparing it with a stored one such as the main file. It checks nothing on
 /// disk: pair it with `safe_path`, and use `safe_rel_file` for anything that

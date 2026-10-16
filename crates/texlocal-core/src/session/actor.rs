@@ -18,9 +18,10 @@ use crate::atomic::Stamp;
 use crate::compile::CompileResult;
 use crate::events::Emitter;
 use crate::logparse::LogItem;
+use crate::paths::{self, within};
 use crate::projects::{self, SymbolScan, Symbols};
 use crate::service::{Service, arg, out, string_arg};
-use crate::{CoreError, lock, paths, settings};
+use crate::{CoreError, lock, settings};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 
@@ -75,10 +76,10 @@ pub(crate) struct Doc {
     disk_text: Option<String>,
     /// While a stat still gives it, a change told of is the session's own save, or none.
     disk_stamp: Option<Stamp>,
-    /// Asked about once; until answered, no save writes over the other app's change.
-    changed: bool,
-    /// Asked about once; until answered, no save puts the file back.
-    gone: bool,
+    /// Asked about once; until answered, no save writes over the other app's change
+    /// or puts the file back.
+    conflict: Option<Conflict>,
+    /// The conflict the host is asking about.
     asking: Option<Conflict>,
     /// Cancel in a conflict: not saved, and the autosave stays quiet.
     held: bool,
@@ -104,10 +105,12 @@ impl Doc {
 #[derive(Default)]
 struct Build {
     compiling: bool,
+    /// One more build asked for during this one; `Some(true)` while every request was automatic.
     queued: Option<bool>,
-    stop: bool,
     auto: bool,
+    /// The edit count when it began.
     built: u64,
+    /// Its saves went through: else what it queued would build stale text.
     saved: bool,
 }
 
@@ -156,8 +159,8 @@ pub(crate) struct Actor {
     autosave_at: Option<Instant>,
     fs_pending: Vec<Change>,
     fs_at: Option<Instant>,
+    /// The listing as last read: the same files and folders make the same tree.
     pub tree: TreeIndex,
-    tree_json: Value,
     _watcher: Option<RecommendedWatcher>,
     deleting: Option<String>,
     clean_waiting: Option<Reply>,
@@ -169,14 +172,22 @@ pub(crate) struct Actor {
 }
 
 impl Actor {
-    pub fn new(setup: Setup) -> Result<Self, CoreError> {
+    /// The session, and what the answer to its open tells the host.
+    pub fn new(setup: Setup) -> Result<(Self, Opened), CoreError> {
         let tree = projects::file_tree(&setup.root)?;
         let watcher = setup
             .timings
             .watch
             .then(|| watch::watch(&setup.root, setup.tx.clone()))
             .flatten();
-        let build_pdf = settings::compiled_pdf_path(&setup.root).is_ok_and(|pdf| pdf.is_file());
+        let pdf = settings::compiled_pdf_path(&setup.root)
+            .ok()
+            .filter(|pdf| pdf.is_file());
+        let opened = Opened {
+            pdf: pdf.as_ref().map(|pdf| pdf.to_string_lossy().into_owned()),
+            tree: out(&tree)?,
+        };
+        let build_pdf = pdf.is_some();
         let empty = Symbols {
             citations: Vec::new(),
             labels: Vec::new(),
@@ -212,7 +223,6 @@ impl Actor {
             fs_pending: Vec::new(),
             fs_at: None,
             tree: TreeIndex::of(&tree),
-            tree_json: serde_json::to_value(&tree).unwrap_or_default(),
             _watcher: watcher,
             deleting: None,
             clean_waiting: None,
@@ -225,17 +235,7 @@ impl Actor {
         if actor.auto_compile && !build_pdf {
             actor.later.push_back(Later::Compile(true));
         }
-        Ok(actor)
-    }
-
-    pub fn opened(&self) -> Opened {
-        let pdf = settings::compiled_pdf_path(&self.root)
-            .ok()
-            .filter(|pdf| self.build_pdf && pdf.is_file());
-        Opened {
-            pdf: pdf.map(|pdf| pdf.to_string_lossy().into_owned()),
-            tree: self.tree_json.clone(),
-        }
+        Ok((actor, opened))
     }
 
     pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) {
@@ -516,8 +516,7 @@ impl Actor {
             force: false,
             disk_text: Some(text.clone()),
             disk_stamp: stamp,
-            changed: false,
-            gone: false,
+            conflict: None,
             asking: None,
             held: false,
             error: None,
@@ -651,14 +650,7 @@ impl Actor {
         if doc.reload.is_some() || deleting || doc.asking.is_some() || autosave && doc.composing {
             return Ok(false);
         }
-        let conflict = if doc.gone {
-            Some(Conflict::Gone)
-        } else if doc.changed {
-            Some(Conflict::Changed)
-        } else {
-            None
-        };
-        if let Some(kind) = conflict {
+        if let Some(kind) = doc.conflict {
             if reporting {
                 self.ask(path, kind);
             }
@@ -684,33 +676,24 @@ impl Actor {
         result
     }
 
-    /// Writes every document with unsaved edits; typing during a write is written too.
+    /// Writes every document with unsaved edits. Typing during a write is the
+    /// next autosave's: its edit, queued behind this, sets the autosave again.
     fn flush_all(&mut self, reporting: bool) -> Result<bool, CoreError> {
         self.autosave_at = None;
-        let mut failure = None;
-        for _ in 0..3 {
-            let dirty = self.dirty_paths();
-            if dirty.is_empty() {
-                break;
-            }
-            let mut all = true;
-            for path in dirty {
-                match self.save_doc(&path, reporting, false) {
-                    Ok(saved) => all &= saved,
-                    Err(err) => {
-                        all = false;
-                        failure.get_or_insert(err);
-                    }
+        let (mut all, mut failure) = (true, None);
+        for path in self.dirty_paths() {
+            match self.save_doc(&path, reporting, false) {
+                Ok(saved) => all &= saved,
+                Err(err) => {
+                    all = false;
+                    failure.get_or_insert(err);
                 }
             }
-            if !all {
-                return failure.map_or(
-                    Ok(false),
-                    |err| if reporting { Err(err) } else { Ok(false) },
-                );
-            }
         }
-        Ok(true)
+        match failure {
+            Some(err) if reporting => Err(err),
+            _ => Ok(all),
+        }
     }
 
     /// A save someone asked for: a build follows when it wrote anything.
@@ -738,14 +721,7 @@ impl Actor {
             .docs
             .get_mut(path)
             .ok_or_else(|| CoreError::not_found("The document isn't open"))?;
-        let kind = doc.asking.or(if doc.gone {
-            Some(Conflict::Gone)
-        } else if doc.changed {
-            Some(Conflict::Changed)
-        } else {
-            None
-        });
-        let Some(kind) = kind else {
+        let Some(kind) = doc.asking.or(doc.conflict) else {
             return Ok(Value::Null);
         };
         let disk_text = doc.disk_text.clone();
@@ -753,10 +729,11 @@ impl Actor {
             (_, "cancel") => (doc.asking, doc.held) = (None, true),
             // The autosave was held while asking, or the edits were saved before the other app's change.
             (Conflict::Changed, "save") => {
-                (doc.asking, doc.changed, doc.force) = (None, false, true)
+                (doc.asking, doc.conflict, doc.force) = (None, None, true)
             }
-            (Conflict::Changed, "revert") => (doc.asking, doc.changed) = (None, false),
-            (Conflict::Gone, "save") => (doc.asking, doc.gone) = (None, false),
+            (Conflict::Changed, "revert") | (Conflict::Gone, "save") => {
+                (doc.asking, doc.conflict) = (None, None)
+            }
             (Conflict::Gone, "close") => {
                 self.close_doc(path, "closed");
                 return Ok(Value::Null);
@@ -831,7 +808,10 @@ impl Actor {
         let Some(doc) = self.docs.get_mut(path) else {
             return;
         };
-        doc.gone = false;
+        // It is there, so not gone.
+        if doc.conflict == Some(Conflict::Gone) {
+            doc.conflict = None;
+        }
         // A volume that keeps whole seconds could give a same-length write in the same second this stamp.
         let exact = doc.disk_stamp.filter(|stamp| stamp.nanoseconds != 0);
         if exact.is_some() && fs::metadata(&abs).ok().map(|meta| Stamp::of(&meta)) == exact {
@@ -846,9 +826,7 @@ impl Actor {
         }
         doc.disk_text = Some(text.clone());
         if doc.dirty() {
-            let asked = doc.changed;
-            doc.changed = true;
-            if !asked {
+            if doc.conflict.replace(Conflict::Changed).is_none() {
                 self.ask(path, Conflict::Changed);
             }
             return;
@@ -860,13 +838,10 @@ impl Actor {
         let Some(doc) = self.docs.get_mut(path) else {
             return;
         };
-        doc.changed = false;
         if !doc.dirty() {
             return self.close_doc(path, "gone");
         }
-        let asked = doc.gone;
-        doc.gone = true;
-        if !asked {
+        if doc.conflict.replace(Conflict::Gone) != Some(Conflict::Gone) {
             self.ask(path, Conflict::Gone);
         }
     }
@@ -875,13 +850,12 @@ impl Actor {
         let Ok(tree) = projects::file_tree(&self.root) else {
             return;
         };
-        let json = serde_json::to_value(&tree).unwrap_or_default();
-        if json == self.tree_json {
+        let index = TreeIndex::of(&tree);
+        if index == self.tree {
             return;
         }
-        self.tree = TreeIndex::of(&tree);
-        self.tree_json = json.clone();
-        self.emit("tree", json!({ "tree": json }));
+        self.tree = index;
+        self.emit("tree", json!({ "tree": tree }));
         self.live_files_changed();
     }
 
@@ -930,16 +904,15 @@ impl Actor {
         }
         if self.build.compiling {
             self.build.queued = Some(self.build.queued.unwrap_or(true) && auto);
-            self.publish_build();
             return Ok(());
         }
         // Before the save, so a second request queues instead of racing this one.
-        (self.build.compiling, self.build.stop, self.build.auto) = (true, false, auto);
+        (self.build.compiling, self.build.auto) = (true, auto);
         self.publish_build();
         let saved = self.flush_all(!auto);
         self.build.saved = saved.as_ref().is_ok_and(|saved| *saved);
         self.build.built = self.edits;
-        if self.build.saved && !self.build.stop && !(auto && self.live_previewing()) {
+        if self.build.saved && !(auto && self.live_previewing()) {
             let (build, tx) = (self.engine.compile(self.root.clone()), self.tx.clone());
             tokio::spawn(async move {
                 let _ = tx.send(Msg::BuildDone(build.await));
@@ -952,9 +925,8 @@ impl Actor {
 
     pub fn stop_compile(&mut self) {
         if self.build.compiling {
-            (self.build.queued, self.build.stop) = (None, true);
+            self.build.queued = None;
             self.engine.stop_compile(&self.root);
-            self.publish_build();
         }
     }
 
@@ -1269,11 +1241,6 @@ fn issue_lines(issues: &[LogItem], path: &str) -> Vec<Value> {
             })
         })
         .collect()
-}
-
-fn within(path: &str, dir: &str) -> bool {
-    path.strip_prefix(dir)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 /// A file's text, and its stamp from before the read: a write meanwhile gives

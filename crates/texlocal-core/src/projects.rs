@@ -16,7 +16,9 @@ use serde_json::json;
 use crate::BUILD_DIR;
 use crate::atomic::{self, Stamp};
 use crate::error::CoreError;
-use crate::paths::{fold_case, project_root, rel_key, safe_path, safe_write_path, sanitize_name};
+use crate::paths::{
+    after_entry, fold_case, project_root, rel_key, safe_path, safe_write_path, sanitize_name,
+};
 use crate::settings::{move_ui, read_settings, write_settings};
 use crate::templates;
 
@@ -564,24 +566,6 @@ pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<atomic::Stam
     Ok(atomic::write(abs, contents)?)
 }
 
-/// What follows the entry `entry` in `path`, both forward-slash project
-/// paths, with names compared as the volume compares them: "" for the entry
-/// itself, "/…" for a path inside it, None for any other.
-fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
-    let mut rest = path;
-    for (i, name) in entry.split('/').enumerate() {
-        if i > 0 {
-            rest = rest.strip_prefix('/')?;
-        }
-        let end = rest.find('/').unwrap_or(rest.len());
-        if fold_case(&rest[..end]) != fold_case(name) {
-            return None;
-        }
-        rest = &rest[end..];
-    }
-    Some(rest)
-}
-
 fn is_under(path: &str, dir: &str) -> bool {
     after_entry(path, dir).is_some_and(|rest| !rest.is_empty())
 }
@@ -814,10 +798,10 @@ impl SymbolScan {
 #[cfg(test)]
 mod tests {
     use super::{
-        Located, SymbolScan, after_entry, create_file, create_free, create_project, file_kind,
-        locate, rename_entry,
+        Located, SymbolScan, create_file, create_free, create_project, file_kind, locate,
+        rename_entry,
     };
-    use crate::paths::project_root;
+    use crate::paths::{after_entry, project_root};
     use crate::settings::{UiPatch, UiState, read_ui, write_ui};
     use std::fs;
     use std::path::{Path, PathBuf};

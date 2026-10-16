@@ -53,11 +53,11 @@ pub struct UploadCheck {
 pub fn keep_both(path: &str, clashes: &[Clash]) -> String {
     clashes
         .iter()
-        .find_map(|c| {
-            let rest = path.strip_prefix(&c.path)?;
-            (rest.is_empty() || rest.starts_with('/')).then(|| format!("{}{rest}", c.keep_both))
-        })
-        .unwrap_or_else(|| path.to_string())
+        .find(|c| paths::within(path, &c.path))
+        .map_or_else(
+            || path.to_string(),
+            |c| format!("{}{}", c.keep_both, &path[c.path.len()..]),
+        )
 }
 
 /// The first entry in `rel`'s way under `base`: the file itself if it

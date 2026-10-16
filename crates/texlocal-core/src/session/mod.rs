@@ -200,7 +200,7 @@ impl Sessions {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::unbounded_channel();
         let docs = Arc::default();
-        let actor = actor::Actor::new(actor::Setup {
+        let (actor, opened) = actor::Actor::new(actor::Setup {
             id,
             project,
             root: root.clone(),
@@ -212,7 +212,6 @@ impl Sessions {
             timings: self.timings.clone(),
             auto_compile,
         })?;
-        let opened = actor.opened();
         // Before the task can make an event (a build, say, for `autoCompile`), and let go
         // once the host has the answer that names the session (`call_then`).
         self.hub.hold(id);

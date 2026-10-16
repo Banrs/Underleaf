@@ -11,6 +11,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 use super::Msg;
+use crate::paths::within;
 use crate::projects::TreeNode;
 
 /// A path the system said changed. Structural: made, removed or renamed.
@@ -130,12 +131,8 @@ pub(crate) fn classify(
             }
             continue;
         }
-        let inside = |doc: &String| {
-            doc.strip_prefix(rel.as_str())
-                .is_some_and(|r| r.starts_with('/'))
-        };
         for doc in docs {
-            if *doc == rel || change.structural && inside(doc) {
+            if *doc == rel || change.structural && within(doc, &rel) {
                 meaning.docs.insert(doc.clone());
             }
         }
