@@ -56,6 +56,17 @@
         <Setter Property="VerticalAlignment" Value="Stretch" />
     </Style>
 
+    <!-- Status bar text: Caption in secondary, tabular so counts don't shift as they change. -->
+    <Style x:Key="StatusTextStyle" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
+        <Setter Property="Padding" Value="8,0" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="TextAlignment" Value="Center" />
+        <Setter Property="TextWrapping" Value="NoWrap" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+        <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
+    </Style>
+
     <Style x:Key="ContentCardStyle" TargetType="Grid">
         <Setter Property="Background" Value="{ThemeResource LayerFillColorDefaultBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />

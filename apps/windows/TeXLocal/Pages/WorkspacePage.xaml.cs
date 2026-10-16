@@ -1,6 +1,9 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -11,67 +14,104 @@ using Windows.ApplicationModel.DataTransfer;
 
 namespace TeXLocal.Pages;
 
-public sealed class FileItem(TreeNode node, bool expanded, bool main, List<FileItem>? children)
+/// An issues panel row: a build's error or warning, by its index among the build's issues.
+public sealed class IssueItem(int index, LogItem item)
 {
-    public string Name => node.Name;
-    public string Path => node.Path;
-    public bool IsDir => node.Type == "dir";
-    public bool IsTex => node.Kind == "tex";
-    public string? Kind => node.Kind;
-    public bool IsExpanded { get; set; } = expanded;
-    public bool IsMain => main;
-    public List<FileItem>? Children => children;
-    public string Glyph => node.Kind switch
-    {
-        null => "\uE8B7",
-        "tex" => "\uE8A5",
-        "bib" => "\uE8F1",
-        "image" => "\uE91B",
-        "pdf" => "\uEA90",
-        _ => "\uE7C3",
-    };
+    public int Index => index;
+    public string Message => item.Message;
+    public bool IsError => item.Type == "error";
+    public bool IsWarning => !IsError;
+    public bool HasPlace => item.File is not null;
+    public string Place => item.Line is { } line ? $"{item.File}:{line}" : item.File ?? "";
+    public override string ToString() => $"{(IsError ? "Error" : "Warning")}: {Message}{(HasPlace ? $", {Place}" : "")}";
 }
 
+/// A project: the sidebar, the editor and the PDF, builds and their issues, all through the project's session.
 public sealed partial class WorkspacePage : Page
 {
-    readonly RenameFlyout rename = new();
-    string id = "";
+    sealed record Chosen(int Index, LogItem Issue);
+
+    static readonly string[] shownEvents = ["tree", "document", "saved", "document_reload", "document_closed", "document_renamed",
+        "conflict", "issues", "build", "build_finished", "build_cleaned"];
+    readonly DispatcherQueueTimer searchTimer, caretTimer;
+    readonly HashSet<string> unsaved = [];
+    readonly Dictionary<string, IssueLine[]> issueLines = [];
+    string id = "", root = "", mainFile = "";
     ulong session;
-    string root = "";
-    string mainFile = "";
-    HashSet<string> expanded = [];
-    TreeNode[] tree = [];
-    string treeJson = "";
-    List<FileItem> items = [];
-    bool sidebarWanted = true;
+    bool texAvailable, compiling, outdated, sidebarWanted = true;
+    double ratio = Prefs.SplitRatio;
+    CompileResult? result;
+    IssueItem[] issues = [];
 
     static Core Core => App.Core!;
+    bool Inline => Split.DisplayMode == SplitViewDisplayMode.Inline;
 
     public WorkspacePage()
     {
         InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Required;
-        foreach (var item in TreeMenu.Items)
-            foreach (var key in item.KeyboardAccelerators) key.ScopeOwner = Tree;
-        Split.OpenPaneLength = Prefs.SidebarWidth;
-        PaneSizer.Delta += d =>
+        searchTimer = Timer(250, () => _ = Search());
+        caretTimer = Timer(150, CaretSettled);
+        SetSplit(ratio);
+        ShowEdge();
+        // Wide, the pane is as the reader last left it there; narrow, it opens over the content only when asked.
+        Split.RegisterPropertyChangedCallback(SplitView.DisplayModeProperty, (_, _) =>
         {
-            Split.OpenPaneLength = Math.Clamp(Split.OpenPaneLength + d, 200, 480);
-            Prefs.SidebarWidth = Split.OpenPaneLength;
+            Split.IsPaneOpen = Inline && sidebarWanted;
+            ShowEdge();
+        });
+        Split.RegisterPropertyChangedCallback(SplitView.IsPaneOpenProperty, (_, _) =>
+        {
+            if (Inline || Split.IsPaneOpen) sidebarWanted = Split.IsPaneOpen;
+            ShowEdge();
+        });
+        PaneSizer.Delta += d => Split.OpenPaneLength = Math.Clamp(Split.OpenPaneLength + d, 200, 480);
+        PaneSizer.Released += () => Prefs.SidebarWidth = Split.OpenPaneLength;
+        SplitSizer.Delta += d =>
+        {
+            var width = Panes.ActualWidth - SplitSizer.ActualWidth;
+            if (width > 0) SetSplit(Math.Clamp(ratio * width + d, EditorColumn.MinWidth, width - PdfColumn.MinWidth) / width);
         };
-        Split.RegisterPropertyChangedCallback(SplitView.DisplayModeProperty, (_, _) => ShowPane(Split.DisplayMode == SplitViewDisplayMode.Inline && sidebarWanted));
-        SetUpDocument();
-        ShowEditorPrefs();
-        Prefs.EditorChanged += ShowEditorPrefs;
+        SplitSizer.Released += () => Prefs.SplitRatio = ratio;
+        IssuesSizer.Delta += d => IssuesRow.Height = new(Math.Clamp(IssuesRow.Height.Value - d, 120, Math.Max(ActualHeight / 2, 120)));
+        IssuesSizer.Released += () => Prefs.IssuesHeight = IssuesRow.Height.Value;
+
+        Editor.CaretMoved += () =>
+        {
+            ShowCaret();
+            Restart(caretTimer);
+        };
+        Editor.Composing += composing =>
+        {
+            if (Editor.Path is { } path) _ = Core.CallAsync("session_composing", new { session, path, composing });
+        };
+        Editor.IssueInvoked += line =>
+        {
+            LogItem[] all = result is null ? [] : [.. result.Errors, .. result.Warnings];
+            var index = Array.FindIndex(all, i => i.File == Editor.Path && i.Line == line.Line);
+            if (index >= 0) GoToIssue("session_choose_issue", new { session, index });
+        };
+        Pdf.ViewMoved += ShowPage;
+        Pdf.Inverse += (page, x, y) => Run(null, async () =>
+        {
+            var at = await Core.CallAsync<InverseSync>("synctex_inverse", new { id, page, x, y });
+            await Reveal(at.File, at.Line, at.Column ?? 0);
+        });
+        // In code: the XAML compiler fails on an x:Bind to Shortcut.Scope.
+        foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem]) Shortcut.SetScope(item, Editor);
+        Shortcut.SetScope(RenameItem, FilesTree);
+        Shortcut.SetScope(DeleteItem, FilesTree);
+        DeleteItem.KeyboardAcceleratorTextOverride = "Del";
+        SetUpInsert();
+        ShowLook();
+        Prefs.EditorChanged += ShowLook;
         Loaded += (_, _) =>
         {
-            // An InfoBar open while the page sat cached under Settings keeps the old theme's state colours.
-            foreach (var bar in (InfoBar[])[BuildFailed, Notice])
-            {
-                var severity = bar.Severity;
-                bar.Severity = severity == InfoBarSeverity.Informational ? InfoBarSeverity.Success : InfoBarSeverity.Informational;
-                bar.Severity = severity;
-            }
+            // In case the wide state applied before the callbacks above were registered.
+            Split.IsPaneOpen |= Inline && sidebarWanted;
+            // An InfoBar open while the page sat cached under Settings keeps the old theme's colours until its state changes.
+            BuildFailed.Severity = InfoBarSeverity.Warning;
+            BuildFailed.Severity = InfoBarSeverity.Error;
         };
     }
 
@@ -79,9 +119,10 @@ public sealed partial class WorkspacePage : Page
     {
         id = (string)e.Parameter;
         App.Window.SetProject(id);
-        App.Window.Search.TextChanged += OnSearchChanged;
-        App.Window.Search.QuerySubmitted += OnSearchSubmitted;
-        App.Window.Search.KeyDown += OnSearchKey;
+        var search = App.Window.Search;
+        search.TextChanged += OnSearchChanged;
+        search.QuerySubmitted += OnSearchSubmitted;
+        search.KeyDown += OnSearchKey;
         if (session != 0) return;
         Core.Event += OnEvent;
         try { await OpenSession(); }
@@ -92,7 +133,7 @@ public sealed partial class WorkspacePage : Page
         }
     }
 
-    /// Settings keeps the project open underneath: the page is cached until it goes elsewhere.
+    /// Settings keeps the project open underneath: the page stays cached until it goes elsewhere.
     protected override void OnNavigatingFrom(NavigatingCancelEventArgs e)
     {
         if (e.SourcePageType != typeof(SettingsPage)) NavigationCacheMode = NavigationCacheMode.Disabled;
@@ -100,257 +141,425 @@ public sealed partial class WorkspacePage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
-        App.Window.Search.TextChanged -= OnSearchChanged;
-        App.Window.Search.QuerySubmitted -= OnSearchSubmitted;
-        App.Window.Search.KeyDown -= OnSearchKey;
+        var search = App.Window.Search;
+        search.TextChanged -= OnSearchChanged;
+        search.QuerySubmitted -= OnSearchSubmitted;
+        search.KeyDown -= OnSearchKey;
         if (e.SourcePageType == typeof(SettingsPage)) return;
-        App.Window.Search.Text = "";
-        Prefs.EditorChanged -= ShowEditorPrefs;
+        search.Text = "";
+        Prefs.EditorChanged -= ShowLook;
         Core.Event -= OnEvent;
         if (session != 0) _ = Core.CallAsync("session_close", new { session });
     }
 
-    /// Settings › Editor, which changes while this page waits under Settings.
-    void ShowEditorPrefs()
+    public void TogglePane() => Split.IsPaneOpen = !Split.IsPaneOpen;
+
+    async Task OpenSession()
+    {
+        texAvailable = (await Core.CallAsync<TexStatus>("status")).Available;
+        CompileButton.IsEnabled = CompileItem.IsEnabled = texAvailable;
+        if (!texAvailable) ToolTipService.SetToolTip(CompileButton, "TeX isn't installed");
+        var opened = await Core.CallAsync<SessionOpened>("session_open", new { id, autoCompile = Prefs.AutoCompile && texAvailable });
+        (session, root) = (opened.Session, opened.Root);
+        var settings = await Core.CallAsync("get_settings", new { id });
+        mainFile = MainFile(settings);
+        ShellEscapeItem.IsChecked = settings.GetProperty("shellEscape").GetBoolean();
+        StopOnErrorItem.IsChecked = settings.GetProperty("stopOnFirstError").GetBoolean();
+        var ui = await Core.CallAsync("get_ui_state", new { id });
+        expanded = [.. ui.GetProperty("expandedFolders").EnumerateArray().Select(f => f.GetString()!)];
+        folded = [.. ui.GetProperty("foldedHeadings").EnumerateArray().Select(f => f.GetString()!)];
+        ShowTree(opened.Tree);
+        if (opened.Pdf is { } pdf) await Pdf.Load(Full(pdf));
+        ShowBuild();
+        if (Find(FilesTree.ItemsSource as List<NavItem>, i => i.Key == mainFile)?.Target is TreeNode { Type: not "dir" } main)
+        {
+            Select(FilesTree, i => i.Key == mainFile);
+            await OpenDocument(main.Path, main.Kind);
+        }
+    }
+
+    void OnEvent(CoreEvent e)
+    {
+        if (e.Session != session || !shownEvents.Contains(e.Type)) return;
+        var ev = e.Json.Deserialize<DocEvent>(Core.Json)!;
+        switch (e.Type)
+        {
+            case "tree": ShowTree(ev.Tree!); break;
+            case "saved": _ = Analyze(); break;
+            case "document_reload" when ev.Path == Editor.Path: Editor.Reload(ev.Text ?? ""); break;
+            case "document_closed" when ev.Path == Editor.Path: CloseEditor(); break;
+            case "document_renamed" when ev.From == Editor.Path: Editor.Rename(ev.To!); break;
+            case "conflict": Conflict(ev.Path!, ev.Kind!); break;
+            case "build_cleaned": Pdf.Clear(); break;
+            case "document":
+                var failed = ev.Error is not null;
+                if (failed && !unsaved.Contains(ev.Path!)) Announce(BuildState, "Wasn't saved", "save");
+                if (failed || ev.Held) unsaved.Add(ev.Path!);
+                else unsaved.Remove(ev.Path!);
+                ShowSaved();
+                break;
+            case "issues":
+                issueLines[ev.Path!] = ev.Lines!;
+                if (ev.Path == Editor.Path) Editor.SetIssues(ev.Lines!);
+                break;
+            case "build":
+                if (ev.Compiling && !compiling)
+                {
+                    BuildFailed.IsOpen = false;
+                    if (!ev.Auto) Announce(BuildState, "Compiling", "build");
+                }
+                (compiling, outdated) = (ev.Compiling, ev.Outdated);
+                ShowBuild();
+                break;
+            case "build_finished":
+                Finished(ev.Result!, ev.Auto, ev.Announce);
+                outdated = ev.Outdated;
+                ShowBuild();
+                break;
+        }
+    }
+
+    // MARK: the document
+
+    /// Shows a file in the editor, or opens one it doesn't edit in its own app; false if the editor doesn't show it.
+    async Task<bool> OpenDocument(string path, string? kind = "tex")
+    {
+        if (kind is not ("tex" or "bib" or "text"))
+        {
+            Process.Start(new ProcessStartInfo(Full(path)) { UseShellExecute = true });
+            return false;
+        }
+        if (Editor.Path == path) return true;
+        try
+        {
+            if (Editor.Path is { } shown && !(await Core.CallAsync("session_close_document", new { session, path = shown })).GetProperty("closed").GetBoolean())
+                return false;
+            var text = (await Core.CallAsync("session_open_document", new { session, path })).GetProperty("text").GetString() ?? "";
+            if (Core.SessionSource(session, path) is not { } source) return false;
+            (Editor.Visibility, NoFile.Visibility) = (Visibility.Visible, Visibility.Collapsed);
+            await Editor.Show(path, text, source);
+            Editor.SetIssues(issueLines.GetValueOrDefault(path, []));
+            ShowSaved();
+            ShowCaret();
+            _ = Analyze();
+            return true;
+        }
+        catch (CoreException ex)
+        {
+            await App.Alert("Can't open this file", ex.Message);
+            return false;
+        }
+    }
+
+    /// A place in a file: a line from 1, a column from 0 and what to select from there.
+    async Task Reveal(string path, int line, int column = 0, int length = 0)
+    {
+        if (await OpenDocument(path)) Editor.GoTo(line, column, length);
+    }
+
+    void CloseEditor()
+    {
+        analysis = null;
+        OutlineTree.ItemsSource = null;
+        Words.Text = "";
+        Editor.Clear();
+        (Editor.Visibility, NoFile.Visibility) = (Visibility.Collapsed, Visibility.Visible);
+        ShowSide();
+        ShowSaved();
+    }
+
+    /// Settings › Editor, which can change while the page waits under Settings.
+    void ShowLook()
     {
         Editor.SetLook(Prefs.EditorFont, Prefs.EditorFontSize, Prefs.EditorTheme);
         (Editor.AutoPair, Editor.AutoComplete) = (Prefs.AutoPair, Prefs.AutoComplete);
     }
 
-    void OnEvent(CoreEvent e)
+    /// Another app changed or removed a file with edits here. Changed, the safe choice (Cancel) is the default.
+    async void Conflict(string path, string kind)
     {
-        if (e.Session != session) return;
-        if (e.Type == "tree") Show(e.Json.GetProperty("tree").Deserialize<TreeNode[]>(Core.Json)!);
-        else OnDocumentEvent(e);
-    }
-
-    void Show(TreeNode[] nodes, bool force = false)
-    {
-        var json = JsonSerializer.Serialize(nodes, Core.Json);
-        if (!force && json == treeJson) return;
-        (tree, treeJson) = (nodes, json);
-        var selected = (Tree.SelectedItem as FileItem)?.Path;
-        items = Build(nodes);
-        Tree.ItemsSource = items;
-        if (selected is not null) Select(selected);
-    }
-
-    List<FileItem> Build(TreeNode[] nodes) =>
-        [.. nodes.Select(n => new FileItem(n, expanded.Contains(n.Path), n.Path == mainFile, n.Children is { } c ? Build(c) : null))];
-
-    async Task Refresh() => Show(await Core.CallAsync<TreeNode[]>("file_tree", new { id }));
-
-    FileItem? Find(string path) => Find(path, items);
-
-    static FileItem? Find(string path, List<FileItem> within)
-    {
-        foreach (var item in within)
+        var name = System.IO.Path.GetFileName(path);
+        var changed = kind == "changed";
+        var answer = await App.Show(new ContentDialog
         {
-            if (item.Path == path) return item;
-            if (item.Children is { } c && Find(path, c) is { } found) return found;
-        }
-        return null;
-    }
-
-    FrameworkElement? Select(string path)
-    {
-        if (Find(path) is not { } item) return null;
-        Tree.SelectedItem = item;
-        Tree.UpdateLayout();
-        return Tree.ContainerFromItem(item) as FrameworkElement;
-    }
-
-    FileItem? Target => Tree.SelectedItem as FileItem;
-
-    string TargetDir(FileItem? item) => item is null ? "" : item.IsDir ? item.Path : ParentOf(item.Path);
-
-    static string ParentOf(string path) => path.LastIndexOf('/') is var i and > 0 ? path[..i] : "";
-
-    string Full(string path) => System.IO.Path.Combine(root, path.Replace('/', '\\'));
-
-    static string Join(string dir, string name) => dir.Length == 0 ? name : $"{dir}/{name}";
-
-    void Persist() => _ = Core.CallAsync("set_ui_state", new { id, patch = new { expandedFolders = expanded.Order() } });
-
-    void OnExpanding(TreeView sender, TreeViewExpandingEventArgs args)
-    {
-        if (args.Item is not FileItem item) return;
-        item.IsExpanded = true;
-        if (expanded.Add(item.Path)) Persist();
-    }
-
-    void OnCollapsed(TreeView sender, TreeViewCollapsedEventArgs args)
-    {
-        if (args.Item is not FileItem item) return;
-        item.IsExpanded = false;
-        if (expanded.Remove(item.Path)) Persist();
-    }
-
-    void OnTreeContextRequested(UIElement sender, ContextRequestedEventArgs args)
-    {
-        Tree.SelectedItem = (args.OriginalSource as FrameworkElement)?.DataContext as FileItem;
-    }
-
-    void OnTreeMenuOpening(object sender, object e)
-    {
-        var item = Target;
-        RenameItem.IsEnabled = RevealItem.IsEnabled = DeleteItem.IsEnabled = item is not null;
-        MainItem.IsEnabled = item is { IsTex: true, IsMain: false };
-    }
-
-    async Task Create(string name, bool dir)
-    {
-        var parent = TargetDir(Target);
-        try
+            Title = changed ? $"“{name}” changed on disk" : $"“{name}” was deleted",
+            Content = changed ? "It has edits here that aren't saved." : "It was deleted or moved, and it has edits here that aren't saved.",
+            PrimaryButtonText = changed ? "Save anyway" : "Save again",
+            SecondaryButtonText = changed ? "Revert" : "Close",
+            CloseButtonText = "Cancel",
+            DefaultButton = changed ? ContentDialogButton.Close : ContentDialogButton.Primary,
+        }) switch
         {
-            var made = (await Core.CallAsync("create_entry", new { id, path = Join(parent, name), dir, free = true })).GetProperty("path").GetString()!;
-            if (parent.Length > 0 && expanded.Add(parent)) Persist();
-            await Refresh();
-            DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
-            {
-                if (Select(made) is { } row) Rename(Find(made)!, row);
-            });
+            ContentDialogResult.Primary => "save",
+            ContentDialogResult.Secondary => changed ? "revert" : "close",
+            _ => "cancel",
+        };
+        Run("Can't save this file", () => Core.CallAsync("session_resolve", new { session, path, answer }));
+        if (Editor.Path is not null) Editor.Focus(FocusState.Programmatic);
+    }
+
+    // MARK: builds and issues
+
+    void Finished(CompileResult done, bool auto, bool announce)
+    {
+        result = done;
+        issues = [.. done.Errors.Concat(done.Warnings).Select((item, i) => new IssueItem(i, item))];
+        (ErrorCount.Text, WarningCount.Text) = ($"{done.Errors.Length}", $"{done.Warnings.Length}");
+        WarningsToggle.IsEnabled = done.Warnings.Length > 0;
+        Log.Text = done.Log.ReplaceLineEndings("\r");
+        ShowIssues();
+        var failed = !done.Ok && !done.Stopped;
+        if (failed && !auto)
+        {
+            BuildFailed.Message = done.Errors.FirstOrDefault()?.Short ?? "";
+            BuildFailed.IsOpen = true;
+            ShowPanel(true);
+            IssueTabs.SelectedItem = IssuesTab;
+            IssueList.SelectedIndex = IssueList.Items.Count > 0 ? 0 : -1;
         }
-        catch (CoreException ex) { await App.Alert("Can't create this", ex.Message); }
+        if (announce) Announce(BuildState, failed ? $"Build failed, {done.Errors.Length} {(done.Errors.Length == 1 ? "error" : "errors")}" : "Build succeeded", "build");
+        if (done.Pdf is { } pdf && (done.PdfChanged || Pdf.PageCount == 0)) _ = Pdf.Load(Full(pdf));
     }
 
-    async void OnNewFile(object sender, RoutedEventArgs e) => await Create("untitled.tex", false);
-
-    async void OnNewFolder(object sender, RoutedEventArgs e) => await Create("untitled folder", true);
-
-    async void OnSetMain(object sender, RoutedEventArgs e)
+    void ShowBuild()
     {
-        if (Target is not { IsTex: true } item) return;
-        var settings = await Core.CallAsync("session_set_settings", new { session, patch = new { mainFile = item.Path } });
-        mainFile = settings.GetProperty("mainFile").GetString() ?? item.Path;
-        Show(tree, true);
+        CompileIcon.Glyph = compiling ? "\uE71A" : "\uE768";
+        CompileLabel.Text = compiling ? "Stop" : "Compile";
+        AutomationProperties.SetName(CompileButton, CompileLabel.Text);
+        if (texAvailable) ToolTipService.SetToolTip(CompileButton, compiling ? "Stop (Shift+F5)" : "Compile (Ctrl+Enter)");
+        StopItem.IsEnabled = Pdf.Compiling = compiling;
+        var state = compiling ? "Compiling…"
+            : result is null ? (Pdf.PageCount > 0 ? "" : "No build yet")
+            : result.Stopped ? "Build stopped"
+            : result.Ok ? $"Built in {result.DurationMs / 1000.0:0.0} s"
+            : "Build failed";
+        BuildState.Text = outdated && !compiling && result is not null ? $"{state} · Preview out of date" : state;
     }
 
-    void OnRename(object sender, RoutedEventArgs e)
+    /// The issues, without warnings while they're hidden.
+    void ShowIssues()
     {
-        if (Target is { } item && Tree.ContainerFromItem(item) is FrameworkElement row) Rename(item, row);
+        IssueList.ItemsSource = WarningsToggle.IsChecked == true ? issues : issues.Where(i => i.IsError).ToArray();
+        ShowIssueTab();
     }
 
-    void Rename(FileItem item, FrameworkElement row) => rename.Show(row, item.Name, async name =>
+    /// The tab's list or log, its control in the header's slot, and the Issues tab's note when there are none.
+    void ShowIssueTab()
     {
-        var to = Join(ParentOf(item.Path), name);
-        await Core.CallAsync("session_rename", new { session, from = item.Path, to });
-        if (mainFile == item.Path) mainFile = to;
-        await Refresh();
-        Select(to);
+        if (Log is null) return;
+        var log = IssueTabs.SelectedItem == LogTab;
+        var none = IssueList.ItemsSource is not IssueItem[] { Length: > 0 };
+        Log.Visibility = CopyLog.Visibility = Vis(log);
+        WarningsToggle.Visibility = Vis(!log);
+        IssueList.Visibility = Vis(!log && !none);
+        NoIssues.Visibility = Vis(!log && none);
+        NoIssues.Text = result is null ? "Compile to check for issues." : "No issues in the last build.";
+    }
+
+    void ShowPanel(bool open)
+    {
+        IssuesItem.IsChecked = open;
+        IssuesRow.Height = new(open ? Prefs.IssuesHeight : 0);
+        IssuesSizer.Visibility = IssuesPanel.Visibility = Vis(open);
+        if (open && Editor.Path is not null) Editor.ScrollToCaret();
+    }
+
+    /// The core's pick of an issue (a click, F8, a line end's mark): selected in the panel, and its place shown.
+    void GoToIssue(string command, object args) => Run("Can't show this issue", async () =>
+    {
+        if (await Core.CallAsync<Chosen?>(command, args) is not { } chosen) return;
+        ShowPanel(true);
+        IssueTabs.SelectedItem = IssuesTab;
+        IssueList.SelectedItem = (IssueList.ItemsSource as IssueItem[])?.FirstOrDefault(i => i.Index == chosen.Index);
+        if (IssueList.SelectedItem is { } row) IssueList.ScrollIntoView(row);
+        if (chosen.Issue.File is { } file) await Reveal(file, chosen.Issue.Line ?? 1);
     });
 
-    void OnReveal(object sender, RoutedEventArgs e)
+    void OnIssueClick(object sender, ItemClickEventArgs e) => GoToIssue("session_choose_issue", new { session, ((IssueItem)e.ClickedItem).Index });
+    void OnNextIssue(object sender, RoutedEventArgs e) => GoToIssue("session_issue", new { session, next = true });
+    void OnPreviousIssue(object sender, RoutedEventArgs e) => GoToIssue("session_issue", new { session, next = false });
+    void OnIssueTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowIssueTab();
+    void OnWarnings(object sender, RoutedEventArgs e) => ShowIssues();
+    void OnIssuesPane(object sender, RoutedEventArgs e) => ShowPanel(IssuesItem.IsChecked);
+    void OnIssueCounts(object sender, RoutedEventArgs e) => ShowPanel(!IssuesItem.IsChecked);
+
+    void OnShowIssues(object sender, RoutedEventArgs e)
     {
-        if (Target is { } item) App.Reveal(System.IO.Path.Combine(root, item.Path.Replace('/', '\\')), select: true);
+        BuildFailed.IsOpen = false;
+        ShowPanel(true);
+        IssueTabs.SelectedItem = IssuesTab;
+        IssueList.Focus(FocusState.Programmatic);
     }
 
-    async void OnDelete(object sender, RoutedEventArgs e)
+    void OnCopyLog(object sender, RoutedEventArgs e)
     {
-        if (Target is not { } item) return;
-        try { await Core.CallAsync("session_prepare_delete", new { session, path = item.Path }); }
-        catch (CoreException ex)
-        {
-            Notice.Title = ex.Status == 409 ? "The main file can't be deleted" : "Can't delete this";
-            Notice.Message = ex.Status == 409 ? "Set another file as the main file first." : ex.Message;
-            Notice.IsOpen = true;
-            return;
-        }
-        var trashed = false;
-        try
-        {
-            await App.Recycle(System.IO.Path.Combine(root, item.Path.Replace('/', '\\')));
-            trashed = true;
-        }
-        catch (Exception ex) { await App.Alert("Can't delete this", ex.Message); }
-        await Core.CallAsync("session_deleted", new { session, path = item.Path, trashed });
-        await Refresh();
+        var data = new DataPackage();
+        data.SetText(result?.Log ?? "");
+        Clipboard.SetContent(data);
     }
 
-    void OnDragOver(object sender, DragEventArgs e)
+    void OnCompileButton(object sender, RoutedEventArgs e) => (compiling ? (RoutedEventHandler)OnStop : OnCompile)(sender, e);
+
+    void OnCompile(object sender, RoutedEventArgs e)
     {
-        if (e.DataView.Contains(StandardDataFormats.StorageItems)) e.AcceptedOperation = DataPackageOperation.Copy;
+        if (texAvailable) Run("Can't compile", () => Core.CallAsync("session_compile", new { session }));
     }
 
-    async void OnDrop(object sender, DragEventArgs e)
+    void OnStop(object sender, RoutedEventArgs e) => Run("Can't stop the build", () => Core.CallAsync("session_stop_compile", new { session }));
+    void OnClean(object sender, RoutedEventArgs e) => Run("Can't clean the build folder", () => Core.CallAsync("session_clean", new { session }));
+
+    void OnAutoCompile(object sender, RoutedEventArgs e)
     {
-        if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
-        var deferral = e.GetDeferral();
-        var dropped = await e.DataView.GetStorageItemsAsync();
-        deferral.Complete();
-        var dir = TargetDir((e.OriginalSource as FrameworkElement)?.DataContext as FileItem);
-        var paths = dropped.Select(i => i.Path).Where(p => p.Length > 0).ToArray();
-        try
-        {
-            var result = await Core.CallAsync<Imported>("import_files", new { id, dir, paths });
-            if (result.Existing.Length > 0)
-            {
-                ReplaceDialog.Content = new TextBlock
-                {
-                    Text = string.Join("\n", result.Existing.Select(c => c.Path)),
-                    TextWrapping = TextWrapping.Wrap,
-                    Style = (Style)Application.Current.Resources["BodyTextBlockStyle"],
-                };
-                var conflict = await ReplaceDialog.ShowAsync() switch
-                {
-                    ContentDialogResult.Primary => "replace",
-                    ContentDialogResult.Secondary => "keepBoth",
-                    _ => null,
-                };
-                if (conflict is null) return;
-                await Core.CallAsync("import_files", new { id, dir, paths, conflict });
-            }
-            await Refresh();
-        }
-        catch (CoreException ex) { await App.Alert("Can't add these files", ex.Message); }
+        Prefs.AutoCompile = AutoCompileItem.IsChecked;
+        Run("Can't change this setting", () => Core.CallAsync("session_set_options", new { session, autoCompile = Prefs.AutoCompile && texAvailable }));
     }
 
-    void OnOpenFolder(object sender, RoutedEventArgs e) => App.Window.OpenFolder();
+    void OnBuildSetting(object sender, RoutedEventArgs e) => Run("Can't change this setting", () => Core.CallAsync("session_set_settings",
+        new { session, patch = new { shellEscape = ShellEscapeItem.IsChecked, stopOnFirstError = StopOnErrorItem.IsChecked } }));
 
-    void OnOpenFile(object sender, RoutedEventArgs e) => App.Window.OpenFile();
+    // MARK: the status bar, the panes and F6
 
-    void OnClose(object sender, RoutedEventArgs e) => App.Window.GoHome();
+    void ShowSaved() => NotSaved.Visibility = Vis(Editor.Path is { } path && unsaved.Contains(path));
 
-    void OnSettings(object sender, RoutedEventArgs e) => App.Window.OpenSettings();
+    void ShowCaret() => CaretText.Text = $"Ln {Editor.Caret.Line}, Col {Editor.Caret.Column + 1}";
 
-    /// F6 and Shift+F6: sidebar, editor, PDF, issues, in turn.
+    void ShowPage()
+    {
+        PageText.Text = Pdf.PageCount == 0 ? "No PDF" : $"Page {Pdf.CurrentPage} of {Pdf.PageCount}";
+        ZoomText.Text = $"{Pdf.Zoom * 100:0}%";
+    }
+
+    /// NavigationView's content layer: its rounded corner sits by an open inline pane, else it meets the window square.
+    void ShowEdge()
+    {
+        var beside = Inline && Split.IsPaneOpen;
+        ContentCard.BorderThickness = new(beside ? 1 : 0, 1, 0, 0);
+        ContentCard.CornerRadius = new(beside ? 8 : 0, 0, 0, 0);
+    }
+
+    void SetSplit(double to)
+    {
+        ratio = Math.Clamp(to, 0.1, 0.9);
+        EditorColumn.Width = new(ratio, GridUnitType.Star);
+        if (PdfItem.IsChecked) PdfColumn.Width = new(1 - ratio, GridUnitType.Star);
+    }
+
+    void OnSplitReset(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        SetSplit(0.5);
+        Prefs.SplitRatio = ratio;
+    }
+
+    void ShowPdf(bool show)
+    {
+        PdfItem.IsChecked = show;
+        Pdf.Visibility = SplitSizer.Visibility = Vis(show);
+        PdfColumn.MinWidth = show ? 240 : 0;
+        PdfColumn.Width = new(show ? 1 - ratio : 0, GridUnitType.Star);
+    }
+
+    void OnPdfPane(object sender, RoutedEventArgs e) => ShowPdf(PdfItem.IsChecked);
+
+    /// F6 and Shift+F6: the sidebar, the editor, the PDF and the issues panel in turn, each that is shown.
     void OnNextRegion(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
         args.Handled = true;
-        UIElement[] regions = [Tree, Editor, Pdf, IssueList];
+        Control side = SideTrees.FirstOrDefault(t => t.Visibility == Visibility.Visible) as Control ?? SideTabs;
+        (UIElement Area, bool Shown, Func<bool> Focus)[] regions =
+        [
+            (SidePane, true, () => (Split.IsPaneOpen = true) && side.Focus(FocusState.Keyboard)),
+            (Editor, Editor.Visibility == Visibility.Visible, () => { Editor.Focus(FocusState.Keyboard); return true; }),
+            (Pdf, PdfItem.IsChecked, () => Pdf.Focus(FocusState.Keyboard)),
+            (IssuesPanel, IssuesItem.IsChecked, () => (Log.Visibility == Visibility.Visible ? (Control)Log : IssueList).Focus(FocusState.Keyboard)),
+        ];
+        var back = args.KeyboardAccelerator.Modifiers.HasFlag(Windows.System.VirtualKeyModifiers.Shift);
         var at = -1;
         for (var e = FocusManager.GetFocusedElement(XamlRoot) as DependencyObject; e is not null && at < 0; e = VisualTreeHelper.GetParent(e))
-            at = Array.IndexOf(regions, e);
-        var step = args.KeyboardAccelerator.Modifiers.HasFlag(Windows.System.VirtualKeyModifiers.Shift) ? regions.Length - 1 : 1;
+            at = Array.FindIndex(regions, r => r.Area == e);
+        if (at < 0) at = back ? 0 : regions.Length - 1;
         for (var i = 1; i <= regions.Length; i++)
         {
-            var next = regions[(Math.Max(at, 0) + i * step) % regions.Length];
-            if (next == Tree && !Split.IsPaneOpen) ShowPane(sidebarWanted = true);
-            if (next.Visibility != Visibility.Visible || next == IssueList && !panelOpen) continue;
-            if (next == Editor) Editor.Focus(FocusState.Keyboard);
-            else if (next == Pdf) Pdf.Focus(FocusState.Keyboard);
-            else next.Focus(FocusState.Keyboard);
-            return;
+            var (_, shown, focus) = regions[(at + i * (back ? regions.Length - 1 : 1)) % regions.Length];
+            if (shown && focus()) return;
         }
     }
 
-    public void TogglePane()
+    // MARK: dialogs and commands
+
+    /// Notepad's Go to line, its number box focused.
+    static async Task<int?> AskNumber(string title, string header, int value, int maximum)
     {
-        sidebarWanted = !Split.IsPaneOpen;
-        ShowPane(sidebarWanted);
+        var box = new NumberBox { Header = header, Minimum = 1, Maximum = maximum, Value = value, SmallChange = 1, ValidationMode = NumberBoxValidationMode.InvalidInputOverwritten };
+        var dialog = new ContentDialog { Title = title, Content = box, PrimaryButtonText = "Go to", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
+        dialog.Opened += (_, _) => box.Focus(FocusState.Programmatic);
+        return await App.Show(dialog) == ContentDialogResult.Primary && !double.IsNaN(box.Value) ? (int)box.Value : null;
     }
 
-    void ShowPane(bool open)
+    async void OnGoToLine(object sender, RoutedEventArgs e)
     {
-        Split.IsPaneOpen = open;
-        SidebarItem.IsChecked = open;
+        if (Editor.Path is not null && await AskNumber("Go to line", $"Line (1–{Editor.LineCount})", Editor.Caret.Line, Editor.LineCount) is { } line)
+            Editor.GoTo(line);
     }
 
-    void OnSidebar(object sender, RoutedEventArgs e)
+    async void OnGoToPage(object sender, RoutedEventArgs e)
     {
-        sidebarWanted = SidebarItem.IsChecked;
-        ShowPane(sidebarWanted);
+        if (Pdf.PageCount > 0 && await AskNumber("Go to page", $"Page (1–{Pdf.PageCount})", Pdf.CurrentPage, Pdf.PageCount) is { } page)
+            Pdf.GoToPage(page);
     }
 
-    void OnPaneClosed(SplitView sender, object args) => SidebarItem.IsChecked = false;
+    /// Turns the PDF on if it's hidden, since that's where this goes.
+    void OnForwardSync(object sender, RoutedEventArgs e)
+    {
+        if (Editor.Path is not { } file || Pdf.PageCount == 0) return;
+        var (line, column) = Editor.Caret;
+        ShowPdf(true);
+        Run(null, async () => Pdf.Reveal(await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file, line, column })));
+    }
+
+    void OnSave(object sender, RoutedEventArgs e) => Run("Can't save", () => Core.CallAsync("session_save", new { session }));
+    void OnFind(object sender, RoutedEventArgs e) => Editor.ShowFind(false);
+    void OnReplace(object sender, RoutedEventArgs e) => Editor.ShowFind(true);
+    void OnFindNext(object sender, RoutedEventArgs e) => Editor.FindNext(true);
+    void OnFindPrevious(object sender, RoutedEventArgs e) => Editor.FindNext(false);
+    void OnMoveLineUp(object sender, RoutedEventArgs e) => Editor.MoveLines(true);
+    void OnMoveLineDown(object sender, RoutedEventArgs e) => Editor.MoveLines(false);
+    void OnZoomIn(object sender, RoutedEventArgs e) => Pdf.ZoomBy(1.25);
+    void OnZoomOut(object sender, RoutedEventArgs e) => Pdf.ZoomBy(0.8);
+    void OnActualSize(object sender, RoutedEventArgs e) => Pdf.ZoomTo(1);
+
+    // MARK: helpers
+
+    /// A core command, its refusal shown in an alert titled `failure`; with no title, ignored.
+    static async void Run(string? failure, Func<Task> call)
+    {
+        try { await call(); }
+        catch (CoreException ex) when (failure is not null) { await App.Alert(failure, ex.Message); }
+        catch (CoreException) { }
+    }
+
+    static void Announce(UIElement on, string text, string activity)
+    {
+        var peer = FrameworkElementAutomationPeer.FromElement(on) ?? FrameworkElementAutomationPeer.CreatePeerForElement(on);
+        peer.RaiseNotificationEvent(AutomationNotificationKind.ActionCompleted, AutomationNotificationProcessing.ImportantMostRecent, text, activity);
+    }
+
+    DispatcherQueueTimer Timer(int milliseconds, Action tick)
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        (timer.Interval, timer.IsRepeating) = (TimeSpan.FromMilliseconds(milliseconds), false);
+        timer.Tick += (_, _) => tick();
+        return timer;
+    }
+
+    static void Restart(DispatcherQueueTimer timer)
+    {
+        timer.Stop();
+        timer.Start();
+    }
+
+    static Visibility Vis(bool shown) => shown ? Visibility.Visible : Visibility.Collapsed;
+
+    string Full(string path) => System.IO.Path.Combine(root, path.Replace('/', '\\'));
+
+    static string MainFile(JsonElement settings) => settings.GetProperty("mainFile").GetString() ?? "";
 }

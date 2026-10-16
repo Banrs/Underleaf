@@ -2,37 +2,39 @@
     x:Class="TeXLocal.Pages.WorkspacePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:app="using:TeXLocal"
     xmlns:controls="using:TeXLocal.Controls"
     xmlns:local="using:TeXLocal.Pages"
     Background="Transparent"
     KeyboardAcceleratorPlacementMode="Hidden">
 
     <Page.Resources>
-        <DataTemplate x:Key="PaletteItemTemplate" x:DataType="local:PaletteItem">
-            <Image
-                Width="24"
-                Height="24"
-                AutomationProperties.Name="{x:Bind Symbol.Command}"
-                Source="{x:Bind Image}"
-                ToolTipService.ToolTip="{x:Bind Symbol.Command}" />
+        <!-- The sidebar's rows, in all three trees: a glyph, text with a bold match, and a count, line or main-file star.
+             Margins rather than column spacing, so a row without a glyph starts where the glyph would. -->
+        <DataTemplate x:Key="NavTemplate" x:DataType="local:NavItem">
+            <TreeViewItem AutomationProperties.Name="{x:Bind Spoken}" IsExpanded="{x:Bind IsExpanded}" ItemsSource="{x:Bind Children}" ToolTipService.ToolTip="{x:Bind Tip}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Margin="0,0,12,0" FontSize="16" Glyph="{x:Bind Glyph}" Visibility="{x:Bind HasGlyph}" />
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" MaxLines="{x:Bind Lines}" Style="{StaticResource BodyTextBlockStyle}" TextTrimming="CharacterEllipsis">
+                        <Run Text="{x:Bind Lead}" /><Run FontWeight="SemiBold" Text="{x:Bind Strong}" /><Run Text="{x:Bind Tail}" />
+                    </TextBlock>
+                    <TextBlock
+                        Grid.Column="2"
+                        Margin="12,0,0,0"
+                        VerticalAlignment="Center"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Text="{x:Bind Trailing}"
+                        Typography.NumeralAlignment="Tabular" />
+                    <FontIcon Grid.Column="2" Margin="12,0,0,0" FontSize="16" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE735;" Visibility="{x:Bind IsMain}" />
+                </Grid>
+            </TreeViewItem>
         </DataTemplate>
-        <DataTemplate x:Key="PaletteHeaderTemplate" x:DataType="local:PaletteGroup">
-            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Title}" />
-        </DataTemplate>
-        <Style x:Key="PaletteItemStyle" TargetType="GridViewItem" BasedOn="{StaticResource DefaultGridViewItemStyle}">
-            <Setter Property="Width" Value="40" />
-            <Setter Property="Height" Value="40" />
-            <Setter Property="MinWidth" Value="40" />
-            <Setter Property="MinHeight" Value="40" />
-            <Setter Property="Margin" Value="0,0,4,4" />
-            <Setter Property="Padding" Value="0" />
-            <Setter Property="HorizontalContentAlignment" Value="Center" />
-            <Setter Property="VerticalContentAlignment" Value="Center" />
-        </Style>
-        <Style x:Key="PalettePresenterStyle" TargetType="FlyoutPresenter" BasedOn="{StaticResource DefaultFlyoutPresenterStyle}">
-            <Setter Property="Padding" Value="0,8,0,0" />
-            <Setter Property="MaxHeight" Value="400" />
-        </Style>
     </Page.Resources>
 
     <Page.KeyboardAccelerators>
@@ -40,13 +42,14 @@
         <KeyboardAccelerator Invoked="OnNextRegion" Key="F6" Modifiers="Shift" />
     </Page.KeyboardAccelerators>
 
-    <Grid Background="Transparent">
+    <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="40" />
             <RowDefinition Height="*" />
             <RowDefinition Height="32" />
         </Grid.RowDefinitions>
 
+        <!-- Narrow, the sidebar overlays the content on acrylic; wide, it sits beside it on Mica. -->
         <VisualStateManager.VisualStateGroups>
             <VisualStateGroup>
                 <VisualState x:Name="Wide">
@@ -58,216 +61,103 @@
                         <Setter Target="Split.PaneBackground" Value="Transparent" />
                     </VisualState.Setters>
                 </VisualState>
-                <VisualState x:Name="Narrow">
-                    <VisualState.StateTriggers>
-                        <AdaptiveTrigger MinWindowWidth="0" />
-                    </VisualState.StateTriggers>
-                    <VisualState.Setters>
-                        <Setter Target="Split.DisplayMode" Value="Overlay" />
-                        <Setter Target="Split.PaneBackground" Value="{ThemeResource AcrylicInAppFillColorDefaultBrush}" />
-                    </VisualState.Setters>
-                </VisualState>
             </VisualStateGroup>
         </VisualStateManager.VisualStateGroups>
 
-        <Grid Padding="4,0,12,0" Background="Transparent">
+        <!-- Notepad's menu bar, and Compile at its end as Visual Studio's Start. -->
+        <Grid Padding="4,0,12,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <MenuBar VerticalAlignment="Center">
-                <MenuBarItem x:Name="FileMenu" AccessKey="F" Title="File">
-                    <MenuFlyoutItem AccessKey="N" Click="OnNewFile" Text="New file">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="N" Modifiers="Control" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
+                <MenuBarItem AccessKey="F" Title="File">
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+N" AccessKey="N" Click="OnNewFile" Text="New file" />
                     <MenuFlyoutItem AccessKey="F" Click="OnNewFolder" Text="New folder" />
                     <MenuFlyoutSeparator />
                     <MenuFlyoutSubItem AccessKey="O" Text="Open">
-                        <MenuFlyoutItem AccessKey="F" Click="OnOpenFolder" Text="Folder…">
-                            <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Key="O" Modifiers="Control" />
-                            </MenuFlyoutItem.KeyboardAccelerators>
-                        </MenuFlyoutItem>
-                        <MenuFlyoutItem AccessKey="Z" Click="OnOpenFile" Text="ZIP or TeX file…">
-                            <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Key="O" Modifiers="Control,Shift" />
-                            </MenuFlyoutItem.KeyboardAccelerators>
-                        </MenuFlyoutItem>
+                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+O" AccessKey="F" Click="{x:Bind app:App.Window.OpenFolder}" Text="Folder…" />
+                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+O" AccessKey="Z" Click="{x:Bind app:App.Window.OpenFile}" Text="ZIP or TeX file…" />
                     </MenuFlyoutSubItem>
-                    <MenuFlyoutItem AccessKey="S" Click="OnSave" Text="Save">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="S" Modifiers="Control" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
-                    <MenuFlyoutItem AccessKey="C" Click="OnClose" Text="Close project">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="W" Modifiers="Control" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem
-                        AccessKey="T"
-                        Click="OnSettings"
-                        KeyboardAcceleratorTextOverride="Ctrl+,"
-                        Text="Settings" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+S" AccessKey="S" Click="OnSave" Text="Save" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+W" AccessKey="C" Click="{x:Bind app:App.Window.GoHome}" Text="Close project" />
+                    <MenuFlyoutSeparator />
+                    <!-- The window handles Ctrl+, itself: the editor swallows it before accelerators. -->
+                    <MenuFlyoutItem AccessKey="T" Click="{x:Bind app:App.Window.OpenSettings}" KeyboardAcceleratorTextOverride="Ctrl+," Text="Settings" />
                 </MenuBarItem>
+                <!-- The editor owns undo, the clipboard and moving lines, so their keys are only shown. -->
                 <MenuBarItem AccessKey="E" Title="Edit">
-                    <MenuFlyoutItem AccessKey="U" Click="OnUndo" KeyboardAcceleratorTextOverride="Ctrl+Z" Text="Undo" />
-                    <MenuFlyoutItem AccessKey="R" Click="OnRedo" KeyboardAcceleratorTextOverride="Ctrl+Y" Text="Redo" />
+                    <MenuFlyoutItem AccessKey="U" Click="{x:Bind Editor.Undo}" KeyboardAcceleratorTextOverride="Ctrl+Z" Text="Undo" />
+                    <MenuFlyoutItem AccessKey="R" Click="{x:Bind Editor.Redo}" KeyboardAcceleratorTextOverride="Ctrl+Y" Text="Redo" />
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem AccessKey="T" Click="OnCut" KeyboardAcceleratorTextOverride="Ctrl+X" Text="Cut" />
-                    <MenuFlyoutItem AccessKey="C" Click="OnCopy" KeyboardAcceleratorTextOverride="Ctrl+C" Text="Copy" />
-                    <MenuFlyoutItem AccessKey="P" Click="OnPaste" KeyboardAcceleratorTextOverride="Ctrl+V" Text="Paste" />
+                    <MenuFlyoutItem AccessKey="T" Click="{x:Bind Editor.Cut}" KeyboardAcceleratorTextOverride="Ctrl+X" Text="Cut" />
+                    <MenuFlyoutItem AccessKey="C" Click="{x:Bind Editor.Copy}" KeyboardAcceleratorTextOverride="Ctrl+C" Text="Copy" />
+                    <MenuFlyoutItem AccessKey="P" Click="{x:Bind Editor.Paste}" KeyboardAcceleratorTextOverride="Ctrl+V" Text="Paste" />
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem AccessKey="F" Click="OnFind" Text="Find…">
-                        <MenuFlyoutItem.Icon>
-                            <FontIcon Glyph="&#xE721;" />
-                        </MenuFlyoutItem.Icon>
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="F" Modifiers="Control" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
-                    <MenuFlyoutItem AccessKey="E" Click="OnReplace" Text="Replace…">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="H" Modifiers="Control" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
-                    <MenuFlyoutItem AccessKey="X" Click="OnFindNext" Text="Find next">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="F3" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
-                    <MenuFlyoutItem AccessKey="V" Click="OnFindPrevious" Text="Find previous">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="F3" Modifiers="Shift" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
-                    <MenuFlyoutItem AccessKey="J" Click="OnFindInProject" Text="Find in project…">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="F" Modifiers="Control,Shift" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+F" AccessKey="F" Click="OnFind" Text="Find…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+H" AccessKey="E" Click="OnReplace" Text="Replace…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="F3" AccessKey="N" Click="OnFindNext" Text="Find next" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Shift+F3" AccessKey="V" Click="OnFindPrevious" Text="Find previous" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+F" AccessKey="J" Click="OnFindInProject" Text="Find in project…" />
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem
-                        x:Name="CommentItem"
-                        AccessKey="M"
-                        Click="OnComment"
-                        KeyboardAcceleratorTextOverride="Ctrl+/"
-                        Text="Toggle comment" />
-                    <MenuFlyoutItem AccessKey="U" Click="OnMoveLineUp" KeyboardAcceleratorTextOverride="Alt+Up" Text="Move line up" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+/" AccessKey="M" Click="{x:Bind Editor.ToggleComment}" Text="Toggle comment" />
+                    <MenuFlyoutItem AccessKey="O" Click="OnMoveLineUp" KeyboardAcceleratorTextOverride="Alt+Up" Text="Move line up" />
                     <MenuFlyoutItem AccessKey="W" Click="OnMoveLineDown" KeyboardAcceleratorTextOverride="Alt+Down" Text="Move line down" />
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem AccessKey="G" Click="OnGoToLine" Text="Go to line…">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="G" Modifiers="Control" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
-                    <MenuFlyoutItem AccessKey="A" Click="OnGoToPage" Text="Go to page…">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="G" Modifiers="Control,Menu" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
-                    <MenuFlyoutItem AccessKey="D" Click="OnForwardSync" Text="Go to PDF position">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="J" Modifiers="Control,Menu" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+G" AccessKey="G" Click="OnGoToLine" Text="Go to line…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Alt+G" AccessKey="A" Click="OnGoToPage" Text="Go to page…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Alt+J" AccessKey="D" Click="OnForwardSync" Text="Go to PDF position" />
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem AccessKey="I" Click="OnNextIssue" Text="Next issue">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="F8" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
-                    <MenuFlyoutItem AccessKey="S" Click="OnPreviousIssue" Text="Previous issue">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="F8" Modifiers="Shift" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
+                    <MenuFlyoutItem controls:Shortcut.Keys="F8" AccessKey="I" Click="OnNextIssue" Text="Next issue" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Shift+F8" AccessKey="S" Click="OnPreviousIssue" Text="Previous issue" />
                 </MenuBarItem>
-                <MenuBarItem x:Name="InsertMenu" AccessKey="I" Title="Insert" />
-                <MenuBarItem AccessKey="V" Title="View">
-                    <ToggleMenuFlyoutItem
-                        x:Name="SidebarItem"
-                        AccessKey="S"
-                        Click="OnSidebar"
-                        IsChecked="True"
-                        Text="Sidebar">
-                        <ToggleMenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="E" Modifiers="Control,Shift" />
-                        </ToggleMenuFlyoutItem.KeyboardAccelerators>
+                <!-- The catalogue's templates follow MathsAnchor and InsertAnchor, and fill List and References. The keys
+                     here are the editor's (Shortcut.Scope, set in code: the XAML compiler fails on x:Bind to it). -->
+                <MenuBarItem x:Name="InsertMenu" AccessKey="I" Title="Insert">
+                    <MenuFlyoutSubItem x:Name="HeadingMenu" AccessKey="H" Text="Heading" />
+                    <MenuFlyoutSeparator />
+                    <ToggleMenuFlyoutItem x:Name="BoldItem" controls:Shortcut.Keys="Ctrl+B" AccessKey="B" Click="OnStyle" Tag="bold" Text="Bold">
+                        <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE8DD;" /></ToggleMenuFlyoutItem.Icon>
                     </ToggleMenuFlyoutItem>
-                    <MenuFlyoutItem AccessKey="O" Click="OnShowOutline" Text="Outline" />
-                    <ToggleMenuFlyoutItem
-                        x:Name="PdfItem"
-                        AccessKey="P"
-                        Click="OnPdfPane"
-                        IsChecked="True"
-                        Text="PDF">
-                        <ToggleMenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="P" Modifiers="Control,Menu" />
-                        </ToggleMenuFlyoutItem.KeyboardAccelerators>
+                    <ToggleMenuFlyoutItem x:Name="ItalicItem" controls:Shortcut.Keys="Ctrl+I" AccessKey="I" Click="OnStyle" Tag="italic" Text="Italic">
+                        <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE8DB;" /></ToggleMenuFlyoutItem.Icon>
                     </ToggleMenuFlyoutItem>
-                    <ToggleMenuFlyoutItem
-                        x:Name="IssuesItem"
-                        AccessKey="I"
-                        Click="OnIssuesPane"
-                        Text="Issues">
-                        <ToggleMenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="M" Modifiers="Control,Shift" />
-                        </ToggleMenuFlyoutItem.KeyboardAccelerators>
+                    <ToggleMenuFlyoutItem x:Name="UnderlineItem" controls:Shortcut.Keys="Ctrl+U" AccessKey="U" Click="OnStyle" Tag="underline" Text="Underline">
+                        <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE8DC;" /></ToggleMenuFlyoutItem.Icon>
                     </ToggleMenuFlyoutItem>
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem x:Name="ZoomInItem" AccessKey="Z" Click="OnZoomIn" Text="Zoom in">
-                        <MenuFlyoutItem.Icon>
-                            <FontIcon Glyph="&#xE8A3;" />
-                        </MenuFlyoutItem.Icon>
-                    </MenuFlyoutItem>
-                    <MenuFlyoutItem x:Name="ZoomOutItem" AccessKey="U" Click="OnZoomOut" Text="Zoom out">
-                        <MenuFlyoutItem.Icon>
-                            <FontIcon Glyph="&#xE71F;" />
-                        </MenuFlyoutItem.Icon>
-                    </MenuFlyoutItem>
-                    <MenuFlyoutItem x:Name="ActualSizeItem" AccessKey="A" Click="OnActualSize" Text="Actual size" />
-                    <MenuFlyoutItem AccessKey="W" Click="OnFitWidth" Text="Fit width" />
-                    <MenuFlyoutItem AccessKey="F" Click="OnFitPage" Text="Fit page" />
+                    <MenuFlyoutItem x:Name="InlineItem" controls:Shortcut.Keys="Alt+=" AccessKey="M" Click="OnInlineMaths" Text="Inline maths" />
+                    <MenuFlyoutItem x:Name="MathsAnchor" AccessKey="D" Click="OnDisplayMaths" Text="Display maths" />
+                    <MenuFlyoutItem x:Name="SymbolItem" controls:Shortcut.Keys="Alt+Shift+=" AccessKey="Y" Click="OnSymbols" Text="Symbol…" />
+                    <MenuFlyoutSeparator x:Name="InsertAnchor" />
+                    <MenuFlyoutSubItem x:Name="ListMenu" AccessKey="L" Text="List" />
+                    <MenuFlyoutSubItem x:Name="ReferencesMenu" AccessKey="R" Text="References and links" />
+                </MenuBarItem>
+                <MenuBarItem AccessKey="V" Title="View">
+                    <ToggleMenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+E" AccessKey="S" IsChecked="{x:Bind Split.IsPaneOpen, Mode=TwoWay}" Text="Sidebar" />
+                    <MenuFlyoutItem AccessKey="O" Click="OnShowOutline" Text="Outline" />
+                    <ToggleMenuFlyoutItem x:Name="PdfItem" controls:Shortcut.Keys="Ctrl+Alt+P" AccessKey="P" Click="OnPdfPane" IsChecked="True" Text="PDF" />
+                    <ToggleMenuFlyoutItem x:Name="IssuesItem" controls:Shortcut.Keys="Ctrl+Shift+M" AccessKey="I" Click="OnIssuesPane" Text="Issues" />
+                    <MenuFlyoutSeparator />
+                    <!-- The PDF's, wherever the focus is: the editor has no zoom of its own. -->
+                    <MenuFlyoutSubItem AccessKey="Z" Text="Zoom">
+                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+=; Ctrl+Add" AccessKey="I" Click="OnZoomIn" Text="Zoom in" />
+                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+-; Ctrl+Subtract" AccessKey="O" Click="OnZoomOut" Text="Zoom out" />
+                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+0" AccessKey="A" Click="OnActualSize" Text="Actual size" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem AccessKey="W" Click="{x:Bind Pdf.FitWidth}" Text="Fit width" />
+                        <MenuFlyoutItem AccessKey="P" Click="{x:Bind Pdf.FitPage}" Text="Fit page" />
+                    </MenuFlyoutSubItem>
                 </MenuBarItem>
                 <MenuBarItem AccessKey="B" Title="Build">
-                    <MenuFlyoutItem x:Name="CompileItem" AccessKey="C" Click="OnCompile" Text="Compile">
-                        <MenuFlyoutItem.Icon>
-                            <FontIcon Glyph="&#xE768;" />
-                        </MenuFlyoutItem.Icon>
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="Enter" Modifiers="Control" />
-                            <KeyboardAccelerator Key="F5" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
-                    <MenuFlyoutItem x:Name="StopItem" AccessKey="S" Click="OnStop" Text="Stop">
-                        <MenuFlyoutItem.Icon>
-                            <FontIcon Glyph="&#xE71A;" />
-                        </MenuFlyoutItem.Icon>
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="F5" Modifiers="Shift" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
+                    <MenuFlyoutItem x:Name="CompileItem" controls:Shortcut.Keys="Ctrl+Enter; F5" AccessKey="C" Click="OnCompile" Text="Compile" />
+                    <MenuFlyoutItem x:Name="StopItem" controls:Shortcut.Keys="Shift+F5" AccessKey="S" Click="OnStop" IsEnabled="False" Text="Stop" />
                     <MenuFlyoutItem AccessKey="L" Click="OnClean" Text="Clean build folder" />
                     <MenuFlyoutSeparator />
-                    <ToggleMenuFlyoutItem
-                        x:Name="AutoCompileItem"
-                        AccessKey="A"
-                        Click="OnAutoCompile"
-                        Text="Compile automatically" />
-                    <ToggleMenuFlyoutItem
-                        x:Name="ShellEscapeItem"
-                        AccessKey="E"
-                        Click="OnShellEscape"
-                        Text="Shell escape" />
-                    <ToggleMenuFlyoutItem
-                        x:Name="StopOnErrorItem"
-                        AccessKey="F"
-                        Click="OnStopOnError"
-                        Text="Stop on first error" />
+                    <ToggleMenuFlyoutItem x:Name="AutoCompileItem" AccessKey="A" Click="OnAutoCompile" IsChecked="{x:Bind app:Prefs.AutoCompile, Mode=OneTime}" Text="Compile automatically" />
+                    <ToggleMenuFlyoutItem x:Name="ShellEscapeItem" AccessKey="E" Click="OnBuildSetting" Text="Shell escape" />
+                    <ToggleMenuFlyoutItem x:Name="StopOnErrorItem" AccessKey="F" Click="OnBuildSetting" Text="Stop on first error" />
                 </MenuBarItem>
             </MenuBar>
             <Button
@@ -289,13 +179,12 @@
         <SplitView
             x:Name="Split"
             Grid.Row="1"
-            DisplayMode="Inline"
-            IsPaneOpen="True"
-            OpenPaneLength="280"
-            PaneBackground="Transparent"
-            PaneClosed="OnPaneClosed">
+            DisplayMode="Overlay"
+            OpenPaneLength="{x:Bind app:Prefs.SidebarWidth, Mode=OneTime}"
+            PaneBackground="{ThemeResource AcrylicInAppFillColorDefaultBrush}">
+            <!-- Word's navigation pane: Files, the Outline of the shown file's document, and project search's Results. -->
             <SplitView.Pane>
-                <Grid>
+                <Grid x:Name="SidePane">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
@@ -304,102 +193,50 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <SelectorBar
-                        x:Name="SideTabs"
-                        Margin="8,0,4,4"
-                        SelectionChanged="OnSideTab">
+                    <SelectorBar x:Name="SideTabs" Margin="8,0,4,4" SelectionChanged="OnSideTab">
                         <SelectorBarItem x:Name="FilesTab" IsSelected="True" Text="Files" />
                         <SelectorBarItem x:Name="OutlineTab" Text="Outline" />
-                        <SelectorBarItem x:Name="ResultsTab" Text="Results" Visibility="Collapsed" />
+                        <SelectorBarItem x:Name="ResultsTab" Text="Results" />
                     </SelectorBar>
                     <TreeView
-                        x:Name="Tree"
+                        x:Name="FilesTree"
                         Grid.Row="1"
                         AllowDrop="True"
                         AutomationProperties.Name="Files"
                         CanDragItems="False"
                         CanReorderItems="False"
                         Collapsed="OnCollapsed"
-                        ContextRequested="OnTreeContextRequested"
+                        ContextRequested="OnFilesContext"
                         DragOver="OnDragOver"
                         Drop="OnDrop"
                         Expanding="OnExpanding"
-                        ItemInvoked="OnItemInvoked"
-                        SelectionMode="Single">
+                        ItemInvoked="OnInvoked"
+                        ItemTemplate="{StaticResource NavTemplate}">
+                        <!-- File Explorer's menu, with its icons. -->
                         <TreeView.ContextFlyout>
-                            <MenuFlyout x:Name="TreeMenu" Opening="OnTreeMenuOpening">
+                            <MenuFlyout Opening="OnFileMenuOpening">
                                 <MenuFlyoutItem Click="OnNewFile" Text="New file">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE8A5;" />
-                                    </MenuFlyoutItem.Icon>
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8A5;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                                 <MenuFlyoutItem Click="OnNewFolder" Text="New folder">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE8F4;" />
-                                    </MenuFlyoutItem.Icon>
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8F4;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                                 <MenuFlyoutSeparator />
                                 <MenuFlyoutItem x:Name="MainItem" Click="OnSetMain" Text="Set as main file">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE735;" />
-                                    </MenuFlyoutItem.Icon>
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE735;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
-                                <MenuFlyoutItem x:Name="RenameItem" Click="OnRename" Text="Rename">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE8AC;" />
-                                    </MenuFlyoutItem.Icon>
-                                    <MenuFlyoutItem.KeyboardAccelerators>
-                                        <KeyboardAccelerator Key="F2" />
-                                    </MenuFlyoutItem.KeyboardAccelerators>
+                                <MenuFlyoutItem x:Name="RenameItem" controls:Shortcut.Keys="F2" Click="OnRename" Text="Rename">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8AC;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                                 <MenuFlyoutItem x:Name="RevealItem" Click="OnReveal" Text="Show in File Explorer">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xEC50;" />
-                                    </MenuFlyoutItem.Icon>
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xEC50;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                                 <MenuFlyoutSeparator />
-                                <MenuFlyoutItem x:Name="DeleteItem" Click="OnDelete" Text="Delete">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE74D;" />
-                                    </MenuFlyoutItem.Icon>
-                                    <MenuFlyoutItem.KeyboardAccelerators>
-                                        <KeyboardAccelerator Key="Delete" />
-                                    </MenuFlyoutItem.KeyboardAccelerators>
+                                <MenuFlyoutItem x:Name="DeleteItem" controls:Shortcut.Keys="Delete" Click="OnDelete" Text="Delete">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                             </MenuFlyout>
                         </TreeView.ContextFlyout>
-                        <TreeView.ItemTemplate>
-                            <DataTemplate x:DataType="local:FileItem">
-                                <TreeViewItem
-                                    AutomationProperties.Name="{x:Bind Name}"
-                                    IsExpanded="{x:Bind IsExpanded}"
-                                    ItemsSource="{x:Bind Children}"
-                                    ToolTipService.ToolTip="{x:Bind Path}">
-                                    <Grid ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <FontIcon FontSize="16" Glyph="{x:Bind Glyph}" />
-                                        <TextBlock
-                                            Grid.Column="1"
-                                            VerticalAlignment="Center"
-                                            Style="{StaticResource BodyTextBlockStyle}"
-                                            Text="{x:Bind Name}"
-                                            TextTrimming="CharacterEllipsis"
-                                            TextWrapping="NoWrap" />
-                                        <FontIcon
-                                            Grid.Column="2"
-                                            AutomationProperties.Name="Main file"
-                                            FontSize="16"
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                            Glyph="&#xE735;"
-                                            Visibility="{x:Bind IsMain}" />
-                                    </Grid>
-                                </TreeViewItem>
-                            </DataTemplate>
-                        </TreeView.ItemTemplate>
                     </TreeView>
                     <TreeView
                         x:Name="OutlineTree"
@@ -407,99 +244,33 @@
                         AutomationProperties.Name="Outline"
                         CanDragItems="False"
                         CanReorderItems="False"
-                        Collapsed="OnOutlineCollapsed"
-                        Expanding="OnOutlineExpanding"
-                        ItemInvoked="OnOutlineInvoked"
-                        SelectionMode="Single"
-                        Visibility="Collapsed">
-                        <TreeView.ItemTemplate>
-                            <DataTemplate x:DataType="local:OutlineItem">
-                                <TreeViewItem
-                                    AutomationProperties.Name="{x:Bind Title}"
-                                    IsExpanded="{x:Bind IsExpanded}"
-                                    ItemsSource="{x:Bind Children}"
-                                    ToolTipService.ToolTip="{x:Bind Place}">
-                                    <TextBlock
-                                        VerticalAlignment="Center"
-                                        Style="{StaticResource BodyTextBlockStyle}"
-                                        Text="{x:Bind Title}"
-                                        TextTrimming="CharacterEllipsis"
-                                        TextWrapping="NoWrap" />
-                                </TreeViewItem>
-                            </DataTemplate>
-                        </TreeView.ItemTemplate>
-                    </TreeView>
-                    <ListView
-                        x:Name="Results"
+                        Collapsed="OnCollapsed"
+                        Expanding="OnExpanding"
+                        ItemInvoked="OnInvoked"
+                        ItemTemplate="{StaticResource NavTemplate}"
+                        Visibility="Collapsed" />
+                    <TreeView
+                        x:Name="ResultsTree"
                         Grid.Row="1"
                         AutomationProperties.Name="Search results"
-                        IsItemClickEnabled="True"
-                        ItemClick="OnResultClick"
-                        SelectionMode="Single"
-                        Visibility="Collapsed">
-                        <ListView.GroupStyle>
-                            <GroupStyle>
-                                <GroupStyle.HeaderTemplate>
-                                    <DataTemplate x:DataType="local:ResultGroup">
-                                        <Grid ColumnSpacing="8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock
-                                                Style="{StaticResource BodyStrongTextBlockStyle}"
-                                                Text="{x:Bind File}"
-                                                TextTrimming="CharacterEllipsis"
-                                                ToolTipService.ToolTip="{x:Bind File}" />
-                                            <TextBlock
-                                                Grid.Column="1"
-                                                VerticalAlignment="Center"
-                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                Style="{StaticResource CaptionTextBlockStyle}"
-                                                Text="{x:Bind Total}"
-                                                Typography.NumeralAlignment="Tabular" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </GroupStyle.HeaderTemplate>
-                            </GroupStyle>
-                        </ListView.GroupStyle>
-                        <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="local:ResultItem">
-                                <Grid Padding="0,8" AutomationProperties.Name="{x:Bind Spoken}" ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock MaxLines="2" Style="{StaticResource BodyTextBlockStyle}" TextTrimming="CharacterEllipsis">
-                                        <Run Text="{x:Bind Hit.Before}" /><Run FontWeight="SemiBold" Text="{x:Bind Hit.Match}" /><Run Text="{x:Bind Hit.After}" />
-                                    </TextBlock>
-                                    <TextBlock
-                                        Grid.Column="1"
-                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                        Style="{StaticResource CaptionTextBlockStyle}"
-                                        Text="{x:Bind Line}"
-                                        Typography.NumeralAlignment="Tabular" />
-                                </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
+                        CanDragItems="False"
+                        CanReorderItems="False"
+                        ItemInvoked="OnInvoked"
+                        ItemTemplate="{StaticResource NavTemplate}"
+                        Visibility="Collapsed" />
                     <TextBlock
                         x:Name="SideNote"
                         Grid.Row="1"
                         Margin="16,12"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Style="{StaticResource BodyTextBlockStyle}"
-                        TextWrapping="Wrap"
                         Visibility="Collapsed" />
-                    <controls:Sizer
-                        x:Name="PaneSizer"
-                        Grid.RowSpan="2"
-                        Grid.Column="1"
-                        AutomationProperties.Name="Sidebar width" />
+                    <!-- No line of its own: the content card's edge is the line. -->
+                    <controls:Sizer x:Name="PaneSizer" Grid.RowSpan="2" Grid.Column="1" AutomationProperties.Name="Sidebar width" />
                 </Grid>
             </SplitView.Pane>
 
-            <Grid Style="{StaticResource ContentCardStyle}">
+            <Grid x:Name="ContentCard" Style="{StaticResource ContentCardStyle}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
@@ -512,44 +283,65 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition x:Name="PdfColumn" Width="*" MinWidth="240" />
                     </Grid.ColumnDefinitions>
-                    <controls:SourceView x:Name="Editor" Visibility="Collapsed" />
-                    <StackPanel
-                        x:Name="NoFile"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center"
-                        Spacing="16">
-                        <FontIcon
-                            HorizontalAlignment="Center"
-                            FontSize="48"
-                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                            Glyph="&#xE8A5;" />
-                        <TextBlock HorizontalAlignment="Center" Style="{StaticResource BodyTextBlockStyle}" Text="Choose a file in the sidebar." />
+                    <controls:SourceView x:Name="Editor" Visibility="Collapsed">
+                        <!-- The emoji panel's way: a search box over the symbols by kind, never over the caret's line. -->
+                        <FlyoutBase.AttachedFlyout>
+                            <Flyout x:Name="Palette">
+                                <StackPanel Spacing="8">
+                                    <TextBox x:Name="SymbolFilter" AutomationProperties.Name="Search symbols" PlaceholderText="Search symbols" TextChanged="OnSymbolFilter" />
+                                    <GridView
+                                        x:Name="Symbols"
+                                        MaxHeight="360"
+                                        AutomationProperties.Name="Symbols"
+                                        IsItemClickEnabled="True"
+                                        ItemClick="OnSymbol"
+                                        SelectionMode="None">
+                                        <GridView.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <ItemsWrapGrid MaximumRowsOrColumns="7" Orientation="Horizontal" />
+                                            </ItemsPanelTemplate>
+                                        </GridView.ItemsPanel>
+                                        <GridView.GroupStyle>
+                                            <GroupStyle>
+                                                <GroupStyle.HeaderTemplate>
+                                                    <DataTemplate x:DataType="local:PaletteGroup">
+                                                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Title}" />
+                                                    </DataTemplate>
+                                                </GroupStyle.HeaderTemplate>
+                                            </GroupStyle>
+                                        </GridView.GroupStyle>
+                                        <GridView.ItemTemplate>
+                                            <DataTemplate x:DataType="local:PaletteItem">
+                                                <Image Width="24" Height="24" Source="{x:Bind Image}" ToolTipService.ToolTip="{x:Bind Command}" />
+                                            </DataTemplate>
+                                        </GridView.ItemTemplate>
+                                    </GridView>
+                                </StackPanel>
+                            </Flyout>
+                        </FlyoutBase.AttachedFlyout>
+                    </controls:SourceView>
+                    <StackPanel x:Name="NoFile" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+                        <FontIcon HorizontalAlignment="Center" FontSize="48" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Glyph="&#xE8A5;" />
+                        <TextBlock HorizontalAlignment="Center" Style="{StaticResource SubtitleTextBlockStyle}" Text="No file open" />
+                        <TextBlock HorizontalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource BodyTextBlockStyle}" Text="Choose a file in the sidebar." />
                     </StackPanel>
-                    <controls:Sizer
-                        x:Name="SplitSizer"
-                        Grid.Column="1"
-                        AutomationProperties.Name="Editor and PDF"
-                        DoubleTapped="OnSplitReset">
-                        <Rectangle
-                            Width="1"
-                            HorizontalAlignment="Center"
-                            Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                    <controls:Sizer x:Name="SplitSizer" Grid.Column="1" AutomationProperties.Name="Editor and PDF" DoubleTapped="OnSplitReset">
+                        <Rectangle Width="1" HorizontalAlignment="Center" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
                     </controls:Sizer>
                     <controls:PdfView x:Name="Pdf" Grid.Column="2" />
+                    <!-- Over the PDF, so it never covers the text or the find bar. -->
+                    <InfoBar x:Name="BuildFailed" Grid.Column="2" Margin="12" VerticalAlignment="Top" Severity="Error" Title="Build failed">
+                        <InfoBar.ActionButton>
+                            <Button Click="OnShowIssues" Content="Show issues" />
+                        </InfoBar.ActionButton>
+                    </InfoBar>
                 </Grid>
 
-                <controls:Sizer
-                    x:Name="IssuesSizer"
-                    Grid.Row="1"
-                    AutomationProperties.Name="Issues height"
-                    Orientation="Horizontal"
-                    Visibility="Collapsed">
-                    <Rectangle
-                        Height="1"
-                        VerticalAlignment="Center"
-                        Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                <controls:Sizer x:Name="IssuesSizer" Grid.Row="1" AutomationProperties.Name="Issues height" Orientation="Horizontal" Visibility="Collapsed">
+                    <Rectangle Height="1" VerticalAlignment="Center" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
                 </controls:Sizer>
 
+                <!-- VS Code's panel: the build's issues, or its log. -->
                 <Grid x:Name="IssuesPanel" Grid.Row="2" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="48" />
@@ -558,8 +350,7 @@
                     <Grid Padding="8,0,12,0" ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="120" />
                         </Grid.ColumnDefinitions>
                         <SelectorBar x:Name="IssueTabs" VerticalAlignment="Center" SelectionChanged="OnIssueTab">
                             <SelectorBarItem x:Name="IssuesTab" IsSelected="True" Text="Issues" />
@@ -568,66 +359,39 @@
                         <CheckBox
                             x:Name="WarningsToggle"
                             Grid.Column="1"
-                            VerticalAlignment="Center"
-                            Checked="OnWarnings"
+                            MinWidth="0"
+                            HorizontalAlignment="Right"
+                            Click="OnWarnings"
                             Content="Warnings"
                             IsChecked="True"
-                            IsEnabled="False"
-                            Unchecked="OnWarnings" />
-                        <Button
-                            Grid.Column="2"
-                            VerticalAlignment="Center"
-                            Click="OnCopyLog"
-                            Content="Copy log" />
+                            IsEnabled="False" />
+                        <Button x:Name="CopyLog" Grid.Column="1" HorizontalAlignment="Right" Click="OnCopyLog" Content="Copy log" Visibility="Collapsed" />
                     </Grid>
-                    <ListView
-                        x:Name="IssueList"
-                        Grid.Row="1"
-                        AutomationProperties.Name="Issues"
-                        DoubleTapped="OnIssueDoubleTapped"
-                        PreviewKeyDown="OnIssueKeyDown"
-                        SelectionMode="Single">
+                    <ListView x:Name="IssueList" Grid.Row="1" AutomationProperties.Name="Issues" IsItemClickEnabled="True" ItemClick="OnIssueClick" Visibility="Collapsed">
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="local:IssueItem">
-                                <Grid Padding="0,8" ColumnSpacing="12" AutomationProperties.Name="{x:Bind Message}">
+                                <Grid Padding="0,8" ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="16" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <FontIcon
-                                        VerticalAlignment="Top"
-                                        FontSize="16"
-                                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                                        Glyph="&#xE783;"
-                                        Visibility="{x:Bind IsError}" />
-                                    <FontIcon
-                                        VerticalAlignment="Top"
-                                        FontSize="16"
-                                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
-                                        Glyph="&#xE7BA;"
-                                        Visibility="{x:Bind IsWarning}" />
-                                    <FontIcon
-                                        VerticalAlignment="Top"
-                                        FontSize="16"
-                                        Foreground="{ThemeResource SystemFillColorAttentionBrush}"
-                                        Glyph="&#xE946;"
-                                        Visibility="{x:Bind IsInfo}" />
-                                    <StackPanel Grid.Column="1" Spacing="2">
-                                        <TextBlock
-                                            MaxLines="2"
-                                            Style="{StaticResource BodyTextBlockStyle}"
-                                            Text="{x:Bind Message}"
-                                            TextTrimming="CharacterEllipsis" />
-                                        <TextBlock
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                            Style="{StaticResource CaptionTextBlockStyle}"
-                                            Text="{x:Bind Place}"
-                                            Visibility="{x:Bind HasPlace}" />
+                                    <FontIcon VerticalAlignment="Top" FontSize="16" Foreground="{ThemeResource SystemFillColorCriticalBrush}" Glyph="&#xE783;" Visibility="{x:Bind IsError}" />
+                                    <FontIcon VerticalAlignment="Top" FontSize="16" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" Visibility="{x:Bind IsWarning}" />
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock MaxLines="2" Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Message}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind Place}" Visibility="{x:Bind HasPlace}" />
                                     </StackPanel>
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
+                    <TextBlock
+                        x:Name="NoIssues"
+                        Grid.Row="1"
+                        Margin="16,12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource BodyTextBlockStyle}"
+                        Text="Compile to check for issues." />
                     <TextBox
                         x:Name="Log"
                         Grid.Row="1"
@@ -641,129 +405,47 @@
                         TextWrapping="NoWrap"
                         Visibility="Collapsed" />
                 </Grid>
-
-                <InfoBar
-                    x:Name="BuildFailed"
-                    Margin="12"
-                    VerticalAlignment="Top"
-                    Severity="Error"
-                    Title="Build failed">
-                    <InfoBar.ActionButton>
-                        <Button Click="OnShowIssues" Content="Show issues" />
-                    </InfoBar.ActionButton>
-                </InfoBar>
-                <InfoBar
-                    x:Name="Notice"
-                    Margin="12"
-                    VerticalAlignment="Top"
-                    Severity="Warning" />
             </Grid>
         </SplitView>
 
-        <Grid Grid.Row="2" Padding="4,0,8,0" Background="Transparent">
-            <Grid.Resources>
-                <Style x:Key="SegmentDivider" TargetType="Rectangle">
-                    <Setter Property="Width" Value="1" />
-                    <Setter Property="Height" Value="16" />
-                    <Setter Property="VerticalAlignment" Value="Center" />
-                    <Setter Property="Fill" Value="{ThemeResource DividerStrokeColorDefaultBrush}" />
-                </Style>
-            </Grid.Resources>
+        <!-- Notepad's status bar with VS Code's left side: segments grouped by spacing, in slots that keep their size. -->
+        <Grid Grid.Row="2" Padding="4,0,8,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" Spacing="4">
-                <Button
-                    x:Name="IssueCounts"
-                    AutomationProperties.Name="Issues"
-                    Click="OnIssueCounts"
-                    Style="{StaticResource StatusButtonStyle}"
-                    ToolTipService.ToolTip="Issues (Ctrl+Shift+M)">
+                <Button AutomationProperties.Name="Issues" Click="OnIssueCounts" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Issues (Ctrl+Shift+M)">
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <FontIcon FontSize="12" Glyph="&#xE783;" />
                         <TextBlock x:Name="ErrorCount" MinWidth="16" Style="{StaticResource CaptionTextBlockStyle}" Text="0" Typography.NumeralAlignment="Tabular" />
-                        <FontIcon Margin="4,0,0,0" FontSize="12" Glyph="&#xE7BA;" />
+                        <FontIcon FontSize="12" Glyph="&#xE7BA;" />
                         <TextBlock x:Name="WarningCount" MinWidth="16" Style="{StaticResource CaptionTextBlockStyle}" Text="0" Typography.NumeralAlignment="Tabular" />
                     </StackPanel>
                 </Button>
-                <Rectangle Style="{StaticResource SegmentDivider}" />
-                <TextBlock
-                    x:Name="BuildState"
-                    MinWidth="240"
-                    Padding="8,0"
-                    VerticalAlignment="Center"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Style="{StaticResource CaptionTextBlockStyle}"
-                    Text="No build yet"
-                    TextTrimming="CharacterEllipsis"
-                    Typography.NumeralAlignment="Tabular" />
+                <TextBlock x:Name="BuildState" MinWidth="240" Style="{StaticResource StatusTextStyle}" Text="No build yet" TextAlignment="Left" />
             </StackPanel>
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
-                <StackPanel x:Name="NotSavedSegment" Opacity="0" Orientation="Horizontal" Spacing="4">
-                    <Button
-                        x:Name="NotSaved"
-                        AutomationProperties.Name="Not saved"
-                        Click="OnSave"
-                        IsEnabled="False"
-                        Style="{StaticResource StatusButtonStyle}"
-                        ToolTipService.ToolTip="Save (Ctrl+S)">
+                <Grid Width="96">
+                    <Button x:Name="NotSaved" AutomationProperties.Name="Not saved" Click="OnSave" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Save (Ctrl+S)" Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" Spacing="4">
                             <FontIcon FontSize="12" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" />
                             <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="Not saved" />
                         </StackPanel>
                     </Button>
-                    <Rectangle Style="{StaticResource SegmentDivider}" />
-                </StackPanel>
-                <TextBlock
-                    x:Name="WordsText"
-                    MinWidth="88"
-                    Padding="8,0"
-                    VerticalAlignment="Center"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Style="{StaticResource CaptionTextBlockStyle}"
-                    TextAlignment="Center"
-                    Typography.NumeralAlignment="Tabular" />
-                <Rectangle Style="{StaticResource SegmentDivider}" />
-                <Button
-                    x:Name="CaretButton"
-                    MinWidth="104"
-                    Click="OnGoToLine"
-                    Style="{StaticResource StatusButtonStyle}"
-                    ToolTipService.ToolTip="Go to line (Ctrl+G)">
+                </Grid>
+                <TextBlock x:Name="Words" MinWidth="88" Style="{StaticResource StatusTextStyle}" />
+                <Button MinWidth="104" Click="OnGoToLine" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Go to line (Ctrl+G)">
                     <TextBlock x:Name="CaretText" Style="{StaticResource CaptionTextBlockStyle}" Text="Ln 1, Col 1" Typography.NumeralAlignment="Tabular" />
                 </Button>
-                <Rectangle Style="{StaticResource SegmentDivider}" />
-                <Button
-                    x:Name="PageButton"
-                    MinWidth="96"
-                    Click="OnGoToPage"
-                    Style="{StaticResource StatusButtonStyle}"
-                    ToolTipService.ToolTip="Go to page (Ctrl+Alt+G)">
+                <Button MinWidth="96" Click="OnGoToPage" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Go to page (Ctrl+Alt+G)">
                     <TextBlock x:Name="PageText" Style="{StaticResource CaptionTextBlockStyle}" Text="No PDF" Typography.NumeralAlignment="Tabular" />
                 </Button>
-                <Rectangle Style="{StaticResource SegmentDivider}" />
-                <TextBlock
-                    x:Name="ZoomText"
-                    MinWidth="56"
-                    Padding="8,0"
-                    VerticalAlignment="Center"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Style="{StaticResource CaptionTextBlockStyle}"
-                    Text="100%"
-                    TextAlignment="Center"
-                    Typography.NumeralAlignment="Tabular" />
+                <Button MinWidth="64" Flyout="{x:Bind Pdf.ZoomMenu}" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Zoom">
+                    <TextBlock x:Name="ZoomText" Style="{StaticResource CaptionTextBlockStyle}" Text="100%" Typography.NumeralAlignment="Tabular" />
+                </Button>
             </StackPanel>
         </Grid>
-
-        <ContentDialog
-            x:Name="ReplaceDialog"
-            Title="Replace existing files?"
-            CloseButtonText="Cancel"
-            DefaultButton="Secondary"
-            PrimaryButtonText="Replace"
-            SecondaryButtonText="Keep both"
-            Style="{StaticResource DefaultContentDialogStyle}" />
     </Grid>
 </Page>

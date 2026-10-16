@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
+using TeXLocal.Controls;
 
 namespace TeXLocal.Pages;
 
@@ -87,8 +88,8 @@ public sealed partial class SettingsPage : Page
         Preview.FontFamily = new FontFamily(Prefs.EditorFont);
         Preview.FontSize = Prefs.EditorFontSize;
         var paper = ((SolidColorBrush)PaperInk.Fill).Color;
-        var secondary = EditorPrefs.Over(((SolidColorBrush)SecondaryInk.Fill).Color, paper);
-        var inks = EditorPrefs.Colors(Prefs.EditorTheme, ActualTheme == ElementTheme.Dark, paper, ((SolidColorBrush)LineInk.Fill).Color, secondary);
+        var secondary = SourceView.Over(((SolidColorBrush)SecondaryInk.Fill).Color, paper);
+        var inks = SourceView.SyntaxColors(Prefs.EditorTheme, ActualTheme == ElementTheme.Dark, paper, ((SolidColorBrush)LineInk.Fill).Color, secondary);
         using var source = Source.New(Sample);
         Preview.Inlines.Clear();
         var at = 0;

@@ -29,6 +29,12 @@ public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, strin
 /// An `issues` event's line: the first issue on it, and the messages of the rest.
 public sealed record IssueLine(int Line, bool Error, string Message, string Short, string? Command, string[] Others);
 
+/// A session event's fields, each type setting its own (docs/core-api.md, Events): document (Path, Error, Held), saved,
+/// document_reload (Path, Text), document_closed, document_renamed (From, To), conflict (Path, Kind), issues (Path, Lines),
+/// build (Compiling, Auto, Outdated), build_finished (Auto, Announce, Outdated, Result) and tree (Tree).
+public sealed record DocEvent(string? Path, string? Error, bool Held, string? Text, string? From, string? To, string? Kind,
+    IssueLine[]? Lines, bool Compiling, bool Auto, bool Outdated, bool Announce, CompileResult? Result, TreeNode[]? Tree);
+
 /// <param name="Page">From 1; the box in TeX points from the page's top left.</param>
 public sealed record ForwardSync(double Page, double? H, double? V, double? Width, double? Height);
 
