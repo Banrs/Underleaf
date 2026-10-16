@@ -27,7 +27,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener};
-use crate::projects::Symbols;
+use crate::projects::{SymbolScan, Symbols};
 use crate::service::{Service, arg, string_arg};
 use crate::texpresso::Events;
 use crate::{CoreError, lock};
@@ -95,7 +95,8 @@ pub(crate) enum Msg {
     },
     BuildDone(Result<CompileResult, CoreError>),
     Cleaned(Result<(), CoreError>),
-    Symbols(u64, Result<Symbols, CoreError>),
+    /// A scan's sequence number, what it read for the next, and what it found.
+    Symbols(u64, SymbolScan, Result<Symbols, CoreError>),
     LiveNews(u64, Result<Events, CoreError>),
     Fs(Vec<Change>),
 }

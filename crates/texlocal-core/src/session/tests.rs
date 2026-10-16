@@ -347,8 +347,10 @@ async fn the_autosave_writes_700_ms_after_the_last_edit() {
     doc.edit(11, 0, "!");
     wait(600).await;
     assert_eq!(rig.disk("main.tex"), "Hello");
-    let states = rig.of_type("document").await;
-    assert_eq!(states.last().unwrap()["dirty"], true);
+    // The open's alone: Not Saved is for an error or Cancel, so edits and saves change
+    // nothing a `document` event tells.
+    assert_eq!(rig.of_type("document").await.len(), 1);
+    assert_eq!(rig.state().await["documents"][0]["dirty"], true);
     wait(150).await;
     assert_eq!(rig.disk("main.tex"), "Hello world!");
     let events = rig.events().await;
@@ -357,8 +359,8 @@ async fn the_autosave_writes_700_ms_after_the_last_edit() {
             .iter()
             .any(|e| e["type"] == "saved" && e["path"] == "main.tex")
     );
-    let last = events.iter().rfind(|e| e["type"] == "document").unwrap();
-    assert_eq!(last["dirty"], false);
+    assert!(!events.iter().any(|e| e["type"] == "document"));
+    assert_eq!(rig.state().await["documents"][0]["dirty"], false);
     assert_eq!(rig.fake.called("compile"), 0);
 }
 

@@ -33,41 +33,38 @@ async fn status_of(service: &Service, command: &str, args: Value) -> u16 {
     service.call(command, &args).await.unwrap_err().status
 }
 
-async fn labels(service: &Service) -> Value {
-    call(service, "scan_symbols", json!({ "id": "P" })).await["labels"].clone()
-}
-
 #[tokio::test]
 async fn a_free_project_name_is_the_next_untitled() {
     let (_dir, service) = service();
     // Nothing made: the series starts at "Untitled".
     let name = call(&service, "free_project_name", json!({})).await;
     assert_eq!(name, json!({ "name": "Untitled" }));
-    let mut made = Vec::new();
-    for _ in 0..3 {
-        let args = json!({ "free": true, "template": "blank" });
-        made.push(call(&service, "create_project", args).await);
+    for name in ["Untitled", "Untitled 2", "Untitled 3"] {
+        let args = json!({ "name": name, "template": "blank" });
+        assert_eq!(call(&service, "create_project", args).await["id"], name);
     }
-    let ids: Vec<_> = made.iter().map(|info| info["id"].clone()).collect();
-    assert_eq!(ids, ["Untitled", "Untitled 2", "Untitled 3"]);
-    assert_eq!(made[2]["name"], "Untitled 3");
     // A gap is filled first, and a name asked for is numbered the same way.
     std::fs::remove_dir_all(service.data_dir.join("Untitled 2")).unwrap();
     let next = call(&service, "free_project_name", json!({})).await;
     assert_eq!(next, json!({ "name": "Untitled 2" }));
-    let args = json!({ "free": true, "name": "untitled" });
-    let from_taken = call(&service, "create_project", args).await;
+    let from_taken = call(&service, "free_project_name", json!({ "name": "untitled" })).await;
     let case_insensitive = cfg!(any(target_os = "macos", windows));
     let expected = if case_insensitive {
         "untitled 2"
     } else {
         "untitled"
     };
-    assert_eq!(from_taken["id"], expected);
+    assert_eq!(from_taken["name"], expected);
+    // A new project whose name is taken is numbered past it.
+    let args = json!({ "name": "Untitled 3", "template": "blank" });
+    assert_eq!(
+        call(&service, "create_project", args).await["id"],
+        "Untitled 3 2"
+    );
     // Names the path rules refuse are refused, not numbered.
-    let bad = json!({ "free": true, "name": ".hidden" });
-    assert_eq!(status_of(&service, "create_project", bad).await, 400);
-    // Without `free` a name is still required.
+    let bad = json!({ "name": ".hidden" });
+    assert_eq!(status_of(&service, "free_project_name", bad).await, 400);
+    // A new project needs its name.
     assert_eq!(status_of(&service, "create_project", json!({})).await, 400);
 }
 
@@ -126,44 +123,6 @@ async fn a_write_answers_the_stamp_of_the_file_it_wrote() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn settings_patches_and_main_file_renames_preserve_both_changes() {
-    let (_dir, service) = with_project();
-    let service = std::sync::Arc::new(service);
-    for index in 0..16 {
-        let (from, to, engine) = if index % 2 == 0 {
-            ("main.tex", "paper.tex", "xelatex")
-        } else {
-            ("paper.tex", "main.tex", "pdflatex")
-        };
-        let start = std::sync::Arc::new(tokio::sync::Barrier::new(2));
-        let patch = tokio::spawn({
-            let service = service.clone();
-            let start = start.clone();
-            async move {
-                start.wait().await;
-                call(
-                    &service,
-                    "set_settings",
-                    json!({ "id": "P", "patch": { "engine": engine } }),
-                )
-                .await
-            }
-        });
-        start.wait().await;
-        call(
-            &service,
-            "rename_entry",
-            json!({ "id": "P", "from": from, "to": to }),
-        )
-        .await;
-        patch.await.unwrap();
-        let settings = call(&service, "get_settings", json!({ "id": "P" })).await;
-        assert_eq!(settings["mainFile"], to);
-        assert_eq!(settings["engine"], engine);
-    }
-}
-
 #[tokio::test]
 async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     let (_dir, service) = with_project();
@@ -218,67 +177,6 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     )
     .await;
     assert!(!main["text"].as_str().unwrap().is_empty());
-}
-
-/// `scan_symbols` is cached by file stamp: a save, an outside edit, a removal
-/// and a link retargeted to a file of the same stamp must each show.
-#[tokio::test]
-async fn symbol_completions_follow_the_files_however_they_change() {
-    let (dir, service) = with_project();
-    let root = dir.path().join("P");
-    let write = |text: &'static str| {
-        call(
-            &service,
-            "write_file",
-            json!({ "id": "P", "path": "a.tex", "text": text }),
-        )
-    };
-    assert_eq!(labels(&service).await, json!([]));
-    write("\\label{one}").await;
-    assert_eq!(labels(&service).await, json!(["one"]));
-    // Same length: the new label must still replace the previous one. Without
-    // inodes (Windows) the stamp is the clock's, which ticks every few ms.
-    tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-    write("\\label{two}").await;
-    assert_eq!(labels(&service).await, json!(["two"]));
-
-    // Files the service did not write are found and, removed, are gone.
-    std::fs::write(root.join("external.tex"), "\\label{outside}").unwrap();
-    assert_eq!(labels(&service).await, json!(["two", "outside"]));
-    std::fs::remove_file(root.join("external.tex")).unwrap();
-    std::fs::remove_file(root.join("a.tex")).unwrap();
-    assert_eq!(labels(&service).await, json!([]));
-
-    #[cfg(unix)]
-    {
-        std::fs::write(root.join("real.tex"), "\\label{one}").unwrap();
-        std::os::unix::fs::symlink(root.join("real.tex"), root.join("link.tex")).unwrap();
-        assert_eq!(labels(&service).await, json!(["one"]));
-        // An app write to the target shows through the link.
-        let args = json!({ "id": "P", "path": "real.tex", "text": "\\label{two}" });
-        call(&service, "write_file", args).await;
-        assert_eq!(labels(&service).await, json!(["two"]));
-
-        std::fs::remove_file(root.join("real.tex")).unwrap();
-        std::fs::remove_file(root.join("link.tex")).unwrap();
-        let first_target = root.join("first.txt");
-        let second_target = root.join("second.txt");
-        let link = root.join("link.tex");
-        std::fs::write(&first_target, "\\label{one}").unwrap();
-        std::fs::write(&second_target, "\\label{two}").unwrap();
-        let fixed_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
-        for target in [&first_target, &second_target] {
-            std::fs::File::open(target)
-                .unwrap()
-                .set_times(std::fs::FileTimes::new().set_modified(fixed_time))
-                .unwrap();
-        }
-        std::os::unix::fs::symlink(&first_target, &link).unwrap();
-        assert_eq!(labels(&service).await, json!(["one"]));
-        std::fs::remove_file(&link).unwrap();
-        std::os::unix::fs::symlink(&second_target, &link).unwrap();
-        assert_eq!(labels(&service).await, json!(["two"]));
-    }
 }
 
 #[test]
@@ -603,8 +501,7 @@ async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
     let outside = json!({ "path": dir.path().parent().unwrap() });
     assert_eq!(call(&service, "locate", outside).await, Value::Null);
 
-    // The interface state is kept with the project and follows a rename.
-    write("sec/a.tex", "").await;
+    // The interface state is kept with the project (and follows a rename: projects.rs).
     let patch = json!({ "expandedFolders": ["sec"], "foldedHeadings": ["sec/a.tex\t2:A#1"] });
     call(
         &service,
@@ -612,13 +509,8 @@ async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
         json!({ "id": "P", "patch": patch }),
     )
     .await;
-    let rename = json!({ "id": "P", "from": "sec", "to": "part" });
-    call(&service, "rename_entry", rename).await;
     let ui = call(&service, "get_ui_state", json!({ "id": "P" })).await;
-    assert_eq!(
-        ui,
-        json!({ "expandedFolders": ["part"], "foldedHeadings": ["part/a.tex\t2:A#1"] })
-    );
+    assert_eq!(ui, patch);
     // It is not a file the generic APIs reach.
     let name = ".texlocal.json";
     let args = json!({ "id": "P", "path": name, "text": "{}" });

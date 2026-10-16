@@ -2,23 +2,23 @@
 //! dir; all returned paths use forward slashes.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
 
 use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
 
+use crate::BUILD_DIR;
 use crate::atomic::{self, Stamp};
 use crate::error::CoreError;
 use crate::paths::{fold_case, project_root, rel_key, safe_path, safe_write_path, sanitize_name};
 use crate::settings::{move_ui, read_settings, write_settings};
 use crate::templates;
-use crate::{BUILD_DIR, lock};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,7 +68,7 @@ pub struct SearchHit {
     pub after: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbols {
     pub citations: Vec<String>,
     pub labels: Vec<String>,
@@ -282,15 +282,6 @@ pub fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, 
         })
         .find(|name| !taken.contains(&fold_case(name)))
         .expect("a free name"))
-}
-
-/// `create_project` under the first free name from `free_project_name`.
-pub fn create_free_project(
-    data_dir: &Path,
-    base: Option<&str>,
-    template: &str,
-) -> Result<ProjectInfo, CoreError> {
-    create_project(data_dir, &free_project_name(data_dir, base)?, template)
 }
 
 /// A new, empty project folder for `name`, or "name 2" and so on when that
@@ -769,25 +760,19 @@ fn parse_symbols(bytes: &[u8], ext: &str) -> Symbols {
     Symbols { citations, labels }
 }
 
-/// A project's labels and citations, read fresh.
-pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
-    SymbolCache::default().scan(root)
-}
-
-/// The symbols of each .tex and .bib file of the projects scanned, by the
-/// file's stamp when it was read: a scan reads again only the files changed
-/// since, where every save would otherwise read the whole project.
+/// A project's labels and citations, and the symbols of each .tex and .bib
+/// file by project path, with the file's stamp when it was read: a scan reads
+/// again only the files changed since the last, where every save would
+/// otherwise read the whole project.
 #[derive(Default)]
-pub struct SymbolCache(Mutex<HashMap<PathBuf, Files>>);
+pub struct SymbolScan(BTreeMap<String, (Stamp, Symbols)>);
 
-/// A project's files' symbols, by project path, with the stamp each was read at.
-type Files = BTreeMap<String, (Stamp, Symbols)>;
-
-impl SymbolCache {
-    pub fn scan(&self, root: &Path) -> Result<Symbols, CoreError> {
-        // Taken out while the scan runs: one beside it starts afresh.
-        let mut known = lock(&self.0).remove(root).unwrap_or_default();
-        let mut files = Files::new();
+impl SymbolScan {
+    /// The project's labels and citations. A scan that fails forgets what the
+    /// last one read, and the next reads every file.
+    pub fn scan(&mut self, root: &Path) -> Result<Symbols, CoreError> {
+        let mut known = std::mem::take(&mut self.0);
+        let mut files = BTreeMap::new();
         visit_files(root, &mut |abs, rel| {
             let ext = ext_of(rel);
             if ext != "bib" && ext != "tex" {
@@ -821,7 +806,7 @@ impl SymbolCache {
             citations: dedup(files.values().flat_map(|(_, s)| &s.citations)),
             labels: dedup(files.values().flat_map(|(_, s)| &s.labels)),
         };
-        lock(&self.0).insert(root.to_path_buf(), files);
+        self.0 = files;
         Ok(found)
     }
 }
@@ -829,7 +814,7 @@ impl SymbolCache {
 #[cfg(test)]
 mod tests {
     use super::{
-        Located, SymbolCache, after_entry, create_file, create_free, create_project, file_kind,
+        Located, SymbolScan, after_entry, create_file, create_free, create_project, file_kind,
         locate, rename_entry,
     };
     use crate::paths::project_root;
@@ -850,7 +835,7 @@ mod tests {
         let (root, a) = (dir.path(), dir.path().join("a.tex"));
         fs::write(&a, "\\label{one}").unwrap();
         fs::write(root.join("b.tex"), "\\label{two}").unwrap();
-        let cache = SymbolCache::default();
+        let mut cache = SymbolScan::default();
         assert_eq!(cache.scan(root).unwrap().labels, ["one", "two"]);
         // Of the same length and date, it is as it was, and isn't read.
         let date = fs::metadata(&a).unwrap().modified().unwrap();
@@ -867,6 +852,32 @@ mod tests {
             (found.labels, found.citations),
             (vec!["one".into()], vec!["key".into()])
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_scan_reads_through_a_link_whatever_file_it_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let (first, second) = (root.join("first.txt"), root.join("second.txt"));
+        let link = root.join("link.tex");
+        fs::write(&first, "\\label{one}").unwrap();
+        fs::write(&second, "\\label{two}").unwrap();
+        // Of one length and date: only which file it is tells them apart.
+        let date = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        for target in [&first, &second] {
+            let file = fs::File::open(target).unwrap();
+            file.set_modified(date).unwrap();
+        }
+        std::os::unix::fs::symlink(&first, &link).unwrap();
+        let mut cache = SymbolScan::default();
+        assert_eq!(cache.scan(root).unwrap().labels, ["one"]);
+        fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&second, &link).unwrap();
+        assert_eq!(cache.scan(root).unwrap().labels, ["two"]);
+        // A save of the file it names, as the app writes it, shows through it.
+        crate::atomic::write(&second, b"\\label{six}").unwrap();
+        assert_eq!(cache.scan(root).unwrap().labels, ["six"]);
     }
 
     #[test]

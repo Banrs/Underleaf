@@ -18,8 +18,8 @@ use crate::atomic::Stamp;
 use crate::compile::CompileResult;
 use crate::events::Emitter;
 use crate::logparse::LogItem;
-use crate::projects::{self, Symbols};
-use crate::service::{Service, arg, string_arg};
+use crate::projects::{self, SymbolScan, Symbols};
+use crate::service::{Service, arg, out, string_arg};
 use crate::{CoreError, lock, paths, settings};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
@@ -95,14 +95,9 @@ impl Doc {
         self.force || self.doc.version() != self.saved
     }
 
+    /// A `document` event: what the host's Not Saved follows.
     fn state(&self) -> Value {
-        json!({
-            "path": self.path,
-            "dirty": self.dirty(),
-            "error": self.error,
-            "conflict": self.asking.map(Conflict::name),
-            "held": self.held,
-        })
+        json!({ "path": self.path, "error": self.error, "held": self.held })
     }
 }
 
@@ -144,7 +139,8 @@ pub(crate) struct Actor {
     symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
     symbols_at: Option<Instant>,
-    symbols_sent: Option<Value>,
+    /// What the last scan read; taken out while a scan runs, so one beside it starts afresh.
+    symbol_scan: SymbolScan,
     edits: u64,
     /// The edit each path last had, kept for the session's life: a document closed since
     /// isn't marked with a build's issues on lines that may have moved.
@@ -201,7 +197,7 @@ impl Actor {
             symbols: Arc::new(RwLock::new(Arc::new(empty))),
             symbols_seq: 0,
             symbols_at: Some(Instant::now()),
-            symbols_sent: None,
+            symbol_scan: SymbolScan::default(),
             edits: 0,
             last_edits: HashMap::new(),
             result_edits: 0,
@@ -287,7 +283,7 @@ impl Actor {
             Msg::Command { name, args, reply } => self.command(&name, &args, reply).await,
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
-            Msg::Symbols(seq, result) => self.symbols_done(seq, result),
+            Msg::Symbols(seq, scan, result) => self.symbols_done(seq, scan, result),
             Msg::LiveNews(seq, news) => self.live_news(seq, news),
             Msg::Fs(changes) => {
                 self.fs_pending.extend(changes);
@@ -389,10 +385,7 @@ impl Actor {
                 Ok(Value::Null)
             }
             "open_document" => self.open_document(&path()?),
-            "close_document" => {
-                let discard = arg::<Option<bool>>(args, "discard")?.unwrap_or(false);
-                self.close_document(&path()?, discard)
-            }
+            "close_document" => self.close_document(&path()?),
             "composing" => {
                 let (path, composing) = (path()?, arg::<bool>(args, "composing")?);
                 if let Some(doc) = self.docs.get_mut(&path) {
@@ -426,9 +419,9 @@ impl Actor {
                     paths::rel_key(string_arg(args, "from")?)?,
                     string_arg(args, "to")?,
                 );
-                self.rename(&from, to).await
+                self.rename(&from, to)
             }
-            "set_settings" => self.set_settings(&arg(args, "patch")?).await,
+            "set_settings" => self.set_settings(&arg(args, "patch")?),
             "prepare_delete" => self.prepare_delete(&path()?),
             "deleted" => {
                 let path = path()?;
@@ -473,11 +466,23 @@ impl Actor {
         }
     }
 
+    /// A snapshot, with what the events leave out.
     fn state(&self) -> Value {
-        let docs: Vec<Value> = self.docs.values().map(Doc::state).collect();
+        let docs: Vec<Value> = self
+            .docs
+            .values()
+            .map(|doc| {
+                let mut state = doc.state();
+                state["dirty"] = doc.dirty().into();
+                state["conflict"] = doc.asking.map(Conflict::name).into();
+                state
+            })
+            .collect();
+        let mut build = self.build_state();
+        build["queued"] = self.build.queued.is_some().into();
         json!({
             "documents": docs,
-            "build": self.build_state(),
+            "build": build,
             "live": self.live_state(),
             "autoCompile": self.auto_compile,
         })
@@ -530,18 +535,16 @@ impl Actor {
         Ok(json!({ "text": text }))
     }
 
-    fn close_document(&mut self, path: &str, discard: bool) -> Result<Value, CoreError> {
+    fn close_document(&mut self, path: &str) -> Result<Value, CoreError> {
         if !self.docs.contains_key(path) {
             return Ok(json!({ "closed": true }));
         }
-        if !discard {
-            for _ in 0..3 {
-                if !self.save_doc(path, true, false)? {
-                    return Ok(json!({ "closed": false }));
-                }
-                if !self.docs.get(path).is_some_and(Doc::dirty) {
-                    break;
-                }
+        for _ in 0..3 {
+            if !self.save_doc(path, true, false)? {
+                return Ok(json!({ "closed": false }));
+            }
+            if !self.docs.get(path).is_some_and(Doc::dirty) {
+                break;
             }
         }
         self.close_doc(path, "closed");
@@ -884,31 +887,29 @@ impl Actor {
 
     // MARK: - Symbols
 
+    /// Without the project's lock: every write replaces a file in one rename,
+    /// so a scan reads each file whole, old or new, and a save need not wait for it.
     fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
-        let (seq, service, root, tx) = (
-            self.symbols_seq,
-            Arc::clone(&self.service),
-            self.root.clone(),
-            self.tx.clone(),
-        );
+        let (seq, root, tx) = (self.symbols_seq, self.root.clone(), self.tx.clone());
+        let mut scan = std::mem::take(&mut self.symbol_scan);
         tokio::task::spawn_blocking(move || {
-            let _ = tx.send(Msg::Symbols(seq, service.scan_symbols(&root)));
+            let result = scan.scan(&root);
+            let _ = tx.send(Msg::Symbols(seq, scan, result));
         });
     }
 
-    fn symbols_done(&mut self, seq: u64, result: Result<Symbols, CoreError>) {
+    fn symbols_done(&mut self, seq: u64, scan: SymbolScan, result: Result<Symbols, CoreError>) {
+        self.symbol_scan = scan;
         let Ok(symbols) = result else { return };
         if seq != self.symbols_seq {
             return;
         }
-        let json = serde_json::to_value(&symbols).unwrap_or_default();
-        if self.symbols_sent.as_ref() == Some(&json) {
+        // Unchanged, the documents keep the completions they made from it.
+        if **self.symbols.read().unwrap_or_else(PoisonError::into_inner) == symbols {
             return;
         }
         *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
-        self.emit("symbols", json.clone());
-        self.symbols_sent = Some(json);
     }
 
     // MARK: - Builds
@@ -1014,7 +1015,6 @@ impl Actor {
         json!({
             "compiling": self.build.compiling,
             "auto": self.build.compiling && self.build.auto,
-            "queued": self.build.queued.is_some(),
             "outdated": self.outdated,
         })
     }
@@ -1129,25 +1129,26 @@ impl Actor {
 
     // MARK: - Files
 
-    async fn rename(&mut self, from: &str, to: &str) -> Result<Value, CoreError> {
+    fn rename(&mut self, from: &str, to: &str) -> Result<Value, CoreError> {
         if !self.save_edits(true)? {
             return Ok(Value::Null);
         }
-        let main = settings::read_settings(&self.root).main_file;
         let (live, intent) = (self.live.active(), self.live.intent);
-        let args = json!({ "id": self.project, "from": from, "to": to });
-        let renamed = self.service.call("rename_entry", &args).await;
+        let renamed = self.service.with_project(&self.project, |root| {
+            let main = settings::read_settings(root).main_file;
+            let renamed = projects::rename_entry(root, from, to)?;
+            // What the preview shows may have moved: it starts again after (`keep_live`).
+            self.service.texpresso.stop(root)?;
+            Ok((renamed, main))
+        });
         self.keep_live(live, intent, renamed.is_ok());
-        let renamed = renamed?;
-        let (from, to) = (
-            renamed["from"].as_str().unwrap_or(from).to_owned(),
-            renamed["to"].as_str().unwrap_or(to).to_owned(),
-        );
+        let (renamed, main) = renamed?;
+        let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
         // Whatever was open at the new name is stale: the name was free.
         let stale: Vec<String> = self
             .docs
             .keys()
-            .filter(|p| within(p, &to))
+            .filter(|p| within(p, to))
             .cloned()
             .collect();
         for path in stale {
@@ -1156,7 +1157,7 @@ impl Actor {
         let moved: Vec<String> = self
             .docs
             .keys()
-            .filter(|p| within(p, &from))
+            .filter(|p| within(p, from))
             .cloned()
             .collect();
         for old in moved {
@@ -1178,27 +1179,31 @@ impl Actor {
             self.publish_doc(&new);
         }
         self.reload_tree();
-        if renamed["mainFile"].as_str() != Some(main.as_str()) {
+        if renamed.main_file != main {
             self.main_file_changed();
         }
-        Ok(renamed)
+        out(renamed)
     }
 
-    async fn set_settings(&mut self, patch: &Value) -> Result<Value, CoreError> {
-        let main = settings::read_settings(&self.root).main_file;
+    fn set_settings(&mut self, patch: &Value) -> Result<Value, CoreError> {
         let (live, intent) = (self.live.active(), self.live.intent);
-        let args = json!({ "id": self.project, "patch": patch });
-        let updated = self.service.call("set_settings", &args).await;
-        let main_changed = updated
-            .as_ref()
-            .is_ok_and(|s| s["mainFile"].as_str() != Some(main.as_str()));
+        let (updated, main_changed) = self.service.with_project(&self.project, |root| {
+            let main = settings::read_settings(root).main_file;
+            let updated = settings::write_settings(root, patch)?;
+            let main_changed = updated.main_file != main;
+            if main_changed {
+                // The preview shows the old main file: it starts again after (`keep_live`).
+                self.service.texpresso.stop(root)?;
+            }
+            Ok((updated, main_changed))
+        })?;
         if main_changed {
             self.keep_live(live, intent, true);
             self.main_file_changed();
-        } else if updated.is_ok() && self.auto_compile {
+        } else if self.auto_compile {
             self.later.push_back(Later::Compile(true));
         }
-        updated
+        out(updated)
     }
 
     fn main_file_changed(&mut self) {

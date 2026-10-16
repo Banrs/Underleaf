@@ -10,7 +10,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use serde_json::{Value, json};
+use serde_json::json;
 use tempfile::TempDir;
 use texlocal_core::compile::{CompileManager, CompileResult, tex_available};
 use texlocal_core::error::CoreError;
@@ -74,10 +74,11 @@ fn stub_service(script: &str, ids: &[&str]) -> (TempDir, Arc<Service>) {
     (tmp, Arc::new(service))
 }
 
-/// A project's build, asked for as a client asks and left running.
-fn build(service: &Arc<Service>, id: &'static str) -> JoinHandle<Result<Value, CoreError>> {
+/// A project's build, asked for as a session asks and left running.
+fn build(service: &Arc<Service>, id: &'static str) -> JoinHandle<CompileResult> {
     let service = Arc::clone(service);
-    tokio::spawn(async move { service.call("compile", &json!({ "id": id })).await })
+    let root = service.project_root(id).unwrap();
+    tokio::spawn(async move { compile(&service.compile, &root).await })
 }
 
 /// Polls a later build just until it waits on the build before it.
@@ -176,8 +177,7 @@ sleep 20
         .call("rename_project", &json!({ "id": "one", "name": "uno" }))
         .await
         .unwrap();
-    let result = build.await.unwrap().unwrap();
-    assert_eq!(result["stopped"], true);
+    assert!(build.await.unwrap().stopped);
     assert!(!tmp.path().join("uno/build/main.fdb_latexmk").exists());
 }
 
@@ -505,9 +505,8 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
         async move { service.call("stop_compile", &args).await }
     };
     assert_eq!(stop("one").await.unwrap(), true);
-    let one = one.await.unwrap().unwrap();
-    assert_eq!(one["stopped"], true);
-    assert_eq!(one["ok"], false);
+    let one = one.await.unwrap();
+    assert!(one.stopped && !one.ok);
     assert!(started.elapsed() < Duration::from_secs(10));
     assert!(
         !two.is_finished() && !three.is_finished(),
@@ -516,14 +515,8 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
 
     // The project builds again after a Stop.
     fs::write(project_root(tmp.path(), "one").unwrap().join("fast"), "").unwrap();
-    let again = service
-        .call("compile", &json!({ "id": "one" }))
-        .await
-        .unwrap();
-    assert_eq!(
-        (again["ok"].clone(), again["stopped"].clone()),
-        (json!(true), json!(false))
-    );
+    let again = build(&service, "one").await.unwrap();
+    assert!(again.ok && !again.stopped);
 
     assert_eq!(stop("one").await.unwrap(), false, "nothing is running");
 
@@ -541,13 +534,13 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
         .call("rename_project", &json!({ "id": "two", "name": "uno" }))
         .await
         .unwrap();
-    assert_eq!(two.await.unwrap().unwrap()["stopped"], true);
+    assert!(two.await.unwrap().stopped);
     assert!(started.elapsed() < Duration::from_secs(10));
     assert!(!three.is_finished());
 
     // Quitting stops the rest, and they say so too.
     service.compile.kill_all();
-    assert_eq!(three.await.unwrap().unwrap()["stopped"], true);
+    assert!(three.await.unwrap().stopped);
 }
 
 #[tokio::test]

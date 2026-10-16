@@ -8,11 +8,16 @@ use tempfile::TempDir;
 use texlocal_core::CoreError;
 use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file};
 use texlocal_core::projects::{
-    create_file, create_project, file_tree, list_projects, rename_entry, rename_project,
-    scan_symbols, search_project,
+    SymbolScan, Symbols, create_file, create_project, file_tree, list_projects, rename_entry,
+    rename_project, search_project,
 };
 use texlocal_core::settings::{Settings, compiled_pdf_path, read_settings, write_settings};
 use texlocal_core::zipexport::export_zip;
+
+/// A project's labels and citations, read afresh.
+fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
+    SymbolScan::default().scan(root)
+}
 
 fn data_dir() -> TempDir {
     tempfile::Builder::new()

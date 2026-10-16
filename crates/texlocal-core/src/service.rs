@@ -87,8 +87,6 @@ pub struct Service {
     /// not folded: ids are the names list_projects read from the folder, so
     /// every client spells a project as its folder is stored.
     edits: Mutex<HashMap<String, Arc<Mutex<()>>>>,
-    /// What `scan_symbols` read, so a scan after a save reads that file alone.
-    symbols: projects::SymbolCache,
 }
 
 fn upload_rel(dir: &str, name: &str) -> String {
@@ -113,7 +111,6 @@ impl Service {
             compile: CompileManager::default(),
             texpresso: crate::texpresso::Manager::default(),
             edits: Mutex::default(),
-            symbols: projects::SymbolCache::default(),
         }
     }
 
@@ -156,7 +153,7 @@ impl Service {
 
     /// Run `use_project` holding the project's lock, finding the project
     /// once it is held, so a rename or delete that held it first is seen.
-    fn with_project<T>(
+    pub(crate) fn with_project<T>(
         &self,
         id: &str,
         use_project: impl FnOnce(&Path) -> Result<T, CoreError>,
@@ -371,10 +368,6 @@ impl Service {
         })
     }
 
-    pub(crate) fn scan_symbols(&self, root: &Path) -> Result<projects::Symbols, CoreError> {
-        self.symbols.scan(root)
-    }
-
     // ---------- dispatch ----------
 
     /// The JSON command table the hosts call through the FFI, but for the
@@ -469,29 +462,18 @@ impl Service {
                 .set_tex_dir(arg::<Option<String>>(args, "dir")?.as_deref())
                 .await?),
             "list_projects" => out(projects::list_projects(&self.data_dir)?),
-            // With `free`, `name` may be left out ("Untitled") and is the series' first free
-            // name ("Untitled 2", …) as `free_project_name` finds it. The project made is
-            // answered, so its `id` is the name it got.
+            // The project made is answered, so its `id` is the name it got: a name taken is
+            // numbered past.
             "create_project" => {
                 let template = arg::<Option<String>>(args, "template")?;
-                let template = template.as_deref().unwrap_or("article");
-                if arg::<Option<bool>>(args, "free")?.unwrap_or(false) {
-                    let name = arg::<Option<String>>(args, "name")?;
-                    out(projects::create_free_project(
-                        &self.data_dir,
-                        name.as_deref(),
-                        template,
-                    )?)
-                } else {
-                    out(projects::create_project(
-                        &self.data_dir,
-                        s("name")?,
-                        template,
-                    )?)
-                }
+                out(projects::create_project(
+                    &self.data_dir,
+                    s("name")?,
+                    template.as_deref().unwrap_or("article"),
+                )?)
             }
-            // The name `create_project {free: true}` would try, creating nothing: for a host to
-            // offer in its New Project field.
+            // The first free name of the series "Untitled", "Untitled 2", …, creating nothing:
+            // for a host to offer in its New Project field.
             "free_project_name" => Ok(json!({
                 "name": projects::free_project_name(
                     &self.data_dir,
@@ -509,21 +491,13 @@ impl Service {
                 })?)
             }
             "get_settings" => out(settings::read_settings(&root()?)),
-            // A rename also rewrites mainFile; serialize read/modify/write.
+            // A rename also rewrites mainFile; serialize read/modify/write. An open project's
+            // session changes its settings itself (`session_set_settings`), to follow a new
+            // main file.
             "set_settings" => out(self.with_project(s("id")?, |root| {
-                let patch: Value = arg(args, "patch")?;
-                let previous = settings::read_settings(root).main_file;
-                let updated = settings::write_settings(root, &patch)?;
-                if updated.main_file != previous {
-                    self.texpresso.stop(root)?;
-                }
-                Ok(updated)
+                settings::write_settings(root, &arg(args, "patch")?)
             })?),
             "file_tree" => out(projects::file_tree(&root()?)?),
-            // Without the project's lock: every write replaces a file in one
-            // rename, so a scan reads each file whole, old or new, and an
-            // autosave need not wait for it.
-            "scan_symbols" => out(self.symbols.scan(&root()?)?),
             "analyze_project" => {
                 let root = root()?;
                 let main = settings::read_settings(&root).main_file;
@@ -542,8 +516,8 @@ impl Service {
                 Ok(json!({ "text": crate::lossy_string(bytes) }))
             }
             // `text` is required: a call that lost it must fail, not empty
-            // the file. The answer is the file's stamp, for the Mac app to
-            // know its own save's change event without reading the file.
+            // the file. The answer is the file's stamp. A session saves its
+            // documents itself; the Mac app's tests write their files with it.
             "write_file" => {
                 let (path, text) = (s("path")?, s("text")?);
                 out(self.with_project(s("id")?, |root| {
@@ -566,21 +540,9 @@ impl Service {
                     Ok(json!({ "path": made }))
                 })?)
             }
-            "rename_entry" => {
-                let (from, to) = (s("from")?, s("to")?);
-                out(self.with_project(s("id")?, |root| {
-                    let result = projects::rename_entry(root, from, to)?;
-                    self.texpresso.stop(root)?;
-                    Ok(result)
-                })?)
-            }
-            "compile" => out(self
-                .compile
-                .compile(&root()?, self.tex_dir().as_deref())
-                .await?),
+            // A session builds and cleans; this stops a project's build from outside it, as
+            // before the project goes to the Trash.
             "stop_compile" => out(self.compile.stop(&root()?)),
-            // Stops a running build first; the next build starts from nothing.
-            "clean_build" => out(self.compile.clean(&root()?).await?),
             "synctex_forward" => {
                 let root = root()?;
                 out(synctex::synctex_forward_at(
@@ -669,7 +631,7 @@ pub(crate) fn string_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, Core
         .ok_or_else(|| arg::<String>(args, key).unwrap_err())
 }
 
-fn out<T: Serialize>(value: T) -> Result<Value, CoreError> {
+pub(crate) fn out<T: Serialize>(value: T) -> Result<Value, CoreError> {
     serde_json::to_value(value).map_err(|err| CoreError::internal(err.to_string()))
 }
 
@@ -698,6 +660,39 @@ mod tests {
         service.call("write_file", &args).await.unwrap();
         let saved = fs::read_to_string(data.path().join("P/main.tex")).unwrap();
         assert_eq!(saved, "saved");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn settings_patches_and_main_file_renames_preserve_both_changes() {
+        let (_data, service) = service();
+        let service = Arc::new(service);
+        for index in 0..16 {
+            let (from, to, engine) = if index % 2 == 0 {
+                ("main.tex", "paper.tex", "xelatex")
+            } else {
+                ("paper.tex", "main.tex", "pdflatex")
+            };
+            let start = Arc::new(tokio::sync::Barrier::new(2));
+            let patch = tokio::spawn({
+                let (service, start) = (Arc::clone(&service), Arc::clone(&start));
+                async move {
+                    start.wait().await;
+                    let args = json!({ "id": "P", "patch": { "engine": engine } });
+                    service.call("set_settings", &args).await.unwrap();
+                }
+            });
+            start.wait().await;
+            // As a session renames.
+            service
+                .with_project("P", |root| projects::rename_entry(root, from, to))
+                .unwrap();
+            patch.await.unwrap();
+            let settings = settings::read_settings(&service.project_root("P").unwrap());
+            assert_eq!(
+                (settings.main_file.as_str(), settings.engine.as_str()),
+                (to, engine)
+            );
+        }
     }
 
     #[test]

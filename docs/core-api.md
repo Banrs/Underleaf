@@ -29,8 +29,8 @@ the call.
   the Mac app reads a `live_page`'s or `live_document`'s PDF before its one hop to the main
   queue.
 - **No event of a session reaches the listener before the answer to that session's
-  `session_open`.** A new session's events (an `autoCompile` build's `build`, the `symbols`
-  scan, a `tree`) are held by the core until the answer has been handed over, then go out
+  `session_open`.** A new session's events (an `autoCompile` build's `build`, a `tree`) are
+  held by the core until the answer has been handed over, then go out
   in the order they were made; a host needs no buffering by id. "Handed over" is exact for
   `tl_call_async`: the hold ends when `done` returns, so a `done` that queues the answer
   for the UI thread queues it before any event. With `tl_call` the hold ends as the call
@@ -64,10 +64,10 @@ All take `session` (except `session_open`). Results are the `ok` value.
 |---|---|---|---|
 | `session_open` | `id`, `autoCompile?` | `{session, root, pdf, tree}` | `pdf`: the last build's, if any. With `autoCompile` and no PDF, a build starts. |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
-| `session_state` | | `{documents: [document state], build, live, autoCompile}` | A snapshot, for a host coming up. |
+| `session_state` | | `{documents: [document state], build, live, autoCompile}` | A snapshot, for a host coming up; a document's state also has `dirty` and `conflict` (`changed`/`gone`/null), the build's `queued`. |
 | `session_set_options` | `autoCompile` | null | Pass the preference and whether TeX is available, together. |
 | `session_open_document` | `path` | `{text}` | Text files only. Opening an open one answers its current text. |
-| `session_close_document` | `path`, `discard?` | `{closed}` | Saves first, asking about conflicts; `closed: false` if that failed. |
+| `session_close_document` | `path` | `{closed}` | Saves first, asking about conflicts; `closed: false` if that failed. |
 | `session_composing` | `path`, `composing` | null | Marked (IME) text: the autosave waits until it ends. |
 | `session_save` | `reporting?` (true) | `{saved}` | Every unsaved document. A failed write is the error; a conflict is asked (`conflict`) and `saved` is false. A build follows when it wrote and automatic builds are on. |
 | `session_resolve` | `path`, `answer` | `{saved}` or null | Answers `conflict`: `changed` takes `save`, `revert`, `cancel`; `gone` takes `save`, `close`, `cancel`. |
@@ -101,8 +101,8 @@ Service commands (`tl_call`):
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `create_project` | `name`, `template?` (article), `free?` | the project (`{id, name, mtime, mainFile}`) | With `free: true`, `name` may be left out (“Untitled”) and the project takes the first free name of the series “Untitled”, “Untitled 2”, … as `free_project_name` finds it; `id`/`name` say which. A name taken (in any case, where the volume ignores case) is numbered past, as for `create_entry {free: true}`; a name the path rules refuse is 400. Without `free` a name is required (and is numbered past when taken, as before). |
-| `free_project_name` | `name?` (“Untitled”) | `{name}` | The name `create_project {free: true}` would try, creating nothing: for the New Project field to offer. |
+| `create_project` | `name`, `template?` (article) | the project (`{id, name, mtime, mainFile}`) | A name taken is numbered past (“Paper 2”); `id`/`name` say which. A name the path rules refuse is 400. |
+| `free_project_name` | `name?` (“Untitled”) | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
 
 Syntax commands (`tl_syntax_call`), JSON in, JSON out:
 
@@ -117,17 +117,16 @@ Each is `{"type", "session", …}`.
 
 | Type | Fields | Host does |
 |---|---|---|
-| `document` | `path`, `dirty`, `error`, `conflict` (`changed`/`gone`/null), `held` | Status bar: Not Saved when `error` or `held`. Announce “Wasn’t Saved” when `error` appears. |
+| `document` | `path`, `error`, `held` | Status bar: Not Saved when `error` or `held`. Announce “Wasn’t Saved” when `error` appears. Sent when a document opens or moves and when either field changes. |
 | `saved` | `path` | Re-run `analyze_project` (outline, words). |
 | `document_reload` | `path`, `text`, `reason` (`disk`/`revert`) | Show `text` without making an edit, then `tl_source_reload(source, text)`. Saves of the document wait for it. |
 | `document_closed` | `path`, `reason` (`gone`/`closed`/`deleted`) | Clear the editor if it shows `path`. |
 | `document_renamed` | `from`, `to` | Re-key the editor's per-file state. |
 | `conflict` | `path`, `kind` | `changed`: alert with Save Anyway, Revert, Cancel and no default button; `gone`: alert whose default saves again, Close, Cancel. Answer with `session_resolve`. |
 | `issues` | `path`, `lines: [{line, error, message, short, command, others}]` | The gutter and line-end boxes; `[]` clears them (an edit does). |
-| `build` | `compiling`, `auto`, `queued`, `outdated` | Compile/Stop button, spinner, “Preview out of date”. Announce “Compiling” for a manual start. |
+| `build` | `compiling`, `auto`, `outdated` | Compile/Stop button, spinner, “Preview out of date”. Announce “Compiling” for a manual start. |
 | `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`; open the panel on a failed manual build; announce when `announce`; sync after compile if `ok` and not `outdated`. |
 | `build_cleaned` | | Clear the PDF unless live. |
-| `symbols` | `labels`, `citations` | Already in the session's documents' completions; for other UI. |
 | `tree` | `tree` (as `file_tree`) | Redraw the sidebar. |
 | `files_changed` | `paths` | Listed files changed in place that aren't open (an image shown, say). |
 | `live` | `phase` (`stopped`/`starting`/`running`/`stopping`), `halted`, `failure`, `error`, `token`, `revision`, `alert` | Title and toolbar; `alert`: show the Live Preview Log. `phase: stopped` ends the live PDF (show the build's). |
@@ -158,7 +157,8 @@ Each is `{"type", "session", …}`.
   gone from the tree restarts it 180 ms later; files changed on disk are sent and rescanned.
   A preview that ends by itself with an error after more than 10 s of running restarts; otherwise
   the error is reported. A stopped run shows `halted` once it has lasted 1 s.
-- **Symbols** are scanned 150 ms after a save and when the session opens.
+- **Symbols** (labels and citations) are scanned 150 ms after a save and when the session
+  opens; the session's documents complete from them.
 
 ## From the Mac app's Swift
 
