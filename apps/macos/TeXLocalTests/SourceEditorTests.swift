@@ -555,24 +555,27 @@ struct SourceEditorTests {
         #expect(text.selectedRange() == NSRange(location: 4, length: 4) && asked == [2])
     }
 
-    /// An issue's message is whole where there is room for it and cut with an ellipsis where there isn't, down to ten of
-    /// its characters. An undefined command's is set in fewer words before it is cut, so that the name is kept.
+    /// An issue's message is whole where there is room for it and cut at its tail, by the box, where there isn't, down to
+    /// ten of its characters. An undefined command's is set in fewer words before it is cut, so that the name is kept.
     @Test func anIssuesMessageFitsItsRoom() {
         let font = NSFont.systemFont(ofSize: 12)
         func width(_ string: String) -> CGFloat { (string as NSString).size(withAttributes: [.font: font]).width }
-        let label = IssueLabel("Paragraph ended before \\section was complete", command: nil, font: font)
-        #expect(abs(label.width - width("Paragraph ended before \\section was complete")) < 0.01)
+        let message = "Paragraph ended before \\section was complete"
+        let label = IssueLabel(message, command: nil, font: font)
+        #expect(abs(label.width - width(message)) < 0.01)
         let whole = label.text(in: label.width)
         #expect(whole?.cut == false && whole?.width == label.width)
         let cut = label.text(in: label.width - 1)
-        #expect(cut?.cut == true && (cut?.width ?? .infinity) <= label.width - 1 && cut?.text.hasSuffix("…") == true)
-        let twelve = label.text(in: width("Paragraph en…") + 1)
-        #expect(twelve?.text == "Paragraph en…")
+        #expect(cut?.cut == true && cut?.width == nil && cut?.text == message)
+        #expect(label.text(in: width("Paragraph…") + 1)?.text == message)
         #expect(label.text(in: width("Paragra…") + 1) == nil && label.text(in: 0) == nil && label.text(in: -40) == nil)
+        #expect(IssueLabel("Too short", command: nil, font: font).text(in: width("Too sh")) == nil)
         let undefined = IssueLabel("Undefined control sequence: \\undefinedmacro", command: "\\undefinedmacro", font: font)
         #expect(undefined.text(in: undefined.width)?.cut == false)
-        #expect(undefined.text(in: undefined.width - 1)?.text == "Undefined: \\undefinedmacro")
-        #expect(undefined.text(in: width("Undefined: \\undefin…") + 1)?.text == "Undefined: \\undefin…")
+        let short = undefined.text(in: undefined.width - 1)
+        #expect(short?.text == "Undefined: \\undefinedmacro" && short?.width != nil)
+        let shortCut = undefined.text(in: width("Undefined: \\undefin…") + 1)
+        #expect(shortCut?.text == "Undefined: \\undefinedmacro" && shortCut?.width == nil)
     }
 
     /// An undefined command is found where its line has it: not a longer one that starts with it, nor a comment's.

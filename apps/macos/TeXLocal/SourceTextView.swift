@@ -593,7 +593,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if width <= room {
             let foot = onPixels(top + first.typographicBounds.maxY + rowShift)
             let rect = NSRect(x: end - width, y: band.minY, width: width, height: foot - band.minY)
-            let box = IssueBox(isError: reported.isError, issues: issues, text: fitted?.text, font: issueFont, fill: Color(nsColor: backgroundColor),
+            let box = IssueBox(isError: reported.isError, issues: issues, text: fitted?.text, cutAtTail: fitted != nil && fitted?.width == nil,
+                               font: issueFont, fill: Color(nsColor: backgroundColor),
                                baseline: top + first.typographicBounds.minY + first.glyphOrigin.y - rect.minY)
             let view = view ?? IssueMessageView(box)
             view.rootView = box

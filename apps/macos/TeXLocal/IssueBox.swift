@@ -54,6 +54,8 @@ struct IssueBox: View {
     /// The line's issues, counted before the symbol where there are more than one.
     let issues: Int
     let text: String?
+    /// The message cut at its tail, with an ellipsis, to the room the box has.
+    let cutAtTail: Bool
     let font: NSFont
     let fill: Color
     /// The source line's baseline under the box's top.
@@ -75,8 +77,9 @@ struct IssueBox: View {
                 .frame(width: Metrics.segment(font, issues: 1))
             if let text {
                 separator.frame(width: Metrics.divider)
-                onBaseline(Text(verbatim: text))
+                onBaseline(Text(verbatim: text), cut: cutAtTail)
                     .padding(.leading, Metrics.padding)
+                    .padding(.trailing, cutAtTail ? Metrics.trailing : 0)
             }
         }
         .font(Font(font as CTFont))
@@ -86,9 +89,10 @@ struct IssueBox: View {
         .accessibilityHidden(true)
     }
 
-    /// On the source line's baseline.
-    private func onBaseline(_ text: Text) -> some View {
-        text.fixedSize()
+    /// On the source line's baseline, and as wide as it is unless it's to be `cut` to the room.
+    private func onBaseline(_ text: Text, cut: Bool = false) -> some View {
+        text.lineLimit(1).truncationMode(.tail)
+            .fixedSize(horizontal: !cut, vertical: true)
             .alignmentGuide(.top) { $0[.firstTextBaseline] - baseline }
             .frame(maxHeight: .infinity, alignment: .top)
     }
@@ -99,10 +103,10 @@ struct IssueBox: View {
 /// not at all where fewer than ten of its characters would show. The line's issues are counted in the box's symbol
 /// segment, as Xcode counts them.
 struct IssueLabel {
-    private let whole: String, font: NSFont
-    private let short: String?
-    /// What is cut where neither fits, typeset to find where.
-    private let most: (text: NSString, line: CTLine)
+    private let whole: String
+    private let short: (text: String, width: CGFloat)?
+    /// The narrowest room for a message cut at its tail: its first ten characters and the ellipsis.
+    private let leastWidth: CGFloat
     /// The whole message's width.
     let width: CGFloat
 
@@ -111,29 +115,20 @@ struct IssueLabel {
 
     init(_ message: String, command: String?, font: NSFont) {
         whole = message
-        short = command.map { String(localized: "Undefined: \($0)") }
-        self.font = font
-        width = typeset(whole, in: font).width
-        let most = short ?? message
-        self.most = (most as NSString, typeset(most, in: font).line)
+        width = typeset(message, in: font).width
+        short = command.map { String(localized: "Undefined: \($0)") }.map { ($0, typeset($0, in: font).width) }
+        let most = (short?.text ?? message) as NSString
+        let least = most.rangeOfComposedCharacterSequences(for: NSRange(location: 0, length: min(Self.least, most.length)))
+        leastWidth = least.length < Self.least ? .infinity
+            : typeset(most.substring(with: least).trimmingCharacters(in: .whitespaces) + "…", in: font).width
     }
 
-    /// The message for a room this wide, or nil where it has none; `cut` where it isn't all there.
-    func text(in room: CGFloat) -> (text: String, width: CGFloat, cut: Bool)? {
+    /// The message for a room this wide, or nil where it has none; `cut` where it isn't all there, and with no width
+    /// where it is to be cut at its tail to the room.
+    func text(in room: CGFloat) -> (text: String, width: CGFloat?, cut: Bool)? {
         if width <= room { return (whole, width, false) }
-        if let short {
-            let shortWidth = typeset(short, in: font).width
-            if shortWidth <= room { return (short, shortWidth, true) }
-        }
-        let ending = "…"
-        var end = CTLineGetStringIndexForPosition(most.line, CGPoint(x: room - typeset(ending, in: font).width, y: 0))
-        while end >= Self.least {
-            let text = most.text.substring(to: end).trimmingCharacters(in: .whitespaces) + ending
-            let textWidth = typeset(text, in: font).width
-            if textWidth <= room { return (text, textWidth, true) }
-            end = most.text.rangeOfComposedCharacterSequence(at: end - 1).location
-        }
-        return nil
+        if let short, short.width <= room { return (short.text, short.width, true) }
+        return leastWidth <= room ? (short?.text ?? whole, nil, true) : nil
     }
 }
 
