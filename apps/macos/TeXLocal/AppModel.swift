@@ -15,6 +15,16 @@ enum DefaultsKey {
     static let newProjectTemplate = "newProjectTemplate"
     static let newProjectEngine = "newProjectEngine"
     static let settingsPane = "settingsPane"
+    static let dismissedTeXTip = "dismissedTeXTip"
+}
+
+/// The pages the app points to; each is a constant that parses.
+enum Links {
+    static let repository = URL(string: "https://github.com/Banrs/Underleaf")!
+    static let issues = repository.appending(path: "issues")
+    static let requirements = URL(string: "https://github.com/Banrs/Underleaf#requirements")!
+    static let texpressoGuide = repository.appending(path: "blob/main/docs/texpresso.md")
+    static let mactex = URL(string: "https://tug.org/mactex/")!
 }
 
 struct AppAlert: Sendable {
@@ -44,6 +54,23 @@ struct ExportFile: Transferable {
     }
 }
 
+/// The File Outline: open in its pane, folded to its header, or hidden with its header while the sidebar shows search results.
+nonisolated enum OutlineState {
+    case open, folded, hidden
+}
+
+/// What the New Project sheet opens with: the template, and the first of "Untitled", "Untitled 2", and so on that no project has.
+struct NewProjectDraft: Identifiable {
+    let template: ProjectTemplate
+    let name: String
+
+    var id: ProjectTemplate { template }
+}
+
+private nonisolated struct FreeName: Decodable {
+    let name: String
+}
+
 @Observable
 final class AppModel {
     var projects: [ProjectInfo] = []
@@ -57,7 +84,7 @@ final class AppModel {
     private(set) var libraryProblem: AppAlert? = Core.shared.isOpen ? nil
         : AppAlert("Couldn’t Open the Projects Folder", Core.libraryAdvice)
 
-    var newProjectTemplate: ProjectTemplate?
+    var newProjectDraft: NewProjectDraft?
     var prompt: Prompt?
     var newEntry: NewEntry?
     var openingProject = false
@@ -77,6 +104,15 @@ final class AppModel {
     /// and not saved (`sidebarShown`, `inspectorShown`).
     var sidebarFolded = false
     var inspectorFolded = false
+    /// The side columns as the window has them: the user's choice, unless the window folded one. Showing a folded one unfolds it.
+    var sidebarShown: Bool {
+        get { sidebarVisible && !sidebarFolded }
+        set { (sidebarVisible, sidebarFolded) = (newValue, false) }
+    }
+    var inspectorShown: Bool {
+        get { inspectorVisible && !inspectorFolded }
+        set { (inspectorVisible, inspectorFolded) = (newValue, false) }
+    }
     var autoCompile: Bool {
         didSet {
             UserDefaults.standard.set(autoCompile, forKey: DefaultsKey.autoCompile)
@@ -117,10 +153,23 @@ final class AppModel {
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
     }
 
+    /// Without a template, the one Settings names for new projects.
     func newProject(_ template: ProjectTemplate? = nil) {
         guard libraryProblem == nil else { return }
-        newProjectTemplate = template ?? UserDefaults.standard.string(forKey: DefaultsKey.newProjectTemplate)
+        let template = template ?? UserDefaults.standard.string(forKey: DefaultsKey.newProjectTemplate)
             .flatMap(ProjectTemplate.init(rawValue:)) ?? .standard
+        newProjectDraft = NewProjectDraft(template: template,
+                                          name: (try? core.now("free_project_name", [:], as: FreeName.self))?.name ?? "Untitled")
+    }
+
+    /// A file that isn't LaTeX has no outline to open: the header stays, folded and dim (`OutlineHeader`), and the sidebar keeps
+    /// its foot from one file to the next.
+    func outlineOpen(of project: ProjectModel?) -> Bool {
+        project?.isLaTeX == true && !outlineCollapsed
+    }
+
+    func outlineState(of project: ProjectModel) -> OutlineState {
+        project.search.isSearching ? .hidden : outlineOpen(of: project) ? .open : .folded
     }
 
     func togglePDF() {
@@ -249,19 +298,14 @@ final class AppModel {
         }
     }
 
-    /// The Redo is registered as the Undo starts, as `UndoableTrash`'s are; one that fails takes it away. The closures hold the model, as the manager doesn't.
     private func registerRenameUndo(current: (id: String, name: String), previous: (id: String, name: String)) {
-        guard let undo = undoManager else { return }
-        undo.registerUndo(withTarget: self) { _ in
+        undoManager?.registerAsyncUndo(withTarget: self, actionName: String(localized: "Rename"), reversal: {
             self.registerRenameUndo(current: previous, previous: current)
-            Task {
-                if await self.renameProject(current.id, shown: current.name, to: previous.name) == nil {
-                    self.undoManager?.removeAllActions(withTarget: self)
-                }
-                await self.refresh()
-            }
-        }
-        undo.setActionName(String(localized: "Rename"))
+        }, work: {
+            let renamed = await self.renameProject(current.id, shown: current.name, to: previous.name) != nil
+            await self.refresh()
+            return renamed
+        })
     }
 
     var undoManager: UndoManager? { undoSource() }

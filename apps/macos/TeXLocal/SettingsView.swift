@@ -134,7 +134,7 @@ private struct CompilingSettings: View {
             Section {
                 ProgramFolder(program: .tex)
             } footer: {
-                HelpLink(destination: URL(string: "https://github.com/Banrs/Underleaf#requirements")!)
+                HelpLink(destination: Links.requirements)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }

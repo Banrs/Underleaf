@@ -35,6 +35,25 @@ struct MenuCommandTests {
         project.shown = .build(URL(filePath: "/dev/null"))
         #expect(app.isEnabled(.syncInverse, on: project) && !app.isEnabled(.syncInverse, on: nil))
     }
+
+    /// The one reckoning the pane, its header and View's command share: open for LaTeX unless folded, hidden for search results.
+    @Test func theFileOutlineIsOpenForLaTeXUnlessFoldedOrSearched() {
+        let app = AppModel()
+        let collapsed = app.outlineCollapsed
+        defer { app.outlineCollapsed = collapsed }
+        let project = ProjectModel(id: "MenuCommandTests", app: app)
+        app.outlineCollapsed = false
+        project.tree.show(.sources)
+        project.openPath = "references.bib"
+        #expect(app.outlineState(of: project) == .folded && !app.outlineOpen(of: project) && !app.outlineOpen(of: nil))
+        project.openPath = "main.tex"
+        #expect(app.outlineState(of: project) == .open && app.outlineOpen(of: project))
+        app.outlineCollapsed = true
+        #expect(app.outlineState(of: project) == .folded)
+        app.outlineCollapsed = false
+        project.search.query = "needle"
+        #expect(app.outlineState(of: project) == .hidden)
+    }
 }
 
 @MainActor

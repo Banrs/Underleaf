@@ -414,9 +414,7 @@ struct OutlineHeader: View {
     static let openHeight = top + row
 
     var body: some View {
-        // A file that isn't LaTeX has no outline to open: the header stays, folded and dim.
-        let outlined = app.project?.isLaTeX == true
-        let expanded = Binding(get: { outlined && !app.outlineCollapsed }, set: { app.outlineCollapsed = !$0 })
+        let expanded = Binding(get: { app.outlineOpen(of: app.project) }, set: { app.outlineCollapsed = !$0 })
         List {
             Section(isExpanded: expanded) {
             } header: {
@@ -432,7 +430,7 @@ struct OutlineHeader: View {
             }
         }
         .listStyle(.sidebar)
-        .disabled(!outlined)
+        .disabled(app.project?.isLaTeX != true)
         // The sidebar's own material shows through, as behind the lists either side.
         .scrollContentBackground(.hidden)
         .scrollDisabled(true)

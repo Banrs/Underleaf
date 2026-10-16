@@ -873,16 +873,12 @@ final class ProjectModel {
         if let result = await performRename(from, to: to) { registerRenameUndo(result, action: action) }
     }
 
-    /// The Redo is registered as the Undo starts, as `UndoableTrash`'s are, and one that fails takes it away. The closures hold the model: the manager doesn't.
     private func registerRenameUndo(_ result: RenameResult, action: String) {
-        guard let undo = app?.undoManager else { return }
-        undo.registerUndo(withTarget: self) { _ in
+        app?.undoManager?.registerAsyncUndo(withTarget: self, actionName: action, reversal: {
             self.registerRenameUndo(RenameResult(from: result.to, to: result.from, mainFile: result.mainFile), action: action)
-            Task {
-                if await self.performRename(result.to, to: result.from) == nil { self.app?.undoManager?.removeAllActions(withTarget: self) }
-            }
-        }
-        undo.setActionName(action)
+        }, work: {
+            await self.performRename(result.to, to: result.from) != nil
+        })
     }
 
     /// The session saves first and moves its open documents; the editor keeps its text and undo under the new name.

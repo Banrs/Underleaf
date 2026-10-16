@@ -246,7 +246,7 @@ final class WorkspaceController: RestoredSplitViewController {
         outlineItem.holdingPriority = .defaultLow + 1
         sidebar.addSplitViewItem(filesItem)
         sidebar.addSplitViewItem(outlineItem)
-        sidebar.loaded = { [unowned self] in if OutlineState(app, project) != .open { outlineItem.isCollapsed = true } }
+        sidebar.loaded = { [unowned self] in if app.outlineState(of: project) != .open { outlineItem.isCollapsed = true } }
         sidebar.view.frame.size.width = ColumnMetrics.sidebarIdeal
         sidebar.header = outlineBar
 
@@ -361,7 +361,7 @@ final class WorkspaceController: RestoredSplitViewController {
         header.sizingOptions = [.intrinsicContentSize]
         header.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(header)
-        outlineBarHeight = bar.heightAnchor.constraint(equalToConstant: outlineBarHeight(folded: OutlineState(app, project) != .open))
+        outlineBarHeight = bar.heightAnchor.constraint(equalToConstant: outlineBarHeight(folded: app.outlineState(of: project) != .open))
         NSLayoutConstraint.activate([
             outlineBarHeight,
             header.topAnchor.constraint(equalTo: bar.topAnchor),
@@ -403,7 +403,7 @@ final class WorkspaceController: RestoredSplitViewController {
             // Until the workspace appears, `viewDidAppear` has it.
             track({ app.showPDF }) { [weak self] visible in if let self, appeared { setCollapsed(pdfItem, !visible) } },
             track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
-            track({ OutlineState(app, project) }) { [weak self] in self?.setOutline($0) },
+            track({ app.outlineState(of: project) }) { [weak self] in self?.setOutline($0) },
             track({ pdf.finding }) { [weak self] finding in if let self { setHidden(pdfFind, !finding) } },
             track({ app.searchFocusToken }, initial: false) { [weak self] _ in self?.focusSearch() },
         ]
@@ -623,29 +623,6 @@ final class WorkspaceController: RestoredSplitViewController {
                 }
             }
         }
-    }
-}
-
-extension AppModel {
-    /// The side columns as the window has them: the user's choice, unless the window folded one. Showing a folded one unfolds it.
-    var sidebarShown: Bool {
-        get { sidebarVisible && !sidebarFolded }
-        set { (sidebarVisible, sidebarFolded) = (newValue, false) }
-    }
-
-    var inspectorShown: Bool {
-        get { inspectorVisible && !inspectorFolded }
-        set { (inspectorVisible, inspectorFolded) = (newValue, false) }
-    }
-}
-
-/// The File Outline: open in its pane, folded to its header, or hidden with its header while the sidebar shows search results.
-/// A file that isn't LaTeX folds it to its header, dim (`OutlineHeader`): the sidebar keeps its foot from one file to the next.
-private nonisolated enum OutlineState {
-    case open, folded, hidden
-
-    @MainActor init(_ app: AppModel, _ project: ProjectModel) {
-        self = project.search.isSearching ? .hidden : app.outlineCollapsed || !project.isLaTeX ? .folded : .open
     }
 }
 

@@ -7,7 +7,7 @@ struct HomeView: View {
     @FocusState private var listFocused: Bool
     @FocusState private var searching: Bool
     @State private var query = ""
-    @AppStorage("dismissedTeXTip") private var dismissedTeXTip = false
+    @AppStorage(DefaultsKey.dismissedTeXTip) private var dismissedTeXTip = false
     @State private var slow: Set<String> = []
 
     var body: some View {
@@ -219,7 +219,7 @@ struct GetMacTeXButton: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        Button("Get MacTeX") { openURL(URL(string: "https://tug.org/mactex/")!) }
+        Button("Get MacTeX") { openURL(Links.mactex) }
     }
 }
 
@@ -227,9 +227,7 @@ struct TeXpressoGuideButton: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        Button("Install Guide") {
-            openURL(URL(string: "https://github.com/Banrs/Underleaf/blob/main/docs/texpresso.md")!)
-        }
+        Button("Install Guide") { openURL(Links.texpressoGuide) }
     }
 }
 
@@ -358,9 +356,9 @@ struct NewProjectSheet: View {
     @State private var template: ProjectTemplate
     @FocusState private var nameFocused: Bool
 
-    init(template: ProjectTemplate) {
-        _template = State(initialValue: template)
-        _name = State(initialValue: (try? Core.shared.now("free_project_name", [:], as: FreeName.self))?.name ?? "Untitled")
+    init(draft: NewProjectDraft) {
+        _template = State(initialValue: draft.template)
+        _name = State(initialValue: draft.name)
     }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
@@ -414,9 +412,4 @@ private struct NameWidth: Layout {
                    working: false, rename: InPlaceRename(), ended: {}) {}
     }
     .listStyle(.inset)
-}
-
-/// The first of "Untitled", "Untitled 2", and so on that no project has.
-private nonisolated struct FreeName: Decodable {
-    let name: String
 }

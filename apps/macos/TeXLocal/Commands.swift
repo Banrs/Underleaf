@@ -24,7 +24,7 @@ enum MenuCommand: CaseIterable {
     case pdfFind
     case pdfGotoPage
     case viewToggleSidebar
-    case viewTogglePdf
+    case viewTogglePDF
     case viewToggleInspector
     case viewToggleLogs
     case viewToggleWordCount
@@ -67,7 +67,7 @@ enum MenuCommand: CaseIterable {
         case .pdfFind: "Find in PDF…"
         case .pdfGotoPage: "Go to Page…"
         case .viewToggleSidebar: "Sidebar"
-        case .viewTogglePdf: "PDF"
+        case .viewTogglePDF: "PDF"
         case .viewToggleInspector: "Inspector"
         case .viewToggleLogs: "Build Panel"
         case .viewToggleWordCount: "Word Count"
@@ -118,7 +118,7 @@ enum MenuCommand: CaseIterable {
         case .editGotoLine: KeyboardShortcut("l")
         case .pdfGotoPage: KeyboardShortcut("g", modifiers: [.command, .option])
         case .viewToggleSidebar: KeyboardShortcut("s", modifiers: [.command, .control])
-        case .viewTogglePdf: KeyboardShortcut("p", modifiers: [.command, .option])
+        case .viewTogglePDF: KeyboardShortcut("p", modifiers: [.command, .option])
         case .viewToggleInspector: KeyboardShortcut("i", modifiers: [.command, .option])
         case .viewToggleLogs: KeyboardShortcut("y", modifiers: [.command, .shift])
         case .viewZoomIn: KeyboardShortcut("=")
@@ -180,7 +180,7 @@ extension AppModel {
         if command == .projectSearch, self.project == nil { return "Find Project…" }
         let shown: Bool? = switch command {
         case .viewToggleSidebar: sidebarShown
-        case .viewTogglePdf: showPDF
+        case .viewTogglePDF: showPDF
         case .viewToggleInspector: inspectorShown
         case .viewToggleLogs: project?.panel.shown == true
         case .viewToggleWordCount: showWordCount
@@ -231,7 +231,7 @@ extension AppModel {
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarShown.toggle()
-        case .viewTogglePdf: togglePDF()
+        case .viewTogglePDF: togglePDF()
         case .viewToggleInspector: inspectorShown.toggle()
         case .viewToggleLogs: project?.panel.shown.toggle()
         case .viewToggleWordCount: showWordCount.toggle()
@@ -325,11 +325,11 @@ struct AppCommands: Commands {
         }
         CommandGroup(replacing: .sidebar) {
             item(.viewToggleSidebar)
-            Button(app.outlineCollapsed || project?.isLaTeX != true ? "Show File Outline" : "Hide File Outline") {
+            Button(app.outlineOpen(of: project) ? "Hide File Outline" : "Show File Outline") {
                 app.outlineCollapsed.toggle()
             }
                 .disabled(project?.isLaTeX != true || project?.search.isSearching == true || !app.sidebarShown)
-            items([.viewTogglePdf, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
+            items([.viewTogglePDF, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
             Divider()
             items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage])
             Divider()

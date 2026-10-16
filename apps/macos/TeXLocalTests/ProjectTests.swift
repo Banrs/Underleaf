@@ -533,6 +533,12 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    @Test func aNewProjectOpensItsSheetWithTheTemplateAndAFreeName() {
+        app.newProject(.report)
+        #expect(app.newProjectDraft?.template == .report && app.newProjectDraft?.name.isEmpty == false)
+        app.newProjectDraft = nil
+    }
+
     @Test func theDockMenuOpensARecentProject() async throws {
         let first = try await project("first").info, second = try await project("second").info
         await app.refresh()
@@ -544,8 +550,8 @@ final class ProjectFlowTests {
         let menu = dock.menu
         #expect(menu.items.map(\.title) == [second.name, first.name, "", "New Project…"])
         menu.performActionForItem(at: 3)
-        #expect(shown == 1 && app.newProjectTemplate != nil)
-        app.newProjectTemplate = nil
+        #expect(shown == 1 && app.newProjectDraft != nil)
+        app.newProjectDraft = nil
         menu.performActionForItem(at: 1)
         try await waitUntil(timeout: .seconds(5)) { app.project?.id == first.id && app.project?.initialLoadComplete == true }
         #expect(shown == 2 && app.recentProjects.first == first.id)

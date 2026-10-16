@@ -337,7 +337,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                 (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
             }
         case .togglePDF:
-            if changed(\.showsPDF) { item.toolTip = app.title(.viewTogglePdf, on: project) }
+            if changed(\.showsPDF) { item.toolTip = app.title(.viewTogglePDF, on: project) }
         default:
             break
         }
@@ -398,7 +398,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
     }
 
-    @objc private func togglePDF() { perform(.viewTogglePdf) }
+    @objc private func togglePDF() { perform(.viewTogglePDF) }
 
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
         project.buildPDF.map { [$0] } ?? []
