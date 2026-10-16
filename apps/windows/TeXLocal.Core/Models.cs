@@ -17,17 +17,17 @@ public sealed record SessionOpened(ulong Session, string Root, string? Pdf, Tree
 
 public sealed record Clash(string Path);
 
-public sealed record Imported(string[] Saved, Clash[] Existing);
+public sealed record Imported(Clash[] Existing);
 
 /// <param name="Type">error or warning.</param>
-public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short, string? Command);
+public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short);
 
 /// <param name="Pdf">Relative to the project root.</param>
 /// <param name="PdfChanged">True only when this run finished and wrote the PDF it returns.</param>
 public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, string? Pdf, LogItem[] Errors, LogItem[] Warnings, string Log, bool PdfChanged);
 
 /// An `issues` event's line: the first issue on it, and the messages of the rest.
-public sealed record IssueLine(int Line, bool Error, string Message, string Short, string? Command, string[] Others);
+public sealed record IssueLine(int Line, bool Error, string Message, string Short, string[] Others);
 
 /// A session event's fields, each type setting its own (docs/core-api.md, Events): document (Path, Error, Held), saved,
 /// document_reload (Path, Text), document_closed, document_renamed (From, To), conflict (Path, Kind), issues (Path, Lines),
@@ -97,13 +97,13 @@ public sealed record HeadingFont(double Scale, bool Bold, string Shape);
 public sealed record HeadingStyle(string Title, string Command, HeadingFont Font, string? Marker);
 
 /// A block of the catalogue's by id, or with Inline a command around "$0" (wrap's template).
-public sealed record Template(string Title, string Body, string? Symbol, bool Inline);
+public sealed record Template(string Title, string Body, bool Inline);
 
 public sealed record Templates(Template[] Math, Template[] Insert, Template[] List, Template[] References);
 
 public sealed record HeadingLevel(string Title, string Command);
 
-public sealed record MathSymbol(string Glyph, string Command);
+public sealed record MathSymbol(string Command);
 
 public sealed record SymbolGroup(string Title, MathSymbol[] Symbols);
 

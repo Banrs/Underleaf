@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -24,10 +23,7 @@ namespace TeXLocal.Controls;
 public sealed partial class PdfView : UserControl
 {
     /// A page's paper, its rendering, the canvas for its SyncTeX box, and its size in DIPs.
-    sealed record Page(Border Box, Image Image, Canvas Marks, Size Size)
-    {
-        public int Rendered => (Image.Source as BitmapImage)?.DecodePixelWidth ?? 0;
-    }
+    sealed record Page(Border Box, Image Image, Canvas Marks, Size Size);
 
     enum Fit { None, Width, Page }
 
@@ -35,11 +31,9 @@ public sealed partial class PdfView : UserControl
     const double Gap = 12, Edge = Gap + 1, PointToDip = 96.0 / 72;
     Page[] pages = [];
     double[] tops = [];
-    Size largest;
     PdfDocument? document;
     Fit fit = Fit.Width;
     (int Number, Point At)? source;
-    Canvas? marked;
     int loads;
     bool rendering, again;
 
@@ -64,7 +58,7 @@ public sealed partial class PdfView : UserControl
         }), true);
         Scroller.DirectManipulationCompleted += (_, _) =>
         {
-            if (pages.Length > 0 && Math.Abs(Zoom - FitZoom(largest)) > 0.001) fit = Fit.None;
+            if (pages.Length > 0 && Math.Abs(Zoom - FitZoom(pages)) > 0.001) fit = Fit.None;
         };
         foreach (var percent in (int[])[50, 75, 100, 125, 150, 200])
         {
@@ -92,21 +86,15 @@ public sealed partial class PdfView : UserControl
         return Math.Clamp(i < 0 ? ~i - 1 : i, 0, tops.Length - 1);
     }
 
-    /// The pages in a view whose top is at a content y, and one each side.
-    (int First, int Last) Near(double[] tops, double y, double zoom) =>
-        (Math.Max(PageAt(tops, y) - 1, 0), Math.Min(PageAt(tops, y + Scroller.ViewportHeight / zoom) + 1, tops.Length - 1));
-
-    int Pixels(double width, double zoom) => (int)Math.Min(Math.Ceiling(width * zoom * (XamlRoot?.RasterizationScale ?? 1)), 4096);
-
-    /// Draws the pages near a view at the zoom's pixels, and releases the pages further away.
+    /// Draws the pages in a view from a content y, and one each side, at the zoom's pixels, and releases those further away.
     async Task Draw(PdfDocument doc, Page[] on, double[] at, double y, double zoom)
     {
-        var (first, last) = Near(at, y, zoom);
+        var (first, last) = (Math.Max(PageAt(at, y) - 1, 0), Math.Min(PageAt(at, y + Scroller.ViewportHeight / zoom) + 1, at.Length - 1));
         for (var i = 0; i < on.Length; i++)
         {
             if (i < first - 1 || i > last + 1) on[i].Image.Source = null;
-            var width = Pixels(on[i].Size.Width, zoom);
-            if (i < first || i > last || on[i].Rendered == width) continue;
+            var width = (int)Math.Min(Math.Ceiling(on[i].Size.Width * zoom * (XamlRoot?.RasterizationScale ?? 1)), 4096);
+            if (i < first || i > last || ((on[i].Image.Source as BitmapImage)?.DecodePixelWidth ?? 0) == width) continue;
             using var page = doc.GetPage((uint)i);
             using var stream = new InMemoryRandomAccessStream();
             await page.RenderToStreamAsync(stream, new PdfPageRenderOptions { DestinationWidth = (uint)width, BitmapEncoderId = BitmapEncoder.BmpEncoderId });
@@ -120,19 +108,16 @@ public sealed partial class PdfView : UserControl
     /// Draws for the view as it is now, one pass at a time: a call during a pass runs another after it.
     async void Render()
     {
-        if (rendering)
-        {
-            again = true;
-            return;
-        }
+        again = true;
+        if (rendering) return;
         rendering = true;
         try
         {
-            do
+            while (again)
             {
                 again = false;
                 if (document is { } doc) await Draw(doc, pages, tops, Scroller.VerticalOffset / Zoom, Zoom);
-            } while (again);
+            }
         }
         finally { rendering = false; }
     }
@@ -143,13 +128,7 @@ public sealed partial class PdfView : UserControl
     {
         var load = ++loads;
         PdfDocument next;
-        try
-        {
-            var stream = new InMemoryRandomAccessStream();
-            await stream.WriteAsync((await File.ReadAllBytesAsync(path)).AsBuffer());
-            stream.Seek(0);
-            next = await PdfDocument.LoadFromStreamAsync(stream);
-        }
+        try { next = await PdfDocument.LoadFromStreamAsync(new MemoryStream(await File.ReadAllBytesAsync(path)).AsRandomAccessStream()); }
         catch (Exception) { return; }
         if (load != loads || next.PageCount == 0) return;
 
@@ -161,8 +140,7 @@ public sealed partial class PdfView : UserControl
             fresh[i] = Paper(i + 1, page.Size);
             at[i] = i == 0 ? Edge : at[i - 1] + fresh[i - 1].Size.Height + 2 + Gap;
         }
-        var most = new Size(fresh.Max(p => p.Size.Width), fresh.Max(p => p.Size.Height));
-        var zoom = fit == Fit.None || Scroller.ViewportWidth == 0 ? Zoom : FitZoom(most);
+        var zoom = fit == Fit.None || Scroller.ViewportWidth == 0 ? Zoom : FitZoom(fresh);
         // The same page at the top of the view, and as far down it.
         var y = 0.0;
         if (pages.Length > 0)
@@ -170,14 +148,13 @@ public sealed partial class PdfView : UserControl
             var top = Scroller.VerticalOffset / Zoom;
             var old = PageAt(tops, top);
             var i = Math.Min(old, fresh.Length - 1);
-            y =at[i] + (top - tops[old]) / pages[old].Size.Height * fresh[i].Size.Height;
+            y = at[i] + (top - tops[old]) / pages[old].Size.Height * fresh[i].Size.Height;
         }
         await Draw(next, fresh, at, y, zoom);
         if (load != loads) return;
 
         Show(next, fresh, at);
-        largest = most;
-        Scroller.ChangeView(fit == Fit.None ? null : 0, y * zoom, (float)zoom, true);
+        View(zoom, fit == Fit.None ? null : 0, y);
     }
 
     /// A page's paper, which the panel's resources style. Its own coordinates are its DIPs at any zoom.
@@ -205,7 +182,7 @@ public sealed partial class PdfView : UserControl
 
     void Show(PdfDocument? next, Page[] shown, double[] at)
     {
-        (document, pages, tops, marked) = (next, shown, at, null);
+        (document, pages, tops) = (next, shown, at);
         Pages.Children.Clear();
         foreach (var page in shown) Pages.Children.Add(page.Box);
         Empty.Visibility = shown.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -228,10 +205,10 @@ public sealed partial class PdfView : UserControl
     public void FitPage() => Refit(Fit.Page, pages.Length == 0 ? null : tops[CurrentPage - 1] - Edge);
 
     /// The zoom at which the widest page fills the view across, and with Fit page the tallest one down.
-    double FitZoom(Size most)
+    double FitZoom(Page[] on)
     {
-        var zoom = Scroller.ViewportWidth / (most.Width + 2 * Edge);
-        if (fit == Fit.Page) zoom = Math.Min(zoom, Scroller.ViewportHeight / (most.Height + 2 * Edge));
+        var zoom = Scroller.ViewportWidth / (on.Max(p => p.Size.Width) + 2 * Edge);
+        if (fit == Fit.Page) zoom = Math.Min(zoom, Scroller.ViewportHeight / (on.Max(p => p.Size.Height) + 2 * Edge));
         return Math.Clamp(zoom, Scroller.MinZoomFactor, Scroller.MaxZoomFactor);
     }
 
@@ -239,7 +216,7 @@ public sealed partial class PdfView : UserControl
     void Refit(Fit mode, double? y = null)
     {
         fit = mode;
-        if (fit != Fit.None && pages.Length > 0 && Scroller.ViewportWidth > 0) View(FitZoom(largest), 0, y);
+        if (fit != Fit.None && pages.Length > 0 && Scroller.ViewportWidth > 0) View(FitZoom(pages), 0, y);
     }
 
     /// Zooms with a content y at the top of the view: by default the one there now.
@@ -263,11 +240,11 @@ public sealed partial class PdfView : UserControl
         Scroller.ChangeView(across, Math.Max(Scroller.VerticalOffset + view.Y - Scroller.ViewportHeight / 3, 0), null);
         if (at.Width is null || at.Height is null) return;
 
-        marked?.Children.Clear();
+        foreach (var other in pages) other.Marks.Children.Clear();
         var box = new Rectangle { Width = width, Height = height };
         Canvas.SetLeft(box, x);
         Canvas.SetTop(box, y - height);
-        (marked = page.Marks).Children.Add(box);
+        page.Marks.Children.Add(box);
         var fade = new DoubleAnimation { To = 0, BeginTime = TimeSpan.FromSeconds(2), Duration = TimeSpan.FromMilliseconds(new UISettings().AnimationsEnabled ? 333 : 0) };
         Storyboard.SetTarget(fade, box);
         Storyboard.SetTargetProperty(fade, "Opacity");
@@ -304,7 +281,5 @@ public sealed partial class PdfView : UserControl
 
     void OnZoomIn(object sender, RoutedEventArgs e) => ZoomBy(1.25);
     void OnZoomOut(object sender, RoutedEventArgs e) => ZoomBy(0.8);
-    void OnFitWidth(object sender, RoutedEventArgs e) => FitWidth();
-    void OnFitPage(object sender, RoutedEventArgs e) => FitPage();
     void OnRootChanged(XamlRoot sender, XamlRootChangedEventArgs e) => Render();
 }

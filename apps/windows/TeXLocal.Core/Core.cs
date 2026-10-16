@@ -17,11 +17,6 @@ public sealed class Core : IDisposable
 {
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    sealed class Pending(Core core) : TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously)
-    {
-        public readonly Core Core = core;
-    }
-
     readonly nint handle;
     readonly Action<Action> post;
     GCHandle self;
@@ -51,9 +46,9 @@ public sealed class Core : IDisposable
     public unsafe Task<JsonElement> CallAsync(string command, object? args = null)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        var pending = new Pending(this);
+        var pending = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         Interlocked.Increment(ref inFlight);
-        tl_call_async(handle, command, args is null ? null : JsonSerializer.Serialize(args, Json), &Done, GCHandle.ToIntPtr(GCHandle.Alloc(pending)));
+        tl_call_async(handle, command, args is null ? null : JsonSerializer.Serialize(args, Json), &Done, GCHandle.ToIntPtr(GCHandle.Alloc((pending, this))));
         return pending.Task;
     }
 
@@ -74,7 +69,7 @@ public sealed class Core : IDisposable
     static unsafe void Done(nint ctx, byte* json)
     {
         var gc = GCHandle.FromIntPtr(ctx);
-        var pending = (Pending)gc.Target!;
+        var (pending, core) = ((TaskCompletionSource<JsonElement>, Core))gc.Target!;
         gc.Free();
         try
         {
@@ -85,7 +80,7 @@ public sealed class Core : IDisposable
                 root.TryGetProperty("error", out var e) ? e.GetString() ?? "" : ""));
         }
         catch (Exception e) { pending.TrySetException(e); }
-        finally { Interlocked.Decrement(ref pending.Core.inFlight); }
+        finally { Interlocked.Decrement(ref core.inFlight); }
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]

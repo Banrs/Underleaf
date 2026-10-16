@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using Microsoft.Win32.SafeHandles;
 using static TeXLocal.Bridge.Native;
 
 namespace TeXLocal.Bridge;
@@ -7,13 +8,11 @@ namespace TeXLocal.Bridge;
 public readonly record struct HighlightRun(int Start, int Length, int Kind);
 
 /// A session document's text as the editor sees it. UI thread only; offsets are UTF-16.
-public sealed unsafe class Source : SafeHandle
+public sealed unsafe class Source : SafeHandleZeroOrMinusOneIsInvalid
 {
-    internal Source(nint handle) : base(0, true) => SetHandle(handle);
+    internal Source(nint handle) : base(true) => SetHandle(handle);
 
     public static Source New(string text) => new(tl_source_new(text, Bytes(text)));
-
-    public override bool IsInvalid => handle == 0;
 
     protected override bool ReleaseHandle()
     {
@@ -36,7 +35,7 @@ public sealed unsafe class Source : SafeHandle
         finally { tl_source_free_runs(runs, count); }
     }
 
-    public string? Call(string cmd, object args) => Take(tl_source_call(handle, cmd, JsonSerializer.Serialize(args, Core.Json)));
+    public void Call(string cmd, object args) => tl_free(tl_source_call(handle, cmd, JsonSerializer.Serialize(args, Core.Json)));
 
     /// A document command's answer; default for null or none.
     public T? Call<T>(string cmd, object args) => Parse<T>(tl_source_call(handle, cmd, JsonSerializer.Serialize(args, Core.Json)));

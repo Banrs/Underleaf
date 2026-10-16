@@ -30,12 +30,4 @@ internal static unsafe partial class Native
 
     /// A text's length as the calls that take one count it: in UTF-8 bytes.
     public static nuint Bytes(string text) => (nuint)Encoding.UTF8.GetByteCount(text);
-
-    /// Takes a string the core allocated, freeing it.
-    public static string? Take(nint p)
-    {
-        if (p == 0) return null;
-        try { return Marshal.PtrToStringUTF8(p); }
-        finally { tl_free(p); }
-    }
 }

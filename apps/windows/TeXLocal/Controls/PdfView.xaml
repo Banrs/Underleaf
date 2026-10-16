@@ -15,7 +15,6 @@
             AutomationProperties.Name="PDF"
             ContextRequested="OnContextRequested"
             HorizontalScrollBarVisibility="Auto"
-            HorizontalScrollMode="Auto"
             IsTabStop="True"
             MaxZoomFactor="4"
             MinZoomFactor="0.25"
@@ -32,8 +31,8 @@
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE71F;" /></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                     <MenuFlyoutSeparator />
-                    <RadioMenuFlyoutItem x:Name="FitWidthItem" Click="OnFitWidth" GroupName="Zoom" Text="Fit width" />
-                    <RadioMenuFlyoutItem x:Name="FitPageItem" Click="OnFitPage" GroupName="Zoom" Text="Fit page" />
+                    <RadioMenuFlyoutItem x:Name="FitWidthItem" Click="{x:Bind FitWidth}" GroupName="Zoom" Text="Fit width" />
+                    <RadioMenuFlyoutItem x:Name="FitPageItem" Click="{x:Bind FitPage}" GroupName="Zoom" Text="Fit page" />
                     <MenuFlyoutSeparator />
                 </MenuFlyout>
             </FlyoutBase.AttachedFlyout>
@@ -52,7 +51,6 @@
                     <Style TargetType="Rectangle">
                         <Setter Property="Fill" Value="{StaticResource SyncFill}" />
                         <Setter Property="Stroke" Value="{ThemeResource AccentFillColorDefaultBrush}" />
-                        <Setter Property="StrokeThickness" Value="1" />
                         <Setter Property="RadiusX" Value="4" />
                         <Setter Property="RadiusY" Value="4" />
                     </Style>
