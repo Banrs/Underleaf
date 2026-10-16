@@ -446,6 +446,7 @@ impl Actor {
             }
             "live_start" => {
                 self.live.intent += 1;
+                self.live.window = arg::<Option<bool>>(args, "window")?.unwrap_or(false);
                 self.live_start(false).await;
                 Ok(self.live_state())
             }

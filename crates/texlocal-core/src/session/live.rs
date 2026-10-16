@@ -68,6 +68,9 @@ pub(crate) struct Live {
     pub disk_at: Option<Instant>,
     /// Rises with each Start the user asks for and each Stop: a restart for an older one is dropped.
     pub intent: u64,
+    /// TeXpresso's own window shows the document, as the user's Start asked: the host's pane
+    /// gets none, and TeXpresso is told no view or caret.
+    pub window: bool,
     listen_seq: u64,
     listener: Option<AbortHandle>,
     version: u64,
@@ -217,11 +220,11 @@ impl Actor {
                 text,
             });
         }
-        let caret = self.live.wanted.clone();
-        let pane = Pane {
+        let caret = self.live.wanted.clone().filter(|_| !self.live.window);
+        let pane = (!self.live.window).then(|| Pane {
             view: self.live.view,
             caret: caret.clone().map(|(path, offset)| Caret { path, offset }),
-        };
+        });
         let start = self
             .engine
             .live_start(self.root.clone(), files, expected, pane);
@@ -431,6 +434,7 @@ impl Actor {
         let pages = (first, last.max(first));
         self.live.view = Some(pages);
         if self.live.phase == Phase::Running
+            && !self.live.window
             && self.live.sent_view != Some(pages)
             && let Some(owner) = &self.live.owner
         {
@@ -442,7 +446,10 @@ impl Actor {
     pub fn live_caret(&mut self, path: String, offset: usize) {
         let moved = (path, offset);
         self.live.wanted = Some(moved.clone());
-        if self.live.phase == Phase::Running && self.live.caret.as_ref() != Some(&moved) {
+        if self.live.phase == Phase::Running
+            && !self.live.window
+            && self.live.caret.as_ref() != Some(&moved)
+        {
             self.live.settle = Some((Instant::now() + self.t.caret, moved));
         }
     }

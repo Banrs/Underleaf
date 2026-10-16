@@ -26,7 +26,7 @@ pub(crate) trait Engine: Send + Sync {
         root: PathBuf,
         files: Vec<FileBuffer>,
         expected: Option<String>,
-        pane: Pane,
+        pane: Option<Pane>,
     ) -> Fut<Result<Status, CoreError>>;
     fn live_update(
         &self,
@@ -78,14 +78,14 @@ impl Engine for ServiceEngine {
         root: PathBuf,
         files: Vec<FileBuffer>,
         expected: Option<String>,
-        pane: Pane,
+        pane: Option<Pane>,
     ) -> Fut<Result<Status, CoreError>> {
         let service = Arc::clone(&self.0);
         Box::pin(async move {
             let path_env = service.tool_paths().1;
             let manager = &service.texpresso;
             manager
-                .start(&root, &files, expected.as_deref(), &path_env, &pane)
+                .start(&root, &files, expected.as_deref(), &path_env, pane.as_ref())
                 .await
         })
     }

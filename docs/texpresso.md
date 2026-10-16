@@ -9,7 +9,9 @@ editor shows as that page changes, and the Mac app draws it in the PDF pane at o
 whole document follows when typing pauses. The pane shows the live document until live
 preview stops, when the last build's PDF returns. Compile still uses latexmk and the
 project's engine, and automatic builds pause during a live session without changing the
-saved setting.
+saved setting. Settings › Live Preview › Show Live Preview In offers TeXpresso's own window
+(MuPDF) as a fallback: the session then sets no `TEXPRESSO_PDF_OUTPUT`, tells TeXpresso no
+view or caret, and the PDF pane keeps the last build's PDF.
 
 The core's session owns the TeXpresso client (`crates/texlocal-core/src/session/live.rs`
 over `src/texpresso.rs`); hosts use `session_live_*` commands and `live*` events
@@ -40,7 +42,8 @@ the PDF pane, and the log only on a failure. The feature is experimental.
 ## The patch
 
 `tools/texpresso/underleaf-pdf.patch` (MIT, like TeXpresso) acts when `TEXPRESSO_PDF_OUTPUT`
-is set, which the core sets: TeXpresso then opens no window and quits when its input closes.
+is set, which the core sets unless the window is chosen: TeXpresso then opens no window and
+quits when its input closes.
 
 - The client says which pages are in view (`["view", first, last]`). A change is typeset as
   far as those, and each page that changed is written at once with MuPDF's PDF writer as a

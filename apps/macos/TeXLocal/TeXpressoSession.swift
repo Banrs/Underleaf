@@ -265,3 +265,23 @@ final class TeXpressoSession {
         }
     }
 }
+
+/// Where live preview shows the document: the PDF pane, or TeXpresso's own window. Read as a
+/// session starts.
+nonisolated enum LiveViewer: String, CaseIterable, Identifiable {
+    case pane, window
+
+    static let key = "liveViewer"
+    static var current: Self {
+        UserDefaults.standard.string(forKey: key).flatMap(Self.init) ?? .pane
+    }
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .pane: "PDF Pane"
+        case .window: "TeXpresso’s Window"
+        }
+    }
+}

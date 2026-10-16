@@ -81,7 +81,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_set_settings` | `patch` | settings | As `set_settings`; a new main file stops the build, restarts the preview, builds. |
 | `session_prepare_delete` | `path` | `{ready}` | Saves, refuses the main file (409), then holds saves under `path` until `session_deleted`. The host trashes the item itself (undoable). |
 | `session_deleted` | `path`, `trashed?` (true) | null | Closes documents under `path` and reads the tree again. |
-| `session_live_start` | | live state | The user's Start: takes the project over from another window. |
+| `session_live_start` | `window?` | live state | The user's Start: takes the project over from another window. `window: true` leaves the document to TeXpresso's own window (the Settings fallback): no `live_document` or `live_page` comes, and TeXpresso is told no view or caret. The session's own restarts keep the choice. |
 | `session_live_stop` | | live state | |
 | `session_live_view` | `first`, `last` | null | Pages in view, from 0. Send before Start and on scroll. |
 | `session_live_caret` | `path`, `offset` | null | On every caret move (UTF-16); told to TeXpresso once it settles (150 ms). |
@@ -159,8 +159,7 @@ Each is `{"type", "session", …}`.
   (retried after 750 ms if TeXpresso couldn't be asked). A rename, a new main file or a file
   gone from the tree restarts it 180 ms later; files changed on disk are sent and rescanned.
   A preview that ends by itself with an error after more than 10 s of running restarts; otherwise
-  the error is reported. A stopped run shows `halted` once it has lasted 1 s. TeXpresso's own
-  window is no longer offered.
+  the error is reported. A stopped run shows `halted` once it has lasted 1 s.
 - **Symbols** are scanned 150 ms after a save and when the session opens.
 
 ## From the Mac app's Swift
@@ -175,7 +174,7 @@ What moves out of `ProjectModel`, `TeXpressoSession` and `FolderWatcher`:
 | `compile`, `compileQueued`, `stopRequested`, `stopCompile`, `cleanBuildFolder`, `markIssues`, `goToIssue`, `chooseIssue`, `announceResult`'s choice | `session_compile`, `session_stop_compile`, `session_clean`, `session_issue`, `session_choose_issue`; `build`, `build_finished`, `issues` |
 | `mutate` lane, `keepingLive`, `liveIntent`, `liveChanges`, `restartTeXpresso`, `refreshTeXpressoDisk`, `filesChanged`, `mainFileChanged`, `performRename`'s bookkeeping, `trashEntry`'s checks | the session's queue; `session_rename`, `session_set_settings`, `session_prepare_delete` / `session_deleted` |
 | `refreshSymbols`, `SourceTextView.symbols` → `setSymbols` | the session's scan; session documents complete from it |
-| `TeXpressoSession` (phase, generation, lane, pending/synced, retry, halting, restartable, caret settling, `Inbox`/`LiveNews`, the `texpresso_wait` thread, `LiveViewer`) | `session_live_*`; `live`, `live_document`, `live_page`, `live_restarted` events |
+| `TeXpressoSession` (phase, generation, lane, pending/synced, retry, halting, restartable, caret settling, `Inbox`/`LiveNews`, the `texpresso_wait` thread) | `session_live_*`; `live`, `live_document`, `live_page`, `live_restarted` events |
 
 What stays in Swift: windows, panes and alerts; the editor (`SourceTextView` sends
 `tl_source_edit` for each edit, reloads on `document_reload`); PDFKit (`PDFController`,

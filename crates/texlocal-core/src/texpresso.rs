@@ -4,7 +4,8 @@
 //! A build with Underleaf's patch (tools/texpresso) shows nothing itself: it writes the
 //! pages the client says it is showing as one-page PDFs the moment they are typeset again,
 //! and the whole document when a run has ended. `Manager::wait` hands those to the client
-//! as they come; `Manager::edit` takes a keystroke without waiting for anything.
+//! as they come; `Manager::edit` takes a keystroke without waiting for anything. A client
+//! that gives no pane gets TeXpresso's own window instead, which draws with MuPDF.
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -60,9 +61,9 @@ pub struct Caret {
     pub offset: usize,
 }
 
-/// The client's pane: the pages it shows there, from 0, and where its caret is, for a
-/// build with Underleaf's patch to have those pages first and a snapshot ready where the
-/// first key will land.
+/// A client that shows the document itself, in its own pane: the pages it shows there,
+/// from 0, and where its caret is, for a build with Underleaf's patch to have those pages
+/// first and a snapshot ready where the first key will land.
 #[derive(Debug, Default)]
 pub struct Pane {
     pub view: Option<(u32, u32)>,
@@ -256,8 +257,9 @@ struct Session {
     token: String,
     executable: PathBuf,
     main: String,
-    /// Where a patched build writes the document, in a folder of the session's own.
-    pdf: PathBuf,
+    /// Where a patched build writes the document, in a folder of the session's own, when
+    /// the client shows it.
+    pdf: Option<PathBuf>,
     state: Mutex<State>,
     /// Never held across a wait: a keystroke takes it on the editor's own thread.
     files: Mutex<Files>,
@@ -296,7 +298,7 @@ impl Session {
         if let Some(tree) = state.tree.take() {
             // The viewer starts an engine: stopping just its parent leaks it.
             tree.kill();
-            remove_pdf_folder(&self.pdf);
+            remove_pdf_folder(self.pdf.as_deref());
             state.error = error;
             self.event(&mut state);
             if let Ok(mut files) = self.files.try_lock() {
@@ -373,17 +375,17 @@ impl Session {
     /// Whether to send what only a build that sends pages knows: it has said it is one,
     /// or nothing at all yet. Another would only report a command it doesn't know.
     fn sends_pages(&self, state: &State) -> bool {
-        state.live.is_some() || !state.spoken
+        self.pdf.is_some() && (state.live.is_some() || !state.spoken)
     }
 }
 impl Drop for Session {
     fn drop(&mut self) {
         self.stop(None);
-        remove_pdf_folder(&self.pdf);
+        remove_pdf_folder(self.pdf.as_deref());
     }
 }
-fn remove_pdf_folder(pdf: &Path) {
-    if let Some(folder) = pdf.parent() {
+fn remove_pdf_folder(pdf: Option<&Path>) {
+    if let Some(folder) = pdf.and_then(Path::parent) {
         let _ = fs::remove_dir_all(folder);
     }
 }
@@ -430,7 +432,9 @@ impl Manager {
     pub fn live_pdf(&self, root: &Path, token: &str) -> Result<PathBuf, CoreError> {
         let session = self.owned(&dunce::canonicalize(root)?, token)?;
         let state = lock(&session.state);
-        Some(&session.pdf)
+        session
+            .pdf
+            .as_ref()
             .filter(|pdf| state.pdf_version > 0 && pdf.with_extension("synctex").is_file())
             .cloned()
             .ok_or_else(|| {
@@ -496,15 +500,15 @@ impl Manager {
         }
         Ok(session.status())
     }
-    /// A build with Underleaf's patch writes the document for the client's `pane`;
-    /// upstream opens its own window all the same.
+    /// With a `pane`, a build with Underleaf's patch writes the document for it instead
+    /// of opening a window; upstream opens its window all the same.
     pub async fn start(
         &self,
         root: &Path,
         files: &[FileBuffer],
         expected: Option<&str>,
         path_env: &str,
-        pane: &Pane,
+        pane: Option<&Pane>,
     ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = dunce::canonicalize(root)?;
@@ -549,13 +553,18 @@ impl Manager {
         let token = crate::random_hex(16)?;
         // The session's own folder, for its owner alone: no build output or
         // other session shares it. The session removes it as it stops.
-        let mut folder = tempfile::Builder::new();
-        folder.prefix("texlocal-texpresso-");
-        // tempfile makes folders 0o777 less the umask.
-        #[cfg(unix)]
-        folder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
-        let folder = folder.tempdir()?.keep();
-        let pdf = dunce::canonicalize(folder)?.join("live.pdf");
+        let pdf = match pane {
+            Some(_) => {
+                let mut folder = tempfile::Builder::new();
+                folder.prefix("texlocal-texpresso-");
+                // tempfile makes folders 0o777 less the umask.
+                #[cfg(unix)]
+                folder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
+                let folder = folder.tempdir()?.keep();
+                Some(dunce::canonicalize(folder)?.join("live.pdf"))
+            }
+            None => None,
+        };
         let mut command = tokio::process::Command::new(&executable);
         command
             .args(["-json", "-texlive", "-I"])
@@ -567,7 +576,9 @@ impl Manager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        command.env("TEXPRESSO_PDF_OUTPUT", &pdf);
+        if let Some(pdf) = &pdf {
+            command.env("TEXPRESSO_PDF_OUTPUT", pdf);
+        }
         // A Mac app runs with signals ignored or blocked that a child inherits across exec.
         // TeXpresso stops a stale TeX worker with SIGTERM, and ignored it never ends: the
         // snapshot waiting on it never resumes, and live preview stops at the first edit.
@@ -587,7 +598,7 @@ impl Manager {
         let (mut child, tree) = match Tree::spawn(&mut command) {
             Ok(spawned) => spawned,
             Err(err) => {
-                remove_pdf_folder(&pdf);
+                remove_pdf_folder(pdf.as_deref());
                 return failed(format!(
                     "Couldn't start TeXpresso: {err}. Check TEXLOCAL_TEXPRESSO and its dependencies."
                 ));
@@ -597,7 +608,7 @@ impl Manager {
         let stderr = child.stderr.take().unwrap();
         let (lines, queued) = mpsc::unbounded_channel();
         // Where the caret is in bytes, as TeXpresso counts, from the text just sent.
-        let caret = pane.caret.as_ref().and_then(|caret| {
+        let caret = pane.and_then(|pane| pane.caret.as_ref()).and_then(|caret| {
             let path = buffers.paths.get(&caret.path)?;
             let offset = buffers.texts.get(path)?.byte_offset(caret.offset)?;
             Some(json!(["caret", path, offset]))
@@ -677,7 +688,7 @@ impl Manager {
         // TeXpresso's idle reruns stay off: each starts TeX again from nothing after a pause
         // in typing and shows no page until it is over. A build that sends pages makes its
         // finishing passes beside the document.
-        if let Some((first, last)) = pane.view {
+        if let Some((first, last)) = pane.and_then(|pane| pane.view) {
             opened.push(json!(["view", first, last.max(first)]));
         }
         opened.extend(caret);
@@ -1033,7 +1044,7 @@ fn apply_message(session: &Session, message: &Value) {
         }
         // [page, index, path, mark]: one page, complete at a path in the session's folder.
         "page" => {
-            let folder = session.pdf.parent();
+            let folder = session.pdf.as_deref().and_then(Path::parent);
             let path = message[2].as_str().filter(|path| {
                 folder.is_some_and(|folder| Path::new(path).parent() == Some(folder))
             });
@@ -1051,13 +1062,16 @@ fn apply_message(session: &Session, message: &Value) {
         // [pdf, path, pages], and from a patched build [.., run, changed, mark]: the whole
         // document written to the path it was given.
         "pdf" => {
+            let Some(pdf) = &session.pdf else {
+                return;
+            };
             state.pdf_version += 1;
             let changed = message[4].as_array().map(|ranges| {
                 let page = |range: &Value, at: usize| range[at].as_u64().unwrap_or(0) as u32;
                 ranges.iter().map(|r| [page(r, 0), page(r, 1)]).collect()
             });
             let document = Document {
-                path: session.pdf.to_string_lossy().into_owned(),
+                path: pdf.to_string_lossy().into_owned(),
                 version: state.pdf_version,
                 serial: session.event(state),
                 pages: number(2).unwrap_or(0) as u32,
@@ -1146,7 +1160,7 @@ mod tests {
             token: "token".into(),
             executable: PathBuf::new(),
             main: "main.tex".into(),
-            pdf: PathBuf::new(),
+            pdf: None,
             state: Mutex::new(State {
                 tree: None,
                 last_used: Instant::now(),
@@ -1232,7 +1246,7 @@ mod tests {
     async fn begin(manager: &Manager, root: &Path, path_env: &str, files: &[FileBuffer]) -> Status {
         let pane = Pane::default();
         manager
-            .start(root, files, None, path_env, &pane)
+            .start(root, files, None, path_env, Some(&pane))
             .await
             .unwrap()
     }
@@ -1245,7 +1259,7 @@ mod tests {
         token: &str,
     ) -> Result<Status, CoreError> {
         manager
-            .start(root, &[], Some(token), path_env, &Pane::default())
+            .start(root, &[], Some(token), path_env, Some(&Pane::default()))
             .await
     }
     /// The status code of a refusal.
@@ -1455,6 +1469,36 @@ mod tests {
                     .is_ok_and(|stat| stat.contains(") Z "))
         })
         .await;
+    }
+    /// Without a pane TeXpresso shows the document in its own window: the session makes no
+    /// folder for one, offers none, and tells TeXpresso no view or caret.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_session_without_a_pane_leaves_the_document_to_texpressos_window() {
+        let (tmp, root, path_env) = setup();
+        let manager = Manager::default();
+        let started = manager
+            .start(&root, &main_buffer("abc"), None, &path_env, None)
+            .await
+            .unwrap();
+        let token = started.session.as_deref().unwrap();
+        assert!(manager.held(token).unwrap().pdf.is_none());
+        manager.view(token, 0, 1).unwrap();
+        manager.caret(token, "main.tex", 1).unwrap();
+        manager
+            .update(&root, "main.tex", "EXIT_CLEAN", token, false)
+            .await
+            .unwrap();
+        until(|| !manager.status(&root, None, || &path_env).unwrap().running).await;
+        // Its stub printed a document all the same, with no path to write it to.
+        let events = manager.wait(&root, token, 0, Duration::ZERO).await.unwrap();
+        assert!(events.pdf.is_none() && events.pages.is_empty());
+        let sent = commands(&tmp);
+        assert!(sent.iter().any(|c| c.to_string().contains("EXIT_CLEAN")));
+        assert!(
+            sent.iter().all(|c| c[0] != "view" && c[0] != "caret"),
+            "{sent:?}"
+        );
     }
     #[cfg(unix)]
     #[tokio::test]
@@ -1673,7 +1717,7 @@ mod tests {
             }),
         };
         let started = manager
-            .start(&root, &main_buffer("aé😀b"), None, &path_env, &pane)
+            .start(&root, &main_buffer("aé😀b"), None, &path_env, Some(&pane))
             .await
             .unwrap();
         let token = started.session.as_deref().unwrap();

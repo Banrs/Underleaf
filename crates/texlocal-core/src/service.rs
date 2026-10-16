@@ -407,10 +407,17 @@ impl Service {
                         .unwrap_or_default(),
                     arg::<Option<String>>(args, "session")?.as_deref(),
                     &self.tool_paths().1,
-                    &crate::texpresso::Pane {
-                        view: arg(args, "view")?,
-                        caret: arg(args, "caret")?,
-                    },
+                    // `pdf`: the client shows the document; else TeXpresso's own window does.
+                    arg::<Option<bool>>(args, "pdf")?
+                        .unwrap_or(false)
+                        .then(|| -> Result<_, CoreError> {
+                            Ok(crate::texpresso::Pane {
+                                view: arg(args, "view")?,
+                                caret: arg(args, "caret")?,
+                            })
+                        })
+                        .transpose()?
+                        .as_ref(),
                 )
                 .await?),
             "texpresso_update" => out(self

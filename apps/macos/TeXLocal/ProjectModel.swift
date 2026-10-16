@@ -774,7 +774,8 @@ final class ProjectModel {
         if let pages = pdf.visiblePages { core.send("session_live_view", ["session": session, "first": pages.lowerBound, "last": pages.upperBound]) }
         texpresso.starting()
         liveCaret()
-        core.send("session_live_start", ["session": session])
+        // TeXpresso's own window, which draws with MuPDF, is the fallback Settings offers.
+        core.send("session_live_start", ["session": session, "window": LiveViewer.current == .window])
     }
 
     func stopTeXpresso() {

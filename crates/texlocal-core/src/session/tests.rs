@@ -29,6 +29,8 @@ struct Fake {
     calls: Mutex<Vec<String>>,
     builds: Mutex<VecDeque<oneshot::Sender<Result<CompileResult, CoreError>>>>,
     starts: Mutex<Vec<(Vec<String>, Option<String>)>>,
+    /// Whether each start gave TeXpresso the host's pane, rather than its own window.
+    panes: Mutex<Vec<bool>>,
     updates: Mutex<Vec<(String, String)>>,
     edits: Mutex<Vec<(String, usize, usize, String)>>,
     /// What the next edits answer; Ok once none is left.
@@ -139,9 +141,10 @@ impl Engine for Fake {
         _root: PathBuf,
         files: Vec<FileBuffer>,
         expected: Option<String>,
-        _pane: Pane,
+        pane: Option<Pane>,
     ) -> Fut<Result<Status, CoreError>> {
         self.log("live_start");
+        self.panes.lock().unwrap().push(pane.is_some());
         let paths = files.into_iter().map(|f| f.path).collect();
         self.starts.lock().unwrap().push((paths, expected));
         let (tx, rx) = mpsc::unbounded_channel();
@@ -873,6 +876,31 @@ async fn the_caret_is_told_once_it_settles() {
     wait(200).await;
     rig.state().await;
     assert_eq!(rig.fake.called("live_caret"), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn in_texpressos_own_window_the_preview_is_told_no_view_or_caret_and_restarts_there() {
+    let rig = Rig::new(false).await;
+    fs::write(rig.root.join("ch.tex"), "chapter").unwrap();
+    rig.open("main.tex").await;
+    rig.ok("live_view", json!({ "first": 0, "last": 1 })).await;
+    let started = rig.ok("live_start", json!({ "window": true })).await;
+    assert_eq!(started["phase"], "running");
+    rig.ok("live_view", json!({ "first": 1, "last": 2 })).await;
+    rig.ok("live_caret", json!({ "path": "main.tex", "offset": 2 }))
+        .await;
+    wait(200).await;
+    rig.state().await;
+    assert_eq!(rig.fake.called("live_view"), 0);
+    assert_eq!(rig.fake.called("live_caret"), 0);
+    // A restart of its own keeps to the window; the user's next Start chooses again.
+    rig.ok("rename", json!({ "from": "ch.tex", "to": "one.tex" }))
+        .await;
+    wait(200).await;
+    rig.state().await;
+    rig.ok("live_stop", json!({})).await;
+    live(&rig).await;
+    assert_eq!(*rig.fake.panes.lock().unwrap(), [false, false, true]);
 }
 
 #[tokio::test(start_paused = true)]
