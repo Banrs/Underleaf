@@ -21,6 +21,18 @@ looks right.
   `Visibility` for transient state.
 - Minimal code, sparse comments.
 
+## Decisions
+
+The owner's, 2026-10-16:
+- **Commands:** a Notepad-style menu bar (File, Edit, View, Build) with Compile as the one accent
+  button, not an Explorer-style CommandBar.
+- **Open files:** one shared editor that the file tree switches, as on the Mac; no tabs.
+- **Live preview:** the core's recompile mode first, then a native `texpresso.exe` (see
+  [Live preview on Windows](#live-preview-on-windows)).
+- **Distribution:** an unpackaged, self-contained zip and a winget manifest; no MSIX for now.
+- Defaults until said otherwise: the library at `%USERPROFILE%\TeXLocal`; TeX Live in the
+  missing-TeX tip, since its installer brings the Perl latexmk needs.
+
 ## Architecture
 
 ```
@@ -323,7 +335,8 @@ events report.
   `build` events; issues panel and line-end boxes; the PDF pane; box-level SyncTeX both ways.
 - **M3+**: completion and typing transforms; outline and words; find and project search; insert
   menu, glyph palette and maths preview; PDFium text, PDF find, word-precise SyncTeX; live
-  preview; themes and editor settings; multiple windows; installer.
+  preview; themes and editor settings; Home as Fluent cards within its maximum width; multiple
+  windows; the zip and winget release.
 
 ## Building and testing
 
