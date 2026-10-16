@@ -50,15 +50,23 @@ struct ShellTests {
         try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == id })
     }
 
+    /// A wide window has Compile as its word. At its narrowest the panes are at their least or wider, Compile is its
+    /// symbol, and nothing has left the toolbar but for its overflow menu, where each tool that can go has a menu form.
     @Test func aNarrowWindowKeepsEveryToolOrItsMenuForm() async throws {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
+        #expect(!workspace.toolbar.compactCompile)
         let compile = try item(.compile, in: workspace)
-        #expect(compile.view == nil && compile.image != nil && compile.style == .prominent)
+        let button = try #require(compile.view)
+        let word = button.fittingSize.width
+        #expect(word > 60 && compile.style == .prominent)
         let least = ColumnMetrics.contentMinimum.width
         #expect(least >= ColumnMetrics.sourceMinimum + 1 + ColumnMetrics.pdfMinimum + ColumnMetrics.toolbarInset)
         try await resize(window, to: least)
         #expect(window.contentView?.frame.width == least)
+        // Compile as its symbol, a circle, still Compile to the overflow menu and VoiceOver.
+        #expect(workspace.toolbar.compactCompile)
+        #expect(button.fittingSize == NSSize(width: 36, height: 36))
         #expect(compile.label == MenuCommand.compileRun.title)
         #expect(compile.menuFormRepresentation?.title == MenuCommand.compileRun.title)
         for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {
@@ -69,45 +77,100 @@ struct ShellTests {
         for id in [NSToolbarItem.Identifier.back, .compile, .togglePDF] {
             #expect(try item(id, in: workspace).visibilityPriority == .high)
         }
+        try await resize(window, to: 1300)
+        #expect(!workspace.toolbar.compactCompile)
+        #expect(button.fittingSize.width == word)
     }
 
-    /// Stop takes Compile's place in the same item, so the tools beside it stay where they are.
-    @Test func stopTakesCompilesPlace() async throws {
+    /// Stop, with the build's spinner, is as wide as Compile was, as its word and as its symbol: the tools beside it stay
+    /// where they are as a build starts and ends. The overflow menu and VoiceOver have Stop by name.
+    @Test func stopIsAsWideAsCompile() async throws {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
         let compile = try item(.compile, in: workspace)
-        let identifiers = workspace.toolbar.toolbar.items.map(\.itemIdentifier)
-        workspace.project.compiling = true
-        try await waitUntil { compile.label == MenuCommand.compileStop.title }
-        #expect(compile.menuFormRepresentation?.title == MenuCommand.compileStop.title)
-        #expect(compile.toolTip == "Stop the build" && compile.backgroundTintColor == .clear && compile.image != nil)
-        #expect(workspace.toolbar.toolbar.items.map(\.itemIdentifier) == identifiers)
-        workspace.project.compiling = false
-        try await waitUntil { compile.label == MenuCommand.compileRun.title }
-        #expect(compile.toolTip == "Compile the project" && compile.backgroundTintColor == nil)
+        let button = try #require(compile.view)
+        for width in [1300, ColumnMetrics.contentMinimum.width] {
+            try await resize(window, to: width)
+            let idle = button.fittingSize
+            workspace.project.compiling = true
+            try await waitUntil { compile.label == MenuCommand.compileStop.title }
+            #expect(button.fittingSize == idle)
+            #expect(compile.menuFormRepresentation?.title == MenuCommand.compileStop.title)
+            #expect(compile.backgroundTintColor == .clear)
+            workspace.project.compiling = false
+            try await waitUntil { compile.label == MenuCommand.compileRun.title }
+            #expect(button.fittingSize == idle && compile.backgroundTintColor == nil)
+        }
     }
 
-    @Test func formatIsAPullDownGroupedAsNotesAa() async throws {
+    /// Compile's room is reckoned from the default tools' widths. In a toolbar customised to others it keeps its word,
+    /// where the default one has it as its symbol, until the window is too narrow for the word beside the tools that
+    /// never leave. With the default tools back, it is its symbol again.
+    @Test func aCustomisedToolbarKeepsCompilesWord() async throws {
         let (window, workspace) = try await workspace(showPDF: true)
         defer { workspace.close(); window.close() }
-        let menu = try #require(try item(.format, in: workspace) as? NSMenuToolbarItem).menu
-        menu.delegate?.menuNeedsUpdate?(menu)
-        // The styles' palette row, the levels, then what goes in.
-        let groups = menu.items.split(whereSeparator: \.isSeparatorItem).map(Array.init)
-        #expect(groups.count == 3)
-        let palette = try #require(groups[0].first?.submenu)
-        #expect(groups[0].count == 1 && palette.presentationStyle == .palette && palette.selectionMode == .selectAny)
-        #expect(palette.items.map(\.title) == [MenuCommand.editBold, .editItalic, .editUnderline].map(\.title) && palette.selectedItems.isEmpty)
-        // The class's levels as the core sets and numbers them, "1.1" for a subsection.
+        let toolbar = workspace.toolbar.toolbar
+        let defaults = workspace.toolbar.toolbarDefaultItemIdentifiers(toolbar)
+        #expect(workspace.toolbar.holdsDefaultItems)
+        // Too narrow for the default tools and Compile's word, wide enough for the word alone.
+        try await resize(window, to: 700)
+        #expect(workspace.toolbar.compactCompile)
+        for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {
+            toolbar.removeItem(identifier: id)
+        }
+        // The toolbar tells the workspace a turn later.
+        try await waitUntil { !workspace.toolbar.holdsDefaultItems && !workspace.toolbar.compactCompile }
+        try await resize(window, to: ColumnMetrics.contentMinimum.width)
+        #expect(workspace.toolbar.compactCompile)
+        #expect(toolbar.visibleItems?.contains { $0.itemIdentifier == .compile } == true)
+        try await resize(window, to: 700)
+        #expect(!workspace.toolbar.compactCompile)
+        toolbar.itemIdentifiers = defaults
+        try await waitUntil { workspace.toolbar.holdsDefaultItems && workspace.toolbar.compactCompile }
+        // Spaces are not tools: without them the toolbar still holds its default ones.
+        toolbar.removeItem(identifier: .flexibleSpace)
+        #expect(workspace.toolbar.holdsDefaultItems)
+        toolbar.itemIdentifiers = defaults
+    }
+
+    /// The source|PDF divider stands under the toolbar's separator from the widest window to the narrowest, sidebar open
+    /// or shut: where a section's tools stop the separator, the divider goes to it (`joinDivider`).
+    @Test(arguments: [false, true])
+    func theDividerStaysUnderTheToolbarsSeparator(sidebar: Bool) async throws {
+        let (window, workspace) = try await workspace(showPDF: true, sidebar: sidebar)
+        defer { workspace.close(); window.close() }
+        let split = workspace.columns.splitView
+        func separators(_ view: NSView) -> [NSView] {
+            view.subviews.flatMap { ($0.className == "NSSeparatorToolbarItemView" ? [$0] : []) + separators($0) }
+        }
+        let frame = try #require(window.contentView?.superview)
+        func lines() -> [CGFloat] { separators(frame).map { split.convert($0.bounds, from: $0).minX } }
+        func divider() -> CGFloat { split.arrangedSubviews[0].frame.maxX }
+        for width in [1300, 900, 700, ColumnMetrics.contentMinimum.width] {
+            try await resize(window, to: width)
+            try await waitUntil({ lines().contains { isClose($0, divider()) } }) {
+                "width \(width): divider at \(divider()), lines at \(lines())"
+            }
+        }
+    }
+
+    /// Aa opens Notes' popover; its overflow form is a menu of the styles and the class's levels by name, as the menu
+    /// bar's Section Level, while the popover numbers them as the class does ("1.1" for a subsection).
+    @Test func formatIsAPopoverWithAMenuForm() async throws {
+        let (window, workspace) = try await workspace(showPDF: true)
+        defer { workspace.close(); window.close() }
+        let format = try item(.format, in: workspace)
+        #expect(!(format is NSMenuToolbarItem) && format.action != nil)
+        let menu = try #require(format.menuFormRepresentation?.submenu)
         let headings = workspace.project.headingStyles
-        #expect(groups[1].map { $0.attributedTitle?.string ?? "" } == headings.map(\.numberedTitle))
+        let titles = [MenuCommand.editBold, .editItalic, .editUnderline].map(\.title) + headings.map(\.title)
+        try await waitUntil {
+            menu.update()
+            return menu.items.filter { !$0.isSeparatorItem }.map(\.title) == titles
+        }
         #expect(headings.contains { $0.marker == "1.1" })
-        #expect(groups[1].map(\.state) == [NSControl.StateValue.on] + Array(repeating: NSControl.StateValue.off, count: groups[1].count - 1))
-        let fonts = groups[1].compactMap { item in item.attributedTitle.flatMap { $0.attribute(.font, at: $0.length - 1, effectiveRange: nil) as? NSFont } }
-        #expect(fonts.count == groups[1].count && fonts[1].pointSize > fonts[0].pointSize)
-        #expect(groups[2].first?.title == MenuCommand.editMath.title)
-        // No LaTeX file is open.
-        #expect(menu.items.allSatisfy { !$0.isEnabled } && palette.items.allSatisfy { !$0.isEnabled })
+        let layout = FormatPanel.Layout(headings)
+        #expect(layout.markers > 0 && layout.pitch >= 24)
     }
 
     /// The File Outline's header is at the files' foot from the first, over an outline folded for a file that has none, and

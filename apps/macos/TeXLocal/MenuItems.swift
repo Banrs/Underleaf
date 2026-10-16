@@ -5,9 +5,9 @@ struct SectionLevelItems: View {
     let project: ProjectModel?
 
     var body: some View {
-        // Numbered as Aa's are (`FormatMenu`), once there's a project's class to number them by.
+        // The levels the class has, by name: the numbers are Aa's (`FormatPanel`).
         ForEach(project?.headingStyles ?? HeadingStyle.styles(of: nil, hasChapters: false), id: \.command) { style in
-            Toggle(project == nil ? style.title : style.numberedTitle,
+            Toggle(style.title,
                    isOn: Binding(get: { project?.headingLevel.command == style.command },
                                  set: { _ in project?.editor.perform(.heading, style.command) }))
         }

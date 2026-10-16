@@ -36,11 +36,6 @@ nonisolated struct HeadingStyle: Equatable, Decodable {
 
     var level: HeadingLevel { HeadingLevel(title: title, command: command) }
 
-    /// The title after its number, as the menus show it.
-    var numberedTitle: String {
-        marker.map { "\($0)\u{2002}\(title)" } ?? title
-    }
-
     static func styles(of documentClass: DocumentClass?, hasChapters: Bool) -> [HeadingStyle] {
         var args: [String: Any] = ["hasChapters": hasChapters]
         if let documentClass {

@@ -26,12 +26,20 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                               NSToolbarItemValidation, NSMenuItemValidation {
     /// Renamed as the defaults change: a layout saved under an earlier name would bring back or lack items.
     let toolbar = NSToolbar(identifier: "Workspace 4")
+    /// Compile as its symbol, which the workspace sets where its word would be the first tool without room.
+    var compactCompile: Bool {
+        get { fit.compact }
+        set { if fit.compact != newValue { fit.compact = newValue } }
+    }
+    private let fit = Fit()
+    @Observable final class Fit { var compact = false }
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
     private weak var workspace: WorkspaceController?
-    private lazy var format = FormatMenu(app: app, project: project)
+    private lazy var format = FormatPopover(app: app, project: project)
     private var applied: State?
+    private var customized: NSKeyValueObservation?
     private var closed = false
 
     init(app: AppModel, project: ProjectModel, workspace: WorkspaceController) {
@@ -41,15 +49,21 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
-        // The window's least width is the symbols' toolbar's (`ColumnMetrics.toolbarMinimum`).
+        // Compile's word is the one label, and the workspace knows its width (`ColumnMetrics`).
         toolbar.allowsDisplayModeCustomization = false
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
+        // Customize Toolbar's changes, for Compile's form (`holdsDefaultItems`): a turn later, once AppKit has done with its items.
+        customized = toolbar.observe(\.itemIdentifiers) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.workspace?.toolbarItemsChanged() }
+        }
         watch()
     }
 
     func close() {
         closed = true
+        customized = nil
+        format.popover.close()
     }
 
     // MARK: - Items
@@ -75,6 +89,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile,
          .inspectorTrackingSeparator, .togglePDF, .toggleInspector]
+    }
+
+    /// Whether the toolbar holds its default tools, spaces aside: the ones whose widths the workspace reckons Compile's
+    /// room from (`fitToolbar`).
+    var holdsDefaultItems: Bool {
+        func tools(_ ids: [NSToolbarItem.Identifier]) -> [NSToolbarItem.Identifier] {
+            ids.filter { $0 != .space && $0 != .flexibleSpace }
+        }
+        return tools(toolbar.itemIdentifiers) == tools(toolbarDefaultItemIdentifiers(toolbar))
     }
 
     /// The system's toggles go to the window's split, not the nested ones, which would answer first.
@@ -126,10 +149,18 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             share.toolTip = "Share the PDF"
             item = share
         case .compile:
-            // The window's one prominent action (HIG, Toolbars): a symbol Stop swaps in place, so nothing beside it moves.
-            item = button(id, MenuCommand.compileRun.title, "hammer.fill", #selector(compile), help: "Compile the project")
+            // The window's one prominent action (HIG, Toolbars), as a word: a play symbol reads as media. It stands for
+            // the word only where the word doesn't fit (`CompileButton`). Customize Toolbar gets a title, as it draws
+            // custom views without their style.
+            item = NSToolbarItem(itemIdentifier: id)
+            item.label = MenuCommand.compileRun.title
+            if flag {
+                item.view = NSHostingView(rootView: compileButton(state))
+            } else {
+                item.title = MenuCommand.compileRun.title
+            }
             item.style = .prominent
-            item.autovalidates = false
+            // Enabled by `validateMenuItem`, as the button by the models (`configure`).
             let form = NSMenuItem(title: MenuCommand.compileRun.title, action: #selector(compile), keyEquivalent: "")
             form.target = self
             item.menuFormRepresentation = form
@@ -215,13 +246,21 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { items })
     }
 
+    /// Aa opens its popover (`FormatPopover`); the overflow menu has the same as a menu.
     private func formatItem() -> NSToolbarItem {
-        let item = NSMenuToolbarItem(itemIdentifier: .format)
-        item.label = "Format"
-        item.toolTip = "Choose a style to apply to text"
-        item.image = symbol("textformat", "Format")
-        item.menu = format.makeMenu()
-        item.showsIndicator = false
+        // Notes' words, from its strings (27.2).
+        let item = button(.format, "Format", "textformat", #selector(showFormat(_:)), help: "Choose a style to apply to text")
+        let form = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
+        form.submenu = menu(Group { [app, project] in
+            ForEach([MenuCommand.editBold, .editItalic, .editUnderline], id: \.self) { command in
+                Button(command.title) { app.perform(command, on: project) }
+            }
+            Divider()
+            SectionLevelItems(project: project)
+        })
+        item.menuFormRepresentation = form
+        // Off outside LaTeX, as Math and Insert (`configure`).
+        item.autovalidates = false
         return item
     }
 
@@ -237,13 +276,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let canZoomOut: Bool
         let compiling: Bool
         let canCompile: Bool
+        let compactCompile: Bool
     }
 
     private var state: State {
         State(isLaTeX: project.isLaTeX,
               hasPDF: project.hasPDF, canShare: project.buildPDF != nil, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
-              compiling: project.compiling, canCompile: canCompile)
+              compiling: project.compiling, canCompile: canCompile, compactCompile: fit.compact)
     }
 
     /// A column resizing refits the PDF during layout, and an async `track` would set the new scale a pass later:
@@ -283,12 +323,17 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                 let command = state.compiling ? MenuCommand.compileStop : .compileRun
                 item.label = command.title
                 item.menuFormRepresentation?.title = command.title
-                item.image = symbol(state.compiling ? "stop.fill" : "hammer.fill", command.title)
-                item.toolTip = state.compiling ? "Stop the build" : "Compile the project"
                 // Stop on clear glass: a prominent item's glass stays its own, where a plain item's joins its neighbours'.
                 item.backgroundTintColor = state.compiling ? .clear : nil
             }
             if changed(\.canCompile) { item.isEnabled = state.canCompile }
+            // A help tag for the symbol alone: the word says as much itself (HIG, Buttons).
+            if changed(\.compiling) || changed(\.compactCompile) {
+                item.toolTip = !state.compactCompile ? nil : state.compiling ? "Stop the build" : "Compile the project"
+            }
+            if changed(\.compiling) || changed(\.compactCompile) || changed(\.canCompile) {
+                (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
+            }
         case .togglePDF:
             if changed(\.showsPDF) { item.toolTip = app.title(.viewTogglePdf, on: project) }
         default:
@@ -315,6 +360,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     @objc private func back() { perform(.projectClose) }
 
+    /// A toolbar button's action comes from its item, as `insertTemplate`'s does (27.2).
+    @objc private func showFormat(_ item: NSToolbarItem) {
+        format.toggle(relativeTo: item)
+    }
+
     @objc private func bold() { perform(.editBold) }
 
     @objc private func italic() { perform(.editItalic) }
@@ -335,8 +385,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         perform(project.compiling ? .compileStop : .compileRun)
     }
 
+    /// The overflow menu's Compile, which the item's own view doesn't enable.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         menuItem.action != #selector(compile) || canCompile
+    }
+
+    private func compileButton(_ state: State) -> CompileButton {
+        CompileButton(compiling: state.compiling, compact: state.compactCompile, enabled: state.canCompile) { [weak self] in
+            self?.compile()
+        }
     }
 
     @objc private func togglePDF() { perform(.viewTogglePdf) }
@@ -385,6 +442,66 @@ private final class ZoomControl: NSSegmentedControl {
         let margins = intrinsicContentSize.width - widest
         setWidth(widest - margins, forSegment: 1)
         setLabel(label, forSegment: 1)
+    }
+}
+
+/// Compile as its word, or as its symbol where the word has no room, and Stop with the build's spinner in the width
+/// Compile has there. It fills the item's glass, which doesn't pass clicks on to an undersized custom view. It changes
+/// form as AppKit's search item goes to its button and back (27.2, measured): the width in one step, the symbol fading
+/// in, or out over the word, in a fifth of a second on Core Animation's default curve.
+private struct CompileButton: View {
+    let compiling: Bool
+    let compact: Bool
+    let enabled: Bool
+    let action: () -> Void
+    @Environment(\.appearsActive) private var appearsActive
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                idle.opacity(compiling ? 0 : 1)
+                // The button stays a button to VoiceOver; the status bar says Compiling.
+                busy.opacity(compiling ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
+            // Faint in a window that isn't the active one, as AppKit's own items, Stop as Compile.
+            .foregroundStyle(appearsActive ? .primary : .tertiary)
+            .animation(.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2), value: compact)
+            // The item's glass as AppKit draws a titled item's and a symbol's: 36 points high (the UI kit's toolbar
+            // controls), a title 12 points in from each end, and a circle for a symbol (27.2).
+            .padding(.horizontal, compact ? 0 : 12)
+            .frame(minWidth: 36, minHeight: 36)
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
+    }
+
+    @ViewBuilder private var idle: some View {
+        if compact {
+            // At the size AppKit draws an item's symbol (27.2), measured.
+            Image(systemName: "play.fill").font(.system(size: 17))
+        } else {
+            Text(MenuCommand.compileRun.title).transition(.identity)
+        }
+    }
+
+    /// The spinner beside Stop's word, or round its symbol: the regular spinner, 32 points, would touch the circle's
+    /// edge, and the small one has no room inside it.
+    @ViewBuilder private var busy: some View {
+        if compact {
+            ZStack {
+                ProgressView().controlSize(.regular).scaleEffect(0.8)
+                Image(systemName: "stop.fill").font(.system(size: 7))
+            }
+        } else {
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.small)
+                Text(MenuCommand.compileStop.title)
+            }
+            .transition(.identity)
+        }
     }
 }
 

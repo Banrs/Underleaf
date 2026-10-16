@@ -143,7 +143,7 @@ struct StatusBar: View {
     private var buildStatus: some View {
         HStack {
             if project.compiling {
-                ProgressView().accessibilityHidden(true)
+                // The toolbar's Stop has the build's one spinner.
                 Text("Compiling…")
             } else if let result = project.result {
                 if result.stopped {
