@@ -61,6 +61,8 @@ public sealed partial class WorkspacePage : Page
         };
         Split.RegisterPropertyChangedCallback(SplitView.DisplayModeProperty, (_, _) => ShowPane(Split.DisplayMode == SplitViewDisplayMode.Inline && sidebarWanted));
         SetUpDocument();
+        ShowEditorPrefs();
+        EditorPrefs.Changed += ShowEditorPrefs;
         Loaded += (_, _) =>
         {
             // An InfoBar open while the page sat cached under Settings keeps the old theme's state colours.
@@ -98,8 +100,16 @@ public sealed partial class WorkspacePage : Page
     {
         ShowSearchBox(false);
         if (e.SourcePageType == typeof(SettingsPage)) return;
+        EditorPrefs.Changed -= ShowEditorPrefs;
         Core.Event -= OnEvent;
         if (session != 0) _ = Core.CallAsync("session_close", new { session });
+    }
+
+    /// Settings › Editor, which changes while this page waits under Settings.
+    void ShowEditorPrefs()
+    {
+        Editor.SetLook(EditorPrefs.Font, EditorPrefs.FontSize, EditorPrefs.Theme);
+        (Editor.AutoPair, Editor.AutoComplete) = (EditorPrefs.AutoPair, EditorPrefs.AutoComplete);
     }
 
     void OnEvent(CoreEvent e)

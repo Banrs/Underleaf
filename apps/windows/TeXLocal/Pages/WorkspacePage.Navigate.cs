@@ -93,7 +93,15 @@ public sealed partial class WorkspacePage
         if (OutlineTree is null) return;
         var tab = SideTabs.SelectedItem;
         Tree.Visibility = tab == FilesTab ? Visibility.Visible : Visibility.Collapsed;
+        var hidden = OutlineTree.Visibility == Visibility.Collapsed;
         OutlineTree.Visibility = tab == OutlineTab && outline.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // A tree selects an item it hasn't drawn only in name: the caret's heading again once it shows.
+        if (hidden && OutlineTree.Visibility == Visibility.Visible && OutlineTree.SelectedItem is { } current)
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+            {
+                OutlineTree.SelectedItem = null;
+                OutlineTree.SelectedItem = current;
+            });
         Results.Visibility = tab == ResultsTab && Results.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         var note = tab == OutlineTab && outline.Count == 0
             ? Editor.Path is null ? "Open a file to see its outline." : "No sections in this document."

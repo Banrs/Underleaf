@@ -195,6 +195,7 @@
                     <Grid Visibility="Collapsed">
                         <Rectangle x:Name="PaperInk" Fill="{ThemeResource SolidBackgroundFillColorBaseBrush}" />
                         <Rectangle x:Name="LineInk" Fill="{ThemeResource SubtleFillColorSecondaryBrush}" />
+                        <Rectangle x:Name="SecondaryInk" Fill="{ThemeResource TextFillColorSecondaryBrush}" />
                     </Grid>
                     <TextBlock
                         x:Name="Preview"
