@@ -58,6 +58,23 @@ struct PDFPane: View {
     }
 }
 
+struct PDFRepresentable: NSViewRepresentable {
+    let project: ProjectModel
+    let darkPaper: Bool
+
+    func makeNSView(context: Context) -> SyncPDFView {
+        let view = project.pdf.view
+        view.onInverse = { [weak project] page, point, click in
+            Task { await project?.inverseSync(page: page, x: point.x, y: point.y, click: click) }
+        }
+        return view
+    }
+
+    func updateNSView(_ view: SyncPDFView, context: Context) {
+        view.darkPaper = darkPaper
+    }
+}
+
 struct PDFFindBar: View {
     @Bindable var controller: PDFController
 
