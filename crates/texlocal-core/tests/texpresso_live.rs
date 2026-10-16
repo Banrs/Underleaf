@@ -78,16 +78,27 @@ impl Client {
         self.sessions.document(session, path).unwrap()
     }
 
-    /// Waits for `text` in TeXpresso's output (compiler output only: stderr may echo what
-    /// it was sent) while it runs, across any restart of the session's own.
+    /// Starts the preview of `session`, its Live Preview Log shown, as a host does with the
+    /// log open.
+    async fn start(&self, session: u64) {
+        self.ask(session, "live_log", json!({ "shown": true }))
+            .await;
+        let started = self.ask(session, "live_start", json!({})).await;
+        assert_eq!(started["phase"], "running", "{started}");
+    }
+
+    /// Waits for a line of the Live Preview Log that starts with `text`, as TeX writes its
+    /// lines, while the preview runs, across any restart of the session's own. Until TeX has
+    /// said something the log has TeXpresso's stderr too, which may echo what it was sent.
     async fn shows(&self, session: u64, text: &str, check: &str) {
         let began = Instant::now();
         loop {
-            let status = self.ask(session, "live_status", json!({})).await;
-            if status["running"] == true && status["output"].as_str().unwrap().contains(text) {
+            let live = &self.ask(session, "state", json!({})).await["live"];
+            let log = live["log"].as_str().unwrap();
+            if live["phase"] == "running" && log.lines().any(|line| line.starts_with(text)) {
                 break;
             }
-            assert!(began.elapsed() < PATIENCE, "{check}: no {text} in {status}");
+            assert!(began.elapsed() < PATIENCE, "{check}: no {text} in {live}");
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         println!("{check}: {} ms", began.elapsed().as_millis());
@@ -211,8 +222,7 @@ async fn run(library: &Path) {
     client
         .ask(a, "live_view", json!({ "first": 1, "last": 1 }))
         .await;
-    let started = client.ask(a, "live_start", json!({})).await;
-    assert_eq!(started["phase"], "running", "{started}");
+    client.start(a).await;
     client
         .shows(a, "UL_SECTION_INITIAL", "The main and included files")
         .await;
@@ -241,7 +251,7 @@ async fn run(library: &Path) {
     let broken = unicode.replace("Unsaved café", "\\UnderleafInvalidCommand\nUnsaved café");
     retype(&main_doc, &broken);
     client
-        .shows(a, "Undefined control sequence", "A LaTeX error")
+        .shows(a, "! Undefined control sequence", "A LaTeX error")
         .await;
     let recovered = unicode.replace("UL_MAIN_UNSAVED", "UL_MAIN_RECOVERED");
     retype(&main_doc, &recovered);
@@ -275,8 +285,13 @@ async fn run(library: &Path) {
     let result = &built["result"];
     assert_eq!(result["ok"], true, "{}", result["log"]);
     is_pdf(Path::new(result["pdf"].as_str().unwrap()));
-    let status = client.ask(a, "live_status", json!({})).await;
-    assert_eq!(status["running"], true, "a build stopped the preview");
+    retype(
+        &section_doc,
+        &section.replace("UL_SECTION_INITIAL", "UL_AFTER_BUILD"),
+    );
+    client
+        .shows(a, "UL_AFTER_BUILD", "The preview beside a build")
+        .await;
 
     // A main file in a folder, its inputs from there: the session starts the preview
     // again for it.
@@ -364,8 +379,7 @@ async fn run(library: &Path) {
     let mut ended = client.events.lock().unwrap().len();
     let b = client.open().await;
     let taken = client.document(b, "main.tex").await;
-    let started = client.ask(b, "live_start", json!({})).await;
-    assert_eq!(started["phase"], "running", "{started}");
+    client.start(b).await;
     let owner = format!("\\typeout{{UL_REPLACEMENT_OWNER}}\n{paged}");
     retype(&taken, &owner);
     client
@@ -374,8 +388,17 @@ async fn run(library: &Path) {
     let stopped = |e: &Value| e["phase"] == "stopped";
     client.event(&mut ended, a, "live", stopped).await;
     client.ask(a, "close", json!({})).await;
-    let status = client.ask(b, "live_status", json!({})).await;
-    assert_eq!(status["running"], true, "the old owner stopped the new one");
+    retype(
+        &taken,
+        &owner.replace("UL_REPLACEMENT_OWNER", "UL_OWNER_AFTER_CLOSE"),
+    );
+    client
+        .shows(
+            b,
+            "UL_OWNER_AFTER_CLOSE",
+            "The new owner's after the old closed",
+        )
+        .await;
 
     // TeXpresso never ended on its own, and no failure was reported.
     assert!(client.since(0, "live_restarted").is_empty());

@@ -15,6 +15,9 @@ final class BuildPanelModel {
     var logFilter = ""
     var showsWarnings = true
 
+    /// Whether it shows the Live Preview Log, which the session sends only then.
+    var showsLiveLog: Bool { shown && tab == .texpresso }
+
     func show(_ tab: PanelTab) {
         self.tab = tab
         shown = true

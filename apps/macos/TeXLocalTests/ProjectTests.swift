@@ -329,14 +329,14 @@ final class ProjectFlowTests {
         panel.openForFailedBuild()
         panel.shown = false
         panel.show(.texpresso)
-        #expect(project.texpresso.showsLog)
+        #expect(panel.showsLiveLog)
         panel.tab = .issues
-        #expect(!project.texpresso.showsLog)
+        #expect(!panel.showsLiveLog)
         panel.closeAfterCleanBuild()
         #expect(panel.shown)
         panel.tab = .texpresso
         panel.shown = false
-        #expect(!project.texpresso.showsLog)
+        #expect(!panel.showsLiveLog)
         await app.close()
     }
 

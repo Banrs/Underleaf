@@ -28,7 +28,8 @@ type News = Result<Events, CoreError>;
 struct Fake {
     calls: Mutex<Vec<String>>,
     builds: Mutex<VecDeque<oneshot::Sender<Result<CompileResult, CoreError>>>>,
-    starts: Mutex<Vec<(Vec<String>, Option<String>)>>,
+    /// Each start's files, and whether it was a restart of the session's own.
+    starts: Mutex<Vec<(Vec<String>, bool)>>,
     /// Whether each start gave TeXpresso the host's pane, rather than its own window.
     panes: Mutex<Vec<bool>>,
     updates: Mutex<Vec<(String, String)>>,
@@ -37,18 +38,13 @@ struct Fake {
     edit_answers: Mutex<VecDeque<Result<(), CoreError>>>,
     news: Mutex<Option<Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<News>>>>>,
     news_tx: Mutex<Option<mpsc::UnboundedSender<News>>>,
-    tokens: Mutex<u64>,
 }
 
-fn status(running: bool, token: Option<String>) -> Status {
+fn status(running: bool) -> Status {
     Status {
-        available: true,
         running,
-        log: String::new(),
-        output: String::new(),
-        error: None,
         revision: 1,
-        session: token,
+        ..Status::default()
     }
 }
 
@@ -136,38 +132,33 @@ impl Engine for Fake {
 
     fn live_start(
         &self,
-        _root: PathBuf,
-        files: Vec<FileBuffer>,
-        expected: Option<String>,
-        pane: Option<Pane>,
-    ) -> Fut<Result<Status, CoreError>> {
+        _owner: u64,
+        _root: &Path,
+        files: &[FileBuffer],
+        replacing: bool,
+        pane: Option<&Pane>,
+    ) -> Result<Status, CoreError> {
         self.log("live_start");
         self.panes.lock().unwrap().push(pane.is_some());
-        let paths = files.into_iter().map(|f| f.path).collect();
-        self.starts.lock().unwrap().push((paths, expected));
+        let paths = files.iter().map(|f| f.path.clone()).collect();
+        self.starts.lock().unwrap().push((paths, replacing));
         let (tx, rx) = mpsc::unbounded_channel();
         *self.news_tx.lock().unwrap() = Some(tx);
         *self.news.lock().unwrap() = Some(Arc::new(tokio::sync::Mutex::new(rx)));
-        let mut tokens = self.tokens.lock().unwrap();
-        *tokens += 1;
-        let token = format!("t{tokens}");
-        Box::pin(async move { Ok(status(true, Some(token))) })
+        Ok(status(true))
     }
 
-    fn live_update(
-        &self,
-        _root: PathBuf,
-        path: String,
-        text: String,
-        _token: String,
-    ) -> Fut<Result<(), CoreError>> {
-        self.updates.lock().unwrap().push((path, text));
-        Box::pin(async { Ok(()) })
+    fn live_update(&self, _owner: u64, path: &str, text: &str) -> Result<(), CoreError> {
+        self.updates
+            .lock()
+            .unwrap()
+            .push((path.to_owned(), text.to_owned()));
+        Ok(())
     }
 
     fn live_edit(
         &self,
-        _token: &str,
+        _owner: u64,
         path: &str,
         start: usize,
         remove: usize,
@@ -181,15 +172,15 @@ impl Engine for Fake {
         answer.unwrap_or(Ok(()))
     }
 
-    fn live_view(&self, _token: &str, _first: u32, _last: u32) {
+    fn live_view(&self, _owner: u64, _first: u32, _last: u32) {
         self.log("live_view");
     }
 
-    fn live_caret(&self, _token: &str, _path: &str, _offset: usize) {
+    fn live_caret(&self, _owner: u64, _path: &str, _offset: usize) {
         self.log("live_caret");
     }
 
-    fn live_wait(&self, _root: PathBuf, _token: String, _after: u64) -> Fut<News> {
+    fn live_wait(&self, _owner: u64, _after: u64) -> Fut<News> {
         let news = self.news.lock().unwrap().clone();
         Box::pin(async move {
             let Some(news) = news else {
@@ -203,18 +194,23 @@ impl Engine for Fake {
         })
     }
 
-    fn live_stop(&self, _root: PathBuf, _token: String) -> Fut<Result<Status, CoreError>> {
+    fn live_stop(&self, _owner: u64) -> Result<Status, CoreError> {
         self.log("live_stop");
-        Box::pin(async { Ok(status(false, None)) })
+        Ok(status(false))
     }
 
-    fn live_rescan(&self, _root: PathBuf, token: String) -> Fut<Result<Status, CoreError>> {
+    fn live_rescan(&self, _owner: u64) -> Result<Status, CoreError> {
         self.log("live_rescan");
-        Box::pin(async move { Ok(status(true, Some(token))) })
+        Ok(status(true))
     }
 
-    fn live_status(&self, _root: &Path, token: Option<&str>) -> Result<Status, CoreError> {
-        Ok(status(token.is_some(), token.map(str::to_owned)))
+    /// TeXpresso's log and output, as the Live Preview Log shows them.
+    fn live_status(&self, _owner: u64) -> Result<Status, CoreError> {
+        Ok(Status {
+            log: "TeX's log".into(),
+            output: "TeX's output".into(),
+            ..status(true)
+        })
     }
 }
 
@@ -815,7 +811,7 @@ async fn a_preview_that_ends_after_ten_seconds_restarts_and_a_new_one_reports() 
     rig.state().await;
     let starts = rig.fake.starts.lock().unwrap().clone();
     assert_eq!(starts.len(), 2);
-    assert_eq!(starts[1].1.as_deref(), Some("t1"));
+    assert!(starts[1].1, "a restart of its own");
     assert_eq!(rig.of_type("live_restarted").await.len(), 1);
     // At once after its start, the end is reported.
     rig.fake.send_news(Ok(Events {
@@ -860,8 +856,54 @@ async fn another_windows_preview_ends_this_ones() {
     doc.edit(0, 0, "x");
     let state = rig.state().await;
     assert_eq!(state["live"]["phase"], "stopped");
-    assert_eq!(state["live"]["token"], Value::Null);
     assert_eq!(state["live"]["failure"], "Another window");
+    // The preview is another's: its log isn't this session's.
+    rig.ok("live_log", json!({ "shown": true })).await;
+    assert_eq!(rig.state().await["live"]["log"], "Another window");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_live_event_carries_the_log_while_the_host_shows_it() {
+    let mut rig = Rig::new(false).await;
+    live(&rig).await;
+    let logs = |events: Vec<Value>| -> Vec<Value> {
+        events
+            .into_iter()
+            .map(|event| event["log"].clone())
+            .collect()
+    };
+    assert!(logs(rig.of_type("live").await).iter().all(Value::is_null));
+    rig.ok("live_log", json!({ "shown": true })).await;
+    assert_eq!(
+        logs(rig.of_type("live").await),
+        [json!("TeX's log\n\nTeX's output")]
+    );
+    // What went wrong comes first.
+    rig.fake.send_news(Ok(Events {
+        error: Some("TeXpresso exited".into()),
+        ..news(false)
+    }));
+    wait(1).await;
+    let shown = logs(rig.of_type("live").await);
+    let last = shown.last().unwrap();
+    assert_eq!(last, "TeXpresso exited\n\nTeX's log\n\nTeX's output");
+    // Hidden, the log is no longer sent, but with an alert, which opens it.
+    rig.ok("live_log", json!({ "shown": false })).await;
+    live(&rig).await;
+    assert!(logs(rig.of_type("live").await).iter().all(Value::is_null));
+    rig.fake.send_news(Ok(Events {
+        error: Some("TeXpresso exited".into()),
+        ..news(false)
+    }));
+    wait(1).await;
+    let lives = rig.of_type("live").await;
+    let (alerts, others): (Vec<Value>, Vec<Value>) =
+        lives.into_iter().partition(|event| event["alert"] == true);
+    assert_eq!(
+        logs(alerts),
+        [json!("TeXpresso exited\n\nTeX's log\n\nTeX's output")]
+    );
+    assert!(logs(others).iter().all(Value::is_null));
 }
 
 #[tokio::test(start_paused = true)]
@@ -877,7 +919,7 @@ async fn a_rename_restarts_the_preview_once_it_settles() {
     rig.state().await;
     let starts = rig.fake.starts.lock().unwrap().clone();
     assert_eq!(starts.len(), 2);
-    assert_eq!(starts[1].1.as_deref(), Some("t1"));
+    assert!(starts[1].1, "a restart of its own");
 }
 
 #[tokio::test(start_paused = true)]

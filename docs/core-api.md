@@ -88,11 +88,12 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_live_stop` | | live state | |
 | `session_live_view` | `first`, `last` | null | Pages in view, from 0. Send before Start and on scroll. |
 | `session_live_caret` | `path`, `offset` | null | On every caret move (UTF-16); told to TeXpresso once it settles (150 ms). |
-| `session_live_status` | | TeXpresso status (`log`, `output`, `error`, …) | For the Live Preview Log; fetch when `live.revision` rises and the log shows. |
+| `session_live_log` | `shown` | null | Whether the host shows the Live Preview Log. While it does, each `live` event carries the log, and one comes at once. |
 
 Every other command (`file_tree`, `read_file`, `analyze_project`, `synctex_*`,
-`get_ui_state`, `pdf_path` for a new main file's PDF, …) is the service's, unchanged. With live
-preview on, pass `live: true, session: <live.token>` to the SyncTeX commands.
+`get_ui_state`, `pdf_path` for a new main file's PDF, …) is the service's, unchanged. While the
+PDF shown is the live document, pass `live: true, session: <the session's number>` to
+`synctex_forward` and `synctex_inverse`.
 
 A session's events can come before its `session_open` has answered (see Threading).
 The session keeps no analysis of the project (`analyze_project` depends on the file
@@ -133,7 +134,7 @@ Each is `{"type", "session", …}`.
 | `build_cleaned` | | Clear the PDF unless live. |
 | `tree` | `tree` (as `file_tree`) | Redraw the sidebar. |
 | `files_changed` | `paths` | Listed files changed in place that aren't open (an image shown, say). |
-| `live` | `phase` (`stopped`/`starting`/`running`/`stopping`), `halted`, `failure`, `error`, `token`, `revision`, `alert` | Title and toolbar; `alert`: show the Live Preview Log. `phase: stopped` ends the live PDF (show the build's). |
+| `live` | `phase` (`stopped`/`starting`/`running`/`stopping`), `halted`, `failure`, `error`, `log`, `alert` | Title and toolbar; `alert`: show the Live Preview Log. `phase: stopped` ends the live PDF (show the build's). `log`: the Live Preview Log's whole text (what went wrong, TeXpresso's error, TeX's log and output) with `alert` and while `session_live_log` says it shows, else null: keep the last one. |
 | `live_document` | `path`, `version`, `serial`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
 | `live_page` | `page`, `path`, `serial` | Draw over that page now if a live document shows and has it; otherwise drop it. The session sends a batch's `live_document` before the batch's pages and drops the pages a document has, so a page is always newer than the document before it, and the next document has any page dropped. |
 | `live_restarted` | | Note “Live Preview Restarted”. |
@@ -205,6 +206,14 @@ Every change a host follows since commit d6bee12, in the order made.
   changes what Swift or C# sees.
 - In Rust, `Sessions::call_then` is gone: `Sessions::call` answers a session command, and
   `Sessions::send` queues one as it is called and answers later.
+- A live preview is its project session's, by the session's number: the `live` event has no
+  `token`, and `synctex_forward` and `synctex_inverse` take the session's number as
+  `session` with `live: true`. Windows: nothing to change (it has no live preview yet).
+- `session_live_status` is gone, and the `live` event has no `revision`: a host says with
+  `session_live_log {shown}` whether it shows the Live Preview Log, and while it does, each
+  `live` event carries the log's whole text as `log` (null otherwise), as the Mac app put it
+  together: what went wrong, TeXpresso's error, TeX's log and its output. An `alert`, which
+  opens the log, carries it too. Windows: nothing to change.
 
 ## From the Mac app's Swift
 
@@ -218,7 +227,7 @@ What moves out of `ProjectModel`, `TeXpressoSession` and `FolderWatcher`:
 | `compile`, `compileQueued`, `stopRequested`, `stopCompile`, `cleanBuildFolder`, `markIssues`, `goToIssue`, `chooseIssue`, `announceResult`'s choice | `session_compile`, `session_stop_compile`, `session_clean`, `session_issue`, `session_choose_issue`; `build`, `build_finished`, `issues` |
 | `mutate` lane, `keepingLive`, `liveIntent`, `liveChanges`, `restartTeXpresso`, `refreshTeXpressoDisk`, `filesChanged`, `mainFileChanged`, `performRename`'s bookkeeping, `trashEntry`'s checks | the session's queue; `session_rename`, `session_set_settings`, `session_prepare_delete` / `session_deleted` |
 | `refreshSymbols`, `SourceTextView.symbols` → `setSymbols` | the session's scan; session documents complete from it |
-| `TeXpressoSession` (phase, generation, lane, pending/synced, retry, halting, restartable, caret settling, `Inbox`/`LiveNews`, the `texpresso_wait` thread) | `session_live_*`; `live`, `live_document`, `live_page`, `live_restarted` events |
+| `TeXpressoSession` (phase, generation, lane, pending/synced, retry, halting, restartable, caret settling, `Inbox`/`LiveNews`, the `texpresso_wait` thread, the Live Preview Log's fetches and text) | `session_live_*`; `live` (with its `log`), `live_document`, `live_page`, `live_restarted` events |
 
 What stays in Swift: windows, panes and alerts; the editor (`SourceTextView` sends
 `tl_source_edit` for each edit, reloads on `document_reload`); PDFKit (`PDFController`,

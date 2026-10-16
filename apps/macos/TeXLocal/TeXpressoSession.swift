@@ -2,23 +2,14 @@ import Foundation
 import Observation
 import PDFKit
 
-nonisolated struct TeXpressoStatus: Decodable, Sendable, Equatable {
-    let running: Bool
-    let log: String
-    let output: String
-    let error: String?
-    let session: String?
-    let revision: Int
-}
-
 /// The session's `live` event, and its answer to Start and Stop.
 nonisolated struct LiveState: Decodable, Sendable {
     let phase: TeXpressoSession.Phase
     let halted: Bool
     let failure: String?
     let error: String?
-    let token: String?
-    let revision: Int
+    /// The Live Preview Log's whole text, while the window shows it (`session_live_log`) and with an alert; nil otherwise.
+    let log: String?
     /// An error the window hasn't been shown yet: the Live Preview Log opens on it. Start's and Stop's answers have none.
     let alert: Bool?
 }
@@ -93,25 +84,24 @@ nonisolated struct LivePage: @unchecked Sendable {
 final class TeXpressoSession {
     nonisolated enum Phase: String, Decodable, Sendable { case stopped, starting, running, stopping }
 
-    private(set) var phase = Phase.stopped
-    private(set) var status: TeXpressoStatus?
+    private(set) var phase = Phase.stopped {
+        didSet { if phase != .stopped { used = true } }
+    }
     private(set) var failure: String?
     private var error: String?
     private(set) var halted = false
+    /// The Live Preview Log as the session last sent it.
+    private(set) var log = ""
+    /// Whether Live Preview has started in this window.
+    private(set) var used = false
     private var acknowledged = false
-    /// TeXpresso's session, for SyncTeX against its PDF.
-    @ObservationIgnored private(set) var token: String?
-    @ObservationIgnored private var revision = 0
     @ObservationIgnored var onAlert: () -> Void = {}
     @ObservationIgnored var onEnded: () -> Void = {}
-    @ObservationIgnored var readStatus: @MainActor () async -> TeXpressoStatus? = { nil }
-    @ObservationIgnored private var logShown: @MainActor () -> Bool = { false }
     @ObservationIgnored private var logWatch: Task<Void, Never>?
 
     var active: Bool { phase == .starting || phase == .running }
     var canStart: Bool { phase == .stopped }
     var needsAttention: Bool { halted || !acknowledged && (failure != nil || error != nil) }
-    var used: Bool { phase != .stopped || status != nil || failure != nil }
     var title: LocalizedStringResource {
         switch phase {
         case .stopped: needsAttention ? "Live Preview Needs Attention" : "Live Preview Stopped"
@@ -121,24 +111,13 @@ final class TeXpressoSession {
         }
     }
 
-    var log: String {
-        var parts: [String] = []
-        if let failure { parts.append(failure) }
-        if let error = status?.error, error != failure { parts.append(error) }
-        if let text = status?.log, !text.isEmpty { parts.append(text) }
-        if let text = status?.output, !text.isEmpty { parts.append(text) }
-        return parts.joined(separator: "\n\n")
-    }
-
-    /// The build panel's: whether it shows the Live Preview Log.
-    var showsLog: Bool { logShown() }
-
-    /// The log is read while the panel shows it, and the trouble of a session that has ended counts as seen once the log closes.
-    func watchLog(_ shows: @escaping @MainActor @Sendable () -> Bool) {
-        logShown = shows
+    /// The session sends the log while the panel shows it, as `tell` says, and the trouble of a session that has ended counts
+    /// as seen once the log closes.
+    func watchLog(_ shows: @escaping @MainActor @Sendable () -> Bool, tell: @escaping @MainActor (Bool) -> Void) {
         logWatch = track(shows, initial: false) { [weak self] shows in
             guard let self else { return }
-            if shows { fetchStatus() } else if phase == .stopped { acknowledged = true }
+            tell(shows)
+            if !shows, phase == .stopped { acknowledged = true }
         }
     }
 
@@ -168,34 +147,14 @@ final class TeXpressoSession {
     func receive(_ state: LiveState) {
         let was = phase
         if state.phase == .starting, was == .stopped { acknowledged = false }
-        (phase, halted, failure, error, token) = (state.phase, state.halted, state.failure, state.error, state.token)
+        (phase, halted, failure, error) = (state.phase, state.halted, state.failure, state.error)
+        // A log not sent is the one before.
+        if let log = state.log { self.log = log }
         if state.alert == true {
             acknowledged = false
             onAlert()
         }
-        if state.revision > revision {
-            revision = state.revision
-            if showsLog { fetchStatus() }
-        }
-        guard phase == .stopped, was != .stopped else { return }
-        // Its last words, unless it starts again.
-        fetchStatus()
-        onEnded()
-    }
-
-    @ObservationIgnored private var statusFetch: Task<Void, Never>?
-
-    private func fetchStatus() {
-        guard statusFetch == nil, (status?.revision ?? -1) < revision || phase == .stopped else { return }
-        let ended = phase == .stopped, asked = revision
-        statusFetch = Task { [weak self] in
-            guard let self else { return }
-            let status = await readStatus()
-            statusFetch = nil
-            // A session that has ended keeps its log for whoever started it.
-            if let status, status.session != nil || ended { self.status = status }
-            if showsLog, revision > asked { fetchStatus() }
-        }
+        if phase == .stopped, was != .stopped { onEnded() }
     }
 }
 

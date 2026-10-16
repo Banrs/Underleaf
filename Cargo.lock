@@ -1145,7 +1145,6 @@ dependencies = [
  "chrono",
  "dunce",
  "flate2",
- "getrandom",
  "libc",
  "memchr",
  "notify",

@@ -85,12 +85,14 @@ in `crates/texlocal-core/src/session/tests.rs`, which run with `cargo test --wor
 - Live preview uses XeTeX regardless of the project's engine, so engine-specific documents
   can differ.
 - Upstream's editor protocol has no PDF endpoint; the patch adds it. While the live document
-  shows, PDF↔source navigation uses its own SyncTeX (`live: true, session: <token>`).
+  shows, PDF↔source navigation uses its own SyncTeX (`live: true, session: <the project
+  session's number>`).
 - The live document has no links: MuPDF's PDF device carries content and no annotations.
   `hyperref` links work again in a build's PDF.
 - A normal Compile is still needed for final output and bibliography tools; live sessions
   include the normal build directory for existing auxiliary files.
-- Sessions are temporary: closing the project stops them. Starting live in another window
-  replaces the previous session, whose late requests cannot affect the new one.
+- Sessions are temporary: closing the project stops them. A preview is its project session's;
+  starting live in another session of the project replaces the previous preview, whose late
+  requests cannot affect the new one.
 - Host validation failures, such as a file over 8 MB, stay visible until that file is
   accepted and do not block other files.

@@ -41,8 +41,9 @@ impl Phase {
 #[derive(Default)]
 pub(crate) struct Live {
     pub phase: Phase,
-    /// The token of the TeXpresso session this one owns; kept after it ends, for a restart.
-    pub owner: Option<String>,
+    /// Whether the project's TeXpresso preview is this session's: kept after it ends, for a
+    /// restart; gone with the user's Stop or another session's Start.
+    pub owns: bool,
     /// Paths to send whole: None for the document's own text when sent, else a file's text from disk.
     pub pending: BTreeMap<String, Option<String>>,
     /// Paths TeXpresso has as the session has them, so a key's edit fits its copy.
@@ -53,7 +54,10 @@ pub(crate) struct Live {
     failure: Option<String>,
     reported: BTreeSet<String>,
     pub status: Option<Status>,
+    /// TeXpresso's as last seen: when it rises, the log may have changed.
     revision: u64,
+    /// The host shows the Live Preview Log: the `live` event carries it.
+    log_shown: bool,
     pub halted: bool,
     pub halting_at: Option<Instant>,
     started: Option<Instant>,
@@ -97,14 +101,36 @@ impl Actor {
     pub fn live_state(&self) -> Value {
         let live = &self.live;
         let errors = live.errors();
+        let failure = (!errors.is_empty()).then(|| errors.join("\n\n"));
         json!({
             "phase": live.phase.name(),
             "halted": live.halted,
-            "failure": (!errors.is_empty()).then(|| errors.join("\n\n")),
+            "log": live.log_shown.then(|| self.live_log(failure.as_deref())),
+            "failure": failure,
             "error": live.status.as_ref().and_then(|s| s.error.clone()),
-            "token": live.owner,
-            "revision": live.revision,
         })
+    }
+
+    /// The Live Preview Log as the host shows it: what went wrong, then the preview's own
+    /// error, its log and its output.
+    fn live_log(&self, failure: Option<&str>) -> String {
+        let status = if self.live.owns {
+            self.engine.live_status(self.id).ok()
+        } else {
+            None
+        };
+        let mut parts: Vec<&str> = failure.into_iter().collect();
+        if let Some(status) = &status {
+            parts.extend(
+                status
+                    .error
+                    .as_deref()
+                    .filter(|&error| Some(error) != failure),
+            );
+            let texts = [status.log.as_str(), status.output.as_str()];
+            parts.extend(texts.into_iter().filter(|text| !text.is_empty()));
+        }
+        parts.join("\n\n")
     }
 
     /// `alert`: an error the host hasn't been shown yet.
@@ -113,7 +139,19 @@ impl Actor {
         if state != self.live.shown || alert {
             self.live.shown = state.clone();
             state["alert"] = alert.into();
+            // The host opens the log on an alert: it comes along.
+            if alert && !self.live.log_shown {
+                state["log"] = self.live_log(state["failure"].as_str()).into();
+            }
             self.emit("live", state);
+        }
+    }
+
+    /// The host shows the Live Preview Log, or no longer does.
+    pub fn show_live_log(&mut self, shown: bool) {
+        self.live.log_shown = shown;
+        if shown {
+            self.publish_live(false);
         }
     }
 
@@ -149,7 +187,7 @@ impl Actor {
         self.live.failure = Some(error.message);
         if error.status == 409 {
             // Another window's preview now: nothing more is sent.
-            self.live.owner = None;
+            self.live.owns = false;
             self.live_cancel_work();
             self.ended(false);
         }
@@ -188,14 +226,12 @@ impl Actor {
         }
     }
 
-    /// Whether a start was tried: `replacing` restarts the session this one owned.
-    pub async fn live_start(&mut self, replacing: bool) -> bool {
+    /// Whether a start was tried: `replacing` restarts the preview this session owns.
+    pub fn live_start(&mut self, replacing: bool) -> bool {
         let phase = self.live.phase;
         if self.closed
             || !replacing && phase != Phase::Stopped
-            || replacing
-                && (phase == Phase::Stopping
-                    || self.live.owner.is_none() && phase != Phase::Starting)
+            || replacing && (phase == Phase::Stopping || !self.live.owns)
         {
             return false;
         }
@@ -205,11 +241,6 @@ impl Actor {
         self.live.reported.clear();
         self.live_reset();
         self.publish_live(false);
-        let expected = self.live.owner.clone().filter(|_| replacing);
-        if replacing && expected.is_none() {
-            self.ended(false);
-            return true;
-        }
         let mut files = Vec::new();
         let mut versions = HashMap::new();
         for (path, doc) in &self.docs {
@@ -227,10 +258,10 @@ impl Actor {
         });
         let start = self
             .engine
-            .live_start(self.root.clone(), files, expected, pane);
-        match start.await {
+            .live_start(self.id, &self.root, &files, replacing, pane.as_ref());
+        match start {
             Ok(status) => {
-                self.live.owner.clone_from(&status.session);
+                self.live.owns = true;
                 self.live.synced = versions.keys().cloned().collect();
                 self.live.sent = versions;
                 (self.live.sent_view, self.live.caret) = (self.live.view, caret);
@@ -238,7 +269,7 @@ impl Actor {
                 if self.live.active() {
                     self.live.started = Some(Instant::now());
                     self.listen();
-                    self.flush_pending().await;
+                    self.flush_pending();
                 }
             }
             Err(error) => {
@@ -251,8 +282,8 @@ impl Actor {
         true
     }
 
-    pub async fn live_restart(&mut self, ended: bool) {
-        let tried = self.live_start(true).await;
+    pub fn live_restart(&mut self, ended: bool) {
+        let tried = self.live_start(true);
         if ended {
             if self.live.active() {
                 self.emit("live_restarted", json!({}));
@@ -262,24 +293,18 @@ impl Actor {
         }
     }
 
-    pub async fn live_stop(&mut self) {
+    pub fn live_stop(&mut self) {
         if self.live.phase == Phase::Stopped {
-            self.live.owner = None;
+            self.live.owns = false;
             return;
         }
         self.live.phase = Phase::Stopping;
         self.live_reset();
         self.publish_live(false);
-        if let Some(owner) = self.live.owner.clone() {
-            match self
-                .engine
-                .live_stop(self.root.clone(), owner.clone())
-                .await
-            {
+        if self.live.owns {
+            match self.engine.live_stop(self.id) {
                 Ok(status) => {
-                    if self.live.owner.as_ref() == Some(&owner) {
-                        self.live.owner = None;
-                    }
+                    self.live.owns = false;
                     self.live.status = Some(status);
                 }
                 Err(error) => {
@@ -294,24 +319,10 @@ impl Actor {
         }
     }
 
-    pub fn live_status(&self) -> Result<Value, CoreError> {
-        let status = self
-            .engine
-            .live_status(&self.root, self.live.owner.as_deref());
-        serde_json::to_value(status?).map_err(|err| CoreError::internal(err.to_string()))
-    }
-
     // MARK: - Edits
 
     /// A key's edit, as the document took it: sent on at once where TeXpresso's copy fits it.
-    pub async fn live_edited(
-        &mut self,
-        path: &str,
-        version: u64,
-        start: u32,
-        length: u32,
-        text: &str,
-    ) {
+    pub fn live_edited(&mut self, path: &str, version: u64, start: u32, length: u32, text: &str) {
         if !self.live.active() || self.closed {
             return;
         }
@@ -330,11 +341,10 @@ impl Actor {
         if live.phase == Phase::Running
             && live.synced.contains(path)
             && !live.pending.contains_key(path)
-            && let Some(owner) = live.owner.clone()
         {
             let sent = self
                 .engine
-                .live_edit(&owner, path, start as usize, length as usize, text);
+                .live_edit(self.id, path, start as usize, length as usize, text);
             match sent {
                 Ok(()) => return,
                 Err(error) if error.status == 409 => return self.fail(error),
@@ -345,7 +355,7 @@ impl Actor {
             }
         }
         self.live.pending.insert(path.to_owned(), None);
-        self.flush_pending().await;
+        self.flush_pending();
     }
 
     /// A document's whole text is to go: it opened, or the disk's replaced it.
@@ -357,7 +367,7 @@ impl Actor {
         }
     }
 
-    pub async fn flush_pending(&mut self) {
+    pub fn flush_pending(&mut self) {
         if self.live.phase != Phase::Running || self.closed || self.live.pending.is_empty() {
             return;
         }
@@ -365,9 +375,6 @@ impl Actor {
         while self.live.phase == Phase::Running && !self.closed {
             let Some((path, text)) = self.live.pending.pop_first() else {
                 break;
-            };
-            let Some(owner) = self.live.owner.clone() else {
-                return;
             };
             let (text, version) = match text {
                 Some(text) => (text, None),
@@ -379,10 +386,7 @@ impl Actor {
                     None => continue,
                 },
             };
-            let update =
-                self.engine
-                    .live_update(self.root.clone(), path.clone(), text.clone(), owner);
-            match update.await {
+            match self.engine.live_update(self.id, &path, &text) {
                 Ok(()) => {
                     self.live.rejected.remove(&path);
                     if self.live.pending.is_empty() {
@@ -415,14 +419,11 @@ impl Actor {
         }
     }
 
-    pub async fn live_rescan(&mut self) {
-        let Some(owner) = self.live.owner.clone() else {
-            return;
-        };
+    pub fn live_rescan(&mut self) {
         if self.live.phase != Phase::Running || self.closed {
             return;
         }
-        match self.engine.live_rescan(self.root.clone(), owner).await {
+        match self.engine.live_rescan(self.id) {
             Ok(status) => self.receive(status),
             Err(error) => self.fail(error),
         }
@@ -436,9 +437,8 @@ impl Actor {
         if self.live.phase == Phase::Running
             && !self.live.window
             && self.live.sent_view != Some(pages)
-            && let Some(owner) = &self.live.owner
         {
-            self.engine.live_view(owner, pages.0, pages.1);
+            self.engine.live_view(self.id, pages.0, pages.1);
             self.live.sent_view = Some(pages);
         }
     }
@@ -464,10 +464,9 @@ impl Actor {
             && live.synced.contains(&path)
             && !live.pending.contains_key(&path)
             && live.caret != moved
-            && let Some(owner) = live.owner.clone()
         {
             self.live.caret = moved;
-            self.engine.live_caret(&owner, &path, offset);
+            self.engine.live_caret(self.id, &path, offset);
         }
     }
 
@@ -490,7 +489,7 @@ impl Actor {
 
     /// Files changed on disk reach TeXpresso. A save of an open document isn't news to it:
     /// a rescan as it typesets the edit stalled it (TeXpresso e8df770).
-    pub async fn refresh_live_disk(&mut self) {
+    pub fn refresh_live_disk(&mut self) {
         let mut others = false;
         for path in std::mem::take(&mut self.live.disk_paths) {
             if !self.live.active() || self.closed {
@@ -509,28 +508,25 @@ impl Actor {
             }
         }
         if others {
-            self.flush_pending().await;
-            self.live_rescan().await;
+            self.flush_pending();
+            self.live_rescan();
         }
     }
 
     // MARK: - What the preview sends back
 
     fn listen(&mut self) {
-        let Some(owner) = self.live.owner.clone() else {
-            return;
-        };
         self.live.listen_seq += 1;
-        let (seq, engine, root, tx) = (
+        let (seq, owner, engine, tx) = (
             self.live.listen_seq,
+            self.id,
             std::sync::Arc::clone(&self.engine),
-            self.root.clone(),
             self.tx.clone(),
         );
         let task = tokio::spawn(async move {
             let mut after = 0;
             loop {
-                let news = engine.live_wait(root.clone(), owner.clone(), after).await;
+                let news = engine.live_wait(owner, after).await;
                 let running = news.as_ref().is_ok_and(|events| events.running);
                 if let Ok(events) = &news {
                     after = events.seq;
@@ -596,7 +592,7 @@ impl Actor {
         }
         if !events.running {
             let restartable = events.error.is_some()
-                && self.live.owner.is_some()
+                && self.live.owns
                 && self
                     .live
                     .started

@@ -240,7 +240,7 @@ impl Actor {
 
     pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) {
         loop {
-            self.run_later().await;
+            self.run_later();
             if self.closed {
                 break;
             }
@@ -248,14 +248,14 @@ impl Actor {
                 Some(at) => tokio::select! {
                     message = rx.recv() => message,
                     () = tokio::time::sleep_until(at) => {
-                        self.fire().await;
+                        self.fire();
                         continue;
                     }
                 },
                 None => rx.recv().await,
             };
             match message {
-                Some(message) => self.handle(message).await,
+                Some(message) => self.handle(message),
                 None => break,
             }
         }
@@ -270,7 +270,7 @@ impl Actor {
         self.events.send(fields);
     }
 
-    async fn handle(&mut self, message: Msg) {
+    fn handle(&mut self, message: Msg) {
         match message {
             Msg::Edited {
                 doc,
@@ -278,9 +278,9 @@ impl Actor {
                 start,
                 length,
                 text,
-            } => self.edited(doc, version, start, length, text).await,
+            } => self.edited(doc, version, start, length, text),
             Msg::Reloaded { doc, version } => self.reloaded(doc, version),
-            Msg::Command { name, args, reply } => self.command(&name, &args, reply).await,
+            Msg::Command { name, args, reply } => self.command(&name, &args, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
             Msg::Symbols(seq, scan, result) => self.symbols_done(seq, scan, result),
@@ -309,7 +309,7 @@ impl Actor {
         .min()
     }
 
-    async fn fire(&mut self) {
+    fn fire(&mut self) {
         let now = Instant::now();
         let due = |at: Option<Instant>| at.is_some_and(|at| at <= now);
         if due(self.autosave_at) {
@@ -334,7 +334,7 @@ impl Actor {
         }
         if due(self.live.retry_at) {
             self.live.retry_at = None;
-            self.flush_pending().await;
+            self.flush_pending();
         }
         if due(self.live.restart_at) {
             self.live.restart_at = None;
@@ -342,11 +342,11 @@ impl Actor {
         }
         if due(self.live.disk_at) {
             self.live.disk_at = None;
-            self.refresh_live_disk().await;
+            self.refresh_live_disk();
         }
     }
 
-    async fn run_later(&mut self) {
+    fn run_later(&mut self) {
         while let Some(next) = self.later.pop_front() {
             if self.closed {
                 self.later.clear();
@@ -356,27 +356,27 @@ impl Actor {
                 Later::Compile(auto) => {
                     let _ = self.compile(auto);
                 }
-                Later::Restart { ended } => self.live_restart(ended).await,
-                Later::FlushLive => self.flush_pending().await,
-                Later::Rescan => self.live_rescan().await,
+                Later::Restart { ended } => self.live_restart(ended),
+                Later::FlushLive => self.flush_pending(),
+                Later::Rescan => self.live_rescan(),
             }
         }
     }
 
     // MARK: - Commands
 
-    async fn command(&mut self, name: &str, args: &Value, reply: Reply) {
+    fn command(&mut self, name: &str, args: &Value, reply: Reply) {
         if name == "clean" {
             return self.clean(reply);
         }
-        let answer = self.answer(name, args).await;
+        let answer = self.answer(name, args);
         let _ = reply.send(answer);
     }
 
-    async fn answer(&mut self, name: &str, args: &Value) -> Result<Value, CoreError> {
+    fn answer(&mut self, name: &str, args: &Value) -> Result<Value, CoreError> {
         let path = || paths::rel_key(string_arg(args, "path")?);
         match name {
-            "close" => Ok(self.close().await),
+            "close" => Ok(self.close()),
             "state" => Ok(self.state()),
             "set_options" => {
                 if let Some(auto) = arg::<Option<bool>>(args, "autoCompile")? {
@@ -443,13 +443,17 @@ impl Actor {
             "live_start" => {
                 self.live.intent += 1;
                 self.live.window = arg::<Option<bool>>(args, "window")?.unwrap_or(false);
-                self.live_start(false).await;
+                self.live_start(false);
                 Ok(self.live_state())
             }
             "live_stop" => {
                 self.live_cancel_work();
-                self.live_stop().await;
+                self.live_stop();
                 Ok(self.live_state())
+            }
+            "live_log" => {
+                self.show_live_log(arg(args, "shown")?);
+                Ok(Value::Null)
             }
             "live_view" => {
                 self.live_view(arg(args, "first")?, arg(args, "last")?);
@@ -459,7 +463,6 @@ impl Actor {
                 self.live_caret(path()?, arg(args, "offset")?);
                 Ok(Value::Null)
             }
-            "live_status" => self.live_status(),
             _ => Err(CoreError::not_found(format!(
                 "Unknown command: session_{name}"
             ))),
@@ -488,12 +491,12 @@ impl Actor {
         })
     }
 
-    async fn close(&mut self) -> Value {
+    fn close(&mut self) -> Value {
         let saved = self.flush_all(false).unwrap_or(false);
         self.stop_compile();
         self.closed = true;
         self.live_cancel_work();
-        self.live_stop().await;
+        self.live_stop();
         lock(&self.shared).clear();
         json!({ "saved": saved })
     }
@@ -558,7 +561,7 @@ impl Actor {
         }
     }
 
-    async fn edited(&mut self, doc: u64, version: u64, start: u32, length: u32, text: String) {
+    fn edited(&mut self, doc: u64, version: u64, start: u32, length: u32, text: String) {
         let Some(path) = self.by_id.get(&doc).cloned() else {
             return;
         };
@@ -571,7 +574,7 @@ impl Actor {
         }
         self.publish_doc(&path);
         self.autosave_at = Some(Instant::now() + self.t.autosave);
-        self.live_edited(&path, version, start, length, &text).await;
+        self.live_edited(&path, version, start, length, &text);
     }
 
     fn reloaded(&mut self, doc: u64, version: u64) {

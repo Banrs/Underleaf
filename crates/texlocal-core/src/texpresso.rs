@@ -15,7 +15,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ropey::Rope;
-use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt};
 use tokio::process::ChildStdin;
@@ -38,6 +37,7 @@ const MISSING: &str = if cfg!(windows) {
 } else {
     "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin."
 };
+/// For a session whose preview another session's Start took over, or its own Stop ended.
 const REPLACED: &str =
     "Another window started TeXpresso for this project. Start TeXpresso again to preview here.";
 const TOO_MANY: &str = "Too many files for TeXpresso (limit 256 files / 64 MB).";
@@ -67,15 +67,13 @@ pub struct Pane {
     pub caret: Option<Caret>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Default)]
 pub struct Status {
-    pub available: bool,
     pub running: bool,
     pub log: String,
     pub output: String,
     pub error: Option<String>,
     pub revision: u64,
-    pub session: Option<String>,
 }
 
 /// A page typeset again, alone in a PDF that is complete on disk.
@@ -231,8 +229,8 @@ struct Files {
     bytes: usize,
 }
 struct Session {
-    token: String,
-    executable: PathBuf,
+    /// The project's folder, resolved.
+    root: PathBuf,
     main: String,
     /// Where a patched build writes the document, in a folder of the session's own, when
     /// the client shows it.
@@ -258,10 +256,10 @@ impl Session {
     }
     /// For its owner: whether it still runs, stopped first if the main file has
     /// changed since the start.
-    fn still_running(&self, root: &Path) -> bool {
-        let stamp = settings_stamp(root);
+    fn still_running(&self) -> bool {
+        let stamp = settings_stamp(&self.root);
         let seen = std::mem::replace(&mut lock(&self.state).settings, stamp);
-        if seen != stamp && settings::read_settings(root).main_file != self.main {
+        if seen != stamp && settings::read_settings(&self.root).main_file != self.main {
             self.stop(Some("The main file changed. Start TeXpresso again.".into()));
         }
         lock(&self.state).tree.is_some()
@@ -292,13 +290,11 @@ impl Session {
             log = tail(&log, MAX_OUTPUT).to_owned();
         }
         Status {
-            available: program_at(&self.executable).is_some(),
             running: state.tree.is_some(),
             output: state.output.text(),
             log,
             error: state.error.clone(),
             revision: state.revision,
-            session: Some(self.token.clone()),
         }
     }
     fn events(&self, state: &State, after: u64) -> Events {
@@ -353,8 +349,10 @@ fn remove_pdf_folder(pdf: Option<&Path>) {
 
 #[derive(Default)]
 pub struct Manager {
-    sessions: Mutex<HashMap<PathBuf, Arc<Session>>>,
-    requests: tokio::sync::Mutex<()>,
+    /// Each preview by the project session that owns it, by the number its host gave the
+    /// session: a session has one preview, and a project one, which a session's Start takes
+    /// over.
+    sessions: Mutex<HashMap<u64, Arc<Session>>>,
     revision: Arc<AtomicU64>,
     shutdown: AtomicBool,
 }
@@ -370,20 +368,33 @@ impl Manager {
             session.stop(None);
         }
     }
-    /// The owner's Stop.
-    pub async fn stop_request(&self, root: &Path, token: &str) -> Result<Status, CoreError> {
-        let _request = self.requests.lock().await;
-        let root = dunce::canonicalize(root)?;
-        let session = self.owned(&root, token)?;
+    /// The owner's preview; refused once another session's Start has taken the project
+    /// over, or the owner's own Stop has ended it, so late calls change nothing.
+    fn owned(&self, owner: u64) -> Result<Arc<Session>, CoreError> {
+        lock(&self.sessions)
+            .get(&owner)
+            .cloned()
+            .ok_or_else(|| CoreError::conflict(REPLACED))
+    }
+    /// The previews of the project at the resolved `root`, and with `owner`, that owner's.
+    fn previews(&self, root: &Path, owner: Option<u64>) -> Vec<Arc<Session>> {
+        let sessions = lock(&self.sessions);
+        let of = |(&key, session): (&u64, &Arc<Session>)| {
+            (session.root == root || Some(key) == owner).then(|| Arc::clone(session))
+        };
+        sessions.iter().filter_map(of).collect()
+    }
+    /// The owner's Stop. It ends the ownership too; a rename or a new main file stops the
+    /// preview with `stop`, which keeps it, so the owner's restart can take it back.
+    pub fn stop_request(&self, owner: u64) -> Result<Status, CoreError> {
+        let session = lock(&self.sessions).remove(&owner);
+        let session = session.ok_or_else(|| CoreError::conflict(REPLACED))?;
         session.stop(None);
-        // Explicit Stop ends ownership too; internal host invalidation
-        // uses stop(root), retaining identity for a conditional restart.
-        lock(&self.sessions).remove(&root);
         Ok(session.status())
     }
-    /// The live document the client's session last wrote, which has its SyncTeX beside it.
-    pub fn live_pdf(&self, root: &Path, token: &str) -> Result<PathBuf, CoreError> {
-        let session = self.owned(&dunce::canonicalize(root)?, token)?;
+    /// The live document the owner's preview last wrote, which has its SyncTeX beside it.
+    pub fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError> {
+        let session = self.owned(owner)?;
         let state = lock(&session.state);
         session
             .pdf
@@ -394,81 +405,38 @@ impl Manager {
                 CoreError::not_found("TeXpresso hasn't written a document to sync with yet")
             })
     }
-    fn owned(&self, root: &Path, token: &str) -> Result<Arc<Session>, CoreError> {
-        lock(&self.sessions)
-            .get(root)
-            .filter(|session| session.token == token)
-            .cloned()
-            .ok_or_else(|| CoreError::conflict(REPLACED))
-    }
-    /// The session a token is for, without the disk: its token is its owner's alone.
-    fn held(&self, token: &str) -> Result<Arc<Session>, CoreError> {
-        lock(&self.sessions)
-            .values()
-            .find(|session| session.token == token)
-            .cloned()
-            .ok_or_else(|| CoreError::conflict(REPLACED))
-    }
-    /// The project's session; with a token, only while that client still owns it.
-    fn session(&self, root: &Path, token: Option<&str>) -> Result<Option<Arc<Session>>, CoreError> {
-        match token {
-            Some(token) => self.owned(root, token).map(Some),
-            None => Ok(lock(&self.sessions).get(root).cloned()),
-        }
-    }
+    /// Stops the project's preview and keeps its owner, as a project about to move or go,
+    /// a rename and a new main file do.
     pub fn stop(&self, root: &Path) -> Result<(), CoreError> {
         let root = dunce::canonicalize(root)?;
-        let session = lock(&self.sessions).get(&root).cloned();
-        if let Some(session) = session {
+        for session in self.previews(&root, None) {
             session.stop(None);
         }
         Ok(())
     }
-    fn idle(&self, path_env: &str) -> Status {
-        Status {
-            available: discover(path_env).is_some(),
-            running: false,
-            log: String::new(),
-            output: String::new(),
-            error: None,
-            revision: self.revision.load(Ordering::Relaxed),
-            session: None,
-        }
-    }
-    /// Without a token, inspection: it doesn't acquire ownership. The PATH is built
-    /// only when no session answers: a client polls this while its session runs, and
-    /// the PATH reads the app's settings and TeX's folders.
-    pub fn status<P: AsRef<str>>(
-        &self,
-        root: &Path,
-        token: Option<&str>,
-        path_env: impl FnOnce() -> P,
-    ) -> Result<Status, CoreError> {
-        let root = dunce::canonicalize(root)?;
-        let Some(session) = self.session(&root, token)? else {
-            return Ok(self.idle(path_env().as_ref()));
-        };
-        if token.is_some() {
-            session.still_running(&root);
-        }
+    /// The owner's preview as it is now, its log and output with it.
+    pub fn status(&self, owner: u64) -> Result<Status, CoreError> {
+        let session = self.owned(owner)?;
+        session.still_running();
         Ok(session.status())
     }
-    /// With a `pane`, a build with Underleaf's patch writes the document for it instead
-    /// of opening a window; upstream opens its window all the same.
-    pub async fn start(
+    /// A preview of the project at `root` for the session `owner`, which takes the project
+    /// over from any other session's. `replacing`: the owner's own restart, which takes back
+    /// only a preview still its own. With a `pane`, a build with Underleaf's patch writes
+    /// the document for it instead of opening a window; upstream opens its window all the
+    /// same.
+    pub fn start(
         &self,
+        owner: u64,
         root: &Path,
         files: &[FileBuffer],
-        expected: Option<&str>,
+        replacing: bool,
         path_env: &str,
         pane: Option<&Pane>,
     ) -> Result<Status, CoreError> {
-        let _request = self.requests.lock().await;
         let root = dunce::canonicalize(root)?;
-        // Automatic restart may only replace the same owner; an explicit user
-        // Start omits the expectation to deliberately take over the project.
-        if let Some(token) = expected {
-            self.owned(&root, token)?;
+        if replacing {
+            self.owned(owner)?;
         }
         let stamp = settings_stamp(&root);
         let main = settings::read_settings(&root).main_file;
@@ -493,7 +461,8 @@ impl Manager {
         let failed = |error: String| {
             Ok(Status {
                 error: Some(error),
-                ..self.idle(path_env)
+                revision: self.revision.load(Ordering::Relaxed),
+                ..Status::default()
             })
         };
         let Some(executable) = discover(path_env) else {
@@ -502,8 +471,9 @@ impl Manager {
         let build = paths::safe_path(&root, BUILD_DIR)?;
         fs::create_dir_all(&build)?;
         let build = dunce::canonicalize(build)?;
-        self.stop(&root)?;
-        let token = crate::random_hex(16)?;
+        for session in self.previews(&root, Some(owner)) {
+            session.stop(None);
+        }
         // The session's own folder, for its owner alone: no build output or
         // other session shares it. The session removes it as it stops.
         let pdf = match pane {
@@ -567,8 +537,7 @@ impl Manager {
             Some(json!(["caret", path, offset]))
         });
         let session = Arc::new(Session {
-            token,
-            executable,
+            root: root.clone(),
             main,
             pdf,
             files: Mutex::new(buffers),
@@ -595,7 +564,9 @@ impl Manager {
             if self.shutdown.load(Ordering::Acquire) {
                 session.stop(None);
             }
-            sessions.insert(root, Arc::clone(&session));
+            // Another session's preview of the project is over: its late calls are refused.
+            sessions.retain(|_, other| other.root != root);
+            sessions.insert(owner, Arc::clone(&session));
         }
         tokio::spawn(write_lines(
             child.stdin.take().unwrap(),
@@ -639,23 +610,15 @@ impl Manager {
     }
     /// The whole text of a file: sent as the change from the buffer TeXpresso has, or
     /// whole when it has none. It is also what repairs a copy `edit` refused to change.
-    pub async fn update(
-        &self,
-        root: &Path,
-        rel: &str,
-        text: &str,
-        token: &str,
-    ) -> Result<(), CoreError> {
-        let _request = self.requests.lock().await;
-        let root = dunce::canonicalize(root)?;
-        let session = self.owned(&root, token)?;
-        if !session.still_running(&root) {
+    pub fn update(&self, owner: u64, rel: &str, text: &str) -> Result<(), CoreError> {
+        let session = self.owned(owner)?;
+        if !session.still_running() {
             return Ok(());
         }
         {
             let mut files = lock(&session.files);
             let files = &mut *files;
-            let path = validate_buffer(&root, rel, text, &files.paths)?;
+            let path = validate_buffer(&session.root, rel, text, &files.paths)?;
             let previous = files.texts.get(&path).map(Text::string);
             let held = previous.as_ref().map_or(0, String::len);
             check_limits(
@@ -684,13 +647,13 @@ impl Manager {
     /// changes nothing: `update` with the whole text then puts both right.
     pub fn edit(
         &self,
-        token: &str,
+        owner: u64,
         rel: &str,
         start: usize,
         remove: usize,
         text: &str,
     ) -> Result<(), CoreError> {
-        let session = self.held(token)?;
+        let session = self.owned(owner)?;
         if text.contains('\0') {
             return Err(CoreError::bad_request(INVALID));
         }
@@ -716,8 +679,8 @@ impl Manager {
     }
     /// The pages the client shows, from 0: a patched build typesets as far as the last of
     /// them first, and sends each as it changes.
-    pub fn view(&self, token: &str, first: u32, last: u32) -> Result<(), CoreError> {
-        let session = self.held(token)?;
+    pub fn view(&self, owner: u64, first: u32, last: u32) -> Result<(), CoreError> {
+        let session = self.owned(owner)?;
         if session.sends_pages(&lock(&session.state)) {
             session.send(&[json!(["view", first, last.max(first)])]);
         }
@@ -726,8 +689,8 @@ impl Manager {
     /// Where the client's caret has settled: a patched build takes a snapshot there, so
     /// the first key typed there is answered as quickly as the ones after it. Refused as
     /// `edit` is for a file or place the session's copy doesn't have.
-    pub fn caret(&self, token: &str, rel: &str, offset: usize) -> Result<(), CoreError> {
-        let session = self.held(token)?;
+    pub fn caret(&self, owner: u64, rel: &str, offset: usize) -> Result<(), CoreError> {
+        let session = self.owned(owner)?;
         let files = lock(&session.files);
         let unfit = || CoreError::unfit(UNFIT);
         let path = files.paths.get(rel).ok_or_else(unfit)?;
@@ -741,10 +704,9 @@ impl Manager {
     /// Waits until the session has something a client at `after` hasn't had (`Events`) or
     /// it ends, and answers with what is new; other calls go on meanwhile. `after` is the
     /// `seq` of the last answer, 0 at first.
-    pub async fn wait(&self, root: &Path, token: &str, after: u64) -> Result<Events, CoreError> {
-        let root = dunce::canonicalize(root)?;
-        let session = self.owned(&root, token)?;
-        session.still_running(&root);
+    pub async fn wait(&self, owner: u64, after: u64) -> Result<Events, CoreError> {
+        let session = self.owned(owner)?;
+        session.still_running();
         loop {
             let changed = session.changed.notified();
             tokio::pin!(changed);
@@ -761,11 +723,9 @@ impl Manager {
             changed.await;
         }
     }
-    pub async fn rescan(&self, root: &Path, token: &str) -> Result<Status, CoreError> {
-        let _request = self.requests.lock().await;
-        let root = dunce::canonicalize(root)?;
-        let session = self.owned(&root, token)?;
-        if session.still_running(&root) {
+    pub fn rescan(&self, owner: u64) -> Result<Status, CoreError> {
+        let session = self.owned(owner)?;
+        if session.still_running() {
             session.send(&[json!(["rescan"])]);
         }
         Ok(session.status())
@@ -1058,8 +1018,7 @@ mod tests {
     #[tokio::test]
     async fn output_is_read_a_line_at_a_time_and_an_overlong_line_is_no_message() {
         let session = Arc::new(Session {
-            token: "token".into(),
-            executable: PathBuf::new(),
+            root: PathBuf::new(),
             main: "main.tex".into(),
             pdf: None,
             state: Mutex::new(State {
@@ -1133,33 +1092,39 @@ mod tests {
     }
     /// The first document the session hands its client.
     #[cfg(unix)]
-    async fn first_document(manager: &Manager, root: &Path, token: &str) -> Document {
-        let mut events = manager.wait(root, token, 0).await.unwrap();
+    async fn first_document(manager: &Manager, owner: u64) -> Document {
+        let mut events = manager.wait(owner, 0).await.unwrap();
         while events.pdf.is_none() {
-            events = manager.wait(root, token, events.seq).await.unwrap();
+            events = manager.wait(owner, events.seq).await.unwrap();
         }
         events.pdf.unwrap()
     }
-    /// A session on `root` with `files` open.
+    /// The project session numbered 1, a host's first.
     #[cfg(unix)]
-    async fn begin(manager: &Manager, root: &Path, path_env: &str, files: &[FileBuffer]) -> Status {
-        let pane = Pane::default();
-        manager
-            .start(root, files, None, path_env, Some(&pane))
-            .await
-            .unwrap()
-    }
-    /// Starts again, claiming to be the owner `token`.
+    const OWNER: u64 = 1;
+    /// A preview of `root` for `owner`, with `files` open: the user's Start.
     #[cfg(unix)]
-    async fn restart(
+    fn begin(
         manager: &Manager,
+        owner: u64,
         root: &Path,
         path_env: &str,
-        token: &str,
-    ) -> Result<Status, CoreError> {
+        files: &[FileBuffer],
+    ) -> Status {
+        let pane = Pane::default();
         manager
-            .start(root, &[], Some(token), path_env, Some(&Pane::default()))
-            .await
+            .start(owner, root, files, false, path_env, Some(&pane))
+            .unwrap()
+    }
+    /// The owner's own restart, which takes back only a preview still its own.
+    #[cfg(unix)]
+    fn restart(
+        manager: &Manager,
+        owner: u64,
+        root: &Path,
+        path_env: &str,
+    ) -> Result<Status, CoreError> {
+        manager.start(owner, root, &[], true, path_env, Some(&Pane::default()))
     }
     /// The status code of a refusal.
     #[cfg(unix)]
@@ -1184,11 +1149,10 @@ mod tests {
             "normal build",
         )
         .unwrap();
-        let first = begin(&manager, &root, &path_env, &main_buffer(original)).await;
-        assert!(first.running && first.available);
-        let token = first.session.as_deref().unwrap();
+        let first = begin(&manager, OWNER, &root, &path_env, &main_buffer(original));
+        assert!(first.running);
         // The session's own, outside the project: never a build's output.
-        let pdf = PathBuf::from(first_document(&manager, &root, token).await.path);
+        let pdf = PathBuf::from(first_document(&manager, OWNER).await.path);
         assert!(pdf.ends_with("live.pdf") && !pdf.starts_with(dunce::canonicalize(&root).unwrap()));
         // In a shared temporary folder, for its owner alone.
         let folder = pdf.parent().unwrap().to_owned();
@@ -1209,11 +1173,8 @@ mod tests {
                 .as_ref()
         );
         assert_eq!(opened[2], original);
-        manager
-            .update(&root, "main.tex", updated, token)
-            .await
-            .unwrap();
-        let second = manager.status(&root, Some(token), || &path_env).unwrap();
+        manager.update(OWNER, "main.tex", updated).unwrap();
+        let second = manager.status(OWNER).unwrap();
         assert!(second.running && second.revision > first.revision);
         until(|| commands(&tmp).iter().any(|c| c[0] == "change")).await;
         let sent = commands(&tmp);
@@ -1238,42 +1199,28 @@ mod tests {
             ("build/out.tex", "bad"),
             ("main.tex", &"x".repeat(MAX_FILE + 1)),
         ] {
-            assert!(manager.update(&root, path, text, token).await.is_err());
+            assert!(manager.update(OWNER, path, text).is_err());
         }
-        manager.rescan(&root, token).await.unwrap();
+        manager.rescan(OWNER).unwrap();
         until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
-        assert!(!manager.stop_request(&root, token).await.unwrap().running);
+        assert!(!manager.stop_request(OWNER).unwrap().running);
         assert!(!folder.exists());
-        assert_eq!(
-            refused(restart(&manager, &root, &path_env, token).await),
-            409
-        );
-        let restarted = begin(&manager, &root, &path_env, &[]).await;
+        assert_eq!(refused(restart(&manager, OWNER, &root, &path_env)), 409);
+        let restarted = begin(&manager, OWNER, &root, &path_env, &[]);
         assert!(restarted.running && restarted.revision > second.revision);
-        let token = restarted.session.as_deref().unwrap();
-        manager
-            .update(&root, "main.tex", "EXIT_CLEAN", token)
-            .await
-            .unwrap();
-        until(|| !manager.status(&root, None, || &path_env).unwrap().running).await;
-        assert!(
-            manager
-                .status(&root, None, || &path_env)
-                .unwrap()
-                .error
-                .is_none()
-        );
-        begin(&manager, &root, &path_env, &[]).await;
+        manager.update(OWNER, "main.tex", "EXIT_CLEAN").unwrap();
+        until(|| !manager.status(OWNER).unwrap().running).await;
+        assert!(manager.status(OWNER).unwrap().error.is_none());
+        begin(&manager, OWNER, &root, &path_env, &[]);
         manager.kill_all();
-        assert!(!manager.status(&root, None, || &path_env).unwrap().running);
+        assert!(!manager.status(OWNER).unwrap().running);
     }
     #[cfg(unix)]
     #[tokio::test]
     async fn edits_follow_one_another_and_a_new_main_file_stops_the_session() {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
-        let started = begin(&manager, &root, &path_env, &main_buffer("abc")).await;
-        let token = started.session.as_deref().unwrap();
+        begin(&manager, OWNER, &root, &path_env, &main_buffer("abc"));
         let changes = || -> Vec<Value> {
             let sent = commands(&tmp).into_iter();
             sent.filter(|c| c[0] == "change").collect()
@@ -1283,10 +1230,7 @@ mod tests {
         let mut text = String::from("abc");
         for edit in ["abXc", "aXc", "aXc", "aXcd"] {
             let sent = changes().len();
-            manager
-                .update(&root, "main.tex", edit, token)
-                .await
-                .unwrap();
+            manager.update(OWNER, "main.tex", edit).unwrap();
             if text != edit {
                 until(|| changes().len() > sent).await;
                 let change = changes().pop().unwrap();
@@ -1300,11 +1244,8 @@ mod tests {
 
         fs::write(root.join("other.tex"), "").unwrap();
         crate::settings::write_settings(&root, &json!({ "mainFile": "other.tex" })).unwrap();
-        manager
-            .update(&root, "main.tex", "abc", token)
-            .await
-            .unwrap();
-        let status = manager.status(&root, None, || &path_env).unwrap();
+        manager.update(OWNER, "main.tex", "abc").unwrap();
+        let status = manager.status(OWNER).unwrap();
         assert!(!status.running);
         assert!(status.error.unwrap().contains("main file changed"));
     }
@@ -1314,10 +1255,10 @@ mod tests {
     async fn unexpected_exit_retains_output_and_stops_engine_group() {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
-        let owner = begin(&manager, &root, &path_env, &[]).await;
+        begin(&manager, OWNER, &root, &path_env, &[]);
         until(|| {
             fs::read_to_string(tmp.path().join("engine.pid")).is_ok()
-                && manager.status(&root, None, || &path_env).unwrap().output == "ready"
+                && manager.status(OWNER).unwrap().output == "ready"
         })
         .await;
         let child_pid: i32 = fs::read_to_string(tmp.path().join("engine.pid"))
@@ -1325,15 +1266,11 @@ mod tests {
             .trim()
             .parse()
             .unwrap();
-        let token = owner.session.as_deref().unwrap();
-        manager
-            .update(&root, "main.tex", "EXIT_STUB", token)
-            .await
-            .unwrap();
-        until(|| !manager.status(&root, None, || &path_env).unwrap().running).await;
-        let status = manager.status(&root, None, || &path_env).unwrap();
+        manager.update(OWNER, "main.tex", "EXIT_STUB").unwrap();
+        until(|| !manager.status(OWNER).unwrap().running).await;
+        let status = manager.status(OWNER).unwrap();
         assert_eq!(status.output, "ready");
-        let events = manager.wait(&root, token, 0).await.unwrap();
+        let events = manager.wait(OWNER, 0).await.unwrap();
         assert!(!events.running);
         assert!(status.error.unwrap().contains("exited"));
         // Killed descendants can remain zombies briefly while init reaps them.
@@ -1351,21 +1288,16 @@ mod tests {
     async fn a_session_without_a_pane_leaves_the_document_to_texpressos_window() {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
-        let started = manager
-            .start(&root, &main_buffer("abc"), None, &path_env, None)
-            .await
-            .unwrap();
-        let token = started.session.as_deref().unwrap();
-        assert!(manager.held(token).unwrap().pdf.is_none());
-        manager.view(token, 0, 1).unwrap();
-        manager.caret(token, "main.tex", 1).unwrap();
         manager
-            .update(&root, "main.tex", "EXIT_CLEAN", token)
-            .await
+            .start(OWNER, &root, &main_buffer("abc"), false, &path_env, None)
             .unwrap();
-        until(|| !manager.status(&root, None, || &path_env).unwrap().running).await;
+        assert!(manager.owned(OWNER).unwrap().pdf.is_none());
+        manager.view(OWNER, 0, 1).unwrap();
+        manager.caret(OWNER, "main.tex", 1).unwrap();
+        manager.update(OWNER, "main.tex", "EXIT_CLEAN").unwrap();
+        until(|| !manager.status(OWNER).unwrap().running).await;
         // Its stub printed a document all the same, with no path to write it to.
-        let events = manager.wait(&root, token, 0).await.unwrap();
+        let events = manager.wait(OWNER, 0).await.unwrap();
         assert!(events.pdf.is_none() && events.pages.is_empty());
         let sent = commands(&tmp);
         assert!(sent.iter().any(|c| c.to_string().contains("EXIT_CLEAN")));
@@ -1379,8 +1311,8 @@ mod tests {
     async fn the_log_follows_backtracking_and_has_the_programs_own_output_once_it_fails() {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
-        let started = begin(&manager, &root, &path_env, &[]).await;
-        let session = manager.held(&started.session.unwrap()).unwrap();
+        begin(&manager, OWNER, &root, &path_env, &[]);
+        let session = manager.owned(OWNER).unwrap();
         // Backtracking drops TeX's log, and the process's historical stderr is
         // not put in its place.
         let diagnostic = "Undefined control sequence";
@@ -1392,70 +1324,42 @@ mod tests {
         assert!(!session.status().log.contains(diagnostic));
 
         session.stop(Some("TeXpresso exited".into()));
-        let status = manager.status(&root, None, || &path_env).unwrap();
+        let status = manager.status(OWNER).unwrap();
         assert!(!status.running && status.error.is_some());
         // Ended with an error, the log has that stderr after all.
         assert!(session.status().log.contains(diagnostic));
     }
     #[cfg(unix)]
     #[tokio::test]
-    async fn replacement_rejects_queued_stale_edits_and_a_stop_ends_ownership() {
+    async fn another_sessions_start_takes_over_and_a_stop_ends_ownership() {
         let (_tmp, root, path_env) = setup();
-        let manager = Arc::new(Manager::default());
-        assert!(!manager.status(&root, None, || &path_env).unwrap().running);
-        let old = begin(&manager, &root, &path_env, &[])
-            .await
-            .session
-            .unwrap();
-        // B's Start reaches the queue before A's delayed edit.
-        let blocked = manager.requests.lock().await;
-        let replacement = tokio::spawn({
-            let (manager, root, path_env) = (Arc::clone(&manager), root.clone(), path_env.clone());
-            async move { begin(&manager, &root, &path_env, &main_buffer("owner B")).await }
-        });
-        tokio::task::yield_now().await;
-        let stale_edit = tokio::spawn({
-            let (manager, root, old) = (Arc::clone(&manager), root.clone(), old.clone());
-            async move { manager.update(&root, "main.tex", "stale A", &old).await }
-        });
-        drop(blocked);
-        let current = replacement.await.unwrap().session.unwrap();
-        assert_ne!(old, current);
-        assert_eq!(refused(stale_edit.await.unwrap()), 409);
-        let session = manager
-            .owned(&dunce::canonicalize(&root).unwrap(), &current)
-            .unwrap();
-        let stale = Some(old.as_str());
-        assert_eq!(refused(manager.status(&root, stale, || &path_env)), 409);
-        assert_eq!(refused(manager.rescan(&root, &old).await), 409);
-        assert_eq!(refused(manager.stop_request(&root, &old).await), 409);
-        // Without a token, B can be looked at.
-        let inspected = manager.status(&root, None, || &path_env).unwrap();
-        assert_eq!(inspected.session.as_deref(), Some(current.as_str()));
-        let owned = manager.status(&root, Some(&current), || &path_env);
-        assert!(owned.unwrap().running);
+        let manager = Manager::default();
+        let (old, current) = (OWNER, OWNER + 1);
+        begin(&manager, old, &root, &path_env, &[]);
+        begin(&manager, current, &root, &path_env, &main_buffer("owner B"));
+        // The old owner's late calls change nothing.
+        assert_eq!(refused(manager.update(old, "main.tex", "stale A")), 409);
+        assert_eq!(refused(manager.edit(old, "main.tex", 0, 0, "x")), 409);
+        assert_eq!(refused(manager.status(old)), 409);
+        assert_eq!(refused(manager.rescan(old)), 409);
+        assert_eq!(refused(manager.stop_request(old)), 409);
+        assert_eq!(refused(manager.wait(old, 0).await), 409);
+        assert_eq!(refused(restart(&manager, old, &root, &path_env)), 409);
+        assert!(manager.status(current).unwrap().running);
         let main = dunce::canonicalize(root.join("main.tex")).unwrap();
+        let session = manager.owned(current).unwrap();
         assert_eq!(
             session.files.lock().unwrap().texts[&main].string(),
             "owner B"
         );
-        assert_eq!(
-            refused(restart(&manager, &root, &path_env, &old).await),
-            409
-        );
+        // A rename's stop keeps the owner, whose restart takes the preview back.
         manager.stop(&root).unwrap();
-        assert!(!manager.status(&root, None, || &path_env).unwrap().running);
-        let restarted = restart(&manager, &root, &path_env, &current).await.unwrap();
-        assert!(restarted.running);
-        assert_ne!(restarted.session.as_deref(), Some(current.as_str()));
+        assert!(!manager.status(current).unwrap().running);
+        let restarted = restart(&manager, current, &root, &path_env).unwrap();
+        assert!(restarted.running && !session.status().running);
         // The owner's Stop ends its ownership too.
-        let token = restarted.session.as_deref().unwrap();
-        let stopped = manager.stop_request(&root, token).await;
-        assert!(!stopped.unwrap().running);
-        assert_eq!(
-            refused(restart(&manager, &root, &path_env, token).await),
-            409
-        );
+        assert!(!manager.stop_request(current).unwrap().running);
+        assert_eq!(refused(restart(&manager, current, &root, &path_env)), 409);
     }
 
     #[test]
@@ -1574,17 +1478,22 @@ mod tests {
                 offset: 4,
             }),
         };
-        let started = manager
-            .start(&root, &main_buffer("aé😀b"), None, &path_env, Some(&pane))
-            .await
+        manager
+            .start(
+                OWNER,
+                &root,
+                &main_buffer("aé😀b"),
+                false,
+                &path_env,
+                Some(&pane),
+            )
             .unwrap();
-        let token = started.session.as_deref().unwrap();
         let path = dunce::canonicalize(root.join("main.tex")).unwrap();
         // Four units in: after a, é and the pair, seven bytes in.
-        manager.edit(token, "main.tex", 4, 0, "X").unwrap();
-        manager.edit(token, "main.tex", 1, 3, "").unwrap();
-        manager.view(token, 5, 4).unwrap();
-        manager.caret(token, "main.tex", 2).unwrap();
+        manager.edit(OWNER, "main.tex", 4, 0, "X").unwrap();
+        manager.edit(OWNER, "main.tex", 1, 3, "").unwrap();
+        manager.view(OWNER, 5, 4).unwrap();
+        manager.caret(OWNER, "main.tex", 2).unwrap();
         until(|| commands(&tmp).len() >= 7).await;
         let sent = commands(&tmp);
         assert_eq!(
@@ -1605,33 +1514,30 @@ mod tests {
         for (file, start, remove) in [("main.tex", 4, 0), ("main.tex", 2, 2), ("other.tex", 0, 0)] {
             assert_eq!(
                 manager
-                    .edit(token, file, start, remove, "no")
+                    .edit(OWNER, file, start, remove, "no")
                     .unwrap_err()
                     .status,
                 412
             );
         }
-        assert_eq!(manager.caret(token, "main.tex", 9).unwrap_err().status, 412);
+        assert_eq!(manager.caret(OWNER, "main.tex", 9).unwrap_err().status, 412);
         assert_eq!(
             manager
-                .edit(token, "main.tex", 0, 0, "\0")
+                .edit(OWNER, "main.tex", 0, 0, "\0")
                 .unwrap_err()
                 .status,
             400
         );
         assert_eq!(
             manager
-                .edit("stale", "main.tex", 0, 0, "x")
+                .edit(OWNER + 1, "main.tex", 0, 0, "x")
                 .unwrap_err()
                 .status,
             409
         );
         // The whole text puts the copy right, sent as the change from what TeXpresso has.
-        manager
-            .update(&root, "main.tex", "aXb😀", token)
-            .await
-            .unwrap();
-        manager.edit(token, "main.tex", 5, 0, "!").unwrap();
+        manager.update(OWNER, "main.tex", "aXb😀").unwrap();
+        manager.edit(OWNER, "main.tex", 5, 0, "!").unwrap();
         until(|| commands(&tmp).len() >= 9).await;
         assert_eq!(
             commands(&tmp)[7..],
@@ -1642,7 +1548,7 @@ mod tests {
         );
         // A session that has ended takes an edit as nothing, and refuses none.
         manager.stop(&root).unwrap();
-        manager.edit(token, "main.tex", 0, 0, "x").unwrap();
+        manager.edit(OWNER, "main.tex", 0, 0, "x").unwrap();
     }
 
     #[cfg(unix)]
@@ -1650,18 +1556,17 @@ mod tests {
     async fn waiting_hands_over_the_latest_of_each_page_and_ends_with_the_session() {
         let (_tmp, root, path_env) = setup_live();
         let manager = Arc::new(Manager::default());
-        let started = begin(&manager, &root, &path_env, &main_buffer("abc")).await;
-        let token = started.session.clone().unwrap();
+        begin(&manager, OWNER, &root, &path_env, &main_buffer("abc"));
         let wait = |after: u64| {
-            let (manager, root, token) = (Arc::clone(&manager), root.clone(), token.clone());
-            async move { manager.wait(&root, &token, after).await.unwrap() }
+            let manager = Arc::clone(&manager);
+            async move { manager.wait(OWNER, after).await.unwrap() }
         };
         // Waits that answer nothing within `SOON` are a failure.
         let soon = |after: u64| {
             let wait = wait(after);
             async move { tokio::time::timeout(SOON, wait).await.expect("an answer") }
         };
-        let session = manager.held(&token).unwrap();
+        let session = manager.owned(OWNER).unwrap();
         // The build says what it speaks, then the first document.
         let mut events = soon(0).await;
         while events.pdf.is_none() {
@@ -1680,8 +1585,8 @@ mod tests {
         let waiting = tokio::spawn(wait(first.seq));
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!waiting.is_finished());
-        manager.edit(&token, "main.tex", 3, 0, "d").unwrap();
-        manager.edit(&token, "main.tex", 4, 0, "e").unwrap();
+        manager.edit(OWNER, "main.tex", 3, 0, "d").unwrap();
+        manager.edit(OWNER, "main.tex", 4, 0, "e").unwrap();
         let mut events = waiting.await.unwrap();
         assert!(began.elapsed() < SOON && events.seq > first.seq);
         let second = |events: &Events| events.pages.iter().any(|p| p.path.ends_with("-2.pdf"));
@@ -1731,10 +1636,7 @@ mod tests {
         let ended = waiting.await.unwrap();
         assert!(!ended.running && began.elapsed() < Duration::from_secs(1));
         assert!(!soon(ended.seq).await.running);
-        assert_eq!(
-            manager.wait(&root, "stale", 0).await.unwrap_err().status,
-            409
-        );
+        assert_eq!(manager.wait(OWNER + 1, 0).await.unwrap_err().status, 409);
     }
 
     #[cfg(unix)]
@@ -1742,18 +1644,17 @@ mod tests {
     async fn a_build_that_only_writes_the_document_is_sent_nothing_it_does_not_know() {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
-        let started = begin(&manager, &root, &path_env, &main_buffer("abc")).await;
-        let token = started.session.as_deref().unwrap();
+        begin(&manager, OWNER, &root, &path_env, &main_buffer("abc"));
         // No word of pages before the document: the build is an older one.
-        let document = first_document(&manager, &root, token).await;
-        let live = lock(&manager.held(token).unwrap().state).live;
+        let document = first_document(&manager, OWNER).await;
+        let live = lock(&manager.owned(OWNER).unwrap().state).live;
         assert_eq!((live, document.version, document.pages), (None, 1, 1));
         assert!(document.run.is_none() && document.changed.is_none());
-        manager.edit(token, "main.tex", 3, 0, "d").unwrap();
-        manager.view(token, 0, 1).unwrap();
-        manager.caret(token, "main.tex", 1).unwrap();
+        manager.edit(OWNER, "main.tex", 3, 0, "d").unwrap();
+        manager.view(OWNER, 0, 1).unwrap();
+        manager.caret(OWNER, "main.tex", 1).unwrap();
         until(|| commands(&tmp).iter().any(|c| c[0] == "change")).await;
-        manager.rescan(&root, token).await.unwrap();
+        manager.rescan(OWNER).unwrap();
         until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
         let verbs: Vec<_> = commands(&tmp)
             .iter()

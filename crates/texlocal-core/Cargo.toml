@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 dunce = "1"
-getrandom = "0.4"
 memchr = "2"
 notify = "8"
 ropey = "1.6"

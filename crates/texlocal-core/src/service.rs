@@ -65,15 +65,15 @@ impl Service {
         paths::project_root(&self.data_dir, id)
     }
 
-    /// With `live`, the TeXpresso session the client owns (`session`) syncs, not the build:
-    /// its PDF is the one shown.
-    fn live_pdf(&self, root: &Path, args: &Value) -> Result<Option<PathBuf>, CoreError> {
+    /// With `live`, the live preview of the client's project session (`session`) syncs, not
+    /// the build: its PDF is the one shown.
+    fn live_pdf(&self, args: &Value) -> Result<Option<PathBuf>, CoreError> {
         if !arg::<Option<bool>>(args, "live")?.unwrap_or(false) {
             return Ok(None);
         }
-        let token = arg::<Option<String>>(args, "session")?
-            .ok_or_else(|| CoreError::bad_request("Live sync needs the TeXpresso session"))?;
-        self.texpresso.live_pdf(root, &token).map(Some)
+        let session = arg::<Option<u64>>(args, "session")?
+            .ok_or_else(|| CoreError::bad_request("Live sync needs the project session"))?;
+        self.texpresso.live_pdf(session).map(Some)
     }
 
     /// Run `work` holding the locks of the projects named `names`, taken in
@@ -339,7 +339,7 @@ impl Service {
                     s("file")?,
                     arg(args, "line")?,
                     arg(args, "column")?,
-                    self.live_pdf(&root, args)?.as_deref(),
+                    self.live_pdf(args)?.as_deref(),
                     &self.tool_paths().0,
                 )
                 .await?)
@@ -355,7 +355,7 @@ impl Service {
                     arg(args, "x")?,
                     arg(args, "y")?,
                     click.as_ref().map(|(text, at)| (text.as_str(), *at)),
-                    self.live_pdf(&root, args)?.as_deref(),
+                    self.live_pdf(args)?.as_deref(),
                     &self.tool_paths().0,
                 )
                 .await?)

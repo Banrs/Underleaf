@@ -28,14 +28,6 @@ pub use error::CoreError;
 pub const BUILD_DIR: &str = "build";
 pub const SETTINGS_FILE: &str = ".texlocal.json";
 
-/// `bytes` bytes from the system's random source, as lowercase hex: each
-/// live preview session's token.
-pub fn random_hex(bytes: usize) -> Result<String, CoreError> {
-    let mut random = vec![0u8; bytes];
-    getrandom::fill(&mut random).map_err(|err| CoreError::internal(err.to_string()))?;
-    Ok(random.iter().map(|byte| format!("{byte:02x}")).collect())
-}
-
 /// The crate's mutexes guard bookkeeping that no panic leaves half-written,
 /// or nothing at all, so a poisoned one is still good: it must not fail
 /// every later edit, nor panic in a Drop or at quit, where that aborts the host.

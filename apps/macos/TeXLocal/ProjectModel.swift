@@ -100,13 +100,12 @@ final class ProjectModel {
         self.app = app
         search = ProjectSearch(id: id)
         tree = FileTree(id: id)
-        texpresso.watchLog { [panel] in panel.shown && panel.tab == .texpresso }
+        texpresso.watchLog { [panel] in panel.showsLiveLog } tell: { [weak self] shown in
+            guard let self, let session else { return }
+            core.send("session_live_log", ["session": session, "shown": shown])
+        }
         texpresso.onAlert = { [weak self] in self?.panel.show(.texpresso) }
         texpresso.onEnded = { [weak self] in Task { await self?.endLivePDF() } }
-        texpresso.readStatus = { [weak self] in
-            guard let self, let session else { return nil }
-            return try? await core.call("session_live_status", ["session": session], as: TeXpressoStatus?.self)
-        }
         tree.onChange = { [weak self] in
             self?.openKindChanged()
             self?.analyze()
@@ -836,8 +835,8 @@ final class ProjectModel {
     }
 
     private func syncArguments(_ arguments: [String: any Sendable]) -> [String: any Sendable] {
-        guard livePDF, let token = texpresso.token else { return arguments }
-        return arguments.merging(["live": true, "session": token]) { $1 }
+        guard livePDF, let session else { return arguments }
+        return arguments.merging(["live": true, "session": session]) { $1 }
     }
 
     /// With the click, the core finds the clicked word in the source lines round SyncTeX's.
