@@ -122,6 +122,134 @@
                     </ComboBox>
                 </Grid>
 
+                <TextBlock Margin="1,30,0,6" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Editor" />
+                <Grid Style="{StaticResource SettingsCardStyle}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon FontSize="20" Glyph="&#xE8D2;" />
+                    <TextBlock
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource BodyTextBlockStyle}"
+                        Text="Font" />
+                    <ComboBox
+                        x:Name="FontBox"
+                        Grid.Column="2"
+                        MinWidth="200"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Font"
+                        SelectionChanged="OnFont" />
+                </Grid>
+                <Grid Style="{StaticResource SettingsCardStyle}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon FontSize="20" Glyph="&#xE8E9;" />
+                    <TextBlock
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource BodyTextBlockStyle}"
+                        Text="Font size" />
+                    <ComboBox
+                        x:Name="SizeBox"
+                        Grid.Column="2"
+                        MinWidth="200"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Font size"
+                        SelectionChanged="OnFontSize" />
+                </Grid>
+                <Grid Style="{StaticResource SettingsCardStyle}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon FontSize="20" Glyph="&#xE771;" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Theme" />
+                        <TextBlock
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Text="Colours for commands, maths and comments, in light and dark"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ComboBox
+                        x:Name="SyntaxBox"
+                        Grid.Column="2"
+                        MinWidth="200"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Editor theme"
+                        SelectionChanged="OnSyntaxTheme" />
+                </Grid>
+                <Grid Style="{StaticResource SettingsCardStyle}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <!-- The editor's background and current line, which the core makes the colours legible on. -->
+                    <Grid Visibility="Collapsed">
+                        <Rectangle x:Name="PaperInk" Fill="{ThemeResource SolidBackgroundFillColorBaseBrush}" />
+                        <Rectangle x:Name="LineInk" Fill="{ThemeResource SubtleFillColorSecondaryBrush}" />
+                    </Grid>
+                    <TextBlock
+                        x:Name="Preview"
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Preview"
+                        TextWrapping="Wrap" />
+                </Grid>
+                <Grid Style="{StaticResource SettingsCardStyle}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon FontSize="20" Glyph="&#xE765;" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Close brackets automatically" />
+                        <TextBlock
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Text="Typing (, [ or { adds its partner"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ToggleSwitch
+                        x:Name="PairSwitch"
+                        Grid.Column="2"
+                        MinWidth="0"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Close brackets automatically"
+                        Toggled="OnAutoPair" />
+                </Grid>
+                <Grid Style="{StaticResource SettingsCardStyle}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon FontSize="20" Glyph="&#xE765;" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Suggest completions while typing" />
+                        <TextBlock
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Text="When off, press Ctrl+Space to see suggestions"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ToggleSwitch
+                        x:Name="CompleteSwitch"
+                        Grid.Column="2"
+                        MinWidth="0"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Suggest completions while typing"
+                        Toggled="OnAutoComplete" />
+                </Grid>
+
                 <TextBlock Margin="1,30,0,6" Style="{StaticResource BodyStrongTextBlockStyle}" Text="About" />
                 <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                     <Expander.Header>
