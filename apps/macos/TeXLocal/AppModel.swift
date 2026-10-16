@@ -3,6 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum DefaultsKey {
+    static let sidebarVisible = "sidebarVisible"
+    static let inspectorVisible = "inspectorVisible"
     static let autoCompile = "autoCompile"
     static let showWordCount = "showWordCount"
     static let recentProjects = "recentProjects"
@@ -14,8 +16,6 @@ enum DefaultsKey {
     static let newProjectEngine = "newProjectEngine"
     static let settingsPane = "settingsPane"
 }
-
-enum SideColumn { case sidebar, inspector }
 
 struct AppAlert: Sendable {
     let title: String
@@ -66,14 +66,17 @@ final class AppModel {
     var searchFocusToken = 0
     @ObservationIgnored var performPDF: ((PDFAction) -> Void)?
 
-    /// The side columns as the workspace's split has them, which keeps them across launches
-    /// (`WorkspaceController`): for the menus' Show and Hide.
-    var sidebarShown = true
-    var inspectorShown = false
-    /// The workspace's, which opens or shuts a side column.
-    @ObservationIgnored var showSideColumn: ((SideColumn, Bool) -> Void)?
-
     // Stored here rather than as @AppStorage so the menus and models observe them.
+    var sidebarVisible: Bool {
+        didSet { UserDefaults.standard.set(sidebarVisible, forKey: DefaultsKey.sidebarVisible) }
+    }
+    var inspectorVisible: Bool {
+        didSet { UserDefaults.standard.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) }
+    }
+    /// Folded by a window too narrow for them, which brings them back as it widens: not hidden,
+    /// and not saved (`sidebarShown`, `inspectorShown`).
+    var sidebarFolded = false
+    var inspectorFolded = false
     var autoCompile: Bool {
         didSet {
             UserDefaults.standard.set(autoCompile, forKey: DefaultsKey.autoCompile)
@@ -102,7 +105,10 @@ final class AppModel {
 
     init() {
         let defaults = UserDefaults.standard
-        defaults.register(defaults: [DefaultsKey.autoCompile: true, DefaultsKey.showWordCount: true, DefaultsKey.showPDF: true])
+        defaults.register(defaults: [DefaultsKey.sidebarVisible: true, DefaultsKey.autoCompile: true,
+                                     DefaultsKey.showWordCount: true, DefaultsKey.showPDF: true])
+        sidebarVisible = defaults.bool(forKey: DefaultsKey.sidebarVisible)
+        inspectorVisible = defaults.bool(forKey: DefaultsKey.inspectorVisible)
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
         showPDF = defaults.bool(forKey: DefaultsKey.showPDF)

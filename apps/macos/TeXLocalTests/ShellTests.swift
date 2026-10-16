@@ -9,6 +9,8 @@ import Testing
 struct ShellTests {
     private func workspace(showPDF: Bool, sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
         let app = AppModel()
+        app.sidebarVisible = sidebar
+        app.inspectorVisible = false
         app.showPDF = showPDF
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1300, height: 600),
                               styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
@@ -17,9 +19,6 @@ struct ShellTests {
         let workspace = WorkspaceController(app: app, project: ProjectModel(id: "ShellTests", app: app),
                                             size: window.contentLayoutRect.size)
         window.contentViewController = workspace
-        // Over what the split's autosave, which this host shares with the app, restored.
-        workspace.sidebarItem.isCollapsed = !sidebar
-        workspace.inspectorItem.isCollapsed = true
         window.contentMinSize = ColumnMetrics.contentMinimum
         // Neither loaded nor saved: this host shares the app's saved toolbar.
         workspace.toolbar.toolbar.autosavesConfiguration = false
@@ -127,20 +126,25 @@ struct ShellTests {
         #expect(files.bottomAlignedAccessoryViewControllers == [header] && sidebar.splitViewItems[1].isCollapsed)
     }
 
-    @Test func viewsTitlesFollowTheSideColumns() async throws {
+    /// A sidebar the window folded is still the user's shown sidebar: it isn't saved as hidden, View offers to show it, and
+    /// showing it unfolds it.
+    @Test func aFoldedSidebarIsNotAHiddenOne() async throws {
         let (window, workspace) = try await workspace(showPDF: true, sidebar: true)
-        defer { workspace.close(); window.close() }
+        defer { workspace.close(); window.close(); workspace.app.sidebarVisible = true }
         let app = workspace.app, project = workspace.project
         #expect(app.title(.viewToggleSidebar, on: project) == "Hide Sidebar")
-        #expect(app.title(.viewToggleInspector, on: project) == "Show Inspector")
+        // Shut by AppKit, not by a drag: as a narrowing window folds it.
         workspace.sidebarItem.isCollapsed = true
+        #expect(app.sidebarVisible && app.sidebarFolded && !app.sidebarShown)
+        #expect(UserDefaults.standard.bool(forKey: DefaultsKey.sidebarVisible))
         #expect(app.title(.viewToggleSidebar, on: project) == "Show Sidebar")
+        // The workspace applies a change of the model's once a turn: a fold and a show in one turn would read as no change.
+        await settle()
         app.perform(.viewToggleSidebar, on: project)
         try await waitUntil { !workspace.sidebarItem.isCollapsed }
-        #expect(app.title(.viewToggleSidebar, on: project) == "Hide Sidebar")
-        app.perform(.viewToggleInspector, on: project)
-        try await waitUntil { !workspace.inspectorItem.isCollapsed }
-        #expect(app.title(.viewToggleInspector, on: project) == "Hide Inspector")
+        #expect(app.sidebarShown && !app.sidebarFolded)
+        app.perform(.viewToggleSidebar, on: project)
+        #expect(!app.sidebarVisible && !UserDefaults.standard.bool(forKey: DefaultsKey.sidebarVisible))
     }
 
     @Test func aPDFRequestShowsTheColumnAndReachesTheWorkspace() {
