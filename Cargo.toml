@@ -7,6 +7,23 @@ version = "0.2.0"
 edition = "2024"
 license = "MIT"
 
+# Pedantic lints that find real slips here; the rest of pedantic is noise for this code
+# (UTF-16 offsets cast by design, prose doc comments, an unpublished library).
+[workspace.lints.clippy]
+assigning_clones = "warn"
+borrow_as_ptr = "warn"
+derive_partial_eq_without_eq = "warn"
+format_push_string = "warn"
+ignored_unit_patterns = "warn"
+map_unwrap_or = "warn"
+needless_collect = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+stable_sort_primitive = "warn"
+unchecked_time_subtraction = "warn"
+unused_self = "warn"
+use_self = "warn"
+
 # LTO reaches the Windows app's DLL, which `cargo rustc --crate-type cdylib`
 # builds as the unit's one crate type, but not the Mac app's archive: Cargo
 # runs it for no crate type of a unit unless it can for all, and

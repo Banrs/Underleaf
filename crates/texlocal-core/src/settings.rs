@@ -134,7 +134,7 @@ pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError>
 /// What a host keeps of a project's interface, with the project: it moves
 /// with a rename of the project or of a file in it. Held in the settings file
 /// under `ui`, which only this module writes.
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct UiState {
     /// Folders open in the file tree, by project path.
@@ -224,10 +224,10 @@ impl Settings {
 
 /// The main file's name without its extension ("chapters/paper.tex" → "paper").
 pub fn main_base_name(rel_slash: &str) -> String {
-    Path::new(rel_slash)
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| rel_slash.to_string())
+    Path::new(rel_slash).file_stem().map_or_else(
+        || rel_slash.to_string(),
+        |s| s.to_string_lossy().into_owned(),
+    )
 }
 
 #[cfg(test)]
@@ -269,7 +269,7 @@ mod tests {
     fn interface_state_replaces_each_list_it_names_and_survives_settings_changes() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let list = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
         let patch = |value: serde_json::Value| serde_json::from_value::<UiPatch>(value).unwrap();
         assert_eq!(read_ui(root), UiState::default());
         write_ui(root, patch(json!({ "expandedFolders": ["b", "a", "b"] }))).unwrap();

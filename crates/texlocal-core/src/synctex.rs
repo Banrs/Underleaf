@@ -30,7 +30,7 @@ pub struct ForwardLoc {
     /// All matching boxes in reading order. The top-level fields retain the
     /// CLI's first match for clients that do not refine a word selection.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub matches: Vec<ForwardLoc>,
+    pub matches: Vec<Self>,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,7 +54,7 @@ pub struct PdfPage {
 }
 
 /// The word's place in a page's text, in UTF-16 units.
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct PdfHit {
     pub page: u32,
     pub start: usize,

@@ -83,7 +83,7 @@ impl TreeIndex {
                 }
             }
         }
-        let mut index = TreeIndex::default();
+        let mut index = Self::default();
         add(&mut index, tree);
         index
     }
@@ -178,8 +178,8 @@ mod tests {
 
     fn index(files: &[&str], folders: &[&str]) -> TreeIndex {
         TreeIndex {
-            files: files.iter().map(|f| f.to_string()).collect(),
-            folders: folders.iter().map(|f| f.to_string()).collect(),
+            files: files.iter().map(ToString::to_string).collect(),
+            folders: folders.iter().map(ToString::to_string).collect(),
         }
     }
 

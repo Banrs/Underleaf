@@ -36,7 +36,7 @@ impl Document {
         tx: mpsc::UnboundedSender<Msg>,
         symbols: Arc<RwLock<Arc<Symbols>>>,
     ) -> Self {
-        Document(Arc::new(Cell {
+        Self(Arc::new(Cell {
             id,
             text: Mutex::new(Text {
                 source: SourceDocument::new(text),

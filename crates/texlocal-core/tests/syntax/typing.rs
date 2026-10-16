@@ -24,8 +24,8 @@ struct Editor {
 }
 
 impl Editor {
-    fn open(text: &str, caret: Option<u32>) -> Editor {
-        let mut editor = Editor {
+    fn open(text: &str, caret: Option<u32>) -> Self {
+        let mut editor = Self {
             doc: SourceDocument::new(text),
             text: text.encode_utf16().collect(),
             selections: vec![],
@@ -113,7 +113,7 @@ impl Editor {
                 start: selection.start,
                 length: selection.length,
                 text: typed.into(),
-            })
+            });
         })
     }
 

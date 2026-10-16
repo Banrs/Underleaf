@@ -62,12 +62,12 @@ private struct GeneralSettings: View {
 }
 
 private struct EditorSettings: View {
-    @AppStorage(EditorPrefs.fontNameKey) private var fontName = ""
-    @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
-    @AppStorage(EditorPrefs.syntaxThemeKey) private var syntaxTheme = SyntaxTheme.overleaf
-    @AppStorage(EditorPrefs.lineNumbersKey) private var lineNumbers = true
-    @AppStorage(EditorPrefs.autoPairKey) private var autoPair = true
-    @AppStorage(EditorPrefs.autoCompleteKey) private var autoComplete = true
+    @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
+    @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
+    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.overleaf
+    @AppStorage(DefaultsKey.editorLineNumbers) private var lineNumbers = true
+    @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
+    @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true
 
     private static let families = Set((NSFontManager.shared.availableFontNames(with: .fixedPitchFontMask) ?? [])
         .compactMap { NSFont(name: $0, size: 0)?.familyName }).sorted()
@@ -143,7 +143,7 @@ private struct CompilingSettings: View {
 }
 
 private struct PDFSettings: View {
-    @AppStorage(PDFPaper.key) private var paper = PDFPaper.white
+    @AppStorage(DefaultsKey.pdfPaper) private var paper = PDFPaper.white
 
     var body: some View {
         Form {
@@ -160,7 +160,7 @@ private struct PDFSettings: View {
 
 private struct LivePreviewSettings: View {
     @Environment(AppModel.self) private var app
-    @AppStorage(LiveViewer.key) private var viewer = LiveViewer.pane
+    @AppStorage(DefaultsKey.liveViewer) private var viewer = LiveViewer.pane
 
     var body: some View {
         Form {

@@ -45,7 +45,7 @@ pub struct Cache {
 
 impl Default for Cache {
     fn default() -> Self {
-        Cache {
+        Self {
             states: vec![State::default()],
         }
     }

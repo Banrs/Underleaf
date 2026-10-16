@@ -90,7 +90,7 @@ impl Text {
                     .map(|(i, _)| i as u32 + 1),
             )
             .collect();
-        Text { units, lines }
+        Self { units, lines }
     }
 
     fn len(&self) -> u32 {
@@ -149,7 +149,7 @@ pub struct SourceDocument {
 
 impl SourceDocument {
     pub fn new(text: &str) -> Self {
-        SourceDocument {
+        Self {
             text: Text::new(text),
             highlighter: highlight::Cache::default(),
             scans: maths::Scans::default(),
@@ -574,7 +574,7 @@ mod tests {
                 .iter()
                 .map(|r| (r.start, r.length))
                 .collect();
-            found.sort();
+            found.sort_unstable();
             found
         };
         // The command, then the maths not_prose finds; the comment is prose to spelling.

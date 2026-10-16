@@ -220,6 +220,32 @@ struct State {
     live: Option<u32>,
     feed: Feed,
 }
+
+impl State {
+    fn events(&self, after: u64) -> Events {
+        let feed = &self.feed;
+        let new = |serial: u64| serial > after;
+        Events {
+            seq: feed.seq,
+            running: self.tree.is_some(),
+            error: self.error.clone(),
+            revision: self.revision,
+            pdf: feed.document.clone().filter(|d| new(d.serial)),
+            pages: feed
+                .pages
+                .values()
+                .filter(|p| new(p.serial))
+                .cloned()
+                .collect(),
+            done: feed
+                .done
+                .as_ref()
+                .filter(|(serial, _)| new(*serial))
+                .map(|(_, end)| end.clone()),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Files {
     texts: HashMap<PathBuf, Text>,
@@ -287,7 +313,8 @@ impl Session {
             log.push_str(tail(&state.stderr.text(), 16 * 1024));
         }
         if log.len() > MAX_OUTPUT {
-            log = tail(&log, MAX_OUTPUT).to_owned();
+            let cut = log.len() - tail(&log, MAX_OUTPUT).len();
+            log.drain(..cut);
         }
         Status {
             running: state.tree.is_some(),
@@ -295,28 +322,6 @@ impl Session {
             log,
             error: state.error.clone(),
             revision: state.revision,
-        }
-    }
-    fn events(&self, state: &State, after: u64) -> Events {
-        let feed = &state.feed;
-        let new = |serial: u64| serial > after;
-        Events {
-            seq: feed.seq,
-            running: state.tree.is_some(),
-            error: state.error.clone(),
-            revision: state.revision,
-            pdf: feed.document.clone().filter(|d| new(d.serial)),
-            pages: feed
-                .pages
-                .values()
-                .filter(|p| new(p.serial))
-                .cloned()
-                .collect(),
-            done: feed
-                .done
-                .as_ref()
-                .filter(|(serial, _)| new(*serial))
-                .map(|(_, end)| end.clone()),
         }
     }
     /// Messages for TeXpresso, in the order of the calls: nothing here waits for it.
@@ -513,8 +518,8 @@ impl Manager {
                     libc::signal(signal, libc::SIG_DFL);
                 }
                 let mut none: libc::sigset_t = std::mem::zeroed();
-                libc::sigemptyset(&mut none);
-                libc::sigprocmask(libc::SIG_SETMASK, &none, std::ptr::null_mut());
+                libc::sigemptyset(&raw mut none);
+                libc::sigprocmask(libc::SIG_SETMASK, &raw const none, std::ptr::null_mut());
                 Ok(())
             });
         }
@@ -717,7 +722,7 @@ impl Manager {
                 // A `seq` from another session is no place in this one's events.
                 let after = if after > state.feed.seq { 0 } else { after };
                 if state.feed.seq > after || state.tree.is_none() {
-                    return Ok(session.events(&state, after));
+                    return Ok(state.events(after));
                 }
             }
             changed.await;
@@ -1621,12 +1626,7 @@ mod tests {
 
         // A page file from outside the session's folder is nobody's page.
         apply_message(&session, &json!(["page", 0, "/etc/passwd", 0]));
-        assert!(
-            session
-                .events(&lock(&session.state), events.seq)
-                .pages
-                .is_empty()
-        );
+        assert!(lock(&session.state).events(events.seq).pages.is_empty());
 
         // Stopping answers the wait at once.
         let waiting = tokio::spawn(wait(events.seq));

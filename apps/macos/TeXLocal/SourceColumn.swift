@@ -3,12 +3,12 @@ import SwiftUI
 
 struct SourceColumn: View {
     let project: ProjectModel
-    @AppStorage(EditorPrefs.fontNameKey) private var fontName = ""
-    @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
-    @AppStorage(EditorPrefs.lineNumbersKey) private var lineNumbers = true
-    @AppStorage(EditorPrefs.syntaxThemeKey) private var syntaxTheme = SyntaxTheme.overleaf
-    @AppStorage(EditorPrefs.autoPairKey) private var autoPair = true
-    @AppStorage(EditorPrefs.autoCompleteKey) private var autoComplete = true
+    @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
+    @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
+    @AppStorage(DefaultsKey.editorLineNumbers) private var lineNumbers = true
+    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.overleaf
+    @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
+    @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true
 
     var body: some View {
         // Keep the editor under previews so it retains its text and scroll position.

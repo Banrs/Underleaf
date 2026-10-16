@@ -287,7 +287,7 @@ mod tests {
     fn maths_is_paths_and_rects_only() {
         let fraction = math_svg(r"\frac{a}{b} + \sqrt{x^2}", true, 20.0, BLACK).unwrap();
         let mut names = elements(&fraction.svg);
-        names.sort();
+        names.sort_unstable();
         names.dedup();
         assert_eq!(names, ["path", "rect", "svg"], "{}", fraction.svg);
         assert!(fraction.width > 20.0 && fraction.height > 20.0);

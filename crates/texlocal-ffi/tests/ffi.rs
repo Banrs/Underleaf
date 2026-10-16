@@ -34,7 +34,13 @@ unsafe fn edit(source: *mut TlSource, start: u32, length: u32, text: &[u8]) -> O
     let (bytes, len) = (text.as_ptr(), text.len());
     unsafe {
         take_json(tl_source_edit(
-            source, start, length, bytes, len, &changing, false,
+            source,
+            start,
+            length,
+            bytes,
+            len,
+            &raw const changing,
+            false,
         ))
     }
 }
@@ -42,7 +48,7 @@ unsafe fn edit(source: *mut TlSource, start: u32, length: u32, text: &[u8]) -> O
 /// The source's whole text.
 unsafe fn text_of(source: *mut TlSource) -> String {
     let mut len = 0;
-    let bytes = unsafe { tl_source_text(source, &mut len) };
+    let bytes = unsafe { tl_source_text(source, &raw mut len) };
     let text = String::from_utf8(unsafe { std::slice::from_raw_parts(bytes, len) }.to_vec());
     unsafe { tl_source_free_text(bytes, len) };
     text.unwrap()
@@ -190,7 +196,7 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         assert_eq!(edit(source, 2, 0, b"\n"), None);
         assert_eq!(tl_source_line_at(source, 3), 2);
         let mut count = 0;
-        let runs = tl_source_highlights(source, 0, 20, &mut count);
+        let runs = tl_source_highlights(source, 0, 20, &raw mut count);
         assert_eq!(std::slice::from_raw_parts(runs, count), [3, 5, 0]);
         tl_source_free_runs(runs, count);
         assert_eq!(text_of(source), "é \n\\emph{x}");
@@ -279,7 +285,7 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
         assert_eq!(tl_source_line_start(none, 1), 0);
         assert_eq!(tl_source_line_count(none), 0);
         let mut count = 7;
-        let runs = tl_source_highlights(none, 0, 1, &mut count);
+        let runs = tl_source_highlights(none, 0, 1, &raw mut count);
         assert_eq!(count, 0, "no runs");
         tl_source_free_runs(runs, count);
         assert!(tl_source_call(none, c("partner").as_ptr(), c("{}").as_ptr()).is_null());
@@ -297,7 +303,7 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
         // Out-of-range offsets are cut to the text.
         edit(source, 99, 99, b"ab");
         assert_eq!(tl_source_line_start(source, 99), 0);
-        let runs = tl_source_highlights(source, 99, 99, &mut count);
+        let runs = tl_source_highlights(source, 99, 99, &raw mut count);
         assert_eq!(count, 0);
         tl_source_free_runs(runs, count);
         // Runs can't be freed without their count, so a null count gets none.
@@ -411,7 +417,7 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
     unsafe { edit(source, 0, 0, added.as_bytes()) };
     // The highlighting reads the session's text.
     let mut count = 0;
-    let runs = unsafe { tl_source_highlights(source, 0, 6, &mut count) };
+    let runs = unsafe { tl_source_highlights(source, 0, 6, &raw mut count) };
     assert_eq!(count, 3);
     unsafe { tl_source_free_runs(runs, count) };
     let saved = call(handle, "session_save", Some(json!({ "session": session })));
@@ -435,7 +441,7 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
             args.as_ptr(),
             Some(collect),
             context(&answered),
-        )
+        );
     };
     let answer = until(&answers, |_| true);
     assert!(answer["ok"]["documents"].is_array());
@@ -453,7 +459,7 @@ fn call_async(handle: *const TlHandle, command: &str, args: Value, sink: &mpsc::
             args.as_ptr(),
             Some(collect),
             context(sink),
-        )
+        );
     };
 }
 

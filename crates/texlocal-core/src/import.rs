@@ -131,7 +131,7 @@ fn hidden(name: &str) -> bool {
 fn collect(
     abs: &Path,
     rel: String,
-    meta: fs::Metadata,
+    meta: &fs::Metadata,
     files: &mut Vec<(Incoming, PathBuf)>,
     allowance: &mut Allowance,
 ) -> Result<(), CoreError> {
@@ -155,7 +155,7 @@ fn collect(
                 } else {
                     format!("{rel}/{name}")
                 };
-                collect(&entry.path(), rel, meta, files, allowance)?;
+                collect(&entry.path(), rel, &meta, files, allowance)?;
             }
         }
     }
@@ -190,7 +190,7 @@ fn import_files_within(
         let name = abs.file_name().unwrap_or_default().to_string_lossy();
         // A dropped link is followed: dropping it names what it points at.
         let meta = fs::metadata(abs)?;
-        collect(abs, name.into_owned(), meta, &mut files, &mut found)?;
+        collect(abs, name.into_owned(), &meta, &mut files, &mut found)?;
     }
     let (incoming, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
     let existing = clashes(&service.project_root(id)?, dir, &incoming)?;
@@ -406,7 +406,7 @@ fn folder_files(
     collect(
         dir,
         String::new(),
-        fs::metadata(dir)?,
+        &fs::metadata(dir)?,
         &mut found,
         &mut allowance,
     )?;

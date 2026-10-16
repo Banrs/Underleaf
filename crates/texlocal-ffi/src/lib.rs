@@ -422,8 +422,8 @@ pub unsafe extern "C" fn tl_source_select(
     let selection = TextRange { start, length };
     unsafe {
         on_source(source, (), |source| {
-            source.with(|doc| doc.select(selection, mirroring))
-        })
+            source.with(|doc| doc.select(selection, mirroring));
+        });
     }
 }
 
@@ -470,7 +470,7 @@ pub unsafe extern "C" fn tl_source_reload(source: *mut TlSource, text: *const u8
         on_source(source, (), |source| match &mut source.0 {
             Source::Own(doc) => **doc = SourceDocument::new(&text),
             Source::Session(document) => document.reload(&text),
-        })
+        });
     }
 }
 

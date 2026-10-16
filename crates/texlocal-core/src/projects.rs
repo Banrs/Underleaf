@@ -41,12 +41,12 @@ pub struct TreeNode {
     #[serde(rename = "kind", skip_serializing_if = "Option::is_none")]
     pub file_kind: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub children: Option<Vec<TreeNode>>,
+    pub children: Option<Vec<Self>>,
 }
 
 /// Where an absolute path lies in the library: its project, and its path in it
 /// ("" for the project's folder).
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Located {
     pub id: String,
     pub path: String,
@@ -979,7 +979,7 @@ mod tests {
     fn a_renamed_entry_takes_its_saved_interface_state_along() {
         let (_data, root) = project();
         create_file(&root, "chapters/a.tex", false).unwrap();
-        let list = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
         write_ui(
             &root,
             UiPatch {

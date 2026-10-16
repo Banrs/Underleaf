@@ -68,7 +68,7 @@ fn typing_speed() {
                 length,
                 put.as_ptr(),
                 put.len(),
-                &changing,
+                &raw const changing,
                 false,
             );
             edit_only += timed.elapsed();
@@ -82,7 +82,7 @@ fn typing_speed() {
             let from = tl_source_line_start(source, line);
             let to = tl_source_line_start(source, line + 1);
             let mut count = 0;
-            let runs = tl_source_highlights(source, from, to.saturating_sub(from), &mut count);
+            let runs = tl_source_highlights(source, from, to.saturating_sub(from), &raw mut count);
             tl_source_free_runs(runs, count);
             tl_source_line_count(source);
         }

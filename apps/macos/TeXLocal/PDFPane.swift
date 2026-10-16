@@ -138,8 +138,6 @@ struct ScaleMenuItems: View {
 enum PDFPaper: String, CaseIterable, Identifiable {
     case white, dark, auto
 
-    static let key = DefaultsKey.pdfPaper
-
     var id: Self { self }
 
     var title: LocalizedStringResource {

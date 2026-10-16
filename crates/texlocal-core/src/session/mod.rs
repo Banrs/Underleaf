@@ -62,7 +62,7 @@ pub(crate) struct Timings {
 
 impl Default for Timings {
     fn default() -> Self {
-        Timings {
+        Self {
             autosave: Duration::from_millis(700),
             symbols: Duration::from_millis(150),
             settle: Duration::from_millis(250),
@@ -128,7 +128,7 @@ impl Sessions {
         engine: Arc<dyn Engine>,
         timings: Timings,
     ) -> Self {
-        Sessions {
+        Self {
             service,
             hub: Hub::default(),
             engine,

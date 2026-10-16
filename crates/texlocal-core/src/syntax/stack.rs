@@ -26,13 +26,13 @@ struct Frame<T> {
 
 impl<T> Clone for Stack<T> {
     fn clone(&self) -> Self {
-        Stack(self.0.clone())
+        Self(self.0.clone())
     }
 }
 
 impl<T> Default for Stack<T> {
     fn default() -> Self {
-        Stack(None)
+        Self(None)
     }
 }
 
@@ -40,7 +40,7 @@ impl<T> Stack<T> {
     pub fn push(&mut self, item: T) {
         work(1);
         let below = std::mem::take(self);
-        *self = Stack(Some(Arc::new(Frame { item, below })));
+        *self = Self(Some(Arc::new(Frame { item, below })));
     }
 
     pub fn pop(&mut self) {

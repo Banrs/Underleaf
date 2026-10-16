@@ -48,7 +48,7 @@ impl From<TexStatus> for Status {
             .as_deref()
             .and_then(|line| LATEXMK_VERSION.captures(line));
         let latexmk_version = version.map(|found| found[1].to_owned());
-        Status {
+        Self {
             tex,
             latexmk_version,
         }
@@ -566,7 +566,7 @@ mod tests {
                     .into()
             });
             let mut statuses = statuses;
-            statuses.sort();
+            statuses.sort_unstable();
             assert_eq!(statuses, [200, 409]);
             let left = fs::read_dir(data.path()).unwrap().count();
             assert_eq!(left, 2, "one project renamed, one left as it was");

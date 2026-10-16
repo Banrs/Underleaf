@@ -45,7 +45,7 @@ static WORD_BREAK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\s{}$&_^~\\%
 /// command and level, its title as plain text, its 1-based line and, in a
 /// project's analysis, its file. A heading whose title is empty is
 /// `untitled`, and titled by its level: "Untitled Section".
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Heading {
     pub depth: usize,
     /// Without its backslash: "section".
@@ -62,7 +62,7 @@ pub struct Heading {
 impl Heading {
     fn new(depth: usize, title: Option<String>, line: usize, file: Option<String>) -> Self {
         let level = &CATALOG.heading_levels[depth];
-        Heading {
+        Self {
             depth,
             command: &level.command,
             level: &level.title,
@@ -85,7 +85,7 @@ pub struct OutlineNode {
     pub heading: Heading,
     pub fold_key: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<OutlineNode>,
+    pub children: Vec<Self>,
 }
 
 /// A session's `analyze` answer: the outline as a tree, the words, and the
@@ -103,7 +103,7 @@ impl ProjectAnalysis {
     /// as a book's once the document has chapters.
     pub(crate) fn new(analysis: &Analysis, class: Option<&headings::DocumentClass>) -> Self {
         let chapters = analysis.outline.iter().any(|h| h.command == "chapter");
-        ProjectAnalysis {
+        Self {
             tree: outline_tree(&analysis.outline),
             words: analysis.words,
             heading_styles: headings::heading_styles(class, chapters),
@@ -161,7 +161,7 @@ pub fn current_heading(outline: &[Heading], file: &str, line: usize) -> Option<u
         .rposition(|h| h.file.as_deref() == Some(file) && h.line <= line)
 }
 
-#[derive(Debug, Default, PartialEq, Serialize)]
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Analysis {
     pub outline: Vec<Heading>,
     pub words: usize,

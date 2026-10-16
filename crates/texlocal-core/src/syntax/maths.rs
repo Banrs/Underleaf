@@ -126,7 +126,7 @@ impl Scanner {
             groups.reverse();
             groups
         };
-        let Scanner {
+        let Self {
             mut stack,
             mut text_argument,
             mut math_run,
@@ -325,7 +325,7 @@ impl Scanner {
         }
         #[cfg(test)]
         READ.with(|read| read.set(read.get() + (i - from)));
-        *self = Scanner {
+        *self = Self {
             stack,
             text_argument,
             math_run,
@@ -376,7 +376,7 @@ const SPACING: usize = 4096;
 
 impl Default for Scans {
     fn default() -> Self {
-        Scans(vec![Point::default()])
+        Self(vec![Point::default()])
     }
 }
 

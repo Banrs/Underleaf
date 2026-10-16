@@ -298,15 +298,12 @@ enum EditorCommand: Equatable {
 }
 
 enum EditorPrefs {
-    static let fontNameKey = DefaultsKey.editorFontName, fontSizeKey = DefaultsKey.editorFontSize
-    static let syntaxThemeKey = DefaultsKey.editorSyntaxTheme, lineNumbersKey = DefaultsKey.editorLineNumbers
-    static let autoPairKey = DefaultsKey.editorAutoPair, autoCompleteKey = DefaultsKey.editorAutoComplete
     static let fontSize = Int(NSFont.systemFontSize)
     static let fontSizes = 10...28
 
     static func stepFontSize(by step: Int) {
-        let current = UserDefaults.standard.object(forKey: fontSizeKey) as? Int ?? fontSize
-        UserDefaults.standard.set(min(max(current + step, fontSizes.lowerBound), fontSizes.upperBound), forKey: fontSizeKey)
+        let current = UserDefaults.standard.object(forKey: DefaultsKey.editorFontSize) as? Int ?? fontSize
+        UserDefaults.standard.set(min(max(current + step, fontSizes.lowerBound), fontSizes.upperBound), forKey: DefaultsKey.editorFontSize)
     }
 
     static var spellCheck: Bool {

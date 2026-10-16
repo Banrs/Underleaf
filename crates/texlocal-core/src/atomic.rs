@@ -39,7 +39,7 @@ impl Stamp {
         // Before 1970 too, as a timespec has it: seconds down, then
         // nanoseconds up from them.
         const NANOS: i128 = 1_000_000_000;
-        Stamp {
+        Self {
             inode,
             size: meta.len(),
             seconds: nanos.div_euclid(NANOS) as i64,

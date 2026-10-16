@@ -174,12 +174,12 @@ pub(crate) struct Tree {
 impl Tree {
     pub(crate) fn spawn(
         command: &mut tokio::process::Command,
-    ) -> std::io::Result<(tokio::process::Child, Tree)> {
+    ) -> std::io::Result<(tokio::process::Child, Self)> {
         #[cfg(unix)]
         {
             let child = command.process_group(0).spawn()?;
             let group = child.id().expect("a child just spawned has its pid") as i32;
-            Ok((child, Tree { group }))
+            Ok((child, Self { group }))
         }
         #[cfg(windows)]
         {
@@ -194,7 +194,7 @@ impl Tree {
             // Joined as it starts, long before it has loaded, let alone run a
             // program of its own.
             match job::Job::of(handle) {
-                Ok(job) => Ok((child, Tree { job: Arc::new(job) })),
+                Ok(job) => Ok((child, Self { job: Arc::new(job) })),
                 Err(err) => {
                     let _ = child.start_kill();
                     Err(err)
@@ -239,7 +239,7 @@ mod job {
             if handle.is_null() {
                 return Err(io::Error::last_os_error());
             }
-            let job = Job(unsafe { OwnedHandle::from_raw_handle(handle) });
+            let job = Self(unsafe { OwnedHandle::from_raw_handle(handle) });
             let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
             limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
             // SAFETY: the limits are of the class named, at their own size,
@@ -355,7 +355,7 @@ async fn drive(
                 let _ = tokio::time::timeout(DRAIN_GRACE, readers).await;
                 status
             }
-            _ = &mut readers => wait.await,
+            () = &mut readers => wait.await,
         }
     };
     (
@@ -796,7 +796,7 @@ impl CompileManager {
         // Reading and parsing the logs blocks, so not on a runtime worker. It
         // only reads: a build cancelled meanwhile, its gate released, leaves
         // it nothing to change under the next build.
-        let result = tokio::task::spawn_blocking(move || finish(run, end, output))
+        let result = tokio::task::spawn_blocking(move || finish(&run, &end, output))
             .await
             .map_err(|err| CoreError::internal(err.to_string()))?;
         if result.ok {
@@ -806,8 +806,8 @@ impl CompileManager {
     }
 }
 
-fn finish(run: CompileRun, end: End, output: String) -> CompileResult {
-    let ok = end == End::Exited(0) && run.output("pdf").exists();
+fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
+    let ok = *end == End::Exited(0) && run.output("pdf").exists();
     // With incremental latexmk, a clean no-op keeps both the PDF and its log.
     // Keep the warnings from that log; after a newly written PDF, an old log
     // still belongs to the previous build and must not be shown.
@@ -822,7 +822,7 @@ fn finish(run: CompileRun, end: End, output: String) -> CompileResult {
 
     // Not from a build cut short, which may have left it half-written.
     let wrote_pdf = matches!(end, End::Exited(_)) && run.wrote("pdf");
-    match &end {
+    match end {
         End::TimedOut => errors.push(LogItem::error(format!(
             "The build was stopped after {} minutes. Something in the document may be repeating forever.",
             COMPILE_TIMEOUT.as_secs() / 60
@@ -846,7 +846,7 @@ fn finish(run: CompileRun, end: End, output: String) -> CompileResult {
     let log = joined_log(engine_log.as_deref(), output);
     CompileResult {
         ok,
-        stopped: end == End::Stopped,
+        stopped: *end == End::Stopped,
         duration_ms: run.request_started.elapsed().as_millis() as u64,
         // A failed run can only advertise a PDF it actually wrote.
         pdf: (ok || wrote_pdf).then(|| run.output("pdf").to_string_lossy().into_owned()),

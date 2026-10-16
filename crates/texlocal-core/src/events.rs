@@ -36,7 +36,7 @@ impl Default for Hub {
                     }
                 }
             });
-        Hub {
+        Self {
             queue: std::sync::Mutex::new(spawned.ok().map(|_| queue)),
             listener,
         }

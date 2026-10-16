@@ -50,7 +50,7 @@ impl Export<'_> {
     /// `dir_canonical` is `dir` resolved, for excluding the archive itself.
     fn add_dir(&mut self, dir: &Path, dir_canonical: &Path, prefix: &str) -> Result<(), CoreError> {
         let mut entries = fs::read_dir(dir)?.collect::<io::Result<Vec<_>>>()?;
-        entries.sort_by_key(|e| e.file_name());
+        entries.sort_by_key(std::fs::DirEntry::file_name);
         let holds_archive = dir_canonical == self.archive_dir;
 
         for entry in entries {

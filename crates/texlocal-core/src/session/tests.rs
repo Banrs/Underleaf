@@ -227,7 +227,7 @@ struct Rig {
 }
 
 impl Rig {
-    async fn new(auto_compile: bool) -> Rig {
+    async fn new(auto_compile: bool) -> Self {
         let data = tempfile::tempdir().unwrap();
         crate::projects::create_project(data.path(), "P", "blank").unwrap();
         let root = dunce::canonicalize(data.path().join("P")).unwrap();
@@ -245,12 +245,12 @@ impl Rig {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
         sessions.set_listener(Some(Box::new(move |event| {
-            sink.lock().unwrap().push(event.clone())
+            sink.lock().unwrap().push(event.clone());
         })));
         let args = json!({ "id": "P", "session": 1, "autoCompile": auto_compile });
         let opened = sessions.call("session_open", &args).await.unwrap();
         let session = opened["session"].as_u64().unwrap();
-        Rig {
+        Self {
             _data: data,
             root,
             sessions,
@@ -740,13 +740,8 @@ async fn a_new_file_changes_the_tree_and_a_changed_unopened_file_is_told_of() {
     rig.changed("refs.bib", true);
     wait(300).await;
     let trees = rig.of_type("tree").await;
-    let names: Vec<&str> = trees[0]["tree"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|n| n["path"].as_str().unwrap())
-        .collect();
-    assert!(names.contains(&"refs.bib"));
+    let tree = trees[0]["tree"].as_array().unwrap();
+    assert!(tree.iter().any(|n| n["path"] == "refs.bib"));
     rig.write_elsewhere("refs.bib", "@book{b,");
     wait(300).await;
     let changed = rig.of_type("files_changed").await;
@@ -1074,7 +1069,7 @@ async fn the_watcher_tells_another_apps_changes_from_the_sessions_own() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&seen);
     sessions.set_listener(Some(Box::new(move |event| {
-        sink.lock().unwrap().push(event.clone())
+        sink.lock().unwrap().push(event.clone());
     })));
     let opened = sessions
         .call("session_open", &json!({ "id": "P", "session": 1 }))

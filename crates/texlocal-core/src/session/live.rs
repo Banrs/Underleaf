@@ -30,10 +30,10 @@ pub(crate) enum Phase {
 impl Phase {
     fn name(self) -> &'static str {
         match self {
-            Phase::Stopped => "stopped",
-            Phase::Starting => "starting",
-            Phase::Running => "running",
-            Phase::Stopping => "stopping",
+            Self::Stopped => "stopped",
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::Stopping => "stopping",
         }
     }
 }

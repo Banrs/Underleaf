@@ -388,7 +388,8 @@ impl Typing {
         let between = length == 0 && Self::closer_after(units, start).is_some();
         let mut insert = format!("\n{indent}");
         if between {
-            insert.push_str(&format!("\n{indent}"));
+            insert.push('\n');
+            insert.push_str(&indent);
         } else {
             while start + length < line_end && is(units[(start + length) as usize], ' ') {
                 length += 1;
@@ -626,7 +627,7 @@ pub fn move_lines(text: &Text, selections: &[TextRange], up: bool) -> Option<Cha
         let joined: String = moved
             .iter()
             .zip(&lines)
-            .map(|(text, (_, end))| format!("{text}{end}"))
+            .flat_map(|(text, (_, end))| [text.as_str(), end.as_str()])
             .collect();
         edits.push(edit(whole.0 as u32, (whole.1 - whole.0) as u32, joined));
         let new_start = if up {

@@ -58,8 +58,8 @@ pub(crate) enum Conflict {
 impl Conflict {
     fn name(self) -> &'static str {
         match self {
-            Conflict::Changed => "changed",
-            Conflict::Gone => "gone",
+            Self::Changed => "changed",
+            Self::Gone => "gone",
         }
     }
 }
@@ -201,7 +201,7 @@ impl Actor {
             citations: Vec::new(),
             labels: Vec::new(),
         };
-        let mut actor = Actor {
+        let mut actor = Self {
             id: setup.id,
             project: setup.project,
             root: setup.root,
@@ -288,7 +288,7 @@ impl Actor {
                 start,
                 length,
                 text,
-            } => self.edited(doc, version, start, length, text),
+            } => self.edited(doc, version, start, length, &text),
             Msg::Reloaded { doc, version } => self.reloaded(doc, version),
             Msg::Command { name, args, reply } => self.command(&name, &args, reply),
             Msg::BuildDone(result) => self.build_done(result),
@@ -413,7 +413,7 @@ impl Actor {
             "resolve" => self.resolve(&path()?, string_arg(args, "answer")?),
             "compile" => {
                 let auto = arg::<Option<bool>>(args, "auto")?.unwrap_or(false);
-                self.compile(auto).map(|_| Value::Null)
+                self.compile(auto).map(|()| Value::Null)
             }
             "stop_compile" => {
                 self.stop_compile();
@@ -578,7 +578,7 @@ impl Actor {
         }
     }
 
-    fn edited(&mut self, doc: u64, version: u64, start: u32, length: u32, text: String) {
+    fn edited(&mut self, doc: u64, version: u64, start: u32, length: u32, text: &str) {
         let Some(path) = self.by_id.get(&doc).cloned() else {
             return;
         };
@@ -591,7 +591,7 @@ impl Actor {
         }
         self.publish_doc(&path);
         self.autosave_at = Some(Instant::now() + self.t.autosave);
-        self.live_edited(&path, version, start, length, &text);
+        self.live_edited(&path, version, start, length, text);
     }
 
     fn reloaded(&mut self, doc: u64, version: u64) {
@@ -749,10 +749,10 @@ impl Actor {
             (_, "cancel") => (doc.asking, doc.held) = (None, true),
             // The autosave was held while asking, or the edits were saved before the other app's change.
             (Conflict::Changed, "save") => {
-                (doc.asking, doc.conflict, doc.force) = (None, None, true)
+                (doc.asking, doc.conflict, doc.force) = (None, None, true);
             }
             (Conflict::Changed, "revert") | (Conflict::Gone, "save") => {
-                (doc.asking, doc.conflict) = (None, None)
+                (doc.asking, doc.conflict) = (None, None);
             }
             (Conflict::Gone, "close") => {
                 self.close_doc(path, "closed");
@@ -769,7 +769,7 @@ impl Actor {
             "save" => Ok(json!({ "saved": self.save_edits(true)? })),
             "revert" => {
                 if let Some(text) = disk_text {
-                    self.request_reload(path, text, Reload::Revert);
+                    self.request_reload(path, &text, Reload::Revert);
                 }
                 Ok(Value::Null)
             }
@@ -777,7 +777,7 @@ impl Actor {
         }
     }
 
-    fn request_reload(&mut self, path: &str, text: String, reason: Reload) {
+    fn request_reload(&mut self, path: &str, text: &str, reason: Reload) {
         if let Some(doc) = self.docs.get_mut(path) {
             doc.reload = Some(reason);
             let reason = if reason == Reload::Revert {
@@ -851,7 +851,7 @@ impl Actor {
             }
             return;
         }
-        self.request_reload(path, text, Reload::Disk);
+        self.request_reload(path, &text, Reload::Disk);
     }
 
     fn file_gone(&mut self, path: &str) {
@@ -1105,7 +1105,7 @@ impl Actor {
                 Vec::new()
             };
             if lines != doc.issues {
-                doc.issues = lines.clone();
+                doc.issues.clone_from(&lines);
                 changed.push(json!({ "path": path, "lines": lines }));
             }
         }
