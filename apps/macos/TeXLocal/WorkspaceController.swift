@@ -103,12 +103,14 @@ final class WorkspaceController: RestoredSplitViewController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// The autosave restores which panes were collapsed as each split loads, but the models say which show: those they hide
-    /// collapse at once, and the tracks (`watch`) bring back those they show. The model follows the side columns from here on.
+    /// The autosave restores which panes were collapsed as each split loads, but the models say which show, and the side
+    /// columns take that at once. Left to the tracks (`watch`), a column the autosave had shut, as a narrow window folds
+    /// one, opened with AppKit's animation as the project appeared, and `joinDivider` waits out pane animations. The model
+    /// follows the side columns from here on.
     override func viewDidLoad() {
         super.viewDidLoad()
-        if !app.sidebarVisible { sidebarItem.isCollapsed = true }
-        if !app.inspectorVisible { inspectorItem.isCollapsed = true }
+        sidebarItem.isCollapsed = !app.sidebarVisible
+        inspectorItem.isCollapsed = !app.inspectorVisible
         collapses = [
             follow(sidebarItem) { [unowned self] visible in
                 fold(visible, shown: \.sidebarVisible, folded: \.sidebarFolded)
