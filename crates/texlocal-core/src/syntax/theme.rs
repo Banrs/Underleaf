@@ -177,24 +177,25 @@ pub fn contrasting(color: Rgba, background: Rgba, ratio: f64) -> Rgba {
     };
     let mut mixed = color;
     for step in 1..=20 {
-        if contrast(mixed, background) < ratio {
-            mixed = blend(color, ink, step as f64 / 20.0);
+        if contrast(mixed, background) >= ratio {
+            break;
         }
+        mixed = blend(color, ink, f64::from(step) / 20.0);
     }
     mixed
 }
 
-/// A colour as text on the editor's background and on its current line, the
-/// (translucent) `fill` over the background: raised to the HIG's 4.5:1 for
-/// text under 18 points, or WCAG's enhanced 7:1 with Increase Contrast.
-pub fn legible(color: Rgba, background: Rgba, fill: Rgba, increase_contrast: bool) -> Rgba {
-    let ratio = if increase_contrast { 7.0 } else { 4.5 };
-    legible_at(color, background, fill, ratio)
+/// The contrast text wants: the HIG's 4.5:1 for text under 18 points, or
+/// WCAG's enhanced 7:1 with Increase Contrast.
+pub fn text_contrast(increase_contrast: bool) -> f64 {
+    if increase_contrast { 7.0 } else { 4.5 }
 }
 
-/// `legible`, to a contrast `ratio` of the caller's choosing: 3:1 is the
-/// HIG's for large text and graphics, such as a border.
-pub fn legible_at(color: Rgba, background: Rgba, fill: Rgba, ratio: f64) -> Rgba {
+/// A colour on the editor's background and on its current line, the
+/// (translucent) `fill` over the background, raised to `ratio`: text's
+/// (`text_contrast`), or 3:1, the HIG's for large text and graphics, such as
+/// a border.
+pub fn legible(color: Rgba, background: Rgba, fill: Rgba, ratio: f64) -> Rgba {
     let line = over(fill, background);
     contrasting(
         contrasting(over(color, background), background, ratio),
@@ -248,7 +249,7 @@ pub fn theme_colors(theme: &Theme, appearance: &Appearance) -> Vec<Rgba> {
             resolved,
             appearance.background,
             appearance.fill,
-            appearance.increase_contrast,
+            text_contrast(appearance.increase_contrast),
         )
     })
     .collect()

@@ -3,7 +3,7 @@
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::Path;
 use std::ptr;
-use std::sync::Mutex;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -11,7 +11,7 @@ use texlocal_ffi::{
     TlHandle, TlSource, tl_call, tl_call_async, tl_close, tl_free, tl_open, tl_session_source,
     tl_set_listener, tl_source_call, tl_source_edit, tl_source_free, tl_source_free_runs,
     tl_source_highlights, tl_source_line_at, tl_source_line_count, tl_source_line_start,
-    tl_source_new, tl_source_reload,
+    tl_source_new, tl_source_reload, tl_syntax_call,
 };
 
 /// The JSON a call answered, read and handed back to the library to free; None
@@ -212,48 +212,22 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
     }
 }
 
-/// The labels and citations are the source's, set when they change rather
-/// than sent with each completions call: offered until set again, and none on
-/// a new source.
+/// The commands that need no source, on any thread: Windows asks for its
+/// theme's colours this way.
 #[test]
-fn completions_offer_the_symbols_set_on_the_source() {
+fn syntax_commands_round_trip_through_the_c_abi() {
     let c = |s: &str| CString::new(s).unwrap();
-    let offered = |source: *mut TlSource, caret: usize| unsafe {
-        let args = json!({ "caret": caret, "explicit": false });
-        let value = source_call(source, "completions", args).unwrap();
-        value["items"].as_array().map_or(vec![], |items| {
-            items
-                .iter()
-                .map(|i| i["label"].as_str().unwrap().to_owned())
-                .collect()
-        })
-    };
-    let set = |source: *mut TlSource, symbols: Value| unsafe {
-        let out = tl_source_call(
-            source,
-            c("set_symbols").as_ptr(),
-            c(&symbols.to_string()).as_ptr(),
-        );
-        assert_eq!(CStr::from_ptr(out).to_str(), Ok("null"));
-        tl_free(out);
-    };
+    let light = json!({ "theme": "overleaf", "dark": false, "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0.08] });
     unsafe {
-        let text = "\\cite{sm} \\ref{fig";
-        let source = tl_source_new(text.as_ptr(), text.len());
-        assert!(offered(source, 8).is_empty(), "a new source has none");
-        set(
-            source,
-            json!({ "labels": ["fig:one", "sec:two"], "citations": ["smith2020", "jones"] }),
-        );
-        assert_eq!(offered(source, 8), ["smith2020"]);
-        assert_eq!(offered(source, 18), ["fig:one"]);
-        // Kept through edits, and replaced whole.
-        tl_source_edit(source, 0, 0, "x ".as_ptr(), 2);
-        assert_eq!(offered(source, 10), ["smith2020"]);
-        set(source, json!({ "citations": ["smyth"] }));
-        assert_eq!(offered(source, 10), ["smyth"]);
-        assert!(offered(source, 20).is_empty());
-        tl_source_free(source);
+        let args = c(&light.to_string());
+        let colors = take_json(tl_syntax_call(c("theme_colors").as_ptr(), args.as_ptr()));
+        assert_eq!(colors.unwrap().as_array().map(Vec::len), Some(9));
+        // An unknown command or theme, or a null string, is no answer.
+        assert!(tl_syntax_call(c("no such command").as_ptr(), c("{}").as_ptr()).is_null());
+        let unknown = c(r#"{"theme": "solarized"}"#);
+        assert!(tl_syntax_call(c("theme_colors").as_ptr(), unknown.as_ptr()).is_null());
+        assert!(tl_syntax_call(ptr::null(), c("{}").as_ptr()).is_null());
+        assert!(tl_syntax_call(c("themes").as_ptr(), ptr::null()).is_null());
     }
 }
 
@@ -298,23 +272,33 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
     }
 }
 
-/// What a C host's callback collects: each JSON text it was handed.
+/// What a C host's callback collects: each JSON text it was handed, sent on
+/// to the test.
 extern "C" fn collect(ctx: *mut c_void, json: *const c_char) {
-    let seen = unsafe { &*(ctx as *const Mutex<Vec<Value>>) };
+    let sink = unsafe { &*(ctx as *const mpsc::Sender<Value>) };
     let json = unsafe { CStr::from_ptr(json) }.to_str().unwrap();
-    seen.lock()
-        .unwrap()
-        .push(serde_json::from_str(json).unwrap());
+    let _ = sink.send(serde_json::from_str(json).unwrap());
 }
 
-fn until(seen: &Mutex<Vec<Value>>, found: impl Fn(&Value) -> bool) -> Value {
+/// A sink for `collect`, its `ctx`, and what comes out of it.
+fn collector() -> (Box<mpsc::Sender<Value>>, mpsc::Receiver<Value>) {
+    let (sink, seen) = mpsc::channel();
+    (Box::new(sink), seen)
+}
+
+fn context(sink: &mpsc::Sender<Value>) -> *mut c_void {
+    (sink as *const mpsc::Sender<Value>).cast_mut().cast()
+}
+
+/// The first value collected that is `found`, within 10 s.
+fn until(seen: &mpsc::Receiver<Value>, found: impl Fn(&Value) -> bool) -> Value {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        if let Some(value) = seen.lock().unwrap().iter().find(|v| found(v)) {
-            return value.clone();
+        let left = deadline.saturating_duration_since(Instant::now());
+        let value = seen.recv_timeout(left).expect("collected in time");
+        if found(&value) {
+            return value;
         }
-        assert!(Instant::now() < deadline, "{:?}", seen.lock().unwrap());
-        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -365,9 +349,8 @@ fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
 fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() {
     let dir = tempfile::tempdir().unwrap();
     let handle = open_with_project(dir.path());
-    let events: Box<Mutex<Vec<Value>>> = Box::default();
-    let ctx = &*events as *const Mutex<Vec<Value>> as *mut c_void;
-    unsafe { tl_set_listener(handle, Some(collect), ctx) };
+    let (sink, events) = collector();
+    unsafe { tl_set_listener(handle, Some(collect), context(&sink)) };
     let opened = call(handle, "session_open", Some(json!({ "id": "P" })));
     let session = opened["ok"]["session"].as_u64().unwrap();
     let args = json!({ "session": session, "path": "main.tex" });
@@ -398,8 +381,7 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
     assert_eq!(state["ok"]["documents"][0]["dirty"], false);
     unsafe { tl_source_free(source) };
     // Without blocking: the answer comes to the callback.
-    let answers: Box<Mutex<Vec<Value>>> = Box::default();
-    let answered = &*answers as *const Mutex<Vec<Value>> as *mut c_void;
+    let (answered, answers) = collector();
     let command = CString::new("session_state").unwrap();
     let args = CString::new(json!({ "session": session }).to_string()).unwrap();
     unsafe {
@@ -408,7 +390,7 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
             command.as_ptr(),
             args.as_ptr(),
             Some(collect),
-            answered,
+            context(&answered),
         )
     };
     let answer = until(&answers, |_| true);

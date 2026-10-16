@@ -57,11 +57,12 @@ void tl_close(TlHandle *_Nullable handle);
 typedef struct TlSource TlSource;
 
 /* The document a session has open at path (session_open_document): its
- * edits are the session's, which saves and previews them, and "set_symbols"
- * does nothing, as the session sets them. NULL if it isn't open. Free with
- * tl_source_free, which leaves the document open. Each source starts with
- * no typing state: the brackets closed for the user and a snippet's fields
- * from an earlier visit are forgotten. */
+ * edits are the session's, which saves and previews them, and its
+ * "completions" offer the project's labels and citations, which the session
+ * scans. NULL if it isn't open. Free with tl_source_free, which leaves the
+ * document open. Each source starts with no typing state: the brackets
+ * closed for the user and a snippet's fields from an earlier visit are
+ * forgotten. */
 TlSource *_Nullable tl_session_source(const TlHandle *handle, uint64_t session, const char *path);
 
 /* Text is len bytes of UTF-8, so it may hold U+0000; bytes that aren't UTF-8
@@ -88,19 +89,15 @@ uint32_t *_Nullable tl_source_highlights(TlSource *source, uint32_t start, uint3
 void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 
 /* A command of SourceDocument::call (crates/texlocal-core/src/syntax/call.rs),
- * with a JSON object of arguments: "completions",
- * "toggle_comment", "indent", "set_heading", "insert_block", "insert_symbol",
- * "math_at", "text_styles", "not_prose", "text" and the rest it lists.
- * Returns the result's JSON, or NULL for an unknown command or arguments;
- * free it with tl_free.
- * "set_symbols" keeps the project's labels and citations, {"labels": [...],
- * "citations": [...]}, with the source, answering null: "completions" offers
- * them in \ref{ and \cite{ until they are set again. A new source has none. */
+ * with a JSON object of arguments: "completions", "toggle_comment",
+ * "set_heading", "insert_block", "insert_symbol", "math_at", "text_styles",
+ * "not_prose", "text" and the rest it lists. Returns the result's JSON, or
+ * NULL for an unknown command or arguments; free it with tl_free. */
 char *_Nullable tl_source_call(const TlSource *source, const char *command, const char *args_json);
 
 /* A command of the syntax module's call, which needs no source, on any thread:
  * "themes", "theme_colors", "legible" ({"color", "background", "fill",
- * "increaseContrast"?, "ratio"? (4.5, 7 with increaseContrast)}), "contrast",
+ * "increaseContrast"?, "ratio"? (4.5, 7 with increaseContrast)}),
  * "menus", "document_class", "heading_styles", "drop_text" ({"path", "kind",
  * "into"? ("tex")} answers {"insert": LaTeX} or {"open": true}, or null for a
  * folder), and maths as SVG:
@@ -109,8 +106,7 @@ char *_Nullable tl_source_call(const TlSource *source, const char *command, cons
  * "side" (24), "color"} answer {"svg", "width", "height", "baseline"} in
  * points (baseline from the top) or {"error": why}; the SVG holds only
  * <path> and <rect>. Returns the result's JSON, or NULL for an unknown
- * command or arguments; free it with tl_free. tl_source_call answers these
- * too. */
+ * command or arguments; free it with tl_free. */
 char *_Nullable tl_syntax_call(const char *command, const char *args_json);
 
 void tl_source_free(TlSource *_Nullable source);

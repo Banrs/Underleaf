@@ -452,8 +452,8 @@ pub unsafe extern "C" fn tl_source_free_runs(runs: *mut u32, count: usize) {
     }
 }
 
-/// `syntax::SourceDocument::call`'s commands, and `syntax::call`'s. Returns the result's JSON (free it with
-/// `tl_free`), or null for an unknown command or arguments.
+/// `syntax::SourceDocument::call`'s commands. Returns the result's JSON
+/// (free it with `tl_free`), or null for an unknown command or arguments.
 ///
 /// # Safety
 /// As `tl_source_edit`; the strings are null or NUL-terminated.

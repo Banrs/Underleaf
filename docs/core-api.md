@@ -15,7 +15,7 @@ Windows loads `texlocal_ffi.dll`):
 | `tl_call(h, command, args_json)` | Blocking, JSON in, `{"ok": value}` or `{"error": message, "status": code}` out; free with `tl_free`. Never on the UI thread. |
 | `tl_call_async(h, command, args_json, done, ctx)` | The same on a core thread; `done(ctx, envelope_json)` gets the envelope. `done` may be NULL. |
 | `tl_set_listener(h, listener, ctx)` | Events, below. NULL removes it; it returns once no call to the old listener runs. |
-| `tl_session_source(h, session, path)` | A session's open document as a `TlSource` (see Documents). Free with `tl_source_free`. Each source handed out starts with no typing state: the brackets the editor closed and a snippet's fields from an earlier visit are forgotten (`reset_typing`, below, does the same by hand). |
+| `tl_session_source(h, session, path)` | A session's open document as a `TlSource` (see Documents). Free with `tl_source_free`. Each source handed out starts with no typing state: the brackets the editor closed and a snippet's fields from an earlier visit are forgotten. |
 | `tl_source_*` | Highlighting, completions and editing commands on a source, as before; `tl_source_reload` takes a reloaded text. |
 | `tl_syntax_call(command, args_json)` | Commands that need no source: themes and colours, menus, maths as SVG, and `drop_text` (below). |
 
@@ -104,13 +104,12 @@ Service commands (`tl_call`):
 | `create_project` | `name`, `template?` (article), `free?` | the project (`{id, name, mtime, mainFile}`) | With `free: true`, `name` may be left out (“Untitled”) and the project takes the first free name of the series “Untitled”, “Untitled 2”, … as `free_project_name` finds it; `id`/`name` say which. A name taken (in any case, where the volume ignores case) is numbered past, as for `create_entry {free: true}`; a name the path rules refuse is 400. Without `free` a name is required (and is numbered past when taken, as before). |
 | `free_project_name` | `name?` (“Untitled”) | `{name}` | The name `create_project {free: true}` would try, creating nothing: for the New Project field to offer. |
 
-Syntax commands (`tl_syntax_call`, and `tl_source_call` too), JSON in, JSON out:
+Syntax commands (`tl_syntax_call`), JSON in, JSON out:
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
 | `drop_text` | `path`, `kind`, `into?` ("tex") | `{"insert": "\\includegraphics{path}"}`, `{"open": true}` or `null` | What a project file dropped on the editor does. `path` is the file's project path and `kind` its `file_tree` kind (`image`, `pdf`, `tex`, …; a folder has none: `null`, nothing happens). `into` is the kind of the file dropped on. An `image` or `pdf` dropped on a `tex` file inserts `\includegraphics{path}` at the caret; any other file opens (`{"open": true}`). The path is written as given. |
 | `legible` | `color`, `background`, `fill`, `increaseContrast?`, `ratio?` | `[r, g, b, a]` | The colour raised to a contrast `ratio` against the background and the current line. Without `ratio`: 4.5, or 7 with `increaseContrast`. With `ratio`, `increaseContrast` is ignored; a PDF find border under Increase Contrast wants `ratio: 3.0`. |
-| `reset_typing` | (a source's) | null | Forgets the closers and snippet fields typing keeps on that source. `tl_session_source` does so for each source it hands out, so a host rarely needs this. |
 
 ## Events
 

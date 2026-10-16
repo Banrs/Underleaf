@@ -430,6 +430,38 @@ mod tests {
         assert_eq!(doc.text(), "c!");
     }
 
+    /// The labels and citations are the document's, set when they change
+    /// rather than sent with each completions call: offered until set again,
+    /// and none on a new document.
+    #[test]
+    fn completions_offer_the_symbols_set_on_the_document() {
+        let offered = |doc: &mut SourceDocument, caret: u32| -> Vec<String> {
+            let answer = doc.call("completions", &format!(r#"{{"caret": {caret}}}"#));
+            let value: serde_json::Value = serde_json::from_str(&answer.unwrap()).unwrap();
+            value["items"].as_array().map_or(vec![], |items| {
+                items
+                    .iter()
+                    .map(|i| i["label"].as_str().unwrap().to_owned())
+                    .collect()
+            })
+        };
+        let owned = |names: &[&str]| names.iter().map(|&n| n.to_owned()).collect();
+        let mut doc = SourceDocument::new("\\cite{sm} \\ref{fig");
+        assert!(offered(&mut doc, 8).is_empty(), "a new document has none");
+        doc.set_symbols(
+            owned(&["fig:one", "sec:two"]),
+            owned(&["smith2020", "jones"]),
+        );
+        assert_eq!(offered(&mut doc, 8), ["smith2020"]);
+        assert_eq!(offered(&mut doc, 18), ["fig:one"]);
+        // Kept through edits, and replaced whole.
+        doc.edit(0, 0, "x ");
+        assert_eq!(offered(&mut doc, 10), ["smith2020"]);
+        doc.set_symbols(vec![], owned(&["smyth"]));
+        assert_eq!(offered(&mut doc, 10), ["smyth"]);
+        assert!(offered(&mut doc, 20).is_empty());
+    }
+
     #[test]
     fn offsets_are_utf16() {
         let mut doc = SourceDocument::new("é😀\nx");

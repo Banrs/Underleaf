@@ -50,7 +50,7 @@ pub struct Change {
 pub struct Tab {
     /// The field to select; none, with a snippet, where there's no other.
     pub field: Option<TextRange>,
-    /// Without a snippet: the indentation, as "indent" gives it.
+    /// Without a snippet: the indentation, as `SourceDocument::indent` gives it.
     pub edits: Vec<TextEdit>,
 }
 
