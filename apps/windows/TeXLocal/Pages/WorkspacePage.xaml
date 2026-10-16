@@ -34,7 +34,7 @@
                 </Grid>
             </TreeViewItem>
         </DataTemplate>
-        <Style TargetType="TreeView" BasedOn="{StaticResource DefaultTreeViewStyle}">
+        <Style TargetType="TreeView">
             <Setter Property="CanDragItems" Value="False" />
             <Setter Property="CanReorderItems" Value="False" />
             <Setter Property="ItemTemplate" Value="{StaticResource NavTemplate}" />
