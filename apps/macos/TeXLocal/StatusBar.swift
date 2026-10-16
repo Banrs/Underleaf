@@ -17,7 +17,11 @@ enum BarMetrics {
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let project: ProjectModel
+
+    /// The editors' colour over the blur beneath: what is left passes about a sixth of the text's contrast, as Xcode's bar does.
+    private var wash: Double { reduceTransparency ? 1 : 0.83 }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -28,7 +32,8 @@ struct StatusBar: View {
         .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
         // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`).
         .padding(.top, BarMetrics.line)
-        // No ground of its own: AppKit's scroll edge lies under the bar (`buildArea`) and draws no line, so the bar has its own.
+        // The editors' colour over a blur of what scrolls beneath (`blurBackdrop`, `buildArea`).
+        .background(.textSurface.opacity(wash))
         .overlay(alignment: .top) { Divider() }
         .monospacedDigit()
         .buttonStyle(.borderless)
@@ -191,5 +196,15 @@ extension View {
 
     fileprivate func hitTarget() -> some View {
         frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect)
+    }
+}
+
+extension NSView {
+    /// A blur of what the window draws behind the view, with no colour of its own: every material and Liquid Glass tints what it blurs.
+    func blurBackdrop(radius: Double = 12) {
+        wantsLayer = true
+        layerUsesCoreImageFilters = true
+        layer?.masksToBounds = true
+        layer?.backgroundFilters = CIFilter(name: "CIGaussianBlur", parameters: [kCIInputRadiusKey: radius]).map { [$0] }
     }
 }

@@ -293,6 +293,20 @@ final class WorkspaceController: RestoredSplitViewController {
         let statusBar = accessory(StatusBar(project: project))
         // 27.2: AppKit's insets pad the bar but leave the panes' scrollers and safe area at the padded height.
         statusBar.automaticallyAppliesContentInsets = false
+        // 27.2: AppKit gives an accessory's scroll edge to the scroll view of one toolbar section, and keeps it there once the
+        // PDF has been hidden, so the other pane's text went sharp under the bar. The ground is the bar's own: a blur on a
+        // plain view over the panes, as a background filter draws nothing on the accessory or inside it.
+        statusBar.preferredScrollEdgeEffectStyle = .soft
+        let ground = NSView()
+        ground.blurBackdrop()
+        ground.translatesAutoresizingMaskIntoConstraints = false
+        columns.view.addSubview(ground)
+        NSLayoutConstraint.activate([
+            ground.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
+            ground.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
+            ground.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
+            ground.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line),
+        ])
         columnsItem.addBottomAlignedAccessoryViewController(statusBar)
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)

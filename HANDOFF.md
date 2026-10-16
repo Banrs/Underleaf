@@ -52,8 +52,9 @@ the hosts' contract with the core.
   rendering attributes aren't drawn (27.2), so an undefined command's underline is drawn
   under the text.
 - **Status bar**: the source and PDF columns' bottom accessory at Xcode's spacing
-  (`BarMetrics`), with AppKit's own scroll edge as its ground and a point line of its own
-  above it. After a failed save, or a Cancel in an alert about the file on disk, it says Not
+  (`BarMetrics`), on a ground of its own (83% of the editors' colour over a Core Image blur,
+  `blurBackdrop`) and a point line above it. AppKit's own scroll edge can't be its ground on
+  27.2: it goes to one pane's scroll view only, and stays there once the PDF has been hidden. After a failed save, or a Cancel in an alert about the file on disk, it says Not
   Saved and that button saves.
 - **Build panel**: below the columns, so the status bar rides up as it opens. A bar at its
   foot, as Xcode's console bar: a pop-up for Issues, Build Log and Live Preview Log, then
