@@ -95,10 +95,6 @@ public sealed partial class HomePage : Page
 
     void OnRetry(object sender, RoutedEventArgs e) => Reload();
 
-    void OnOpenFolder(object sender, RoutedEventArgs e) => Window.OpenFolder();
-
-    void OnOpenFile(object sender, RoutedEventArgs e) => Window.OpenFile();
-
     void OnItemClick(object sender, ItemClickEventArgs e) => Window.OpenProject(((ProjectInfo)e.ClickedItem).Id);
 
     /// New project, as File Explorer's New folder: a free name, selected for typing over; a refusal under the box.

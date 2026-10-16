@@ -108,8 +108,6 @@ public sealed partial class MainWindow : Window
         while (Pages.CanGoBack && Pages.Content is not HomePage) Pages.GoBack();
     }
 
-    void OnSettings(object sender, RoutedEventArgs e) => OpenSettings();
-
     void OnBackRequested(TitleBar sender, object args)
     {
         if (Pages.CanGoBack) Pages.GoBack();

@@ -27,7 +27,6 @@ public partial class App : Application
         };
     }
 
-    /// Opens the core if it isn't open; false if it can't be.
     public static bool OpenCore()
     {
         if (Core is not null) return true;

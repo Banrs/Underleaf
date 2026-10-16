@@ -2,6 +2,7 @@
     x:Class="TeXLocal.Pages.SettingsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:app="using:TeXLocal"
     xmlns:bridge="using:TeXLocal.Bridge"
     xmlns:controls="using:TeXLocal.Controls"
     Background="Transparent">
@@ -101,10 +102,10 @@
                     </Grid>
                 </Border>
                 <controls:Card Description="Typing (, [ or { adds its partner" Glyph="&#xE943;" Header="Close brackets automatically">
-                    <ToggleSwitch x:Name="PairSwitch" MinWidth="0" AutomationProperties.Name="Close brackets automatically" />
+                    <ToggleSwitch x:Name="PairSwitch" MinWidth="0" AutomationProperties.Name="Close brackets automatically" IsOn="{x:Bind app:Prefs.AutoPair, Mode=TwoWay}" />
                 </controls:Card>
                 <controls:Card Description="When off, press Ctrl+Space to see suggestions" Glyph="&#xE8FD;" Header="Suggest completions while typing">
-                    <ToggleSwitch x:Name="CompleteSwitch" MinWidth="0" AutomationProperties.Name="Suggest completions while typing" />
+                    <ToggleSwitch x:Name="CompleteSwitch" MinWidth="0" AutomationProperties.Name="Suggest completions while typing" IsOn="{x:Bind app:Prefs.AutoComplete, Mode=TwoWay}" />
                 </controls:Card>
 
                 <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="About" />

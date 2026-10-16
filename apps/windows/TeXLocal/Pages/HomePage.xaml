@@ -2,6 +2,7 @@
     x:Class="TeXLocal.Pages.HomePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:app="using:TeXLocal"
     xmlns:bridge="using:TeXLocal.Bridge"
     xmlns:controls="using:TeXLocal.Controls"
     xmlns:local="using:TeXLocal.Pages"
@@ -37,7 +38,6 @@
             <Setter Property="Margin" Value="-4,0" />
             <Setter Property="Padding" Value="4,2" />
             <Setter Property="FocusVisualMargin" Value="2,0" />
-            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="ContextFlyout" Value="{StaticResource ProjectMenu}" />
         </Style>
     </Page.Resources>
@@ -65,10 +65,10 @@
                 <DropDownButton Content="Open">
                     <DropDownButton.Flyout>
                         <MenuFlyout Placement="BottomEdgeAlignedLeft">
-                            <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+O" Click="OnOpenFolder" Text="Folder…">
+                            <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+O" Click="{x:Bind app:App.Window.OpenFolder}" Text="Folder…">
                                 <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8B7;" /></MenuFlyoutItem.Icon>
                             </MenuFlyoutItem>
-                            <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+O" Click="OnOpenFile" Text="ZIP or TeX file…">
+                            <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+O" Click="{x:Bind app:App.Window.OpenFile}" Text="ZIP or TeX file…">
                                 <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8A5;" /></MenuFlyoutItem.Icon>
                             </MenuFlyoutItem>
                         </MenuFlyout>
@@ -152,19 +152,16 @@
                                     x:Name="NameText"
                                     Style="{StaticResource BodyTextBlockStyle}"
                                     Text="{x:Bind Name}"
-                                    TextTrimming="CharacterEllipsis"
                                     TextWrapping="NoWrap"
                                     ToolTipService.ToolTip="{x:Bind Name}" />
                                 <TextBlock
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Style="{StaticResource CaptionTextBlockStyle}"
                                     Text="{x:Bind local:HomePage.Caption(MainFile, Mtime)}"
-                                    TextTrimming="CharacterEllipsis"
                                     TextWrapping="NoWrap" />
                             </StackPanel>
                             <Button
                                 Grid.Column="2"
-                                VerticalAlignment="Center"
                                 AutomationProperties.Name="{x:Bind local:HomePage.MoreName(Name)}"
                                 Flyout="{StaticResource ProjectMenu}"
                                 Style="{StaticResource SubtleButtonStyle}"

@@ -12,7 +12,6 @@ public static unsafe partial class Prefs
 {
     static readonly IPropertySet values =
         Microsoft.Windows.Storage.ApplicationData.GetForUnpackaged("TeXLocal", "TeXLocal").LocalSettings.Values;
-    static SyntaxTheme[]? themes;
     static string[]? families;
 
     public static double SidebarWidth { get => Get("sidebarWidth", 280.0); set => values["sidebarWidth"] = value; }
@@ -31,7 +30,7 @@ public static unsafe partial class Prefs
 
     public static event Action? EditorChanged;
 
-    public static SyntaxTheme[] Themes => themes ??= Source.SyntaxCall<SyntaxTheme[]>("themes", new { }) ?? [];
+    public static SyntaxTheme[] Themes => field ??= Source.SyntaxCall<SyntaxTheme[]>("themes", new { }) ?? [];
 
     static T Get<T>(string key, T fallback) => values.TryGetValue(key, out var v) && v is T t ? t : fallback;
 

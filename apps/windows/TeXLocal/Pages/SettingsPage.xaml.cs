@@ -27,8 +27,6 @@ public sealed partial class SettingsPage : Page
         SizeBox.SelectedIndex = Array.IndexOf(sizes, Prefs.EditorFontSize);
         SyntaxBox.ItemsSource = Prefs.Themes;
         SyntaxBox.SelectedValue = Prefs.EditorTheme;
-        PairSwitch.IsOn = Prefs.AutoPair;
-        CompleteSwitch.IsOn = Prefs.AutoComplete;
 
         ThemeBox.SelectionChanged += (_, _) =>
         {
@@ -38,8 +36,6 @@ public sealed partial class SettingsPage : Page
         FontBox.SelectionChanged += OnLook;
         SizeBox.SelectionChanged += OnLook;
         SyntaxBox.SelectionChanged += OnLook;
-        PairSwitch.Toggled += (_, _) => Prefs.AutoPair = PairSwitch.IsOn;
-        CompleteSwitch.Toggled += (_, _) => Prefs.AutoComplete = CompleteSwitch.IsOn;
         Loaded += (_, _) => ShowPreview();
         ActualThemeChanged += (_, _) => DispatcherQueue.TryEnqueue(ShowPreview);
     }

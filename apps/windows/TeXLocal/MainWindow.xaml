@@ -1,8 +1,7 @@
 <Window
     x:Class="TeXLocal.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="TeXLocal">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Window.SystemBackdrop>
         <MicaBackdrop />
     </Window.SystemBackdrop>
@@ -29,8 +28,7 @@
                     x:Name="Search"
                     Width="440"
                     x:FieldModifier="public"
-                    AutomationProperties.Name="Search in project"
-                    Visibility="Collapsed">
+                    AutomationProperties.Name="Search in project">
                     <AutoSuggestBox.QueryIcon>
                         <FontIcon Glyph="&#xE721;" />
                     </AutoSuggestBox.QueryIcon>
@@ -42,7 +40,7 @@
                     Width="40"
                     Height="32"
                     AutomationProperties.Name="Settings"
-                    Click="OnSettings"
+                    Click="{x:Bind OpenSettings}"
                     Style="{StaticResource SubtleButtonStyle}"
                     ToolTipService.ToolTip="Settings (Ctrl+,)">
                     <FontIcon FontSize="16" Glyph="&#xE713;" />
