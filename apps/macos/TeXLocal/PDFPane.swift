@@ -155,7 +155,7 @@ enum PDFPaper: String, CaseIterable, Identifiable {
 
     var id: Self { self }
 
-    var title: String {
+    var title: LocalizedStringResource {
         switch self {
         case .white: "White"
         case .dark: "Dark"

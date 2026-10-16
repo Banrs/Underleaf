@@ -90,6 +90,24 @@ struct PDFSwapTests {
         #expect(text(view) == ["x"] && view.document === shown)
     }
 
+    @Test func aLiveDocumentAfterOneNotReadTakesEveryPage() throws {
+        let controller = PDFController(), view = controller.view
+        view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try document(["a", "b"]))
+        let shown = try #require(view.document)
+        func live(_ pages: [String], changed: IndexSet) throws -> LiveRead {
+            .document(LiveDocument(url: URL(filePath: "/live.pdf"), document: try document(pages), changed: changed, complete: true))
+        }
+        controller.showLive(.document(nil))
+        controller.showLive(try live(["a2", "b2"], changed: [1]))
+        #expect(text(view) == ["a2", "b2"] && view.document === shown)
+        controller.showLive(try live(["a3", "b3"], changed: [1]))
+        #expect(text(view) == ["a2", "b3"])
+        // A page past the document showing goes: the next document has it.
+        controller.showLive(.page(LivePage(index: 2, page: try #require(try document(["c"]).page(at: 0)))))
+        #expect(text(view) == ["a2", "b3"] && controller.pageCount == 2)
+    }
+
     @Test(arguments: [false, true])
     func aLivePageLeavesTheSelectionAndFindOnOtherPages(inView: Bool) async throws {
         let controller = PDFController(), view = controller.view

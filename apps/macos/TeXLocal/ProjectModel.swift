@@ -56,7 +56,7 @@ final class ProjectModel {
     var livePDF: Bool { if case .live = shown { true } else { false } }
     private(set) var buildPDF: URL?
     let pdf = PDFController()
-    let panel: BuildPanelModel
+    let panel = BuildPanelModel()
     let texpresso = TeXpressoSession()
 
     var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) }
@@ -98,7 +98,7 @@ final class ProjectModel {
         self.app = app
         search = ProjectSearch(id: id)
         tree = FileTree(id: id)
-        panel = BuildPanelModel(texpresso: texpresso)
+        texpresso.watchLog { [panel] in panel.shown && panel.tab == .texpresso }
         texpresso.onAlert = { [weak self] in self?.panel.show(.texpresso) }
         texpresso.onEnded = { [weak self] in Task { await self?.endLivePDF() } }
         texpresso.readStatus = { [weak self] in
@@ -109,11 +109,6 @@ final class ProjectModel {
             self?.openKindChanged()
             self?.analyze()
         }
-        texpresso.showDocument = { [weak self] in self?.showLive($0) }
-        texpresso.showPage = { [weak self] page, index in
-            if self?.livePDF == true { self?.pdf.showLive(page, at: index) }
-        }
-        texpresso.shownPages = { [weak self] in self?.pdf.view.document?.pageCount ?? 0 }
         pdf.onVisiblePages = { [weak self] in self?.liveView($0) }
         pdf.buildBehindLive = { [weak self] in self.flatMap { $0.livePDF ? $0.buildPDF : nil } }
     }
@@ -277,11 +272,20 @@ final class ProjectModel {
         pdf.clear()
     }
 
-    private func showLive(_ live: LiveDocument) {
+    /// A live PDF as `Core` read it where the event arrived, in the order the session sent them. A page is drawn over a live
+    /// document only, never over the build's.
+    private func showLive(_ read: LiveRead) {
         guard texpresso.active, !closed else { return }
-        if !livePDF, app?.showPDF == false { app?.showPDF = true }
-        shown = .live(live.url)
-        pdf.showLive(live.document, changed: live.changed, complete: live.complete)
+        switch read {
+        case .document(let live?):
+            if !livePDF, app?.showPDF == false { app?.showPDF = true }
+            shown = .live(live.url)
+        case .page where !livePDF:
+            return
+        default:
+            break
+        }
+        pdf.showLive(read)
     }
 
     /// In the order changed: on the session's queue, as a read of it is.
@@ -316,7 +320,7 @@ final class ProjectModel {
         case "tree": if let listed = decoded(TreeEvent.self) { treeChanged(listed) }
         case "files_changed": if let changed = decoded(PathsEvent.self) { filesChanged(changed) }
         case "live": if let state = decoded(LiveState.self) { texpresso.receive(state) }
-        case "live_document", "live_page": if let live { texpresso.receive(live) }
+        case "live_document", "live_page": if let live { showLive(live) }
         case "live_restarted": notices.note(String(localized: "Live Preview Restarted"))
         default: break
         }

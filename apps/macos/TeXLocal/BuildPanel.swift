@@ -6,25 +6,14 @@ enum PanelTab: String, CaseIterable {
 
 @Observable
 final class BuildPanelModel {
-    private let texpresso: TeXpressoSession
-
     var shown = false {
-        didSet {
-            if !shown { openedByBuild = false }
-            texpresso.showsLog = shown && tab == .texpresso
-        }
+        didSet { if !shown { openedByBuild = false } }
     }
     @ObservationIgnored private var openedByBuild = false
-    var tab: PanelTab = .issues {
-        didSet { texpresso.showsLog = shown && tab == .texpresso }
-    }
+    var tab: PanelTab = .issues
     var issueFilter = ""
     var logFilter = ""
     var showsWarnings = true
-
-    init(texpresso: TeXpressoSession) {
-        self.texpresso = texpresso
-    }
 
     func show(_ tab: PanelTab) {
         self.tab = tab
