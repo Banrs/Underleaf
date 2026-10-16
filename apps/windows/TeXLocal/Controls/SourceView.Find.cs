@@ -1,21 +1,21 @@
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Input;
 using TeXLocal.Bridge;
 using VirtualKey = Windows.System.VirtualKey;
 
 namespace TeXLocal.Controls;
 
-/// Find and replace in the file, as Notepad's bar over the text: RichEdit finds (FindText), and replacements are the
-/// session's edits like any other.
+/// Find and replace in the file, as Notepad's bar over the text with VS Code's find widget's behaviour: RichEdit finds
+/// (FindText), and replacements are the session's edits like any other.
 public sealed partial class SourceView
 {
-    const int Forward = 0x3FFFFFFF, MostCounted = 9999;
+    const int Forward = 0x3FFFFFFF, MostCounted = 999;
 
     FindOptions Options => (MatchCase.IsChecked ? FindOptions.Case : FindOptions.None) | (WholeWord.IsChecked ? FindOptions.Word : FindOptions.None);
 
-    public bool FindShown => FindBar.Visibility == Visibility.Visible;
+    bool FindShown => FindBar.Visibility == Visibility.Visible;
 
     public void ShowFind(bool replace)
     {
@@ -33,16 +33,22 @@ public sealed partial class SourceView
     void ShowReplace(bool show)
     {
         ReplaceBox.Visibility = ReplaceButtons.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        ReplaceChevron.Glyph = show ? "\uE70E" : "\uE76C";
-        var name = show ? "Hide replace" : "Show replace";
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ReplaceToggle, name);
-        ToolTipService.SetToolTip(ReplaceToggle, show ? "Hide replace" : "Show replace (Ctrl+H)");
+        ReplaceChevron.Glyph = show ? "\uE70D" : "\uE76C";
+        Band();
     }
 
-    public void HideFind()
+    /// VS Code's space above the text while the bar is open, as tall as the bar, so no match is ever under it.
+    void Band()
+    {
+        Editor.Padding = new Thickness(8, 8 + (!FindShown ? 0 : ReplaceBox.Visibility == Visibility.Visible ? 84 : 48), 16, 8);
+        Invalidate(false);
+    }
+
+    void HideFind()
     {
         if (!FindShown) return;
         FindBar.Visibility = Visibility.Collapsed;
+        Band();
         Editor.Focus(FocusState.Programmatic);
     }
 
@@ -50,13 +56,9 @@ public sealed partial class SourceView
     public void FindNext(bool forward)
     {
         if (source is null) return;
-        if (FindBox.Text.Length == 0)
-        {
-            ShowFind(false);
-            return;
-        }
         var s = Selected;
-        if ((Search(forward ? s.End : s.Start, forward) ?? Search(forward ? 0 : text.Length, forward)) is { } found) Place(found);
+        if (FindBox.Text.Length == 0) ShowFind(false);
+        else if ((Search(forward ? s.End : s.Start, forward) ?? Search(forward ? 0 : text.Length, forward)) is { } found) Place(found);
         Count();
     }
 
@@ -67,47 +69,41 @@ public sealed partial class SourceView
             ? new SourceRange(range.StartPosition, range.EndPosition - range.StartPosition) : null;
     }
 
-    List<SourceRange> Matches()
+    List<SourceRange> Matches(int most = int.MaxValue)
     {
         var found = new List<SourceRange>();
-        for (var at = 0; found.Count <= MostCounted && Search(at, true) is { } match; at = match.End)
-        {
-            found.Add(match);
-            if (match.Length == 0) break;
-        }
+        for (var at = 0; found.Count < most && Search(at, true) is { } match; at = match.End) found.Add(match);
         return found;
     }
 
+    /// "1 of 5" while a match is selected, Replace only while there's one, and Narrator hears the count.
     void Count()
     {
-        if (FindBox.Text.Length == 0 || source is null)
-        {
-            FindCount.Text = "";
-            return;
-        }
-        var matches = Matches();
-        var s = Selected;
-        var at = matches.FindIndex(m => m.Start == s.Start && m.Length == s.Length);
+        List<SourceRange> matches = FindBox.Text.Length == 0 || source is null ? [] : Matches(MostCounted + 1);
+        var at = matches.IndexOf(Selected);
         var total = matches.Count > MostCounted ? $"{MostCounted}+" : $"{matches.Count}";
-        FindCount.Text = matches.Count == 0 ? "No results" : at < 0 ? $"{total} found" : $"{at + 1} of {total}";
+        FindCount.Text = FindBox.Text.Length == 0 ? "" : matches.Count == 0 ? "No results" : at < 0 ? $"{total} found" : $"{at + 1} of {total}";
+        ReplaceOne.IsEnabled = ReplaceEvery.IsEnabled = matches.Count > 0;
+        FrameworkElementAutomationPeer.FromElement(FindCount)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
     }
 
-    void OnFindChanged(object sender, object e) => Count();
+    /// The first match from the selection's start is selected as you type.
+    void OnFindChanged(object sender, object e)
+    {
+        if (source is not null && FindBox.Text.Length > 0 && (Search(Selected.Start, true) ?? Search(0, true)) is { } found) Place(found);
+        Count();
+    }
 
     void OnFindNext(object sender, RoutedEventArgs e) => FindNext(true);
-
     void OnFindPrevious(object sender, RoutedEventArgs e) => FindNext(false);
-
     void OnFindClose(object sender, RoutedEventArgs e) => HideFind();
-
     void OnReplaceToggle(object sender, RoutedEventArgs e) => ShowReplace(ReplaceBox.Visibility != Visibility.Visible);
 
     void OnFindKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        var shift = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
         if (e.Key == VirtualKey.Escape) HideFind();
         else if (e.Key == VirtualKey.Enter && ReferenceEquals(sender, ReplaceBox)) OnReplace(sender, e);
-        else if (e.Key == VirtualKey.Enter) FindNext(!shift);
+        else if (e.Key == VirtualKey.Enter) FindNext(!Down(VirtualKey.Shift));
         else return;
         e.Handled = true;
     }
@@ -117,22 +113,15 @@ public sealed partial class SourceView
     {
         if (source is null || FindBox.Text.Length == 0) return;
         var s = Selected;
-        if (Search(s.Start, true) is { } match && match == s)
-        {
-            NextUndoGroup();
-            Put(s.Start, s.Length, ReplaceBox.Text);
-            Place(s.Start + ReplaceBox.Text.Length);
-            NextUndoGroup();
-        }
+        if (Search(s.Start, true) == s) Apply(new Change([new(s.Start, s.Length, ReplaceBox.Text)], [new(s.Start + ReplaceBox.Text.Length, 0)]));
         FindNext(true);
     }
 
-    /// Every match, as one undo step.
+    /// Every match, uncounted, as one undo step.
     void OnReplaceAll(object sender, RoutedEventArgs e)
     {
         if (source is null || FindBox.Text.Length == 0) return;
         Apply([.. Matches().Select(m => new TextEdit(m.Start, m.Length, ReplaceBox.Text))]);
-        Refresh();
         Count();
     }
 }

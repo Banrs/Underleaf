@@ -161,7 +161,8 @@ public sealed partial class WorkspacePage
     {
         if (Editor.Path is null) return;
         if (palette is null || paletteTheme != ActualTheme) await BuildPalette();
-        palette!.ShowAt(Editor, new FlyoutShowOptions { Position = Editor.CaretPoint, Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft });
+        var r = Editor.CaretRect;
+        palette!.ShowAt(Editor, new FlyoutShowOptions { Position = new(r.X, r.Bottom), ExclusionRect = r, Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft });
     }
 
     /// The catalogue's symbols in a grid by kind, as the emoji panel: a click puts the command in, between dollars in text.

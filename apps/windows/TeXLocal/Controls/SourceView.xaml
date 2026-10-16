@@ -5,15 +5,6 @@
     xmlns:local="using:TeXLocal.Controls">
 
     <UserControl.Resources>
-        <Style x:Key="NumberStyle" TargetType="TextBlock">
-            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="TextAlignment" Value="Right" />
-            <Setter Property="Foreground" Value="{ThemeResource TextFillColorTertiaryBrush}" />
-        </Style>
-        <Style x:Key="CurrentNumberStyle" TargetType="TextBlock" BasedOn="{StaticResource NumberStyle}">
-            <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
-        </Style>
         <!-- A flyout's surface, for the popups that leave the keyboard in the editor. -->
         <Style x:Key="SurfaceStyle" TargetType="Border">
             <Setter Property="Background" Value="{ThemeResource AcrylicInAppFillColorDefaultBrush}" />
@@ -21,57 +12,31 @@
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="{ThemeResource OverlayCornerRadius}" />
         </Style>
-        <DataTemplate x:Key="ErrorBox">
-            <Border
-                Padding="4,0,8,0"
-                Background="{ThemeResource SystemFillColorCriticalBackgroundBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="4">
-                <Grid ColumnSpacing="4">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon
-                        VerticalAlignment="Center"
-                        FontSize="16"
-                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                        Glyph="&#xE783;" />
-                    <TextBlock
-                        Grid.Column="1"
-                        VerticalAlignment="Center"
-                        Style="{StaticResource CaptionTextBlockStyle}"
-                        TextTrimming="CharacterEllipsis"
-                        TextWrapping="NoWrap" />
-                </Grid>
-            </Border>
-        </DataTemplate>
-        <DataTemplate x:Key="WarningBox">
-            <Border
-                Padding="4,0,8,0"
-                Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="4">
-                <Grid ColumnSpacing="4">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon
-                        VerticalAlignment="Center"
-                        FontSize="16"
-                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
-                        Glyph="&#xE7BA;" />
-                    <TextBlock
-                        Grid.Column="1"
-                        VerticalAlignment="Center"
-                        Style="{StaticResource CaptionTextBlockStyle}"
-                        TextTrimming="CharacterEllipsis"
-                        TextWrapping="NoWrap" />
-                </Grid>
-            </Border>
+        <Style x:Key="FindButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+        <Style x:Key="CompletionItemStyle" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+            <Setter Property="Padding" Value="12,0,16,0" />
+            <Setter Property="AllowFocusOnInteraction" Value="False" />
+        </Style>
+        <!-- Visual Studio's inline diagnostics: past the end of the line, never over its text. -->
+        <DataTemplate x:Key="IssueTemplate" x:DataType="local:IssueMark">
+            <Grid ColumnSpacing="8" ToolTipService.ToolTip="{x:Bind Tip}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <InfoBadge VerticalAlignment="Center" Style="{x:Bind Badge}" />
+                <TextBlock
+                    Grid.Column="1"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Text="{x:Bind Label}"
+                    TextWrapping="NoWrap" />
+            </Grid>
         </DataTemplate>
     </UserControl.Resources>
 
@@ -85,15 +50,17 @@
             <Rectangle x:Name="PaperInk" Fill="{ThemeResource SolidBackgroundFillColorBaseBrush}" />
             <Rectangle x:Name="TextInk" Fill="{ThemeResource TextFillColorPrimaryBrush}" />
             <Rectangle x:Name="SecondaryInk" Fill="{ThemeResource TextFillColorSecondaryBrush}" />
+            <Rectangle x:Name="NumberInk" Fill="{ThemeResource TextFillColorTertiaryBrush}" />
         </Grid>
 
-        <Canvas x:Name="Gutter" Width="48" />
-        <Canvas x:Name="Backdrop" Grid.Column="1">
+        <Canvas x:Name="Gutter" />
+        <Canvas x:Name="Backdrop" Grid.Column="1" AutomationProperties.AccessibilityView="Raw">
             <Rectangle x:Name="CurrentLine" Fill="{ThemeResource SubtleFillColorSecondaryBrush}" />
         </Canvas>
         <RichEditBox
             x:Name="Editor"
             Grid.Column="1"
+            Padding="8,8,16,8"
             AcceptsReturn="True"
             AutomationProperties.Name="Source"
             ClipboardCopyFormat="PlainText"
@@ -102,6 +69,7 @@
             FontSize="14"
             IsSpellCheckEnabled="False"
             IsTextPredictionEnabled="False"
+            SelectionHighlightColorWhenNotFocused="{ThemeResource TextControlSelectionHighlightColor}"
             TextWrapping="Wrap">
             <RichEditBox.Resources>
                 <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
@@ -120,12 +88,12 @@
                 x:Name="PartnerBox"
                 BorderBrush="{ThemeResource ControlStrongStrokeColorDefaultBrush}"
                 BorderThickness="1"
-                CornerRadius="2"
+                CornerRadius="{ThemeResource ControlCornerRadius}"
                 IsHitTestVisible="False"
                 Opacity="0" />
         </Canvas>
 
-        <!-- Find and replace over the text, as Notepad's. -->
+        <!-- Notepad's find bar over the text, with VS Code's find widget's behaviour. -->
         <Border
             x:Name="FindBar"
             Grid.Column="1"
@@ -134,7 +102,7 @@
             HorizontalAlignment="Right"
             VerticalAlignment="Top"
             Style="{StaticResource SurfaceStyle}"
-            Translation="0,0,16"
+            Translation="0,0,32"
             Visibility="Collapsed">
             <Border.Shadow>
                 <ThemeShadow />
@@ -145,22 +113,20 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" MinWidth="96" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="32" />
+                    <ColumnDefinition Width="*" MinWidth="120" />
+                    <ColumnDefinition Width="88" />
+                    <ColumnDefinition Width="32" />
+                    <ColumnDefinition Width="32" />
+                    <ColumnDefinition Width="32" />
+                    <ColumnDefinition Width="32" />
                 </Grid.ColumnDefinitions>
                 <Button
                     x:Name="ReplaceToggle"
-                    Width="32"
-                    Height="32"
-                    Padding="0"
-                    AutomationProperties.Name="Show replace"
+                    AutomationProperties.Name="Toggle replace"
                     Click="OnReplaceToggle"
-                    Style="{StaticResource SubtleButtonStyle}"
-                    ToolTipService.ToolTip="Show replace (Ctrl+H)">
+                    Style="{StaticResource FindButtonStyle}"
+                    ToolTipService.ToolTip="Toggle replace (Ctrl+H)">
                     <FontIcon x:Name="ReplaceChevron" FontSize="12" Glyph="&#xE76C;" />
                 </Button>
                 <TextBox
@@ -173,42 +139,33 @@
                 <TextBlock
                     x:Name="FindCount"
                     Grid.Column="2"
-                    MinWidth="64"
-                    Padding="4,0"
                     VerticalAlignment="Center"
+                    AutomationProperties.LiveSetting="Polite"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     Style="{StaticResource CaptionTextBlockStyle}"
                     TextAlignment="Center"
+                    TextWrapping="NoWrap"
                     Typography.NumeralAlignment="Tabular" />
-                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4">
-                    <Button
-                        Width="32"
-                        Height="32"
-                        Padding="0"
-                        AutomationProperties.Name="Find previous"
-                        Click="OnFindPrevious"
-                        Style="{StaticResource SubtleButtonStyle}"
-                        ToolTipService.ToolTip="Find previous (Shift+F3)">
-                        <FontIcon FontSize="16" Glyph="&#xE74A;" />
-                    </Button>
-                    <Button
-                        Width="32"
-                        Height="32"
-                        Padding="0"
-                        AutomationProperties.Name="Find next"
-                        Click="OnFindNext"
-                        Style="{StaticResource SubtleButtonStyle}"
-                        ToolTipService.ToolTip="Find next (F3)">
-                        <FontIcon FontSize="16" Glyph="&#xE74B;" />
-                    </Button>
-                </StackPanel>
+                <Button
+                    Grid.Column="3"
+                    AutomationProperties.Name="Find previous"
+                    Click="OnFindPrevious"
+                    Style="{StaticResource FindButtonStyle}"
+                    ToolTipService.ToolTip="Find previous (Shift+F3)">
+                    <FontIcon FontSize="16" Glyph="&#xE74A;" />
+                </Button>
                 <Button
                     Grid.Column="4"
-                    Width="32"
-                    Height="32"
-                    Padding="0"
+                    AutomationProperties.Name="Find next"
+                    Click="OnFindNext"
+                    Style="{StaticResource FindButtonStyle}"
+                    ToolTipService.ToolTip="Find next (F3)">
+                    <FontIcon FontSize="16" Glyph="&#xE74B;" />
+                </Button>
+                <Button
+                    Grid.Column="5"
                     AutomationProperties.Name="Find options"
-                    Style="{StaticResource SubtleButtonStyle}"
+                    Style="{StaticResource FindButtonStyle}"
                     ToolTipService.ToolTip="Find options">
                     <FontIcon FontSize="16" Glyph="&#xE71C;" />
                     <Button.Flyout>
@@ -219,13 +176,10 @@
                     </Button.Flyout>
                 </Button>
                 <Button
-                    Grid.Column="5"
-                    Width="32"
-                    Height="32"
-                    Padding="0"
-                    AutomationProperties.Name="Close find"
+                    Grid.Column="6"
+                    AutomationProperties.Name="Close"
                     Click="OnFindClose"
-                    Style="{StaticResource SubtleButtonStyle}"
+                    Style="{StaticResource FindButtonStyle}"
                     ToolTipService.ToolTip="Close (Esc)">
                     <FontIcon FontSize="16" Glyph="&#xE711;" />
                 </Button>
@@ -241,16 +195,18 @@
                     x:Name="ReplaceButtons"
                     Grid.Row="1"
                     Grid.Column="2"
-                    Grid.ColumnSpan="4"
+                    Grid.ColumnSpan="5"
+                    HorizontalAlignment="Right"
                     Orientation="Horizontal"
                     Spacing="4"
                     Visibility="Collapsed">
-                    <Button Click="OnReplace" Content="Replace" />
-                    <Button Click="OnReplaceAll" Content="Replace all" />
+                    <Button x:Name="ReplaceOne" Click="OnReplace" Content="Replace" IsEnabled="False" />
+                    <Button x:Name="ReplaceEvery" Click="OnReplaceAll" Content="Replace all" IsEnabled="False" />
                 </StackPanel>
             </Grid>
         </Border>
 
+        <!-- VS Code's hover: the maths the caret is in, drawn by RaTeX, above its line. -->
         <Popup x:Name="MathPopup" Grid.Column="1">
             <Border
                 x:Name="MathSurface"
@@ -263,19 +219,21 @@
                 </Border.Shadow>
                 <Grid>
                     <Image x:Name="MathImage" AutomationProperties.Name="Maths preview" Stretch="Fill" />
-                    <TextBlock
-                        x:Name="MathError"
-                        MaxWidth="480"
-                        FontFamily="Cascadia Mono, Consolas"
-                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                        TextWrapping="Wrap" />
+                    <StackPanel x:Name="MathError" Orientation="Horizontal" Spacing="8">
+                        <FontIcon
+                            VerticalAlignment="Top"
+                            FontSize="16"
+                            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                            Glyph="&#xE783;" />
+                        <TextBlock x:Name="MathErrorText" MaxWidth="480" Style="{StaticResource CaptionTextBlockStyle}" />
+                    </StackPanel>
                 </Grid>
             </Border>
         </Popup>
 
+        <!-- IntelliSense on the flyout surface: the list never takes the keyboard from the text. -->
         <Popup x:Name="CompletionPopup" Grid.Column="1">
             <Border
-                x:Name="CompletionSurface"
                 MinWidth="240"
                 MaxWidth="480"
                 Padding="0,4"
@@ -286,22 +244,16 @@
                 </Border.Shadow>
                 <ListView
                     x:Name="CompletionList"
+                    MaxHeight="256"
                     AllowFocusOnInteraction="False"
                     AutomationProperties.Name="Completions"
                     IsItemClickEnabled="True"
                     IsTabStop="False"
                     ItemClick="OnCompletionClick"
-                    SelectionMode="Single">
+                    ItemContainerStyle="{StaticResource CompletionItemStyle}">
                     <ListView.Resources>
                         <x:Double x:Key="ListViewItemMinHeight">32</x:Double>
                     </ListView.Resources>
-                    <ListView.ItemContainerStyle>
-                        <Style TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
-                            <Setter Property="MinHeight" Value="32" />
-                            <Setter Property="Padding" Value="12,0,16,0" />
-                            <Setter Property="AllowFocusOnInteraction" Value="False" />
-                        </Style>
-                    </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="local:CompletionRow">
                             <Grid AutomationProperties.Name="{x:Bind Item.Label}" ColumnSpacing="12">
@@ -309,16 +261,8 @@
                                     <ColumnDefinition Width="16" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <FontIcon
-                                    FontSize="16"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Glyph="{x:Bind Glyph}" />
-                                <TextBlock
-                                    Grid.Column="1"
-                                    VerticalAlignment="Center"
-                                    FontFamily="{x:Bind Font}"
-                                    TextTrimming="CharacterEllipsis"
-                                    TextWrapping="NoWrap">
+                                <FontIcon FontSize="16" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="{x:Bind Glyph}" />
+                                <TextBlock Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                                     <Run FontWeight="SemiBold" Text="{x:Bind Typed}" /><Run Text="{x:Bind Rest}" />
                                 </TextBlock>
                             </Grid>
