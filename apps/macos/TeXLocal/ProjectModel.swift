@@ -591,11 +591,20 @@ final class ProjectModel {
     // MARK: - Compile
 
     /// The session queues one more during a build, and leaves an automatic one while Live Preview runs.
+    /// A build asked for shows as one at once, so the toolbar has Stop from the click on and a Stop reaches the core
+    /// behind it in the session's lane, where it ends the build however soon it comes; the core's `build` events then
+    /// confirm or end it. An automatic one waits for them, as the core may leave it.
     func compile(auto: Bool = false) async {
         guard let session, !closed, texAvailable else { return }
+        if !auto, !compiling {
+            compiling = true
+            AccessibilityNotification.Announcement(String(localized: "Compiling")).post()
+        }
         do {
             try await core.session("session_compile", ["session": session, "auto": auto])
         } catch {
+            // The core has ended a build whose save failed, and with no core none started.
+            compiling = false
             if !closed { report(error, String(localized: "“\((openPath ?? id).fileName)” Wasn’t Saved")) }
         }
     }
@@ -618,7 +627,8 @@ final class ProjectModel {
     }
 
     private func buildChanged(_ state: BuildState) {
-        // Not through `notices.announce`: the result of a short build isn't held back for it.
+        // Not through `notices.announce`: the result of a short build isn't held back for it. A build asked for here
+        // has been announced already (`compile`).
         if state.compiling, !compiling, !state.auto { AccessibilityNotification.Announcement(String(localized: "Compiling")).post() }
         (compiling, outdated) = (state.compiling, state.outdated)
     }
