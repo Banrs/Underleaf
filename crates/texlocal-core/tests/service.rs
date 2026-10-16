@@ -2,9 +2,12 @@
 
 use std::path::Path;
 
+use std::sync::Arc;
+
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
+use texlocal_core::session::Sessions;
 
 fn service() -> (TempDir, Service) {
     let dir = tempfile::Builder::new()
@@ -403,4 +406,39 @@ async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
     assert_eq!(hit, json!({ "page": 2, "start": 6, "end": 10 }));
     let beyond = json!({ "id": "P", "file": "main.tex", "line": 9, "column": 0, "pages": [] });
     assert_eq!(call(&service, "synctex_match", beyond).await, Value::Null);
+}
+
+#[tokio::test]
+async fn a_rename_answers_the_moved_ui_state_and_the_main_file_it_moved() {
+    let (_dir, service) = with_project();
+    let service = Arc::new(service);
+    let root = service.project_root("P").unwrap();
+    std::fs::create_dir(root.join("ch")).unwrap();
+    std::fs::write(root.join("ch/a.tex"), "").unwrap();
+    let patch = json!({ "expandedFolders": ["ch"] });
+    call(
+        &service,
+        "set_ui_state",
+        json!({ "id": "P", "patch": patch }),
+    )
+    .await;
+    let sessions = Sessions::new(Arc::clone(&service));
+    let ask = async |command: &str, args: Value| {
+        let answer = sessions.call(command, &args).await;
+        answer.unwrap_or_else(|e| panic!("{command} failed: {} {}", e.status, e.message))
+    };
+    ask("session_open", json!({ "id": "P", "session": 1 })).await;
+
+    let args = json!({ "session": 1, "patch": { "mainFile": "ch/a.tex" } });
+    ask("session_set_settings", args).await;
+    // The sidebar's state moved with the folder, and the main file with it.
+    let args = json!({ "session": 1, "from": "ch", "to": "chapters" });
+    let renamed = ask("session_rename", args).await;
+    assert_eq!(renamed["mainFile"], "chapters/a.tex");
+    assert_eq!(renamed["ui"]["expandedFolders"], json!(["chapters"]));
+    // The session refuses to trash the main file it moved.
+    let args = json!({ "session": 1, "path": "chapters" });
+    let refused = sessions.call("session_prepare_delete", &args).await;
+    assert_eq!(refused.unwrap_err().status, 409);
+    ask("session_close", json!({ "session": 1 })).await;
 }

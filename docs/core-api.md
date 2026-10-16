@@ -42,7 +42,7 @@ the call.
   answers may come back on different threads in another order. Send a session's commands
   after its `session_open` has answered. Other commands each run on a thread of their own, in
   no set order: a host that needs one done before the next (a `set_ui_state`, then the
-  `get_ui_state` after a rename) waits for the first's answer.
+  `session_rename` that moves it) waits for the first's answer.
 - A `TlSource` is used by one thread at a time (the editor's). A session's document is also
   read by the core's threads; it locks itself, so the editor's calls never see a half edit.
 
@@ -84,7 +84,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_outline_current` | `path`, `line` | index or null | The heading a line of `path` is under, as its `index` in the last `session_analyze`'s outline: the file's last at or above the line; null above its first. |
 | `session_issue` | `next` | `{index, issue}` or null | The next or previous issue with a place, round the ends; the host opens `issue.file` at `issue.line`. |
 | `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter. |
-| `session_rename` | `from`, `to` | rename result or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). |
+| `session_rename` | `from`, `to` | `{from, to, mainFile, ui}` or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `get_ui_state`) with the entry's paths moved; a host sends its `set_ui_state` first. |
 | `session_set_settings` | `patch` | settings | As `set_settings`; a new main file stops the build, restarts the preview, builds. |
 | `session_prepare_delete` | `path` | `{ready}` | Saves, refuses the main file (409), then holds saves under `path` until `session_deleted`. The host trashes the item itself (undoable). |
 | `session_deleted` | `path`, `trashed?` (true) | null | Closes documents under `path` and reads the tree again. |
@@ -257,6 +257,8 @@ Every change a host follows since commit d6bee12, in the order made.
 - An `issues` line has `compact` and `tokens` in place of `command`.
 - `search_project` answers its hits by file (`[{file, hits}]`), and `status`, `set_tex_dir` and
   `set_texpresso_dir` answer `latexmkVersion`.
+- `session_rename` also answers `ui`, the ui state with the entry's paths moved, so a host
+  need not call `get_ui_state` after it (it sends any `set_ui_state` before the rename).
 
 ## From the Mac app's Swift
 

@@ -208,12 +208,18 @@ pub(crate) fn move_ui(root: &Path, moved: impl Fn(&str) -> Option<String>) {
     }
 }
 
-/// The compiled PDF path for a project — the ONE place this is derived.
-/// mainFile "paper.tex" → "<root>/build/paper.pdf".
+/// The compiled PDF path for a project, with its settings as on disk.
 pub fn compiled_pdf_path(root: &Path) -> Result<PathBuf, CoreError> {
-    let settings = read_settings(root);
-    let base = main_base_name(&safe_rel_file(root, &settings.main_file)?);
-    Ok(root.join(BUILD_DIR).join(format!("{base}.pdf")))
+    read_settings(root).pdf_path(root)
+}
+
+impl Settings {
+    /// The compiled PDF path — the ONE place this is derived.
+    /// mainFile "paper.tex" → "<root>/build/paper.pdf".
+    pub fn pdf_path(&self, root: &Path) -> Result<PathBuf, CoreError> {
+        let base = main_base_name(&safe_rel_file(root, &self.main_file)?);
+        Ok(root.join(BUILD_DIR).join(format!("{base}.pdf")))
+    }
 }
 
 /// The main file's name without its extension ("chapters/paper.tex" → "paper").

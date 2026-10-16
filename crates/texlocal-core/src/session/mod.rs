@@ -196,7 +196,7 @@ impl Sessions {
             "root": root.to_string_lossy(),
             "pdf": opened.pdf,
             "tree": opened.tree,
-            "settings": settings::read_settings(&root),
+            "settings": opened.settings,
             "ui": settings::read_ui(&root),
         }))
     }

@@ -22,8 +22,9 @@ use crate::logparse::LogItem;
 use crate::paths::{self, within};
 use crate::projects::{self, SymbolScan, Symbols};
 use crate::service::{Service, arg, out, string_arg};
+use crate::settings::{self, Settings};
 use crate::syntax::{TextRange, headings};
-use crate::{CoreError, lock, settings};
+use crate::{CoreError, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 
@@ -43,6 +44,7 @@ pub(crate) struct Setup {
 pub(crate) struct Opened {
     pub pdf: Option<String>,
     pub tree: Value,
+    pub settings: Settings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,12 +186,15 @@ impl Actor {
             .watch
             .then(|| watch::watch(&setup.root, setup.tx.clone()))
             .flatten();
-        let pdf = settings::compiled_pdf_path(&setup.root)
+        let settings = settings::read_settings(&setup.root);
+        let pdf = settings
+            .pdf_path(&setup.root)
             .ok()
             .filter(|pdf| pdf.is_file());
         let opened = Opened {
             pdf: pdf.as_ref().map(|pdf| pdf.to_string_lossy().into_owned()),
             tree: out(&tree)?,
+            settings,
         };
         let build_pdf = pdf.is_some();
         let empty = Symbols {
@@ -1056,6 +1061,7 @@ impl Actor {
     /// the file at `path`, and the levels the main file's class has, the class read
     /// from its text as the editor has it; its outline is kept for `outline_current`.
     fn analyze(&mut self, path: &str) -> Result<Value, CoreError> {
+        // Read each time: another app, or another host's `set_settings`, may have changed it.
         let main = settings::read_settings(&self.root).main_file;
         let analysis = analyze::analyze_project(&self.root, &main, path);
         let main_text = match paths::rel_key(&main)
@@ -1197,7 +1203,10 @@ impl Actor {
         if renamed.main_file != main {
             self.main_file_changed();
         }
-        out(renamed)
+        // The sidebar's state, moved with the entry, so the host need not ask for it.
+        let mut answer = out(renamed)?;
+        answer["ui"] = out(settings::read_ui(&self.root))?;
+        Ok(answer)
     }
 
     fn set_settings(&mut self, patch: &Value) -> Result<Value, CoreError> {
@@ -1245,8 +1254,7 @@ impl Actor {
         if !self.flush_all(true)? || !self.dirty_paths().is_empty() {
             return Ok(json!({ "ready": false }));
         }
-        let main = settings::read_settings(&self.root).main_file;
-        if within(&main, path) {
+        if within(&settings::read_settings(&self.root).main_file, path) {
             return Err(CoreError::conflict(MAIN_FILE_TRASH));
         }
         self.deleting = Some(path.to_owned());
