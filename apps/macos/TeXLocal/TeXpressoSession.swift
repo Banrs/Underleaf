@@ -207,7 +207,7 @@ final class TeXpressoSession {
 nonisolated enum LiveViewer: String, CaseIterable, Identifiable {
     case pane, window
 
-    static let key = "liveViewer"
+    static let key = DefaultsKey.liveViewer
     static var current: Self {
         UserDefaults.standard.string(forKey: key).flatMap(Self.init) ?? .pane
     }

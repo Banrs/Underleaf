@@ -41,7 +41,8 @@ nonisolated struct Template: Decodable, Sendable {
 
 extension ProjectModel {
     func insert(_ template: Template) {
-        editor.perform(template.inline ? .inline : .block, template.body, title: template.title)
+        editor.perform(template.inline ? .inline(template: template.body, title: template.title)
+                                       : .block(id: template.body, title: template.title))
     }
 }
 

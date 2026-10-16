@@ -150,7 +150,7 @@ struct SourceEditorTests {
 
     @Test func blocksTabThroughTheirFields() {
         open("")
-        #expect(editor.perform(.block, "figure"))
+        #expect(editor.perform(.block(id: "figure")))
         let string = text.string as NSString
         #expect(text.selectedRange() == NSRange(location: string.range(of: "]{}").location + 2, length: 0))
         text.insertTab(nil)
@@ -159,7 +159,7 @@ struct SourceEditorTests {
         #expect(text.selectedRange().location == NSMaxRange(string.range(of: "fig:")))
         #expect(text.undoManager?.undoActionName == "Insert")
         open("")
-        #expect(editor.perform(.block, "figure", title: "Figure"))
+        #expect(editor.perform(.block(id: "figure", title: "Figure")))
         #expect(text.undoManager?.undoActionName == "Insert Figure")
     }
 

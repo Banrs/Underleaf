@@ -9,7 +9,7 @@ struct SectionLevelItems: View {
         ForEach(project?.headingStyles ?? HeadingStyle.styles(of: nil, hasChapters: false), id: \.command) { style in
             Toggle(style.title,
                    isOn: Binding(get: { project?.headingLevel.command == style.command },
-                                 set: { _ in project?.editor.perform(.heading, style.command) }))
+                                 set: { _ in project?.editor.perform(.heading(style.command)) }))
         }
     }
 }
@@ -31,7 +31,7 @@ struct SymbolItems: View {
                     // A palette row, which shows its items' images: text alone draws blank (27.2).
                     ControlGroup {
                         ForEach(symbols[start..<min(start + columns, symbols.count)], id: \.command) { symbol in
-                            Button { project?.editor.perform(.symbol, symbol.command) } label: {
+                            Button { project?.editor.perform(.symbol(symbol.command)) } label: {
                                 Label {
                                     Text(verbatim: MathGlyphs.spokenName(symbol.glyph, symbol.command))
                                 } icon: {

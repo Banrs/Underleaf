@@ -192,7 +192,7 @@ struct FormatPanel: View {
     }
 
     private func choose(_ command: String) {
-        project.editor.perform(.heading, command)
+        project.editor.perform(.heading(command))
         close()
     }
 

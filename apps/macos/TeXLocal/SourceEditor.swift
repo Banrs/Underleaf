@@ -223,10 +223,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     // MARK: - Commands
 
     @discardableResult
-    func perform(_ command: EditorCommand, _ argument: String? = nil, title: String? = nil) -> Bool {
+    func perform(_ command: EditorCommand) -> Bool {
         guard path != nil, textView.isEditable else { return false }
         let document = textView.document, selection = textView.selectedRange(), selections = textView.selectedRanges.map(\.rangeValue)
-        let inserting = title.map { String(localized: "Insert \($0)") } ?? String(localized: "Insert")
         let insert = { (insertion: Insertion?, name: String) in
             guard let insertion else { return false }
             self.textView.apply([insertion.edit], named: name, select: NSRange(location: insertion.caret, length: 0))
@@ -239,9 +238,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         case .underline: textView.apply(document.toggle(.underline, selections), named: String(localized: "Underline"))
         case .math: textView.apply(document.wrap(selections, in: "$$0$"), named: String(localized: "Inline Math"))
         case .displayMath: textView.apply(document.wrap(selections, in: "\\[$0\\]"), named: String(localized: "Display Math"))
-        case .inline:
+        case .inline(let template, let title):
             // A template such as \ref{$0}: "$0" is where the selection goes.
-            textView.apply(document.wrap(selections, in: argument ?? ""), named: inserting)
+            textView.apply(document.wrap(selections, in: template), named: Self.insertion(titled: title))
             // Empty braces: the labels or citations for them, once the menu has closed.
             if selection.length == 0 { Task { self.textView.complete(nil) } }
         case .comment:
@@ -250,15 +249,19 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             let up = command == .moveLineUp
             guard textView.apply(document.moveLines(selections, up: up),
                                  named: up ? String(localized: "Move Line Up") : String(localized: "Move Line Down")) else { return false }
-        case .heading:
-            guard insert(document.setHeading(caret: selection.location, command: argument ?? ""), String(localized: "Section Level")) else { return false }
-        case .symbol:
-            guard insert(document.insertSymbol(argument ?? "", replacing: selection), String(localized: "Insert Symbol")) else { return false }
-        case .block:
-            guard insert(document.insertBlock(argument ?? "", replacing: selection), inserting) else { return false }
+        case .heading(let command):
+            guard insert(document.setHeading(caret: selection.location, command: command), String(localized: "Section Level")) else { return false }
+        case .symbol(let command):
+            guard insert(document.insertSymbol(command, replacing: selection), String(localized: "Insert Symbol")) else { return false }
+        case .block(let id, let title):
+            guard insert(document.insertBlock(id, replacing: selection), Self.insertion(titled: title)) else { return false }
         }
         focus()
         return true
+    }
+
+    private static func insertion(titled title: String?) -> String {
+        title.map { String(localized: "Insert \($0)") } ?? String(localized: "Insert")
     }
 
     var textStyles: TextStyles {
@@ -290,14 +293,21 @@ struct EditorView: NSViewRepresentable {
     }
 }
 
-enum EditorCommand {
-    case bold, italic, underline, math, displayMath, comment, heading, symbol, moveLineUp, moveLineDown
-    case block
-    case inline
+enum EditorCommand: Equatable {
+    case bold, italic, underline, math, displayMath, comment, moveLineUp, moveLineDown
+    /// A section command without its backslash; empty for Normal Text.
+    case heading(String)
+    case symbol(String)
+    /// A block of the core's by its id; the title names the undo.
+    case block(id: String, title: String? = nil)
+    /// A template whose "$0" is where the selection goes.
+    case inline(template: String, title: String? = nil)
 }
 
 enum EditorPrefs {
-    static let fontSizeKey = "editorFontSize", spellCheckKey = "editorSpellCheck", syntaxThemeKey = "editorSyntaxTheme"
+    static let fontNameKey = DefaultsKey.editorFontName, fontSizeKey = DefaultsKey.editorFontSize
+    static let syntaxThemeKey = DefaultsKey.editorSyntaxTheme, lineNumbersKey = DefaultsKey.editorLineNumbers
+    static let autoPairKey = DefaultsKey.editorAutoPair, autoCompleteKey = DefaultsKey.editorAutoComplete
     static let fontSize = Int(NSFont.systemFontSize)
     static let fontSizes = 10...28
 
@@ -305,12 +315,10 @@ enum EditorPrefs {
         let current = UserDefaults.standard.object(forKey: fontSizeKey) as? Int ?? fontSize
         UserDefaults.standard.set(min(max(current + step, fontSizes.lowerBound), fontSizes.upperBound), forKey: fontSizeKey)
     }
-    static let fontNameKey = "editorFontName", lineNumbersKey = "editorLineNumbers"
-    static let autoPairKey = "editorAutoPair", autoCompleteKey = "editorAutoComplete"
 
     static var spellCheck: Bool {
-        get { UserDefaults.standard.object(forKey: spellCheckKey) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: spellCheckKey) }
+        get { UserDefaults.standard.object(forKey: DefaultsKey.editorSpellCheck) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: DefaultsKey.editorSpellCheck) }
     }
 }
 

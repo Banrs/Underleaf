@@ -1,5 +1,18 @@
 import Foundation
 
+/// The keys of the settings the editor, the PDF pane and live preview store; the raw values are what users' defaults hold.
+nonisolated extension DefaultsKey {
+    static let editorFontName = "editorFontName"
+    static let editorFontSize = "editorFontSize"
+    static let editorSyntaxTheme = "editorSyntaxTheme"
+    static let editorLineNumbers = "editorLineNumbers"
+    static let editorAutoPair = "editorAutoPair"
+    static let editorAutoComplete = "editorAutoComplete"
+    static let editorSpellCheck = "editorSpellCheck"
+    static let pdfPaper = "pdfPaper"
+    static let liveViewer = "liveViewer"
+}
+
 // The Rust core's JSON shapes use camelCase keys.
 
 nonisolated struct ProjectInfo: Decodable, Identifiable {

@@ -5,7 +5,7 @@ import SwiftUI
 struct PDFPane: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
-    @AppStorage(PDFPaper.key) private var paper = PDFPaper.white
+    @AppStorage(DefaultsKey.pdfPaper) private var paper = PDFPaper.white
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -168,7 +168,7 @@ enum PDFFind {
 enum PDFPaper: String, CaseIterable, Identifiable {
     case white, dark, auto
 
-    static let key = "pdfPaper"
+    static let key = DefaultsKey.pdfPaper
 
     var id: Self { self }
 
