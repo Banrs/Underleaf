@@ -38,7 +38,8 @@ public static class Shortcut
                 }),
                 ScopeOwner = GetScope(e),
             });
-        if (e is MenuFlyoutItem item) item.KeyboardAcceleratorTextOverride = combos[0];
+        // A menu item shows its keys already, so it has no accelerator tooltip, as in Notepad's menus.
+        if (e is MenuFlyoutItem item) (item.KeyboardAcceleratorTextOverride, item.KeyboardAcceleratorPlacementMode) = (combos[0], KeyboardAcceleratorPlacementMode.Hidden);
     }
 
     static VirtualKey Key(string name) => name switch

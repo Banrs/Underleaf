@@ -11,6 +11,7 @@ using Microsoft.UI.Xaml.Navigation;
 using TeXLocal.Bridge;
 using TeXLocal.Controls;
 using Windows.ApplicationModel.DataTransfer;
+using VirtualKey = Windows.System.VirtualKey;
 
 namespace TeXLocal.Pages;
 
@@ -85,6 +86,13 @@ public sealed partial class WorkspacePage : Page
         {
             if (Editor.Path is { } path) _ = Core.CallAsync("session_composing", new { session, path, composing });
         };
+        // Compile's Ctrl+Enter reaches RichEdit as a line break too, unless it is taken before the editor has it.
+        Editor.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != VirtualKey.Enter || !SourceView.Down(VirtualKey.Control) || SourceView.Down(VirtualKey.Shift) || SourceView.Down(VirtualKey.Menu)) return;
+            e.Handled = true;
+            if (CompileItem.IsEnabled) OnCompile(this, e);
+        };
         Editor.IssueInvoked += line =>
         {
             LogItem[] all = result is null ? [] : [.. result.Errors, .. result.Warnings];
@@ -103,6 +111,7 @@ public sealed partial class WorkspacePage : Page
         Shortcut.SetScope(DeleteItem, FilesTree);
         DeleteItem.KeyboardAcceleratorTextOverride = "Del";
         SetUpInsert();
+        SetUpMenuFocus();
         ShowLook();
         Prefs.EditorChanged += ShowLook;
         Loaded += (_, _) =>
@@ -259,7 +268,7 @@ public sealed partial class WorkspacePage : Page
 
     void CloseEditor()
     {
-        analysis = null;
+        (analysis, caretHeading) = (null, null);
         OutlineTree.ItemsSource = null;
         Words.Text = "";
         Editor.Clear();
@@ -491,6 +500,30 @@ public sealed partial class WorkspacePage : Page
     }
 
     // MARK: dialogs and commands
+
+    UIElement? beforeMenu;
+
+    /// A Win32 menu gives focus back to the window's control when it closes; MenuBar leaves it on its own item,
+    /// where typing goes nowhere. So focus that comes back to the bar from a menu, flyout or dialog goes on to
+    /// wherever it was before the bar took it.
+    void SetUpMenuFocus() => MainMenu.GettingFocus += (_, e) =>
+    {
+        if (e.OldFocusedElement is not { } old || Within(old, MainMenu)) return;
+        if (XamlRoot?.Content is { } content && Within(old, content)) beforeMenu = old as UIElement;
+        else DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+        {
+            if (XamlRoot is null || FocusManager.GetFocusedElement(XamlRoot) is not MenuBarItem) return;
+            if (beforeMenu is { } back && XamlRoot.Content is { } root && Within(back, root) && back.Focus(FocusState.Programmatic)) return;
+            if (Editor.Path is not null) Editor.Focus(FocusState.Programmatic);
+        });
+    };
+
+    static bool Within(DependencyObject element, DependencyObject ancestor)
+    {
+        for (var at = element; at is not null; at = VisualTreeHelper.GetParent(at))
+            if (at == ancestor) return true;
+        return false;
+    }
 
     /// Notepad's Go to line, its number box focused.
     static async Task<int?> AskNumber(string title, string header, int value, int maximum)

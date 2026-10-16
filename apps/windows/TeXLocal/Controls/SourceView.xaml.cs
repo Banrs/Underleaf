@@ -45,7 +45,8 @@ public sealed partial class SourceView : UserControl
 {
     // The completion list: rows, rows shown, and its labels' inset from its edge (border, padding, glyph, spacing).
     const int RowHeight = 32, ShownRows = 8, LabelInset = 1 + 12 + 16 + 12;
-    readonly TaskCompletionSource ready = new();
+    // Asynchronous, so the first text goes in after the layout pass that completes it.
+    readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly List<TextBlock> numbers = [];
     readonly List<(IssueLine Issue, FrameworkElement Mark)> marks = [];
     readonly DispatcherQueueTimer partnerTimer;
@@ -116,9 +117,10 @@ public sealed partial class SourceView : UserControl
         Editor.SizeChanged += (_, e) =>
         {
             FindBar.Width = Math.Clamp(e.NewSize.Width - 40, 0, 480);
+            if (scroller is not null && e.NewSize.Width > 0) ready.TrySetResult();
             Invalidate(false);
         };
-        // Applied here even while the view is collapsed, so the first file waits only for the template.
+        // Applied here even while the view is collapsed; the first file waits for the editor's first layout too.
         Editor.Loaded += (_, _) =>
         {
             Editor.ApplyTemplate();
@@ -129,7 +131,7 @@ public sealed partial class SourceView : UserControl
                 CloseCompletions();
                 Invalidate(false);
             };
-            ready.TrySetResult();
+            if (Editor.ActualWidth > 0) ready.TrySetResult();
         };
         SizeChanged += (_, e) => Clip = new RectangleGeometry { Rect = new(0, 0, e.NewSize.Width, e.NewSize.Height) };
         ActualThemeChanged += (_, _) => Recolour(true);
@@ -219,7 +221,7 @@ public sealed partial class SourceView : UserControl
     }
 
     /// Completes once the whole text is in. RichEdit drops the text's colours if it gets them before
-    /// its template is applied, so the first file waits for that.
+    /// its template is applied and it has been laid out, so the first file waits for both.
     public async Task Show(string path, string content, Source src)
     {
         await ready.Task;
@@ -363,7 +365,7 @@ public sealed partial class SourceView : UserControl
         return typed.Any(char.IsControl) ? null : typed;
     }
 
-    static bool Down(VirtualKey key) => InputKeyboardSource.GetKeyStateForCurrentThread(key).HasFlag(CoreVirtualKeyStates.Down);
+    internal static bool Down(VirtualKey key) => InputKeyboardSource.GetKeyStateForCurrentThread(key).HasFlag(CoreVirtualKeyStates.Down);
 
     void OnPreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
@@ -624,9 +626,10 @@ public sealed partial class SourceView : UserControl
         };
         CompletionList.ItemsSource = found.Items.Select(i => new CompletionRow(i, s.Start - found.Start, glyph)).ToList();
         CompletionList.SelectedIndex = 0;
-        // The surface's padding and border are the 10 past the rows; above the line when there's no room below.
+        // The surface's padding and border are the 10 past the rows; above the line when there's no room below. Near the
+        // text's left edge the list reaches over the gutter, so its labels still line up with the typed text.
         var height = Math.Min(found.Items.Length, ShownRows) * RowHeight + 10;
-        CompletionPopup.HorizontalOffset = Math.Max(0, at.X - LabelInset);
+        CompletionPopup.HorizontalOffset = Math.Max(-Gutter.ActualWidth, at.X - LabelInset);
         CompletionPopup.VerticalOffset = at.Bottom + 4 + height <= ActualHeight || at.Y - height - 4 < 0 ? at.Bottom + 4 : at.Y - height - 4;
         CompletionPopup.IsOpen = true;
         Announce(found.Items[0].Label);

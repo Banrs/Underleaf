@@ -70,7 +70,7 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <MenuBar VerticalAlignment="Center">
+            <MenuBar x:Name="MainMenu" VerticalAlignment="Center">
                 <MenuBarItem AccessKey="F" Title="File">
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+N" AccessKey="N" Click="OnNewFile" Text="New file" />
                     <MenuFlyoutItem AccessKey="F" Click="OnNewFolder" Text="New folder" />
@@ -284,14 +284,16 @@
                         <ColumnDefinition x:Name="PdfColumn" Width="*" MinWidth="240" />
                     </Grid.ColumnDefinitions>
                     <controls:SourceView x:Name="Editor" Visibility="Collapsed">
-                        <!-- The emoji panel's way: a search box over the symbols by kind, never over the caret's line. -->
+                        <!-- The emoji panel's way: a search box over the symbols by kind, never over the caret's line. Seven
+                             44 cells across (48 with their gap), in a size that holds while the search narrows them. -->
                         <FlyoutBase.AttachedFlyout>
                             <Flyout x:Name="Palette">
                                 <StackPanel Spacing="8">
                                     <TextBox x:Name="SymbolFilter" AutomationProperties.Name="Search symbols" PlaceholderText="Search symbols" TextChanged="OnSymbolFilter" />
                                     <GridView
                                         x:Name="Symbols"
-                                        MaxHeight="360"
+                                        Width="336"
+                                        Height="360"
                                         AutomationProperties.Name="Symbols"
                                         IsItemClickEnabled="True"
                                         ItemClick="OnSymbol"

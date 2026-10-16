@@ -97,12 +97,12 @@ apps/windows/
 |---|---|---|
 | Window, chrome | `Window` + `MicaBackdrop` (Base), WinUI `TitleBar` (`Height` 48 with `TitleBarHeightOption.Tall`; the control alone stays 32); Settings (subtle gear) in `TitleBar.RightHeader`; project search in `TitleBar.Content`, 440 wide; no `Subtitle`; the window caption names the project | Mica Alt is for tabs in the title bar; no hand-built caption |
 | Pages | `Frame`: Home, Workspace, Settings; back via `TitleBar.IsBackButtonVisible`. The workspace page stays cached (and its session open) under Settings, and is dropped when it goes anywhere else | `NavigationView` switches top-level sections, which this app hasn't |
-| Commands | `MenuBar` (File, Edit, Insert, View, Build) in a 40 row, Compile at its end | Notepad's model; a `CommandBar` can't hold Insert's and Section's depth. One model, not both |
-| Sidebar | `SplitView` (Inline ≥ 1008, Overlay below) holding a `SelectorBar` (Files, Outline, Results, always shown) over three `TreeView`s sharing one item template; width by `Sizer` | NavigationView is not a file tree; Word's navigation pane is tabs over one pane, not stacked panels |
+| Commands | `MenuBar` (File, Edit, Insert, View, Build) in a 40 row, Compile at its end. Focus that comes back to the bar from a menu, flyout or dialog goes on to where it was before the bar took it (the editor if that is gone), as a Win32 menu gives it back; MenuBar alone leaves it on its item | Notepad's model; a `CommandBar` can't hold Insert's and Section's depth. One model, not both |
+| Sidebar | `SplitView` (Inline ≥ 1008, Overlay below) holding a `SelectorBar` (Files, Outline, Results, always shown) over three `TreeView`s sharing one item template; width by `Sizer`. The outline's selection is set only while it shows, after `UpdateLayout`: a hidden `TreeView` selects a row in name only, and setting `SelectedItem` on one whose items were just replaced crashed the app | NavigationView is not a file tree; Word's navigation pane is tabs over one pane, not stacked panels |
 | Splitters | `Sizer` (a `Grid`: `Border` is sealed), ~50 lines: pointer capture, `SizeWestEast`/`SizeNorthSouth` cursor, arrow keys; `Released` says when to save the size | Toolkit 8.2 pulls the 1.6 metapackage; 8.3 is preview. Move when 8.3 is stable |
-| Settings cards | `Card` (Controls/Card.cs), a `ContentControl` with Header, Description and Glyph, its default style in Generic.xaml | No Community Toolkit; a `Grid` style can't set columns |
+| Settings cards | `Card` (Controls/Card.cs), a `ContentControl` with Header, Description and Glyph, its default style in Generic.xaml; the description's presenter is collapsed without one, as SettingsCard's (an empty one fails XAML's measure with E_INVALIDARG) | No Community Toolkit; a `Grid` style can't set columns |
 | Home list | `ListView` with `ProjectItemStyle` based on `DefaultListViewItemStyle`; pointer-over and pressed aliased to `ControlFillColorSecondary`/`Tertiary` | A replaced `ListViewItem` template loses the presenter's focus, keyboard and high-contrast handling |
-| Accelerators | `Shortcut.Keys`/`Scope` attached properties on the command; a `Scope` naming an element is set in code, since the XAML compiler fails on an `x:Bind` to it | OEM keys (= - / ,) have no XAML name; property elements cost five lines each |
+| Accelerators | `Shortcut.Keys`/`Scope` attached properties on the command; a `Scope` naming an element is set in code, since the XAML compiler fails on an `x:Bind` to it. A menu item shows its keys as text and no accelerator tooltip (`KeyboardAcceleratorPlacementMode` Hidden), as Notepad's. Ctrl+Enter is taken in the editor's `PreviewKeyDown`, before RichEdit puts a line break in as well as the accelerator compiling | OEM keys (= - / ,) have no XAML name; property elements cost five lines each |
 | Dialogs | `ContentDialog` through `App.Show` (XamlRoot, theme, style) | Each dialog setting its own root, theme and style |
 | Subtle buttons | WinUI's own `SubtleButtonStyle`: the title bar's Settings, Home's More, the status bar (`StatusButtonStyle` is based on it) | No restyled `Button` |
 | Recycle Bin | `Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile`/`DeleteDirectory` with `SendToRecycleBin` (the shell's file operation) | `StorageFile`/`StorageFolder.DeleteAsync(Default)` deletes outright in an unpackaged app |
@@ -200,7 +200,8 @@ list item templates. Theme follows the system unless Settings says otherwise.
 `Shortcut.Keys` (a scoped one adds `Shortcut.Scope`), so menus and tooltips show them. Every
 icon-only button has `AutomationProperties.Name` and a ToolTip that shows its key. Ctrl+B/I/U are
 formatting only. `AccessKey` on menus, unique within each. F6 / Shift+F6 cycle sidebar, editor,
-PDF, issues list or build log.
+PDF, issues list or build log. A menu command, or a flyout or dialog opened from one, gives focus
+back to where it was, so typing goes on in the editor.
 
 **Motion.** Built-in only: `DrillInNavigationTransitionInfo` Home → project,
 `SlideNavigationTransitionInfo` (from right) to Settings, theme transitions, `SplitView`'s own
@@ -264,7 +265,8 @@ secondary text at margin 16,12 is enough.
   where they land (a clash asks Replace, Keep both, Cancel). Its context menu, with File Explorer's
   icons: New file, New folder, Set as main file, Rename (F2), Show in File Explorer, Delete (Del,
   disabled on the main file). Outline: the headings of the document the shown file belongs to
-  (`analyze_project`), the caret's selected (`outline_current`); a heading opens its line; folds
+  (`analyze_project`), the caret's selected (`outline_current`), also when the tab is switched to;
+  a heading opens its line; folds
   are kept with the open folders in the project's UI state. Results: one expanded row per file
   (its path and count) with its hits under it on up to two lines, the line number at the right; a
   hit opens with its match selected. Before a search the note says "Search the project with the
@@ -283,7 +285,8 @@ secondary text at margin 16,12 is enough.
   ink by colour index, never RichEdit's automatic colour, which follows the control's state. Keys
   go to the core first (`type`, `insert_newline`, `delete_backward`, `tab`, `move_lines`).
 - **Find** (Notepad's find bar, VS Code's find widget): at the text's top right on the flyout
-  surface, up to 480 wide: replace toggle (Ctrl+H), the box, the count ("1 of 5", "No results"),
+  surface, up to 480 wide: replace toggle (Ctrl+H, which puts the keys in Replace once there is
+  something to find and in the find box before that), the box, the count ("1 of 5", "No results"),
   previous, next, options (match case, whole word) and close. It is incremental: typing selects the
   next hit from the selection. Enter and Shift+Enter go to the next and previous, Enter in Replace
   replaces, Esc closes; Replace and Replace all are enabled only while there are matches, and
@@ -291,13 +294,14 @@ secondary text at margin 16,12 is enough.
   match on line 1 is never under it.
 - **Completion and maths** (Visual Studio's IntelliSense, VS Code's hover): completions are a list
   under the caret on the flyout surface (240–480 wide, up to 8 rows of 32) that never takes focus,
-  its labels in line with the typed text, the typed prefix SemiBold; it flips above the line when
-  there's no room. The maths the caret is in shows above its line (below when there's no room) as
+  its labels in line with the typed text (near the text's left edge it reaches over the gutter for
+  that), the typed prefix SemiBold; it flips above the line when there's no room. The maths the caret is in shows above its line (below when there's no room) as
   RaTeX's SVG, or as E783 and the core's reason.
 - **Palette** (the emoji panel): Symbol… opens a `Flyout` below the caret's line, never over it: a
   "Search symbols" box that filters by command over a grouped `GridView` of the catalogue's
-  symbols (24 images in 44 cells, 7 across, BodyStrong group headers). A click puts the command in,
-  between dollars in text.
+  symbols (24 images in 44 cells, 7 across, BodyStrong group headers) in a fixed 336 × 360, so the
+  flyout holds its size while the search narrows the symbols. A click puts the command in, between
+  dollars in text.
 - **PDF** (Edge's PDF viewer, Word's Print Layout): a grey canvas with white pages, a 1px
   `CardStrokeColorDefaultBrush` outside each page, 12 apart, centred; a `ProgressBar` overlaid at
   the top while compiling; the last good render stays up during builds, and a new PDF keeps the
@@ -347,7 +351,7 @@ secondary text at margin 16,12 is enough.
 
 | Command | Key | | Command | Key |
 |---|---|---|---|---|
-| New file / New project | Ctrl+N / Ctrl+Shift+N | | Compile | Ctrl+Enter, F5 |
+| New file / New project | Ctrl+N / Ctrl+Shift+N | | Compile | Ctrl+Enter, F5 (also in the editor, with no line break) |
 | Open folder / ZIP or TeX file | Ctrl+O / Ctrl+Shift+O | | Stop | Shift+F5 |
 | Save | Ctrl+S | | Next / previous issue | F8 / Shift+F8 |
 | Close project | Ctrl+W | | Go to line / page | Ctrl+G / Ctrl+Alt+G |

@@ -31,6 +31,7 @@
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="{TemplateBinding Header}" />
                             <ContentPresenter
+                                x:Name="DescriptionPresenter"
                                 Content="{TemplateBinding Description}"
                                 FontSize="12"
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"

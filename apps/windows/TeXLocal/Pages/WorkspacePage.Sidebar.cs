@@ -45,6 +45,7 @@ public sealed partial class WorkspacePage
     string? searchError;
     int searches;
     Analysis? analysis;
+    NavItem? caretHeading;
 
     TreeView[] SideTrees => [FilesTree, OutlineTree, ResultsTree];
     TreeNode? Picked => (FilesTree.SelectedItem as NavItem)?.Target as TreeNode;
@@ -110,17 +111,10 @@ public sealed partial class WorkspacePage
         var tab = SideTabs.SelectedItem;
         var outlined = OutlineTree.ItemsSource is List<NavItem> { Count: > 0 };
         var hits = ResultsTree.ItemsSource is List<NavItem> { Count: > 0 };
-        var hidden = OutlineTree.Visibility == Visibility.Collapsed;
         FilesTree.Visibility = Vis(tab == FilesTab);
         OutlineTree.Visibility = Vis(tab == OutlineTab && outlined);
         ResultsTree.Visibility = Vis(tab == ResultsTab && hits);
-        // A tree selects a row it hasn't drawn in name only: the caret's heading again once the tree shows.
-        if (hidden && OutlineTree.Visibility == Visibility.Visible && OutlineTree.SelectedItem is { } current)
-            DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
-            {
-                OutlineTree.SelectedItem = null;
-                OutlineTree.SelectedItem = current;
-            });
+        SelectCaretHeading();
         SideNote.Text = tab == OutlineTab && !outlined ? Editor.Path is null ? "Open a file to see its outline." : "No sections in this document."
             : tab != ResultsTab || hits ? ""
             : searchError ?? (searched.Length == 0 ? "Search the project with the box in the title bar (Ctrl+Shift+F)." : $"No results for “{searched}”.");
@@ -177,7 +171,7 @@ public sealed partial class WorkspacePage
         catch (CoreException) { return; }
         if (Editor.Path != path) return;
         Words.Text = analysis.Words == 1 ? "1 word" : $"{analysis.Words:N0} words";
-        OutlineTree.ItemsSource = Headings(analysis.Tree);
+        (OutlineTree.ItemsSource, caretHeading) = (Headings(analysis.Tree), null);
         ShowSide();
         await ReadHeadingStyles();
         CaretSettled();
@@ -190,10 +184,19 @@ public sealed partial class WorkspacePage
         var line = Editor.Caret.Line;
         ShowInsertChecks(shown.Outline.FirstOrDefault(h => h.File == path && h.Line == line));
         var index = await Core.CallAsync<int?>("outline_current", new { outline = shown.Outline, file = path, line });
-        if (analysis == shown && Find(OutlineTree.ItemsSource as List<NavItem>, i => i.Target is OutlineNode n && n.Index == index) is { } item
-            && OutlineTree.SelectedItem != item)
-            OutlineTree.SelectedItem = item;
+        if (analysis != shown) return;
+        caretHeading = Find(OutlineTree.ItemsSource as List<NavItem>, i => i.Target is OutlineNode n && n.Index == index);
+        SelectCaretHeading();
     });
+
+    /// Only while the outline shows: a hidden TreeView selects a row it hasn't drawn in name only, and selecting in
+    /// one whose items were just replaced can crash it.
+    void SelectCaretHeading()
+    {
+        if (OutlineTree.Visibility != Visibility.Visible || OutlineTree.SelectedItem == caretHeading) return;
+        OutlineTree.UpdateLayout();
+        OutlineTree.SelectedItem = caretHeading;
+    }
 
     // MARK: project search
 

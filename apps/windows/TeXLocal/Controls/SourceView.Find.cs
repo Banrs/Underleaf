@@ -25,7 +25,8 @@ public sealed partial class SourceView
         if (s.Length is > 0 and < 200 && text.IndexOf('\n', s.Start, s.Length) < 0) FindBox.Text = text.Substring(s.Start, s.Length);
         FindBar.Visibility = Visibility.Visible;
         ShowReplace(replace || ReplaceBox.Visibility == Visibility.Visible);
-        (replace ? ReplaceBox : FindBox).Focus(FocusState.Keyboard);
+        // Replace takes the keys only once there is something to find (VS Code, Notepad).
+        (replace && FindBox.Text.Length > 0 ? ReplaceBox : FindBox).Focus(FocusState.Keyboard);
         FindBox.SelectAll();
         Count();
     }
