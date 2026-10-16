@@ -24,6 +24,28 @@ struct CoreTests {
         }
         #expect(fault?.message.hasPrefix("Something went wrong inside TeXLocal.") == true && fault?.status == nil)
     }
+
+    /// The app numbers its sessions, and their events reach the observer of the number, decoded.
+    @Test func aSessionsEventsReachTheObserverOfItsNumber() async throws {
+        let core = Core.shared
+        let info = try await core.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"], as: ProjectInfo.self)
+        defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
+        var events: [SessionEvent] = []
+        let session = core.observe { events.append($0) }
+        defer { core.forget(session) }
+        let opened = try await core.call("session_open", ["id": info.id, "session": session], as: SessionOpened.self)
+        #expect(opened.settings.mainFile == info.mainFile && opened.pdf == nil)
+        let taken = await #expect(throws: CoreError.self) {
+            _ = try await core.call("session_open", ["id": info.id, "session": session], as: SessionOpened.self)
+        }
+        #expect(taken?.status == 409)
+        _ = try await core.call("session_open_document", ["session": session, "path": info.mainFile], as: FileText.self)
+        _ = try await core.call("session_close_document", ["session": session, "path": info.mainFile], as: Closed.self)
+        try await waitUntil {
+            events.contains { if case .closed(let closed) = $0 { closed.path == info.mainFile && closed.reason == "closed" } else { false } }
+        }
+        try await core.call("session_close", ["session": session])
+    }
 }
 
 @Suite(.serialized, .timeLimit(.minutes(2)))
@@ -52,7 +74,7 @@ final class ProjectFlowTests {
                                               as: ProjectInfo.self)
         let folder = Core.libraryFolder.appending(path: info.id)
         folders.append(folder)
-        try await Core.shared.perform("write_file", ["id": info.id, "path": info.mainFile, "text": text])
+        try await Core.shared.call("write_file", ["id": info.id, "path": info.mainFile, "text": text])
         return (info, folder)
     }
 
@@ -79,7 +101,7 @@ final class ProjectFlowTests {
 
     @Test func theMainFileOnDiskStaysOutOfTheTrash() async throws {
         let (project, folder) = try await opened()
-        try await Core.shared.perform("write_file", ["id": project.id, "path": "second.tex", "text": "x"])
+        try await Core.shared.call("write_file", ["id": project.id, "path": "second.tex", "text": "x"])
         let settings = folder.appending(path: ".texlocal.json")
         var json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
         json["mainFile"] = "second.tex"
@@ -487,7 +509,7 @@ final class ProjectFlowTests {
 
     @Test func aSearchListsItsHitsByFile() async throws {
         let project = try await opened("needle\nhay\nNeedle").project
-        try await Core.shared.perform("write_file", ["id": project.id, "path": "appendix.tex", "text": "a needle"])
+        try await Core.shared.call("write_file", ["id": project.id, "path": "appendix.tex", "text": "a needle"])
         project.search.query = "needle"
         await project.search.run()
         #expect(project.search.hits?.count == 3 && project.search.failure == nil)
@@ -510,11 +532,11 @@ final class ProjectFlowTests {
         #expect(changes == 1 && tree.node(at: info.mainFile)?.isDirectory == false)
         await tree.reload()
         #expect(changes == 1)
-        try await Core.shared.perform("write_file", ["id": info.id, "path": "notes.tex", "text": "x"])
+        try await Core.shared.call("write_file", ["id": info.id, "path": "notes.tex", "text": "x"])
         await tree.reload()
         #expect(changes == 2 && tree.node(at: "notes.tex") != nil)
         tree.close()
-        try await Core.shared.perform("write_file", ["id": info.id, "path": "more.tex", "text": "x"])
+        try await Core.shared.call("write_file", ["id": info.id, "path": "more.tex", "text": "x"])
         await tree.reload()
         #expect(changes == 2 && tree.node(at: "more.tex") == nil)
     }
@@ -531,8 +553,10 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func aNewProjectOpensItsSheetWithTheTemplateAndAFreeName() {
+    @Test func aNewProjectOpensItsSheetWithTheTemplateAndAFreeName() async throws {
         app.newProject(.report)
+        // Once the core has named it.
+        try await waitUntil { app.newProjectDraft != nil }
         #expect(app.newProjectDraft?.template == .report && app.newProjectDraft?.name.isEmpty == false)
         app.newProjectDraft = nil
     }
@@ -548,7 +572,9 @@ final class ProjectFlowTests {
         let menu = dock.menu
         #expect(menu.items.map(\.title) == [second.name, first.name, "", "New Project…"])
         menu.performActionForItem(at: 3)
-        #expect(shown == 1 && app.newProjectDraft != nil)
+        // Once the core has named it.
+        try await waitUntil { app.newProjectDraft != nil }
+        #expect(shown == 1)
         app.newProjectDraft = nil
         menu.performActionForItem(at: 1)
         try await waitUntil(timeout: .seconds(5)) { app.project?.id == first.id && app.project?.initialLoadComplete == true }

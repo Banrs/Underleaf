@@ -8,7 +8,7 @@ nonisolated struct TeXpressoStatus: Decodable, Sendable, Equatable {
     let output: String
     let error: String?
     let session: String?
-    var revision = 0
+    let revision: Int
 }
 
 /// The session's `live` event, and its answer to Start and Stop.
@@ -19,7 +19,7 @@ nonisolated struct LiveState: Decodable, Sendable {
     let error: String?
     let token: String?
     let revision: Int
-    /// An error the window hasn't been shown yet: the Live Preview Log opens on it.
+    /// An error the window hasn't been shown yet: the Live Preview Log opens on it. Start's and Stop's answers have none.
     let alert: Bool?
 }
 
@@ -38,21 +38,18 @@ nonisolated struct LivePageEvent: Decodable, Sendable {
     let path: String
 }
 
-/// A live event's PDF, read on the core's event thread so the main queue gets it ready to draw, in one hop: the page's
-/// one-page PDF, or the whole document; nil inside where the file couldn't be read. Nil for any other event.
+/// A live event's PDF, read on the core's event thread as the event is decoded, so the main actor gets it ready to draw:
+/// the page's one-page PDF, or the whole document; nil inside where the file couldn't be read.
 nonisolated enum LiveRead: Sendable {
     case document(LiveDocument?)
     case page(LivePage?)
 
-    private struct Head: Decodable { let type: String }
+    init(_ event: LiveDocumentEvent) {
+        self = .document(Self.read(event))
+    }
 
-    init?(_ event: Data) {
-        let decoder = JSONDecoder()
-        switch try? decoder.decode(Head.self, from: event).type {
-        case "live_document": self = .document((try? decoder.decode(LiveDocumentEvent.self, from: event)).flatMap(Self.read))
-        case "live_page": self = .page((try? decoder.decode(LivePageEvent.self, from: event)).flatMap(Self.read))
-        default: return nil
-        }
+    init(_ event: LivePageEvent) {
+        self = .page(Self.read(event))
     }
 
     /// The file is complete when it is named, and replaced by another of its name, never rewritten: mapped, it is read as its

@@ -433,8 +433,8 @@ final class PDFController: NSObject {
         guard let source else { return showFound(loc, on: located, hit: nil) }
         let pages = syncPages(loc.matches ?? [loc], in: document)
         revealing = Task {
-            let hit = try? await Core.shared.answer("synctex_match", ["id": source.id, "file": source.file, "line": source.line,
-                                                                      "column": source.column, "pages": pages], as: PageHit.self)
+            let hit = try? await Core.shared.call("synctex_match", ["id": source.id, "file": source.file, "line": source.line,
+                                                                    "column": source.column, "pages": pages], as: PageHit?.self)
             guard !Task.isCancelled, view.document === document else { return }
             showFound(loc, on: located, hit: hit)
         }

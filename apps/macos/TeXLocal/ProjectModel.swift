@@ -40,10 +40,9 @@ final class ProjectModel {
     /// Why a document held after Cancel in an alert isn't saved, for the status bar.
     @ObservationIgnored private var heldReasons: [String: String] = [:]
     @ObservationIgnored private var lineIssues: [String: [Int: SourceTextView.LineIssue]] = [:]
-    /// Closed by this model, so its `document_closed` doesn't clear the editor showing the next file.
-    @ObservationIgnored private var closingDocuments: Set<String> = []
     @ObservationIgnored private var composingPath: String?
-    @ObservationIgnored private var sentAutoCompile: Bool?
+    /// A `tree` event came before the answer to the session's open, whose tree is older.
+    @ObservationIgnored private var treeChanged = false
 
     var compiling = false
     private(set) var outdated = false
@@ -76,6 +75,9 @@ final class ProjectModel {
         didSet { if foldedHeadings != oldValue { saveUIState(["foldedHeadings": foldedHeadings.sorted()]) } }
     }
     @ObservationIgnored private var showingUIState = false
+    /// The sidebar's state is written in the order it changes, and read after the last write: these are the service's
+    /// commands, not the session's, which the core takes in the order sent.
+    @ObservationIgnored private var uiStateWrites: Task<Void, Never>?
 
     let search: ProjectSearch
 
@@ -103,7 +105,7 @@ final class ProjectModel {
         texpresso.onEnded = { [weak self] in Task { await self?.endLivePDF() } }
         texpresso.readStatus = { [weak self] in
             guard let self, let session else { return nil }
-            return try? await core.session("session_live_status", ["session": session], as: TeXpressoStatus.self)
+            return try? await core.call("session_live_status", ["session": session], as: TeXpressoStatus?.self)
         }
         tree.onChange = { [weak self] in
             self?.openKindChanged()
@@ -147,8 +149,6 @@ final class ProjectModel {
 
     var showsLastSuccessfulBuild: Bool { hasPDF && result?.failed == true && result?.pdf == nil }
     var texAvailable: Bool { app?.tex?.available ?? false }
-    /// The session builds by itself only where TeX is.
-    private var autoCompile: Bool { (app?.autoCompile ?? false) && texAvailable }
 
     private func report(_ error: any Error, _ title: String) {
         app?.alert = AppAlert(title, error)
@@ -204,53 +204,51 @@ final class ProjectModel {
             pdf.restorePage = saved.pdfPage
             pdf.restoreZoom = saved.pdfZoom
         }
-        // The PDF loads while the file is read and analysed, and is shown before the workspace appears, so the pane doesn't open on its empty state.
-        async let pdfShown = showPDFOnDisk()
+        // Its events come to `handle` from here on: the app numbers the session, so none comes before its observer.
+        let session = core.observe { [weak self] event in self?.handle(event) }
         do {
-            settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
-            await readUIState()
             // With automatic builds and no PDF, the session starts one.
-            let auto = autoCompile
-            guard let opened = try await core.session("session_open", ["id": id, "autoCompile": auto], as: SessionOpened.self) else {
-                throw CoreError(message: String(localized: "The project’s files couldn’t be read."))
-            }
+            let opened = try await core.call("session_open", ["id": id, "session": session, "autoCompile": app?.autoCompile ?? false],
+                                             as: SessionOpened.self)
             guard !closed else {
-                core.send("session_close", ["session": opened.session])
+                core.forget(session)
+                core.send("session_close", ["session": session])
                 return
             }
-            session = opened.session
-            sentAutoCompile = auto
+            self.session = session
             root = URL(filePath: opened.root, directoryHint: .isDirectory)
-            // The tree as it opened, before any event's newer one.
-            tree.show(opened.tree)
-            core.observe(opened.session) { [weak self] type, event, live in self?.handle(type, event, live) }
+            settings = opened.settings
+            showUIState(opened.ui)
+            if !treeChanged { tree.show(opened.tree) }
+            // The PDF loads while the file is read and analysed, and is shown before the workspace appears, so the pane doesn't open on its empty state.
+            async let pdfShown = showBuildPDF(opened.pdf)
             let restored = saved?.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
             await analysis?.value
+            _ = await pdfShown
         } catch {
+            core.forget(session)
             // Home stays, with the alert over it: a workspace would have no files to show.
             guard !closed else { return }
             report(error, "Couldn’t Open “\(id)”")
             if app?.project === self { await app?.close() }
             return
         }
-        _ = await pdfShown
         guard !closed else { return }
         initialLoadComplete = true
     }
 
-    /// The preference, or whether TeX is found, changed.
-    func optionsChanged() {
-        guard let session, !closed, sentAutoCompile != autoCompile else { return }
-        sentAutoCompile = autoCompile
-        core.send("session_set_options", ["session": session, "autoCompile": autoCompile])
+    /// The preference changed: the session builds by itself only where `status` last found TeX.
+    func autoCompileChanged() {
+        guard let session, !closed else { return }
+        core.send("session_set_options", ["session": session, "autoCompile": app?.autoCompile ?? false])
     }
 
-    /// A no-op build's PDF is already shown: reopening every page would lose PDFKit's state.
-    @discardableResult private func showPDFOnDisk(reloadIfUnchanged: Bool = true, replacingLive: Bool = false) async -> Bool {
+    /// The build's PDF at `path`, if it has one. A no-op build's PDF is already shown: reopening every page would lose
+    /// PDFKit's state.
+    @discardableResult private func showBuildPDF(_ path: String?, reloadIfUnchanged: Bool = true, replacingLive: Bool = false) async -> Bool {
         await restart(&pdfLoad) { [self] in
-            guard !closed, let path = try? await core.call("pdf_path", ["id": id], as: String.self),
-                  !Task.isCancelled, !closed else { return false }
+            guard let path, !closed else { return false }
             let url = URL(filePath: path)
             var live: Bool { replacingLive ? texpresso.active : livePDF }
             if live {
@@ -267,7 +265,8 @@ final class ProjectModel {
     }
 
     private func endLivePDF() async {
-        guard livePDF, !texpresso.active, !(await showPDFOnDisk(replacingLive: true)), livePDF, !texpresso.active, !closed else { return }
+        guard livePDF, !texpresso.active, !(await showBuildPDF(buildPDF?.path(percentEncoded: false), replacingLive: true)), livePDF,
+              !texpresso.active, !closed else { return }
         shown = .none
         pdf.clear()
     }
@@ -288,14 +287,19 @@ final class ProjectModel {
         pdf.showLive(read)
     }
 
-    /// In the order changed: on the session's queue, as a read of it is.
     private func saveUIState(_ patch: [String: any Sendable]) {
         guard !showingUIState, !closed else { return }
-        core.send("set_ui_state", ["id": id, "patch": patch])
+        let args: [String: any Sendable] = ["id": id, "patch": patch]
+        _ = enqueue(&uiStateWrites) { [core] in try? await core.call("set_ui_state", args) }
     }
 
     private func readUIState() async {
-        guard let state = try? await core.session("get_ui_state", ["id": id], as: UIState.self), !closed else { return }
+        await uiStateWrites?.value
+        guard let state = try? await core.call("get_ui_state", ["id": id], as: UIState.self), !closed else { return }
+        showUIState(state)
+    }
+
+    private func showUIState(_ state: UIState) {
         showingUIState = true
         (expandedFolders, foldedHeadings) = (Set(state.expandedFolders), Set(state.foldedHeadings))
         showingUIState = false
@@ -303,26 +307,24 @@ final class ProjectModel {
 
     // MARK: - The session's events
 
-    private func handle(_ type: String, _ event: Data, _ live: LiveRead?) {
+    private func handle(_ event: SessionEvent) {
         guard !closed else { return }
-        func decoded<T: Decodable>(_ kind: T.Type) -> T? { Core.decode(kind, event, type) }
-        switch type {
-        case "document": if let state = decoded(DocumentState.self) { documentChanged(state) }
-        case "saved": analyze()
-        case "document_reload": if let reloaded = decoded(ReloadEvent.self) { reload(reloaded) }
-        case "document_closed": if let gone = decoded(PathEvent.self) { documentClosed(gone) }
-        case "document_renamed": if let renamed = decoded(RenamedEvent.self) { documentRenamed(renamed) }
-        case "conflict": if let asked = decoded(ConflictEvent.self) { conflict(asked) }
-        case "issues": if let marked = decoded(IssuesEvent.self) { markIssues(marked) }
-        case "build": if let state = decoded(BuildState.self) { inOrder { self.buildChanged(state) } }
-        case "build_finished": if let finished = decoded(BuildFinished.self) { inOrder { await self.buildFinished(finished) } }
-        case "build_cleaned": inOrder { self.buildCleaned() }
-        case "tree": if let listed = decoded(TreeEvent.self) { treeChanged(listed) }
-        case "files_changed": if let changed = decoded(PathsEvent.self) { filesChanged(changed) }
-        case "live": if let state = decoded(LiveState.self) { texpresso.receive(state) }
-        case "live_document", "live_page": if let live { showLive(live) }
-        case "live_restarted": notices.note(String(localized: "Live Preview Restarted"))
-        default: break
+        switch event {
+        case .document(let state): documentChanged(state)
+        case .saved: analyze()
+        case .reload(let reloaded): reload(reloaded)
+        case .closed(let gone): documentClosed(gone)
+        case .renamed(let renamed): documentRenamed(renamed)
+        case .conflict(let asked): conflict(asked)
+        case .issues(let marked): markIssues(marked)
+        case .build(let state): inOrder { self.buildChanged(state) }
+        case .buildFinished(let finished): inOrder { await self.buildFinished(finished) }
+        case .buildCleaned: inOrder { self.buildCleaned() }
+        case .tree(let listed): showTree(listed)
+        case .filesChanged(let changed): filesChanged(changed)
+        case .live(let state): texpresso.receive(state)
+        case .livePDF(let read): showLive(read)
+        case .liveRestarted: notices.note(String(localized: "Live Preview Restarted"))
         }
     }
 
@@ -345,11 +347,12 @@ final class ProjectModel {
         }
     }
 
-    private func documentClosed(_ event: PathEvent) {
+    /// One this model closed (`closed`) has the next file shown, or is cleared already.
+    private func documentClosed(_ event: ClosedEvent) {
         documents[event.path] = nil
         heldReasons[event.path] = nil
         lineIssues[event.path] = nil
-        if openPath == event.path, !closingDocuments.contains(event.path) { clearOpenFile() }
+        if openPath == event.path, event.reason != "closed" { clearOpenFile() }
     }
 
     /// The editor follows the rename's own answer, which covers a folder's files it keeps too.
@@ -372,7 +375,8 @@ final class ProjectModel {
         if editor.path == event.path { editor.textView.issueLines = lines }
     }
 
-    private func treeChanged(_ event: TreeEvent) {
+    private func showTree(_ event: TreeEvent) {
+        treeChanged = true
         tree.show(event.tree)
         // A file previewed, not edited, that went: the session has no document of it to close.
         if let openPath, !editsText, tree.node(at: openPath) == nil { clearOpenFile() }
@@ -406,7 +410,7 @@ final class ProjectModel {
                     if tree.node(at: path) == nil { await tree.reload() }
                     // Read first and closed last, with nothing awaited between the close and the switch.
                     if isText(path) {
-                        _ = try await core.session("session_open_document", ["session": session, "path": path], as: FileText.self)
+                        _ = try await core.call("session_open_document", ["session": session, "path": path], as: FileText.self)
                     }
                     guard !Task.isCancelled, !closed else { return }
                     if let was = openPath, editsText {
@@ -439,10 +443,8 @@ final class ProjectModel {
     /// Saved first; false, staying open, if that failed or asks about the disk.
     private func closeDocument(_ path: String) async -> Bool {
         guard let session else { return true }
-        closingDocuments.insert(path)
-        defer { closingDocuments.remove(path) }
         do {
-            return try await core.session("session_close_document", ["session": session, "path": path], as: Closed.self)?.closed ?? true
+            return try await core.call("session_close_document", ["session": session, "path": path], as: Closed.self).closed
         } catch {
             if !closed { report(error, String(localized: "“\(path.fileName)” Wasn’t Saved")) }
             return false
@@ -461,7 +463,7 @@ final class ProjectModel {
 
     /// Where a file dropped on the window is in this project, as the disk spells it; asked as the drag moves, so at once.
     func projectPath(_ url: URL) -> String? {
-        guard let located = try? core.now("locate", ["path": url.path(percentEncoded: false)], as: Located.self),
+        guard let located = try? core.now("locate", ["path": url.path(percentEncoded: false)], as: Located?.self),
               located.id == id, !located.path.isEmpty else { return nil }
         return located.path
     }
@@ -482,7 +484,7 @@ final class ProjectModel {
     func save(reporting: Bool = true) async -> Bool {
         guard let session, !closed else { return true }
         do {
-            return try await core.session("session_save", ["session": session, "reporting": reporting], as: Saved.self)?.saved ?? false
+            return try await core.call("session_save", ["session": session, "reporting": reporting], as: Saved.self).saved
         } catch {
             if reporting, !closed { report(error, String(localized: "“\((openPath ?? id).fileName)” Wasn’t Saved")) }
             return false
@@ -542,7 +544,7 @@ final class ProjectModel {
 
     private func heading(at line: Int) async -> Int? {
         guard !headings.isEmpty else { return nil }
-        return try? await core.answer("outline_current", ["outline": headings, "file": openPath, "line": line], as: Int.self)
+        return try? await core.call("outline_current", ["outline": headings, "file": openPath, "line": line], as: Int?.self)
     }
 
     private func readText(_ path: String) async throws -> String {
@@ -583,7 +585,7 @@ final class ProjectModel {
         guard let session else { return }
         Task {
             do {
-                _ = try await core.session("session_resolve", ["session": session, "path": path, "answer": answer], as: Saved.self)
+                try await core.call("session_resolve", ["session": session, "path": path, "answer": answer])
             } catch {
                 if !closed { report(error, String(localized: "“\(path.fileName)” Wasn’t Saved")) }
             }
@@ -593,9 +595,9 @@ final class ProjectModel {
     // MARK: - Compile
 
     /// The session queues one more during a build, and leaves an automatic one while Live Preview runs.
-    /// A build asked for shows as one at once, so the toolbar has Stop from the click on and a Stop reaches the core
-    /// behind it in the session's lane, where it ends the build however soon it comes; the core's `build` events then
-    /// confirm or end it. An automatic one waits for them, as the core may leave it.
+    /// A build asked for shows as one at once, so the toolbar has Stop from the click on and a Stop reaches the session
+    /// behind it, where it ends the build however soon it comes; the core's `build` events then confirm or end it. An
+    /// automatic one waits for them, as the core may leave it.
     func compile(auto: Bool = false) async {
         guard let session, !closed, texAvailable else { return }
         if !auto, !compiling {
@@ -603,7 +605,7 @@ final class ProjectModel {
             AccessibilityNotification.Announcement(String(localized: "Compiling")).post()
         }
         do {
-            try await core.session("session_compile", ["session": session, "auto": auto])
+            try await core.call("session_compile", ["session": session, "auto": auto])
         } catch {
             // The core has ended a build whose save failed, and with no core none started.
             compiling = false
@@ -619,8 +621,7 @@ final class ProjectModel {
     func cleanBuildFolder() async {
         guard let session, !closed else { return }
         do {
-            // Not in the session's lane: it waits for the build it stops.
-            try await core.perform("session_clean", ["session": session])
+            try await core.call("session_clean", ["session": session])
         } catch {
             if !closed { report(error, "Couldn’t Clean the Build Folder") }
             return
@@ -637,8 +638,8 @@ final class ProjectModel {
 
     private func buildFinished(_ finished: BuildFinished) async {
         let result = finished.result
-        if result.pdf != nil, !closed {
-            await showPDFOnDisk(reloadIfUnchanged: result.pdfChanged)
+        if let pdf = result.pdf, !closed {
+            await showBuildPDF(pdf, reloadIfUnchanged: result.pdfChanged)
             // Not after typing through the build: the PDF hasn't the caret's text yet, and the sync would save it mid-word and start the next build at once.
             if result.ok, !finished.outdated, app?.showPDF == true, isLaTeX, UserDefaults.standard.bool(forKey: DefaultsKey.syncAfterCompile) {
                 Task { await forwardSync(quietly: true) }
@@ -701,7 +702,7 @@ final class ProjectModel {
     func goToIssue(next: Bool) {
         guard let session else { return }
         Task {
-            guard let chosen = try? await core.session("session_issue", ["session": session, "next": next], as: ChosenIssue.self),
+            guard let chosen = try? await core.call("session_issue", ["session": session, "next": next], as: ChosenIssue?.self),
                   !closed else { return }
             panel.show(.issues)
             chosenIssue = chosen.index
@@ -731,7 +732,10 @@ final class ProjectModel {
         // The session saves what it can, and stops its build and Live Preview.
         if let session {
             core.forget(session)
-            closing = Task { _ = try? await core.session("session_close", ["session": session]) }
+            closing = Task { [uiStateWrites] in
+                await uiStateWrites?.value
+                try? await core.call("session_close", ["session": session])
+            }
         }
     }
 
@@ -748,8 +752,7 @@ final class ProjectModel {
         let before = settings
         settings?.apply(change)
         do {
-            guard let updated = try await core.session("session_set_settings", ["session": session, "patch": change.patch],
-                                                       as: ProjectSettings.self) else { return false }
+            let updated = try await core.call("session_set_settings", ["session": session, "patch": change.patch], as: ProjectSettings.self)
             guard !closed else { return false }
             settings = updated
             if updated.mainFile != before?.mainFile { mainFileChanged() }
@@ -775,7 +778,9 @@ final class ProjectModel {
     /// The session stops the build, restarts Live Preview and builds the new one; the PDF is the new main file's.
     private func mainFileChanged() {
         analyze()
-        Task { await showPDFOnDisk() }
+        Task {
+            if let path = try? await core.call("pdf_path", ["id": id], as: String.self) { await showBuildPDF(path) }
+        }
     }
 
     // MARK: - Live preview
@@ -793,7 +798,7 @@ final class ProjectModel {
         guard let session else { return }
         texpresso.stopping()
         Task {
-            if let state = try? await core.session("session_live_stop", ["session": session], as: LiveState.self) { texpresso.stopped(state) }
+            if let state = try? await core.call("session_live_stop", ["session": session], as: LiveState.self) { texpresso.stopped(state) }
         }
         // Its pages go now, not as its stop ends.
         Task { await endLivePDF() }
@@ -887,7 +892,7 @@ final class ProjectModel {
         let (before, wasText) = (openPath, editsText)
         let renamed: RenameResult?
         do {
-            renamed = try await core.session("session_rename", ["session": session, "from": from, "to": to], as: RenameResult.self)
+            renamed = try await core.call("session_rename", ["session": session, "from": from, "to": to], as: RenameResult?.self)
         } catch {
             if !closed { report(error, "Couldn’t Rename “\(from.fileName)”") }
             return nil
@@ -934,7 +939,7 @@ final class ProjectModel {
         guard let session, !closed else { return false }
         let title = "Couldn’t Move “\(path.fileName)” to the Trash"
         do {
-            guard try await core.session("session_prepare_delete", ["session": session, "path": path], as: Ready.self)?.ready == true,
+            guard try await core.call("session_prepare_delete", ["session": session, "path": path], as: Ready.self).ready,
                   !closed else { return false }
         } catch {
             guard !closed else { return false }
@@ -975,8 +980,7 @@ final class ProjectModel {
     }
 
     func importFiles(_ urls: [URL], into dir: String = "", conflict: String? = nil) async {
-        var args: [String: any Sendable] = ["id": id, "dir": dir, "paths": urls.map { $0.path(percentEncoded: false) }]
-        args["conflict"] = conflict
+        let args: [String: any Sendable] = ["id": id, "dir": dir, "paths": urls.map { $0.path(percentEncoded: false) }, "conflict": conflict]
         do {
             let clashes = try await core.call("import_files", args, as: Imported.self).existing.map(\.path)
             if conflict == nil, !clashes.isEmpty { importClash = ImportClash(urls: urls, dir: dir, names: clashes) }
@@ -1002,7 +1006,7 @@ final class ProjectModel {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         exportFolder = folder
         let url = folder.appending(path: "\(id).zip")
-        try await core.perform("export_zip", ["id": id, "dest": url.path(percentEncoded: false)])
+        try await core.call("export_zip", ["id": id, "dest": url.path(percentEncoded: false)])
         return url
     }
 
@@ -1056,10 +1060,57 @@ struct ImportClash {
 
 // MARK: - The session's answers and events (docs/core-api.md)
 
+/// What a session's event says, decoded once, on the core's event thread (`Core`).
+nonisolated enum SessionEvent: Sendable {
+    case document(DocumentState)
+    case saved
+    case reload(ReloadEvent)
+    case closed(ClosedEvent)
+    case renamed(RenamedEvent)
+    case conflict(ConflictEvent)
+    case issues(IssuesEvent)
+    case build(BuildState)
+    case buildFinished(BuildFinished)
+    case buildCleaned
+    case tree(TreeEvent)
+    case filesChanged(PathsEvent)
+    case live(LiveState)
+    /// A `live_document` or `live_page`, its PDF read already.
+    case livePDF(LiveRead)
+    case liveRestarted
+
+    /// The event of `type`, its fields read from `decoder`; nil for a type the app has no use for.
+    init?(_ type: String, _ decoder: any Decoder) throws {
+        func fields<T: Decodable>(_: T.Type = T.self) throws -> T { try T(from: decoder) }
+        switch type {
+        case "document": self = .document(try fields())
+        case "saved": self = .saved
+        case "document_reload": self = .reload(try fields())
+        case "document_closed": self = .closed(try fields())
+        case "document_renamed": self = .renamed(try fields())
+        case "conflict": self = .conflict(try fields())
+        case "issues": self = .issues(try fields())
+        case "build": self = .build(try fields())
+        case "build_finished": self = .buildFinished(try fields())
+        case "build_cleaned": self = .buildCleaned
+        case "tree": self = .tree(try fields())
+        case "files_changed": self = .filesChanged(try fields())
+        case "live": self = .live(try fields())
+        case "live_document": self = .livePDF(LiveRead(try fields(LiveDocumentEvent.self)))
+        case "live_page": self = .livePDF(LiveRead(try fields(LivePageEvent.self)))
+        case "live_restarted": self = .liveRestarted
+        default: return nil
+        }
+    }
+}
+
 nonisolated struct SessionOpened: Decodable, Sendable {
-    let session: UInt64
     let root: String
+    /// The last build's, if it has one.
+    let pdf: String?
     let tree: [TreeNode]
+    let settings: ProjectSettings
+    let ui: UIState
 }
 
 nonisolated struct Located: Decodable, Sendable { let id, path: String }
@@ -1077,6 +1128,8 @@ nonisolated struct DocumentState: Decodable, Equatable {
 
 nonisolated struct ReloadEvent: Decodable { let path, text: String }
 nonisolated struct PathEvent: Decodable, Sendable { let path: String }
+/// `reason`: `gone`, `deleted`, or `closed` when the app closed it.
+nonisolated struct ClosedEvent: Decodable { let path, reason: String }
 nonisolated struct RenamedEvent: Decodable { let from, to: String }
 nonisolated struct ConflictEvent: Decodable { let path, kind: String }
 nonisolated struct TreeEvent: Decodable { let tree: [TreeNode] }

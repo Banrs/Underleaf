@@ -324,7 +324,7 @@ struct PDFFindTests {
         let info = try await Core.shared.call("create_project", ["name": "Sync \(UUID().uuidString.prefix(8))", "template": "blank"],
                                               as: ProjectInfo.self)
         defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
-        try await Core.shared.perform("write_file", ["id": info.id, "path": info.mainFile, "text": line])
+        try await Core.shared.call("write_file", ["id": info.id, "path": info.mainFile, "text": line])
         let pdf = try textPDF([line], width: 180), page = try #require(pdf.page(at: 0))
         let rendered = try #require(page.string)
         let box = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).bounds(for: page)
@@ -334,8 +334,8 @@ struct PDFFindTests {
                           from: SyncSource(id: info.id, file: info.mainFile, line: 1, column: column))
         let second = NSRange(try #require(rendered.ranges(of: "echo").last), in: rendered)
         let whole: [[String: any Sendable]] = [["page": 1, "text": rendered, "near": [[0, (rendered as NSString).length]]]]
-        let hit = try await Core.shared.answer("synctex_match", ["id": info.id, "file": info.mainFile, "line": 1, "column": column,
-                                                                "pages": whole], as: PageHit.self)
+        let hit = try await Core.shared.call("synctex_match", ["id": info.id, "file": info.mainFile, "line": 1, "column": column,
+                                                              "pages": whole], as: PageHit?.self)
         #expect(hit.map { NSRange(location: $0.start, length: $0.end - $0.start) } == second)
         // PDFKit's selection of a word that ends a row takes the row's break along.
         try await waitUntil {

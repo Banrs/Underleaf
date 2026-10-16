@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum DefaultsKey {
+/// The keys of the settings the app stores; the raw values are what users' defaults hold.
+nonisolated enum DefaultsKey {
     static let sidebarVisible = "sidebarVisible"
     static let inspectorVisible = "inspectorVisible"
     static let autoCompile = "autoCompile"
@@ -16,6 +17,15 @@ enum DefaultsKey {
     static let newProjectEngine = "newProjectEngine"
     static let settingsPane = "settingsPane"
     static let dismissedTeXTip = "dismissedTeXTip"
+    static let editorFontName = "editorFontName"
+    static let editorFontSize = "editorFontSize"
+    static let editorSyntaxTheme = "editorSyntaxTheme"
+    static let editorLineNumbers = "editorLineNumbers"
+    static let editorAutoPair = "editorAutoPair"
+    static let editorAutoComplete = "editorAutoComplete"
+    static let editorSpellCheck = "editorSpellCheck"
+    static let pdfPaper = "pdfPaper"
+    static let liveViewer = "liveViewer"
 }
 
 /// The pages the app points to; each is a constant that parses.
@@ -75,9 +85,7 @@ private nonisolated struct FreeName: Decodable {
 final class AppModel {
     var projects: [ProjectInfo] = []
     private(set) var projectsLoaded = false
-    var tex: TexStatus? {
-        didSet { project?.optionsChanged() }
-    }
+    var tex: TexStatus?
     private(set) var settingTeX = false
     var project: ProjectModel?
     var alert: AppAlert?
@@ -116,7 +124,7 @@ final class AppModel {
     var autoCompile: Bool {
         didSet {
             UserDefaults.standard.set(autoCompile, forKey: DefaultsKey.autoCompile)
-            project?.optionsChanged()
+            project?.autoCompileChanged()
         }
     }
     var showWordCount: Bool {
@@ -153,13 +161,16 @@ final class AppModel {
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
     }
 
-    /// Without a template, the one Settings names for new projects.
+    /// Without a template, the one Settings names for new projects. The sheet opens once the core has named the project,
+    /// a moment later: not awaited, as the menus and buttons that ask don't wait.
     func newProject(_ template: ProjectTemplate? = nil) {
         guard libraryProblem == nil else { return }
         let template = template ?? UserDefaults.standard.string(forKey: DefaultsKey.newProjectTemplate)
             .flatMap(ProjectTemplate.init(rawValue:)) ?? .standard
-        newProjectDraft = NewProjectDraft(template: template,
-                                          name: (try? core.now("free_project_name", [:], as: FreeName.self))?.name ?? "Untitled")
+        Task {
+            let free = try? await core.call("free_project_name", as: FreeName.self)
+            newProjectDraft = NewProjectDraft(template: template, name: free?.name ?? "Untitled")
+        }
     }
 
     /// A file that isn't LaTeX has no outline to open: the header stays, folded and dim (`OutlineHeader`), and the sidebar keeps
@@ -218,8 +229,8 @@ final class AppModel {
         texCheck?.cancel()
         defer { settingTeX = false }
         do {
-            tex = try await core.call(texpresso ? "set_texpresso_dir" : "set_tex_dir", ["dir": path ?? NSNull()],
-                                      as: TexStatus.self)
+            // A nil path bridges as null, which the core reads as none.
+            tex = try await core.call(texpresso ? "set_texpresso_dir" : "set_tex_dir", ["dir": path], as: TexStatus.self)
         } catch {
             // A status read started before this choice was discarded: refresh after the check ends, even if the chosen folder was refused.
             Task { await refreshTeXStatus() }
@@ -227,15 +238,11 @@ final class AppModel {
         }
     }
 
+    /// With the engine Settings names for new projects: the core makes the project with it or not at all.
     func create(name: String, template: ProjectTemplate) async throws {
-        let info = try await core.call("create_project", ["name": name, "template": template.rawValue], as: ProjectInfo.self)
-        // The project stands if this fails, and opens under the alert that says so.
-        if let engine = UserDefaults.standard.string(forKey: DefaultsKey.newProjectEngine).flatMap(TeXEngine.init(rawValue:)),
-           engine != .pdflatex {
-            _ = await alerting("Couldn’t Set the Engine for “\(info.name)”") {
-                try await core.call("set_settings", ["id": info.id, "patch": ["engine": engine.rawValue]], as: ProjectSettings.self)
-            }
-        }
+        let engine = UserDefaults.standard.string(forKey: DefaultsKey.newProjectEngine).flatMap(TeXEngine.init(rawValue:))
+        let info = try await core.call("create_project", ["name": name, "template": template.rawValue, "engine": engine?.rawValue],
+                                       as: ProjectInfo.self)
         await refresh()
         // Not awaited: the sheet goes as the project opens, not after its first build.
         Task { await open(info.id) }
@@ -268,7 +275,7 @@ final class AppModel {
     }
 
     private func isInLibrary(_ url: URL, open: Bool) async -> Bool {
-        guard let located = try? await core.answer("locate", ["path": url.path(percentEncoded: false)], as: Located.self) else { return false }
+        guard let located = try? await core.call("locate", ["path": url.path(percentEncoded: false)], as: Located?.self) else { return false }
         let id = located.id
         if !projects.contains(where: { $0.id == id }) { await refresh() }
         guard projects.contains(where: { $0.id == id }) else { return false }

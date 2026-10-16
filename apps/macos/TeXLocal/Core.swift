@@ -8,7 +8,9 @@ nonisolated struct CoreError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-/// `tl_call` blocks for as long as the command runs (minutes, for a compile), so calls run on a GCD thread: the cooperative pool must never block.
+/// The Rust core (docs/core-api.md). A command runs on a core thread and answers there (`tl_call_async`), so nothing waits on
+/// the main actor or the cooperative pool, and a session takes its commands in the order they were sent. Events come in on
+/// the core's own thread, are decoded there, and reach their session's observer on the main actor in the order sent.
 final class Core {
     static let shared = Core()
 
@@ -21,69 +23,85 @@ final class Core {
         return home.appending(path: "TeXLocal", directoryHint: .isDirectory)
     }()
 
-    /// The core takes concurrent calls from any thread, so the GCD thread reads it.
-    private nonisolated final class Handle: @unchecked Sendable {
-        let raw: OpaquePointer
-        init(_ raw: OpaquePointer) { self.raw = raw }
-    }
-
-    private var handle: Handle? = Core.open()
+    private var handle: OpaquePointer? = Core.open()
     var isOpen: Bool { handle != nil }
 
     static let libraryPath = (libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
     static let libraryAdvice = "Make sure you can create and write to \(libraryPath), then try again."
     private static let unavailable = CoreError(message: "TeXLocal can’t open its projects folder. \(libraryAdvice)")
 
-    private init() {}
-
-    private static func open() -> Handle? {
-        guard let raw = libraryFolder.withUnsafeFileSystemRepresentation({ tl_open($0) }) else { return nil }
-        listen(raw)
-        return Handle(raw)
+    private init() {
+        // For the app's life: each event goes to its session's observer, one at a time, in the order the core sent them.
+        Task {
+            for await (session, event) in Self.events.stream { observers[session]?(event) }
+        }
     }
 
-    /// Nonisolated, so the C callback formed here is too: one formed in a main-actor context would be taken as the main
-    /// actor's and trap on the core's thread. The text, valid only during the call, is copied, then taken on the main queue
-    /// in the order sent. Live Preview's PDF is read here first, so its page goes to the main queue ready to draw.
-    private nonisolated static func listen(_ raw: OpaquePointer) {
-        tl_set_listener(raw, { _, json in
-            let event = Data(bytes: json, count: strlen(json))
-            let live = LiveRead(event)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { Core.shared.receive(event, live) }
-            }
-        }, nil)
+    private static func open() -> OpaquePointer? {
+        guard let handle = libraryFolder.withUnsafeFileSystemRepresentation({ tl_open($0) }) else { return nil }
+        listen(handle)
+        return handle
     }
 
     func reopen() {
         if handle == nil { handle = Self.open() }
     }
 
-    private nonisolated static func run(_ handle: Handle, _ command: String, _ json: String) -> Data {
-        let out = command.withCString { c in json.withCString { j in tl_call(handle.raw, c, j) } }
-        guard let out else { return Data() }
-        defer { tl_free(out) }
-        return Data(bytes: out, count: strlen(out))
+    // MARK: - Commands
+
+    private nonisolated static func json(_ args: [String: any Sendable]) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
     }
 
+    /// What a call's `done` gets back: the answer's envelope, read on the core's thread.
+    private nonisolated final class Answer: Sendable {
+        let take: @Sendable (Data) -> Void
+        init(_ take: @escaping @Sendable (Data) -> Void) { self.take = take }
+    }
+
+    /// Nonisolated, so the C callback formed here is too: one formed in a main-actor context would be taken as the main
+    /// actor's and trap on the core's thread. The envelope, valid only during the callback, is copied.
+    private nonisolated static func start(_ handle: OpaquePointer, _ command: String, _ json: String,
+                                          _ answered: @escaping @Sendable (Data) -> Void) {
+        let context = Unmanaged.passRetained(Answer(answered)).toOpaque()
+        command.withCString { command in
+            json.withCString { json in
+                tl_call_async(handle, command, json, { context, envelope in
+                    guard let context else { return }
+                    Unmanaged<Answer>.fromOpaque(context).takeRetainedValue().take(Data(bytes: envelope, count: strlen(envelope)))
+                }, context)
+            }
+        }
+    }
+
+    /// The answer, or the error, a command's envelope holds; an optional `T` takes a null answer.
     private nonisolated struct Envelope<T: Decodable>: Decodable {
-        let ok: T?
-        let error: String?
-        let status: Int?
+        let answer: Result<T, CoreError>
+
+        private enum Keys: CodingKey { case ok, error, status }
+
+        init(from decoder: any Decoder) throws {
+            let envelope = try decoder.container(keyedBy: Keys.self)
+            if let error = try envelope.decodeIfPresent(String.self, forKey: .error) {
+                answer = .failure(CoreError(message: error, status: try envelope.decodeIfPresent(Int.self, forKey: .status)))
+            } else {
+                answer = .success(try envelope.decode(T.self, forKey: .ok))
+            }
+        }
     }
 
     private nonisolated struct Ignored: Decodable, Sendable {
         init(from decoder: any Decoder) throws {}
     }
 
-    private nonisolated static func decoded<T: Decodable>(_ handle: Handle, _ command: String, _ json: String) throws -> T? {
+    private nonisolated static func decoded<T: Decodable>(_ command: String, _ envelope: Data) throws -> T {
+        let answer: Result<T, CoreError>
         do {
-            let envelope = try JSONDecoder().decode(Envelope<T>.self, from: run(handle, command, json))
-            if let error = envelope.error { throw CoreError(message: error, status: envelope.status) }
-            return envelope.ok
-        } catch let error as DecodingError {
+            answer = try JSONDecoder().decode(Envelope<T>.self, from: envelope).answer
+        } catch {
             throw fault(command, String(describing: error))
         }
+        return try answer.get()
     }
 
     private nonisolated static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "core")
@@ -93,39 +111,49 @@ final class Core {
         return CoreError(message: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
     }
 
-    private nonisolated static func json(_ args: [String: any Sendable]) throws -> String {
-        String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
-    }
-
-    /// The arguments are encoded on the GCD thread: escaping a whole document's text took 3 ms of the main actor's time per megabyte.
-    private func result<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable], as: T.Type,
-                                                 on queue: DispatchQueue) async throws -> T? {
+    /// The command's answer. It is sent before this first suspends, so a session takes it in the order called, beside
+    /// `send`'s; the answer is decoded on the core's thread.
+    func call<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable] = [:], as: T.Type) async throws -> T {
         guard let handle else { throw Self.unavailable }
+        let json = try Self.json(args)
         return try await withCheckedThrowingContinuation { done in
-            queue.async {
-                done.resume(with: Result { try Core.decoded(handle, command, Core.json(args)) })
+            Self.start(handle, command, json) { envelope in
+                done.resume(with: Result { try Self.decoded(command, envelope) })
             }
         }
     }
 
+    /// For a command whose answer says nothing but that it was done.
+    func call(_ command: String, _ args: [String: any Sendable]) async throws {
+        _ = try await call(command, args, as: Ignored?.self)
+    }
+
+    /// Not waited for: a failure is only logged.
+    func send(_ command: String, _ args: [String: any Sendable]) {
+        guard let handle else { return }
+        do {
+            Self.start(handle, command, try Self.json(args)) { envelope in
+                do {
+                    let _: Ignored? = try Self.decoded(command, envelope)
+                } catch {
+                    Self.log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        } catch {
+            Self.log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private nonisolated static func run(_ handle: OpaquePointer, _ command: String, _ json: String) -> Data {
+        let out = command.withCString { c in json.withCString { j in tl_call(handle, c, j) } }
+        defer { tl_free(out) }
+        return Data(bytes: out, count: strlen(out))
+    }
+
     /// Blocking, for an answer the interface needs at once (a drag over the window asks where a file is); only for quick commands.
-    func now<T: Decodable>(_ command: String, _ args: [String: any Sendable], as: T.Type) throws -> T? {
+    func now<T: Decodable>(_ command: String, _ args: [String: any Sendable], as: T.Type) throws -> T {
         guard let handle else { throw Self.unavailable }
-        return try Self.decoded(handle, command, try Self.json(args))
-    }
-
-    /// Nil for a null answer.
-    func answer<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable] = [:], as: T.Type) async throws -> T? {
-        try await result(command, args, as: T.self, on: .global(qos: .userInitiated))
-    }
-
-    func call<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable] = [:], as: T.Type) async throws -> T {
-        guard let ok = try await answer(command, args, as: T.self) else { throw Self.fault(command, "no answer") }
-        return ok
-    }
-
-    func perform(_ command: String, _ args: [String: any Sendable]) async throws {
-        _ = try await answer(command, args, as: Ignored.self)
+        return try Self.decoded(command, Self.run(handle, command, try Self.json(args)))
     }
 
     /// Synchronous: it runs as the app quits.
@@ -134,83 +162,57 @@ final class Core {
         _ = Core.run(handle, "kill_all", "{}")
     }
 
-    // MARK: - Sessions
-
-    /// Session commands reach the core in the order they were asked for, one at a time: a caret's move never overtakes the
-    /// next, nor a setting the one after it. They are quick (docs/core-api.md), so none holds the others up for long.
-    private let lane = DispatchQueue(label: "TeXLocal.session", qos: .userInitiated)
-
-    /// Nil for a null answer.
-    func session<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable], as: T.Type) async throws -> T? {
-        try await result(command, args, as: T.self, on: lane)
-    }
-
-    func session(_ command: String, _ args: [String: any Sendable]) async throws {
-        _ = try await result(command, args, as: Ignored.self, on: lane)
-    }
-
-    /// Not waited for: a failure is only logged.
-    func send(_ command: String, _ args: [String: any Sendable]) {
-        guard let handle else { return }
-        lane.async {
-            do {
-                let _: Ignored? = try Core.decoded(handle, command, Core.json(args))
-            } catch {
-                Core.log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            }
-        }
-    }
-
     /// The session's open document at `path`, for the editor: its edits are the session's. Nil if it isn't open.
     func source(session: UInt64, path: String) -> OpaquePointer? {
         guard let handle else { return nil }
-        return tl_session_source(handle.raw, session, path)
+        return tl_session_source(handle, session, path)
     }
 
     // MARK: - Events
 
-    private nonisolated struct EventHead: Decodable {
-        let type: String
-        let session: UInt64
+    /// What the listener reads, in the order the core sent it.
+    private nonisolated static let events = AsyncStream.makeStream(of: (UInt64, SessionEvent).self)
+
+    /// The text, valid only during the call, is decoded on the core's thread, and Live Preview's PDF read there, so its
+    /// page reaches the main actor ready to draw. Nonisolated for the C callback, as `start`'s.
+    private nonisolated static func listen(_ handle: OpaquePointer) {
+        tl_set_listener(handle, { _, json in
+            let event = Data(bytes: json, count: strlen(json))
+            do {
+                let read = try JSONDecoder().decode(EventRead.self, from: event)
+                if let said = read.event { Core.events.continuation.yield((read.session, said)) }
+            } catch {
+                Core.log.error("An event the app can't read: \(String(describing: error), privacy: .public)")
+            }
+        }, nil)
     }
 
-    typealias Observer = (_ type: String, _ event: Data, _ live: LiveRead?) -> Void
-    private var observers: [UInt64: Observer] = [:]
-    /// A session's first events can come before `session_open` has answered with its number: they wait for its observer.
-    private var early: [UInt64: [(String, Data, LiveRead?)]] = [:]
-    private var newest: UInt64 = 0
+    private var observers: [UInt64: (SessionEvent) -> Void] = [:]
+    private var numbered: UInt64 = 0
 
-    func observe(_ session: UInt64, _ observer: @escaping Observer) {
-        observers[session] = observer
-        newest = max(newest, session)
-        let waiting = early.removeValue(forKey: session) ?? []
-        // Sessions are numbered in order: one older than an observed one that has none was closed before it was observed.
-        early = early.filter { $0.key > newest }
-        for (type, event, live) in waiting { observer(type, event, live) }
+    /// A number for a session about to open, whose events go to `observer` from now on. The app numbers its sessions, so
+    /// it listens for one before it opens: a session's first events can come before `session_open` has answered.
+    func observe(_ observer: @escaping (SessionEvent) -> Void) -> UInt64 {
+        numbered += 1
+        observers[numbered] = observer
+        return numbered
     }
 
     func forget(_ session: UInt64) {
         observers[session] = nil
     }
+}
 
-    private func receive(_ event: Data, _ live: LiveRead?) {
-        guard let head = try? JSONDecoder().decode(EventHead.self, from: event) else {
-            return Self.log.error("An event the app can't read: \(String(decoding: event.prefix(200), as: UTF8.self), privacy: .public)")
-        }
-        if let observer = observers[head.session] {
-            observer(head.type, event, live)
-        } else if head.session > newest {
-            early[head.session, default: []].append((head.type, event, live))
-        }
-    }
+/// An event as the listener reads it: the session it names, and what it says, or nil for one the app has no use for.
+private nonisolated struct EventRead: Decodable {
+    let session: UInt64
+    let event: SessionEvent?
 
-    /// Nil, logged, for an event in another shape than the app's: a fault of the app's own or the core's.
-    static func decode<T: Decodable>(_ type: T.Type, _ event: Data, _ name: String) -> T? {
-        do {
-            return try JSONDecoder().decode(T.self, from: event)
-        } catch {
-            log.error("\(name, privacy: .public) event: \(String(describing: error), privacy: .public)")
-            return nil
-        }
+    private enum Keys: CodingKey { case type, session }
+
+    init(from decoder: any Decoder) throws {
+        let head = try decoder.container(keyedBy: Keys.self)
+        session = try head.decode(UInt64.self, forKey: .session)
+        event = try SessionEvent(head.decode(String.self, forKey: .type), decoder)
     }
 }

@@ -12,7 +12,7 @@ extension NSColor {
 
     /// What the core's colour commands take for an appearance: the editor's background, the current line's fill over it
     /// (`SourceTextView.drawBackground`), and whether it's dark and asks for Increase Contrast's 7:1 over the HIG's 4.5:1.
-    static func ground(_ name: NSAppearance.Name) -> [String: Any]? {
+    static func contrastArguments(in name: NSAppearance.Name) -> [String: Any]? {
         guard let appearance = NSAppearance(named: name) else { return nil }
         return ["dark": name == .darkAqua || name == .accessibilityHighContrastDarkAqua,
                 "increaseContrast": name != .aqua && name != .darkAqua,
@@ -29,7 +29,7 @@ extension NSColor {
 
     /// `ratio` in place of the text's 4.5:1 (7:1 with Increase Contrast), as for a non-text mark's 3:1.
     func legibleAsText(in name: NSAppearance.Name, ratio: Double? = nil) -> NSColor {
-        guard var args = Self.ground(name), let appearance = NSAppearance(named: name) else { return self }
+        guard var args = Self.contrastArguments(in: name), let appearance = NSAppearance(named: name) else { return self }
         args["color"] = rgba(in: appearance)
         if let ratio { args["ratio"] = ratio }
         let legible: [Double]? = Syntax.call("legible", args)
@@ -119,7 +119,7 @@ struct SyntaxTheme: RawRepresentable, Hashable, Identifiable {
     private func colors() -> [NSColor] {
         var shades: [NSAppearance.Name: [[Double]]] = [:]
         for name in NSColor.textAppearances {
-            guard var args = NSColor.ground(name), let appearance = NSAppearance(named: name) else { continue }
+            guard var args = NSColor.contrastArguments(in: name), let appearance = NSAppearance(named: name) else { continue }
             args["theme"] = rawValue
             args["system"] = Self.systemColors.mapValues { $0.rgba(in: appearance) }
             shades[name] = Syntax.call("theme_colors", args) as [[Double]]?
