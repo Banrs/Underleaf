@@ -277,13 +277,14 @@ pub fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, 
         Err(err) if err.kind() == ErrorKind::NotFound => HashSet::new(),
         Err(err) => return Err(err.into()),
     };
-    Ok((1..)
-        .map(|n| match n {
-            1 => clean.clone(),
-            n => format!("{clean} {n}"),
-        })
+    Ok(project_names(&clean)
         .find(|name| !taken.contains(&fold_case(name)))
         .expect("a free name"))
+}
+
+/// The names a new project takes in turn: `clean`, then "clean 2", "clean 3"…
+fn project_names(clean: &str) -> impl Iterator<Item = String> {
+    std::iter::once(clean.to_owned()).chain((2..).map(move |n| format!("{clean} {n}")))
 }
 
 /// A new, empty project folder for `name`, or "name 2" and so on when that
@@ -291,11 +292,7 @@ pub fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, 
 pub(crate) fn new_project_dir(data_dir: &Path, name: &str) -> Result<(String, PathBuf), CoreError> {
     let clean = sanitize_name(name)?;
     fs::create_dir_all(data_dir)?;
-    for n in 1.. {
-        let name = match n {
-            1 => clean.clone(),
-            n => format!("{clean} {n}"),
-        };
+    for name in project_names(&clean) {
         let root = data_dir.join(&name);
         // One create rather than a check and then a create: it cannot race,
         // and it passes over anything already there, a dangling link or case
@@ -492,12 +489,7 @@ pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
 /// ("untitled.tex", "untitled 2.tex"); the path made.
 pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {
     let (parent, name) = rel.rsplit_once('/').unwrap_or(("", rel));
-    for n in 1.. {
-        let free = if n == 1 {
-            name.to_owned()
-        } else {
-            numbered(name, n)
-        };
+    for free in copy_names(name) {
         let path = if parent.is_empty() {
             free
         } else {
@@ -629,13 +621,14 @@ pub(crate) fn discard_replaced(root: &Path, rel: &str) -> Result<(), CoreError> 
     discard(&safe_path(root, rel)?)
 }
 
-/// `name` with a copy's number, as Finder numbers them: "main 2.tex",
-/// "figures 2".
-pub(crate) fn numbered(name: &str, n: u32) -> String {
-    match name.rsplit_once('.') {
+/// The names an entry's copies take in turn, as Finder numbers them: `name`,
+/// then "main 2.tex", "main 3.tex"… or "figures 2", "figures 3"…
+pub(crate) fn copy_names(name: &str) -> impl Iterator<Item = String> {
+    let numbered = move |n: u32| match name.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => format!("{stem} {n}.{ext}"),
         _ => format!("{name} {n}"),
-    }
+    };
+    std::iter::once(name.to_owned()).chain((2..).map(numbered))
 }
 
 // ---------- search ----------

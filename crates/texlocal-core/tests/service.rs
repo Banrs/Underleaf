@@ -416,10 +416,9 @@ async fn the_tex_dir_persists_in_the_data_dir_and_clears_to_automatic() {
     // Another host on the same data dir sees the same choice.
     let other = Service::new(dir.path().to_path_buf());
     assert_eq!(other.tex_dir(), Some(tex.path().to_path_buf()));
-    let saved: Value = serde_json::from_slice(
-        &std::fs::read(dir.path().join(texlocal_core::service::APP_SETTINGS_FILE)).unwrap(),
-    )
-    .unwrap();
+    let saved: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join(".texlocal-app.json")).unwrap())
+            .unwrap();
     assert_eq!(saved, json!({ "texDir": bin }));
 
     let status = call(&service, "set_tex_dir", json!({ "dir": null })).await;

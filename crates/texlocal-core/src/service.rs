@@ -23,7 +23,7 @@ pub const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
 const SEARCH_LIMIT: usize = 100;
 /// Shared TeX folder choice, stored beside projects as a file so it never
 /// appears in the project list.
-pub const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
+const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
     "That folder doesn't contain the texpresso program. Choose the folder it's in.";
@@ -315,8 +315,9 @@ impl Service {
                 continue;
             }
             let (parent, name) = path.rsplit_once('/').unwrap_or(("", &path));
-            let keep_both = (2..)
-                .map(|n| upload_rel(parent, &projects::numbered(name, n)))
+            let keep_both = projects::copy_names(name)
+                .skip(1)
+                .map(|copy| upload_rel(parent, &copy))
                 .find(|free| {
                     fs::symlink_metadata(base.join(free)).is_err() && taken.insert(fold_case(free))
                 })

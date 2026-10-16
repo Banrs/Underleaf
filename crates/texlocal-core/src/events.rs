@@ -132,17 +132,34 @@ impl Emitter {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::sync::Mutex;
     use std::time::Duration;
+
+    /// A hub whose listener hands each event's `n` on to the receiver.
+    fn listened() -> (Hub, mpsc::Receiver<u64>) {
+        let hub = Hub::default();
+        let (seen, numbers) = mpsc::channel();
+        hub.set_listener(Some(Box::new(move |event| {
+            let _ = seen.send(event["n"].as_u64().unwrap());
+        })));
+        (hub, numbers)
+    }
+
+    /// The next `count` events' numbers, waiting up to five seconds for each.
+    fn next(numbers: &mpsc::Receiver<u64>, count: usize) -> Vec<u64> {
+        let wait = Duration::from_secs(5);
+        (0..count)
+            .map(|_| numbers.recv_timeout(wait).unwrap())
+            .collect()
+    }
+
+    /// Whether nothing more arrives for a while.
+    fn quiet(numbers: &mpsc::Receiver<u64>) -> bool {
+        numbers.recv_timeout(Duration::from_millis(50)).is_err()
+    }
 
     #[test]
     fn events_reach_the_listener_in_order_and_none_after_it_is_removed() {
-        let hub = Hub::default();
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&seen);
-        hub.set_listener(Some(Box::new(move |event| {
-            sink.lock().unwrap().push(event["n"].as_u64().unwrap());
-        })));
+        let (hub, numbers) = listened();
         let emitter = hub.emitter();
         for n in 0..50 {
             if n % 2 == 0 {
@@ -151,52 +168,30 @@ mod tests {
                 emitter.send(json!({ "n": n }));
             }
         }
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while seen.lock().unwrap().len() < 50 && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert_eq!(*seen.lock().unwrap(), (0..50).collect::<Vec<_>>());
+        assert_eq!(next(&numbers, 50), (0..50).collect::<Vec<_>>());
         hub.set_listener(None);
         hub.emit(json!({ "n": 99 }));
-        std::thread::sleep(Duration::from_millis(50));
-        assert_eq!(seen.lock().unwrap().len(), 50);
+        assert!(quiet(&numbers));
     }
 
     #[test]
     fn a_held_sessions_events_wait_for_its_release_and_others_go_on() {
-        let hub = Hub::default();
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&seen);
-        hub.set_listener(Some(Box::new(move |event| {
-            sink.lock().unwrap().push(event.clone());
-        })));
+        let (hub, numbers) = listened();
         hub.hold(1);
         let (one, two) = (hub.emitter(), hub.emitter());
         one.send(json!({ "session": 1, "n": 0 }));
         two.send(json!({ "session": 2, "n": 1 }));
         one.send(json!({ "session": 1, "n": 2 }));
-        let wait = |count: usize| {
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            while seen.lock().unwrap().len() < count && std::time::Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            seen.lock()
-                .unwrap()
-                .iter()
-                .map(|e| e["n"].as_u64().unwrap())
-                .collect::<Vec<_>>()
-        };
         // The other session's event is first, though the held one's were made before it.
-        assert_eq!(wait(1), [1]);
-        std::thread::sleep(Duration::from_millis(50));
-        assert_eq!(seen.lock().unwrap().len(), 1, "held back");
+        assert_eq!(next(&numbers, 1), [1]);
+        assert!(quiet(&numbers), "held back");
         hub.release(1);
         one.send(json!({ "session": 1, "n": 3 }));
         // In the order made, and the later ones follow at once.
-        assert_eq!(wait(4), [1, 0, 2, 3]);
+        assert_eq!(next(&numbers, 3), [0, 2, 3]);
         // Releasing a session never held does nothing.
         hub.release(7);
         hub.emit(json!({ "session": 7, "n": 4 }));
-        assert_eq!(wait(5), [1, 0, 2, 3, 4]);
+        assert_eq!(next(&numbers, 1), [4]);
     }
 }
