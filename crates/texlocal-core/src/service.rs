@@ -1,13 +1,13 @@
 // Shared command surface: hosts forward here so path checks and edit
 // serialization have one implementation.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::analyze;
@@ -19,7 +19,6 @@ use crate::settings;
 use crate::synctex;
 use crate::{CoreError, atomic, import, lock, paths, zipexport};
 
-pub const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
 const SEARCH_LIMIT: usize = 100;
 /// Shared TeX folder choice, stored beside projects as a file so it never
 /// appears in the project list.
@@ -27,55 +26,6 @@ const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
     "That folder doesn't contain the texpresso program. Choose the folder it's in.";
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UploadSpec {
-    pub path: String,
-    pub size: usize,
-}
-
-/// An upload's occupied path or blocking parent file, relative to its target
-/// folder. `keep_both` names a free sibling.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Clash {
-    pub path: String,
-    pub keep_both: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct UploadCheck {
-    pub existing: Vec<Clash>,
-}
-
-/// An upload file's path once Keep Both has renamed the clash it lies under.
-pub fn keep_both(path: &str, clashes: &[Clash]) -> String {
-    clashes
-        .iter()
-        .find(|c| paths::within(path, &c.path))
-        .map_or_else(
-            || path.to_string(),
-            |c| format!("{}{}", c.keep_both, &path[c.path.len()..]),
-        )
-}
-
-/// The first entry in `rel`'s way under `base`: the file itself if it
-/// exists, or a folder on its path that exists as something else.
-fn clash(base: &Path, rel: &str) -> Option<String> {
-    let mut end = 0;
-    loop {
-        end = rel[end..].find('/').map_or(rel.len(), |i| end + i);
-        let abs = base.join(&rel[..end]);
-        let meta = fs::symlink_metadata(&abs).ok()?;
-        // A link to a folder is a folder on the way: the path checks have
-        // already kept it inside the project.
-        if end == rel.len() || !(meta.is_dir() || abs.is_dir()) {
-            return Some(rel[..end].to_string());
-        }
-        end += 1;
-    }
-}
 
 pub struct Service {
     pub data_dir: PathBuf,
@@ -87,21 +37,6 @@ pub struct Service {
     /// not folded: ids are the names list_projects read from the folder, so
     /// every client spells a project as its folder is stored.
     edits: Mutex<HashMap<String, Arc<Mutex<()>>>>,
-}
-
-fn upload_rel(dir: &str, name: &str) -> String {
-    if dir.is_empty() {
-        name.to_string()
-    } else {
-        format!("{}/{}", dir.trim_end_matches('/'), name)
-    }
-}
-
-pub(crate) fn too_large() -> CoreError {
-    CoreError::bad_request(format!(
-        "File exceeds the {} MB upload limit",
-        UPLOAD_MAX_BYTES / 1024 / 1024
-    ))
 }
 
 impl Service {
@@ -261,98 +196,6 @@ impl Service {
     }
 
     // ---------- files ----------
-
-    /// Validate the whole batch before writing, so a late unsafe or oversize
-    /// entry cannot cause a predictable partial import. Return clashes and free Keep Both
-    /// names for the host's Replace, Keep Both or Stop choice: an import's
-    /// (`import::import_files`).
-    pub fn validate_uploads(
-        &self,
-        id: &str,
-        dir: &str,
-        files: &[UploadSpec],
-    ) -> Result<UploadCheck, CoreError> {
-        let root = self.project_root(id)?;
-        let base = root.join(paths::rel_key(dir).unwrap_or_default());
-        let mut seen = HashSet::new();
-        let mut folders = HashSet::new();
-        let mut rels = Vec::new();
-        for file in files {
-            if file.size > UPLOAD_MAX_BYTES {
-                return Err(too_large());
-            }
-            paths::safe_write_path(&root, &upload_rel(dir, &file.path))?;
-            // Relative to `dir`, as the host names the files.
-            let rel = paths::rel_key(&file.path)?;
-            let key = fold_case(&rel);
-            if seen.contains(&key) {
-                return Err(CoreError::bad_request(
-                    "The upload contains duplicate paths",
-                ));
-            }
-            if folders.contains(&key)
-                || key
-                    .match_indices('/')
-                    .any(|(i, _)| seen.contains(&key[..i]))
-            {
-                return Err(CoreError::bad_request(
-                    "The upload contains conflicting paths",
-                ));
-            }
-            folders.extend(key.match_indices('/').map(|(i, _)| key[..i].to_string()));
-            seen.insert(key);
-            rels.push(rel);
-        }
-        // Names a Keep Both may not take: every path the upload creates.
-        seen.extend(folders);
-        let mut taken = seen;
-        let mut existing: Vec<Clash> = Vec::new();
-        for rel in &rels {
-            let Some(path) = clash(&base, rel) else {
-                continue;
-            };
-            if existing.iter().any(|c| c.path == path) {
-                continue;
-            }
-            let (parent, name) = path.rsplit_once('/').unwrap_or(("", &path));
-            let keep_both = projects::copy_names(name)
-                .skip(1)
-                .map(|copy| upload_rel(parent, &copy))
-                .find(|free| {
-                    fs::symlink_metadata(base.join(free)).is_err() && taken.insert(fold_case(free))
-                })
-                .expect("a free name");
-            existing.push(Clash { path, keep_both });
-        }
-        Ok(UploadCheck { existing })
-    }
-
-    /// Write one validated upload, rechecking its path and size. An occupied
-    /// path conflicts unless `replace` first moves it to Trash.
-    pub fn upload_file(
-        &self,
-        id: &str,
-        dir: &str,
-        path: &str,
-        bytes: &[u8],
-        replace: bool,
-    ) -> Result<String, CoreError> {
-        if bytes.len() > UPLOAD_MAX_BYTES {
-            return Err(too_large());
-        }
-        let rel = upload_rel(dir, path);
-        self.with_project(id, |root| {
-            let abs = paths::safe_write_path(root, &rel)?;
-            if let Some(taken) = clash(root, &paths::rel_key(&rel)?) {
-                if !replace {
-                    return Err(CoreError::conflict(format!("“{taken}” already exists")));
-                }
-                projects::discard_replaced(root, &taken)?;
-            }
-            projects::write_creating(&abs, bytes)
-        })?;
-        Ok(rel)
-    }
 
     /// The compiled PDF's location; it may not exist yet.
     pub fn pdf_path(&self, id: &str) -> Result<PathBuf, CoreError> {

@@ -7,8 +7,11 @@ use std::path::Path;
 use serde_json::json;
 use texlocal_core::import::{Conflict, Imported, import_files, import_project};
 use texlocal_core::projects::{create_project, file_tree};
-use texlocal_core::service::{Service, UPLOAD_MAX_BYTES};
+use texlocal_core::service::Service;
 use zip::write::SimpleFileOptions;
+
+/// The largest file an import takes.
+const UPLOAD_MAX_BYTES: u64 = 100 << 20;
 
 fn names(root: &Path) -> Vec<String> {
     fn walk(nodes: Vec<texlocal_core::projects::TreeNode>, out: &mut Vec<String>) {
@@ -126,7 +129,7 @@ fn a_tex_in_a_folder_larger_than_a_project_comes_alone() {
     fs::write(downloads.join("notes.tex"), "\\documentclass{article}").unwrap();
     // Sparse: past one upload's bytes without writing them.
     let big = fs::File::create(downloads.join("big.dmg")).unwrap();
-    big.set_len(UPLOAD_MAX_BYTES as u64 + 1).unwrap();
+    big.set_len(UPLOAD_MAX_BYTES + 1).unwrap();
     let info = import_project(&service, &downloads.join("notes.tex")).unwrap();
     assert_eq!(
         (info.id.as_str(), info.main_file.as_str()),
@@ -168,7 +171,7 @@ fn excluded_build_output_does_not_count_towards_the_tex_folder_limit() {
     fs::write(src.join("chapter.tex"), "\\section{Chapter}").unwrap();
     fs::File::create(src.join("Build/main.pdf"))
         .unwrap()
-        .set_len(UPLOAD_MAX_BYTES as u64 + 1)
+        .set_len(UPLOAD_MAX_BYTES + 1)
         .unwrap();
     let info = import_project(&service, &src.join("main.tex")).unwrap();
     assert_eq!(

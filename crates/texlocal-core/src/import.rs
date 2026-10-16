@@ -1,9 +1,9 @@
-//! Bringing outside files into the library, for in-process hosts: a Finder
-//! drop onto a project, and File › Open of a folder, a .zip or a .tex made a
-//! new project. Both read host-chosen absolute paths, so neither is in
-//! `Service::call`, which the browser server exposes. Both block on the
-//! disk; hosts call them off their UI thread, as they do every `tl_call`.
+//! Bringing outside files into the library: a Finder drop onto a project,
+//! and File › Open of a folder, a .zip or a .tex made a new project. Both read
+//! host-chosen absolute paths and block on the disk; hosts call them off
+//! their UI thread, as they do every `tl_call`.
 
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -13,11 +13,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use zip::ZipArchive;
 
-use crate::paths::{normalize_segments, rel_key, sanitize_name};
+use crate::paths::{self, fold_case, normalize_segments, rel_key, sanitize_name};
 use crate::projects::{self, ProjectInfo};
-use crate::service::{Clash, Service, UPLOAD_MAX_BYTES, UploadSpec, keep_both, too_large};
+use crate::service::Service;
 use crate::settings::write_settings;
-use crate::{BUILD_DIR, CoreError, templates};
+use crate::{BUILD_DIR, CoreError, atomic, templates};
 
 /// What to do with incoming files that land on existing entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -33,6 +33,31 @@ pub enum Conflict {
 pub struct Imported {
     pub saved: Vec<String>,
     pub existing: Vec<Clash>,
+}
+
+/// An incoming file's occupied path or blocking parent file, relative to its
+/// target folder. `keep_both` names a free sibling.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Clash {
+    pub path: String,
+    pub keep_both: String,
+}
+
+/// The largest file an import takes.
+const UPLOAD_MAX_BYTES: u64 = 100 * 1024 * 1024;
+
+fn too_large() -> CoreError {
+    CoreError::bad_request(format!(
+        "File exceeds the {} MB upload limit",
+        UPLOAD_MAX_BYTES / 1024 / 1024
+    ))
+}
+
+/// A file to bring: its project-relative path, and its size as found.
+struct Incoming {
+    path: String,
+    size: u64,
 }
 
 /// What an import may still bring: files, entries looked at (what a folder
@@ -70,7 +95,7 @@ const IMPORT: Allowance = Allowance {
 const TEX_FOLDER: Allowance = Allowance {
     files: 2000,
     entries: 20_000,
-    bytes: UPLOAD_MAX_BYTES as u64,
+    bytes: UPLOAD_MAX_BYTES,
 };
 
 impl Allowance {
@@ -82,9 +107,9 @@ impl Allowance {
     /// Copy `source` to `sink`, taking the bytes actually read, and never
     /// more than one upload's.
     fn copy(&mut self, source: impl Read, sink: &mut impl Write) -> Result<(), CoreError> {
-        let cap = self.bytes.min(UPLOAD_MAX_BYTES as u64);
+        let cap = self.bytes.min(UPLOAD_MAX_BYTES);
         let copied = io::copy(&mut source.take(cap + 1), sink)?;
-        if copied > UPLOAD_MAX_BYTES as u64 {
+        if copied > UPLOAD_MAX_BYTES {
             return Err(too_large());
         }
         spend(&mut self.bytes, copied, TOO_BIG)
@@ -107,14 +132,14 @@ fn collect(
     abs: &Path,
     rel: String,
     meta: fs::Metadata,
-    files: &mut Vec<(UploadSpec, PathBuf)>,
+    files: &mut Vec<(Incoming, PathBuf)>,
     allowance: &mut Allowance,
 ) -> Result<(), CoreError> {
     if meta.is_file() {
         allowance.file(meta.len())?;
-        let spec = UploadSpec {
+        let spec = Incoming {
             path: rel,
-            size: meta.len() as usize,
+            size: meta.len(),
         };
         files.push((spec, abs.to_path_buf()));
     } else if meta.is_dir() {
@@ -137,11 +162,10 @@ fn collect(
     Ok(())
 }
 
-/// Import dropped files and folders into the project folder `dir`, with the
-/// same validate-then-write rule as a browser upload: a bad path or oversize
-/// file fails the drop before anything lands. Without `conflict`, a drop that
-/// would land on existing entries writes nothing and reports them, for the
-/// host to ask about.
+/// Import dropped files and folders into the project folder `dir`: a bad
+/// path or oversize file fails the drop before anything lands. Without
+/// `conflict`, a drop that would land on existing entries writes nothing and
+/// reports them, for the host to ask about.
 pub fn import_files(
     service: &Service,
     id: &str,
@@ -168,8 +192,8 @@ fn import_files_within(
         let meta = fs::metadata(abs)?;
         collect(abs, name.into_owned(), meta, &mut files, &mut found)?;
     }
-    let (specs, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
-    let existing = service.validate_uploads(id, dir, &specs)?.existing;
+    let (incoming, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
+    let existing = clashes(&service.project_root(id)?, dir, &incoming)?;
     if conflict.is_none() && !existing.is_empty() {
         return Ok(Imported {
             saved: Vec::new(),
@@ -178,17 +202,153 @@ fn import_files_within(
     }
     let replace = conflict == Some(Conflict::Replace);
     let mut saved = Vec::new();
-    for (spec, abs) in specs.into_iter().zip(sources) {
+    for (file, source) in incoming.into_iter().zip(sources) {
         let path = if conflict == Some(Conflict::KeepBoth) {
-            keep_both(&spec.path, &existing)
+            keep_both(&file.path, &existing)
         } else {
-            spec.path
+            file.path
         };
-        let mut bytes = Vec::new();
-        allowance.copy(File::open(abs)?, &mut bytes)?;
-        saved.push(service.upload_file(id, dir, &path, &bytes, replace)?);
+        saved.push(save(
+            service,
+            id,
+            &in_folder(dir, &path),
+            &source,
+            replace,
+            &mut allowance,
+        )?);
     }
     Ok(Imported { saved, existing })
+}
+
+/// `name` in the project folder `dir` ("" is the project's own).
+fn in_folder(dir: &str, name: &str) -> String {
+    if dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}/{}", dir.trim_end_matches('/'), name)
+    }
+}
+
+/// Checks the whole batch before anything is written, so a late unsafe or
+/// oversize entry cannot cause a predictable partial import. Returns the
+/// entries it would land on, with free Keep Both names, for the host's
+/// Replace, Keep Both or Stop choice.
+fn clashes(root: &Path, dir: &str, files: &[Incoming]) -> Result<Vec<Clash>, CoreError> {
+    let base = root.join(paths::rel_key(dir).unwrap_or_default());
+    let mut seen = HashSet::new();
+    let mut folders = HashSet::new();
+    let mut rels = Vec::new();
+    for file in files {
+        if file.size > UPLOAD_MAX_BYTES {
+            return Err(too_large());
+        }
+        paths::safe_write_path(root, &in_folder(dir, &file.path))?;
+        // Relative to `dir`, as the host names the files.
+        let rel = paths::rel_key(&file.path)?;
+        let key = fold_case(&rel);
+        if seen.contains(&key) {
+            return Err(CoreError::bad_request(
+                "The upload contains duplicate paths",
+            ));
+        }
+        if folders.contains(&key)
+            || key
+                .match_indices('/')
+                .any(|(i, _)| seen.contains(&key[..i]))
+        {
+            return Err(CoreError::bad_request(
+                "The upload contains conflicting paths",
+            ));
+        }
+        folders.extend(key.match_indices('/').map(|(i, _)| key[..i].to_string()));
+        seen.insert(key);
+        rels.push(rel);
+    }
+    // Names a Keep Both may not take: every path the import creates.
+    seen.extend(folders);
+    let mut taken = seen;
+    let mut existing: Vec<Clash> = Vec::new();
+    for rel in &rels {
+        let Some(path) = occupant(&base, rel) else {
+            continue;
+        };
+        if existing.iter().any(|c| c.path == path) {
+            continue;
+        }
+        let (parent, name) = path.rsplit_once('/').unwrap_or(("", &path));
+        let keep_both = projects::copy_names(name)
+            .skip(1)
+            .map(|copy| in_folder(parent, &copy))
+            .find(|free| {
+                fs::symlink_metadata(base.join(free)).is_err() && taken.insert(fold_case(free))
+            })
+            .expect("a free name");
+        existing.push(Clash { path, keep_both });
+    }
+    Ok(existing)
+}
+
+/// A file's path once Keep Both has renamed the clash it lies under.
+fn keep_both(path: &str, clashes: &[Clash]) -> String {
+    clashes
+        .iter()
+        .find(|c| paths::within(path, &c.path))
+        .map_or_else(
+            || path.to_string(),
+            |c| format!("{}{}", c.keep_both, &path[c.path.len()..]),
+        )
+}
+
+/// The first entry in `rel`'s way under `base`: the file itself if it
+/// exists, or a folder on its path that exists as something else.
+fn occupant(base: &Path, rel: &str) -> Option<String> {
+    let mut end = 0;
+    loop {
+        end = rel[end..].find('/').map_or(rel.len(), |i| end + i);
+        let abs = base.join(&rel[..end]);
+        let meta = fs::symlink_metadata(&abs).ok()?;
+        // A link to a folder is a folder on the way: the path checks have
+        // already kept it inside the project.
+        if end == rel.len() || !(meta.is_dir() || abs.is_dir()) {
+            return Some(rel[..end].to_string());
+        }
+        end += 1;
+    }
+}
+
+/// Write the file at `source` to the project path `rel`. It is copied to a
+/// temporary file in the project's folder first, so a source that fails or
+/// outgrows the allowance part-way replaces nothing, then renamed into place
+/// whole. An occupied path conflicts unless `replace` first moves it to the
+/// Trash. The path written.
+fn save(
+    service: &Service,
+    id: &str,
+    rel: &str,
+    source: &Path,
+    replace: bool,
+    allowance: &mut Allowance,
+) -> Result<String, CoreError> {
+    let root = service.project_root(id)?;
+    // Any name in the folder: the temporary file is made beside it.
+    let (temp, mut file) = atomic::create_temp(&root.join("incoming"), None)?;
+    allowance.copy(File::open(source)?, &mut file)?;
+    file.sync_all()?;
+    drop(file);
+    service.with_project(id, |root| {
+        let abs = paths::safe_write_path(root, rel)?;
+        if let Some(taken) = occupant(root, &rel_key(rel)?) {
+            if !replace {
+                return Err(CoreError::conflict(format!("“{taken}” already exists")));
+            }
+            projects::discard_replaced(root, &taken)?;
+        }
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        Ok(atomic::persist(temp, &abs)?)
+    })?;
+    Ok(rel.to_string())
 }
 
 /// Where an imported project's file comes from.
@@ -203,7 +363,7 @@ enum Source {
 fn zip_files(
     archive: &mut ZipArchive<File>,
     mut allowance: Allowance,
-) -> Result<Vec<(UploadSpec, Source)>, CoreError> {
+) -> Result<Vec<(Incoming, Source)>, CoreError> {
     spend(&mut allowance.entries, archive.len() as u64, TOO_MANY)?;
     let mut files = Vec::new();
     for i in 0..archive.len() {
@@ -219,9 +379,9 @@ fn zip_files(
         };
         if !segments.iter().any(|s| hidden(s)) {
             allowance.file(entry.size())?;
-            let spec = UploadSpec {
+            let spec = Incoming {
                 path: segments.join("/"),
-                size: entry.size() as usize,
+                size: entry.size(),
             };
             files.push((spec, Source::Zip(i)));
         }
@@ -241,7 +401,7 @@ fn zip_files(
 fn folder_files(
     dir: &Path,
     mut allowance: Allowance,
-) -> Result<Vec<(UploadSpec, Source)>, CoreError> {
+) -> Result<Vec<(Incoming, Source)>, CoreError> {
     let mut found = Vec::new();
     collect(
         dir,
@@ -295,9 +455,9 @@ fn import_project_within(
         let found = zip_files(&mut archive, allowance)?;
         (named(src.file_stem()), Some(archive), found)
     } else {
-        let spec = UploadSpec {
+        let spec = Incoming {
             path: named(src.file_name()),
-            size: usize::try_from(meta.len()).unwrap_or(usize::MAX),
+            size: meta.len(),
         };
         (
             named(src.file_stem()),
@@ -325,9 +485,9 @@ fn import_project_within(
         staging.permissions(fs::Permissions::from_mode(0o777));
     }
     let staging = staging.tempdir_in(&service.data_dir)?;
-    let (staged, staged_id) = (staging.path(), staging.path().file_name().unwrap());
+    let staged = staging.path();
     let (specs, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
-    service.validate_uploads(&staged_id.to_string_lossy(), "", &specs)?;
+    clashes(staged, "", &specs)?;
     for (spec, source) in specs.iter().zip(sources) {
         // The folder holds only what the import wrote, so there is no clash
         // or file to replace: each is written in place, with no temporary
@@ -404,6 +564,125 @@ mod tests {
 
     fn projects(service: &Service) -> usize {
         fs::read_dir(&service.data_dir).unwrap().count()
+    }
+
+    /// A library with one blank project, "P".
+    fn with_project() -> (tempfile::TempDir, Service) {
+        let (dir, service) = library();
+        projects::create_project(&service.data_dir, "P", "blank").unwrap();
+        (dir, service)
+    }
+
+    fn incoming(path: &str, size: u64) -> Incoming {
+        Incoming {
+            path: path.into(),
+            size,
+        }
+    }
+
+    /// Saves `bytes` as the file `rel` of project "P".
+    fn put(service: &Service, rel: &str, bytes: &[u8], replace: bool) -> Result<String, CoreError> {
+        let source = tempfile::NamedTempFile::new().unwrap();
+        fs::write(source.path(), bytes).unwrap();
+        save(service, "P", rel, source.path(), replace, &mut { IMPORT })
+    }
+
+    #[test]
+    fn files_are_validated_as_a_batch_before_any_write() {
+        let (_dir, service) = with_project();
+        let root = service.project_root("P").unwrap();
+
+        assert!(clashes(&root, "img", &[incoming("a.png", 1), incoming("b.png", 1)]).is_ok());
+        for batch in [
+            [incoming("a.png", 1), incoming("a.png", 1)],
+            [incoming("notes", 1), incoming("notes/ch.tex", 1)],
+            [incoming("notes/ch.tex", 1), incoming("notes", 1)],
+            [
+                incoming("a.png", 1),
+                incoming("b.png", UPLOAD_MAX_BYTES + 1),
+            ],
+            [incoming("a.png", 1), incoming("../x.png", 1)],
+        ] {
+            assert_eq!(clashes(&root, "", &batch).unwrap_err().status, 400);
+        }
+
+        assert_eq!(
+            put(&service, "img/c.png", b"png", false).unwrap(),
+            "img/c.png"
+        );
+        assert_eq!(fs::read(root.join("img/c.png")).unwrap(), b"png");
+    }
+
+    #[test]
+    fn a_file_reports_what_it_would_land_on_and_never_overwrites_unasked() {
+        let (_dir, service) = with_project();
+        let root = service.project_root("P").unwrap();
+        fs::create_dir_all(root.join("figs")).unwrap();
+        fs::write(root.join("figs/a.png"), "old").unwrap();
+        fs::write(root.join("figs/a 2.png"), "older").unwrap();
+        fs::write(root.join("notes"), "a file").unwrap();
+        let batch = [
+            incoming("main.tex", 1),
+            incoming("figs/a.png", 1),
+            incoming("figs/b.png", 1),
+            incoming("notes/x.tex", 1),
+            incoming("notes/y.tex", 1),
+            // Keep Both must not pick a name the import itself brings.
+            incoming("main 2.tex", 1),
+        ];
+        let existing = clashes(&root, "", &batch).unwrap();
+        assert_eq!(
+            serde_json::to_value(&existing).unwrap(),
+            json!([
+                { "path": "main.tex", "keepBoth": "main 3.tex" },
+                { "path": "figs/a.png", "keepBoth": "figs/a 3.png" },
+                // A folder of the import that is a file here, once.
+                { "path": "notes", "keepBoth": "notes 2" },
+            ])
+        );
+        let renamed = |p: &str| keep_both(p, &existing);
+        assert_eq!(renamed("notes/x.tex"), "notes 2/x.tex");
+        assert_eq!(renamed("figs/b.png"), "figs/b.png");
+        assert_eq!(renamed("notesy/x.tex"), "notesy/x.tex");
+
+        let err = put(&service, "figs/a.png", b"new", false).unwrap_err();
+        assert_eq!(
+            (err.status, err.message.as_str()),
+            (409, "“figs/a.png” already exists")
+        );
+        assert_eq!(fs::read(root.join("figs/a.png")).unwrap(), b"old");
+        // Replacing a folder that holds the main file is refused before the Trash.
+        fs::create_dir(root.join("ch")).unwrap();
+        fs::rename(root.join("main.tex"), root.join("ch/main.tex")).unwrap();
+        write_settings(&root, &json!({ "mainFile": "ch/main.tex" })).unwrap();
+        assert_eq!(put(&service, "ch", b"x", true).unwrap_err().status, 409);
+        // However the import spells it, on a volume that ignores case.
+        #[cfg(target_os = "macos")]
+        assert_eq!(put(&service, "CH", b"x", true).unwrap_err().status, 409);
+        assert!(root.join("ch/main.tex").is_file());
+        // Nothing is left beside the project's files by the refused saves.
+        assert!(fs::read_dir(&root).unwrap().flatten().all(|entry| {
+            !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".texlocal-")
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_folder_in_the_project_is_a_folder_a_file_goes_into() {
+        let (_dir, service) = with_project();
+        let root = service.project_root("P").unwrap();
+        fs::create_dir(root.join("figs")).unwrap();
+        std::os::unix::fs::symlink(root.join("figs"), root.join("link")).unwrap();
+        assert!(
+            clashes(&root, "", &[incoming("link/a.png", 1)])
+                .unwrap()
+                .is_empty()
+        );
+        put(&service, "link/a.png", b"png", false).unwrap();
+        assert_eq!(fs::read(root.join("figs/a.png")).unwrap(), b"png");
     }
 
     #[test]
