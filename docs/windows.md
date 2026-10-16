@@ -46,6 +46,7 @@ apps/windows/
     Models.cs                  records for the JSON the views read (web-case)
   TeXLocal/                    the WinUI 3 app (unpackaged, self-contained)
     App.xaml(.cs), MainWindow.xaml(.cs)
+    EditorPrefs.cs             Settings › Editor's preferences, the core's themes, monospace families by GDI
     Pages/HomePage, WorkspacePage, SettingsPage (.xaml/.cs); WorkspacePage.Document.cs (editor, builds, issues, PDF, SyncTeX)
     Controls/Sizer.cs, RenameFlyout.xaml(.cs), PdfView.xaml(.cs), SourceView.xaml(.cs)
     Themes/Generic.xaml        card styles, status button style
@@ -67,7 +68,8 @@ apps/windows/
 - **Close.** Remove the listener, `kill_all`, wait for calls in flight, `tl_close`.
 - **Data folder.** `TEXLOCAL_DATA`, else `%USERPROFILE%\TeXLocal` (the Mac's `~/TeXLocal`; outside
   OneDrive-redirected Documents, whose sync locks files mid-build).
-- **Host preferences** (theme, window bounds, sidebar width, Compile automatically) live in
+- **Host preferences** (theme, window bounds, sidebar width, Compile automatically, and through
+  `EditorPrefs` the editor's font, size, theme and typing switches, raising `Changed`) live in
   `ApplicationData.GetForUnpackaged("TeXLocal", "TeXLocal").LocalSettings` (the registry, under
   `HKCU\Software\Classes\Local Settings\Software\TeXLocal`), as the Mac's in `UserDefaults`;
   validation of shared preferences is a core gap.
@@ -228,7 +230,11 @@ minimum 800 × 500 (`OverlappedPresenter.PreferredMinimum*`); default 1280 × 80
   description, control at the right. `ToggleSwitch` for on/off, `ComboBox` for choices, apply at
   once, no Save. Groups: Appearance (App theme: Use system setting, Light, Dark; link to
   `ms-settings:colors`), Projects (folder, Open in File Explorer), TeX (status, location:
-  Automatic or Choose folder…), Editor and Compiling (M2/M3), About (an `Expander` last).
+  Automatic or Choose folder…), Editor (Font: the installed fixed-pitch families, and a saved one
+  since removed; Font size: Notepad's sizes from 10 to 28, and a saved one between them; Theme: the
+  core's themes; a preview of a few LaTeX lines in that font and size, coloured by the core; Close
+  brackets automatically and Suggest completions while typing as `ToggleSwitch`es with `MinWidth`
+  0, so the switch sits at the card's edge), Compiling (M2/M3), About (an `Expander` last).
 - **Dialogs**: `ContentDialog` only for blocking decisions, specific verbs, primary on the left.
   New project (Name; Create default; the core numbers a taken name, "Thesis 2", and a name it
   refuses is shown under the box, dialog stays). Go to
@@ -282,7 +288,7 @@ templates), `document_class` / `heading_styles`, and `math_svg` / `glyph_svg` th
    engines, with their labels, for New project and the Build menu; `create_project` takes a
    `template` id but nothing lists them. Until then New project uses the core's default.
 3. (Landed: themes; the editor colours from `theme_colors` through `tl_syntax_call`. The host maps
-   only a high-contrast theme to the window text colour. A theme picker waits for Settings › Editor.)
+   only a high-contrast theme to the window text colour. Settings › Editor picks the theme.)
 4. (Landed: document class and heading styles.)
 5. (Landed: maths as SVG; a PNG through resvg only if `SvgImageSource` falls short.)
 6. **PDF in the core**: PDFium (`pdfium-render` 0.9.4, `pdfium-win-x64` chromium/7881) giving page
