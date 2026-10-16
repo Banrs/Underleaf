@@ -195,7 +195,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
             .selectorIdentifier: kMonospacedNumbersSelector]]]), size: 0) ?? numbers
         issueFont = .systemFont(ofSize: fontSize)
-        issueGap = 3 * ("0" as NSString).size(withAttributes: [.font: font]).width
+        issueGap = ("0" as NSString).size(withAttributes: [.font: font]).width
         gutterWidth = 0
         updateGutterWidth()
     }
@@ -239,7 +239,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     func updateGutterWidth() {
         lineCountDigits = digits(document.lineCount)
         numbersEnd = showsLineNumbers ? 19.5 + CGFloat(lineCountDigits - 1) * digitWidth : 14
-        let width = numbersEnd + 11 - (textContainer?.lineFragmentPadding ?? 0)
+        // The text starts on a whole point, as Xcode's does (51 at 13 pt).
+        let width = (numbersEnd + 11).rounded(.up) - (textContainer?.lineFragmentPadding ?? 0)
         guard width != gutterWidth else { return }
         gutterWidth = width
         textContainerInset.width = (textContainerOrigin.x + 8) / 2
@@ -536,18 +537,19 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let left = textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = textContainerOrigin.y + fragment.layoutFragmentFrame.minY
         let said = [reported.message] + reported.others
-        let label = issueLabels[number] ?? IssueLabel(reported.short, command: reported.command, others: reported.others.count, font: issueFont)
+        let label = issueLabels[number] ?? IssueLabel(reported.short, command: reported.command, font: issueFont)
         issueLabels[number] = label
         typealias Metrics = IssueBox.Metrics
         let end = band.maxX - Metrics.endInset
         let room = end - (left + first.typographicBounds.maxX) - issueGap
-        let fitted = label.text(in: room - Metrics.width(ofText: 0, font: issueFont))
-        let width = Metrics.width(ofText: fitted?.width, font: issueFont)
+        let issues = said.count
+        let fitted = label.text(in: room - Metrics.width(ofText: 0, font: issueFont, issues: issues))
+        let width = Metrics.width(ofText: fitted?.width, font: issueFont, issues: issues)
         if width <= room {
             let foot = onPixels(top + first.typographicBounds.maxY + rowShift)
             let rect = NSRect(x: end - width, y: band.minY + Metrics.verticalInset, width: width,
                               height: foot - band.minY - 2 * Metrics.verticalInset)
-            let box = IssueBox(isError: reported.isError, text: fitted?.text, font: issueFont, fill: Color(nsColor: backgroundColor),
+            let box = IssueBox(isError: reported.isError, issues: issues, text: fitted?.text, font: issueFont, fill: Color(nsColor: backgroundColor),
                                baseline: top + first.typographicBounds.minY + first.glyphOrigin.y - rect.minY)
             let view = view ?? IssueMessageView(box)
             view.rootView = box
@@ -1108,10 +1110,12 @@ struct IssueBox: View {
     nonisolated enum Metrics {
         /// The symbol's segment, as a fraction of the text's size.
         static let segment: CGFloat = 2
-        /// The room either side of the message, as a fraction of the text's size.
-        static let padding: CGFloat = 0.5
+        /// The room either side of the message: Xcode 27's after its divider, at 13 pt.
+        static let padding: CGFloat = 5
+        /// What the symbol's segment gains for the count of a line's issues before the symbol, as Xcode's.
+        static let count: CGFloat = 12
         static let symbolScale = Image.Scale.small
-        static let cornerRadius: CGFloat = 3
+        static let cornerRadius: CGFloat = 4
         static let border: CGFloat = 1
         static let divider: CGFloat = 1
         /// From the source line's baseline, down.
@@ -1121,16 +1125,19 @@ struct IssueBox: View {
         /// From the band's top and the line's foot.
         static let verticalInset: CGFloat = 0
 
-        static func segment(_ font: NSFont) -> CGFloat { (segment * font.pointSize).rounded() }
-        static func padding(_ font: NSFont) -> CGFloat { (padding * font.pointSize).rounded() }
+        static func segment(_ font: NSFont, issues: Int) -> CGFloat {
+            (segment * font.pointSize).rounded() + (issues > 1 ? count : 0)
+        }
 
         /// The box's width for a message this wide, or for the symbol alone.
-        static func width(ofText text: CGFloat?, font: NSFont) -> CGFloat {
-            segment(font) + (text.map { divider + (2 * padding(font) + $0).rounded(.up) } ?? 0)
+        static func width(ofText text: CGFloat?, font: NSFont, issues: Int) -> CGFloat {
+            segment(font, issues: issues) + (text.map { divider + (2 * padding + $0).rounded(.up) } ?? 0)
         }
     }
 
     let isError: Bool
+    /// The line's issues, counted before the symbol where there are more than one.
+    let issues: Int
     let text: String?
     let font: NSFont
     let fill: Color
@@ -1141,17 +1148,20 @@ struct IssueBox: View {
         let shape = RoundedRectangle(cornerRadius: Metrics.cornerRadius)
         let separator = Color(nsColor: .separatorColor)
         HStack(spacing: 0) {
-            Image(systemName: isError ? "exclamationmark.octagon" : "exclamationmark.triangle")
-                .imageScale(Metrics.symbolScale)
-                .foregroundStyle(isError ? .red : .yellow)
-                .frame(width: Metrics.segment(font))
+            HStack(spacing: 2) {
+                if issues > 1 { Text(verbatim: "\(issues)") }
+                Image(systemName: isError ? "exclamationmark.octagon" : "exclamationmark.triangle")
+                    .imageScale(Metrics.symbolScale)
+                    .foregroundStyle(isError ? .red : .yellow)
+            }
+            .frame(width: Metrics.segment(font, issues: issues))
             if let text {
                 separator.frame(width: Metrics.divider)
                 Text(verbatim: text)
                     .fixedSize()
                     .alignmentGuide(.top) { $0[.firstTextBaseline] - baseline - Metrics.baselineOffset }
                     .frame(maxHeight: .infinity, alignment: .top)
-                    .padding(.horizontal, Metrics.padding(font))
+                    .padding(.horizontal, Metrics.padding)
             }
         }
         .font(Font(font as CTFont))
@@ -1164,10 +1174,10 @@ struct IssueBox: View {
 
 /// An issue's message for its line's end, from the core's one-line form: whole where there is room for it, then for an
 /// undefined command in fewer words that keep its name ("Undefined: \name"), then cut at the tail with an ellipsis, and
-/// not at all where fewer than ten of its characters would show. The line's other issues are counted after it ("+2"),
-/// and the count outlasts the cut.
+/// not at all where fewer than ten of its characters would show. The line's issues are counted in the box's symbol
+/// segment, as Xcode counts them.
 struct IssueLabel {
-    private let whole: String, count: String, font: NSFont
+    private let whole: String, font: NSFont
     private let short: String?
     /// What is cut where neither fits, typeset to find where.
     private let most: (text: NSString, line: CTLine)
@@ -1177,9 +1187,8 @@ struct IssueLabel {
     /// The fewest of a message's characters worth showing before the ellipsis.
     static let least = 10
 
-    init(_ message: String, command: String?, others: Int, font: NSFont) {
-        count = others > 0 ? "  +\(others)" : ""
-        whole = message + count
+    init(_ message: String, command: String?, font: NSFont) {
+        whole = message
         short = command.map { String(localized: "Undefined: \($0)") }
         self.font = font
         width = typeset(whole, in: font).width
@@ -1191,10 +1200,10 @@ struct IssueLabel {
     func text(in room: CGFloat) -> (text: String, width: CGFloat, cut: Bool)? {
         if width <= room { return (whole, width, false) }
         if let short {
-            let shortWidth = typeset(short + count, in: font).width
-            if shortWidth <= room { return (short + count, shortWidth, true) }
+            let shortWidth = typeset(short, in: font).width
+            if shortWidth <= room { return (short, shortWidth, true) }
         }
-        let ending = "…" + count
+        let ending = "…"
         var end = CTLineGetStringIndexForPosition(most.line, CGPoint(x: room - typeset(ending, in: font).width, y: 0))
         while end >= Self.least {
             let text = most.text.substring(to: end).trimmingCharacters(in: .whitespaces) + ending

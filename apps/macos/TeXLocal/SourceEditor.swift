@@ -31,7 +31,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.usesFontPanel = false
         text.usesFindBar = true
         text.isIncrementalSearchingEnabled = true
-        text.textContainerInset = NSSize(width: 0, height: 7)
+        text.textContainerInset = NSSize(width: 0, height: 8)
         text.fontSize = NSFont.systemFontSize
         text.allowsUndo = true
         // Smart dashes and quotes would rewrite the LaTeX (-- to an em dash), so spelling, correction and text replacement apply to prose only (below).
