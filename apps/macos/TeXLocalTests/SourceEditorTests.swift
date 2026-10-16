@@ -605,21 +605,25 @@ struct SourceEditorTests {
         // Two issues on a line: Xcode's count before the symbol, in a wider segment.
         let stop = ("Emergency stop" as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13)]).width
         #expect(abs(try #require(rows[2].message).rect.width - IssueBox.Metrics.width(ofText: stop, font: .systemFont(ofSize: 13), issues: 2)) < 0.01)
+        // Xcode 27's boxes at 13 pt for its message "Cannot convert value of type 'String' to specified type 'Int'"
+        // (353.74 pt), as measured: 406 pt alone, 418 with a count.
+        let xcode = 353.7421875 as CGFloat
+        #expect(IssueBox.Metrics.width(ofText: xcode, font: .systemFont(ofSize: 13), issues: 1) == 406)
+        #expect(IssueBox.Metrics.width(ofText: xcode, font: .systemFont(ofSize: 13), issues: 2) == 418)
         // Both places the command stands, each four characters wide to the pixel, and none for the other lines.
         let pixel = 1 / window.backingScaleFactor
         #expect(rows.map(\.tokens.count) == [0, 2, 0] && rows[1].tokens.allSatisfy { abs($0.width - 4 * digit) <= pixel })
         let start = text.textContainerOrigin.x + padding
         #expect(abs(rows[1].tokens[0].minX - (start + 4 * digit)) <= pixel / 2 && abs(rows[1].tokens[1].minX - (start + 19 * digit)) <= pixel / 2)
-        // Narrower: the second line's message is in fewer words, its box a character from its text at the nearest, as
-        // Xcode's, in the view it had.
+        // Narrower: the second line's message is in fewer words, its box taking all the room from a character after its
+        // text, on whole points, as Xcode's, in the view it had.
         try layOut(width: 520)
         let views = rows.map { $0.message?.view }
         rows = text.issueRows
         let cut = try #require(rows[1].message)
-        #expect(cut.cut && cut.rect.maxX == rows[1].band.maxX - 1 && cut.rect.minX >= start + 30 * digit + digit)
+        #expect(cut.cut && cut.rect.maxX == rows[1].band.maxX - 1 && cut.rect.width == cut.rect.width.rounded())
+        #expect(cut.rect.minX >= start + 31 * digit && cut.rect.minX < start + 31 * digit + 1 && cut.view === views[1])
         let font = NSFont.systemFont(ofSize: 13)
-        let words = ("Undefined: \\foo" as NSString).size(withAttributes: [.font: font]).width
-        #expect(abs(cut.rect.width - IssueBox.Metrics.width(ofText: words, font: font, issues: 1)) < 0.01 && cut.view === views[1])
         #expect(rows[1].tip == "Undefined control sequence: \\foo" && rows[0].message?.cut == false)
         // Room for the symbol and not for words: the symbol alone, and the help tag's words.
         open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
@@ -630,7 +634,7 @@ struct SourceEditorTests {
         // No room: the band is left, and the help tag's words.
         open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
         text.issueLines = [2: undefined]
-        try layOut(width: 440)
+        try layOut(width: 420)
         rows = text.issueRows
         #expect(rows.count == 1 && rows[0].message == nil && rows[0].tip == "Undefined control sequence: \\foo" && rows[0].tokens.count == 2)
         #expect(!text.subviews.contains { $0 is IssueMessageView })

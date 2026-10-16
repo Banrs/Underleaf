@@ -189,11 +189,18 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         defaultParagraphStyle = style
         textStorage?.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
         typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: style]
-        // Xcode's numbers: semi-condensed SF a point under the text, tabular, never under the HIG's 10 points.
-        let numbers = NSFont.systemFont(ofSize: max(10, fontSize - 1), weight: .regular, width: NSFont.Width(rawValue: -0.1))
-        numberFont = NSFont(descriptor: numbers.fontDescriptor.addingAttributes([.featureSettings: [[
-            NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
-            .selectorIdentifier: kMonospacedNumbersSelector]]]), size: 0) ?? numbers
+        // Xcode's numbers: SF at the issue symbol's size, a little narrower than semi-condensed (74 on SF's width axis to
+        // its 80), tabular, with the open 4, 6 and 9 (SF's first two stylistic sets), never under the HIG's 10 points.
+        let numbers = NSFont.systemFont(ofSize: max(10, IssueBox.Metrics.small(fontSize)), weight: .regular, width: NSFont.Width(rawValue: -0.1))
+        var axes = CTFontCopyVariation(numbers) as? [NSNumber: NSNumber] ?? [:]
+        axes[0x7764_7468 as NSNumber] = 74 // 'wdth'
+        numberFont = NSFont(descriptor: numbers.fontDescriptor.addingAttributes([
+            NSFontDescriptor.AttributeName(kCTFontVariationAttribute as String): axes,
+            .featureSettings: [
+                [NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType, .selectorIdentifier: kMonospacedNumbersSelector],
+                [NSFontDescriptor.FeatureKey.typeIdentifier: kStylisticAlternativesType, .selectorIdentifier: kStylisticAltOneOnSelector],
+                [NSFontDescriptor.FeatureKey.typeIdentifier: kStylisticAlternativesType, .selectorIdentifier: kStylisticAltTwoOnSelector]]]),
+            size: 0) ?? numbers
         issueFont = .systemFont(ofSize: fontSize)
         issueGap = ("0" as NSString).size(withAttributes: [.font: font]).width
         gutterWidth = 0
@@ -238,7 +245,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     func updateGutterWidth() {
         lineCountDigits = digits(document.lineCount)
-        numbersEnd = showsLineNumbers ? 19.5 + CGFloat(lineCountDigits - 1) * digitWidth : 14
+        // Xcode's numbers end 39.7 pt in at 13 pt (fitted to its gutter as drawn).
+        numbersEnd = showsLineNumbers ? 19.8 + CGFloat(lineCountDigits - 1) * digitWidth : 14
         // The text starts on a whole point, as Xcode's does (51 at 13 pt).
         let width = (numbersEnd + 11).rounded(.up) - (textContainer?.lineFragmentPadding ?? 0)
         guard width != gutterWidth else { return }
@@ -544,7 +552,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let room = end - (left + first.typographicBounds.maxX) - issueGap
         let issues = said.count
         let fitted = label.text(in: room - Metrics.width(ofText: 0, font: issueFont, issues: issues))
-        let width = Metrics.width(ofText: fitted?.width, font: issueFont, issues: issues)
+        // A message cut short takes all the room there is, on whole points, as Xcode's does.
+        let width = fitted?.cut == true ? room.rounded(.down) : Metrics.width(ofText: fitted?.width, font: issueFont, issues: issues)
         if width <= room {
             let foot = onPixels(top + first.typographicBounds.maxY + rowShift)
             let rect = NSRect(x: end - width, y: band.minY + Metrics.verticalInset, width: width,
@@ -1110,10 +1119,14 @@ struct IssueBox: View {
     nonisolated enum Metrics {
         /// The symbol's segment, as a fraction of the text's size.
         static let segment: CGFloat = 2
-        /// The room either side of the message: Xcode 27's after its divider, at 13 pt.
+        /// The room before the message: Xcode 27's after its divider, at 13 pt.
         static let padding: CGFloat = 5
+        /// The room after a message that is all there, as Xcode 27 leaves it at 13 pt.
+        static let trailing: CGFloat = 20
         /// What the symbol's segment gains for the count of a line's issues before the symbol, as Xcode's.
         static let count: CGFloat = 12
+        /// How far the count reaches into the symbol's segment, as Xcode's.
+        static let countOverlap: CGFloat = 1
         static let symbolScale = Image.Scale.small
         static let cornerRadius: CGFloat = 4
         static let border: CGFloat = 1
@@ -1125,13 +1138,16 @@ struct IssueBox: View {
         /// From the band's top and the line's foot.
         static let verticalInset: CGFloat = 0
 
+        /// The size of the symbol and of the line numbers: Xcode's 12.35 pt at 13 pt.
+        static func small(_ size: CGFloat) -> CGFloat { size * 0.95 }
+
         static func segment(_ font: NSFont, issues: Int) -> CGFloat {
             (segment * font.pointSize).rounded() + (issues > 1 ? count : 0)
         }
 
         /// The box's width for a message this wide, or for the symbol alone.
         static func width(ofText text: CGFloat?, font: NSFont, issues: Int) -> CGFloat {
-            segment(font, issues: issues) + (text.map { divider + (2 * padding + $0).rounded(.up) } ?? 0)
+            segment(font, issues: issues) + (text.map { divider + (padding + $0 + trailing).rounded(.up) } ?? 0)
         }
     }
 
@@ -1148,20 +1164,20 @@ struct IssueBox: View {
         let shape = RoundedRectangle(cornerRadius: Metrics.cornerRadius)
         let separator = Color(nsColor: .separatorColor)
         HStack(spacing: 0) {
-            HStack(spacing: 2) {
-                if issues > 1 { Text(verbatim: "\(issues)") }
-                Image(systemName: isError ? "exclamationmark.octagon" : "exclamationmark.triangle")
-                    .imageScale(Metrics.symbolScale)
-                    .foregroundStyle(isError ? .red : .yellow)
+            if issues > 1 {
+                onBaseline(Text(verbatim: "\(issues)"))
+                    .frame(width: Metrics.count, alignment: .trailing)
+                    .offset(x: Metrics.countOverlap)
             }
-            .frame(width: Metrics.segment(font, issues: issues))
+            Image(systemName: isError ? "exclamationmark.octagon" : "exclamationmark.triangle")
+                .font(.system(size: Metrics.small(font.pointSize)))
+                .imageScale(Metrics.symbolScale)
+                .foregroundStyle(isError ? .red : .yellow)
+                .frame(width: Metrics.segment(font, issues: 1))
             if let text {
                 separator.frame(width: Metrics.divider)
-                Text(verbatim: text)
-                    .fixedSize()
-                    .alignmentGuide(.top) { $0[.firstTextBaseline] - baseline - Metrics.baselineOffset }
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .padding(.horizontal, Metrics.padding)
+                onBaseline(Text(verbatim: text))
+                    .padding(.leading, Metrics.padding)
             }
         }
         .font(Font(font as CTFont))
@@ -1169,6 +1185,13 @@ struct IssueBox: View {
         .background(fill, in: shape)
         .overlay(shape.strokeBorder(separator, lineWidth: Metrics.border))
         .accessibilityHidden(true)
+    }
+
+    /// On the source line's baseline.
+    private func onBaseline(_ text: Text) -> some View {
+        text.fixedSize()
+            .alignmentGuide(.top) { $0[.firstTextBaseline] - baseline - Metrics.baselineOffset }
+            .frame(maxHeight: .infinity, alignment: .top)
     }
 }
 
