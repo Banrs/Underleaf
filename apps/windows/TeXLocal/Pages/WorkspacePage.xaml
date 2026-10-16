@@ -4,7 +4,8 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:TeXLocal.Controls"
     xmlns:local="using:TeXLocal.Pages"
-    Background="Transparent">
+    Background="Transparent"
+    KeyboardAcceleratorPlacementMode="Hidden">
 
     <Page.KeyboardAccelerators>
         <KeyboardAccelerator Invoked="OnNextRegion" Key="F6" />

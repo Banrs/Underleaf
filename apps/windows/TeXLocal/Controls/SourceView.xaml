@@ -1,7 +1,8 @@
 <UserControl
     x:Class="TeXLocal.Controls.SourceView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:TeXLocal.Controls">
 
     <UserControl.Resources>
         <Style x:Key="NumberStyle" TargetType="TextBlock">
@@ -12,6 +13,13 @@
         </Style>
         <Style x:Key="CurrentNumberStyle" TargetType="TextBlock" BasedOn="{StaticResource NumberStyle}">
             <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+        </Style>
+        <!-- A flyout's surface, for the popups that leave the keyboard in the editor. -->
+        <Style x:Key="SurfaceStyle" TargetType="Border">
+            <Setter Property="Background" Value="{ThemeResource AcrylicInAppFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource SurfaceStrokeColorFlyoutBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{ThemeResource OverlayCornerRadius}" />
         </Style>
         <DataTemplate x:Key="ErrorBox">
             <Border
@@ -76,6 +84,7 @@
         <Grid Visibility="Collapsed">
             <Rectangle x:Name="PaperInk" Fill="{ThemeResource SolidBackgroundFillColorBaseBrush}" />
             <Rectangle x:Name="TextInk" Fill="{ThemeResource TextFillColorPrimaryBrush}" />
+            <Rectangle x:Name="SecondaryInk" Fill="{ThemeResource TextFillColorSecondaryBrush}" />
         </Grid>
 
         <Canvas x:Name="Gutter" Width="48" />
@@ -105,6 +114,92 @@
                 <Thickness x:Key="TextControlBorderThemeThicknessFocused">0</Thickness>
             </RichEditBox.Resources>
         </RichEditBox>
-        <Canvas x:Name="Overlay" Grid.Column="1" />
+        <Canvas x:Name="Overlay" Grid.Column="1">
+            <!-- The bracket a closer matches, for a moment. -->
+            <Border
+                x:Name="PartnerBox"
+                BorderBrush="{ThemeResource ControlStrongStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="2"
+                IsHitTestVisible="False"
+                Opacity="0" />
+        </Canvas>
+
+        <Popup x:Name="MathPopup" Grid.Column="1">
+            <Border
+                x:Name="MathSurface"
+                Padding="12,8"
+                IsHitTestVisible="False"
+                Style="{StaticResource SurfaceStyle}"
+                Translation="0,0,32">
+                <Border.Shadow>
+                    <ThemeShadow />
+                </Border.Shadow>
+                <Grid>
+                    <Image x:Name="MathImage" AutomationProperties.Name="Maths preview" Stretch="Fill" />
+                    <TextBlock
+                        x:Name="MathError"
+                        MaxWidth="480"
+                        FontFamily="Cascadia Mono, Consolas"
+                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                        TextWrapping="Wrap" />
+                </Grid>
+            </Border>
+        </Popup>
+
+        <Popup x:Name="CompletionPopup" Grid.Column="1">
+            <Border
+                x:Name="CompletionSurface"
+                MinWidth="240"
+                MaxWidth="480"
+                Padding="0,4"
+                Style="{StaticResource SurfaceStyle}"
+                Translation="0,0,32">
+                <Border.Shadow>
+                    <ThemeShadow />
+                </Border.Shadow>
+                <ListView
+                    x:Name="CompletionList"
+                    AllowFocusOnInteraction="False"
+                    AutomationProperties.Name="Completions"
+                    IsItemClickEnabled="True"
+                    IsTabStop="False"
+                    ItemClick="OnCompletionClick"
+                    SelectionMode="Single">
+                    <ListView.Resources>
+                        <x:Double x:Key="ListViewItemMinHeight">32</x:Double>
+                    </ListView.Resources>
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+                            <Setter Property="MinHeight" Value="32" />
+                            <Setter Property="Padding" Value="12,0,16,0" />
+                            <Setter Property="AllowFocusOnInteraction" Value="False" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="local:CompletionRow">
+                            <Grid AutomationProperties.Name="{x:Bind Item.Label}" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="16" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon
+                                    FontSize="16"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Glyph="{x:Bind Glyph}" />
+                                <TextBlock
+                                    Grid.Column="1"
+                                    VerticalAlignment="Center"
+                                    FontFamily="{x:Bind Font}"
+                                    TextTrimming="CharacterEllipsis"
+                                    TextWrapping="NoWrap">
+                                    <Run FontWeight="SemiBold" Text="{x:Bind Typed}" /><Run Text="{x:Bind Rest}" />
+                                </TextBlock>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Border>
+        </Popup>
     </Grid>
 </UserControl>
