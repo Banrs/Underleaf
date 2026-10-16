@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCustomRotorItemSearchDelegate {
     static func plainDocument() -> SourceTextView {
@@ -18,7 +19,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private func displayOptionsChanged() {
         needsDisplay = true
-        for issue in issueRows { issue.message?.view.needsDisplay = true }
     }
 
     /// A cursor rect of the list's own lost to the text view's per-move cursor, so the pointer is set on every move.
@@ -195,10 +195,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
             .selectorIdentifier: kMonospacedNumbersSelector]]]), size: 0) ?? numbers
         issueFont = .systemFont(ofSize: fontSize)
-        let size = NSImage.SymbolConfiguration(pointSize: fontSize, weight: .regular, scale: .small)
-        issueSymbols = [true: ("exclamationmark.octagon", NSColor.systemRed), false: ("exclamationmark.triangle", .systemYellow)].compactMapValues {
-            NSImage(systemSymbolName: $0.0, accessibilityDescription: nil)?.withSymbolConfiguration(size.applying(.init(paletteColors: [$0.1])))
-        }
         issueGap = 3 * ("0" as NSString).size(withAttributes: [.font: font]).width
         gutterWidth = 0
         updateGutterWidth()
@@ -224,6 +220,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         var message: String
         /// The core's line-end form of it.
         var short: String
+        /// The command an "Undefined control sequence" names, underlined where the line has it.
+        var command: String?
         var others: [String] = []
     }
 
@@ -231,7 +229,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         didSet { if issueLines != oldValue { issuesChanged() } }
     }
     var issueClicked: (Int) -> Void = { _ in }
-    private var issueSymbols: [Bool: NSImage] = [:]
 
     var showsLineNumbers = true {
         didSet { if showsLineNumbers != oldValue { updateGutterWidth() } }
@@ -420,9 +417,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         defer { context.restoreGState() }
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
         // The caret's line has the current line's fill, which is the same shape, and not both.
-        for issue in issueRows where issue.line != current?.number && issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
-            Self.issueFill.setFill()
-            issue.shape.fill()
+        for issue in issueRows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
+            if issue.line != current?.number {
+                Self.issueFill.setFill()
+                issue.shape.fill()
+            }
+            NSColor.systemRed.setFill()
+            issue.tokens.forEach { $0.fill() }
         }
         guard rect.minX < numbersEnd + 4, showsLineNumbers else { return }
         // Increase Contrast raises the numbers as the syntax colours are (`displayOptionsChanged` redraws them).
@@ -451,6 +452,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let shape: NSBezierPath
         var message: (view: IssueMessageView, rect: NSRect, cut: Bool)?
         var tip: String?
+        /// The undefined command's underlines, where the line has it.
+        var tokens: [NSRect] = []
         let fragment: NSTextLayoutFragment
         let frame: NSRect
         let width: CGFloat
@@ -459,13 +462,18 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private(set) var issueRows: [IssueRow] = []
     private var issuesStale = false
-    private var issueFont = NSFont.systemFont(ofSize: NSFont.systemFontSize - 1)
+    /// The messages as measured, by line: for these issues and this font.
+    private var issueLabels: [Int: IssueLabel] = [:]
+    private var issueFont = NSFont.systemFont(ofSize: NSFont.systemFontSize - 1) {
+        didSet { issueLabels.removeAll() }
+    }
     private var issueGap: CGFloat = 0
     private var issueTips: [(tag: NSView.ToolTipTag, rect: NSRect, text: NSString)] = []
 
     private static let issueFill = NSColor.tertiarySystemFill
 
     private func issuesChanged() {
+        issueLabels.removeAll()
         issuesStale = true
         placeIssues()
         redrawLineAndGutter()
@@ -528,18 +536,46 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let left = textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = textContainerOrigin.y + fragment.layoutFragmentFrame.minY
         let said = [reported.message] + reported.others
-        let end = band.maxX - 1
+        let label = issueLabels[number] ?? IssueLabel(reported.short, command: reported.command, others: reported.others.count, font: issueFont)
+        issueLabels[number] = label
+        typealias Metrics = IssueBox.Metrics
+        let end = band.maxX - Metrics.endInset
         let room = end - (left + first.typographicBounds.maxX) - issueGap
-        let view = view ?? IssueMessageView()
-        view.show(reported.short, others: reported.others.count, symbol: issueSymbols[reported.isError], font: issueFont)
-        if let fitted = view.fit(in: room) {
-            let rect = NSRect(x: end - fitted.width, y: band.minY, width: fitted.width,
-                              height: onPixels(top + first.typographicBounds.maxY + rowShift) - band.minY)
+        let fitted = label.text(in: room - Metrics.width(ofText: 0, font: issueFont))
+        let width = Metrics.width(ofText: fitted?.width, font: issueFont)
+        if width <= room {
+            let foot = onPixels(top + first.typographicBounds.maxY + rowShift)
+            let rect = NSRect(x: end - width, y: band.minY + Metrics.verticalInset, width: width,
+                              height: foot - band.minY - 2 * Metrics.verticalInset)
+            let box = IssueBox(isError: reported.isError, text: fitted?.text, font: issueFont, fill: Color(nsColor: backgroundColor),
+                               baseline: top + first.typographicBounds.minY + first.glyphOrigin.y - rect.minY)
+            let view = view ?? IssueMessageView(box)
+            view.rootView = box
             if view.frame != rect { view.frame = rect }
             if view.superview !== self { addSubview(view) }
-            issue.message = (view, rect, fitted.cut)
+            issue.message = (view, rect, fitted?.cut ?? true)
         }
         if issue.message?.cut != false || said.count > 1 { issue.tip = said.joined(separator: "\n") }
+        // Underlined in the system's red, as Xcode does an issue's token, under the text: TextKit 2 draws no underline
+        // given as a rendering attribute (27.2).
+        if let command = reported.command, let font {
+            // As far under the baseline as the font puts an underline, a point thick at least, on whole pixels.
+            let scale = window?.backingScaleFactor ?? 1
+            func whole(_ length: CGFloat) -> CGFloat { (length * scale).rounded() / scale }
+            let thickness = max(1, whole(font.underlineThickness))
+            for range in (first.attributedString.string as NSString).ranges(ofCommand: command) {
+                // A command a line is too narrow for is on two.
+                for line in lines {
+                    let part = NSIntersectionRange(range, line.characterRange)
+                    guard part.length > 0 else { continue }
+                    let lineLeft = left + line.typographicBounds.minX
+                    let start = whole(lineLeft + line.locationForCharacter(at: part.location).x)
+                    let end = whole(lineLeft + line.locationForCharacter(at: NSMaxRange(part)).x)
+                    let under = top + line.typographicBounds.minY + line.glyphOrigin.y - font.underlinePosition
+                    issue.tokens.append(NSRect(x: start, y: whole(under), width: end - start, height: thickness))
+                }
+            }
+        }
         return issue
     }
 
@@ -1053,59 +1089,149 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
 /// 27.2: TextKit draws a selection in a view above the text view's background (`_NSTextSelectionView`), which would
 /// cover a box drawn there; this view sits above the text's views, takes no click, and the text view answers for it.
-final class IssueMessageView: NSBox {
-    private let symbol = NSImageView()
-    private let divider = NSBox()
-    private let message = NSTextField(labelWithString: "")
-    private let others = NSTextField(labelWithString: "")
-    private let stack = NSStackView()
-
-    init() {
-        super.init(frame: .zero)
-        boxType = .custom
-        cornerRadius = 3
-        borderWidth = 1
-        borderColor = .separatorColor
-        fillColor = .textBackgroundColor
-        contentViewMargins = .zero
-        divider.boxType = .separator
-        message.lineBreakMode = .byTruncatingTail
-        message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        others.textColor = .secondaryLabelColor
-        for view in [symbol, divider, message, others] { stack.addArrangedSubview(view) }
-        stack.spacing = 5
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 5, bottom: 0, right: 6)
-        // Upright, as tall as the box: a separator box draws along its longer side.
-        NSLayoutConstraint.activate([divider.widthAnchor.constraint(equalToConstant: 1),
-                                     divider.heightAnchor.constraint(equalTo: stack.heightAnchor)])
-        contentView = stack
+/// Placed by frame, it sizes nothing itself and has no safe area under the toolbar.
+final class IssueMessageView: NSHostingView<IssueBox> {
+    convenience init(_ box: IssueBox) {
+        self.init(rootView: box)
+        sizingOptions = []
+        safeAreaRegions = []
     }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
 
-    /// `text` is the issue's short message, on one line.
-    func show(_ text: String, others count: Int, symbol image: NSImage?, font: NSFont) {
-        symbol.image = image
-        message.font = font
-        message.stringValue = text
-        others.font = font
-        others.stringValue = count > 0 ? "+\(count)" : ""
+/// An issue at its line's end, as Xcode sets it: a box in the text's background edged in the separators' colour, the
+/// symbol in a segment of its own, a divider and the message on the source line's baseline, or the symbol alone where
+/// the line has no room for words. VoiceOver has the issues from the text view's rotor.
+struct IssueBox: View {
+    /// Every measure of the box. Fractions of the text's size are rounded to whole points, so its edges are the band's pixels.
+    nonisolated enum Metrics {
+        /// The symbol's segment, as a fraction of the text's size.
+        static let segment: CGFloat = 2
+        /// The room either side of the message, as a fraction of the text's size.
+        static let padding: CGFloat = 0.5
+        static let symbolScale = Image.Scale.small
+        static let cornerRadius: CGFloat = 3
+        static let border: CGFloat = 1
+        static let divider: CGFloat = 1
+        /// From the source line's baseline, down.
+        static let baselineOffset: CGFloat = 0
+        /// From the band's end.
+        static let endInset: CGFloat = 1
+        /// From the band's top and the line's foot.
+        static let verticalInset: CGFloat = 0
+
+        static func segment(_ font: NSFont) -> CGFloat { (segment * font.pointSize).rounded() }
+        static func padding(_ font: NSFont) -> CGFloat { (padding * font.pointSize).rounded() }
+
+        /// The box's width for a message this wide, or for the symbol alone.
+        static func width(ofText text: CGFloat?, font: NSFont) -> CGFloat {
+            segment(font) + (text.map { divider + (2 * padding(font) + $0).rounded(.up) } ?? 0)
+        }
     }
 
-    /// Its width in `room`, in whole points: the whole message, a few words of it at least before
-    /// the ellipsis, or the symbol alone; nil where even that has no room.
-    func fit(in room: CGFloat) -> (width: CGFloat, cut: Bool)? {
-        func width() -> CGFloat { (stack.fittingSize.width + 2 * borderWidth).rounded(.up) }
-        (divider.isHidden, message.isHidden, others.isHidden) = (false, false, others.stringValue.isEmpty)
-        let whole = width()
-        if whole <= room { return (whole, false) }
-        let few = 5 * (message.font?.pointSize ?? NSFont.systemFontSize)
-        if whole - message.fittingSize.width + few <= room { return (room.rounded(.down), true) }
-        (divider.isHidden, message.isHidden, others.isHidden) = (true, true, true)
-        let alone = width()
-        return alone <= room ? (alone, true) : nil
+    let isError: Bool
+    let text: String?
+    let font: NSFont
+    let fill: Color
+    /// The source line's baseline under the box's top.
+    let baseline: CGFloat
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Metrics.cornerRadius)
+        let separator = Color(nsColor: .separatorColor)
+        HStack(spacing: 0) {
+            Image(systemName: isError ? "exclamationmark.octagon" : "exclamationmark.triangle")
+                .imageScale(Metrics.symbolScale)
+                .foregroundStyle(isError ? .red : .yellow)
+                .frame(width: Metrics.segment(font))
+            if let text {
+                separator.frame(width: Metrics.divider)
+                Text(verbatim: text)
+                    .fixedSize()
+                    .alignmentGuide(.top) { $0[.firstTextBaseline] - baseline - Metrics.baselineOffset }
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .padding(.horizontal, Metrics.padding(font))
+            }
+        }
+        .font(Font(font as CTFont))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(fill, in: shape)
+        .overlay(shape.strokeBorder(separator, lineWidth: Metrics.border))
+        .accessibilityHidden(true)
+    }
+}
+
+/// An issue's message for its line's end, from the core's one-line form: whole where there is room for it, then for an
+/// undefined command in fewer words that keep its name ("Undefined: \name"), then cut at the tail with an ellipsis, and
+/// not at all where fewer than ten of its characters would show. The line's other issues are counted after it ("+2"),
+/// and the count outlasts the cut.
+struct IssueLabel {
+    private let whole: String, count: String, font: NSFont
+    private let short: String?
+    /// What is cut where neither fits, typeset to find where.
+    private let most: (text: NSString, line: CTLine)
+    /// The whole message's width.
+    let width: CGFloat
+
+    /// The fewest of a message's characters worth showing before the ellipsis.
+    static let least = 10
+
+    init(_ message: String, command: String?, others: Int, font: NSFont) {
+        count = others > 0 ? "  +\(others)" : ""
+        whole = message + count
+        short = command.map { String(localized: "Undefined: \($0)") }
+        self.font = font
+        width = typeset(whole, in: font).width
+        let most = short ?? message
+        self.most = (most as NSString, typeset(most, in: font).line)
+    }
+
+    /// The message for a room this wide, or nil where it has none; `cut` where it isn't all there.
+    func text(in room: CGFloat) -> (text: String, width: CGFloat, cut: Bool)? {
+        if width <= room { return (whole, width, false) }
+        if let short {
+            let shortWidth = typeset(short + count, in: font).width
+            if shortWidth <= room { return (short + count, shortWidth, true) }
+        }
+        let ending = "…" + count
+        var end = CTLineGetStringIndexForPosition(most.line, CGPoint(x: room - typeset(ending, in: font).width, y: 0))
+        while end >= Self.least {
+            let text = most.text.substring(to: end).trimmingCharacters(in: .whitespaces) + ending
+            let textWidth = typeset(text, in: font).width
+            if textWidth <= room { return (text, textWidth, true) }
+            end = most.text.rangeOfComposedCharacterSequence(at: end - 1).location
+        }
+        return nil
+    }
+}
+
+extension NSString {
+    /// Where a line has the command, each time it does: not as the start of a longer name, not after a backslash that is
+    /// itself a command's (`\\foo` is a line break and a word), and not in a comment.
+    func ranges(ofCommand command: String) -> [NSRange] {
+        // TeX's letters, with `@` as in a class's or a package's own source.
+        func isLetter(_ character: Character) -> Bool { character.isASCII && (character.isLetter || character == "@") }
+        // To the first percent sign that isn't `\%`.
+        var end = 0
+        while end < length, character(at: end) != 0x25 || isEscaped(at: end) { end += 1 }
+        let word = command.dropFirst().first.map(isLetter) ?? false
+        var found: [NSRange] = [], from = 0
+        while from < end {
+            let range = self.range(of: command, options: .literal, range: NSRange(location: from, length: end - from))
+            guard range.location != NSNotFound else { break }
+            from = NSMaxRange(range)
+            let next = from < length ? Unicode.Scalar(character(at: from)).map(Character.init) : nil
+            if !isEscaped(at: range.location), !(word && next.map(isLetter) == true) { found.append(range) }
+        }
+        return found
+    }
+
+    /// Whether the character at `at` follows an unescaped backslash, as the bracket of `\[` does.
+    private func isEscaped(at: Int) -> Bool {
+        var slashes = 0
+        while at - slashes > 0, character(at: at - slashes - 1) == 0x5C { slashes += 1 }
+        return slashes % 2 == 1
     }
 }
 

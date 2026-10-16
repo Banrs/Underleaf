@@ -540,19 +540,41 @@ struct SourceEditorTests {
         #expect(text.selectedRange() == NSRange(location: 4, length: 4) && asked == [2])
     }
 
-    @Test func anIssuesBoxFitsItsRoom() throws {
-        let font = NSFont.systemFont(ofSize: 13), symbol = try #require(NSImage(systemSymbolName: "xmark.octagon.fill", accessibilityDescription: nil))
-        let box = IssueMessageView()
-        box.show("Paragraph ended before \\section was complete", others: 0, symbol: symbol, font: font)
-        let whole = try #require(box.fit(in: 1000))
-        #expect(!whole.cut && whole.width == whole.width.rounded())
-        let cut = try #require(box.fit(in: whole.width - 40))
-        #expect(cut.cut && cut.width == (whole.width - 40).rounded(.down))
-        let alone = try #require(box.fit(in: 40))
-        #expect(alone.cut && alone.width < 40)
-        #expect(box.fit(in: alone.width - 1) == nil)
-        box.show("Paragraph ended before \\section was complete", others: 2, symbol: symbol, font: font)
-        #expect(try #require(box.fit(in: 1000)).width > whole.width)
+    /// An issue's message is whole where there is room for it and cut with an ellipsis where there isn't, down to ten of
+    /// its characters. An undefined command's is set in fewer words before it is cut, so that the name is kept, and the
+    /// count of the line's other issues outlasts the cut.
+    @Test func anIssuesMessageFitsItsRoom() {
+        let font = NSFont.systemFont(ofSize: 12)
+        func width(_ string: String) -> CGFloat { (string as NSString).size(withAttributes: [.font: font]).width }
+        let label = IssueLabel("Paragraph ended before \\section was complete", command: nil, others: 0, font: font)
+        #expect(abs(label.width - width("Paragraph ended before \\section was complete")) < 0.01)
+        let whole = label.text(in: label.width)
+        #expect(whole?.cut == false && whole?.width == label.width)
+        let cut = label.text(in: label.width - 1)
+        #expect(cut?.cut == true && (cut?.width ?? .infinity) <= label.width - 1 && cut?.text.hasSuffix("…") == true)
+        let twelve = label.text(in: width("Paragraph en…") + 1)
+        #expect(twelve?.text == "Paragraph en…")
+        #expect(label.text(in: width("Paragra…") + 1) == nil && label.text(in: 0) == nil && label.text(in: -40) == nil)
+        let counted = IssueLabel("Missing number, treated as zero", command: nil, others: 2, font: font)
+        #expect(abs(counted.width - width("Missing number, treated as zero  +2")) < 0.01)
+        #expect(counted.text(in: width("Missing number, treated…  +2") + 1)?.text == "Missing number, treated…  +2")
+        let undefined = IssueLabel("Undefined control sequence: \\undefinedmacro", command: "\\undefinedmacro", others: 0, font: font)
+        #expect(undefined.text(in: undefined.width)?.cut == false)
+        #expect(undefined.text(in: undefined.width - 1)?.text == "Undefined: \\undefinedmacro")
+        #expect(undefined.text(in: width("Undefined: \\undefin…") + 1)?.text == "Undefined: \\undefin…")
+        let several = IssueLabel("Undefined control sequence: \\foo", command: "\\foo", others: 2, font: font)
+        #expect(several.text(in: several.width - 1)?.text == "Undefined: \\foo  +2")
+    }
+
+    /// An undefined command is found where its line has it: not a longer one that starts with it, nor a comment's.
+    @Test func anUndefinedCommandIsFoundOnItsLine() {
+        func found(_ line: String, _ command: String = "\\foo") -> [NSRange] { (line as NSString).ranges(ofCommand: command) }
+        #expect(found("a \\foo b \\foo{c}\n") == [NSRange(location: 2, length: 4), NSRange(location: 9, length: 4)])
+        #expect(found("\\foobar \\foo@ \\\\foo \\foo1") == [NSRange(location: 20, length: 4)])
+        #expect(found("\\foo % \\foo") == [NSRange(location: 0, length: 4)])
+        #expect(found("50\\% \\foo") == [NSRange(location: 5, length: 4)])
+        #expect(found("a\\;b \\\\;", "\\;") == [NSRange(location: 1, length: 2)])
+        #expect(found("no such command").isEmpty)
     }
 
     private func layOut(width: CGFloat? = nil) throws {
@@ -561,15 +583,60 @@ struct SourceEditorTests {
         try #require(text.textLayoutManager).textViewportLayoutController.layoutViewport()
     }
 
+    /// A line with an issue has its symbol and what it says in a box at the end of its first wrapped line, a point inside
+    /// its band's end; a narrower pane cuts the words short, then leaves the symbol alone, then nothing, with a help tag's
+    /// words for what isn't shown. An undefined command is underlined where it stands.
     @Test func anIssuesMessageIsAtItsLinesEnd() throws {
         let window = inWindow()
         defer { withExtendedLifetime(window) {} }
-        open("one\nUse \\foo here.\n", caret: 0)
-        text.issueLines = [2: .init(isError: true, message: "Undefined control sequence: \\foo", short: "Undefined control sequence: \\foo")]
+        let undefined = SourceTextView.LineIssue(isError: true, message: "Undefined control sequence: \\foo",
+                                                 short: "Undefined control sequence: \\foo", command: "\\foo")
+        open("one\nUse \\foo here, and \\foo there.\n\n", caret: 0)
+        text.issueLines = [1: .init(isError: false, message: "Marked", short: "Marked"), 2: undefined,
+                           4: .init(isError: true, message: "Emergency stop", short: "Emergency stop", others: ["Missing \\begin{document}"])]
         try layOut()
-        let row = try #require(text.issueRows.first)
-        let message = try #require(row.message)
-        #expect(row.line == 2 && message.view.superview === text && message.rect.maxX == row.band.maxX - 1)
+        let padding = try #require(text.textContainer).lineFragmentPadding
+        let digit = ("0" as NSString).size(withAttributes: [.font: try #require(text.font)]).width
+        var rows = text.issueRows
+        // The last line is the document's empty one, laid out with the paragraph before it.
+        #expect(rows.map(\.line) == [1, 2, 4] && rows.map(\.isError) == [false, true, true])
+        for row in rows {
+            let message = try #require(row.message)
+            #expect(!message.cut && message.rect.maxX == row.band.maxX - 1 && message.rect.minY == row.band.minY)
+            #expect(row.band.contains(message.rect) && message.view.superview === text && message.view.frame == message.rect)
+            // It takes no click.
+            #expect(text.hitTest(text.convert(NSPoint(x: message.rect.midX, y: message.rect.midY), to: text.superview)) === text)
+        }
+        #expect(rows[0].tip == nil && rows[1].tip == nil && rows[2].tip == "Emergency stop\nMissing \\begin{document}")
+        // Both places the command stands, each four characters wide to the pixel, and none for the other lines.
+        let pixel = 1 / window.backingScaleFactor
+        #expect(rows.map(\.tokens.count) == [0, 2, 0] && rows[1].tokens.allSatisfy { abs($0.width - 4 * digit) <= pixel })
+        let start = text.textContainerOrigin.x + padding
+        #expect(abs(rows[1].tokens[0].minX - (start + 4 * digit)) <= pixel / 2 && abs(rows[1].tokens[1].minX - (start + 19 * digit)) <= pixel / 2)
+        // Narrower: the second line's message is in fewer words, its box three digits from its text at the nearest, in
+        // the view it had.
+        try layOut(width: 520)
+        let views = rows.map { $0.message?.view }
+        rows = text.issueRows
+        let cut = try #require(rows[1].message)
+        #expect(cut.cut && cut.rect.maxX == rows[1].band.maxX - 1 && cut.rect.minX >= start + 30 * digit + 3 * digit)
+        let font = NSFont.systemFont(ofSize: 13)
+        let words = ("Undefined: \\foo" as NSString).size(withAttributes: [.font: font]).width
+        #expect(abs(cut.rect.width - IssueBox.Metrics.width(ofText: words, font: font)) < 0.01 && cut.view === views[1])
+        #expect(rows[1].tip == "Undefined control sequence: \\foo" && rows[0].message?.cut == false)
+        // Room for the symbol and not for words: the symbol alone, and the help tag's words.
+        open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
+        text.issueLines = [2: undefined]
+        try layOut(width: 480)
+        let alone = try #require(text.issueRows.first?.message)
+        #expect(alone.cut && alone.rect.width == IssueBox.Metrics.width(ofText: nil, font: font) && text.issueRows.first?.tip != nil)
+        // No room: the band is left, and the help tag's words.
+        open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
+        text.issueLines = [2: undefined]
+        try layOut(width: 440)
+        rows = text.issueRows
+        #expect(rows.count == 1 && rows[0].message == nil && rows[0].tip == "Undefined control sequence: \\foo" && rows[0].tokens.count == 2)
+        #expect(!text.subviews.contains { $0 is IssueMessageView })
     }
 
     @Test func aClickOnAnIssuesMessageShowsTheIssue() throws {
