@@ -93,8 +93,8 @@ crates/texlocal-core/    Projects, path safety, latexmk/SyncTeX, log parsing, ZI
                          Its syntax module is the editors' logic: highlighting, completion,
                          typing transforms, snippets, themes, the symbol and template
                          catalogue, heading styles, maths and glyphs as SVG (RaTeX).
-crates/texlocal-ffi/     C ABI: a static library for the Mac app, a dynamic one for the
-                         Windows app (header in include/).
+crates/texlocal-ffi/     C ABI (header in include/): a static library for the Mac app; the
+                         Windows app builds it as a DLL.
 apps/macos/              AppKit and SwiftUI app, UI only.
 docs/                    core-api.md (the hosts' contract) · texpresso.md (live preview) ·
                          design-tokens.md (editor themes and surfaces)

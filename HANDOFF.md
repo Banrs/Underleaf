@@ -8,17 +8,15 @@ the hosts' contract with the core.
 - **Rust core** (`crates/texlocal-core`) builds and tests on Windows, macOS and Linux. It owns
   everything but UI and OS integration: projects, path safety, latexmk and SyncTeX, log
   parsing, ZIP export, the JSON command service, and **project sessions** (`session/`):
-  each open document's text, autosave, notify-based folder watching, builds, issues and the
-  TeXpresso client. Hosts send commands and receive events (`tl_set_listener`).
-- **`crates/texlocal-syntax`** is I/O-free and also builds to wasm. It owns editor logic:
-  typing transforms, snippets, completion, highlighting, themes, the symbol and template
-  catalogue, heading styles, and maths and glyph rendering through RaTeX (`math_svg`,
-  `glyph_svg`).
-- **`crates/texlocal-ffi`** is the C ABI: a static library for the Mac app, a dynamic one
-  for the Windows app.
-- **`crates/texlocal-server`** serves the API on `127.0.0.1` with a startup token. A web
-  directory is optional: with none, it serves the API alone. A browser frontend is to be
-  written on the same core.
+  each open document's text, autosave, notify-based folder watching, builds, issues, the
+  outline's analysis and the TeXpresso client. Hosts send commands and receive events
+  (`tl_set_listener`). Logic both hosts need lives here, never in a host.
+- **The core's `syntax` module** is I/O-free and owns editor logic: typing transforms,
+  snippets, completion, highlighting, themes, the symbol and template catalogue, heading
+  styles, the ranges spelling and Writing Tools leave alone, and maths and glyph rendering
+  through RaTeX (`math_svg`, `glyph_svg`).
+- **`crates/texlocal-ffi`** is the C ABI, built as a static library (and an rlib for its
+  tests); the Windows app builds its DLL with `cargo rustc --crate-type cdylib`.
 - **macOS app** (`apps/macos`) is UI only, on the core.
 - **Windows app**: a native WinUI 3 / Fluent app is in progress on branch `claude/windows`.
 - **CI** is `.github/workflows/ci.yml`: a path-filtered `changes` job, Rust on Ubuntu and
@@ -37,17 +35,20 @@ the hosts' contract with the core.
   nowhere else. Sidebar and inspector fold for a narrow window and are not saved as hidden
   for it. The window's title is AppKit's, which keeps 160 pt for it (27.2); the system's
   title and overflow were chosen over a custom one.
-- **Toolbar**: Compile is a symbol item (it becomes Stop while building). Aa is an
-  `NSMenuToolbarItem` menu grouped as Notes'; Math and Insert are menus beside it.
+- **Toolbar**: Compile is the window's one prominent item, as a word, changing to its symbol
+  only where the word has no room (as AppKit's search item changes form); while building it
+  is Stop, with its spinner. Aa opens Notes' popover of text styles (`FormatPopover`); Math
+  and Insert are menus beside it.
 - **Source**: one TextKit 2 `NSTextView` (`SourceTextView`) shared across files, in an
   `NSScrollView` of its own (`EditorView`), at Xcode's metrics for font, gutter and current
   line. The completion list (`CompletionList`) is Liquid Glass in a system menu's measures,
   a view of the editor's scroll view and not a window, since glass in a borderless
   non-key panel draws flat.
 - **Issues** are on their lines as in Xcode: a gutter of numbers only, a band over the whole
-  paragraph (`tertiarySystemFill`), and at the end of its first line a box
-  (`IssueMessageView`, an `NSBox`) of system views holding the symbol and the core's
-  one-line message, or the symbol alone where there is no room. A help tag and a click open
+  paragraph (`tertiarySystemFill`), and at the end of its first line a SwiftUI box
+  (`IssueBox`, hosted above the text's views by `IssueMessageView`) holding the symbol and
+  the core's one-line message (its `compact` form where the line is short of room), or the
+  symbol alone. A help tag and a click open
   the build panel on it. Its measures follow the text's size. Underline styles set as
   rendering attributes aren't drawn (27.2), so an undefined command's underline is drawn
   under the text.
@@ -63,7 +64,7 @@ the hosts' contract with the core.
 - **Splits**: AppKit's thin dividers. The source|PDF divider stops above the status bar
   (`ColumnsSplitView`) and a double-click restores the even split; a drag stops at the
   sidebar's opening width and the even split, with the alignment haptic
-  (`RestoredSplitViewController.detent`). A display link lays the splits out during pane
+  (`DetentSplitViewController.detent`). A display link lays the splits out during pane
   animations, which otherwise don't always reach the screen (27.2).
 - **File Outline** sits at the sidebar's foot. On a file that isn't LaTeX it stays, folded
   and dim; it hides only for search results.
@@ -74,25 +75,34 @@ the hosts' contract with the core.
   document showing; during Live Preview it reads the last build's file (`buildBehindLive`).
   The PDF view sits directly in its pane: SwiftUI's scroll edge needs a SwiftUI scroll view,
   and one around PDFKit's view takes its rubber-banding and insets (27.2).
-- **Sessions**: the open project is a core session. The editor sends each edit once
-  (`tl_source_edit`); `ProjectModel` learns what changed from events (`Core.observe`, on the
-  main queue in order); session commands go one at a time on a queue of their own
-  (`Core.session`, `Core.send`). The sidebar's open folders and folded headings are the
-  project's settings (`get_ui_state`, `set_ui_state`), not UserDefaults.
+- **Sessions**: the open project is a core session, numbered by the app before it opens
+  (`Core.observe`), so none of its events can come before the app listens. Commands go
+  through `tl_call_async` and are awaited, so no thread waits on the core; a session takes
+  them in the order sent. Events are decoded on the core's thread and reach their session's
+  `ProjectModel` on the main actor in order. `ProjectModel` is split by concern:
+  `ProjectModel.swift` (state, events, editing, outline, conflicts, settings),
+  `+Build`, `+Live` (live preview and SyncTeX), `+Files`, and `SessionEvents.swift`. The
+  sidebar's open folders and folded headings are the project's settings (`get_ui_state`,
+  `set_ui_state`, and a rename's answer), not UserDefaults.
 - **Editor logic is the core's**: each key asks the source (`tl_source_call`: `type`,
-  `delete_backward`, `insert_newline`) for the edit to type instead, and each storage edit
-  and selection is told back (`follow`, `select`). Command edits, theme colours, the menu
-  catalogue, heading styles and maths SVG come from `tl_syntax_call` (`Syntax`). The maths
-  preview is set at 1.21 times the text.
+  `delete_backward`, `insert_newline`) for the edit to type instead; each storage edit is
+  told back once (`tl_source_edit`, which also answers a snippet's mirror edits) and each
+  selection too (`tl_source_select`). The text comes from `tl_source_text`, and what
+  spelling and Writing Tools skip from `code_ranges`. Command edits, theme colours, the menu
+  catalogue and maths SVG come from `tl_syntax_call` (`Syntax`). The maths preview is set at
+  1.21 times the text.
 - **Other helpers are the core's**: SyncTeX finds the word (`synctex_match`,
-  `synctex_inverse`); the outline's tree and fold keys come with `analyze_project` and its
-  current heading with `outline_current`; a file's kind with `file_tree`; a free name with
-  `create_entry`; an issue box's message as `short`.
-- **Live preview**: the session sends each edit on to TeXpresso and reports its pages
-  (`live_document`, `live_page`); `TeXpressoSession` reads them off the main actor and
-  `PDFController` swaps them into the pane (`showLive`). The whole document follows 300 ms
-  after the last key and replaces only the pages that changed. The protocol is in
-  `docs/texpresso.md`. The pane is the only display: TeXpresso opens no window of its own.
+  `synctex_inverse`); `session_analyze` gives the outline's tree with its fold keys, the
+  word count and the main file's heading styles, and `session_outline_current` the heading
+  at a line; an issue line carries its message's `compact` form and where its command is
+  (`tokens`); a file's kind comes with `file_tree`; a free name with `create_entry`.
+- **Live preview** belongs to its project session, by the session's number. The session
+  sends each edit on to TeXpresso and reports its pages (`live_document`, `live_page`);
+  `TeXpressoSession` reads them off the main actor and `PDFController` swaps them into the
+  pane (`showLive`). The whole document follows 300 ms after the last key and replaces only
+  the pages that changed. While the Live Preview Log shows, the `live` event carries its
+  text (`session_live_log`). Settings ▸ Live Preview chooses the pane or TeXpresso's own
+  window. The protocol is in `docs/texpresso.md`.
 - **A file another app changed** while it has unsaved edits here is asked about in an AppKit
   alert (Save Anyway, Revert, Cancel) with no default button, since either answer loses a
   version; SwiftUI's alert can't omit the default. One moved or deleted gets a SwiftUI alert
@@ -101,11 +111,12 @@ the hosts' contract with the core.
 - **Dim, not hidden**, where hiding would make things jump: the File Outline, the panel's
   Warnings toggle with no warnings, Live Preview Log before Live Preview has run, and
   Format items in files the toolbar's are dim in.
-- **Settings** has four panes: General, Editor, Compiling, Live Preview.
+- **Settings** has five panes: General, Editor, Compiling, PDF (white, dark or automatic
+  paper), Live Preview.
 - **Words**: the feature is Live Preview; TeXpresso is named only where the program is the
   subject. The verb is Compile, and a run and its result are a build. Interface spelling is
   British (Colours) except LaTeX's own terms (Math).
-- Removed on purpose: a dark-paper PDF, TeXpresso's own window, Home's template cards.
+- **Home** offers new projects as template cards.
 
 Platform quirks met on the way (27.2) are in the code's comments where they're handled.
 
@@ -144,4 +155,5 @@ its signature, and compare the installed and built binaries.
   where Homebrew has all of TeXpresso's dependencies and `pkg-config`.
 - Not watched on screen since the live preview's rewrite: a restart after TeXpresso exits,
   and a quick Stop and Start.
-- The browser frontend and the Windows app are not finished.
+- The Windows app (branch `claude/windows`) is not finished; it follows `docs/core-api.md`,
+  whose "Changes for hosts (October 2026)" lists what it must catch up with.
