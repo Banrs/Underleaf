@@ -79,8 +79,11 @@ struct MenuStructureTests {
         let groups = Menus.shared.symbolGroups
         #expect(!groups.isEmpty)
         for group in groups {
-            let rows = try #require(try item(group.title, in: insert).submenu).items.compactMap(\.submenu)
+            let grid = try #require(try item(group.title, in: insert).submenu)
+            let rows = grid.items.compactMap(\.submenu)
             #expect(rows.allSatisfy { $0.presentationStyle == .palette })
+            // Widened past AppKit's own size for its palettes (`MathGlyphs.centre`).
+            #expect(grid.minimumWidth > 0 && grid.size.width == grid.minimumWidth, "\(group.title)")
             #expect(Set(rows.map(\.items.count)) == [SymbolItems.columns(group.symbols.count)], "\(group.title)")
             let glyphs = rows.flatMap(\.items)
             #expect(glyphs.map(\.toolTip) == group.symbols.map(\.command))

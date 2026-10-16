@@ -105,10 +105,21 @@ enum MathGlyphs {
             item.state = .off
         }
     }
+    /// AppKit lays a palette's cells 13 pt inside both edges of its menu, yet sizes a menu of palettes alone
+    /// 5 pt past the last cell (27.2), so a grid sat to the right: its menu takes the difference.
+    private static let centre = NotificationCenter.default.addObserver(
+        forName: NSMenu.didAddItemNotification, object: nil, queue: .main) { note in
+        nonisolated(unsafe) let menu = note.object as? NSMenu
+        MainActor.assumeIsolated {
+            guard let menu, menu.items.allSatisfy({ $0.submenu?.presentationStyle == .palette }) else { return }
+            menu.minimumWidth = 0
+            menu.minimumWidth = menu.size.width + 8
+        }
+    }
 
     /// A template, so the menu tints it.
     static func image(_ command: String) -> NSImage {
-        _ = unmark
+        _ = (unmark, centre)
         if let image = images[command] { return image }
         let drawn: Syntax.Drawing? = Syntax.call("glyph_svg", ["command": command])
         let image = drawn.flatMap { NSImage(drawing: $0) } ?? NSImage(size: NSSize(width: 24, height: 24))
