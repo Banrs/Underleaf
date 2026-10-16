@@ -1,9 +1,10 @@
 //! Maths as SVG, by RaTeX (KaTeX's layout in Rust): its parser and layout,
 //! and its SVG export with every glyph an outline from the KaTeX fonts
 //! compiled in, so the SVG holds only `<path>` and `<rect>` and needs no
-//! fonts. Text the KaTeX fonts haven't is an error: RaTeX would look for it
-//! in the system's fonts, which takes seconds and isn't the same on any two
-//! machines.
+//! fonts. Text the KaTeX fonts haven't (CJK, Cyrillic) is drawn as outlines
+//! from the system's fonts, as KaTeX's page had the browser's: loading them
+//! takes about half a second the first time. What has no outline, such as a
+//! colour emoji on macOS, is an error.
 
 use ratex_font::FontId;
 use ratex_layout::{LayoutOptions, layout, to_display_list};
@@ -47,12 +48,6 @@ fn display_list(tex: &str, display: bool, color: Rgba) -> Result<DisplayList, St
         .with_color(Color::new(r, g, b, a));
     let mut list = to_display_list(&layout(&nodes, &options));
     for item in &mut list.items {
-        if let DisplayItem::GlyphPath {
-            font, char_code, ..
-        } = item
-        {
-            check_glyph(font, *char_code)?;
-        }
         clamp_item(item);
     }
     list.width = length(list.width);
@@ -62,27 +57,6 @@ fn display_list(tex: &str, display: bool, color: Rgba) -> Result<DisplayList, St
     let total = (list.height + list.depth).clamp(0.0, MAX_EM);
     list.depth = total - list.height;
     Ok(list)
-}
-
-/// A glyph RaTeX would draw from a system font, or from a KaTeX font that
-/// hasn't it, is an error: RaTeX's own test for loading the system's fonts.
-fn check_glyph(font: &str, char_code: u32) -> Result<(), String> {
-    let id = FontId::parse(font);
-    let katex = id.filter(|id| {
-        !matches!(
-            id,
-            FontId::CjkRegular | FontId::CjkFallback | FontId::EmojiFallback
-        )
-    });
-    match katex {
-        Some(id) if char_code <= 0x7f || ratex_font::get_char_metrics(id, char_code).is_some() => {
-            Ok(())
-        }
-        _ => {
-            let c = char::from_u32(char_code).unwrap_or('\u{fffd}');
-            Err(format!("The maths fonts have no “{c}”"))
-        }
-    }
 }
 
 fn coordinate(v: f64) -> f64 {
@@ -339,13 +313,23 @@ mod tests {
     fn what_cant_be_drawn_is_an_error() {
         assert!(math_svg(r"x^", false, 10.0, BLACK).is_err());
         assert!(math_svg(r"\frac{1}", false, 10.0, BLACK).is_err());
-        let cjk = math_svg(r"\text{日本}", false, 10.0, BLACK).unwrap_err();
-        assert!(cjk.contains('日'), "{cjk}");
-        assert!(math_svg(r"\text{😀}", false, 10.0, BLACK).is_err());
+        // A colour emoji has no outline to draw where the system's emoji font is bitmaps
+        // alone, as macOS's is; Windows' and Linux's have outlines.
+        if cfg!(target_os = "macos") {
+            assert!(math_svg(r"\text{😀}", false, 10.0, BLACK).is_err());
+        }
         assert!(math_svg(r"\def\a{\a}\a", false, 10.0, BLACK).is_err());
         assert!(math_svg("x", false, f64::NAN, BLACK).is_err());
         // Latin text and accents are the fonts'.
         assert!(math_svg(r"\text{café} \alpha", false, 10.0, BLACK).is_ok());
+        // Text the KaTeX fonts haven't is drawn from the system's fonts, as KaTeX's page did in the browser's.
+        for tex in [r"\text{日本} + x", r"\text{Привет} \alpha"] {
+            let drawn = math_svg(tex, false, 10.0, BLACK).unwrap();
+            assert!(
+                drawn.svg.contains("<path") && !drawn.svg.contains("<text"),
+                "{tex}"
+            );
+        }
     }
 
     #[test]
