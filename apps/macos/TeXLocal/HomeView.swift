@@ -8,7 +8,9 @@ struct HomeView: View {
     @FocusState private var searching: Bool
     @State private var query = ""
     @AppStorage(DefaultsKey.dismissedTeXTip) private var dismissedTeXTip = false
-    @State private var slow: Set<String> = []
+    /// What was still at work 300 ms after it began: a quick open or copy shows no spinner.
+    @State private var slowOpening: String?
+    @State private var slowImports: [URL] = []
 
     var body: some View {
         Group {
@@ -38,7 +40,11 @@ struct HomeView: View {
         .onChange(of: app.searchFocusToken) { searching = true }
         .task(id: app.opening) {
             do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
-            slow = Set(app.opening)
+            slowOpening = app.opening
+        }
+        .task(id: app.importing) {
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+            slowImports = app.importing
         }
     }
 
@@ -66,12 +72,12 @@ struct HomeView: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("New")
             Section {
-                ForEach(copying, id: \.self) { name in
-                    ProjectLabel(detail: Text("Copying…"), progress: "Copying") { Text(name).font(.headline) }
+                ForEach(copying, id: \.self) { url in
+                    ProjectLabel(detail: Text("Copying…"), progress: "Copying") { Text(url.lastPathComponent).font(.headline) }
                 }
                 ForEach(shown) { project in
                     // Its own view, so a row redraws only when its rename starts or ends.
-                    ProjectRow(project: project, working: working.contains(project.id), rename: rename,
+                    ProjectRow(project: project, working: project.id == app.opening && project.id == slowOpening, rename: rename,
                                ended: { listFocused = true }) { commitRename(project) }
                 }
                 if app.projectsLoaded, shown.isEmpty { empty.frame(maxWidth: .infinity).selectionDisabled() }
@@ -141,11 +147,8 @@ struct HomeView: View {
         Task { await app.rename(project, to: name) }
     }
 
-    private var working: Set<String> { slow.intersection(app.opening) }
-
-    private var copying: [String] {
-        let ids = Set(app.projects.map(\.id))
-        return query.isEmpty ? app.opening.filter { working.contains($0) && !ids.contains($0) } : []
+    private var copying: [URL] {
+        query.isEmpty ? slowImports.filter(app.importing.contains) : []
     }
 
     private var shown: [ProjectInfo] {

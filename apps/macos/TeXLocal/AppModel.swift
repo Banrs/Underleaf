@@ -256,13 +256,10 @@ final class AppModel {
     func importProject(from url: URL, open: Bool = true) async {
         if await isInLibrary(url, open: open) { return }
         // A second Return while it copies would make a second project.
+        guard !importing.contains(url) else { return }
+        importing.append(url)
+        defer { importing.removeAll { $0 == url } }
         let name = url.lastPathComponent
-        guard importing.insert(url).inserted else { return }
-        opening.append(name)
-        defer {
-            importing.remove(url)
-            stopOpening(name)
-        }
         guard let info = await alerting("Couldn’t Open “\(name)”", {
             try await core.call("import_project", ["src": url.path], as: ProjectInfo.self)
         }) else { return }
@@ -352,15 +349,15 @@ final class AppModel {
         }
     }
 
-    /// Only the latest carries on: the restored project and an Open With import can overlap at launch.
+    /// Bumped by each open and close, so only the latest carries on: the restored project and an Open With import can
+    /// overlap at launch.
     @ObservationIgnored private var openGeneration = 0
-    private(set) var opening: [String] = []
-    var isOpening: Bool { !opening.isEmpty }
-    @ObservationIgnored private var importing = Set<URL>()
-
-    private func stopOpening(_ name: String) {
-        if let place = opening.firstIndex(of: name) { opening.remove(at: place) }
-    }
+    /// The id of the project loading, for Home to show at work, before `project` may name it. A superseded open lets go
+    /// of it as it gives up, unless a later one has taken it.
+    private(set) var opening: String?
+    /// What is being copied into the library, for Home to show at work.
+    private(set) var importing: [URL] = []
+    var isOpening: Bool { opening != nil || !importing.isEmpty }
 
     @ObservationIgnored private var launchProject: String?
 
@@ -374,8 +371,8 @@ final class AppModel {
         openGeneration += 1
         let generation = openGeneration
         guard project?.id != id || project?.closed == true else { return }
-        opening.append(id)
-        defer { stopOpening(id) }
+        opening = id
+        defer { if opening == id { opening = nil } }
         guard await leave(generation) else { return }
         dropRequests()
         // Home's renames and moves to the Trash can't be undone under a project: Undo from the sidebar could rename the open project's folder under it.
