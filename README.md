@@ -12,8 +12,6 @@ One Rust core, thin native hosts:
 - **macOS app** — AppKit and SwiftUI for macOS 27, in `apps/macos`. The editor is
   native (TextKit), and the PDF is PDFKit's.
 - **Windows app** — a native WinUI 3 / Fluent app on the same core, in progress.
-- **Local server** — `crates/texlocal-server` serves the core's API on `127.0.0.1`
-  only, for a browser frontend still to be written.
 
 [HANDOFF.md](HANDOFF.md) has the current status and architecture.
 
@@ -92,12 +90,11 @@ Projects are plain folders in `~/TeXLocal` — override with
 crates/texlocal-core/    Projects, path safety, latexmk/SyncTeX, log parsing, ZIP export,
                          the JSON command service, and project sessions (saving, watching,
                          building, issues, the TeXpresso client) with events to hosts.
-crates/texlocal-syntax/  Editor logic, free of I/O (also builds to wasm): highlighting,
-                         completion, typing transforms, snippets, themes, the symbol and
-                         template catalogue, heading styles, maths and glyphs as SVG (RaTeX).
+                         Its syntax module is the editors' logic: highlighting, completion,
+                         typing transforms, snippets, themes, the symbol and template
+                         catalogue, heading styles, maths and glyphs as SVG (RaTeX).
 crates/texlocal-ffi/     C ABI: a static library for the Mac app, a dynamic one for the
                          Windows app (header in include/).
-crates/texlocal-server/  Local HTTP host for the core's API.
 apps/macos/              AppKit and SwiftUI app, UI only.
 docs/                    core-api.md (the hosts' contract) · texpresso.md (live preview) ·
                          design-tokens.md (editor themes and surfaces)
@@ -108,7 +105,6 @@ tools/texpresso/         Builds and installs TeXpresso with Underleaf's patch.
 
 ```sh
 cargo test --workspace        # the core builds and tests on Windows, macOS and Linux
-cargo run -p texlocal-server  # the API on 127.0.0.1, with a token printed at startup
 
 # macOS app (Xcode 27): the build runs cargo itself
 open apps/macos/TeXLocal.xcodeproj
@@ -129,10 +125,6 @@ Keep the version in the workspace `Cargo.toml` and the macOS project (`MARKETING
 
 ## Security notes
 
-- The server binds `127.0.0.1` only, asks for its startup token in an `X-TeXLocal-Token`
-  header on every request for project data (never in a cookie), rejects foreign Host and
-  Origin headers, and may not be framed.
-- Project files are served with a sandbox CSP and `nosniff`, so a file in a project can never execute as a document on the server's origin.
 - `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). The macOS app turns it on per project; `.texlocal.json` is reserved and cannot be written through the generic file APIs.
 - A project's own `latexmkrc` (Perl that runs on every build) is read only when that project has shell escape on; your own (`~/.latexmkrc` or `~/.config/latexmk/latexmkrc`) always is.
 

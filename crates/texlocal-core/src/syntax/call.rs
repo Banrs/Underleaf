@@ -7,9 +7,9 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::theme::{self, Rgba};
-use crate::{SnippetField, SourceDocument, Style, TextEdit, TextRange, map_selections};
-use crate::{headings, render};
+use super::theme::{self, Rgba};
+use super::{SnippetField, SourceDocument, Style, TextEdit, TextRange, map_selections};
+use super::{headings, render};
 
 /// The arguments the document's commands take, each what it needs; any left
 /// out are empty, but for `autoPair` (true) and `step` (1).
@@ -254,7 +254,7 @@ fn call_with(command: &str, value: &Value) -> Option<String> {
                 render::glyph_svg(&m.command, size, side, color)
             })
         }
-        "menus" => json(crate::catalog::menus()),
+        "menus" => json(super::catalog::menus()),
         "document_class" => json(headings::document_class(string("text")?)),
         "heading_styles" => {
             let class = string("class").map(|name| headings::DocumentClass {
@@ -288,7 +288,7 @@ fn call_with(command: &str, value: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::SourceDocument;
+    use crate::syntax::SourceDocument;
 
     #[test]
     fn commands_answer_by_name() {

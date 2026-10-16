@@ -3,8 +3,8 @@
 
 use serde::Serialize;
 
-use crate::maths::{Group, Scans, Visit};
-use crate::{NAME, Text, TextEdit, TextRange, ascii, edit};
+use super::maths::{Group, Scans, Visit};
+use super::{NAME, Text, TextEdit, TextRange, ascii, edit};
 
 /// The styles the whole selection has, each as the edits that unwrap the
 /// innermost command giving it: its name and opening brace, then its closing

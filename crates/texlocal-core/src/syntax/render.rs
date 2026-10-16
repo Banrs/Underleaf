@@ -15,7 +15,7 @@ use ratex_types::math_style::MathStyle;
 use ratex_types::path_command::PathCommand;
 use serde::Serialize;
 
-use crate::theme::Rgba;
+use super::theme::Rgba;
 
 /// An SVG and its size, in the points (or pixels) of `size`.
 #[derive(Clone, Debug, PartialEq, Serialize)]

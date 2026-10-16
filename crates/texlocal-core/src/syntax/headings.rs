@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::catalog::{CATALOG, HeadingLevel};
+use super::catalog::{CATALOG, HeadingLevel};
 
 /// The class a main file's `\documentclass` names, and the type size its
 /// options set.

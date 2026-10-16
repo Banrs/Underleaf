@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::{Text, catalog, is, utf16};
+use super::{Text, catalog, is, utf16};
 
 /// A place to type in a completion's text. Fields with the same `index`
 /// are one field in several places: what's typed in one goes in all.
@@ -187,9 +187,9 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
 
 #[cfg(test)]
 mod tests {
-    use crate::SourceDocument;
+    use crate::syntax::SourceDocument;
 
-    fn complete(before: &str) -> crate::Completion {
+    fn complete(before: &str) -> crate::syntax::Completion {
         let doc = SourceDocument::new(before);
         let caret = before.encode_utf16().count() as u32;
         doc.completions(caret, false, &[], &[])
@@ -222,8 +222,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(12, 0)]
         );
-        let (text, fields) =
-            super::expand(&crate::Text::new("\t\\beg"), 5, "#{😀}\n\t#{}#{é}#{😀}#{}");
+        let (text, fields) = super::expand(
+            &crate::syntax::Text::new("\t\\beg"),
+            5,
+            "#{😀}\n\t#{}#{é}#{😀}#{}",
+        );
         assert_eq!(text, "😀\n\t  é😀");
         assert_eq!(
             fields
@@ -236,7 +239,7 @@ mod tests {
 
     #[test]
     fn an_offer_says_what_its_items_are() {
-        use crate::CompletionKind::*;
+        use crate::syntax::CompletionKind::*;
         let kind = |before: &str| {
             let (labels, citations) = (["sec:a".to_owned()], ["knuth84".to_owned()]);
             let caret = before.encode_utf16().count() as u32;

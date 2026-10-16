@@ -2,8 +2,8 @@
 //! Name arguments include cases that the highlighter leaves uncoloured when
 //! options come first, as in `\usepackage[utf8]{inputenc}`.
 
-use crate::maths::{Point, Scans, Visit};
-use crate::{Text, TextRange, blank, catalog::CATALOG};
+use super::maths::{Point, Scans, Visit};
+use super::{Text, TextRange, blank, catalog::CATALOG};
 
 /// Absolute UTF-16 ranges to skip in `start..end`: math and literal code from
 /// the shared math scan, plus name arguments. The scan resumes from a kept
@@ -184,7 +184,7 @@ fn argument_ranges(text: &Text, mut i: usize, end: usize, ranges: &mut Vec<TextR
 
 #[cfg(test)]
 mod tests {
-    use crate::SourceDocument;
+    use crate::syntax::SourceDocument;
 
     /// The name arguments `not_prose` finds in the whole source.
     fn names(source: &str) -> Vec<String> {

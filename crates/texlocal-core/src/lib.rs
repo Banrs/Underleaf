@@ -1,9 +1,9 @@
-// TeXLocal's core: projects, compilation, and the path rules that keep both
-// inside the data directory. Deliberately GUI-free, so it tests on any host
-// without a webview.
+// TeXLocal's core: projects, compilation, the path rules that keep both
+// inside the data directory, project sessions, and the editors' LaTeX logic
+// (`syntax`). Deliberately GUI-free, so it tests on any host.
 //
 // Path convention: every project-relative path this crate RETURNS or STORES
-// uses forward slashes — the frontend and SyncTeX both expect '/'.
+// uses forward slashes — the hosts and SyncTeX both expect '/'.
 
 pub mod analyze;
 mod atomic;
@@ -18,6 +18,7 @@ pub mod service;
 pub mod session;
 pub mod settings;
 pub mod synctex;
+pub mod syntax;
 pub mod templates;
 pub mod texpresso;
 pub mod zipexport;
@@ -27,23 +28,8 @@ pub use error::CoreError;
 pub const BUILD_DIR: &str = "build";
 pub const SETTINGS_FILE: &str = ".texlocal.json";
 
-/// Where projects live: `TEXLOCAL_DATA` when set, else ~/TeXLocal — visible in
-/// the file manager, syncable, and (unlike ~/Documents on macOS) not behind a
-/// privacy gate, so no host hangs waiting on a folder-permission prompt. The
-/// browser server opens it, and the Mac app the folder its Swift finds by the
-/// same rule (Core.libraryFolder, which Home names when it can't be opened),
-/// so both see one library.
-pub fn default_data_dir() -> std::path::PathBuf {
-    if let Some(dir) = std::env::var_os("TEXLOCAL_DATA").filter(|v| !v.is_empty()) {
-        return dir.into();
-    }
-    std::env::home_dir()
-        .map(|home| home.join("TeXLocal"))
-        .unwrap_or_else(|| "TeXLocal".into())
-}
-
-/// `bytes` bytes from the system's random source, as lowercase hex: the
-/// browser server's token and each live preview session's.
+/// `bytes` bytes from the system's random source, as lowercase hex: each
+/// live preview session's token.
 pub fn random_hex(bytes: usize) -> Result<String, CoreError> {
     let mut random = vec![0u8; bytes];
     getrandom::fill(&mut random).map_err(|err| CoreError::internal(err.to_string()))?;

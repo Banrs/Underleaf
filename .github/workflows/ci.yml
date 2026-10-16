@@ -36,8 +36,8 @@ jobs:
             files=ALL
           fi
           has() { [ "$files" = ALL ] || grep -Eq "$1" <<< "$files"; }
-          shared='^(crates/texlocal-(core|ffi|syntax)/|Cargo\.(toml|lock)$|\.github/workflows/ci\.yml$)'
-          has "$shared|^crates/" && echo rust=true >> "$GITHUB_OUTPUT"
+          shared='^(crates/|Cargo\.(toml|lock)$|\.github/workflows/ci\.yml$)'
+          has "$shared" && echo rust=true >> "$GITHUB_OUTPUT"
           has "$shared|^apps/macos/" && echo mac=true >> "$GITHUB_OUTPUT"
           exit 0
 

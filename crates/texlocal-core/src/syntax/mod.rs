@@ -1,20 +1,22 @@
 //! LaTeX editing logic for the editors: highlighting, completion and the
-//! editing commands, as ranges and edits for the editor to apply. The editor owns the text, its undo and its drawing; a
-//! `SourceDocument` mirrors the text through the editor's edits and answers in
-//! UTF-16 offsets, which NSString, JavaScript and WinUI all count in.
+//! editing commands, as ranges and edits for the editor to apply. The editor
+//! owns the text, its undo and its drawing; a `SourceDocument` mirrors the
+//! text through the editor's edits and answers in UTF-16 offsets, which
+//! NSString and WinUI both count in. A session's open file
+//! (`session::Document`) holds one, as does each of the FFI's own sources.
 
 mod call;
-pub mod catalog;
+pub(crate) mod catalog;
 mod complete;
 mod edit;
-pub mod headings;
+pub(crate) mod headings;
 mod highlight;
 mod maths;
 mod prose;
-pub mod render;
+pub(crate) mod render;
 mod stack;
 mod style;
-pub mod theme;
+pub(crate) mod theme;
 mod typing;
 
 use serde::{Deserialize, Serialize};

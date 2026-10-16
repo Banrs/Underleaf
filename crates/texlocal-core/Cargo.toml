@@ -1,6 +1,6 @@
 [package]
 name = "texlocal-core"
-description = "TeXLocal's project, compile, and SyncTeX core — no GUI dependencies"
+description = "TeXLocal's core: projects, compiling, SyncTeX, the live preview and the editors' LaTeX logic — no GUI dependencies"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,10 +11,9 @@ getrandom = "0.4"
 memchr = "2"
 notify = "8"
 ropey = "1.6"
-texlocal-syntax = { path = "../texlocal-syntax" }
 which = "8"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-regex = "1"
+regex = "1.12.1"
 trash = "5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -27,6 +26,20 @@ tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync
 # would have: without its line, flate2 fails to build.
 zip = { version = "2", default-features = false, features = ["chrono", "deflate-flate2", "flate2"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# The editors' maths as SVG (syntax/render.rs).
+ratex-font = "=0.1.14"
+ratex-katex-fonts = "=0.1.14"
+ratex-layout = "=0.1.14"
+ratex-parser = "=0.1.14"
+# Glyphs as outlines from the KaTeX fonts compiled in; text those fonts
+# haven't (CJK, Cyrillic) comes from its system-font fallback (render.rs).
+ratex-svg = { version = "=0.1.14", features = ["embed-fonts"] }
+ratex-types = "=0.1.14"
+# ratex-katex-fonts embeds its fonts only in release builds unless this is
+# on: debug and test builds would read them from the registry at run time.
+rust-embed = { version = "8.11", features = ["debug-embed"] }
+ttf-parser = "0.25"
+unicode-segmentation = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -6,9 +6,9 @@ use std::{borrow::Cow, sync::LazyLock};
 use regex::Regex;
 use serde::Serialize;
 
-use crate::prose::Names;
-use crate::stack::Stack;
-use crate::{NAME, Text, TextRange, ascii, catalog, is, letter, space, utf16};
+use super::prose::Names;
+use super::stack::Stack;
+use super::{NAME, Text, TextRange, ascii, catalog, is, letter, space, utf16};
 
 fn find(src: &[u16], from: usize, needle: &[u16]) -> Option<usize> {
     (from..=src.len().checked_sub(needle.len())?).find(|&i| src[i..].starts_with(needle))
@@ -520,7 +520,7 @@ fn preview_tex(environment: Option<&str>, body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{READ, SPACING};
-    use crate::{SourceDocument, TextRange};
+    use crate::syntax::{SourceDocument, TextRange};
 
     fn in_math(text: &str) -> bool {
         super::math_mode_at(&text.encode_utf16().collect::<Vec<_>>())

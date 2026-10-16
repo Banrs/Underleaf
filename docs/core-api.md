@@ -1,7 +1,6 @@
 # The core's API for hosts
 
-Underleaf's hosts (the macOS app, the Windows app, the browser server) are UI and OS
-integration only. Everything else is the Rust core's: stateless commands (`Service`, as
+Underleaf's hosts (the macOS app and the Windows app) are UI and OS integration only. Everything else is the Rust core's: stateless commands (`Service`, as
 before) and **project sessions** (`texlocal_core::session`), which keep what a host used to
 keep per open project. This is the contract they are written against.
 
@@ -21,8 +20,7 @@ Windows loads `texlocal_ffi.dll`):
 | `tl_syntax_call(command, args_json)` | Commands that need no source: themes and colours, menus, maths as SVG, and `drop_text` (below). |
 
 Callbacks are plain C: `void (*)(void *ctx, const char *json)`, UTF-8 JSON valid only during
-the call. The browser server calls `Sessions::call` and `Hub::set_listener` directly, and can
-forward events as they come (SSE or WebSocket).
+the call.
 
 ### Threading
 
@@ -37,9 +35,8 @@ forward events as they come (SSE or WebSocket).
   `tl_call_async`: the hold ends when `done` returns, so a `done` that queues the answer
   for the UI thread queues it before any event. With `tl_call` the hold ends as the call
   returns, so the host's own code after it may still run alongside the first events: open
-  with `tl_call_async` if the order matters to it. The browser
-  server's `Sessions::call` holds until the answer is produced; `Sessions::call_then`
-  takes a `deliver` closure and holds until it returns.
+  with `tl_call_async` if the order matters to it. In Rust, `Sessions::call_then` takes
+  a `deliver` closure and holds until it returns.
 - `tl_call` may be called from any thread, several at once. `session_*` commands are quick
   (they never wait for a build or TeXpresso to finish), but go through the session's queue:
   keep them off the UI thread or use `tl_call_async`.
@@ -100,7 +97,7 @@ a host keeps the outline it last got and asks `outline_current {outline, file, l
 
 ## Commands that fill small gaps
 
-Service commands (`tl_call`; the browser's too):
+Service commands (`tl_call`):
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|

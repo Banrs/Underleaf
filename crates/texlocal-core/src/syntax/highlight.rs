@@ -4,8 +4,8 @@
 //! before left; those states are kept, so an edit re-reads only from its
 //! line, and only as far as asked.
 
-use crate::stack::Stack;
-use crate::{NAME, Text, ascii, letter, space};
+use super::stack::Stack;
+use super::{NAME, Text, ascii, letter, space};
 
 /// What a run of text is, by the stex mode's token names. Plain text and
 /// brackets have none. The C ABI numbers them in this order, from 0.
@@ -365,7 +365,7 @@ fn command_letter(u: u16) -> bool {
 mod tests {
     use super::Highlight;
     use super::HighlightKind::*;
-    use crate::{SourceDocument, utf16};
+    use crate::syntax::{SourceDocument, utf16};
 
     /// The runs as "text Kind" pairs.
     fn runs(source: &str) -> Vec<String> {
@@ -534,7 +534,7 @@ mod tests {
         let source: String = (0..LINES)
             .map(|n| format!("{{ \\cite{{ line {n} word\n"))
             .collect();
-        crate::stack::WORK.set(0);
+        crate::syntax::stack::WORK.set(0);
         let mut doc = SourceDocument::new(&source);
         let len = utf16(&source) as u32;
         let runs = doc.highlights(0, len);
@@ -543,7 +543,7 @@ mod tests {
         assert_eq!(runs.last().map(|r| r.kind), Some(Argument));
         // Each line is read twice, a few frames made or looked at for each
         // however deep the stack is.
-        let work = crate::stack::WORK.get();
+        let work = crate::syntax::stack::WORK.get();
         assert!(work <= 8 * LINES, "{work} frames for {LINES} lines");
         drop(doc); // a deep stack drops without overflowing
     }

@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{SnippetField, Text, TextEdit, TextRange, edit, is, utf16};
+use super::{SnippetField, Text, TextEdit, TextRange, edit, is, utf16};
 
 /// What a key does instead of what the editor would: an edit, typed as a
 /// key types (so it undoes with the typing around it), and where the
@@ -511,7 +511,7 @@ impl Typing {
         let Some(snippet) = &mut self.snippet else {
             return Tab {
                 field: None,
-                edits: crate::edit::indent(text, selections, step > 0),
+                edits: super::edit::indent(text, selections, step > 0),
             };
         };
         let next = snippet.active + step;
@@ -663,7 +663,7 @@ pub fn wrap(text: &Text, selections: &[TextRange], template: &str) -> Change {
 }
 
 fn wrap_in(text: &Text, selections: &[TextRange], prefix: &str, suffix: &str) -> Change {
-    let selection = crate::clamp(
+    let selection = super::clamp(
         selections.first().copied().unwrap_or_default(),
         text.units.len() as u32,
     );
@@ -684,7 +684,7 @@ fn wrap_in(text: &Text, selections: &[TextRange], prefix: &str, suffix: &str) ->
 /// following the text; on otherwise, round the selection.
 pub fn toggle_style(
     text: &Text,
-    styles: crate::TextStyles,
+    styles: super::TextStyles,
     selections: &[TextRange],
     style: Style,
 ) -> Change {

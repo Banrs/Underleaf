@@ -1,7 +1,6 @@
 use std::fmt;
 
-/// An error with an HTTP status code: the browser server answers with it, and
-/// the FFI reports it as `status`.
+/// An error with an HTTP status code, which the FFI reports as `status`.
 #[derive(Debug, Clone)]
 pub struct CoreError {
     pub status: u16,

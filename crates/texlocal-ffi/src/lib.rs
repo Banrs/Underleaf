@@ -1,6 +1,5 @@
-//! The C ABI the macOS app links: one JSON-in, JSON-out call over
-//! `texlocal_core::service`, the same command names and arguments the browser
-//! server uses. See `include/texlocal.h`.
+//! The C ABI the Mac app links and the Windows app loads: one JSON-in,
+//! JSON-out call over `texlocal_core::service`. See `include/texlocal.h`.
 //!
 //! `tl_call` blocks until the command finishes (a compile can take minutes),
 //! so hosts call it off their UI thread, or use `tl_call_async`. Concurrent
@@ -8,7 +7,7 @@
 //! its own thread. `session_*` commands go to `texlocal_core::session`, whose
 //! events reach the listener `tl_set_listener` sets.
 //!
-//! `tl_source_*` are the editor's: `texlocal_syntax`'s view of a file's text,
+//! `tl_source_*` are the editor's: `texlocal_core::syntax`'s view of a file's text,
 //! answering in UTF-16 offsets, on the editor's thread. A source from
 //! `tl_session_source` is a session's document: its edits are saved and
 //! previewed from there too.
@@ -24,8 +23,8 @@ use serde_json::{Map, Value, json};
 use texlocal_core::events::{Hub, Listener};
 use texlocal_core::service::{Service, arg, string_arg};
 use texlocal_core::session::{Document, Sessions};
+use texlocal_core::syntax::{self, SourceDocument};
 use texlocal_core::{CoreError, import, zipexport};
-use texlocal_syntax::SourceDocument;
 
 pub struct TlHandle {
     runtime: tokio::runtime::Runtime,
@@ -71,8 +70,8 @@ impl Host {
                 zipexport::export_zip(&root, Path::new(s("dest")?))?;
                 Ok(Value::Null)
             }
-            // On quit, while a compile call may still be in flight â€” which rules
-            // out tl_close â€” stop the latexmk trees that would otherwise outlive
+            // On quit, while a compile call may still be in flight — which rules
+            // out tl_close — stop the latexmk trees that would otherwise outlive
             // the app.
             "kill_all" => {
                 service.kill_all();
@@ -151,9 +150,11 @@ unsafe fn str_arg<'a>(ptr: *const c_char) -> Option<&'a str> {
 }
 
 /// Open the service over the library folder `data_dir`, which the host
-/// chooses (the Mac app by `default_data_dir`'s rule, in Swift). Returns null
-/// if `data_dir` is null or not UTF-8, the directory cannot be created or the
-/// runtime cannot start.
+/// chooses: both apps take `TEXLOCAL_DATA` when set, else ~/TeXLocal, which
+/// is visible in the file manager, syncable, and (unlike ~/Documents on
+/// macOS) not behind a privacy gate, so no host hangs waiting on a
+/// folder-permission prompt. Returns null if `data_dir` is null or not UTF-8,
+/// the directory cannot be created or the runtime cannot start.
 ///
 /// # Safety
 /// `data_dir` is null or a NUL-terminated string.
@@ -269,7 +270,7 @@ pub unsafe extern "C" fn tl_call_async(
 }
 
 /// Sets the function the core's events go to, one JSON object at a time
-/// (`{"type": â€¦, "session": â€¦, â€¦}`), in order, on a thread of the core's
+/// (`{"type": …, "session": …, …}`), in order, on a thread of the core's
 /// own; null removes it. Returns once no call to the previous one is running.
 ///
 /// # Safety
@@ -352,7 +353,7 @@ pub unsafe extern "C" fn tl_session_source(
         })
 }
 
-/// A file's text as the editor has it (`texlocal_syntax::SourceDocument`):
+/// A file's text as the editor has it (`syntax::SourceDocument`):
 /// the host's own, or a session's document.
 pub struct TlSource(Source);
 
@@ -491,8 +492,7 @@ pub unsafe extern "C" fn tl_source_free_runs(runs: *mut u32, count: usize) {
     }
 }
 
-/// `texlocal_syntax::SourceDocument::call`'s commands, and
-/// `texlocal_syntax::call`'s. Returns the result's JSON (free it with
+/// `syntax::SourceDocument::call`'s commands, and `syntax::call`'s. Returns the result's JSON (free it with
 /// `tl_free`), or null for an unknown command or arguments.
 ///
 /// # Safety
@@ -516,7 +516,7 @@ fn owned_string(text: String) -> *mut c_char {
     CString::new(text).map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
-/// `texlocal_syntax::call`'s commands, which need no source: the themes,
+/// `syntax::call`'s commands, which need no source: the themes,
 /// the menus' catalogue, a class's headings, and maths and symbols as SVG
 /// ("math_svg", "glyph_svg"). Any thread. Returns the result's JSON (free it
 /// with `tl_free`), or null for an unknown command or arguments.
@@ -530,7 +530,7 @@ pub unsafe extern "C" fn tl_syntax_call(
 ) -> *mut c_char {
     let call = || {
         let (command, args) = unsafe { (str_arg(command)?, str_arg(args_json)?) };
-        texlocal_syntax::call(command, args)
+        syntax::call(command, args)
     };
     caught(call)
         .flatten()

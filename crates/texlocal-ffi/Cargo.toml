@@ -1,21 +1,21 @@
 [package]
 name = "texlocal-ffi"
-description = "C ABI over texlocal-core's command service and texlocal-syntax's editor logic, for the macOS app"
+description = "C ABI over texlocal-core's commands, sessions and editor logic, for the Mac and Windows apps"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
 name = "texlocal_ffi"
-# staticlib links into the macOS app, cdylib loads into the Windows app
-# (P/Invoke); rlib is for tests/ffi.rs.
-crate-type = ["staticlib", "cdylib", "rlib"]
+# staticlib links into the macOS app; rlib is for tests/ffi.rs. The Windows
+# app loads a DLL (P/Invoke) that its build asks for itself, with `cargo rustc
+# --crate-type cdylib`, so the Mac's builds link no dylib they never use.
+crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 texlocal-core = { path = "../texlocal-core" }
-texlocal-syntax = { path = "../texlocal-syntax" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [dev-dependencies]

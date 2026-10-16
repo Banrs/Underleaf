@@ -2,7 +2,7 @@
 //! maths at a place, the maths to preview, completions, headings and blocks.
 
 use serde::Deserialize;
-use texlocal_syntax::{SourceDocument, TextEdit, TextRange, math_mode_at};
+use texlocal_core::syntax::{SourceDocument, TextEdit, TextRange, math_mode_at};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

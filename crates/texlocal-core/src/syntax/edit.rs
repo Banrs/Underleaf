@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::{
+use super::{
     Insertion, Text, TextEdit, TextRange, blank, catalog, complete, edit, is, space, utf16,
 };
 
@@ -169,7 +169,7 @@ pub fn insert_block(text: &Text, id: &str, selection: TextRange) -> Option<Inser
 #[cfg(test)]
 mod tests {
     use super::edit;
-    use crate::{SourceDocument, TextRange};
+    use crate::syntax::{SourceDocument, TextRange};
 
     #[test]
     fn outdent_keeps_visual_columns_and_the_matching_prefix() {

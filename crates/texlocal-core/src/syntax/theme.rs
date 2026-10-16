@@ -6,7 +6,7 @@
 
 use serde::Serialize;
 
-use crate::HighlightKind;
+use super::HighlightKind;
 
 /// sRGB components and alpha, 0 to 1.
 pub type Rgba = [f64; 4];

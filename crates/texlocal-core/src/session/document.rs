@@ -3,12 +3,12 @@
 
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
-use texlocal_syntax::SourceDocument;
 use tokio::sync::mpsc;
 
 use super::Msg;
 use crate::lock;
 use crate::projects::Symbols;
+use crate::syntax::SourceDocument;
 
 struct Text {
     source: SourceDocument,

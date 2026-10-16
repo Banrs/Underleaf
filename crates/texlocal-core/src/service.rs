@@ -361,12 +361,6 @@ impl Service {
         settings::compiled_pdf_path(&self.project_root(id)?)
     }
 
-    /// A project file's location, through the path boundary, for the browser
-    /// server to serve it.
-    pub fn raw_path(&self, id: &str, rel: &str) -> Result<PathBuf, CoreError> {
-        paths::safe_path(&self.project_root(id)?, rel)
-    }
-
     // ---------- project sessions (session/) ----------
 
     /// Writes a project file's text under the project's lock; the file's

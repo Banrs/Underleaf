@@ -1,5 +1,4 @@
-// The shared command surface: the JSON dispatch every host forwards to, and
-// the browser's file route table.
+// The command surface: the JSON dispatch every host forwards to.
 
 use std::path::Path;
 
@@ -176,7 +175,6 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
         "export_project",
         "save_pdf_as",
         "pdf_path",
-        "raw_path",
     ] {
         assert_eq!(
             status_of(&service, command, json!({ "id": "P" })).await,
@@ -184,10 +182,7 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
             "{command}"
         );
     }
-    let raw = service.raw_path("P", "img/a.png").unwrap();
-    assert!(raw.ends_with("P/img/a.png"));
     assert_eq!(service.pdf_path("P").unwrap().extension().unwrap(), "pdf");
-    assert!(service.raw_path("P", "../../secret").is_err());
     // Missing and mistyped arguments, and paths the boundary refuses, which
     // apply through the dispatch exactly as through the methods.
     for (command, args) in [

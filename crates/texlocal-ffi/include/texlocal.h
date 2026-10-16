@@ -1,7 +1,7 @@
 /* TeXLocal core, for the native apps: macOS links the static library,
- * Windows loads the DLL. The service's calls are JSON in, JSON out, with the
- * command names and arguments the browser server uses; docs/core-api.md is
- * the contract, with the project sessions' commands and events. */
+ * Windows loads the DLL. The service's calls are JSON in, JSON out;
+ * docs/core-api.md is the contract, with the project sessions' commands and
+ * events. */
 #ifndef TEXLOCAL_H
 #define TEXLOCAL_H
 
@@ -49,7 +49,7 @@ void tl_set_listener(const TlHandle *handle, TlCallback _Nullable listener, void
  * live previews. No call may be in flight; no listener call follows. */
 void tl_close(TlHandle *_Nullable handle);
 
-/* The source editor's view of a file's text (crates/texlocal-syntax).
+/* The source editor's view of a file's text (the core's syntax module).
  * Calls on one TlSource must not overlap: one thread at a time, as the Swift
  * main actor guarantees. That holds for the const queries too: the Rust
  * side takes the source mutably in every call. Offsets and lengths count UTF-16
@@ -87,8 +87,8 @@ uint32_t tl_source_line_count(const TlSource *source);
 uint32_t *_Nullable tl_source_highlights(TlSource *source, uint32_t start, uint32_t length, size_t *_Nullable count);
 void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 
-/* A command of texlocal_syntax's SourceDocument::call (crates/texlocal-syntax
- * src/call.rs), with a JSON object of arguments: "completions",
+/* A command of SourceDocument::call (crates/texlocal-core/src/syntax/call.rs),
+ * with a JSON object of arguments: "completions",
  * "toggle_comment", "indent", "set_heading", "insert_block", "insert_symbol",
  * "math_at", "text_styles", "not_prose", "text" and the rest it lists.
  * Returns the result's JSON, or NULL for an unknown command or arguments;
@@ -98,7 +98,7 @@ void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
  * them in \ref{ and \cite{ until they are set again. A new source has none. */
 char *_Nullable tl_source_call(const TlSource *source, const char *command, const char *args_json);
 
-/* A command of texlocal_syntax::call, which needs no source, on any thread:
+/* A command of the syntax module's call, which needs no source, on any thread:
  * "themes", "theme_colors", "legible" ({"color", "background", "fill",
  * "increaseContrast"?, "ratio"? (4.5, 7 with increaseContrast)}), "contrast",
  * "menus", "document_class", "heading_styles", "drop_text" ({"path", "kind",

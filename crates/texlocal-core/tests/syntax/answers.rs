@@ -4,7 +4,7 @@
 //! of them, as on a document read fresh. How far a question reads is
 //! checked beside the scanner (maths.rs).
 
-use texlocal_syntax::{SourceDocument, TextRange, math_mode_at};
+use texlocal_core::syntax::{SourceDocument, TextRange, math_mode_at};
 
 /// How many of a random test's documents or rounds: fewer in a debug build, where
 /// each takes about ten times as long, and still every kind of each.

@@ -1,17 +1,18 @@
 [workspace]
 resolver = "3"
-members = ["crates/texlocal-core", "crates/texlocal-ffi", "crates/texlocal-server", "crates/texlocal-syntax"]
+members = ["crates/texlocal-core", "crates/texlocal-ffi"]
 
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
 license = "MIT"
 
-# LTO reaches the browser server's binary but not the app's core: Cargo runs
-# it for no crate type of a unit unless it can for all, and texlocal-ffi's
-# rlib, which its tests link, cannot. Measured in October 2026 through the C
-# ABI, an LTO archive was no faster on the editor's calls, and left a
-# stripped binary that linked it 1.5 MB smaller.
+# LTO reaches the Windows app's DLL, which `cargo rustc --crate-type cdylib`
+# builds as the unit's one crate type, but not the Mac app's archive: Cargo
+# runs it for no crate type of a unit unless it can for all, and
+# texlocal-ffi's rlib, which its tests link, cannot. Measured in October 2026
+# through the C ABI, an LTO archive was no faster on the editor's calls, and
+# left a stripped binary that linked it 1.5 MB smaller.
 [profile.release]
 codegen-units = 1
 lto = true

@@ -3,7 +3,7 @@
 //! each change reported back (`follow`), each selection (`select`), and a
 //! snippet's field mirrored once the text has changed.
 
-use texlocal_syntax::{
+use texlocal_core::syntax::{
     Change, Completing, Keystroke, SourceDocument, Style, TextEdit, TextRange, map_selections,
 };
 
@@ -448,7 +448,7 @@ fn a_field_in_two_places_is_typed_in_both() {
     assert_eq!(e.string(), "x\\begin{yenv}\n  \n\\end{env}");
     // Escape ends one.
     let mut doc = SourceDocument::new("ab");
-    let field = |start, index| texlocal_syntax::SnippetField {
+    let field = |start, index| texlocal_core::syntax::SnippetField {
         start,
         length: 0,
         index,
@@ -475,7 +475,7 @@ fn resetting_typing_forgets_the_closers_and_the_snippet() {
     assert_eq!((e.string().as_str(), e.selection()), ("())", caret(2)));
     // A snippet is over.
     let mut doc = SourceDocument::new("ab");
-    let field = |start, index| texlocal_syntax::SnippetField {
+    let field = |start, index| texlocal_core::syntax::SnippetField {
         start,
         length: 0,
         index,
