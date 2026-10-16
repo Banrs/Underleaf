@@ -17,7 +17,7 @@ use crate::paths::fold_case;
 use crate::projects;
 use crate::settings;
 use crate::synctex;
-use crate::{CoreError, atomic, lock, paths};
+use crate::{CoreError, atomic, import, lock, paths, zipexport};
 
 pub const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
 const SEARCH_LIMIT: usize = 100;
@@ -377,12 +377,8 @@ impl Service {
 
     // ---------- dispatch ----------
 
-    /// Shared JSON command table for browser and native hosts. Raw bytes and
-    /// host-chosen absolute paths stay in direct methods outside this table.
-    ///
-    /// `set_tex_dir` takes an absolute path from the browser too: its server
-    /// binds 127.0.0.1 with token and Host/Origin checks, and compiling
-    /// already permits choosing TeX.
+    /// The JSON command table the hosts call through the FFI, but for the
+    /// sessions' (`session_*`). Raw bytes stay in direct methods outside it.
     pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
         let s = |key: &str| string_arg(args, key);
         let root = || self.project_root(s("id")?);
@@ -629,6 +625,27 @@ impl Service {
             )),
             // An absolute path in the library as {id, path}; null outside every project.
             "locate" => out(projects::locate(&self.data_dir, Path::new(s("path")?))?),
+            "pdf_path" => Ok(json!(self.pdf_path(s("id")?)?.to_string_lossy())),
+            "project_root" => Ok(json!(root()?.to_string_lossy())),
+            "export_zip" => {
+                zipexport::export_zip(&root()?, Path::new(s("dest")?))?;
+                Ok(Value::Null)
+            }
+            // On quit, while a compile call may still be in flight — which rules
+            // out tl_close — stop the latexmk trees that would otherwise outlive
+            // the app.
+            "kill_all" => {
+                self.kill_all();
+                Ok(Value::Null)
+            }
+            "import_files" => out(import::import_files(
+                self,
+                s("id")?,
+                &arg::<Option<String>>(args, "dir")?.unwrap_or_default(),
+                &arg::<Option<Vec<PathBuf>>>(args, "paths")?.unwrap_or_default(),
+                arg(args, "conflict")?,
+            )?),
+            "import_project" => out(import::import_project(self, Path::new(s("src")?))?),
             "get_ui_state" => out(settings::read_ui(&root()?)),
             "set_ui_state" => out(self.with_project(s("id")?, |root| {
                 settings::write_ui(root, arg(args, "patch")?)
@@ -639,14 +656,14 @@ impl Service {
 }
 
 /// Argument `key` of a JSON command, which a missing key reads as null.
-pub fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, CoreError> {
+pub(crate) fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, CoreError> {
     // Straight from the borrowed Value, with no intermediate clone of it.
     T::deserialize(args.get(key).unwrap_or(&Value::Null))
         .map_err(|err| CoreError::bad_request(format!("Invalid argument `{key}`: {err}")))
 }
 
 /// Borrow a required string while keeping the typed argument errors.
-pub fn string_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, CoreError> {
+pub(crate) fn string_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, CoreError> {
     args.get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| arg::<String>(args, key).unwrap_err())

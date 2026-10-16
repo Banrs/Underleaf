@@ -15,16 +15,16 @@
 use std::borrow::Cow;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::{Map, Value, json};
-use texlocal_core::events::{Hub, Listener};
-use texlocal_core::service::{Service, arg, string_arg};
+use texlocal_core::CoreError;
+use texlocal_core::events::Listener;
+use texlocal_core::service::Service;
 use texlocal_core::session::{Document, Sessions};
 use texlocal_core::syntax::{self, SourceDocument};
-use texlocal_core::{CoreError, import, zipexport};
 
 pub struct TlHandle {
     runtime: tokio::runtime::Runtime,
@@ -38,57 +38,17 @@ struct Host {
 }
 
 impl Host {
-    /// `call`, the answer handed to `deliver`, which makes the host's copy of it. A new
+    /// The command's answer, handed to `deliver`, which makes the host's copy of it. A new
     /// session's events are held until `deliver` returns, so none comes before the answer.
     fn call_then<T, F>(&self, command: &str, args: &Value, deliver: F) -> T
     where
         F: FnOnce(Result<Value, CoreError>) -> T,
     {
-        match self
-            .runtime
-            .block_on(self.sessions.call_then(command, args, deliver))
-        {
-            Ok(delivered) => delivered,
-            Err(deliver) => deliver(self.call(command, args)),
-        }
-    }
-
-    /// Absolute-path commands belong to the in-process host. Only the shared
-    /// commands are forwarded to `Service::call`, which the browser exposes.
-    fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
-        if let Some(answer) = self.runtime.block_on(self.sessions.call(command, args)) {
-            return answer;
-        }
-        let service = &self.service;
-        let s = |key: &str| string_arg(args, key);
-        let path = |p: PathBuf| json!(p.to_string_lossy());
-        match command {
-            "pdf_path" => service.pdf_path(s("id")?).map(path),
-            "project_root" => service.project_root(s("id")?).map(path),
-            "export_zip" => {
-                let root = service.project_root(s("id")?)?;
-                zipexport::export_zip(&root, Path::new(s("dest")?))?;
-                Ok(Value::Null)
-            }
-            // On quit, while a compile call may still be in flight — which rules
-            // out tl_close — stop the latexmk trees that would otherwise outlive
-            // the app.
-            "kill_all" => {
-                service.kill_all();
-                Ok(Value::Null)
-            }
-            "import_files" => Ok(json!(import::import_files(
-                service,
-                s("id")?,
-                &arg::<Option<String>>(args, "dir")?.unwrap_or_default(),
-                &arg::<Option<Vec<PathBuf>>>(args, "paths")?.unwrap_or_default(),
-                arg(args, "conflict")?,
-            )?)),
-            "import_project" => Ok(json!(import::import_project(
-                service,
-                Path::new(s("src")?)
-            )?)),
-            _ => self.runtime.block_on(service.call(command, args)),
+        if command.starts_with("session_") {
+            let answered = self.sessions.call_then(command, args, deliver);
+            self.runtime.block_on(answered)
+        } else {
+            deliver(self.runtime.block_on(self.service.call(command, args)))
         }
     }
 }
@@ -167,7 +127,7 @@ pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
         std::fs::create_dir_all(&dir).ok()?;
         let runtime = tokio::runtime::Runtime::new().ok()?;
         let service = Arc::new(Service::new(dir));
-        let sessions = Sessions::new(Arc::clone(&service), Arc::new(Hub::default()));
+        let sessions = Sessions::new(Arc::clone(&service));
         let host = Arc::new(Host {
             runtime: runtime.handle().clone(),
             service,
@@ -290,7 +250,7 @@ pub unsafe extern "C" fn tl_set_listener(
         let callback = Callback { call, ctx };
         Box::new(move |event: &Value| callback.send(event)) as Listener
     });
-    caught(|| handle.host.sessions.hub().set_listener(listener));
+    caught(|| handle.host.sessions.set_listener(listener));
 }
 
 /// Free a string `tl_call` returned. Null is ignored.
@@ -320,7 +280,7 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
     caught(move || {
         let host = &handle.host;
         host.runtime.block_on(host.sessions.close_all());
-        host.sessions.hub().set_listener(None);
+        host.sessions.set_listener(None);
         host.service.kill_all();
         drop(handle);
     });

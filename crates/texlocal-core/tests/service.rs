@@ -168,13 +168,12 @@ async fn settings_patches_and_main_file_renames_preserve_both_changes() {
 async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     let (_dir, service) = with_project();
 
-    // Byte and absolute-path operations are methods, not commands.
+    // Raw bytes go through methods, not commands.
     for command in [
         "no_such_command",
         "upload_file",
         "export_project",
         "save_pdf_as",
-        "pdf_path",
     ] {
         assert_eq!(
             status_of(&service, command, json!({ "id": "P" })).await,
@@ -182,7 +181,8 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
             "{command}"
         );
     }
-    assert_eq!(service.pdf_path("P").unwrap().extension().unwrap(), "pdf");
+    let pdf = call(&service, "pdf_path", json!({ "id": "P" })).await;
+    assert!(pdf.as_str().unwrap().ends_with(".pdf"), "{pdf}");
     // Missing and mistyped arguments, and paths the boundary refuses, which
     // apply through the dispatch exactly as through the methods.
     for (command, args) in [

@@ -26,7 +26,7 @@ use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::compile::CompileResult;
-use crate::events::Hub;
+use crate::events::{Hub, Listener};
 use crate::projects::Symbols;
 use crate::service::{Service, arg, string_arg};
 use crate::texpresso::Events;
@@ -118,7 +118,7 @@ struct Open {
 /// Every open session, and the hub their events go out through.
 pub struct Sessions {
     service: Arc<Service>,
-    hub: Arc<Hub>,
+    hub: Hub,
     engine: Arc<dyn Engine>,
     timings: Timings,
     open: Mutex<HashMap<u64, Open>>,
@@ -126,20 +126,19 @@ pub struct Sessions {
 }
 
 impl Sessions {
-    pub fn new(service: Arc<Service>, hub: Arc<Hub>) -> Self {
+    pub fn new(service: Arc<Service>) -> Self {
         let engine = Arc::new(ServiceEngine(Arc::clone(&service)));
-        Self::with_engine(service, hub, engine, Timings::default())
+        Self::with_engine(service, engine, Timings::default())
     }
 
     pub(crate) fn with_engine(
         service: Arc<Service>,
-        hub: Arc<Hub>,
         engine: Arc<dyn Engine>,
         timings: Timings,
     ) -> Self {
         Sessions {
             service,
-            hub,
+            hub: Hub::default(),
             engine,
             timings,
             open: Mutex::default(),
@@ -147,7 +146,13 @@ impl Sessions {
         }
     }
 
-    pub fn hub(&self) -> &Arc<Hub> {
+    /// Sets the function the sessions' events go to; see `Hub::set_listener`.
+    pub fn set_listener(&self, listener: Option<Listener>) {
+        self.hub.set_listener(listener);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hub(&self) -> &Hub {
         &self.hub
     }
 
@@ -158,27 +163,23 @@ impl Sessions {
         lock(&docs).get(path).cloned()
     }
 
-    /// Answers a `session_*` command; None for any other command, which the
-    /// host sends on to `Service::call`. Must run inside a tokio runtime that
-    /// goes on running its tasks between calls.
-    ///
-    /// A new session's events are held until the answer to `session_open` is produced (here,
-    /// as it returns); see `call_then` for holding them until the host has it.
-    pub async fn call(&self, command: &str, args: &Value) -> Option<Result<Value, CoreError>> {
-        self.call_then(command, args, |answer| answer).await.ok()
+    /// `call_then`, answering what it is given.
+    #[cfg(test)]
+    pub(crate) async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
+        self.call_then(command, args, |answer| answer).await
     }
 
-    /// `call`, handing the answer to `deliver` and returning what it does. No event of
-    /// a session reaches the listener before `deliver` has returned for the answer to its
-    /// `session_open`: `deliver` is where a host's callback gets the answer, so none of the
-    /// events can come first. A command that isn't a `session_*` one gives `deliver` back.
-    pub async fn call_then<T, F>(&self, command: &str, args: &Value, deliver: F) -> Result<T, F>
+    /// Answers a `session_*` command, handing the answer to `deliver` and returning what
+    /// it does; the host sends every other command to `Service::call`. Must run inside a
+    /// tokio runtime that goes on running its tasks between calls.
+    ///
+    /// No event of a session reaches the listener before `deliver` has returned for the
+    /// answer to its `session_open`: `deliver` is where a host's callback gets the answer,
+    /// so none of the events can come first.
+    pub async fn call_then<T, F>(&self, command: &str, args: &Value, deliver: F) -> T
     where
         F: FnOnce(Result<Value, CoreError>) -> T,
     {
-        if !command.starts_with("session_") {
-            return Err(deliver);
-        }
         let answer = match command {
             "session_open" => self.open(args),
             _ => self.send(command, args).await,
@@ -188,7 +189,7 @@ impl Sessions {
             .then(|| answer.as_ref().ok()?["session"].as_u64())
             .flatten()
             .map(|session| Release(&self.hub, session));
-        Ok(deliver(answer))
+        deliver(answer)
     }
 
     fn open(&self, args: &Value) -> Result<Value, CoreError> {

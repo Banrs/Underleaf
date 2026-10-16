@@ -15,7 +15,6 @@ use super::watch::Change;
 use super::{Document, Engine, Msg, Sessions, Timings};
 use crate::CoreError;
 use crate::compile::CompileResult;
-use crate::events::Hub;
 use crate::logparse::LogItem;
 use crate::service::Service;
 use crate::texpresso::{Document as LiveDocument, Events, FileBuffer, Pane, RunEnd, Status};
@@ -239,21 +238,20 @@ impl Rig {
         let root = dunce::canonicalize(data.path().join("P")).unwrap();
         fs::write(root.join("main.tex"), "Hello").unwrap();
         let service = Arc::new(Service::new(data.path().to_path_buf()));
-        let hub = Arc::new(Hub::default());
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&seen);
-        hub.set_listener(Some(Box::new(move |event| {
-            sink.lock().unwrap().push(event.clone())
-        })));
         let fake = Arc::new(Fake::default());
         let timings = Timings {
             watch: false,
             ..Timings::default()
         };
         let engine = Arc::clone(&fake) as Arc<dyn Engine>;
-        let sessions = Sessions::with_engine(service, hub, engine, timings);
+        let sessions = Sessions::with_engine(service, engine, timings);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        sessions.set_listener(Some(Box::new(move |event| {
+            sink.lock().unwrap().push(event.clone())
+        })));
         let args = json!({ "id": "P", "autoCompile": auto_compile });
-        let opened = sessions.call("session_open", &args).await.unwrap().unwrap();
+        let opened = sessions.call("session_open", &args).await.unwrap();
         let session = opened["session"].as_u64().unwrap();
         Rig {
             _data: data,
@@ -269,7 +267,7 @@ impl Rig {
     async fn call(&self, name: &str, mut args: Value) -> Result<Value, CoreError> {
         args["session"] = self.session.into();
         let command = format!("session_{name}");
-        self.sessions.call(&command, &args).await.unwrap()
+        self.sessions.call(&command, &args).await
     }
 
     /// Answers once every message sent before it has been handled.
@@ -960,21 +958,16 @@ async fn the_watcher_tells_another_apps_changes_from_the_sessions_own() {
     let root = dunce::canonicalize(data.path().join("P")).unwrap();
     fs::write(root.join("main.tex"), "Hello").unwrap();
     let service = Arc::new(Service::new(data.path().to_path_buf()));
-    let hub = Arc::new(Hub::default());
+    let sessions = Sessions::new(service);
     let seen = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&seen);
-    hub.set_listener(Some(Box::new(move |event| {
+    sessions.set_listener(Some(Box::new(move |event| {
         sink.lock().unwrap().push(event.clone())
     })));
-    let sessions = Sessions::new(service, hub);
     let opened = sessions.call("session_open", &json!({ "id": "P" })).await;
-    let session = opened.unwrap().unwrap()["session"].as_u64().unwrap();
+    let session = opened.unwrap()["session"].as_u64().unwrap();
     let args = json!({ "session": session, "path": "main.tex" });
-    sessions
-        .call("session_open_document", &args)
-        .await
-        .unwrap()
-        .unwrap();
+    sessions.call("session_open_document", &args).await.unwrap();
     let doc = sessions.document(session, "main.tex").unwrap();
     doc.edit(5, 0, "!");
     let saved = until_event(&seen, |e| e["type"] == "saved");
@@ -1001,20 +994,19 @@ async fn no_event_reaches_the_listener_before_the_answer_to_its_sessions_open() 
     let data = tempfile::tempdir().unwrap();
     crate::projects::create_project(data.path(), "P", "blank").unwrap();
     let service = Arc::new(Service::new(data.path().to_path_buf()));
-    let hub = Arc::new(Hub::default());
-    // The listener and the answer's delivery write to one list, in the order they happen.
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let sink = Arc::clone(&seen);
-    hub.set_listener(Some(Box::new(move |event| {
-        sink.lock().unwrap().push(event.clone())
-    })));
     let fake = Arc::new(Fake::default());
     let engine = Arc::clone(&fake) as Arc<dyn Engine>;
     let timings = Timings {
         watch: false,
         ..Timings::default()
     };
-    let sessions = Sessions::with_engine(service, hub, engine, timings);
+    let sessions = Sessions::with_engine(service, engine, timings);
+    // The listener and the answer's delivery write to one list, in the order they happen.
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    sessions.set_listener(Some(Box::new(move |event| {
+        sink.lock().unwrap().push(event.clone())
+    })));
     // No PDF yet, so a build starts at once: its `build` event is made while
     // the open is still being answered.
     let args = json!({ "id": "P", "autoCompile": true });
@@ -1036,22 +1028,16 @@ async fn no_event_reaches_the_listener_before_the_answer_to_its_sessions_open() 
                 .push(json!({ "type": "answer", "session": session }));
             session
         })
-        .await
-        .unwrap_or_else(|_| panic!("a session command"));
+        .await;
     let first = until_event(&seen, |e| e["type"] == "build").expect("the build is told");
     let events = seen.lock().unwrap().clone();
     assert_eq!(events[0], json!({ "type": "answer", "session": session }));
     assert_eq!(first["session"], session);
     assert_eq!(first["compiling"], true);
-    // A command that isn't a session's is given back, and a failed open holds nothing.
-    let other = sessions
-        .call_then("list_projects", &json!({}), |_| ())
-        .await;
-    assert!(other.is_err());
+    // A failed open holds nothing.
     let missing = json!({ "id": "Nope" });
     sessions
         .call_then("session_open", &missing, |answer| assert!(answer.is_err()))
-        .await
-        .unwrap_or_else(|_| panic!("a session command"));
+        .await;
     sessions.close_all().await;
 }
