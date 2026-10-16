@@ -2,7 +2,6 @@ import Foundation
 import Testing
 @testable import TeXLocal
 
-@MainActor
 struct RemapPathTests {
     @Test func theOpenFileMovesWithItsFolder() {
         #expect(remapPath("ch/intro.tex", from: "ch/intro.tex", to: "ch/start.tex") == "ch/start.tex")
@@ -14,7 +13,6 @@ struct RemapPathTests {
     }
 }
 
-@MainActor
 struct TaskSlotTests {
     @Test(.timeLimit(.minutes(1)))
     func theLatestOfItsKindCarriesOn() async {
@@ -39,7 +37,6 @@ struct TaskSlotTests {
     }
 }
 
-@MainActor
 struct InPlaceRenameTests {
     @Test func aRenameEndsOnceWithItsNewName() {
         let rename = InPlaceRename<String>()

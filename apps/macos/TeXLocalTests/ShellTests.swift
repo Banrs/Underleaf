@@ -5,7 +5,6 @@ import Testing
 
 /// One at a time: AppKit keeps toolbars of one identifier alike, so a tool taken out of one window's is out of every window's.
 @Suite(.serialized)
-@MainActor
 struct ShellTests {
     private func workspace(showPDF: Bool, sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
         let app = AppModel()
@@ -140,11 +139,8 @@ struct ShellTests {
         let (window, workspace) = try await workspace(showPDF: true, sidebar: sidebar)
         defer { workspace.close(); window.close() }
         let split = workspace.columns.splitView
-        func separators(_ view: NSView) -> [NSView] {
-            view.subviews.flatMap { ($0.className == "NSSeparatorToolbarItemView" ? [$0] : []) + separators($0) }
-        }
         let frame = try #require(window.contentView?.superview)
-        func lines() -> [CGFloat] { separators(frame).map { split.convert($0.bounds, from: $0).minX } }
+        func lines() -> [CGFloat] { frame.descendants(named: "NSSeparatorToolbarItemView").map { split.convert($0.bounds, from: $0).minX } }
         func divider() -> CGFloat { split.arrangedSubviews[0].frame.maxX }
         for width in [1300, 900, 700, ColumnMetrics.contentMinimum.width] {
             try await resize(window, to: width)

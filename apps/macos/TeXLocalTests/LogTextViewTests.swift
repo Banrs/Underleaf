@@ -2,7 +2,6 @@ import AppKit
 import Testing
 @testable import TeXLocal
 
-@MainActor
 struct LogTextViewTests {
     @Test func liveOutputKeepsTheSelectedErrorAndReadingPosition() throws {
         let (scroll, view) = try logScroll()

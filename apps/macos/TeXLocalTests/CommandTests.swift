@@ -2,7 +2,6 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-@MainActor
 struct MenuCommandTests {
     @Test func noTwoCommandsShareAMacChord() {
         var seen: [KeyboardShortcut: MenuCommand] = [:]
@@ -56,7 +55,6 @@ struct MenuCommandTests {
     }
 }
 
-@MainActor
 struct MenuStructureTests {
     private func all(_ menu: NSMenu) -> [NSMenuItem] {
         menu.delegate?.menuNeedsUpdate?(menu)

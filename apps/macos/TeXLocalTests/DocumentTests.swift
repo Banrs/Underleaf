@@ -3,7 +3,6 @@ import PDFKit
 import Testing
 @testable import TeXLocal
 
-@MainActor
 struct SyncTeXGeometryTests {
     let offset = CGRect(x: 10, y: 20, width: 612, height: 792)
 
@@ -16,7 +15,6 @@ struct SyncTeXGeometryTests {
     }
 }
 
-@MainActor
 struct FindTests {
     @Test func theMatchCountLabel() {
         #expect(PDFFind.count(3, of: 12, limited: false, for: "loop") == "3 of 12")
@@ -28,7 +26,6 @@ struct FindTests {
     }
 }
 
-@MainActor
 struct PDFFitTests {
     @Test(arguments: zip([CGFloat(0), 37], [0, 90]))
     func fitPageKeepsTheWholePageInView(_ bottomInset: CGFloat, _ rotation: Int) throws {
@@ -168,7 +165,6 @@ struct PDFFitTests {
     }
 }
 
-@MainActor
 func textPDF(_ pages: [String], width: CGFloat = 612) throws -> PDFDocument {
     let document = PDFDocument()
     for text in pages {
@@ -180,7 +176,6 @@ func textPDF(_ pages: [String], width: CGFloat = 612) throws -> PDFDocument {
     return document
 }
 
-@MainActor
 @Suite(.serialized)
 struct PDFFindTests {
     init() {

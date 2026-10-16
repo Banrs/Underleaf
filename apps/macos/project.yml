@@ -109,6 +109,8 @@ targets:
         BUNDLE_LOADER: $(TEST_HOST)
         # @testable import TeXLocal loads the core's module too.
         SWIFT_INCLUDE_PATHS: $(SRCROOT)/../../crates/texlocal-ffi/include
+        # As the app: the suites test main-actor code, so they run there unless they say otherwise.
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
 schemes:
   TeXLocal:
     build:

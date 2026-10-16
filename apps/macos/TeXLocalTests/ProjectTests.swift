@@ -5,7 +5,6 @@ import Testing
 @testable import TeXLocal
 
 /// Projects are removed, not trashed: `delete_project` trashes through Finder, which a headless test host can't drive.
-@MainActor
 struct CoreTests {
     init() throws {
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
@@ -27,7 +26,6 @@ struct CoreTests {
     }
 }
 
-@MainActor
 @Suite(.serialized, .timeLimit(.minutes(2)))
 final class ProjectFlowTests {
     private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects]
@@ -606,7 +604,6 @@ private extension ProjectModel {
 }
 
 @Suite(.timeLimit(.minutes(1)))
-@MainActor
 struct UndoableTrashTests {
     @Test func undoPutsATrashedItemBackAndRedoTrashesItAgain() async throws {
         let files = FileManager.default
