@@ -379,9 +379,15 @@ public sealed partial class WorkspacePage : Page
     void OnNextIssue(object sender, RoutedEventArgs e) => GoToIssue("session_issue", new { session, next = true });
     void OnPreviousIssue(object sender, RoutedEventArgs e) => GoToIssue("session_issue", new { session, next = false });
     void OnIssueTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowIssueTab();
-    void OnWarnings(object sender, RoutedEventArgs e) => ShowIssues();
     void OnIssuesPane(object sender, RoutedEventArgs e) => ShowPanel(IssuesItem.IsChecked);
     void OnIssueCounts(object sender, RoutedEventArgs e) => ShowPanel(!IssuesItem.IsChecked);
+
+    /// Checked and Unchecked rather than Click, which a toggle through UI Automation doesn't raise; the first comes during
+    /// InitializeComponent.
+    void OnWarnings(object sender, RoutedEventArgs e)
+    {
+        if (Log is not null) ShowIssues();
+    }
 
     void OnShowIssues(object sender, RoutedEventArgs e)
     {
