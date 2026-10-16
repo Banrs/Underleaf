@@ -22,7 +22,7 @@ public sealed partial class SourceView
         if (source is null) return;
         CloseCompletions();
         var s = Selected;
-        if (s.Length is > 0 and < 200 && text.IndexOf('\n', s.Start, s.Length) < 0) FindBox.Text = text.Substring(s.Start, s.Length);
+        if (s.Length is > 0 and < 200 && Text.IndexOf('\n', s.Start, s.Length) < 0) FindBox.Text = Text.Substring(s.Start, s.Length);
         FindBar.Visibility = Visibility.Visible;
         ShowReplace(replace || ReplaceBox.Visibility == Visibility.Visible);
         // Replace takes the keys only once there is something to find (VS Code, Notepad).
@@ -59,13 +59,13 @@ public sealed partial class SourceView
         if (source is null) return;
         var s = Selected;
         if (FindBox.Text.Length == 0) ShowFind(false);
-        else if ((Search(forward ? s.End : s.Start, forward) ?? Search(forward ? 0 : text.Length, forward)) is { } found) Place(found);
+        else if ((Search(forward ? s.End : s.Start, forward) ?? Search(forward ? 0 : Text.Length, forward)) is { } found) Place(found);
         Count();
     }
 
     SourceRange? Search(int from, bool forward)
     {
-        var range = forward ? Document.GetRange(from, text.Length) : Document.GetRange(0, from);
+        var range = forward ? Document.GetRange(from, Text.Length) : Document.GetRange(0, from);
         return range.FindText(FindBox.Text, forward ? Forward : -Forward, Options) > 0
             ? new SourceRange(range.StartPosition, range.EndPosition - range.StartPosition) : null;
     }

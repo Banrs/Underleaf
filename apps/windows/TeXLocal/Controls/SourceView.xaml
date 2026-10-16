@@ -61,23 +61,17 @@
             x:Name="Editor"
             Grid.Column="1"
             Padding="8,8,16,8"
-            AcceptsReturn="True"
             AutomationProperties.Name="Source"
             ClipboardCopyFormat="PlainText"
             DisabledFormattingAccelerators="All"
-            FontFamily="Cascadia Mono, Consolas"
-            FontSize="14"
             IsSpellCheckEnabled="False"
             IsTextPredictionEnabled="False"
-            SelectionHighlightColorWhenNotFocused="{ThemeResource TextControlSelectionHighlightColor}"
-            TextWrapping="Wrap">
+            SelectionHighlightColorWhenNotFocused="{ThemeResource TextControlSelectionHighlightColor}">
+            <!-- No border in any state, so its brushes are never drawn. -->
             <RichEditBox.Resources>
                 <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
                 <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
                 <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
-                <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
-                <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
-                <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
                 <Thickness x:Key="TextControlBorderThemeThickness">0</Thickness>
                 <Thickness x:Key="TextControlBorderThemeThicknessFocused">0</Thickness>
             </RichEditBox.Resources>

@@ -47,12 +47,10 @@ public sealed partial class SourceView : UserControl
     const int RowHeight = 32, ShownRows = 8, LabelInset = 1 + 12 + 16 + 12;
     // Asynchronous, so the first text goes in after the layout pass that completes it.
     readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    readonly List<TextBlock> numbers = [];
     readonly List<(IssueLine Issue, FrameworkElement Mark)> marks = [];
     readonly DispatcherQueueTimer partnerTimer;
     Source? source;
     ScrollViewer? scroller;
-    string text = "";
     bool setting, changed, undoing, restoring, composing, loading, stale, mirroring, reoffer, queued, moved;
     int loads, lastEnd = -1, edits;
     double advance = 8.4;
@@ -62,15 +60,14 @@ public sealed partial class SourceView : UserControl
     (int Caret, int Edits, MathPreview? Value)? lastMath;
     MathPreview? shownMath;
     int? dismissedMath;
-    Color ink;
     Color[] kinds = [];
     ElementTheme inked;
     string theme = "overleaf";
 
     public string? Path { get; private set; }
-    public string Text => text;
+    public string Text { get; private set; } = "";
     /// The text colour as drawn, for what is drawn to match it.
-    public Color Ink => ink;
+    public Color Ink { get; private set; }
     public bool AutoPair { get; set; } = true;
     public bool AutoComplete { get; set; } = true;
     public event Action<bool>? Composing;
@@ -124,7 +121,9 @@ public sealed partial class SourceView : UserControl
         Editor.Loaded += (_, _) =>
         {
             Editor.ApplyTemplate();
-            if (scroller is not null || Descendant<ScrollViewer>(Editor) is not { } found) return;
+            // The template's ContentElement, a child of its root Grid.
+            if (scroller is not null || VisualTreeHelper.GetChild(Editor, 0) is not Panel root
+                || root.Children.OfType<ScrollViewer>().FirstOrDefault() is not { } found) return;
             scroller = found;
             scroller.ViewChanged += (_, _) =>
             {
@@ -165,20 +164,9 @@ public sealed partial class SourceView : UserControl
         {
             if (!stale || !IsLoaded || source is null || loading) return;
             var at = CaretOffset;
-            await SetText(text);
+            await SetText(Text);
             Document.Selection.SetRange(at, at);
         });
-    }
-
-    static T? Descendant<T>(DependencyObject root) where T : DependencyObject
-    {
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            if (child is T found) return found;
-            if (Descendant<T>(child) is { } deeper) return deeper;
-        }
-        return null;
     }
 
     /// A theme brush's colour as RichEdit can draw it, over the editor's background.
@@ -188,8 +176,8 @@ public sealed partial class SourceView : UserControl
     /// Text set with them keeps them unless it is set off screen.
     void Inks()
     {
-        (ink, inked, stale) = (Of(TextInk), ActualTheme, !IsLoaded);
-        kinds =SyntaxColors(theme, ActualTheme == ElementTheme.Dark, ((SolidColorBrush)PaperInk.Fill).Color,
+        (Ink, inked, stale) = (Of(TextInk), ActualTheme, !IsLoaded);
+        kinds = SyntaxColors(theme, ActualTheme == ElementTheme.Dark, ((SolidColorBrush)PaperInk.Fill).Color,
             ((SolidColorBrush)CurrentLine.Fill).Color, Of(SecondaryInk));
     }
 
@@ -273,7 +261,7 @@ public sealed partial class SourceView : UserControl
         setting = true;
         Document.SetText(TextSetOptions.FormatRtf, Rtf(content, 0, split));
         setting = changed = restoring = false;
-        text = content[..split];
+        Text = content[..split];
         if (split < content.Length)
         {
             loading = true;
@@ -288,9 +276,9 @@ public sealed partial class SourceView : UserControl
             if (generation != loads) return;
             loading = false;
             setting = true;
-            Document.GetRange(text.Length, text.Length).SetText(TextSetOptions.FormatRtf, Rtf(content, split, content.Length));
+            Document.GetRange(Text.Length, Text.Length).SetText(TextSetOptions.FormatRtf, Rtf(content, split, content.Length));
             setting = false;
-            text += content[split..];
+            Text += content[split..];
         }
         Document.ClearUndoRedoHistory();
         Document.BeginUndoGroup();
@@ -298,12 +286,11 @@ public sealed partial class SourceView : UserControl
         Invalidate();
     }
 
-    /// Part of the text as RTF with its colours.
     string Rtf(string content, int from, int to)
     {
         var rtf = new StringBuilder(to - from + (to - from) / 4 + 128);
         rtf.Append(@"{\rtf1\ansi{\colortbl;");
-        foreach (var c in kinds.Append(ink)) rtf.Append($@"\red{c.R}\green{c.G}\blue{c.B};");
+        foreach (var c in kinds.Append(Ink)) rtf.Append($@"\red{c.R}\green{c.G}\blue{c.B};");
         // Plain text in the ink, not RichEdit's automatic colour, which follows the control's state.
         rtf.Append($@"}}\cf{kinds.Length + 1} ");
         var at = from;
@@ -394,8 +381,6 @@ public sealed partial class SourceView : UserControl
 
     SourceRange Selected => new(Document.Selection.StartPosition, Document.Selection.EndPosition - Document.Selection.StartPosition);
 
-    static object Range(SourceRange r) => new { start = r.Start, length = r.Length };
-
     /// The selection the core asked for, which is no reason to close the list.
     void Place(SourceRange r)
     {
@@ -419,7 +404,7 @@ public sealed partial class SourceView : UserControl
     {
         source!.Edit(start, removed, inserted);
         source.Call("follow", new { old = new { start, length = removed }, delta = inserted.Length - removed, mirroring });
-        text = string.Concat(text.AsSpan(0, start), inserted, text.AsSpan(start + removed));
+        Text = string.Concat(Text.AsSpan(0, start), inserted, Text.AsSpan(start + removed));
         lastEnd = start + inserted.Length;
         edits++;
         if (colour) Colour(source.LineAt(start), source.LineAt(start + inserted.Length));
@@ -445,7 +430,7 @@ public sealed partial class SourceView : UserControl
 
     /// The selection follows the edits.
     bool Apply(TextEdit[]? edits) => edits is { Length: > 0 } && Apply(new Change(edits,
-        source!.Call<SourceRange[]>("map_selections", new { edits, selections = new[] { Range(Selected) } }) ?? []));
+        source!.Call<SourceRange[]>("map_selections", new { edits, selections = new[] { Selected } }) ?? []));
 
     /// A block or a symbol, then its snippet's first field.
     void Insert(Insertion? insertion)
@@ -466,7 +451,7 @@ public sealed partial class SourceView : UserControl
     bool Type(string typed)
     {
         var at = Selected;
-        var stroke = source!.Call<Keystroke>("type", new { selection = Range(at), text = typed, autoPair = AutoPair });
+        var stroke = source!.Call<Keystroke>("type", new { selection = at, text = typed, autoPair = AutoPair });
         if (stroke?.Edit is { } edit) Put(edit.Start, edit.Length, edit.Text);
         else if (stroke?.Selection is null) Put(at.Start, at.Length, typed);
         Place(stroke?.Selection ?? new SourceRange(lastEnd, 0));
@@ -487,7 +472,7 @@ public sealed partial class SourceView : UserControl
     /// Return keeps the line's indentation; between an empty pair the closer goes on a line of its own.
     bool Newline()
     {
-        if (source!.Call<Keystroke>("insert_newline", new { selection = Range(Selected) }) is not { Edit: { } edit } stroke) return false;
+        if (source!.Call<Keystroke>("insert_newline", new { selection = Selected }) is not { Edit: { } edit } stroke) return false;
         Apply(new Change([edit], [stroke.Selection ?? new(edit.Start + edit.Text.Length, 0)]));
         Finish(stroke);
         return true;
@@ -497,7 +482,7 @@ public sealed partial class SourceView : UserControl
     bool DeleteBackward()
     {
         var completing = offered is not null;
-        if (source!.Call<Keystroke>("delete_backward", new { selection = Range(Selected), autoPair = AutoPair }) is not { Edit: { } edit })
+        if (source!.Call<Keystroke>("delete_backward", new { selection = Selected, autoPair = AutoPair }) is not { Edit: { } edit })
         {
             reoffer = completing;
             return false;
@@ -511,7 +496,7 @@ public sealed partial class SourceView : UserControl
     /// A snippet's next field, or the lines indented.
     bool Tab(int step)
     {
-        var answer = source!.Call<Tabbing>("tab", new { selections = new[] { Range(Selected) }, step });
+        var answer = source!.Call<Tabbing>("tab", new { selections = new[] { Selected }, step });
         if (answer?.Field is { } field) Place(field);
         else Apply(answer?.Edits);
         return true;
@@ -531,29 +516,29 @@ public sealed partial class SourceView : UserControl
         return true;
     }
 
-    public bool MoveLines(bool up) => Apply(source?.Call<Change>("move_lines", new { selections = new[] { Range(Selected) }, up }));
+    public bool MoveLines(bool up) => Apply(source?.Call<Change>("move_lines", new { selections = new[] { Selected }, up }));
 
-    public void ToggleComment() => Command(() => Apply(source!.Call<TextEdit[]>("toggle_comment", new { selections = new[] { Range(Selected) } })));
+    public void ToggleComment() => Command(() => Apply(source!.Call<TextEdit[]>("toggle_comment", new { selections = new[] { Selected } })));
 
     /// bold, italic or underline.
-    public void ToggleStyle(string style) => Command(() => Apply(source!.Call<Change>("toggle_style", new { selections = new[] { Range(Selected) }, style })));
+    public void ToggleStyle(string style) => Command(() => Apply(source!.Call<Change>("toggle_style", new { selections = new[] { Selected }, style })));
 
     /// The selection round a template's "$0"; with nothing selected, an argument's completions after.
     public void Wrap(string template, bool complete = false) => Command(() =>
     {
         var empty = Selected.Length == 0;
-        Apply(source!.Call<Change>("wrap", new { selections = new[] { Range(Selected) }, template }));
+        Apply(source!.Call<Change>("wrap", new { selections = new[] { Selected }, template }));
         if (complete && empty) DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => Complete(true));
     });
 
     public void SetHeading(string command) => Command(() => Insert(source!.Call<Insertion>("set_heading", new { caret = CaretOffset, command })));
 
-    public void InsertSymbol(string command) => Command(() => Insert(source!.Call<Insertion>("insert_symbol", new { command, selection = Range(Selected) })));
+    public void InsertSymbol(string command) => Command(() => Insert(source!.Call<Insertion>("insert_symbol", new { command, selection = Selected })));
 
-    public void InsertBlock(string id) => Command(() => Insert(source!.Call<Insertion>("insert_block", new { id, selection = Range(Selected) })));
+    public void InsertBlock(string id) => Command(() => Insert(source!.Call<Insertion>("insert_block", new { id, selection = Selected })));
 
     /// The styles the whole selection has, for Bold, Italic and Underline's checks.
-    public TextStyles Styles => source?.Call<TextStyles>("text_styles", new { selection = Range(Selected) }) ?? new(null, null, null);
+    public TextStyles Styles => source?.Call<TextStyles>("text_styles", new { selection = Selected }) ?? new(null, null, null);
 
     void Command(Action action)
     {
@@ -574,7 +559,7 @@ public sealed partial class SourceView : UserControl
         if (!changed)
         {
             before = s;
-            if (source is not null && !loading) source.Call("select", new { selection = Range(s), mirroring });
+            if (source is not null && !loading) source.Call("select", new { selection = s, mirroring });
         }
         if ((s.Start, s.End) != placed)
         {
@@ -587,7 +572,7 @@ public sealed partial class SourceView : UserControl
 
     void ShowPartner(int at)
     {
-        if (source is null || at < 0 || at >= text.Length || source.Call<int?>("partner", new { at }) is not { } match
+        if (source is null || at < 0 || at >= Text.Length || source.Call<int?>("partner", new { at }) is not { } match
             || RectOf(match, match + 1) is not { } r) return;
         (PartnerBox.Width, PartnerBox.Height) = (Math.Max(r.Width, 4) + 2, r.Height);
         Canvas.SetLeft(PartnerBox, r.X - 1);
@@ -722,7 +707,7 @@ public sealed partial class SourceView : UserControl
         {
             shownMath = maths;
             var size = Editor.FontSize * 1.21;
-            var color = Rgba(ink);
+            var color = Rgba(Ink);
             var drawn = await Task.Run(() => Source.SyntaxCall<MathSvg>("math_svg", new { tex = maths.Tex, display = maths.Display, size, color }));
             if (shownMath != maths) return;
             await ShowMaths(drawn);
@@ -825,7 +810,7 @@ public sealed partial class SourceView : UserControl
         Apply(new Change([new(at.Start, at.Length, pasted)], [new(at.Start + pasted.Length, 0)]));
     }
 
-    int End(int line) => line < source!.LineCount ? source.LineStart(line + 1) - 1 : text.Length;
+    int End(int line) => line < source!.LineCount ? source.LineStart(line + 1) - 1 : Text.Length;
 
     // MARK: RichEdit's own edits
 
@@ -844,7 +829,7 @@ public sealed partial class SourceView : UserControl
             if (!restored && (removed > 0 || EndsWord(inserted))) NextUndoGroup();
         }
         before = Selected;
-        source.Call("select", new { selection = Range(before), mirroring });
+        source.Call("select", new { selection = before, mirroring });
         if (reoffer)
         {
             reoffer = false;
@@ -857,20 +842,20 @@ public sealed partial class SourceView : UserControl
     {
         bool Fits(int start, int removed)
         {
-            var inserted = now.Length - text.Length + removed;
-            return start >= 0 && removed >= 0 && inserted >= 0 && start + removed <= text.Length
-                && text.AsSpan(0, start).SequenceEqual(now.AsSpan(0, start))
-                && text.AsSpan(start + removed).SequenceEqual(now.AsSpan(start + inserted));
+            var inserted = now.Length - Text.Length + removed;
+            return start >= 0 && removed >= 0 && inserted >= 0 && start + removed <= Text.Length
+                && Text.AsSpan(0, start).SequenceEqual(now.AsSpan(0, start))
+                && Text.AsSpan(start + removed).SequenceEqual(now.AsSpan(start + inserted));
         }
-        (int, int, string) At(int start, int removed) => (start, removed, now.Substring(start, now.Length - text.Length + removed));
-        var shorter = text.Length - now.Length;
+        (int, int, string) At(int start, int removed) => (start, removed, now.Substring(start, now.Length - Text.Length + removed));
+        var shorter = Text.Length - now.Length;
         if (Fits(before.Start, before.Length)) return At(before.Start, before.Length);
         if (before.Length == 0 && shorter > 0 && Fits(before.Start - shorter, shorter)) return At(before.Start - shorter, shorter);
-        var head = text.AsSpan().CommonPrefixLength(now);
+        var head = Text.AsSpan().CommonPrefixLength(now);
         var tail = 0;
-        var most = Math.Min(text.Length, now.Length) - head;
-        while (tail < most && text[^(tail + 1)] == now[^(tail + 1)]) tail++;
-        return At(head, text.Length - head - tail);
+        var most = Math.Min(Text.Length, now.Length) - head;
+        while (tail < most && Text[^(tail + 1)] == now[^(tail + 1)]) tail++;
+        return At(head, Text.Length - head - tail);
     }
 
     Color? InkOf(int kind) => kind >= 0 && kind < kinds.Length ? kinds[kind] : null;
@@ -881,7 +866,7 @@ public sealed partial class SourceView : UserControl
         var runs = source.Highlights(a, Math.Max(b - a, 0));
         setting = true;
         Document.BatchDisplayUpdates();
-        Document.GetRange(a, b).CharacterFormat.ForegroundColor = ink;
+        Document.GetRange(a, b).CharacterFormat.ForegroundColor = Ink;
         foreach (var run in runs)
             if (InkOf(run.Kind) is { } c) Document.GetRange(run.Start, run.Start + run.Length).CharacterFormat.ForegroundColor = c;
         Document.ApplyDisplayUpdates();
@@ -944,20 +929,20 @@ public sealed partial class SourceView : UserControl
         for (var line = first; line <= last; line++)
         {
             if (RectOf(source.LineStart(line), source.LineStart(line)) is not { } r) continue;
-            if (used == numbers.Count)
+            if (used == Gutter.Children.Count)
             {
-                numbers.Add(new TextBlock { TextAlignment = TextAlignment.Right });
-                AutomationProperties.SetAccessibilityView(numbers[used], AccessibilityView.Raw);
-                Gutter.Children.Add(numbers[used]);
+                var added = new TextBlock { TextAlignment = TextAlignment.Right };
+                AutomationProperties.SetAccessibilityView(added, AccessibilityView.Raw);
+                Gutter.Children.Add(added);
             }
             // The editor's font and size at the line's top: the number sits on the text's baseline.
-            var number = numbers[used++];
+            var number = (TextBlock)Gutter.Children[used++];
             (number.FontFamily, number.FontSize, number.Width) = (Editor.FontFamily, Editor.FontSize, Gutter.Width - 8);
             (number.Text, number.Foreground) = (line.ToString(), (line == caret ? TextInk : NumberInk).Fill);
             number.Visibility = Visibility.Visible;
             Canvas.SetTop(number, r.Y);
         }
-        for (var i = used; i < numbers.Count; i++) numbers[i].Visibility = Visibility.Collapsed;
+        for (var i = used; i < Gutter.Children.Count; i++) Gutter.Children[i].Visibility = Visibility.Collapsed;
 
         if (RectOf(source.LineStart(caret), End(caret)) is { } current)
         {
@@ -968,7 +953,7 @@ public sealed partial class SourceView : UserControl
         var right = Overlay.ActualWidth - Editor.Padding.Right;
         foreach (var (issue, mark) in marks)
         {
-            var end = issue.Line >= first && issue.Line <= Math.Min(last, source.LineCount) ? RectOf(End(issue.Line), End(issue.Line)) : null;
+            var end = issue.Line >= first && issue.Line <= last ? RectOf(End(issue.Line), End(issue.Line)) : null;
             var x = (end?.X ?? 0) + 16;
             mark.Visibility = end is not null && right - x >= 16 ? Visibility.Visible : Visibility.Collapsed;
             if (end is not { } r) continue;
