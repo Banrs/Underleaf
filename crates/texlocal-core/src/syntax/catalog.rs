@@ -86,14 +86,12 @@ pub struct Symbol {
 #[serde(rename_all = "camelCase")]
 pub struct Menus<'a> {
     pub templates: &'a Templates,
-    pub heading_levels: &'a [HeadingLevel],
     pub symbol_groups: &'a [SymbolGroup],
 }
 
 pub fn menus() -> Menus<'static> {
     Menus {
         templates: &CATALOG.templates,
-        heading_levels: &CATALOG.heading_levels,
         symbol_groups: &CATALOG.symbol_groups,
     }
 }

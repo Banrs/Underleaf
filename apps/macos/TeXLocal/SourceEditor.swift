@@ -165,7 +165,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
                   orthography: NSOrthography, wordCount: Int) -> [NSTextCheckingResult] {
-        let code = code(in: range, kinds: [.command, .argument, .stringLiteral, .builtin])
+        let code = textView.document.codeRanges(in: range, for: .spelling)
         return results.filter { result in
             // Language metadata can span both prose and TeX without changing it.
             if result.resultType == .orthography { return true }
@@ -175,15 +175,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
     }
 
-    /// The highlighter also colours words inside \text{…} as maths, while the core keeps those as prose, so spelling leaves the maths kinds out of `kinds`.
-    private func code(in range: NSRange, kinds: Set<HighlightKind>) -> [NSRange] {
-        let document = textView.document
-        return document.highlights(in: range).filter { kinds.contains($0.kind) }.map(\.range) + document.notProse(in: range)
-    }
-
     func textView(_ view: NSTextView, writingToolsIgnoredRangesInEnclosingRange range: NSRange) -> [NSValue] {
-        code(in: range, kinds: [.command, .argument, .mathDelimiter, .mathIdentifier, .number, .comment, .invalid, .stringLiteral, .builtin])
-            .map(NSValue.init(range:))
+        textView.document.codeRanges(in: range, for: .writingTools).map(NSValue.init(range:))
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {

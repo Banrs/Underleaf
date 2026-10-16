@@ -7,10 +7,11 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::paths;
 use crate::syntax::catalog::{CATALOG, alternation};
+use crate::syntax::headings;
 
 static COMMENT_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*%").unwrap());
 static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(^|[^\\])%.*$").unwrap());
@@ -40,16 +41,37 @@ static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
 // What separates words: spaces and TeX's special characters.
 static WORD_BREAK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\s{}$&_^~\\%]").unwrap());
 
-/// A sectioning command: its depth (0 for \part to 5 for \paragraph), its
-/// title as plain text ("(untitled)" when empty), its 1-based line and, in a
-/// project's analysis, its file.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// A sectioning command: its depth (0 for \part to 5 for \paragraph),
+/// command and level, its title as plain text, its 1-based line and, in a
+/// project's analysis, its file. A heading whose title is empty is
+/// `untitled`, and titled by its level: "Untitled Section".
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Heading {
     pub depth: usize,
+    /// Without its backslash: "section".
+    pub command: &'static str,
+    /// The level's name: "Section".
+    pub level: &'static str,
     pub title: String,
+    pub untitled: bool,
     pub line: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+}
+
+impl Heading {
+    fn new(depth: usize, title: Option<String>, line: usize, file: Option<String>) -> Self {
+        let level = &CATALOG.heading_levels[depth];
+        Heading {
+            depth,
+            command: &level.command,
+            level: &level.title,
+            untitled: title.is_none(),
+            title: title.unwrap_or_else(|| format!("Untitled {}", level.title)),
+            line,
+            file,
+        }
+    }
 }
 
 /// A heading with what nests under it. `fold_key` names its fold in the
@@ -57,7 +79,7 @@ pub struct Heading {
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutlineNode {
-    /// Its place in the flat outline.
+    /// Its place in the outline, read in order.
     pub index: usize,
     #[serde(flatten)]
     pub heading: Heading,
@@ -66,18 +88,26 @@ pub struct OutlineNode {
     pub children: Vec<OutlineNode>,
 }
 
-/// `analyze_project`'s answer: the analysis, and its outline as a tree.
+/// A session's `analyze` answer: the outline as a tree, the words, and the
+/// levels the main file's class has, as it sets and numbers them.
 #[derive(Debug, Serialize)]
-pub struct ProjectAnalysis {
-    #[serde(flatten)]
-    pub analysis: Analysis,
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectAnalysis {
     pub tree: Vec<OutlineNode>,
+    pub words: usize,
+    pub heading_styles: Vec<headings::Level>,
 }
 
-impl From<Analysis> for ProjectAnalysis {
-    fn from(analysis: Analysis) -> Self {
-        let tree = outline_tree(&analysis.outline);
-        Self { analysis, tree }
+impl ProjectAnalysis {
+    /// `class`, the main file's; a class it doesn't know numbers its headings
+    /// as a book's once the document has chapters.
+    pub(crate) fn new(analysis: &Analysis, class: Option<&headings::DocumentClass>) -> Self {
+        let chapters = analysis.outline.iter().any(|h| h.command == "chapter");
+        ProjectAnalysis {
+            tree: outline_tree(&analysis.outline),
+            words: analysis.words,
+            heading_styles: headings::heading_styles(class, chapters),
+        }
     }
 }
 
@@ -98,7 +128,14 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
             let index = *next;
             *next += 1;
             let file = heading.file.as_deref().unwrap_or_default();
-            let key = format!("{file}\t{}:{}", heading.depth, heading.title);
+            // An untitled heading's key is as it was before it had a title,
+            // so its saved fold stays.
+            let title = if heading.untitled {
+                "(untitled)"
+            } else {
+                &heading.title
+            };
+            let key = format!("{file}\t{}:{title}", heading.depth);
             let count = seen.entry(key.clone()).or_default();
             *count += 1;
             let fold_key = format!("{key}#{count}");
@@ -118,10 +155,10 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
 /// The heading a line of a file is under, as its place in `outline`: the
 /// file's last at or above the line. None above the file's first, since where
 /// the file is read in isn't known.
-pub fn current_heading(outline: &[Heading], file: Option<&str>, line: usize) -> Option<usize> {
+pub fn current_heading(outline: &[Heading], file: &str, line: usize) -> Option<usize> {
     outline
         .iter()
-        .rposition(|h| h.file.as_deref() == file && h.line <= line)
+        .rposition(|h| h.file.as_deref() == Some(file) && h.line <= line)
 }
 
 #[derive(Debug, Default, PartialEq, Serialize)]
@@ -191,16 +228,18 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
                 if !heading_on_line {
                     heading_on_line = true;
                     if let Some(title) = brace_group(code) {
-                        into.outline.push(Heading {
-                            depth: CATALOG
-                                .heading_levels
-                                .iter()
-                                .position(|level| level.command == heading.as_str())
-                                .expect("a heading level of the catalog"),
-                            title: plain_title(title),
-                            line: index + 1,
-                            file: Some(file.clone()),
-                        });
+                        let depth = CATALOG
+                            .heading_levels
+                            .iter()
+                            .position(|level| level.command == heading.as_str())
+                            .expect("a heading level of the catalog");
+                        let title = plain_title(title);
+                        into.outline.push(Heading::new(
+                            depth,
+                            title,
+                            index + 1,
+                            Some(file.clone()),
+                        ));
                     }
                 }
             } else if let Some(name) = m.name("braced").or_else(|| m.name("bare")) {
@@ -243,8 +282,8 @@ fn brace_group(rest: &str) -> Option<&str> {
 }
 
 /// A title as the outline shows it: styles, labels and grouping braces gone,
-/// spaces collapsed, "(untitled)" when nothing is left.
-fn plain_title(title: &str) -> String {
+/// spaces collapsed; none when nothing is left.
+fn plain_title(title: &str) -> Option<String> {
     let mut rest = title;
     let mut title = String::new();
     while let Some(m) = TITLE_DROP.find(rest) {
@@ -260,8 +299,8 @@ fn plain_title(title: &str) -> String {
     let title = TITLE_STYLE.replace_all(&title, "");
     let title = TITLE_BRACE.replace_all(&title, "$1");
     match SPACES.replace_all(&title, " ").trim_matches(' ') {
-        "" => "(untitled)".into(),
-        title => title.into(),
+        "" => None,
+        title => Some(title.into()),
     }
 }
 
@@ -281,7 +320,7 @@ fn words(line: &str) -> usize {
 mod tests {
     use super::*;
 
-    /// A heading's depth, title and line.
+    /// A heading's depth, title ("" for none) and line.
     type Outline<'a> = &'a [(usize, &'a str, usize)];
 
     /// Headings and words, of one file's text.
@@ -316,11 +355,7 @@ mod tests {
                 ],
                 9,
             ),
-            (
-                "\\section{}\n\\chapter*{}",
-                &[(2, "(untitled)", 1), (1, "(untitled)", 2)],
-                0,
-            ),
+            ("\\section{}\n\\chapter*{}", &[(2, "", 1), (1, "", 2)], 0),
             ("Text \\section{A} and \\subsection{B}", &[(2, "A", 1)], 4),
             (
                 "% \\section{Hidden}\n  \t% \\section{Indented}\n\\section{Shown} % \\section{After}",
@@ -358,11 +393,9 @@ mod tests {
             let expected = Analysis {
                 outline: outline
                     .iter()
-                    .map(|&(depth, title, line)| Heading {
-                        depth,
-                        title: title.into(),
-                        line,
-                        file: Some("main.tex".into()),
+                    .map(|&(depth, title, line)| {
+                        let title = (!title.is_empty()).then(|| title.into());
+                        Heading::new(depth, title, line, Some("main.tex".into()))
                     })
                     .collect(),
                 words,
@@ -374,11 +407,9 @@ mod tests {
 
     #[test]
     fn the_outline_nests_by_depth_with_a_fold_key_for_each_heading() {
-        let heading = |depth, title: &str, file: &str, line| Heading {
-            depth,
-            title: title.into(),
-            line,
-            file: Some(file.into()),
+        let heading = |depth, title: &str, file: &str, line| {
+            let title = (!title.is_empty()).then(|| title.into());
+            Heading::new(depth, title, line, Some(file.into()))
         };
         // A subsection before any section sits flush; same-named headings are numbered.
         let outline = [
@@ -388,6 +419,7 @@ mod tests {
             heading(3, "Intro", "a.tex", 9),
             heading(2, "Intro", "a.tex", 12),
             heading(1, "Back", "b.tex", 2),
+            heading(1, "", "b.tex", 4),
         ];
         let tree = outline_tree(&outline);
         let shape = |nodes: &[OutlineNode]| -> Vec<(usize, String, usize)> {
@@ -403,6 +435,7 @@ mod tests {
                 (1, "a.tex\t2:Intro#1".into(), 2),
                 (4, "a.tex\t2:Intro#2".into(), 0),
                 (5, "b.tex\t1:Back#1".into(), 0),
+                (6, "b.tex\t1:(untitled)#1".into(), 0),
             ]
         );
         assert_eq!(
@@ -412,18 +445,27 @@ mod tests {
                 (3, "a.tex\t3:Intro#2".into(), 0),
             ]
         );
-        // On the wire: the heading's own fields, camelCase keys, no empty children.
+        // On the wire: the heading's own fields, camelCase keys, no empty children; one
+        // without a title is titled by its level.
         let json = serde_json::to_value(&tree[0]).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({ "index": 0, "depth": 3, "title": "Early", "line": 1,
-                "file": "a.tex", "foldKey": "a.tex\t3:Early#1" })
+            serde_json::json!({ "index": 0, "depth": 3, "command": "subsection", "level": "Subsection", "title": "Early",
+                "untitled": false, "line": 1, "file": "a.tex", "foldKey": "a.tex\t3:Early#1" })
+        );
+        let untitled = serde_json::to_value(&tree[4]).unwrap();
+        assert_eq!(
+            (&untitled["title"], &untitled["untitled"]),
+            (
+                &serde_json::json!("Untitled Chapter"),
+                &serde_json::json!(true)
+            )
         );
         // The heading a line is under: its file's last at or above it.
-        assert_eq!(current_heading(&outline, Some("a.tex"), 9), Some(3));
-        assert_eq!(current_heading(&outline, Some("a.tex"), 100), Some(4));
-        assert_eq!(current_heading(&outline, Some("b.tex"), 1), None);
-        assert_eq!(current_heading(&outline, None, 5), None);
+        assert_eq!(current_heading(&outline, "a.tex", 9), Some(3));
+        assert_eq!(current_heading(&outline, "a.tex", 100), Some(4));
+        assert_eq!(current_heading(&outline, "b.tex", 1), None);
+        assert_eq!(current_heading(&outline, "c.tex", 5), None);
     }
 
     /// The main file's inputs read in place, each file once, commented ones not;

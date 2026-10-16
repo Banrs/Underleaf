@@ -99,9 +99,9 @@ struct IssueBox: View {
 }
 
 /// An issue's message for its line's end, from the core's one-line form: whole where there is room for it, then for an
-/// undefined command in fewer words that keep its name ("Undefined: \name"), then cut at the tail with an ellipsis, and
-/// not at all where fewer than ten of its characters would show. The line's issues are counted in the box's symbol
-/// segment, as Xcode counts them.
+/// undefined command in the core's fewer words that keep its name ("Undefined: \name"), then cut at the tail with an
+/// ellipsis, and not at all where fewer than ten of its characters would show. The line's issues are counted in the
+/// box's symbol segment, as Xcode counts them.
 struct IssueLabel {
     private let whole: String
     private let short: (text: String, width: CGFloat)?
@@ -113,10 +113,10 @@ struct IssueLabel {
     /// The fewest of a message's characters worth showing before the ellipsis.
     static let least = 10
 
-    init(_ message: String, command: String?, font: NSFont) {
+    init(_ message: String, compact: String?, font: NSFont) {
         whole = message
         width = typeset(message, in: font).width
-        short = command.map { String(localized: "Undefined: \($0)") }.map { ($0, typeset($0, in: font).width) }
+        short = compact.map { ($0, typeset($0, in: font).width) }
         let most = (short?.text ?? message) as NSString
         let least = most.rangeOfComposedCharacterSequences(for: NSRange(location: 0, length: min(Self.least, most.length)))
         leastWidth = least.length < Self.least ? .infinity
@@ -129,35 +129,6 @@ struct IssueLabel {
         if width <= room { return (whole, width, false) }
         if let short, short.width <= room { return (short.text, short.width, true) }
         return leastWidth <= room ? (short?.text ?? whole, nil, true) : nil
-    }
-}
-
-extension NSString {
-    /// Where a line has the command, each time it does: not as the start of a longer name, not after a backslash that is
-    /// itself a command's (`\\foo` is a line break and a word), and not in a comment.
-    func ranges(ofCommand command: String) -> [NSRange] {
-        // TeX's letters, with `@` as in a class's or a package's own source.
-        func isLetter(_ character: Character) -> Bool { character.isASCII && (character.isLetter || character == "@") }
-        // To the first percent sign that isn't `\%`.
-        var end = 0
-        while end < length, character(at: end) != 0x25 || isEscaped(at: end) { end += 1 }
-        let word = command.dropFirst().first.map(isLetter) ?? false
-        var found: [NSRange] = [], from = 0
-        while from < end {
-            let range = self.range(of: command, options: .literal, range: NSRange(location: from, length: end - from))
-            guard range.location != NSNotFound else { break }
-            from = NSMaxRange(range)
-            let next = from < length ? Unicode.Scalar(character(at: from)).map(Character.init) : nil
-            if !isEscaped(at: range.location), !(word && next.map(isLetter) == true) { found.append(range) }
-        }
-        return found
-    }
-
-    /// Whether the character at `at` follows an unescaped backslash, as the bracket of `\[` does.
-    private func isEscaped(at: Int) -> Bool {
-        var slashes = 0
-        while at - slashes > 0, character(at: at - slashes - 1) == 0x5C { slashes += 1 }
-        return slashes % 2 == 1
     }
 }
 

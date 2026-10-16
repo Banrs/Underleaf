@@ -16,7 +16,7 @@ Windows loads `texlocal_ffi.dll`):
 | `tl_call_async(h, command, args_json, done, ctx)` | The same on a core thread; `done(ctx, envelope_json)` gets the envelope. `done` may be NULL. A session's commands are queued for it before this returns (see Threading). |
 | `tl_set_listener(h, listener, ctx)` | Events, below. NULL removes it; it returns once no call to the old listener runs. |
 | `tl_session_source(h, session, path)` | A session's open document as a `TlSource` (see Documents). Free with `tl_source_free`. Each source handed out starts with no typing state: the brackets the editor closed and a snippet's fields from an earlier visit are forgotten. |
-| `tl_source_*` | Highlighting, completions and editing commands on a source, as before; `tl_source_reload` takes a reloaded text. |
+| `tl_source_*` | Highlighting, completions and editing commands on a source; `tl_source_reload` takes a reloaded text. Each edit is `tl_source_edit`, each move of the (first) selection `tl_source_select`; `tl_source_text` gives the whole text as UTF-8 bytes (see The editor's source). |
 | `tl_syntax_call(command, args_json)` | Commands that need no source: themes and colours, menus, maths as SVG, and `drop_text` (below). |
 
 Callbacks are plain C: `void (*)(void *ctx, const char *json)`, UTF-8 JSON valid only during
@@ -50,8 +50,10 @@ the call.
 
 ```
 session_open {id, session, autoCompile} -> {session, root, pdf, tree, settings, ui}
-  session_open_document {session, path} -> {text}       load text into the editor verbatim
-  tl_session_source(h, session, path)   -> TlSource     every editor edit: tl_source_edit
+  session_open_document {session, path} -> null
+  tl_session_source(h, session, path)   -> TlSource     tl_source_text: load into the editor verbatim
+                                                        every editor edit: tl_source_edit
+  session_analyze {session, path}       -> {tree, words, headingStyles}
   ... the session autosaves, builds, watches the folder, previews; events tell the host ...
   session_close_document {session, path}                before showing another file, if one editor
 session_close {session}                 -> {saved}
@@ -70,7 +72,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
 | `session_state` | | `{documents: [document state], build, live, autoCompile}` | A snapshot, for a host coming up; a document's state also has `dirty` and `conflict` (`changed`/`gone`/null), the build's `queued`. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
-| `session_open_document` | `path` | `{text}` | Text files only. Opening an open one answers its current text. |
+| `session_open_document` | `path` | null | Text files only. The editor reads the text from the document's source (`tl_source_text`) once it shows it, so it has whatever reloads came meanwhile. |
 | `session_close_document` | `path` | `{closed}` | Saves first, asking about conflicts; `closed: false` if that failed. |
 | `session_composing` | `path`, `composing` | null | Marked (IME) text: the autosave waits until it ends. |
 | `session_save` | `reporting?` (true) | `{saved}` | Every unsaved document. A failed write is the error; a conflict is asked (`conflict`) and `saved` is false. A build follows when it wrote and automatic builds are on. |
@@ -78,6 +80,8 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_compile` | `auto?` | null | During a build, one more is queued. A failed save before a manual build is the error. |
 | `session_stop_compile` | | null | Drops the queued build too. |
 | `session_clean` | | null | Stops the build, waits for it, removes `build/`; answers when done. |
+| `session_analyze` | `path` | `{tree, words, headingStyles}` | The document the main file reads, from the disk, with the file shown (`path`): when the main file doesn't reach it, the document is that file alone. `tree`: the outline's headings, each `{index, depth, command, level, title, untitled, line, file, foldKey, children?}`; `index` is its place in the outline read in order, `command` its sectioning command without the backslash, `level` that level's name (“Section”), `title` its title as plain text or, `untitled: true`, its level's (“Untitled Section”); `foldKey` names its fold in the ui state. `headingStyles`: the levels the main file's class has (Normal Text first, `{title, command, font: {scale, bold, shape}, marker}`), the class read from the main file as the editor has it. The session keeps the outline for `session_outline_current`. Ask again after each `saved`, a tree or a file changed, and when another file is shown. |
+| `session_outline_current` | `path`, `line` | index or null | The heading a line of `path` is under, as its `index` in the last `session_analyze`'s outline: the file's last at or above the line; null above its first. |
 | `session_issue` | `next` | `{index, issue}` or null | The next or previous issue with a place, round the ends; the host opens `issue.file` at `issue.line`. |
 | `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter. |
 | `session_rename` | `from`, `to` | rename result or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). |
@@ -90,15 +94,12 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_live_caret` | `path`, `offset` | null | On every caret move (UTF-16); told to TeXpresso once it settles (150 ms). |
 | `session_live_log` | `shown` | null | Whether the host shows the Live Preview Log. While it does, each `live` event carries the log, and one comes at once. |
 
-Every other command (`file_tree`, `read_file`, `analyze_project`, `synctex_*`,
+Every other command (`file_tree`, `read_file`, `search_project`, `synctex_*`,
 `get_ui_state`, `pdf_path` for a new main file's PDF, …) is the service's, unchanged. While the
 PDF shown is the live document, pass `live: true, session: <the session's number>` to
 `synctex_forward` and `synctex_inverse`.
 
 A session's events can come before its `session_open` has answered (see Threading).
-The session keeps no analysis of the project (`analyze_project` depends on the file
-shown, and the host asks again after each `saved`), so there is no `session_outline_current`:
-a host keeps the outline it last got and asks `outline_current {outline, file, line}`.
 
 ## Commands that fill small gaps
 
@@ -108,12 +109,15 @@ Service commands (`tl_call`):
 |---|---|---|---|
 | `create_project` | `name`, `template?` (article), `engine?` | the project (`{id, name, mtime, mainFile}`) | A name taken is numbered past (“Paper 2”); `id`/`name` say which. A name the path rules refuse is 400. With `engine`, the project is made with it; an unknown engine is 400, and nothing is made. |
 | `free_project_name` | `name?` (“Untitled”) | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
+| `search_project` | `id`, `query` | `[{file, hits: [{file, line, before, match, after}]}]` | The first 100 lines that have `query` (in any case), by file, the files in order of their paths. |
+| `status` | | `{available, version, latexmkVersion, texDir, found, texpresso, texpressoDir}` | `latexmkVersion`: the number latexmk's version line names (“4.86”), or null. `set_tex_dir` and `set_texpresso_dir` answer the same. |
 
 Syntax commands (`tl_syntax_call`), JSON in, JSON out:
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
 | `drop_text` | `path`, `kind`, `into?` ("tex") | `{"insert": "\\includegraphics{path}"}`, `{"open": true}` or `null` | What a project file dropped on the editor does. `path` is the file's project path and `kind` its `file_tree` kind (`image`, `pdf`, `tex`, …; a folder has none: `null`, nothing happens). `into` is the kind of the file dropped on. An `image` or `pdf` dropped on a `tex` file inserts `\includegraphics{path}` at the caret; any other file opens (`{"open": true}`). The path is written as given. |
+| `heading_styles` | `class?`, `pointSize?` (10), `hasChapters?` | as `session_analyze`'s `headingStyles` | The levels without a project: no `class` gives every level, numbered as a book's with `hasChapters`. |
 | `legible` | `color`, `background`, `fill`, `increaseContrast?`, `ratio?` | `[r, g, b, a]` | The colour raised to a contrast `ratio` against the background and the current line. Without `ratio`: 4.5, or 7 with `increaseContrast`. With `ratio`, `increaseContrast` is ignored; a PDF find border under Increase Contrast wants `ratio: 3.0`. |
 
 ## Events
@@ -123,12 +127,12 @@ Each is `{"type", "session", …}`.
 | Type | Fields | Host does |
 |---|---|---|
 | `document` | `path`, `error`, `held` | Status bar: Not Saved when `error` or `held`. Announce “Wasn’t Saved” when `error` appears. Sent when a document opens or moves and when either field changes. |
-| `saved` | `path` | Re-run `analyze_project` (outline, words). |
+| `saved` | `path` | Ask `session_analyze` again (outline, words, levels). |
 | `document_reload` | `path`, `text`, `reason` (`disk`/`revert`) | Show `text` without making an edit, then `tl_source_reload(source, text)`. Saves of the document wait for it. |
 | `document_closed` | `path`, `reason` (`gone`/`closed`/`deleted`) | Clear the editor if it shows `path`. |
 | `document_renamed` | `from`, `to` | Re-key the editor's per-file state. |
 | `conflict` | `path`, `kind` | `changed`: alert with Save Anyway, Revert, Cancel and no default button; `gone`: alert whose default saves again, Close, Cancel. Answer with `session_resolve`. |
-| `issues` | `path`, `lines: [{line, error, message, short, command, others}]` | The gutter and line-end boxes; `[]` clears them (an edit does). |
+| `issues` | `path`, `lines: [{line, error, message, short, compact, tokens, others}]` | The gutter and line-end boxes; `[]` clears them (an edit does). `short`: the message on one line; `compact`: for an undefined command, fewer words that keep its name (“Undefined: \\foo”), else null; `tokens`: where the line has that command, `[{start, length}]` in UTF-16 units from the line's start (an edit clears the issues, so they hold). |
 | `build` | `compiling`, `auto`, `outdated` | Compile/Stop button, spinner, “Preview out of date”. Announce “Compiling” for a manual start. |
 | `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce`; sync after compile if `ok` and not `outdated`. |
 | `build_cleaned` | | Clear the PDF unless live. |
@@ -138,6 +142,25 @@ Each is `{"type", "session", …}`.
 | `live_document` | `path`, `version`, `serial`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
 | `live_page` | `page`, `path`, `serial` | Draw over that page now if a live document shows and has it; otherwise drop it. The session sends a batch's `live_document` before the batch's pages and drops the pages a document has, so a page is always newer than the document before it, and the next document has any page dropped. |
 | `live_restarted` | | Note “Live Preview Restarted”. |
+
+## The editor's source
+
+A `TlSource` (`tl_session_source` for a session's document) answers in UTF-16 offsets on the
+editor's thread.
+
+- `tl_source_edit(source, start, length, text, len, changing, mirroring)`: each change to the
+  editor's storage, once. `changing` is the range the editor said it would change (a
+  `TlRange *`, NULL if it said no one range); the closers typing put in and a snippet's fields
+  move with the edit. It answers NULL, or, while a snippet's field is typed in, the edits that
+  put what was typed in the field's other places (a JSON array, from the last; free with
+  `tl_free`): the editor applies them with `mirroring` true, which answers NULL, then selects
+  what it had.
+- `tl_source_select(source, start, length, mirroring)`: the (first) selection moved; a snippet
+  ends once it leaves its fields, unless `mirroring`.
+- `tl_source_text(source, &len)`: the whole text as `len` bytes of UTF-8, which may hold
+  U+0000; free with `tl_source_free_text(text, len)`.
+- `tl_source_call`'s `code_ranges` (`selection`, `for`: `spelling` or `writingTools`): what the
+  checker leaves alone in the lines a range touches, `[{start, length}]`.
 
 ## The rules the session keeps
 
@@ -214,6 +237,26 @@ Every change a host follows since commit d6bee12, in the order made.
   `live` event carries the log's whole text as `log` (null otherwise), as the Mac app put it
   together: what went wrong, TeXpresso's error, TeX's log and its output. An `alert`, which
   opens the log, carries it too. Windows: nothing to change.
+- `tl_source_edit` takes `changing` (a `TlRange *`, NULL for none) and `mirroring`, follows the
+  edit itself and answers a snippet's mirror edits (NULL for none, which is every edit outside a
+  snippet; free one with `tl_free`). `tl_source_select` is new. `tl_source_call` no longer
+  answers `follow`, `select`, `mirror_snippet`, `text` or `not_prose`: `code_ranges` answers
+  what spelling or Writing Tools leave alone. Windows: pass NULL and false to
+  `tl_source_edit` and free what it answers.
+- `session_open_document` answers null: the text is `tl_source_text`'s, read from the document's
+  source (Windows: `WorkspacePage.Document`'s open reads it there, and frees it with
+  `tl_source_free_text`).
+- `analyze_project` and `outline_current` are gone: `session_analyze {path}` answers the outline
+  as a tree only (no flat `outline`; flatten the tree in order for the list), with `words` and
+  the main file's `headingStyles`, and keeps the outline for `session_outline_current {path,
+  line}`. A heading has its `command` and `level`; an empty title is the level's (“Untitled Section”) with
+  `untitled: true`, where it was “(untitled)”; fold keys are as before.
+- `tl_syntax_call` no longer answers `document_class`, and `menus` no longer has
+  `headingLevels`: the levels are `session_analyze`'s `headingStyles`, or `heading_styles`
+  without a project.
+- An `issues` line has `compact` and `tokens` in place of `command`.
+- `search_project` answers its hits by file (`[{file, hits}]`), and `status`, `set_tex_dir` and
+  `set_texpresso_dir` answer `latexmkVersion`.
 
 ## From the Mac app's Swift
 
@@ -230,6 +273,7 @@ What moves out of `ProjectModel`, `TeXpressoSession` and `FolderWatcher`:
 | `TeXpressoSession` (phase, generation, lane, pending/synced, retry, halting, restartable, caret settling, `Inbox`/`LiveNews`, the `texpresso_wait` thread, the Live Preview Log's fetches and text) | `session_live_*`; `live` (with its `log`), `live_document`, `live_page`, `live_restarted` events |
 
 What stays in Swift: windows, panes and alerts; the editor (`SourceTextView` sends
-`tl_source_edit` for each edit, reloads on `document_reload`); PDFKit (`PDFController`,
+`tl_source_edit` for each edit and `tl_source_select` for each selection, reloads on
+`document_reload`); PDFKit (`PDFController`,
 `LiveCanvas`, reading each live PDF, the waiting-pages rule against the page count, memory
 resets); undo (`UndoableTrash`, rename undo); accessibility announcements; `UserDefaults`.

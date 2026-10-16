@@ -27,7 +27,7 @@ func isClose(_ a: CGFloat, _ b: CGFloat, within tolerance: CGFloat = 0.5) -> Boo
 extension [TreeNode] {
     /// A main file and a bibliography, as the core lists them.
     static var sources: [TreeNode] {
-        [TreeNode(type: "file", name: "main.tex", path: "main.tex", kind: .tex, children: nil),
-         TreeNode(type: "file", name: "references.bib", path: "references.bib", kind: .bib, children: nil)]
+        [TreeNode(type: .file, name: "main.tex", path: "main.tex", kind: .tex, children: nil),
+         TreeNode(type: .file, name: "references.bib", path: "references.bib", kind: .bib, children: nil)]
     }
 }

@@ -16,12 +16,11 @@ final class ProjectModel {
     }
     /// The open file's, from the tree; kept while the tree hasn't the file yet (a rename) or has it no longer (gone).
     private(set) var openKind: FileKind?
-    var outline: [OutlineItem] = []
+    /// The outline's headings in order: `outlineTree`'s, each at its `id`.
+    private(set) var outline: [OutlineItem] = []
     private(set) var outlineTree: [OutlineNode] = []
-    /// `outline` as `outline_current` takes it.
-    @ObservationIgnored private var headings: [[String: any Sendable]] = []
-    var documentClass: DocumentClass?
-    @ObservationIgnored private var classFile: String?
+    /// The levels the main file's class has, as the last analysis found them.
+    private(set) var headingStyles = HeadingStyle.standard
     var words: Int?
     var cursorLine = 1
     var cursorColumn = 0
@@ -115,12 +114,10 @@ final class ProjectModel {
     }
 
     var isLaTeX: Bool { openKind == .tex }
-    var headingStyles: [HeadingStyle] {
-        HeadingStyle.styles(of: documentClass, hasChapters: outline.contains { $0.level == 1 })
-    }
 
-    var headingLevel: HeadingLevel {
-        outline.first { $0.file == openPath && $0.line == cursorLine }.flatMap { HeadingLevel.atDepth($0.level) } ?? .normalText
+    /// The level of the caret's line, as its sectioning command: empty for Normal Text.
+    var headingCommand: String {
+        outline.first { $0.file == openPath && $0.line == cursorLine }?.command ?? ""
     }
     var editsText: Bool { openKind?.isText == true }
 
@@ -193,7 +190,7 @@ final class ProjectModel {
         }
         editor.textView.headings = { [weak self] in
             guard let self else { return [] }
-            return outline.filter { $0.file == self.openPath }.map { ($0.line, $0.displayTitle) }
+            return outline.filter { $0.file == self.openPath }.map { ($0.line, $0.title) }
         }
         editor.textView.forwardSync = { [weak self] quietly in
             self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync(quietly: quietly) } } : nil
@@ -368,7 +365,8 @@ final class ProjectModel {
 
     private func markIssues(_ event: IssuesEvent) {
         let lines = Dictionary(event.lines.map { line in
-            (line.line, SourceTextView.LineIssue(isError: line.error, message: line.message, short: line.short, command: line.command, others: line.others))
+            (line.line, SourceTextView.LineIssue(isError: line.error, message: line.message, short: line.short, compact: line.compact,
+                                                 tokens: line.tokens.map(\.range), others: line.others))
         }) { $1 }
         lineIssues[event.path] = lines.isEmpty ? nil : lines
         if editor.path == event.path { editor.textView.issueLines = lines }
@@ -409,7 +407,7 @@ final class ProjectModel {
                     if tree.node(at: path) == nil { await tree.reload() }
                     // Read first and closed last, with nothing awaited between the close and the switch.
                     if isText(path) {
-                        _ = try await core.call("session_open_document", ["session": session, "path": path], as: FileText.self)
+                        try await core.call("session_open_document", ["session": session, "path": path])
                     }
                     guard !Task.isCancelled, !closed else { return }
                     if let was = openPath, editsText {
@@ -490,35 +488,24 @@ final class ProjectModel {
         }
     }
 
+    /// The session keeps the analysis's outline, which `heading(at:)` asks about.
     private func analyze() {
         analysis?.cancel()
-        guard isLaTeX, let path = openPath else {
+        guard isLaTeX, let path = openPath, let session else {
             outline = []
             outlineTree = []
-            headings = []
             words = nil
             findHeadings()
             return
         }
         analysis = Task {
-            guard let doc = try? await core.call("analyze_project", ["id": id, "file": path], as: Analysis.self),
+            guard let doc = try? await core.call("session_analyze", ["session": session, "path": path], as: Analysis.self),
                   !Task.isCancelled else { return }
-            outline = doc.outline.enumerated().map { index, heading in
-                var item = heading
-                item.id = index
-                return item
-            }
+            outline = doc.outline
             outlineTree = doc.tree
-            headings = doc.outline.map(\.heading)
+            headingStyles = doc.headingStyles
             words = doc.words
             findHeadings()
-            // The class changes with the main file only.
-            guard let main = settings?.mainFile, main == path || main != classFile,
-                  let text = main == path ? editor.document?.text
-                    : try? await readText(main),
-                  !Task.isCancelled else { return }
-            documentClass = DocumentClass(in: text)
-            classFile = main
         }
     }
 
@@ -528,6 +515,8 @@ final class ProjectModel {
         let top = topLine
         findingHeadings?.cancel()
         findingHeadings = Task {
+            // The session answers from the outline it analysed last: the one on its way, once it is shown.
+            await analysis?.value
             let atTop = await heading(at: top)
             guard !Task.isCancelled else { return }
             if atTop != topHeading {
@@ -542,12 +531,8 @@ final class ProjectModel {
     }
 
     private func heading(at line: Int) async -> Int? {
-        guard !headings.isEmpty else { return nil }
-        return try? await core.call("outline_current", ["outline": headings, "file": openPath, "line": line], as: Int?.self)
-    }
-
-    private func readText(_ path: String) async throws -> String {
-        try await core.call("read_file", ["id": id, "path": path], as: FileText.self).text
+        guard let session, let openPath, !outline.isEmpty else { return nil }
+        return try? await core.call("session_outline_current", ["session": session, "path": openPath, "line": line], as: Int?.self)
     }
 
     // MARK: - Changes on disk
@@ -1147,8 +1132,10 @@ nonisolated struct IssuesEvent: Decodable {
         let message: String
         /// On one line, without LaTeX's words for what the symbol says already.
         let short: String
-        /// The command an "Undefined control sequence" names.
-        let command: String?
+        /// An undefined command's, in fewer words that keep its name.
+        let compact: String?
+        /// Where the line has the undefined command, from its start.
+        let tokens: [SourceRange]
         let others: [String]
     }
 

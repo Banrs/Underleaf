@@ -1,4 +1,4 @@
-/// A heading with what nests under it, as `analyze_project`'s `tree` has it; `foldKey` names its fold in the project's
+/// A heading with what nests under it, as `session_analyze`'s `tree` has it; `foldKey` names its fold in the project's
 /// saved state.
 nonisolated struct OutlineNode: Identifiable, Decodable, Sendable {
     let item: OutlineItem
@@ -22,29 +22,28 @@ nonisolated struct OutlineNode: Identifiable, Decodable, Sendable {
     }
 }
 
+/// A heading, by its place in the outline read in order: its sectioning command without the backslash, its level's name
+/// ("Section"), and its title, its level's for one that has none (`untitled`): "Untitled Section".
 nonisolated struct OutlineItem: Identifiable, Hashable, Decodable, Sendable {
     var id = 0
-    let level: Int
+    let command: String
+    let level: String
     let title: String
+    let untitled: Bool
     let line: Int
     let file: String
 
     private enum CodingKeys: String, CodingKey {
-        case level = "depth", title, line, file
+        case command, level, title, untitled, line, file
     }
-
-    var isUntitled: Bool { title == "(untitled)" }
-
-    var displayTitle: String { isUntitled ? "Untitled \(kind)" : title }
-
-    var kind: String { HeadingLevel.atDepth(level)?.title ?? "Section" }
-
-    /// As `outline_current` takes it.
-    var heading: [String: any Sendable] { ["depth": level, "title": title, "line": line, "file": file] }
 }
 
 nonisolated struct Analysis: Decodable, Sendable {
-    let outline: [OutlineItem]
-    let words: Int
     let tree: [OutlineNode]
+    let words: Int
+    /// The levels the main file's class has.
+    let headingStyles: [HeadingStyle]
+
+    /// The tree's headings in order, each at its `id`.
+    var outline: [OutlineItem] { tree.flatMap { [$0] + $0.descendants }.map(\.item) }
 }

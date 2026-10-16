@@ -25,7 +25,7 @@ use texlocal_core::CoreError;
 use texlocal_core::events::Listener;
 use texlocal_core::service::Service;
 use texlocal_core::session::{Document, Sessions};
-use texlocal_core::syntax::{self, SourceDocument};
+use texlocal_core::syntax::{self, SourceDocument, TextRange};
 
 pub struct TlHandle {
     runtime: tokio::runtime::Runtime,
@@ -361,13 +361,19 @@ pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSo
     )))))
 }
 
-/// The editor replaced `length` units at `start` with `text`. Each call on
-/// a source answers as for a null source if it fails: nothing, 0, no runs.
+/// The editor replaced `length` units at `start` with `text`: the source
+/// takes the edit, and the closers typing put in and a snippet's fields move
+/// with it. `changing` is the range the editor said it would change, if it
+/// said one (null). Unless the edit is a mirror edit going in (`mirroring`),
+/// answers what's typed in a snippet's field for its other places, as a JSON
+/// array of edits from the last (free it with `tl_free`), or null for none,
+/// as nearly always. Each call on a source answers as for a null source if
+/// it fails: nothing, 0, no runs.
 ///
 /// # Safety
 /// `source` came from `tl_source_new` and is not freed, and no other call
 /// on it (queries included) overlaps this one; `text` is null (nothing) or
-/// `len` bytes of UTF-8.
+/// `len` bytes of UTF-8; `changing` is null or valid for a read.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_edit(
     source: *mut TlSource,
@@ -375,13 +381,80 @@ pub unsafe extern "C" fn tl_source_edit(
     length: u32,
     text: *const u8,
     len: usize,
-) {
+    changing: *const TextRange,
+    mirroring: bool,
+) -> *mut c_char {
     let text = unsafe { text_arg(text, len) };
-    unsafe {
-        on_source(source, (), |source| match &mut source.0 {
+    let changing = unsafe { changing.as_ref() }.copied();
+    let followed = |source: &mut TlSource| {
+        match &mut source.0 {
             Source::Own(doc) => doc.edit(start, length, &text),
             Source::Session(document) => document.edit(start, length, &text),
+        }
+        let old = TextRange { start, length };
+        let delta = text.encode_utf16().count() as i64 - length as i64;
+        source.with(|doc| {
+            doc.follow(old, delta, changing, mirroring);
+            let mirror = if mirroring {
+                vec![]
+            } else {
+                doc.mirror_snippet()
+            };
+            (!mirror.is_empty()).then(|| json_string(mirror))
         })
+    };
+    unsafe { on_source(source, None, followed) }.unwrap_or(std::ptr::null_mut())
+}
+
+/// The editor's selection (its first) moved: a snippet ends once it leaves
+/// the snippet's fields, unless `mirroring` edits are going in, and the
+/// closers before its line are no longer stepped over.
+///
+/// # Safety
+/// As `tl_source_edit`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_source_select(
+    source: *mut TlSource,
+    start: u32,
+    length: u32,
+    mirroring: bool,
+) {
+    let selection = TextRange { start, length };
+    unsafe {
+        on_source(source, (), |source| {
+            source.with(|doc| doc.select(selection, mirroring))
+        })
+    }
+}
+
+/// The source's whole text as UTF-8, `*len` bytes with no NUL after them
+/// (a U+0000 in the text is one of them). Free it with `tl_source_free_text`.
+/// A null `len` gets null, as the text could not be freed without its length.
+///
+/// # Safety
+/// As `tl_source_edit`; `len` is null or valid for a write.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_source_text(source: *mut TlSource, len: *mut usize) -> *mut u8 {
+    let Some(len) = (unsafe { len.as_mut() }) else {
+        return std::ptr::null_mut();
+    };
+    let text = unsafe {
+        on_source(source, String::new(), |source| {
+            source.with(|doc| doc.text())
+        })
+    };
+    let bytes = text.into_bytes().into_boxed_slice();
+    *len = bytes.len();
+    Box::into_raw(bytes).cast()
+}
+
+/// # Safety
+/// `text` is null (nothing to free) or, with `len`, came from one
+/// `tl_source_text`, freed once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_source_free_text(text: *mut u8, len: usize) {
+    if !text.is_null() {
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(text, len)) });
     }
 }
 

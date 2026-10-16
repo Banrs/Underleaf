@@ -28,9 +28,26 @@ final class SourceDocument {
         tl_source_free(raw)
     }
 
-    func edit(_ range: NSRange, with text: String) {
+    /// The storage replaced `range` with `text`; `changing` is what the view said it would change. The closers typing put
+    /// in and a snippet's fields move with it. Unless the edit is a mirror edit going in (`mirroring`), what's typed in a
+    /// snippet's field for its other places, from the last: nearly always none.
+    func edit(_ range: NSRange, with text: String, changing: NSRange?, mirroring: Bool) -> [TextEdit] {
         var text = text
-        text.withUTF8 { tl_source_edit(raw, UInt32(range.location), UInt32(range.length), $0.baseAddress, $0.count) }
+        let out = text.withUTF8 { text in
+            let edit = { (changing: UnsafePointer<TlRange>?) in
+                tl_source_edit(self.raw, UInt32(range.location), UInt32(range.length), text.baseAddress, text.count, changing, mirroring)
+            }
+            guard let changing else { return edit(nil) }
+            return withUnsafePointer(to: TlRange(start: UInt32(changing.location), length: UInt32(changing.length)), edit)
+        }
+        // None is no answer at all.
+        guard let out else { return [] }
+        return Syntax.decode("edit", out) ?? []
+    }
+
+    /// The view's first selection moved.
+    func select(_ selection: NSRange, mirroring: Bool) {
+        tl_source_select(raw, UInt32(selection.location), UInt32(selection.length), mirroring)
     }
 
     /// The editor shows `text` whole, as the session's `document_reload` gave it: not an edit to save.
@@ -60,10 +77,15 @@ final class SourceDocument {
         }
     }
 
-    /// Each from its start, however far before the range.
-    func notProse(in range: NSRange) -> [NSRange] {
-        let ranges: [SourceRange] = call("not_prose", ["selection": Self.json(range)]) ?? []
+    /// What spelling or Writing Tools leave alone where `range` is: code, and what isn't prose, each from its start,
+    /// however far before the range.
+    func codeRanges(in range: NSRange, for checker: Checker) -> [NSRange] {
+        let ranges: [SourceRange] = call("code_ranges", ["selection": Self.json(range), "for": checker.rawValue]) ?? []
         return ranges.map(\.range)
+    }
+
+    nonisolated enum Checker: String {
+        case spelling, writingTools
     }
 
     func completions(caret: Int, explicit: Bool) -> Completions? {
@@ -94,8 +116,12 @@ final class SourceDocument {
         call("math_at", ["caret": caret])
     }
 
+    /// By its UTF-8 bytes, so a U+0000 in it stays.
     var text: String {
-        call("text", [:]) ?? ""
+        var count = 0
+        guard let bytes = tl_source_text(raw, &count) else { return "" }
+        defer { tl_source_free_text(bytes, count) }
+        return String(decoding: UnsafeBufferPointer(start: bytes, count: count), as: UTF8.self)
     }
 
     // MARK: typing
@@ -118,18 +144,6 @@ final class SourceDocument {
         call("partner", ["at": at])
     }
 
-    /// The storage replaced `old` with text `delta` units longer; `changing` is what the view said it would change.
-    func follow(_ old: NSRange, delta: Int, changing: NSRange?, mirroring: Bool) {
-        var args: [String: Any] = ["old": Self.json(old), "delta": delta, "mirroring": mirroring]
-        if let changing { args["changing"] = Self.json(changing) }
-        perform("follow", args)
-    }
-
-    /// The view's first selection moved.
-    func select(_ selection: NSRange, mirroring: Bool) {
-        perform("select", ["selection": Self.json(selection), "mirroring": mirroring])
-    }
-
     /// A completion's or block's fields, put in at `at`: the first field's range, to select.
     func startSnippet(_ fields: [SnippetField], at: Int) -> NSRange? {
         let fields = fields.map { ["start": $0.start, "length": $0.length, "index": $0.index] }
@@ -145,11 +159,6 @@ final class SourceDocument {
     /// Tab (1) or Shift-Tab (-1): a snippet's next field to select, or the lines' indentation.
     func tab(_ selections: [NSRange], step: Int) -> Tabbing {
         call("tab", ["selections": selections.map(Self.json), "step": step]) ?? Tabbing()
-    }
-
-    /// What's typed in a snippet's field, for its other places: from the last.
-    func mirrorSnippet() -> [TextEdit] {
-        call("mirror_snippet", [:]) ?? []
     }
 
     /// Nil when a line has nowhere to go.
@@ -186,16 +195,10 @@ final class SourceDocument {
     private func call<T: Decodable>(_ command: String, _ args: [String: Any]) -> T? {
         Syntax.decode(command, send(command, args))
     }
-
-    /// For a command that answers null.
-    private func perform(_ command: String, _ args: [String: Any]) {
-        guard let out = send(command, args) else { return Syntax.log.error("\(command, privacy: .public): no answer") }
-        tl_free(out)
-    }
 }
 
 /// The core's syntax module's commands that need no document (`tl_syntax_call`): the themes' colours, the menus'
-/// catalogue, a class's headings, and maths as SVG. On any thread.
+/// catalogue, the levels without a class, and maths as SVG. On any thread.
 nonisolated enum Syntax {
     static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "source")
 

@@ -80,7 +80,7 @@ struct FormatPanel: View {
         let levels = headings.map(\.command)
         let layout = Layout(headings)
         // Read once: it searches the outline.
-        let current = project.headingLevel.command
+        let current = project.headingCommand
         VStack(spacing: 0) {
             HStack {
                 toggle(.editBold, symbol: "bold", on: styles.bold != nil, help: "Make text bold")

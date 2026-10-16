@@ -7,11 +7,13 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
+use texlocal_core::syntax::TextRange;
 use texlocal_ffi::{
     TlHandle, TlSource, tl_call, tl_call_async, tl_close, tl_free, tl_open, tl_session_source,
     tl_set_listener, tl_source_call, tl_source_edit, tl_source_free, tl_source_free_runs,
-    tl_source_highlights, tl_source_line_at, tl_source_line_count, tl_source_line_start,
-    tl_source_new, tl_source_reload, tl_syntax_call,
+    tl_source_free_text, tl_source_highlights, tl_source_line_at, tl_source_line_count,
+    tl_source_line_start, tl_source_new, tl_source_reload, tl_source_select, tl_source_text,
+    tl_syntax_call,
 };
 
 /// The JSON a call answered, read and handed back to the library to free; None
@@ -23,6 +25,27 @@ unsafe fn take_json(out: *mut c_char) -> Option<Value> {
     let value = serde_json::from_str(unsafe { CStr::from_ptr(out) }.to_str().unwrap()).unwrap();
     unsafe { tl_free(out) };
     Some(value)
+}
+
+/// An edit the editor made, as it says it would make it: the mirror edits the
+/// source answers, if any.
+unsafe fn edit(source: *mut TlSource, start: u32, length: u32, text: &[u8]) -> Option<Value> {
+    let changing = TextRange { start, length };
+    let (bytes, len) = (text.as_ptr(), text.len());
+    unsafe {
+        take_json(tl_source_edit(
+            source, start, length, bytes, len, &changing, false,
+        ))
+    }
+}
+
+/// The source's whole text.
+unsafe fn text_of(source: *mut TlSource) -> String {
+    let mut len = 0;
+    let bytes = unsafe { tl_source_text(source, &mut len) };
+    let text = String::from_utf8(unsafe { std::slice::from_raw_parts(bytes, len) }.to_vec());
+    unsafe { tl_source_free_text(bytes, len) };
+    text.unwrap()
 }
 
 /// A command to a source mirror, as the editor sends one.
@@ -88,22 +111,13 @@ fn commands_round_trip_through_the_c_abi() {
         "x"
     );
 
-    call(
-        handle,
-        "write_file",
-        Some(json!({ "id": "P", "path": "main.tex", "text": "\\section{Intro}\nHello world" })),
-    );
     assert_eq!(
         call(
             handle,
-            "analyze_project",
-            Some(json!({ "id": "P", "file": "main.tex" }))
+            "search_project",
+            Some(json!({ "id": "P", "query": "x" }))
         )["ok"],
-        json!({
-            "outline": [{ "depth": 2, "title": "Intro", "line": 1, "file": "main.tex" }],
-            "words": 3,
-            "tree": [{ "index": 0, "depth": 2, "title": "Intro", "line": 1, "file": "main.tex", "foldKey": "main.tex\t2:Intro#1" }]
-        })
+        json!([{ "file": "a.tex", "hits": [{ "file": "a.tex", "line": 1, "before": "", "match": "x", "after": "" }] }])
     );
 
     // Errors come back as an envelope with the core's status, never a crash.
@@ -173,16 +187,13 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         let text = "é \\emph{x}";
         let source = tl_source_new(text.as_ptr(), text.len());
         // Offsets count UTF-16 units: "é " is two.
-        tl_source_edit(source, 2, 0, "\n".as_ptr(), 1);
+        assert_eq!(edit(source, 2, 0, b"\n"), None);
         assert_eq!(tl_source_line_at(source, 3), 2);
         let mut count = 0;
         let runs = tl_source_highlights(source, 0, 20, &mut count);
         assert_eq!(std::slice::from_raw_parts(runs, count), [3, 5, 0]);
         tl_source_free_runs(runs, count);
-        assert_eq!(
-            source_call(source, "text", json!({})),
-            Some(json!("é \n\\emph{x}"))
-        );
+        assert_eq!(text_of(source), "é \n\\emph{x}");
         let symbol = source_call(
             source,
             "insert_symbol",
@@ -203,11 +214,36 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         let text = "a\0\nb";
         let source = tl_source_new(text.as_ptr(), text.len());
         assert_eq!(tl_source_line_count(source), 2);
-        tl_source_edit(source, 4, 0, "\0c".as_ptr(), 2);
-        assert_eq!(
-            source_call(source, "text", json!({})),
-            Some(json!("a\u{0}\nb\u{0}c"))
+        edit(source, 4, 0, b"\0c");
+        assert_eq!(text_of(source), "a\u{0}\nb\u{0}c");
+        tl_source_free(source);
+
+        // What's typed in a snippet's field goes in its other places: the edit
+        // answers those edits, which go in as mirroring and answer none.
+        let text = "\\begin{}\n\\end{}";
+        let source = tl_source_new(text.as_ptr(), text.len());
+        let fields = json!([{ "start": 7, "length": 0, "index": 0 }, { "start": 14, "length": 0, "index": 0 }]);
+        source_call(
+            source,
+            "start_snippet",
+            json!({ "fields": fields, "at": 0 }),
         );
+        let mirror = edit(source, 7, 0, b"x");
+        assert_eq!(
+            mirror,
+            Some(json!([{ "start": 15, "length": 0, "text": "x" }]))
+        );
+        let mirrored = tl_source_edit(source, 15, 0, b"x".as_ptr(), 1, ptr::null(), true);
+        assert!(mirrored.is_null());
+        tl_source_select(source, 8, 0, false);
+        assert_eq!(text_of(source), "\\begin{x}\n\\end{x}");
+        // The snippet lasts while the selection is in its fields.
+        assert_eq!(
+            edit(source, 8, 0, b"y"),
+            Some(json!([{ "start": 16, "length": 1, "text": "xy" }]))
+        );
+        tl_source_select(source, 0, 0, false);
+        assert_eq!(edit(source, 0, 0, b"%"), None);
         tl_source_free(source);
     }
 }
@@ -236,7 +272,9 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
     let c = |s: &str| CString::new(s).unwrap();
     unsafe {
         let none: *mut TlSource = ptr::null_mut();
-        tl_source_edit(none, 0, 0, "x".as_ptr(), 1);
+        assert_eq!(edit(none, 0, 0, b"x"), None);
+        tl_source_select(none, 0, 0, false);
+        assert_eq!(text_of(none), "");
         assert_eq!(tl_source_line_at(none, 0), 0);
         assert_eq!(tl_source_line_start(none, 1), 0);
         assert_eq!(tl_source_line_count(none), 0);
@@ -244,16 +282,20 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
         let runs = tl_source_highlights(none, 0, 1, &mut count);
         assert_eq!(count, 0, "no runs");
         tl_source_free_runs(runs, count);
-        assert!(tl_source_call(none, c("text").as_ptr(), c("{}").as_ptr()).is_null());
+        assert!(tl_source_call(none, c("partner").as_ptr(), c("{}").as_ptr()).is_null());
         tl_source_free(none);
 
         let source = tl_source_new(ptr::null(), 0);
         assert!(!source.is_null());
-        assert!(tl_source_call(source, c("text").as_ptr(), c("{not json").as_ptr()).is_null());
+        let partner = c("partner");
+        assert!(tl_source_call(source, partner.as_ptr(), c("{not json").as_ptr()).is_null());
         assert!(tl_source_call(source, ptr::null(), c("{}").as_ptr()).is_null());
-        assert!(tl_source_call(source, c("text").as_ptr(), ptr::null()).is_null());
+        assert!(tl_source_call(source, partner.as_ptr(), ptr::null()).is_null());
+        // The text can't be freed without its length, so a null length gets none.
+        assert!(tl_source_text(source, ptr::null_mut()).is_null());
+        tl_source_free_text(ptr::null_mut(), 0);
         // Out-of-range offsets are cut to the text.
-        tl_source_edit(source, 99, 99, "ab".as_ptr(), 2);
+        edit(source, 99, 99, b"ab");
         assert_eq!(tl_source_line_start(source, 99), 0);
         let runs = tl_source_highlights(source, 99, 99, &mut count);
         assert_eq!(count, 0);
@@ -264,9 +306,8 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
 
         // Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes them: the
         // edit still lands, keeping the mirror in step with the editor.
-        tl_source_edit(source, 1, 0, b"\xff\n".as_ptr(), 2);
-        let text = source_call(source, "text", json!({}));
-        assert_eq!(text, Some(json!("a\u{fffd}\nb")));
+        edit(source, 1, 0, b"\xff\n");
+        assert_eq!(text_of(source), "a\u{fffd}\nb");
         assert_eq!(tl_source_line_count(source), 2);
         tl_source_free(source);
     }
@@ -323,9 +364,7 @@ fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
         let typed = json!({ "selection": { "start": 0, "length": 0 }, "text": "{" });
         let key = source_call(source, "type", typed).unwrap();
         assert_eq!(key["edit"]["text"], "{}");
-        tl_source_edit(source, 0, 0, b"{}".as_ptr(), 2);
-        let followed = json!({ "old": { "start": 0, "length": 0 }, "delta": 2 });
-        source_call(source, "follow", followed);
+        edit(source, 0, 0, b"{}");
         // Typing its closer steps over it.
         let closing = json!({ "selection": { "start": 1, "length": 0 }, "text": "}" });
         let key = source_call(source, "type", closing).unwrap();
@@ -336,9 +375,7 @@ fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
         let source = tl_session_source(handle, session, path.as_ptr());
         let typed = json!({ "selection": { "start": 2, "length": 0 }, "text": "(" });
         source_call(source, "type", typed);
-        tl_source_edit(source, 2, 0, b"()".as_ptr(), 2);
-        let followed = json!({ "old": { "start": 2, "length": 0 }, "delta": 2 });
-        source_call(source, "follow", followed);
+        edit(source, 2, 0, b"()");
         tl_source_free(source);
         let source = tl_session_source(handle, session, path.as_ptr());
         let closing = json!({ "selection": { "start": 3, "length": 0 }, "text": ")" });
@@ -362,17 +399,16 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
     );
     let session = opened["ok"]["session"].as_u64().unwrap();
     let args = json!({ "session": session, "path": "main.tex" });
-    let text = call(handle, "session_open_document", Some(args))["ok"]["text"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let opened = call(handle, "session_open_document", Some(args));
+    assert_eq!(opened, json!({ "ok": null }));
     let path = CString::new("main.tex").unwrap();
     let source = unsafe { tl_session_source(handle, session, path.as_ptr()) };
     assert!(!source.is_null());
+    let text = unsafe { text_of(source) };
     let missing = CString::new("other.tex").unwrap();
     assert!(unsafe { tl_session_source(handle, session, missing.as_ptr()) }.is_null());
     let added = "% note\n";
-    unsafe { tl_source_edit(source, 0, 0, added.as_ptr(), added.len()) };
+    unsafe { edit(source, 0, 0, added.as_bytes()) };
     // The highlighting reads the session's text.
     let mut count = 0;
     let runs = unsafe { tl_source_highlights(source, 0, 6, &mut count) };

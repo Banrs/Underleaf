@@ -14,6 +14,7 @@ use tokio::time::Instant;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Timings};
+use crate::analyze::{self, Heading, ProjectAnalysis};
 use crate::atomic::Stamp;
 use crate::compile::CompileResult;
 use crate::events::Emitter;
@@ -21,6 +22,7 @@ use crate::logparse::LogItem;
 use crate::paths::{self, within};
 use crate::projects::{self, SymbolScan, Symbols};
 use crate::service::{Service, arg, out, string_arg};
+use crate::syntax::{TextRange, headings};
 use crate::{CoreError, lock, settings};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
@@ -154,6 +156,8 @@ pub(crate) struct Actor {
     pub auto_compile: bool,
     build: Build,
     issues: Vec<LogItem>,
+    /// The outline of the last `analyze`, which `outline_current` reads.
+    outline: Vec<Heading>,
     error_count: usize,
     chosen: Option<usize>,
     autosave_at: Option<Instant>,
@@ -217,6 +221,7 @@ impl Actor {
             auto_compile: setup.auto_compile,
             build: Build::default(),
             issues: Vec::new(),
+            outline: Vec::new(),
             error_count: 0,
             chosen: None,
             autosave_at: None,
@@ -384,7 +389,7 @@ impl Actor {
                 }
                 Ok(Value::Null)
             }
-            "open_document" => self.open_document(&path()?),
+            "open_document" => self.open_document(&path()?).map(|()| Value::Null),
             "close_document" => self.close_document(&path()?),
             "composing" => {
                 let (path, composing) = (path()?, arg::<bool>(args, "composing")?);
@@ -408,6 +413,11 @@ impl Actor {
             "stop_compile" => {
                 self.stop_compile();
                 Ok(Value::Null)
+            }
+            "analyze" => self.analyze(&path()?),
+            "outline_current" => {
+                let line = arg(args, "line")?;
+                out(analyze::current_heading(&self.outline, &path()?, line))
             }
             "issue" => Ok(self.next_issue(arg(args, "next")?)),
             "choose_issue" => {
@@ -503,9 +513,11 @@ impl Actor {
 
     // MARK: - Documents
 
-    fn open_document(&mut self, path: &str) -> Result<Value, CoreError> {
-        if let Some(doc) = self.docs.get(path) {
-            return Ok(json!({ "text": doc.doc.snapshot().0 }));
+    /// The editor reads the text from the document's source (`tl_source_text`), as
+    /// it is once the switch to it is made.
+    fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
+        if self.docs.contains_key(path) {
+            return Ok(());
         }
         let (text, stamp) = read_disk(&paths::safe_path(&self.root, path)?)?;
         let id = self.next_doc;
@@ -517,7 +529,7 @@ impl Actor {
             path: path.to_owned(),
             saved: 0,
             force: false,
-            disk_text: Some(text.clone()),
+            disk_text: Some(text),
             disk_stamp: stamp,
             conflict: None,
             asking: None,
@@ -534,7 +546,7 @@ impl Actor {
         self.publish_doc(path);
         self.mark_issues();
         self.live_whole(path);
-        Ok(json!({ "text": text }))
+        Ok(())
     }
 
     fn close_document(&mut self, path: &str) -> Result<Value, CoreError> {
@@ -1038,6 +1050,30 @@ impl Actor {
         let _ = reply.send(result.map(|()| Value::Null));
     }
 
+    // MARK: - Analysis
+
+    /// The document the main file reads, as `analyze::analyze_project` finds it for
+    /// the file at `path`, and the levels the main file's class has, the class read
+    /// from its text as the editor has it; its outline is kept for `outline_current`.
+    fn analyze(&mut self, path: &str) -> Result<Value, CoreError> {
+        let main = settings::read_settings(&self.root).main_file;
+        let analysis = analyze::analyze_project(&self.root, &main, path);
+        let main_text = match paths::rel_key(&main)
+            .ok()
+            .and_then(|main| self.docs.get(&main))
+        {
+            Some(doc) => Some(doc.doc.snapshot().0),
+            None => paths::safe_path(&self.root, &main)
+                .ok()
+                .and_then(|path| read_disk(&path).ok())
+                .map(|(text, _)| text),
+        };
+        let class = main_text.as_deref().and_then(headings::document_class);
+        let answer = ProjectAnalysis::new(&analysis, class.as_ref());
+        self.outline = analysis.outline;
+        out(answer)
+    }
+
     // MARK: - Issues
 
     fn clear_issues(&mut self, path: &str) {
@@ -1055,7 +1091,10 @@ impl Actor {
         for (path, doc) in &mut self.docs {
             let last_edit = self.last_edits.get(path).copied().unwrap_or(0);
             let lines = if last_edit <= self.result_edits {
-                issue_lines(&self.issues, path)
+                let tokens = |line, command: &str| {
+                    doc.doc.with(|source| source.command_ranges(line, command))
+                };
+                issue_lines(&self.issues, path, tokens)
             } else {
                 Vec::new()
             };
@@ -1216,8 +1255,14 @@ impl Actor {
 }
 
 /// The build's issues on `path`'s lines, as the editor marks them: the
-/// first issue of a line with the rest after it.
-fn issue_lines(issues: &[LogItem], path: &str) -> Vec<Value> {
+/// first issue of a line with the rest after it. An undefined command's
+/// issue has where the line has the command (as `tokens` finds it, from the
+/// line's start), and a `compact` message that names it in fewer words.
+fn issue_lines(
+    issues: &[LogItem],
+    path: &str,
+    tokens: impl Fn(u32, &str) -> Vec<TextRange>,
+) -> Vec<Value> {
     let mut lines: BTreeMap<u32, (&LogItem, Vec<String>)> = BTreeMap::new();
     for item in issues.iter().rev() {
         let (Some(file), Some(line)) = (&item.file, item.line) else {
@@ -1235,12 +1280,14 @@ fn issue_lines(issues: &[LogItem], path: &str) -> Vec<Value> {
     let lines = lines.into_iter();
     lines
         .map(|(line, (item, others))| {
+            let command = item.command.as_deref();
             json!({
                 "line": line,
                 "error": item.kind == "error",
                 "message": item.message,
                 "short": item.short,
-                "command": item.command,
+                "compact": command.map(|command| format!("Undefined: {command}")),
+                "tokens": command.map_or_else(Vec::new, |command| tokens(line, command)),
                 "others": others,
             })
         })

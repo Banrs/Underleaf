@@ -42,13 +42,14 @@ struct SourceEditorTests {
         #expect(text.undoManager === a)
     }
 
-    /// The mirror keeps a U+0000 the editor keeps, and the offsets after it (#24).
+    /// The mirror keeps a U+0000 the editor keeps, and the offsets after it (#24), and gives it back in its text.
     @Test func aNulCharacterKeepsTheMirrorInStep() {
         let document = SourceDocument(text: "a\u{0}\nb")
         #expect(document.lineCount == 2)
-        document.edit(NSRange(location: 4, length: 0), with: "\u{0}\nc")
+        #expect(document.edit(NSRange(location: 4, length: 0), with: "\u{0}\nc", changing: nil, mirroring: false).isEmpty)
         #expect(document.lineCount == 3)
         #expect(document.lineStart(3) == 6)
+        #expect(document.text == "a\u{0}\nb\u{0}\nc")
     }
 
     @Test func aTextViewOnItsOwnMirrorsItsEdits() {
@@ -561,7 +562,7 @@ struct SourceEditorTests {
         let font = NSFont.systemFont(ofSize: 12)
         func width(_ string: String) -> CGFloat { (string as NSString).size(withAttributes: [.font: font]).width }
         let message = "Paragraph ended before \\section was complete"
-        let label = IssueLabel(message, command: nil, font: font)
+        let label = IssueLabel(message, compact: nil, font: font)
         #expect(abs(label.width - width(message)) < 0.01)
         let whole = label.text(in: label.width)
         #expect(whole?.cut == false && whole?.width == label.width)
@@ -569,24 +570,13 @@ struct SourceEditorTests {
         #expect(cut?.cut == true && cut?.width == nil && cut?.text == message)
         #expect(label.text(in: width("Paragraph…") + 1)?.text == message)
         #expect(label.text(in: width("Paragra…") + 1) == nil && label.text(in: 0) == nil && label.text(in: -40) == nil)
-        #expect(IssueLabel("Too short", command: nil, font: font).text(in: width("Too sh")) == nil)
-        let undefined = IssueLabel("Undefined control sequence: \\undefinedmacro", command: "\\undefinedmacro", font: font)
+        #expect(IssueLabel("Too short", compact: nil, font: font).text(in: width("Too sh")) == nil)
+        let undefined = IssueLabel("Undefined control sequence: \\undefinedmacro", compact: "Undefined: \\undefinedmacro", font: font)
         #expect(undefined.text(in: undefined.width)?.cut == false)
         let short = undefined.text(in: undefined.width - 1)
         #expect(short?.text == "Undefined: \\undefinedmacro" && short?.width != nil)
         let shortCut = undefined.text(in: width("Undefined: \\undefin…") + 1)
         #expect(shortCut?.text == "Undefined: \\undefinedmacro" && shortCut?.width == nil)
-    }
-
-    /// An undefined command is found where its line has it: not a longer one that starts with it, nor a comment's.
-    @Test func anUndefinedCommandIsFoundOnItsLine() {
-        func found(_ line: String, _ command: String = "\\foo") -> [NSRange] { (line as NSString).ranges(ofCommand: command) }
-        #expect(found("a \\foo b \\foo{c}\n") == [NSRange(location: 2, length: 4), NSRange(location: 9, length: 4)])
-        #expect(found("\\foobar \\foo@ \\\\foo \\foo1") == [NSRange(location: 20, length: 4)])
-        #expect(found("\\foo % \\foo") == [NSRange(location: 0, length: 4)])
-        #expect(found("50\\% \\foo") == [NSRange(location: 5, length: 4)])
-        #expect(found("a\\;b \\\\;", "\\;") == [NSRange(location: 1, length: 2)])
-        #expect(found("no such command").isEmpty)
     }
 
     private func layOut(width: CGFloat? = nil) throws {
@@ -601,8 +591,10 @@ struct SourceEditorTests {
     @Test func anIssuesMessageIsAtItsLinesEnd() throws {
         let window = inWindow()
         defer { withExtendedLifetime(window) {} }
+        // The core's: where the line has the command (crates/texlocal-core's `command_ranges`).
         let undefined = SourceTextView.LineIssue(isError: true, message: "Undefined control sequence: \\foo",
-                                                 short: "Undefined control sequence: \\foo", command: "\\foo")
+                                                 short: "Undefined control sequence: \\foo", compact: "Undefined: \\foo",
+                                                 tokens: [NSRange(location: 4, length: 4), NSRange(location: 19, length: 4)])
         open("one\nUse \\foo here, and \\foo there.\n\n", caret: 0)
         text.issueLines = [1: .init(isError: false, message: "Marked", short: "Marked"), 2: undefined,
                            4: .init(isError: true, message: "Emergency stop", short: "Emergency stop", others: ["Missing \\begin{document}"])]

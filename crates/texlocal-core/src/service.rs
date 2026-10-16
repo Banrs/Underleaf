@@ -5,13 +5,13 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
+use regex::Regex;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::analyze;
 use crate::atomic::Stamp;
 use crate::compile::{self, CompileManager, TexStatus, engine_flags};
 use crate::paths::fold_case;
@@ -27,6 +27,33 @@ const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
     "That folder doesn't contain the texpresso program. Choose the folder it's in.";
+
+/// `status`'s answer: what the look for TeX found, and latexmk's version
+/// number from its version line ("4.86"), as Settings shows it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Status {
+    #[serde(flatten)]
+    pub tex: TexStatus,
+    pub latexmk_version: Option<String>,
+}
+
+static LATEXMK_VERSION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Version (\d[\w.]*)").unwrap());
+
+impl From<TexStatus> for Status {
+    fn from(tex: TexStatus) -> Self {
+        let version = tex
+            .version
+            .as_deref()
+            .and_then(|line| LATEXMK_VERSION.captures(line));
+        let latexmk_version = version.map(|found| found[1].to_owned());
+        Status {
+            tex,
+            latexmk_version,
+        }
+    }
+}
 
 pub struct Service {
     pub data_dir: PathBuf,
@@ -114,7 +141,7 @@ impl Service {
     // ---------- status ----------
 
     /// Probe the current TeX choice, including installs made while the app is open.
-    pub async fn status(&self) -> TexStatus {
+    pub async fn status(&self) -> Status {
         let ((tex_path, texpresso_path), (tex_dir, texpresso_dir)) =
             (self.tool_paths(), self.app_folders());
         let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
@@ -123,7 +150,7 @@ impl Service {
         found.tex_dir = shown(tex_dir);
         found.texpresso_dir = shown(texpresso_dir);
         self.tex_found.store(found.available, Ordering::Relaxed);
-        found
+        found.into()
     }
 
     /// Whether the last `status` found TeX.
@@ -178,7 +205,7 @@ impl Service {
     }
 
     /// Choose TeXpresso's folder; None or empty goes back to the TeX path.
-    pub async fn set_texpresso_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
+    pub async fn set_texpresso_dir(&self, dir: Option<&str>) -> Result<Status, CoreError> {
         let chosen = dir.map(str::trim).filter(|d| !d.is_empty()).map(Path::new);
         if let Some(dir) = chosen
             && compile::program_at(&dir.join("texpresso")).is_none()
@@ -191,7 +218,7 @@ impl Service {
 
     /// Choose the TeX folder; None or empty goes back to automatic. A TeX Live
     /// root is accepted and saved as its bin folder.
-    pub async fn set_tex_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
+    pub async fn set_tex_dir(&self, dir: Option<&str>) -> Result<Status, CoreError> {
         let chosen = match dir.map(str::trim).filter(|d| !d.is_empty()) {
             None => None,
             Some(dir) => {
@@ -287,17 +314,11 @@ impl Service {
                 settings::write_settings(root, &arg(args, "patch")?)
             })?),
             "file_tree" => out(projects::file_tree(&root()?)?),
-            "analyze_project" => {
-                let root = root()?;
-                let main = settings::read_settings(&root).main_file;
-                let analysis = analyze::analyze_project(&root, &main, s("file")?);
-                out(analyze::ProjectAnalysis::from(analysis))
-            }
-            "search_project" => out(projects::search_project(
+            "search_project" => out(projects::search_groups(projects::search_project(
                 &root()?,
                 s("query")?,
                 SEARCH_LIMIT,
-            )?),
+            )?)),
             // Already a Value: out() would serialize it again, copying the
             // whole document.
             "read_file" => {
@@ -368,12 +389,6 @@ impl Service {
                 arg(args, "column")?,
                 &arg::<Vec<synctex::PdfPage>>(args, "pages")?,
             )?),
-            // The index in an `analyze_project` outline of the heading a line is under.
-            "outline_current" => out(analyze::current_heading(
-                &arg::<Vec<analyze::Heading>>(args, "outline")?,
-                arg::<Option<String>>(args, "file")?.as_deref(),
-                arg(args, "line")?,
-            )),
             // An absolute path in the library as {id, path}; null outside every project.
             "locate" => out(projects::locate(&self.data_dir, Path::new(s("path")?))?),
             "pdf_path" => Ok(json!(self.pdf_path(s("id")?)?.to_string_lossy())),
@@ -436,6 +451,25 @@ mod tests {
             projects::create_project(data.path(), name, "blank").unwrap();
         }
         (data, service)
+    }
+
+    #[test]
+    fn the_latexmk_version_is_the_number_its_version_line_names() {
+        let version = |line: Option<&str>| {
+            let tex = TexStatus {
+                available: line.is_some(),
+                version: line.map(str::to_owned),
+                tex_dir: None,
+                found: None,
+                texpresso: None,
+                texpresso_dir: None,
+            };
+            Status::from(tex).latexmk_version
+        };
+        let line = "Latexmk, John Collins, 1 Jan 2025. Version 4.86a";
+        assert_eq!(version(Some(line)).as_deref(), Some("4.86a"));
+        assert_eq!(version(Some("Latexmk, stub 1.0")), None);
+        assert_eq!(version(None), None);
     }
 
     #[tokio::test]

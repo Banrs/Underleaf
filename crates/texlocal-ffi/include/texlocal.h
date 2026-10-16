@@ -5,6 +5,7 @@
 #ifndef TEXLOCAL_H
 #define TEXLOCAL_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -69,8 +70,30 @@ TlSource *_Nullable tl_session_source(const TlHandle *handle, uint64_t session, 
  * no runs or NULL. */
 TlSource *tl_source_new(const uint8_t *_Nullable text, size_t len);
 
-/* The editor replaced length units at start with text. */
-void tl_source_edit(TlSource *source, uint32_t start, uint32_t length, const uint8_t *_Nullable text, size_t len);
+/* A range of the text, in UTF-16 units. */
+typedef struct {
+    uint32_t start;
+    uint32_t length;
+} TlRange;
+
+/* The editor replaced length units at start with text, having said it would
+ * change changing (NULL if it said no one range). The closers typing put in
+ * and a snippet's fields move with the edit. Unless mirroring (the source's
+ * own mirror edits going in), returns what was typed in a snippet's field
+ * for its other places, a JSON array of edits from the last, or NULL for
+ * none, as nearly always; free it with tl_free. */
+char *_Nullable tl_source_edit(TlSource *source, uint32_t start, uint32_t length, const uint8_t *_Nullable text, size_t len,
+                               const TlRange *_Nullable changing, bool mirroring);
+
+/* The editor's (first) selection moved: a snippet ends once it leaves the
+ * fields, unless mirroring. */
+void tl_source_select(TlSource *source, uint32_t start, uint32_t length, bool mirroring);
+
+/* The whole text as *len bytes of UTF-8, with no NUL after them (the text
+ * may hold U+0000). Free with tl_source_free_text, which takes NULL as
+ * nothing. A NULL len gets NULL. */
+uint8_t *_Nullable tl_source_text(TlSource *source, size_t *_Nullable len);
+void tl_source_free_text(uint8_t *_Nullable text, size_t len);
 
 /* The editor now shows text whole, as a document_reload event gave it: not
  * an edit to save. */
@@ -90,14 +113,14 @@ void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 /* A command of SourceDocument::call (crates/texlocal-core/src/syntax/call.rs),
  * with a JSON object of arguments: "completions", "toggle_comment",
  * "set_heading", "insert_block", "insert_symbol", "math_at", "text_styles",
- * "not_prose", "text" and the rest it lists. Returns the result's JSON, or
+ * "code_ranges" and the rest it lists. Returns the result's JSON, or
  * NULL for an unknown command or arguments; free it with tl_free. */
 char *_Nullable tl_source_call(TlSource *source, const char *command, const char *args_json);
 
 /* A command of the syntax module's call, which needs no source, on any thread:
  * "themes", "theme_colors", "legible" ({"color", "background", "fill",
  * "increaseContrast"?, "ratio"? (4.5, 7 with increaseContrast)}),
- * "menus", "document_class", "heading_styles", "drop_text" ({"path", "kind",
+ * "menus", "heading_styles", "drop_text" ({"path", "kind",
  * "into"? ("tex")} answers {"insert": LaTeX} or {"open": true}, or null for a
  * folder), and maths as SVG:
  * "math_svg" {"tex", "display", "size" (points, default 13), "color" ([r, g,

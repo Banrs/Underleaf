@@ -108,13 +108,14 @@ async fn dispatch_round_trips_project_and_file_commands() {
     .await;
     assert_eq!(read, json!({ "text": "hello needle" }));
 
-    let hits = call(
+    let groups = call(
         &service,
         "search_project",
         json!({ "id": id, "query": "needle" }),
     )
     .await;
-    assert_eq!(hits[0]["file"], "sec/a.tex");
+    assert_eq!(groups[0]["file"], "sec/a.tex");
+    assert_eq!(groups[0]["hits"][0]["after"], "");
 
     let tree = call(&service, "file_tree", json!({ "id": id })).await;
     assert!(tree.as_array().unwrap().iter().any(|n| n["name"] == "sec"));
@@ -332,6 +333,11 @@ async fn status_reports_the_current_tex_choice() {
     assert_eq!(call(&service, "status", json!({})).await, chosen);
     assert_eq!(chosen["available"], true);
     assert_eq!(chosen["version"], "Latexmk, stub 1.0");
+    assert_eq!(
+        chosen["latexmkVersion"],
+        Value::Null,
+        "the stub says no version number"
+    );
     assert_eq!(chosen["found"], bin);
 
     // An update in the same folder is reflected without another folder choice.
@@ -366,20 +372,6 @@ async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
     assert_eq!(status_of(&service, "create_entry", taken).await, 409);
     let tree = call(&service, "file_tree", json!({ "id": "P" })).await;
     assert!(tree.as_array().unwrap().iter().all(|n| n["kind"] == "tex"));
-
-    // The outline as a tree, and the heading a line is under.
-    write("main.tex", "\\section{A}\n\\subsection{B}\n\\section{A}\n").await;
-    let analysis = call(
-        &service,
-        "analyze_project",
-        json!({ "id": "P", "file": "main.tex" }),
-    )
-    .await;
-    assert_eq!(analysis["outline"].as_array().unwrap().len(), 3);
-    assert_eq!(analysis["tree"][0]["children"][0]["title"], "B");
-    assert_eq!(analysis["tree"][1]["foldKey"], "main.tex\t2:A#2");
-    let at = json!({ "outline": analysis["outline"], "file": "main.tex", "line": 2 });
-    assert_eq!(call(&service, "outline_current", at).await, json!(1));
 
     // Where a path in the library is.
     let path = dir.path().join("P/sec/new.tex");

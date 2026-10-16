@@ -110,11 +110,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         guard editedMask.contains(.editedCharacters), !loading else { return }
         let old = NSRange(location: edited.location, length: edited.length - delta)
         let text = textStorage.mutableString.substring(with: edited)
-        document.edit(old, with: text)
+        // The closers typing put in and a snippet's fields move with the text; what's typed in a field goes in its other
+        // places once the change is done (`didChangeText`).
+        mirrorEdits = document.edit(old, with: text, changing: changing, mirroring: mirroring)
         edits += 1
         staleColours = min(staleColours ?? edited.location, edited.location)
-        // The closers typing put in and a snippet's fields move with the text.
-        document.follow(old, delta: delta, changing: changing, mirroring: mirroring)
         changing = nil
         if lineCountDigits != digits(document.lineCount) {
             // After the edit: a layout change mid-edit would lay out stale text.
@@ -227,8 +227,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         var message: String
         /// The core's line-end form of it.
         var short: String
-        /// The command an "Undefined control sequence" names, underlined where the line has it.
-        var command: String?
+        /// An undefined command's, in fewer words that keep its name.
+        var compact: String?
+        /// Where the line has the undefined command, from the line's start: underlined.
+        var tokens: [NSRange] = []
         var others: [String] = []
     }
 
@@ -581,7 +583,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let left = textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = textContainerOrigin.y + fragment.layoutFragmentFrame.minY
         let said = [reported.message] + reported.others
-        let label = issueLabels[number] ?? IssueLabel(reported.short, command: reported.command, font: issueFont)
+        let label = issueLabels[number] ?? IssueLabel(reported.short, compact: reported.compact, font: issueFont)
         issueLabels[number] = label
         typealias Metrics = IssueBox.Metrics
         let end = band.maxX - Metrics.endInset
@@ -605,12 +607,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if issue.message?.cut != false || said.count > 1 { issue.tip = said.joined(separator: "\n") }
         // Underlined in the system's red, as Xcode does an issue's token, under the text: TextKit 2 draws no underline
         // given as a rendering attribute (27.2).
-        if let command = reported.command, let font {
+        if !reported.tokens.isEmpty, let font {
             // As far under the baseline as the font puts an underline, a point thick at least, on whole pixels.
             let scale = window?.backingScaleFactor ?? 1
             func whole(_ length: CGFloat) -> CGFloat { (length * scale).rounded() / scale }
             let thickness = max(1, whole(font.underlineThickness))
-            for range in (first.attributedString.string as NSString).ranges(ofCommand: command) {
+            for range in reported.tokens {
                 // A command a line is too narrow for is on two.
                 for line in lines {
                     let part = NSIntersectionRange(range, line.characterRange)
@@ -988,6 +990,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     /// The core's mirror edits are going in: they move the fields without ending the snippet.
     private var mirroring = false
+    /// What the last edit typed in a snippet's field, for its other places: from the last.
+    private var mirrorEdits: [TextEdit] = []
 
     func startSnippet(_ fields: [SnippetField], at location: Int) {
         guard let first = document.startSnippet(fields, at: location) else { return }
@@ -997,9 +1001,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// What's typed in a field goes in its other places.
     override func didChangeText() {
         super.didChangeText()
-        guard !mirroring else { return }
-        let edits = document.mirrorSnippet()
-        guard !edits.isEmpty else { return }
+        guard !mirroring, !mirrorEdits.isEmpty else { return }
+        let edits = mirrorEdits
+        mirrorEdits = []
         let selection = selectedRange()
         mirroring = true
         for edit in edits where shouldChangeText(in: edit.range, replacementString: edit.text) {

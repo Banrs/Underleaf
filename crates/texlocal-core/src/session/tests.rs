@@ -489,6 +489,76 @@ async fn issues_mark_unedited_documents_and_go_with_an_edit() {
     );
 }
 
+/// An undefined command's issue says where its line has the command, and names it in fewer words.
+#[tokio::test(start_paused = true)]
+async fn an_undefined_commands_issue_says_where_its_line_has_it() {
+    let mut rig = Rig::new(false).await;
+    fs::write(
+        rig.root.join("main.tex"),
+        "Hello\n\\foo and \\foobar % \\foo\n",
+    )
+    .unwrap();
+    rig.open("main.tex").await;
+    rig.ok("compile", json!({})).await;
+    let mut undefined = issue("error", 2, "Undefined control sequence: \\foo");
+    undefined.command = Some("\\foo".into());
+    rig.fake
+        .finish_build(built(true, vec![undefined, issue("error", 1, "Other")]));
+    let issues = rig.of_type("issues").await;
+    let lines = issues[0]["lines"].as_array().unwrap();
+    assert_eq!(
+        (&lines[0]["compact"], &lines[0]["tokens"]),
+        (&Value::Null, &json!([]))
+    );
+    assert_eq!(lines[1]["compact"], "Undefined: \\foo");
+    assert_eq!(lines[1]["tokens"], json!([{ "start": 0, "length": 4 }]));
+}
+
+/// The analysis of the file shown, whose outline the heading a line is under is found in.
+#[tokio::test(start_paused = true)]
+async fn the_analysis_is_kept_for_the_heading_a_line_is_under() {
+    let rig = Rig::new(false).await;
+    let text = "\\documentclass{book}\n\\chapter{A}\n\\section{B}\n\\section{}\n";
+    fs::write(rig.root.join("main.tex"), text).unwrap();
+    let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
+    assert_eq!(analysis["words"], 3, "book, A and B");
+    assert_eq!(analysis["tree"][0]["children"][0]["command"], "section");
+    assert_eq!(
+        analysis["tree"][0]["children"][1]["title"],
+        "Untitled Section"
+    );
+    assert_eq!(
+        analysis["tree"][0]["children"][1]["foldKey"],
+        "main.tex\t2:(untitled)#1"
+    );
+    // The class's levels: a book's, with Normal Text first.
+    let levels: Vec<&str> = analysis["headingStyles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["command"].as_str().unwrap())
+        .collect();
+    assert_eq!(levels[..3], ["", "part", "chapter"]);
+    let current = |line| {
+        rig.ok(
+            "outline_current",
+            json!({ "path": "main.tex", "line": line }),
+        )
+    };
+    assert_eq!(current(1).await, Value::Null);
+    assert_eq!(current(3).await, json!(1));
+    assert_eq!(current(9).await, json!(2));
+    // The class as the editor has it, before it is saved.
+    let doc = rig.open("main.tex").await;
+    doc.edit(15, 4, "article");
+    let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
+    let levels = analysis["headingStyles"].as_array().unwrap();
+    assert!(
+        !levels.iter().any(|l| l["command"] == "chapter"),
+        "{levels:?}"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_document_edited_since_the_build_shows_no_marks_when_it_opens_again() {
     let mut rig = Rig::new(false).await;

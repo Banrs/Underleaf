@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::theme::{self, Rgba};
-use super::{SnippetField, SourceDocument, Style, TextEdit, TextRange, map_selections};
+use super::{Checker, SnippetField, SourceDocument, Style, TextEdit, TextRange, map_selections};
 use super::{headings, render};
 
 /// The arguments the document's commands take, each what it needs; any left
@@ -26,11 +26,8 @@ struct Args {
     /// Whether typing closes brackets for the user; true when left out.
     auto_pair: Option<bool>,
     at: u32,
-    /// A change's range before it, and how many units longer it made it.
-    old: TextRange,
-    delta: i64,
-    changing: Option<TextRange>,
-    mirroring: bool,
+    #[serde(rename = "for")]
+    checker: Option<Checker>,
     fields: Vec<SnippetField>,
     /// Which way Tab goes; 1, forwards, when left out.
     step: Option<i64>,
@@ -58,17 +55,17 @@ fn args<T: DeserializeOwned>(args: &Value) -> Option<T> {
 impl SourceDocument {
     /// The commands on the document's text: "completions", "toggle_comment",
     /// "set_heading", "insert_block", "insert_symbol", "math_at",
-    /// "text_styles", "not_prose" (the `selection`'s) and "text". Typing's
-    /// (typing.rs), each the method of its name: "type" (`selection`,
-    /// `text`, `autoPair`), "delete_backward" (`selection`, `autoPair`) and
-    /// "insert_newline" (`selection`), each a `Keystroke`; "partner" (`at`);
-    /// "follow" (`old`, `delta`, `changing`, `mirroring`) and "select"
-    /// (`selection`, `mirroring`), which answer null; "start_snippet"
-    /// (`fields`, `at`), "end_snippet", "tab" (`selections`, `step`),
-    /// "mirror_snippet"; "move_lines" (`selections`, `up`), "toggle_style"
-    /// (`selections`, `style`: "bold", "italic" or "underline"), "wrap"
-    /// (`selections`, `template`) and "map_selections" (`edits`,
-    /// `selections`). Those that need no document are `call`'s.
+    /// "text_styles" and "code_ranges" (`selection`, `for`: "spelling" or
+    /// "writingTools"). Typing's (typing.rs), each the method of its name:
+    /// "type" (`selection`, `text`, `autoPair`), "delete_backward"
+    /// (`selection`, `autoPair`) and "insert_newline" (`selection`), each a
+    /// `Keystroke`; "partner" (`at`); "start_snippet" (`fields`, `at`),
+    /// "end_snippet", "tab" (`selections`, `step`); "move_lines"
+    /// (`selections`, `up`), "toggle_style" (`selections`, `style`: "bold",
+    /// "italic" or "underline"), "wrap" (`selections`, `template`) and
+    /// "map_selections" (`edits`, `selections`). An edit's following and a
+    /// selection's are the C ABI's own (`tl_source_edit`, `tl_source_select`),
+    /// as is the text; those that need no document are `call`'s.
     pub fn call(&mut self, command: &str, args_json: &str) -> Option<String> {
         let a: Args = args(&object(args_json)?)?;
         let auto_pair = a.auto_pair.unwrap_or(true);
@@ -82,24 +79,14 @@ impl SourceDocument {
             "insert_symbol" => json(self.insert_symbol(&a.command, a.selection)),
             "math_at" => json(self.math_at(a.caret)),
             "text_styles" => json(self.text_styles(a.selection)),
-            "not_prose" => json(self.not_prose(a.selection.start, a.selection.length)),
-            "text" => json(self.text()),
+            "code_ranges" => json(self.code_ranges(a.selection, a.checker?)),
             "type" => json(self.type_text(a.selection, &a.text, auto_pair)),
             "delete_backward" => json(self.delete_backward(a.selection, auto_pair)),
             "insert_newline" => json(self.insert_newline(a.selection)),
             "partner" => json(self.partner(a.at)),
-            "follow" => {
-                self.follow(a.old, a.delta, a.changing, a.mirroring);
-                json(())
-            }
-            "select" => {
-                self.select(a.selection, a.mirroring);
-                json(())
-            }
             "start_snippet" => json(self.start_snippet(&a.fields, a.at)),
             "end_snippet" => json(self.end_snippet()),
             "tab" => json(self.tab(&a.selections, a.step.unwrap_or(1))),
-            "mirror_snippet" => json(self.mirror_snippet()),
             "move_lines" => json(self.move_lines(&a.selections, a.up)),
             "toggle_style" => json(self.toggle_style(&a.selections, a.style?)),
             "wrap" => json(self.wrap(&a.selections, &a.template)),
@@ -177,10 +164,9 @@ fn dropped(path: &str, kind: &str, into: &str) -> Option<Dropped> {
 /// (`theme::Appearance`'s fields), by highlight kind; "legible" (`color`,
 /// `background`, `fill`, `increaseContrast`, `ratio`), one colour raised to
 /// `ratio` (default 4.5, or 7 with `increaseContrast`). "menus", the
-/// catalogue's templates, heading levels and symbol groups;
-/// "document_class" (`text`), the class a main file names, or null;
-/// "heading_styles" (`class`, `pointSize`, `hasChapters`), the levels the
-/// class has, as it sets and numbers them. "drop_text" (`path`, `kind`,
+/// catalogue's templates and symbol groups; "heading_styles" (`class`,
+/// `pointSize`, `hasChapters`), the levels the class has, as it sets and
+/// numbers them (a session's analysis answers the main file's). "drop_text" (`path`, `kind`,
 /// `into`), what a project file dropped on the editor does: {"insert": text}
 /// or {"open": true}, or null for a folder. "math_svg" (`tex`, `display`,
 /// `size`, `color`) and "glyph_svg" (`command`, `size`, `side`, `color`):
@@ -206,7 +192,6 @@ pub fn call(command: &str, args_json: &str) -> Option<String> {
             })
         }
         "menus" => json(super::catalog::menus()),
-        "document_class" => json(headings::document_class(string("text")?)),
         "heading_styles" => {
             let class = string("class").map(|name| headings::DocumentClass {
                 name: name.to_owned(),
@@ -242,9 +227,9 @@ mod tests {
         doc.set_symbols(vec![], vec!["knuth84".into()]);
         let offer = doc.call("completions", r#"{"caret": 8}"#).unwrap();
         assert!(offer.contains(r#""label":"knuth84""#), "{offer}");
-        assert_eq!(doc.call("text", "{}").as_deref(), Some(r#""\\cite{kn""#));
+        assert_eq!(doc.call("partner", "{}").as_deref(), Some("null"));
         assert_eq!(doc.call("no such command", "{}"), None);
-        assert_eq!(doc.call("text", "[]"), None);
+        assert_eq!(doc.call("partner", "[]"), None);
         assert_eq!(doc.call("toggle_comment", r#"{"selections": 3}"#), None);
         // Those that need no document are only `call`'s.
         assert_eq!(doc.call("themes", "{}"), None);
@@ -303,11 +288,6 @@ mod tests {
         assert!((7.0..7.6).contains(&enhanced), "{enhanced}");
         let menus = super::call("menus", "{}").unwrap();
         assert!(menus.contains(r#"{"glyph":"α","command":"\\alpha"}"#));
-        let class = super::call(
-            "document_class",
-            r#"{"text": "\\documentclass[11pt]{book}"}"#,
-        );
-        assert_eq!(class.as_deref(), Some(r#"{"name":"book","pointSize":11}"#));
         let levels = super::call("heading_styles", r#"{"class": "letter"}"#).unwrap();
         assert!(levels.starts_with(r#"[{"title":"Normal Text","command":"""#));
         let maths = super::call("math_svg", r#"{"tex": "x^2", "size": 10}"#);

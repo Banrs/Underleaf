@@ -12,7 +12,11 @@ nonisolated struct ProjectInfo: Decodable, Identifiable {
 }
 
 nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
-    let type: String
+    nonisolated enum Entry: String, Decodable {
+        case file, dir
+    }
+
+    let type: Entry
     let name: String
     let path: String
     /// A file's, as the core sorts it by its name; a folder has none.
@@ -20,7 +24,7 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
     let children: [TreeNode]?
 
     var id: String { path }
-    var isDirectory: Bool { type == "dir" }
+    var isDirectory: Bool { type == .dir }
 
     var symbol: String {
         if isDirectory { return "folder" }
@@ -57,6 +61,8 @@ nonisolated extension String {
 nonisolated struct TexStatus: Decodable {
     let available: Bool
     var version: String?
+    /// The number latexmk's version line names: "4.86".
+    var latexmkVersion: String?
     var texDir: String?
     var found: String?
     var texpresso: String?
@@ -130,7 +136,8 @@ nonisolated struct SearchHit: Decodable, Identifiable {
     var id: String { "\(file):\(line):\(before.count)" }
 }
 
-nonisolated struct SearchGroup: Identifiable {
+/// A file's hits, as `search_project` answers them.
+nonisolated struct SearchGroup: Decodable, Identifiable {
     let file: String
     let hits: [SearchHit]
 

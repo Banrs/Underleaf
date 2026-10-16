@@ -39,7 +39,7 @@ struct CoreTests {
             _ = try await core.call("session_open", ["id": info.id, "session": session], as: SessionOpened.self)
         }
         #expect(taken?.status == 409)
-        _ = try await core.call("session_open_document", ["session": session, "path": info.mainFile], as: FileText.self)
+        try await core.call("session_open_document", ["session": session, "path": info.mainFile])
         _ = try await core.call("session_close_document", ["session": session, "path": info.mainFile], as: Closed.self)
         try await waitUntil {
             events.contains { if case .closed(let closed) = $0 { closed.path == info.mainFile && closed.reason == "closed" } else { false } }
@@ -369,19 +369,21 @@ final class ProjectFlowTests {
         #expect(project.words == 6)
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
-        #expect(project.headingLevel.title == "Section")
+        #expect(project.headingCommand == "section")
         await app.close()
     }
 
-    @Test func theClassIsTheMainFiles() async throws {
-        let (info, folder) = try await project("% \\documentclass{book}\n\\documentclass[11pt]{report}\n\\include{a}")
+    /// The levels are those of the class the main file names outside comments, at its type size, whichever file shows.
+    @Test func theLevelsAreTheMainFilesClasses() async throws {
+        let (info, folder) = try await project("% \\documentclass{article}\n\\documentclass[11pt]{report}\n\\include{a}")
         try "\\section{A}\nthree".write(to: folder.appending(path: "a.tex"), atomically: false, encoding: .utf8)
         await app.open(info.id)
         let project = try #require(app.project)
-        try await waitUntil { project.documentClass?.name == "report" }
+        let reports = { project.headingStyles.contains { $0.command == "chapter" } }
+        try await waitUntil(reports)
         project.reveal(project.outline[0])
         try await waitUntil { project.openPath == "a.tex" }
-        #expect(project.documentClass == DocumentClass(name: "report", pointSize: 11))
+        #expect(reports() && project.headingStyles.first { $0.command == "section" }?.font.scale == 14.4 / 10.95)
         await app.close()
     }
 
@@ -512,15 +514,15 @@ final class ProjectFlowTests {
         try await Core.shared.call("write_file", ["id": project.id, "path": "appendix.tex", "text": "a needle"])
         project.search.query = "needle"
         await project.search.run()
-        #expect(project.search.hits?.count == 3 && project.search.failure == nil)
-        #expect(project.search.groups.map(\.file) == ["appendix.tex", "main.tex"] && project.search.groups.map(\.hits.count) == [1, 2])
+        #expect(project.search.hitCount == 3 && project.search.failure == nil)
+        #expect(project.search.groups?.map(\.file) == ["appendix.tex", "main.tex"] && project.search.groups?.map(\.hits.count) == [1, 2])
         project.search.query = "needles"
         #expect(project.search.searched == "needle")
         await project.search.run()
-        #expect(project.search.hits?.isEmpty == true && project.search.searched == "needles")
+        #expect(project.search.groups?.isEmpty == true && project.search.searched == "needles")
         project.search.query = " "
         await project.search.run()
-        #expect(project.search.hits == nil && project.search.failure == nil && project.search.groups.isEmpty)
+        #expect(project.search.groups == nil && project.search.failure == nil && project.search.hitCount == 0)
         await app.close()
     }
 

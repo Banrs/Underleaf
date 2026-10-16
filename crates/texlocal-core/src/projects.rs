@@ -70,6 +70,26 @@ pub struct SearchHit {
     pub after: String,
 }
 
+/// A file's search hits, in the order found.
+#[derive(Debug, Serialize)]
+pub struct SearchGroup {
+    pub file: String,
+    pub hits: Vec<SearchHit>,
+}
+
+/// `search_project`'s hits by file, the files in the order of their paths,
+/// as the search results list them.
+pub fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {
+    let mut groups: BTreeMap<String, Vec<SearchHit>> = BTreeMap::new();
+    for hit in hits {
+        groups.entry(hit.file.clone()).or_default().push(hit);
+    }
+    groups
+        .into_iter()
+        .map(|(file, hits)| SearchGroup { file, hits })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbols {
     pub citations: Vec<String>,

@@ -234,7 +234,7 @@ private struct ProgramFolder: View {
 
         func detail(in tex: TexStatus) -> String {
             guard let path = folder(in: tex) else { return "Not Found" }
-            guard self == .tex, let number = tex.version?.firstMatch(of: /Version (\d[\w.]*)/)?.1 else { return path }
+            guard self == .tex, let number = tex.latexmkVersion else { return path }
             return "latexmk \(number) in \(path)"
         }
     }

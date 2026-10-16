@@ -1,7 +1,7 @@
 import Foundation
 
-/// What the menus and the toolbar put in, the section levels and the maths symbols: the core's catalogue
-/// (its syntax module's catalog.json), which every frontend's menus are made from.
+/// What the menus and the toolbar put in and the maths symbols: the core's catalogue (its syntax module's catalog.json),
+/// which every frontend's menus are made from.
 nonisolated struct Menus: Decodable, Sendable {
     nonisolated struct Templates: Decodable, Sendable {
         let math: [Template]
@@ -22,12 +22,10 @@ nonisolated struct Menus: Decodable, Sendable {
     }
 
     let templates: Templates
-    /// Outermost first: indexed by the outline's depth.
-    let headingLevels: [HeadingLevel]
     let symbolGroups: [SymbolGroup]
 
     static let shared: Menus = Syntax.call("menus", [:])
-        ?? Menus(templates: Templates(math: [], insert: [], list: [], references: []), headingLevels: [], symbolGroups: [])
+        ?? Menus(templates: Templates(math: [], insert: [], list: [], references: []), symbolGroups: [])
 }
 
 /// A block of the core's by its id, or with `inline` a command whose "$0" is where the selection goes.
@@ -46,17 +44,30 @@ extension ProjectModel {
     }
 }
 
-nonisolated struct HeadingLevel: Hashable, Decodable, Sendable {
+/// A level the main file's class has, as its class file sets and numbers its headings (`session_analyze`'s
+/// `headingStyles`): Normal Text first.
+nonisolated struct HeadingStyle: Equatable, Decodable, Sendable {
+    nonisolated struct Font: Equatable, Decodable, Sendable {
+        /// The size as a multiple of the text's.
+        var scale: Double
+        var bold: Bool
+        var shape: Shape
+    }
+
+    nonisolated enum Shape: String, Decodable, Sendable {
+        case upright, italic, smallCaps
+    }
+
     let title: String
     /// Without its backslash; empty for Normal Text.
     let command: String
+    let font: Font
+    /// Its number as its heading prints it, with the class's counters: "1.1" for a subsection.
+    let marker: String?
 
-    static let normalText = HeadingLevel(title: "Normal Text", command: "")
-
-    static func atDepth(_ depth: Int) -> HeadingLevel? {
-        let sections = Menus.shared.headingLevels
-        return sections.indices.contains(depth) ? sections[depth] : nil
-    }
+    /// Without a class: every level, set as the standard classes set them (`heading_styles`).
+    static let standard: [HeadingStyle] = Syntax.call("heading_styles", [:])
+        ?? [HeadingStyle(title: "Normal Text", command: "", font: Font(scale: 1, bold: false, shape: .upright), marker: nil)]
 }
 
 enum TeXEngine: String, CaseIterable, Identifiable {

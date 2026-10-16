@@ -18,13 +18,14 @@ struct FilesList: View {
         }
             // Each search reads every file in the project; it waits for typing to pause.
             .task(id: project.search.query) {
-                if project.search.isSearching { try? await Task.sleep(for: PDFFind.debounce) }
+                if project.search.isSearching { try? await Task.sleep(for: ProjectSearch.debounce) }
                 guard !Task.isCancelled else { return }
                 await project.search.run()
                 // The list changes without a word: VoiceOver hears the count, as it does the PDF's find count.
-                guard !Task.isCancelled, let hits = project.search.hits, project.search.failure == nil else { return }
-                var spoken = hits.isEmpty ? AttributedString(localized: "Not found")
-                    : AttributedString(localized: "^[\(hits.count) match](inflect: true)")
+                guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
+                let count = project.search.hitCount
+                var spoken = count == 0 ? AttributedString(localized: "Not found")
+                    : AttributedString(localized: "^[\(count) match](inflect: true)")
                 spoken.accessibilitySpeechAnnouncementPriority = .low
                 AccessibilityNotification.Announcement(spoken).post()
             }
@@ -157,20 +158,20 @@ struct FilesList: View {
                 if let failure = project.search.failure {
                     ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",
                                            description: Text(failure))
-                } else if project.search.hits?.isEmpty == true {
+                } else if project.search.groups?.isEmpty == true {
                     ContentUnavailableView.search(text: project.search.searched)
                 }
             }
     }
 
     private func open(_ id: SearchHit.ID?, focus: Bool) {
-        if let found = project.search.hits?.first(where: { $0.id == id }) {
+        if let found = project.search.groups?.lazy.flatMap(\.hits).first(where: { $0.id == id }) {
             Task { await project.open(found.file, line: found.line, focus: focus) }
         }
     }
 
     private var searchResults: some View {
-        ForEach(project.search.groups) { group in
+        ForEach(project.search.groups ?? []) { group in
             Section {
                 ForEach(group.hits) { hit in
                     HStack(alignment: .firstTextBaseline) {
@@ -292,11 +293,11 @@ private func disclosure(_ set: ReferenceWritableKeyPath<ProjectModel, Set<String
 
 #Preview("File tree") {
     @Previewable @State var expanded: Set<String> = ["figures"]
-    let file = { (path: String, kind: FileKind) in TreeNode(type: "file", name: path.fileName, path: path, kind: kind, children: nil) }
+    let file = { (path: String, kind: FileKind) in TreeNode(type: .file, name: path.fileName, path: path, kind: kind, children: nil) }
     List {
         Section("Files") {
             TreeRows(nodes: [
-                TreeNode(type: "dir", name: "figures", path: "figures",
+                TreeNode(type: .dir, name: "figures", path: "figures",
                          children: [file("figures/plot.pdf", .pdf), file("figures/diagram.png", .image)]),
                 file("main.tex", .tex), file("references.bib", .bib),
             ], children: \.children, isExpanded: { node in
@@ -451,11 +452,11 @@ private struct HeadingRow: View, Equatable {
     let item: OutlineItem
 
     var body: some View {
-        Text(item.displayTitle)
+        Text(item.title)
             .lineLimit(1)
-            .help(item.displayTitle)
-            .foregroundStyle(item.isUntitled ? .secondary : .primary)
-            .accessibilityValue(item.kind)
+            .help(item.title)
+            .foregroundStyle(item.untitled ? .secondary : .primary)
+            .accessibilityValue(item.level)
             // For scrollTo, inside the row: on it, the list would take it for the row's identity, and a heading that gains subheadings would keep a leaf's closed state.
             .id(item.id)
     }

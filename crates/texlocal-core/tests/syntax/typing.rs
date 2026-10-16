@@ -563,8 +563,9 @@ fn typing_answers_by_name() {
     );
     let off = r#"{"selection": {"start": 0, "length": 0}, "text": "{", "autoPair": false}"#;
     assert!(doc.call("type", off).unwrap().contains(r#""edit":null"#));
+    // An edit's following and a selection's are the C ABI's own.
     let follow = r#"{"old": {"start": 0, "length": 0}, "delta": 2}"#;
-    assert_eq!(doc.call("follow", follow).as_deref(), Some("null"));
+    assert_eq!(doc.call("follow", follow), None);
     assert_eq!(doc.call("toggle_style", r#"{"style": "strong"}"#), None);
     let edits = r#"{"edits": [{"start": 0, "length": 0, "text": "ab"}], "selections": [{"start": 0, "length": 1}]}"#;
     assert_eq!(
