@@ -85,7 +85,7 @@ private struct EditorSettings: View {
                 }
                 Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
                 Picker(selection: $syntaxTheme) {
-                    ForEach(SyntaxTheme.allCases) { Text($0.title).tag($0) }
+                    ForEach(SyntaxTheme.all) { Text($0.title).tag($0) }
                 } label: {
                     Text("Theme")
                     Text("Colours for commands, math and comments. All follow light and dark appearance.")

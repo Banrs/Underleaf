@@ -102,10 +102,8 @@ struct SourceEditorTests {
     }
 
     @Test func typingAssistanceCanBeTurnedOff() throws {
-        let defaults = UserDefaults.standard, keys = [EditorPrefs.autoPairKey, EditorPrefs.autoCompleteKey]
-        let before = keys.map { defaults.object(forKey: $0) }
-        defer { for (key, value) in zip(keys, before) { defaults.set(value, forKey: key) } }
-        for key in keys { defaults.set(false, forKey: key) }
+        text.autoPair = false
+        text.autoComplete = false
         open("")
         text.insertText("{", replacementRange: typed)
         #expect(text.string == "{")
@@ -477,14 +475,16 @@ struct SourceEditorTests {
         window.orderFront(nil)
         defer { window.close() }
         open("\\section{A} % note")
-        text.syntaxTheme = .texstudio
-        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.texstudio.color(.command) } state: {
+        #expect(SyntaxTheme.all.map(\.id) == ["overleaf", "texstudio", "system"] && SyntaxTheme(rawValue: "gone") == nil)
+        let texstudio = try #require(SyntaxTheme(rawValue: "texstudio")), system = try #require(SyntaxTheme(rawValue: "system"))
+        text.syntaxTheme = texstudio
+        try await waitUntil { (try? self.colour(of: "\\section")) == texstudio.color(.command) } state: {
             "TeXstudio: \(String(describing: try? self.colour(of: "\\section")))"
         }
-        #expect(try colour(of: "% note") == SyntaxTheme.texstudio.color(.comment))
+        #expect(try colour(of: "% note") == texstudio.color(.comment))
         let before = try renderedText()
-        text.syntaxTheme = .system
-        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.system.color(.command) } state: {
+        text.syntaxTheme = system
+        try await waitUntil { (try? self.colour(of: "\\section")) == system.color(.command) } state: {
             "System: \(String(describing: try? self.colour(of: "\\section")))"
         }
         #expect(try renderedText() != before, "A theme change must repaint the already-visible text.")

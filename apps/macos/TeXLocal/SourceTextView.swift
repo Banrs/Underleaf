@@ -243,15 +243,23 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private func digits(_ n: Int) -> Int { max(4, String(n).count) }
 
+    /// Where the current line's and an issue's band start, and where the numbers would end without them.
+    private static let bandStart: CGFloat = 14
+    /// The room after the text and the bands.
+    private static let trailingMargin: CGFloat = 8
+    /// Where a number's first digit ends: Xcode's four-digit numbers end 39.7 pt in at 13 pt (fitted to its gutter as drawn).
+    private static let firstDigitEnd: CGFloat = 19.8
+    /// From the numbers to the text, which starts on a whole point, as Xcode's does (51 at 13 pt).
+    private static let numbersToText: CGFloat = 11
+
     func updateGutterWidth() {
         lineCountDigits = digits(document.lineCount)
-        // Xcode's numbers end 39.7 pt in at 13 pt (fitted to its gutter as drawn).
-        numbersEnd = showsLineNumbers ? 19.8 + CGFloat(lineCountDigits - 1) * digitWidth : 14
-        // The text starts on a whole point, as Xcode's does (51 at 13 pt).
-        let width = (numbersEnd + 11).rounded(.up) - (textContainer?.lineFragmentPadding ?? 0)
+        numbersEnd = showsLineNumbers ? Self.firstDigitEnd + CGFloat(lineCountDigits - 1) * digitWidth : Self.bandStart
+        let width = (numbersEnd + Self.numbersToText).rounded(.up) - (textContainer?.lineFragmentPadding ?? 0)
         guard width != gutterWidth else { return }
         gutterWidth = width
-        textContainerInset.width = (textContainerOrigin.x + 8) / 2
+        // The container tracks the view's width less twice this: the gutter and the margin after the text.
+        textContainerInset.width = (gutterWidth + Self.trailingMargin) / 2
         needsDisplay = true
     }
 
@@ -265,7 +273,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let top = shownTop
         super.setFrameSize(size)
         // 27.2: scrolled down, AppKit's tracking waits for a live resize's end, so the width follows as it goes.
-        textContainer?.size.width = max(0, size.width - 2 * textContainerInset.width)
+        textContainer?.size.width = max(0, size.width - gutterWidth - Self.trailingMargin)
         top.map(scroll(toShownTop:))
         layOutViewportOnceSettled()
     }
@@ -283,26 +291,50 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
     }
 
+    /// What of the text shows: the clip view's bounds less the scroll view's insets for the bars over it.
+    var shownRect: NSRect {
+        guard let scroll = enclosingScrollView else { return visibleRect }
+        let insets = scroll.contentInsets
+        var shown = convert(scroll.contentView.bounds, from: scroll.contentView)
+        shown.origin.y += insets.top
+        shown.size.height -= insets.top + insets.bottom
+        return shown
+    }
+
     /// From the fragments last laid out: asked by point, TextKit answers from its new estimates.
     var shownTop: (offset: Int, below: CGFloat)? {
-        guard let clip = enclosingScrollView?.contentView,
-              let top = fragments.first(where: { $0.fragment.layoutFragmentFrame.maxY + textContainerOrigin.y > clip.bounds.minY + clip.contentInsets.top })?.fragment
-        else { return nil }
+        guard let clip = enclosingScrollView?.contentView, let top = fragment(under: shownRect.minY) else { return nil }
         return (offset(top.rangeInElement.location), top.layoutFragmentFrame.minY + textContainerOrigin.y - clip.bounds.minY)
     }
 
+    /// The line half a line under the shown text's top, from the fragments last laid out as `shownTop` is; nil while
+    /// they don't reach there, which the viewport's next layout does (`laidOut`).
+    var topLine: Int? {
+        let y = shownRect.minY + (font?.boundingRectForFont.height ?? 0) / 2
+        guard let top = fragment(under: y), top.layoutFragmentFrame.minY + textContainerOrigin.y <= y else { return nil }
+        return document.line(at: offset(top.rangeInElement.location))
+    }
+
+    /// The first fragment laid out that reaches below `y`.
+    private func fragment(under y: CGFloat) -> NSTextLayoutFragment? {
+        fragments.first { $0.fragment.layoutFragmentFrame.maxY + textContainerOrigin.y > y }?.fragment
+    }
+
+    /// Each time TextKit lays out the viewport: a scroll past what it had laid out, an edit, a new width.
+    var laidOut: () -> Void = {}
+
     /// 27.2: AppKit's Jump to Selection lands lines off where TextKit 2 has only estimated the heights above.
     override func centerSelectionInVisibleArea(_ sender: Any?) {
-        guard let scrollView = enclosingScrollView, let manager = textLayoutManager,
+        guard let clip = enclosingScrollView?.contentView, let manager = textLayoutManager,
               let location = textRange(NSRange(location: selectedRange().location, length: 0))?.location
         else { return super.centerSelectionInVisibleArea(sender) }
-        let insets = scrollView.contentInsets
-        let shown = scrollView.contentView.bounds.height - insets.top - insets.bottom
+        // The shown text's middle, under the clip view's top.
+        let middle = shownRect.midY - clip.bounds.minY
         scroll(location) { [unowned self] paragraph in
-            guard let fragment = manager.textLayoutFragment(for: location) else { return paragraph.midY - insets.top - shown / 2 }
+            guard let fragment = manager.textLayoutFragment(for: location) else { return paragraph.midY - middle }
             let inParagraph = offset(location) - offset(fragment.rangeInElement.location)
             let line = fragment.textLineFragments.last { $0.characterRange.location <= inParagraph } ?? fragment.textLineFragments.first
-            return paragraph.minY + (line?.typographicBounds.midY ?? paragraph.height / 2) - insets.top - shown / 2
+            return paragraph.minY + (line?.typographicBounds.midY ?? paragraph.height / 2) - middle
         }
     }
 
@@ -360,6 +392,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         showCompletions(reload: false)
         placeIssues()
         redrawLineAndGutter()
+        laidOut()
     }
 
     /// The document's last line when it's empty: TextKit lays it out as an extra line of the paragraph before.
@@ -384,7 +417,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let frame = fragment.layoutFragmentFrame
         let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) + rowShift)
         let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + rowShift)
-        return NSRect(x: 14, y: top, width: bounds.width - 22, height: bottom - top)
+        return NSRect(x: Self.bandStart, y: top, width: bounds.width - Self.bandStart - Self.trailingMargin, height: bottom - top)
     }
 
     private func onPixels(_ y: CGFloat) -> CGFloat {
@@ -410,7 +443,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return line
     }
 
-    private static let legibleNumbers = NSColor.tertiaryLabelColor.legibleAsText
+    /// The numbers' grey, raised with Increase Contrast as the syntax colours are (`displayOptionsChanged` redraws them).
+    private static let numberColor: NSColor = {
+        let raised: [NSAppearance.Name] = [.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
+        return .adapting(Dictionary(uniqueKeysWithValues: raised.map { ($0, NSColor.tertiaryLabelColor.legibleAsText(in: $0)) }),
+                         fallback: .tertiaryLabelColor)
+    }()
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
@@ -435,14 +473,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             issue.tokens.forEach { $0.fill() }
         }
         guard rect.minX < numbersEnd + 4, showsLineNumbers else { return }
-        // Increase Contrast raises the numbers as the syntax colours are (`displayOptionsChanged` redraws them).
-        let faint = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? Self.legibleNumbers : .tertiaryLabelColor
         for (offset, fragment) in fragments {
             let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: origin.y)
             guard frame.maxY >= rect.minY, frame.minY <= rect.maxY, let line = fragment.textLineFragments.first else { continue }
             let lineNumber = document.line(at: offset)
             func draw(_ lineNumber: Int, on line: NSTextLineFragment) {
-                (lineNumber == current?.number ? .labelColor : faint).setFill()
+                (lineNumber == current?.number ? .labelColor : Self.numberColor).setFill()
                 let number = numberLine(lineNumber)
                 context.textPosition = CGPoint(x: numbersEnd - number.width, y: frame.minY + line.typographicBounds.minY + line.glyphOrigin.y)
                 CTLineDraw(number.line, context)
@@ -556,8 +592,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let width = fitted?.cut == true ? room.rounded(.down) : Metrics.width(ofText: fitted?.width, font: issueFont, issues: issues)
         if width <= room {
             let foot = onPixels(top + first.typographicBounds.maxY + rowShift)
-            let rect = NSRect(x: end - width, y: band.minY + Metrics.verticalInset, width: width,
-                              height: foot - band.minY - 2 * Metrics.verticalInset)
+            let rect = NSRect(x: end - width, y: band.minY, width: width, height: foot - band.minY)
             let box = IssueBox(isError: reported.isError, issues: issues, text: fitted?.text, font: issueFont, fill: Color(nsColor: backgroundColor),
                                baseline: top + first.typographicBounds.minY + first.glyphOrigin.y - rect.minY)
             let view = view ?? IssueMessageView(box)
@@ -723,7 +758,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         // Asked for whether or not it shows: Escape's dismissal lasts while the caret is in that maths.
         let maths = loading ? nil : math(at: selectedRange().location)
         if maths?.start != dismissedMath { dismissedMath = nil }
-        guard let window, hasKeyboard, let maths, dismissedMath == nil, let scroll = enclosingScrollView else {
+        guard let window, hasKeyboard, let maths, dismissedMath == nil, enclosingScrollView != nil else {
             mathPopover?.close()
             return
         }
@@ -731,11 +766,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         // A point wide: NSPopover takes an empty rect for the whole view.
         var rect = convert(window.convertFromScreen(screen), from: nil)
         rect.size.width = max(rect.width, 1)
-        let insets = scroll.contentInsets, clip = scroll.contentView
-        var shown = convert(clip.bounds, from: clip)
-        shown.origin.y += insets.top
-        shown.size.height -= insets.top + insets.bottom
-        guard shown.contains(NSPoint(x: rect.minX, y: rect.midY)) else {
+        guard shownRect.contains(NSPoint(x: rect.minX, y: rect.midY)) else {
             mathPopover?.close()
             return
         }
@@ -772,6 +803,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     // MARK: typing: the core's brackets, indentation and snippet fields
 
+    /// Settings' typing: brackets closed as they're typed, and completions offered as a command is.
+    var autoPair = true, autoComplete = true
+
     /// Told as marked (IME) text comes and goes: the session's autosave waits for it to be committed.
     var composing: (Bool) -> Void = { _ in }
     private var toldComposing = false
@@ -804,7 +838,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             closeCompletions()
             return
         }
-        let stroke = document.type(typed, replacing: selectedRange(), autoPair: EditorPrefs.autoPair)
+        let stroke = document.type(typed, replacing: selectedRange(), autoPair: autoPair)
         if let edit = stroke.edit {
             super.insertText(edit.text, replacementRange: edit.range)
         } else if stroke.selection == nil {
@@ -831,7 +865,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             typing = wasTyping
             if completing { offerCompletions() }
         }
-        guard selectedRanges.count == 1, let edit = document.deleteBackward(selectedRange(), autoPair: EditorPrefs.autoPair).edit
+        guard selectedRanges.count == 1, let edit = document.deleteBackward(selectedRange(), autoPair: autoPair).edit
         else { return super.deleteBackward(sender) }
         insertText(edit.text, replacementRange: edit.range)
     }
@@ -869,7 +903,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             closeCompletions()
         } else if document.endSnippet() {
             // Escape leaves the snippet's fields.
-        } else if mathPopover?.isShown == true, let maths = math(at: caret) {
+        } else if mathPopover?.isWanted == true, let maths = math(at: caret) {
             dismissedMath = maths.start
             mathPopover?.close()
         } else {
@@ -890,7 +924,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var caret: Int { selectedRange().location }
 
     private func offerCompletions() {
-        if EditorPrefs.autoComplete || offered != nil { complete(explicit: false) }
+        if autoComplete || offered != nil { complete(explicit: false) }
     }
 
     override func complete(_ sender: Any?) { complete(explicit: true) }
@@ -918,11 +952,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             host = scroll
             start = scroll.convert(window.convertFromScreen(
                 firstRect(forCharacterRange: NSRange(location: offered.start, length: 0), actualRange: nil)), from: nil)
-            let insets = scroll.contentInsets, clip = scroll.contentView
-            var inWindow = clip.convert(clip.bounds, to: nil)
-            inWindow.origin.y += insets.bottom
-            inWindow.size.height -= insets.top + insets.bottom
-            shown = scroll.convert(inWindow, from: nil)
+            shown = scroll.convert(shownRect, from: self)
             guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return closeCompletions() }
             guard reload else { return completionList.place(under: start, in: shown) }
         }
@@ -1131,12 +1161,8 @@ struct IssueBox: View {
         static let cornerRadius: CGFloat = 4
         static let border: CGFloat = 1
         static let divider: CGFloat = 1
-        /// From the source line's baseline, down.
-        static let baselineOffset: CGFloat = 0
         /// From the band's end.
         static let endInset: CGFloat = 1
-        /// From the band's top and the line's foot.
-        static let verticalInset: CGFloat = 0
 
         /// The size of the symbol and of the line numbers: Xcode's 12.35 pt at 13 pt.
         static func small(_ size: CGFloat) -> CGFloat { size * 0.95 }
@@ -1190,7 +1216,7 @@ struct IssueBox: View {
     /// On the source line's baseline.
     private func onBaseline(_ text: Text) -> some View {
         text.fixedSize()
-            .alignmentGuide(.top) { $0[.firstTextBaseline] - baseline - Metrics.baselineOffset }
+            .alignmentGuide(.top) { $0[.firstTextBaseline] - baseline }
             .frame(maxHeight: .infinity, alignment: .top)
     }
 }
@@ -1273,23 +1299,39 @@ private func typeset(_ string: String, in font: NSFont) -> (line: CTLine, width:
     return (line, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
 }
 
-/// The core's themes (texlocal-syntax's theme.rs), each kind's colour raised to the HIG's 4.5:1 on the editor's
-/// background and its current line in each appearance, and to 7:1 with Increase Contrast.
-enum SyntaxTheme: String, CaseIterable, Identifiable {
-    case overleaf, texstudio, system
+/// A theme of the core's (texlocal-syntax's theme.rs) by its id, each kind's colour raised to the HIG's 4.5:1 on the
+/// editor's background and its current line in each appearance, and to 7:1 with Increase Contrast. Settings stores the
+/// id; one the core no longer has reads as none, so the default is used.
+struct SyntaxTheme: RawRepresentable, Hashable, Identifiable {
+    let rawValue: String
 
-    var id: Self { self }
+    var id: String { rawValue }
 
-    var title: String {
-        Self.titles.first { $0.id == rawValue }?.title ?? rawValue
+    init?(rawValue: String) {
+        guard Self.listed.contains(where: { $0.id == rawValue }) else { return nil }
+        self.rawValue = rawValue
     }
 
-    private nonisolated struct Title: Decodable {
+    private init(_ id: String) {
+        rawValue = id
+    }
+
+    /// Settings' default.
+    static let overleaf = SyntaxTheme("overleaf")
+
+    /// The core's, in its order, as Settings lists them.
+    static let all = listed.map { SyntaxTheme($0.id) }
+
+    var title: String {
+        Self.listed.first { $0.id == rawValue }?.title ?? rawValue
+    }
+
+    private nonisolated struct Listed: Decodable {
         let id: String
         let title: String
     }
 
-    private static let titles: [Title] = Syntax.call("themes", [:]) ?? []
+    private static let listed: [Listed] = Syntax.call("themes", [:]) ?? []
 
     func color(_ kind: HighlightKind) -> NSColor {
         let shown = Self.made[self] ?? colors()
@@ -1314,11 +1356,11 @@ enum SyntaxTheme: String, CaseIterable, Identifiable {
             args["system"] = Self.systemColors.mapValues { $0.rgba(in: appearance) }
             shades[name] = Syntax.call("theme_colors", args) as [[Double]]?
         }
-        var shared: [String: NSColor] = [:]
+        var shared: [[[Double]?]: NSColor] = [:]
         return HighlightKind.allCases.map { kind -> NSColor in
             let index = Int(kind.rawValue)
             let byName = shades.compactMapValues { index < $0.count ? $0[index] : nil }
-            let key = NSColor.textAppearances.map { byName[$0].map { "\($0)" } ?? "-" }.joined(separator: " ")
+            let key = NSColor.textAppearances.map { byName[$0] }
             if let color = shared[key] { return color }
             let color = NSColor.adapting(byName.mapValues { NSColor.srgb($0) }, fallback: .textColor)
             shared[key] = color

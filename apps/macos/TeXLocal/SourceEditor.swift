@@ -4,14 +4,15 @@ import SwiftUI
 final class SourceEditor: NSObject, NSTextViewDelegate {
     let textView = SourceTextView.plainDocument()
     let scrollView = NSScrollView()
+    /// The caret's line and column, told as the selection moves or a file opens.
     var onCursor: (Int, Int) -> Void = { _, _ in }
+    /// The top line, told as a scroll or a layout may have changed it.
     var onScroll: (Int) -> Void = { _ in }
 
     private(set) var path: String?
     /// Their state and scroll come back only if their text is unchanged since, as Xcode's do.
     private var kept: [String: (text: String, undo: UndoManager, selection: NSRange, top: (offset: Int, below: CGFloat)?)] = [:]
     private var undo = UndoManager()
-    private var cursorLine = 1, cursorColumn = 0, topLine = 1
 
     /// Hiding removes the editor from the key view loop; showing it restores requested focus after a file opens.
     var shown = false {
@@ -59,7 +60,12 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         scrollView.documentView = text
         let clip = scrollView.contentView
         clip.postsBoundsChangedNotifications = true
-        scrolling = NotificationCenter.default.addObserver(of: clip, for: .boundsDidChange) { [weak self] _ in self?.scrolled() }
+        scrolling = NotificationCenter.default.addObserver(of: clip, for: .boundsDidChange) { [weak self] _ in
+            self?.textView.previewMath()
+            self?.reportTop()
+        }
+        // A jump's new top line is known once the viewport is laid out there.
+        text.laidOut = { [weak self] in self?.reportTop() }
     }
 
     func undoManager(for view: NSTextView) -> UndoManager? { undo }
@@ -139,27 +145,17 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     private func scroll(to offset: Int, atTop: Bool) {
         guard let target = textView.textRange(NSRange(location: offset, length: 0)) else { return }
-        let insets = scrollView.contentInsets, shown = scrollView.contentView.bounds.height - insets.top - insets.bottom
-        textView.scroll(target.location) { atTop ? $0.minY - insets.top : $0.midY - insets.top - shown / 2 }
+        // Under the clip view's top: the shown text's top and middle.
+        let shown = textView.shownRect, clipTop = scrollView.contentView.bounds.minY
+        textView.scroll(target.location) { atTop ? $0.minY - (shown.minY - clipTop) : $0.midY - (shown.midY - clipTop) }
     }
 
-    private func scrolled() {
-        textView.previewMath()
-        guard let manager = textView.textLayoutManager, let font = textView.font else { return }
-        let y = scrollView.contentView.bounds.minY + scrollView.contentInsets.top - textView.textContainerOrigin.y
-            + font.boundingRectForFont.height / 2
-        guard let fragment = manager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, y))) else { return }
-        let line = textView.document.line(at: textView.offset(fragment.rangeInElement.location))
-        guard line != topLine else { return }
-        topLine = line
-        onScroll(line)
+    private func reportTop() {
+        if let line = textView.topLine { onScroll(line) }
     }
 
     private func reportCursor() {
-        let line = currentLine, column = currentColumn
-        guard line != cursorLine || column != cursorColumn else { return }
-        (cursorLine, cursorColumn) = (line, column)
-        onCursor(line, column)
+        onCursor(currentLine, currentColumn)
     }
 
     func textDidChange(_ notification: Notification) {
@@ -277,6 +273,8 @@ struct EditorView: NSViewRepresentable {
     let fontSize: Int
     let lineNumbers: Bool
     let syntaxTheme: SyntaxTheme
+    let autoPair: Bool
+    let autoComplete: Bool
 
     func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
 
@@ -286,6 +284,8 @@ struct EditorView: NSViewRepresentable {
         editor.textView.fontName = fontName
         editor.textView.showsLineNumbers = lineNumbers
         editor.textView.syntaxTheme = syntaxTheme
+        editor.textView.autoPair = autoPair
+        editor.textView.autoComplete = autoComplete
         if editor.shown != shown { editor.shown = shown }
     }
 }
@@ -307,9 +307,6 @@ enum EditorPrefs {
     }
     static let fontNameKey = "editorFontName", lineNumbersKey = "editorLineNumbers"
     static let autoPairKey = "editorAutoPair", autoCompleteKey = "editorAutoComplete"
-
-    static var autoPair: Bool { UserDefaults.standard.object(forKey: autoPairKey) as? Bool ?? true }
-    static var autoComplete: Bool { UserDefaults.standard.object(forKey: autoCompleteKey) as? Bool ?? true }
 
     static var spellCheck: Bool {
         get { UserDefaults.standard.object(forKey: spellCheckKey) as? Bool ?? true }

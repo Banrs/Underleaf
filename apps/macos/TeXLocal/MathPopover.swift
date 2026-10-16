@@ -6,8 +6,10 @@ final class MathPopover {
     private let popover = NSPopover()
     private let content = NSHostingController(rootView: MathView())
     private var wanted: (maths: MathPreview, size: CGFloat, rect: NSRect, view: NSView, edge: NSRectEdge)?
+    /// What the content shows.
     private var rendered: (maths: MathPreview, size: CGFloat)?
-    private var rendering = false
+    /// One drawing at a time, which draws what's wanted until it's what the content shows.
+    private var rendering: Task<Void, Never>?
 
     init() {
         popover.behavior = .applicationDefined
@@ -18,11 +20,15 @@ final class MathPopover {
 
     func show(_ maths: MathPreview, size: CGFloat, at rect: NSRect, of view: NSView, edge: NSRectEdge) {
         wanted = (maths, size, rect, view, edge)
-        if rendered?.maths == maths, rendered?.size == size {
+        if isRendered {
             present()
-        } else {
-            update()
+        } else if rendering == nil {
+            rendering = Task { await render() }
         }
+    }
+
+    private var isRendered: Bool {
+        rendered?.maths == wanted?.maths && rendered?.size == wanted?.size
     }
 
     /// Unconditionally: `isShown` stays true while a closed popover animates out, and a show then brings it back.
@@ -31,25 +37,21 @@ final class MathPopover {
         popover.show(relativeTo: wanted.rect, of: wanted.view, preferredEdge: wanted.edge)
     }
 
-    var isShown: Bool { wanted != nil }
+    var isWanted: Bool { wanted != nil }
 
     func close() {
         wanted = nil
         if popover.isShown { popover.close() }
     }
 
-    private func update() {
-        guard !rendering, let asked = wanted else { return }
-        rendered = nil
-        rendering = true
-        // The maths a little larger than the text, at 1.21 times its size.
-        let em = asked.size * 1.21
-        Task {
+    /// What was wanted as a drawing began and isn't by its end is skipped.
+    private func render() async {
+        defer { rendering = nil }
+        while let asked = wanted, !isRendered {
+            // The maths a little larger than the text, at 1.21 times its size.
+            let em = asked.size * 1.21
             let drawing = await Self.draw(asked.maths.tex, display: asked.maths.display, size: Double(em))
-            rendering = false
-            guard let wanted else { return }
-            // Skip intermediate requests.
-            guard wanted.maths == asked.maths, wanted.size == asked.size else { update(); return }
+            guard wanted?.maths == asked.maths, wanted?.size == asked.size else { continue }
             rendered = (asked.maths, asked.size)
             content.rootView = MathView(tex: asked.maths.tex, em: em, image: drawing.flatMap { NSImage(drawing: $0) })
             popover.contentSize = content.view.fittingSize

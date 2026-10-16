@@ -7,12 +7,14 @@ struct SourceColumn: View {
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
     @AppStorage(EditorPrefs.lineNumbersKey) private var lineNumbers = true
     @AppStorage(EditorPrefs.syntaxThemeKey) private var syntaxTheme = SyntaxTheme.overleaf
+    @AppStorage(EditorPrefs.autoPairKey) private var autoPair = true
+    @AppStorage(EditorPrefs.autoCompleteKey) private var autoComplete = true
 
     var body: some View {
         // Keep the editor under previews so it retains its text and scroll position.
         ZStack {
             EditorView(editor: project.editor, shown: project.editsText, fontName: fontName, fontSize: fontSize,
-                       lineNumbers: lineNumbers, syntaxTheme: syntaxTheme)
+                       lineNumbers: lineNumbers, syntaxTheme: syntaxTheme, autoPair: autoPair, autoComplete: autoComplete)
                 .ignoresSafeArea(.container, edges: [.top, .bottom])
                 .background(.textSurface)
             if project.openPath == nil {

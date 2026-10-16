@@ -34,8 +34,6 @@ nonisolated struct HeadingStyle: Equatable, Decodable {
     /// Its number as its heading prints it, with the class's counters: "1.1" for a subsection.
     let marker: String?
 
-    var level: HeadingLevel { HeadingLevel(title: title, command: command) }
-
     static func styles(of documentClass: DocumentClass?, hasChapters: Bool) -> [HeadingStyle] {
         var args: [String: Any] = ["hasChapters": hasChapters]
         if let documentClass {

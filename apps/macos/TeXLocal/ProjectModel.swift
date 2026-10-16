@@ -178,7 +178,7 @@ final class ProjectModel {
     /// Stops if the project is left meanwhile, so it never writes to the editor after the next one.
     func load(restoring saved: SavedWorkspace?) async {
         editor.onCursor = { [weak self] line, column in
-            guard let self else { return }
+            guard let self, line != cursorLine || column != cursorColumn else { return }
             cursorLine = line
             cursorColumn = column
             (currentLine, caretMoved) = (line, true)
@@ -187,7 +187,7 @@ final class ProjectModel {
         }
         editor.textView.composing = { [weak self] composing in self?.composing(composing) }
         editor.onScroll = { [weak self] line in
-            guard let self else { return }
+            guard let self, line != topLine else { return }
             topLine = line
             findHeadings()
         }
@@ -336,7 +336,6 @@ final class ProjectModel {
             editor.reload(text: event.text)
             analyze()
             editor.reveal(line: top, atTop: true, focus: false)
-            cursorLine = editor.currentLine
         } else if let session, let source = SourceDocument(session: session, path: event.path) {
             source.reload(event.text)
         }
@@ -430,7 +429,6 @@ final class ProjectModel {
             return
         }
         editor.open(path: path, text: source.text, source: source, focus: focus)
-        cursorLine = editor.currentLine
         editor.textView.issueLines = lineIssues[path] ?? [:]
     }
 
