@@ -86,7 +86,6 @@ pub(crate) struct Doc {
     /// A `document_reload` the host has yet to apply: nothing is saved meanwhile.
     reload: Option<Reload>,
     composing: bool,
-    last_edit: u64,
     issues: Vec<Value>,
     shown: Value,
 }
@@ -147,6 +146,9 @@ pub(crate) struct Actor {
     symbols_at: Option<Instant>,
     symbols_sent: Option<Value>,
     edits: u64,
+    /// The edit each path last had, kept for the session's life: a document closed since
+    /// isn't marked with a build's issues on lines that may have moved.
+    last_edits: HashMap<String, u64>,
     result_edits: u64,
     build_pdf: bool,
     outdated: bool,
@@ -201,6 +203,7 @@ impl Actor {
             symbols_at: Some(Instant::now()),
             symbols_sent: None,
             edits: 0,
+            last_edits: HashMap::new(),
             result_edits: 0,
             build_pdf,
             outdated: false,
@@ -515,7 +518,6 @@ impl Actor {
             error: None,
             reload: None,
             composing: false,
-            last_edit: 0,
             issues: Vec::new(),
             shown: Value::Null,
         };
@@ -559,10 +561,7 @@ impl Actor {
             return;
         };
         self.edits += 1;
-        let edits = self.edits;
-        if let Some(doc) = self.docs.get_mut(&path) {
-            doc.last_edit = edits;
-        }
+        self.last_edits.insert(path.clone(), self.edits);
         self.clear_issues(&path);
         if self.has_pdf() && !self.outdated {
             self.outdated = true;
@@ -578,12 +577,11 @@ impl Actor {
             return;
         };
         self.edits += 1;
-        let edits = self.edits;
+        self.last_edits.insert(path.clone(), self.edits);
         let Some(doc) = self.docs.get_mut(&path) else {
             return;
         };
         doc.saved = version;
-        doc.last_edit = edits;
         let reason = doc.reload.take();
         if reason == Some(Reload::Revert) {
             // Written back: a save under way when the change came may have written over it.
@@ -1079,7 +1077,8 @@ impl Actor {
     fn mark_issues(&mut self) {
         let mut changed = Vec::new();
         for (path, doc) in &mut self.docs {
-            let lines = if doc.last_edit <= self.result_edits {
+            let last_edit = self.last_edits.get(path).copied().unwrap_or(0);
+            let lines = if last_edit <= self.result_edits {
                 issue_lines(&self.issues, path)
             } else {
                 Vec::new()
@@ -1172,6 +1171,9 @@ impl Actor {
                 shared.insert(new.clone(), doc.doc.clone());
             }
             self.docs.insert(new.clone(), doc);
+            if let Some(edit) = self.last_edits.remove(&old) {
+                self.last_edits.insert(new.clone(), edit);
+            }
             self.emit("document_renamed", json!({ "from": old, "to": new }));
             self.publish_doc(&new);
         }

@@ -492,6 +492,29 @@ async fn issues_mark_unedited_documents_and_go_with_an_edit() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_document_edited_since_the_build_shows_no_marks_when_it_opens_again() {
+    let mut rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    rig.ok("compile", json!({})).await;
+    rig.fake
+        .finish_build(built(true, vec![issue("error", 1, "Undefined")]));
+    assert_eq!(rig.of_type("issues").await.len(), 1);
+    // The line the issue was on moves down.
+    doc.edit(0, 0, "\n");
+    rig.ok("close_document", json!({ "path": "main.tex" }))
+        .await;
+    rig.events().await;
+    rig.open("main.tex").await;
+    assert_eq!(rig.of_type("issues").await, Vec::<Value>::new());
+    // A build since the edit marks it again.
+    rig.ok("compile", json!({})).await;
+    rig.fake
+        .finish_build(built(true, vec![issue("error", 2, "Undefined")]));
+    let issues = rig.of_type("issues").await;
+    assert_eq!(issues[0]["lines"][0]["line"], 2);
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_failed_build_announces_and_an_automatic_one_only_when_the_errors_change() {
     let mut rig = Rig::new(false).await;
     rig.ok("compile", json!({ "auto": true })).await;

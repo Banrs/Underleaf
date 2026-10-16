@@ -154,7 +154,7 @@ Each is `{"type", "session", …}`.
 - **Builds**: one at a time; a request during one queues one more (manual wins over
   automatic); Stop drops it. Automatic builds wait while live preview runs or is restarting.
   `outdated`: edits since the shown PDF's build began. Issues mark a document's lines only if
-  it hasn't been edited since that build began.
+  it hasn't been edited since that build began, closed and opened again since or not.
 - **Live preview**: keys go to TeXpresso as made; one its copy can't take sends the whole text
   (retried after 750 ms if TeXpresso couldn't be asked). A rename, a new main file or a file
   gone from the tree restarts it 180 ms later; files changed on disk are sent and rescanned.
