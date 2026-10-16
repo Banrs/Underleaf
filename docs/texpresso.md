@@ -68,9 +68,9 @@ TeXpresso gets only the changed UTF-8 range.
 
 ## Verify
 
-`crates/texlocal-core/tests/texpresso_live.rs` runs the real engine through `Service`, as
-hosts call it, headless on SDL's dummy display driver, with everything written to a
-temporary folder:
+`crates/texlocal-core/tests/texpresso_live.rs` runs the real engine through a project
+session, as the hosts drive it, headless on SDL's dummy display driver, with everything
+written to a temporary folder:
 
 ```sh
 TEXLOCAL_TEXPRESSO=/absolute/path/to/texpresso \

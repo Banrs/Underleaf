@@ -1,15 +1,17 @@
-//! Live preview end to end with a real TeXpresso, through `Service` as the hosts
-//! call it: `TEXLOCAL_TEXPRESSO` names the program, and TeX Live must be on the
-//! PATH. Headless, and everything it writes is in a temporary folder.
+//! Live preview end to end with a real TeXpresso, through a project session as the hosts
+//! drive it: the editor's edits go to the session's documents, and what TeXpresso shows
+//! comes back as events. `TEXLOCAL_TEXPRESSO` names the program, and TeX Live must be on
+//! the PATH. Headless, and everything it writes is in a temporary folder.
 //!
 //! cargo test -p texlocal-core --test texpresso_live -- --ignored --nocapture
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use texlocal_core::CoreError;
 use texlocal_core::service::Service;
+use texlocal_core::session::{Document, Sessions};
 
 #[test]
 #[ignore = "needs TeXpresso (TEXLOCAL_TEXPRESSO) and TeX Live"]
@@ -37,103 +39,141 @@ fn live_preview_follows_unsaved_edits() {
         .block_on(run(&scratch.path().join("projects")));
 }
 
-/// A project in the service, and the live preview session the client owns.
+/// The longest any one thing may take.
+const PATIENCE: Duration = Duration::from_secs(90);
+
+/// A project's sessions, as a host has them, and every event they sent.
 struct Client {
-    service: Service,
+    sessions: Sessions,
+    events: Arc<Mutex<Vec<Value>>>,
     id: String,
-    session: Option<String>,
-    latest: Value,
 }
 
 impl Client {
-    /// `command` with the project and, after the first start, the session.
-    async fn call(&mut self, command: &str, mut args: Value) -> Result<Value, CoreError> {
-        let fields = args.as_object_mut().unwrap();
-        fields.entry("id").or_insert(json!(self.id));
-        if command.starts_with("texpresso_") && command != "texpresso_start" {
-            fields.entry("session").or_insert(json!(self.session));
-        }
-        let answer = self.service.call(command, &args).await;
-        if command == "texpresso_start"
-            && let Ok(started) = &answer
-        {
-            self.session = started["session"].as_str().map(str::to_owned);
-        }
-        answer
+    async fn open(&self) -> u64 {
+        let opened = self.call("session_open", json!({ "id": self.id })).await;
+        opened["session"].as_u64().unwrap()
     }
 
-    async fn ok(&mut self, command: &str, args: Value) -> Value {
-        self.call(command, args)
-            .await
-            .unwrap_or_else(|err| panic!("{command}: {} {}", err.status, err.message))
+    /// `session_<command>` in `session`.
+    async fn ask(&self, session: u64, command: &str, mut args: Value) -> Value {
+        args["session"] = json!(session);
+        self.call(&format!("session_{command}"), args).await
     }
 
-    async fn refused(&mut self, command: &str, args: Value, status: u16) -> CoreError {
-        let err = self.call(command, args).await.unwrap_err();
-        assert_eq!(err.status, status, "{command}: {}", err.message);
-        err
-    }
-
-    async fn update(&mut self, path: &str, text: &str) {
-        self.ok("texpresso_update", json!({ "path": path, "text": text }))
+    async fn call(&self, command: &str, args: Value) -> Value {
+        let answer = self
+            .sessions
+            .call_then(command, &args, |answer| answer)
             .await;
+        answer.unwrap_or_else(|err| panic!("{command}: {} {}", err.status, err.message))
     }
 
-    /// Waits for `text` in TeXpresso's output (compiler output only: stderr may echo
-    /// what it was sent), the session running all the while.
-    async fn shows(&mut self, text: &str, check: &str) {
+    /// The document at `path` the editor of `session` edits.
+    async fn document(&self, session: u64, path: &str) -> Document {
+        self.ask(session, "open_document", json!({ "path": path }))
+            .await;
+        self.sessions.document(session, path).unwrap()
+    }
+
+    /// Waits for `text` in TeXpresso's output (compiler output only: stderr may echo what
+    /// it was sent) while it runs, across any restart of the session's own.
+    async fn shows(&self, session: u64, text: &str, check: &str) {
         let began = Instant::now();
         loop {
-            self.latest = self.ok("texpresso_status", json!({})).await;
-            assert_eq!(self.latest["running"], true, "{check}: {}", self.latest);
-            if self.latest["output"].as_str().unwrap().contains(text) {
+            let status = self.ask(session, "live_status", json!({})).await;
+            if status["running"] == true && status["output"].as_str().unwrap().contains(text) {
                 break;
             }
-            assert!(
-                began.elapsed() < Duration::from_secs(90),
-                "{check}: no {text} in {}",
-                self.latest["output"]
-            );
-            tokio::time::sleep(Duration::from_millis(75)).await;
+            assert!(began.elapsed() < PATIENCE, "{check}: no {text} in {status}");
+            tokio::time::sleep(Duration::from_millis(25)).await;
         }
         println!("{check}: {} ms", began.elapsed().as_millis());
     }
 
-    /// The events from `seq` on until one `wanted` takes, and the pages they named.
+    /// The first event from `from` on that `wanted` takes, of `session` and `kind`; `from`
+    /// moves past it.
     async fn event(
-        &mut self,
-        seq: &mut u64,
-        pages: &mut Vec<Value>,
+        &self,
+        from: &mut usize,
+        session: u64,
+        kind: &str,
         wanted: impl Fn(&Value) -> bool,
     ) -> Value {
         let began = Instant::now();
         loop {
-            let events = self
-                .ok("texpresso_wait", json!({ "after": *seq, "timeout": 5000 }))
-                .await;
-            assert_eq!(events["running"], true, "{events}");
-            *seq = events["seq"].as_u64().unwrap();
-            pages.extend(events["pages"].as_array().unwrap().iter().cloned());
-            if wanted(&events) {
-                return events;
+            {
+                let events = self.events.lock().unwrap();
+                let mut later = events.iter().enumerate().skip(*from);
+                let found = later.find(|(_, event)| {
+                    event["session"] == session && event["type"] == kind && wanted(event)
+                });
+                if let Some((at, event)) = found {
+                    *from = at + 1;
+                    return event.clone();
+                }
             }
-            assert!(began.elapsed() < Duration::from_secs(90), "{events}");
+            assert!(began.elapsed() < PATIENCE, "no {kind} event wanted");
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+
+    /// Where the events stand once none has come for half a second.
+    async fn settled(&self) -> usize {
+        let mut seen = usize::MAX;
+        loop {
+            let count = self.events.lock().unwrap().len();
+            if count == seen {
+                return count;
+            }
+            seen = count;
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    /// The events of `kind` from `from` on.
+    fn since(&self, from: usize, kind: &str) -> Vec<Value> {
+        let events = self.events.lock().unwrap();
+        let later = events[from..].iter().filter(|event| event["type"] == kind);
+        later.cloned().collect()
     }
 }
 
-fn is_pdf(path: &str) {
-    assert!(std::fs::read(path).unwrap().starts_with(b"%PDF-"), "{path}");
+/// Types `text` over the document's own, as one edit of the range that differs, in
+/// UTF-16 units as the editor counts. The texts here differ by whole characters.
+fn retype(document: &Document, text: &str) {
+    let old: Vec<u16> = document
+        .with(|source| source.text())
+        .encode_utf16()
+        .collect();
+    let new: Vec<u16> = text.encode_utf16().collect();
+    let start = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+    let (old_rest, new_rest) = (&old[start..], &new[start..]);
+    let same = |(a, b): &(&u16, &u16)| a == b;
+    let end = old_rest
+        .iter()
+        .rev()
+        .zip(new_rest.iter().rev())
+        .take_while(same)
+        .count();
+    let inserted = String::from_utf16(&new_rest[..new_rest.len() - end]).unwrap();
+    let removed = old_rest.len() - end;
+    document.edit(start as u32, removed as u32, &inserted);
+}
+
+fn is_pdf(path: &Path) {
+    let bytes = std::fs::read(path).unwrap();
+    assert!(bytes.starts_with(b"%PDF-"), "{}", path.display());
 }
 
 /// UTF-16 units before `what` in `text`, as the editor counts.
-fn units_to(text: &str, what: &str) -> usize {
-    text[..text.find(what).unwrap()].encode_utf16().count()
+fn units_to(text: &str, what: &str) -> u32 {
+    text[..text.find(what).unwrap()].encode_utf16().count() as u32
 }
 
 async fn run(library: &Path) {
     std::fs::create_dir_all(library).unwrap();
-    let service = Service::new(library.to_path_buf());
+    let service = Arc::new(Service::new(library.to_path_buf()));
     let project = service
         .call(
             "create_project",
@@ -141,53 +181,69 @@ async fn run(library: &Path) {
         )
         .await
         .unwrap();
-    let mut client = Client {
-        service,
-        id: project["id"].as_str().unwrap().to_owned(),
-        session: None,
-        latest: Value::Null,
+    let id = project["id"].as_str().unwrap().to_owned();
+    let root = service.project_root(&id).unwrap();
+    let sessions = Sessions::new(Arc::clone(&service));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    sessions.set_listener(Some(Box::new(move |event| {
+        sink.lock().unwrap().push(event.clone());
+    })));
+    let client = Client {
+        sessions,
+        events,
+        id: id.clone(),
     };
     let main = "\\documentclass{article}\n\\begin{document}\n\\typeout{UL_MAIN_INITIAL}\nHello café. $x^2+y^2=z^2$\n\\input{section.tex}\n\\end{document}\n";
     let section = "\\typeout{UL_SECTION_INITIAL}\nIncluded text.\n";
     for (path, text) in [("main.tex", main), ("section.tex", section)] {
-        client
-            .ok("write_file", json!({ "path": path, "text": text }))
-            .await;
+        std::fs::write(root.join(path), text).unwrap();
     }
+    let engine = json!({ "id": id, "patch": { "engine": "xelatex" } });
+    service.call("set_settings", &engine).await.unwrap();
+
+    // As the Mac app starts it: the pages in view first, the document shown in its pane.
+    let a = client.open().await;
+    let main_doc = client.document(a, "main.tex").await;
     client
-        .ok("set_settings", json!({ "patch": { "engine": "xelatex" } }))
+        .ask(a, "live_view", json!({ "first": 1, "last": 1 }))
         .await;
-    let status = client.ok("texpresso_status", json!({})).await;
-    assert_eq!(status["available"], true, "{status}");
-    let main_buffer = |text: &str| json!({ "files": [{ "path": "main.tex", "text": text }] });
-    let started = client.ok("texpresso_start", main_buffer(main)).await;
-    assert_eq!(started["running"], true, "{started}");
+    let started = client.ask(a, "live_start", json!({})).await;
+    assert_eq!(started["phase"], "running", "{started}");
     client
-        .shows("UL_SECTION_INITIAL", "The main and included files")
+        .shows(a, "UL_SECTION_INITIAL", "The main and included files")
         .await;
 
-    // Unsaved edits, to the main file and an included one, errors and recovery.
+    // Unsaved edits, to the main file and an included one opened while it runs, errors
+    // and recovery.
     let unicode = main
         .replace("UL_MAIN_INITIAL", "UL_MAIN_UNSAVED")
         .replace("Hello café.", "Unsaved café — naïve.");
-    client.update("main.tex", &unicode).await;
+    retype(&main_doc, &unicode);
     client
-        .shows("UL_MAIN_UNSAVED", "An unsaved Unicode edit")
+        .shows(a, "UL_MAIN_UNSAVED", "An unsaved Unicode edit")
         .await;
-    let include = section.replace("UL_SECTION_INITIAL", "UL_SECTION_UNSAVED");
-    client.update("section.tex", &include).await;
+    let section_doc = client.document(a, "section.tex").await;
+    retype(
+        &section_doc,
+        &section.replace("UL_SECTION_INITIAL", "UL_SECTION_UNSAVED"),
+    );
     client
-        .shows("UL_SECTION_UNSAVED", "An unsaved edit to an included file")
+        .shows(
+            a,
+            "UL_SECTION_UNSAVED",
+            "An unsaved edit to an included file",
+        )
         .await;
     let broken = unicode.replace("Unsaved café", "\\UnderleafInvalidCommand\nUnsaved café");
-    client.update("main.tex", &broken).await;
+    retype(&main_doc, &broken);
     client
-        .shows("Undefined control sequence", "A LaTeX error")
+        .shows(a, "Undefined control sequence", "A LaTeX error")
         .await;
     let recovered = unicode.replace("UL_MAIN_UNSAVED", "UL_MAIN_RECOVERED");
-    client.update("main.tex", &recovered).await;
+    retype(&main_doc, &recovered);
     client
-        .shows("UL_MAIN_RECOVERED", "Recovery without a restart")
+        .shows(a, "UL_MAIN_RECOVERED", "Recovery without a restart")
         .await;
 
     // Each half-typed text reaches the engine, which must survive it.
@@ -202,54 +258,25 @@ async fn run(library: &Path) {
         "\\documentclass{artic".to_owned(),
     ];
     for (index, text) in incomplete.iter().enumerate() {
-        client.update("main.tex", text).await;
+        retype(&main_doc, text);
         tokio::time::sleep(Duration::from_millis(700)).await;
         let marker = format!("UL_TYPING_RECOVERED_{index}");
-        client
-            .update("main.tex", &recovered.replace("UL_MAIN_RECOVERED", &marker))
-            .await;
-        client.shows(&marker, &format!("Typing {text:?}")).await;
-    }
-    for (path, saved) in [("main.tex", main), ("section.tex", section)] {
-        let read = client.ok("read_file", json!({ "path": path })).await;
-        assert_eq!(read["text"], saved, "the saved {path}");
+        retype(&main_doc, &recovered.replace("UL_MAIN_RECOVERED", &marker));
+        client.shows(a, &marker, &format!("Typing {text:?}")).await;
     }
 
     // A build beside the preview.
-    let compiled = client.ok("compile", json!({})).await;
-    assert_eq!(compiled["ok"], true, "{}", compiled["log"]);
-    let pdf = library
-        .join(&client.id)
-        .join(compiled["pdf"].as_str().unwrap());
-    is_pdf(pdf.to_str().unwrap());
-    let status = client.ok("texpresso_status", json!({})).await;
+    let mut from = client.events.lock().unwrap().len();
+    client.ask(a, "compile", json!({})).await;
+    let built = client.event(&mut from, a, "build_finished", |_| true).await;
+    let result = &built["result"];
+    assert_eq!(result["ok"], true, "{}", result["log"]);
+    is_pdf(&root.join(result["pdf"].as_str().unwrap()));
+    let status = client.ask(a, "live_status", json!({})).await;
     assert_eq!(status["running"], true, "a build stopped the preview");
 
-    // A start from elsewhere takes the session over, and its old owner is refused.
-    let superseded = client.session.clone();
-    let owner = recovered.replace("UL_MAIN_RECOVERED", "UL_REPLACEMENT_OWNER");
-    client.ok("texpresso_start", main_buffer(&owner)).await;
-    assert_ne!(client.session, superseded);
-    client
-        .shows("UL_REPLACEMENT_OWNER", "The new owner's text")
-        .await;
-    for command in [
-        "texpresso_status",
-        "texpresso_start",
-        "texpresso_update",
-        "texpresso_rescan",
-        "texpresso_stop",
-    ] {
-        let args = json!({ "session": superseded, "path": "main.tex", "text": main });
-        let err = client.refused(command, args, 409).await;
-        assert!(err.message.contains("Another window started TeXpresso"));
-    }
-    let status = client.ok("texpresso_status", json!({})).await;
-    assert_eq!(status["running"], true, "the old owner stopped the new one");
-
-    // A main file in a folder, its inputs from there.
-    let stopped = client.ok("texpresso_stop", json!({})).await;
-    assert_eq!(stopped["running"], false);
+    // A main file in a folder, its inputs from there: the session starts the preview
+    // again for it.
     for (path, text) in [
         (
             "nested/main.tex",
@@ -260,103 +287,99 @@ async fn run(library: &Path) {
             section.replace("UL_SECTION_INITIAL", "UL_NESTED_SECTION"),
         ),
     ] {
-        client
-            .ok("write_file", json!({ "path": path, "text": text }))
-            .await;
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::write(root.join(path), text).unwrap();
     }
     let nested = json!({ "patch": { "mainFile": "nested/main.tex" } });
-    client.ok("set_settings", nested).await;
-    client.ok("texpresso_start", json!({})).await;
+    client.ask(a, "set_settings", nested).await;
     client
-        .shows("UL_NESTED_SECTION", "A nested main file's input")
+        .shows(a, "UL_NESTED_SECTION", "A nested main file's input")
         .await;
-    let edit = "\\typeout{UL_NESTED_UNSAVED}\nNested live edit.\n";
-    client.update("nested/section.tex", edit).await;
+    let nested_doc = client.document(a, "nested/section.tex").await;
+    retype(
+        &nested_doc,
+        "\\typeout{UL_NESTED_UNSAVED}\nNested live edit.\n",
+    );
     client
-        .shows("UL_NESTED_UNSAVED", "An edit to a nested input")
+        .shows(a, "UL_NESTED_UNSAVED", "An edit to a nested input")
         .await;
-    client.ok("texpresso_stop", json!({})).await;
 
-    // As the Mac app shows it: no window, and the pages in view as PDFs of their own as
-    // they change. Only a build with Underleaf's patch (tools/texpresso) sends them.
+    // The pages in view as PDFs of their own as they change, and the whole document when
+    // typing pauses. Only a build with Underleaf's patch (tools/texpresso) sends them.
     let main_again = json!({ "patch": { "mainFile": "main.tex" } });
-    client.ok("set_settings", main_again).await;
+    client.ask(a, "set_settings", main_again).await;
+    let marker = format!("UL_TYPING_RECOVERED_{}", incomplete.len() - 1);
+    client.shows(a, &marker, "The main file again").await;
     let paged = "\\documentclass{article}\n\\begin{document}\nPage one café.\n\\newpage\nPage two.\n\\end{document}\n";
-    let mut start = main_buffer(paged);
-    start["pdf"] = json!(true);
-    start["view"] = json!([1, 1]);
-    client.ok("texpresso_start", start).await;
-    let (mut seq, mut pages) = (0, Vec::new());
-    let first = client
-        .event(&mut seq, &mut pages, |e| {
-            !e["live"].is_null() || !e["pdf"].is_null()
+    let paging = client.events.lock().unwrap().len();
+    retype(&main_doc, paged);
+    let mut from = paging;
+    let whole = client
+        .event(&mut from, a, "live_document", |e| {
+            e["pages"] == 2 && e["complete"] == true
         })
         .await;
-    if first["live"].is_null() {
-        println!("This TeXpresso sends no pages: page updates not checked.");
-    } else {
-        let complete = |e: &Value| e["pdf"]["run"] == "complete";
-        let whole = match complete(&first) {
-            true => first["pdf"].clone(),
-            false => client.event(&mut seq, &mut pages, complete).await["pdf"].clone(),
-        };
-        assert_eq!(whole["pages"], 2);
-        let path = whole["path"].as_str().unwrap();
-        is_pdf(path);
-        let synctex = std::fs::read(Path::new(path).with_extension("synctex")).unwrap();
-        assert!(!synctex.is_empty());
+    let path = Path::new(whole["path"].as_str().unwrap()).to_owned();
+    is_pdf(&path);
+    let synctex = std::fs::read(path.with_extension("synctex")).unwrap();
+    assert!(!synctex.is_empty());
 
-        // An offset in UTF-16 units, past the é that is two bytes to TeXpresso.
-        let began = Instant::now();
-        let at = units_to(paged, "two");
-        let typed = json!({ "path": "main.tex", "start": at, "remove": 0, "text": "number " });
-        let edit = client.ok("texpresso_edit", typed).await["edit"].clone();
-        let shown = |e: &Value| {
-            e["pages"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|p| p["page"] == 1 && p["edit"].as_u64() >= edit.as_u64())
-        };
-        let events = client.event(&mut seq, &mut pages, shown).await;
-        let page = events["pages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|p| p["page"] == 1);
-        is_pdf(page.unwrap()["path"].as_str().unwrap());
-        println!(
-            "A key on the page in view: {} ms",
-            began.elapsed().as_millis()
-        );
-        let after = client
-            .event(&mut seq, &mut pages, |e| {
-                complete(e) && e["pdf"]["edit"].as_u64() >= edit.as_u64()
-            })
-            .await;
-        assert_eq!(after["pdf"]["changed"], json!([[1, 1]]));
-        assert!(
-            !pages.iter().any(|p| p["page"] == 0),
-            "a page out of view, and unchanged, was sent"
-        );
+    // An offset in UTF-16 units, past the é that is two bytes to TeXpresso.
+    let mut from = client.settled().await;
+    let began = Instant::now();
+    main_doc.edit(units_to(paged, "two"), 0, "number ");
+    let page = client
+        .event(&mut from, a, "live_page", |e| e["page"] == 1)
+        .await;
+    is_pdf(Path::new(page["path"].as_str().unwrap()));
+    println!(
+        "A key on the page in view: {} ms",
+        began.elapsed().as_millis()
+    );
+    let after = client
+        .event(&mut from, a, "live_document", |e| e["complete"] == true)
+        .await;
+    assert_eq!(after["changed"], json!([[1, 1]]));
+    let pages = client.since(paging, "live_page");
+    assert!(
+        !pages.iter().any(|p| p["page"] == 0),
+        "a page out of view, and unchanged, was sent"
+    );
 
-        let unfit = json!({ "path": "main.tex", "start": 9999, "remove": 0, "text": "x" });
-        client.refused("texpresso_edit", unfit, 412).await;
-        let other = json!({ "path": "section.tex", "start": 0, "remove": 0, "text": "x" });
-        client.refused("texpresso_edit", other, 412).await;
+    // A run a half-typed construct stops shows as halted once it has lasted, and no longer
+    // once the construct is closed.
+    let two = units_to(paged, "Page two");
+    main_doc.edit(two, 0, "\\textbf{");
+    let halted = |halted: bool| move |e: &Value| e["halted"] == halted;
+    client.event(&mut from, a, "live", halted(true)).await;
+    main_doc.edit(two, 8, "");
+    client.event(&mut from, a, "live", halted(false)).await;
 
-        // A run a half-typed construct stops is told apart from one that ends.
-        let two = units_to(paged, "Page two");
-        let open = json!({ "path": "main.tex", "start": two, "remove": 0, "text": "\\textbf{" });
-        client.ok("texpresso_edit", open).await;
-        let done = |e: &Value| !e["done"].is_null();
-        let stopped = client.event(&mut seq, &mut pages, done).await;
-        assert_eq!(stopped["done"]["run"], "stopped");
-        let close = json!({ "path": "main.tex", "start": two, "remove": 8, "text": "" });
-        client.ok("texpresso_edit", close).await;
-        let ended = client.event(&mut seq, &mut pages, done).await;
-        assert_eq!(ended["done"], json!({ "pages": 2, "run": "complete" }));
-    }
-    let stopped = client.ok("texpresso_stop", json!({})).await;
-    assert_eq!(stopped["running"], false);
+    // Another session's Start takes the project's preview over; closing the first then
+    // leaves the new one running.
+    client.ask(a, "save", json!({})).await;
+    let mut ended = client.events.lock().unwrap().len();
+    let b = client.open().await;
+    let taken = client.document(b, "main.tex").await;
+    let started = client.ask(b, "live_start", json!({})).await;
+    assert_eq!(started["phase"], "running", "{started}");
+    let owner = format!("\\typeout{{UL_REPLACEMENT_OWNER}}\n{paged}");
+    retype(&taken, &owner);
+    client
+        .shows(b, "UL_REPLACEMENT_OWNER", "The new owner's text")
+        .await;
+    let stopped = |e: &Value| e["phase"] == "stopped";
+    client.event(&mut ended, a, "live", stopped).await;
+    client.ask(a, "close", json!({})).await;
+    let status = client.ask(b, "live_status", json!({})).await;
+    assert_eq!(status["running"], true, "the old owner stopped the new one");
+
+    // TeXpresso never ended on its own, and no failure was reported.
+    assert!(client.since(0, "live_restarted").is_empty());
+    let failed = client.since(0, "live");
+    let failed = failed.iter().find(|e| !e["failure"].is_null());
+    assert!(failed.is_none(), "{failed:?}");
+    let stopped = client.ask(b, "live_stop", json!({})).await;
+    assert_eq!(stopped["phase"], "stopped");
+    client.ask(b, "close", json!({})).await;
 }
