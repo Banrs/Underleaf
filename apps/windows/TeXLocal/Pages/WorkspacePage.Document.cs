@@ -58,6 +58,8 @@ public sealed partial class WorkspacePage
             MainWindow.Prefs["issuesHeight"] = height;
         };
 
+        SetUpNavigation();
+        SetUpInsert();
         Editor.CaretMoved += ShowCaret;
         Editor.Composing += composing =>
         {
@@ -103,6 +105,7 @@ public sealed partial class WorkspacePage
         StopOnErrorItem.IsChecked = settings.GetProperty("stopOnFirstError").GetBoolean();
         var ui = await Core.CallAsync("get_ui_state", new { id });
         expanded = [.. ui.GetProperty("expandedFolders").EnumerateArray().Select(f => f.GetString()!)];
+        folded = [.. ui.GetProperty("foldedHeadings").EnumerateArray().Select(f => f.GetString()!)];
         Show(opened.Tree);
         if (opened.Pdf is { } pdf) await Pdf.Load(Full(pdf));
         ShowBuild();
@@ -126,6 +129,9 @@ public sealed partial class WorkspacePage
                 if (failed || Flag("held")) unsaved.Add(Str("path")!);
                 else unsaved.Remove(Str("path")!);
                 ShowSaved();
+                break;
+            case "saved":
+                _ = Analyze();
                 break;
             case "document_reload" when Str("path") == Editor.Path:
                 Editor.Reload(Str("text") ?? "");
@@ -210,7 +216,7 @@ public sealed partial class WorkspacePage
     void ShowSaved()
     {
         var show = Editor.Path is { } path && unsaved.Contains(path);
-        NotSaved.Opacity = show ? 1 : 0;
+        NotSavedSegment.Opacity = show ? 1 : 0;
         NotSaved.IsEnabled = show;
     }
 
@@ -339,6 +345,7 @@ public sealed partial class WorkspacePage
             Editor.SetIssues(issueLines.GetValueOrDefault(path, []));
             ShowSaved();
             ShowCaret();
+            _ = Analyze();
             return true;
         }
         catch (CoreException ex)
@@ -350,6 +357,10 @@ public sealed partial class WorkspacePage
 
     void CloseEditor()
     {
+        (analysis, outline) = (null, []);
+        OutlineTree.ItemsSource = null;
+        WordsText.Text = "";
+        ShowSide();
         Editor.Clear();
         Editor.Visibility = Visibility.Collapsed;
         NoFile.Visibility = Visibility.Visible;

@@ -58,6 +58,9 @@ public sealed partial class SourceView : UserControl
     string theme = "overleaf";
 
     public string? Path { get; private set; }
+    public string Text => text;
+    /// The text colour as drawn, for what is drawn to match it.
+    public Color Ink => ink;
     public bool AutoPair { get; set; } = true;
     public bool AutoComplete { get; set; } = true;
     public event Action<bool>? Composing;
@@ -101,7 +104,11 @@ public sealed partial class SourceView : UserControl
             PreviewMath();
         };
         Editor.GotFocus += (_, _) => PreviewMath();
-        Editor.SizeChanged += (_, _) => Refresh();
+        Editor.SizeChanged += (_, e) =>
+        {
+            FindBar.Width = Math.Clamp(e.NewSize.Width - 40, 0, 480);
+            Refresh();
+        };
         SizeChanged += (_, e) => Clip = new RectangleGeometry { Rect = new(0, 0, e.NewSize.Width, e.NewSize.Height) };
         Editor.LayoutUpdated += (_, _) =>
         {
@@ -507,7 +514,7 @@ public sealed partial class SourceView : UserControl
         return true;
     }
 
-    /// The completion list, then a snippet, then the maths preview.
+    /// A snippet, then the maths preview, then the find bar (the completion list goes before).
     bool Escape()
     {
         if (source!.Call<bool>("end_snippet", new { })) return true;
@@ -517,7 +524,9 @@ public sealed partial class SourceView : UserControl
             MathPopup.IsOpen = false;
             return true;
         }
-        return false;
+        if (!FindShown) return false;
+        HideFind();
+        return true;
     }
 
     public bool MoveLines(bool up) => Apply(source?.Call<Change>("move_lines", new { selections = new[] { Range(Selected) }, up }));
@@ -604,11 +613,11 @@ public sealed partial class SourceView : UserControl
         offered = found;
         var glyph = found.Kind switch
         {
-            "environment" => "",
-            "label" => "",
-            "citation" => "",
-            "entryType" => "",
-            _ => "",
+            "environment" => "\uE8FD",
+            "label" => "\uE8EC",
+            "citation" => "\uE8F1",
+            "entryType" => "\uE8A5",
+            _ => "\uE943",
         };
         CompletionList.ItemsSource = found.Items.Select(i => new CompletionRow(i, s.Start - found.Start, glyph, Editor.FontFamily)).ToList();
         CompletionList.SelectedIndex = 0;
@@ -781,14 +790,26 @@ public sealed partial class SourceView : UserControl
 
     public int LineCount => source?.LineCount ?? 1;
 
-    public void GoTo(int line, int column = 0)
+    /// A line from 1 and a column from 0, selecting `length` units from there.
+    public void GoTo(int line, int column = 0, int length = 0)
     {
         if (source is null) return;
         line = Math.Clamp(line, 1, source.LineCount);
         var at = Math.Min(source.LineStart(line) + column, End(line));
-        Document.Selection.SetRange(at, at);
+        Document.Selection.SetRange(at, Math.Min(at + length, End(line)));
         Document.Selection.ScrollIntoView(PointOptions.None);
         Editor.Focus(FocusState.Programmatic);
+    }
+
+    /// Under the caret, in this view's coordinates: where a flyout for the text opens.
+    public Point CaretPoint
+    {
+        get
+        {
+            var r = RectOf(CaretOffset, CaretOffset);
+            var x = r.X + Gutter.ActualWidth;
+            return r.Y < -1000 ? new Point(Gutter.ActualWidth + 16, 16) : new Point(x, r.Bottom);
+        }
     }
 
     /// RichEdit restores an edit's colours with its text, so undo and redo colour nothing: colouring
