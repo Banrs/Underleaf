@@ -4,6 +4,7 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -236,6 +237,8 @@ impl Rig {
         let root = dunce::canonicalize(data.path().join("P")).unwrap();
         fs::write(root.join("main.tex"), "Hello").unwrap();
         let service = Arc::new(Service::new(data.path().to_path_buf()));
+        // As if `status` had found TeX, which automatic builds wait for.
+        service.tex_found.store(true, Ordering::Relaxed);
         let fake = Arc::new(Fake::default());
         let timings = Timings {
             watch: false,
@@ -248,7 +251,7 @@ impl Rig {
         sessions.set_listener(Some(Box::new(move |event| {
             sink.lock().unwrap().push(event.clone())
         })));
-        let args = json!({ "id": "P", "autoCompile": auto_compile });
+        let args = json!({ "id": "P", "session": 1, "autoCompile": auto_compile });
         let opened = sessions.call("session_open", &args).await.unwrap();
         let session = opened["session"].as_u64().unwrap();
         Rig {
@@ -285,7 +288,8 @@ impl Rig {
         let mark = self.marks;
         self.sessions
             .hub()
-            .emit(json!({ "type": "mark", "n": mark }));
+            .emitter()
+            .send(json!({ "type": "mark", "n": mark }));
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             let mut seen = self.seen.lock().unwrap();
@@ -960,7 +964,9 @@ async fn the_watcher_tells_another_apps_changes_from_the_sessions_own() {
     sessions.set_listener(Some(Box::new(move |event| {
         sink.lock().unwrap().push(event.clone())
     })));
-    let opened = sessions.call("session_open", &json!({ "id": "P" })).await;
+    let opened = sessions
+        .call("session_open", &json!({ "id": "P", "session": 1 }))
+        .await;
     let session = opened.unwrap()["session"].as_u64().unwrap();
     let args = json!({ "session": session, "path": "main.tex" });
     sessions.call("session_open_document", &args).await.unwrap();
@@ -985,55 +991,51 @@ async fn the_watcher_tells_another_apps_changes_from_the_sessions_own() {
     sessions.close_all().await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn no_event_reaches_the_listener_before_the_answer_to_its_sessions_open() {
-    let data = tempfile::tempdir().unwrap();
-    crate::projects::create_project(data.path(), "P", "blank").unwrap();
-    let service = Arc::new(Service::new(data.path().to_path_buf()));
-    let fake = Arc::new(Fake::default());
-    let engine = Arc::clone(&fake) as Arc<dyn Engine>;
-    let timings = Timings {
-        watch: false,
-        ..Timings::default()
+#[tokio::test]
+async fn a_host_numbers_its_sessions_and_a_number_open_already_is_refused() {
+    let mut rig = Rig::new(true).await;
+    // The first build's event names the number the host gave: it listened for it before
+    // the open answered.
+    let build = rig
+        .events()
+        .await
+        .into_iter()
+        .find(|e| e["type"] == "build");
+    assert_eq!(build.expect("the build is told")["session"], rig.session);
+    let again = json!({ "id": "P", "session": rig.session });
+    let taken = rig.sessions.call("session_open", &again).await.unwrap_err();
+    assert_eq!(taken.status, 409);
+    // The session open already goes on as before.
+    assert!(rig.ok("state", json!({})).await["build"]["compiling"] == true);
+}
+
+#[tokio::test]
+async fn automatic_builds_wait_for_tex_to_be_found() {
+    let mut rig = Rig::new(false).await;
+    rig.sessions
+        .service
+        .tex_found
+        .store(false, Ordering::Relaxed);
+    rig.ok("set_options", json!({ "autoCompile": true })).await;
+    rig.ok("compile", json!({ "auto": true })).await;
+    assert_eq!(rig.fake.called("compile"), 0, "no TeX: no automatic build");
+    rig.ok("compile", json!({})).await;
+    assert_eq!(rig.fake.called("compile"), 1, "one asked for still runs");
+    let _ = rig.events().await;
+}
+
+#[tokio::test]
+async fn a_sessions_commands_are_taken_in_the_order_sent_however_they_are_awaited() {
+    let rig = Rig::new(false).await;
+    let send = |auto: bool| {
+        let args = json!({ "session": rig.session, "autoCompile": auto });
+        rig.sessions.send("session_set_options", &args)
     };
-    let sessions = Sessions::with_engine(service, engine, timings);
-    // The listener and the answer's delivery write to one list, in the order they happen.
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let sink = Arc::clone(&seen);
-    sessions.set_listener(Some(Box::new(move |event| {
-        sink.lock().unwrap().push(event.clone())
-    })));
-    // No PDF yet, so a build starts at once: its `build` event is made while
-    // the open is still being answered.
-    let args = json!({ "id": "P", "autoCompile": true });
-    let delivered = Arc::clone(&seen);
-    let session = sessions
-        .call_then("session_open", &args, |answer| {
-            // The build has started, so its event is made; and then a good while for it to
-            // have gone out, had it not been held back.
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            while fake.called("compile") == 0 && std::time::Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            assert_eq!(fake.called("compile"), 1, "the build started");
-            std::thread::sleep(Duration::from_millis(200));
-            let session = answer.unwrap()["session"].as_u64().unwrap();
-            delivered
-                .lock()
-                .unwrap()
-                .push(json!({ "type": "answer", "session": session }));
-            session
-        })
-        .await;
-    let first = until_event(&seen, |e| e["type"] == "build").expect("the build is told");
-    let events = seen.lock().unwrap().clone();
-    assert_eq!(events[0], json!({ "type": "answer", "session": session }));
-    assert_eq!(first["session"], session);
-    assert_eq!(first["compiling"], true);
-    // A failed open holds nothing.
-    let missing = json!({ "id": "Nope" });
-    sessions
-        .call_then("session_open", &missing, |answer| assert!(answer.is_err()))
-        .await;
-    sessions.close_all().await;
+    let (first, second) = (send(false), send(true));
+    let state = rig
+        .sessions
+        .send("session_state", &json!({ "session": rig.session }));
+    assert_eq!(state.await.unwrap()["autoCompile"], true);
+    second.await.unwrap();
+    first.await.unwrap();
 }

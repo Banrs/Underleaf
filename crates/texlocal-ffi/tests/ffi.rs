@@ -308,7 +308,11 @@ fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
     let handle = open_with_project(dir.path());
     let empty = json!({ "id": "P", "path": "main.tex", "text": "" });
     call(handle, "write_file", Some(empty));
-    let opened = call(handle, "session_open", Some(json!({ "id": "P" })));
+    let opened = call(
+        handle,
+        "session_open",
+        Some(json!({ "id": "P", "session": 1 })),
+    );
     let session = opened["ok"]["session"].as_u64().unwrap();
     let args = json!({ "session": session, "path": "main.tex" });
     call(handle, "session_open_document", Some(args));
@@ -351,7 +355,11 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
     let handle = open_with_project(dir.path());
     let (sink, events) = collector();
     unsafe { tl_set_listener(handle, Some(collect), context(&sink)) };
-    let opened = call(handle, "session_open", Some(json!({ "id": "P" })));
+    let opened = call(
+        handle,
+        "session_open",
+        Some(json!({ "id": "P", "session": 1 })),
+    );
     let session = opened["ok"]["session"].as_u64().unwrap();
     let args = json!({ "session": session, "path": "main.tex" });
     let text = call(handle, "session_open_document", Some(args))["ok"]["text"]
@@ -395,5 +403,52 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
     };
     let answer = until(&answers, |_| true);
     assert!(answer["ok"]["documents"].is_array());
+    unsafe { tl_close(handle) };
+}
+
+/// `command` with `args` through `tl_call_async`, its answer going to `sink`.
+fn call_async(handle: *const TlHandle, command: &str, args: Value, sink: &mpsc::Sender<Value>) {
+    let command = CString::new(command).unwrap();
+    let args = CString::new(args.to_string()).unwrap();
+    unsafe {
+        tl_call_async(
+            handle,
+            command.as_ptr(),
+            args.as_ptr(),
+            Some(collect),
+            context(sink),
+        )
+    };
+}
+
+#[test]
+fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
+    let dir = tempfile::tempdir().unwrap();
+    let handle = open_with_project(dir.path());
+    let (sink, answers) = collector();
+    call_async(
+        handle,
+        "session_open",
+        json!({ "id": "P", "session": 7 }),
+        &sink,
+    );
+    assert_eq!(until(&answers, |_| true)["ok"]["session"], 7);
+    // The host numbers its sessions: a number open already is refused.
+    let taken = call(
+        handle,
+        "session_open",
+        Some(json!({ "id": "P", "session": 7 })),
+    );
+    assert_eq!(taken["status"], 409);
+    for round in 0..50 {
+        let last = round % 2 == 0;
+        for auto in [!last, last, !last, last] {
+            let args = json!({ "session": 7, "autoCompile": auto });
+            call_async(handle, "session_set_options", args, &sink);
+        }
+        call_async(handle, "session_state", json!({ "session": 7 }), &sink);
+        let state = until(&answers, |answer| answer["ok"]["autoCompile"].is_boolean());
+        assert_eq!(state["ok"]["autoCompile"], last, "round {round}");
+    }
     unsafe { tl_close(handle) };
 }

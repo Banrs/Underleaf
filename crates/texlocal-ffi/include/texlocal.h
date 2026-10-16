@@ -23,7 +23,7 @@ TlHandle *_Nullable tl_open(const char *_Nullable data_dir);
 
 /* Blocking; call off the UI thread. args_json may be NULL. Returns
  * {"ok": value} or {"error": message, "status": code}. Free with tl_free. */
-char *_Nullable tl_call(const TlHandle *handle, const char *command, const char *_Nullable args_json);
+char *tl_call(const TlHandle *handle, const char *command, const char *_Nullable args_json);
 
 void tl_free(char *_Nullable text);
 
@@ -34,9 +34,9 @@ typedef void (*TlCallback)(void *_Nullable ctx, const char *json);
 
 /* tl_call without blocking: the command runs on a core thread, which then
  * calls done with the envelope tl_call would return. A NULL done runs the
- * command for its effect alone. For session_open, no event of the new
- * session reaches the listener until done has returned (tl_call: until it
- * returns), so the host has the session's id before any event names it. */
+ * command for its effect alone. A session's commands (every session_* but
+ * session_open) are queued for it before this returns, so it takes them in
+ * the order they were sent. */
 void tl_call_async(const TlHandle *handle, const char *command, const char *_Nullable args_json,
                    TlCallback _Nullable done, void *_Nullable ctx);
 
@@ -51,8 +51,7 @@ void tl_close(TlHandle *_Nullable handle);
 
 /* The source editor's view of a file's text (the core's syntax module).
  * Calls on one TlSource must not overlap: one thread at a time, as the Swift
- * main actor guarantees. That holds for the const queries too: the Rust
- * side takes the source mutably in every call. Offsets and lengths count UTF-16
+ * main actor guarantees, queries included. Offsets and lengths count UTF-16
  * units; lines count from 1. */
 typedef struct TlSource TlSource;
 
@@ -77,9 +76,9 @@ void tl_source_edit(TlSource *source, uint32_t start, uint32_t length, const uin
  * an edit to save. */
 void tl_source_reload(TlSource *source, const uint8_t *_Nullable text, size_t len);
 
-uint32_t tl_source_line_at(const TlSource *source, uint32_t offset);
-uint32_t tl_source_line_start(const TlSource *source, uint32_t line);
-uint32_t tl_source_line_count(const TlSource *source);
+uint32_t tl_source_line_at(TlSource *source, uint32_t offset);
+uint32_t tl_source_line_start(TlSource *source, uint32_t line);
+uint32_t tl_source_line_count(TlSource *source);
 
 /* The highlighted runs of the lines a range touches: start, length and kind
  * (HighlightKind's order) for each; *count is the number of values. Free
@@ -93,7 +92,7 @@ void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
  * "set_heading", "insert_block", "insert_symbol", "math_at", "text_styles",
  * "not_prose", "text" and the rest it lists. Returns the result's JSON, or
  * NULL for an unknown command or arguments; free it with tl_free. */
-char *_Nullable tl_source_call(const TlSource *source, const char *command, const char *args_json);
+char *_Nullable tl_source_call(TlSource *source, const char *command, const char *args_json);
 
 /* A command of the syntax module's call, which needs no source, on any thread:
  * "themes", "theme_colors", "legible" ({"color", "background", "fill",

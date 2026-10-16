@@ -4,6 +4,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -12,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::analyze;
 use crate::atomic::Stamp;
-use crate::compile::{self, CompileManager, TexStatus};
+use crate::compile::{self, CompileManager, TexStatus, engine_flags};
 use crate::paths::fold_case;
 use crate::projects;
 use crate::settings;
@@ -37,6 +38,9 @@ pub struct Service {
     /// not folded: ids are the names list_projects read from the folder, so
     /// every client spells a project as its folder is stored.
     edits: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Whether the last look for TeX (`status`) found it: sessions build by themselves only
+    /// then. None found before the first look.
+    pub(crate) tex_found: AtomicBool,
 }
 
 impl Service {
@@ -46,6 +50,7 @@ impl Service {
             compile: CompileManager::default(),
             texpresso: crate::texpresso::Manager::default(),
             edits: Mutex::default(),
+            tex_found: AtomicBool::new(false),
         }
     }
 
@@ -117,7 +122,13 @@ impl Service {
         found.texpresso = shown(crate::texpresso::discover(&texpresso_path));
         found.tex_dir = shown(tex_dir);
         found.texpresso_dir = shown(texpresso_dir);
+        self.tex_found.store(found.available, Ordering::Relaxed);
         found
+    }
+
+    /// Whether the last `status` found TeX.
+    pub(crate) fn tex_found(&self) -> bool {
+        self.tex_found.load(Ordering::Relaxed)
     }
 
     // ---------- TeX folder ----------
@@ -229,14 +240,26 @@ impl Service {
                 .await?),
             "list_projects" => out(projects::list_projects(&self.data_dir)?),
             // The project made is answered, so its `id` is the name it got: a name taken is
-            // numbered past.
+            // numbered past. Its engine is checked first, so the project is made with it or
+            // not at all.
             "create_project" => {
                 let template = arg::<Option<String>>(args, "template")?;
-                out(projects::create_project(
+                let engine = arg::<Option<String>>(args, "engine")?;
+                if let Some(engine) = &engine
+                    && engine_flags(engine).is_none()
+                {
+                    return Err(CoreError::bad_request(format!("Unknown engine: {engine}")));
+                }
+                let made = projects::create_project(
                     &self.data_dir,
                     s("name")?,
                     template.as_deref().unwrap_or("article"),
-                )?)
+                )?;
+                if let Some(engine) = engine {
+                    let patch = json!({ "engine": engine });
+                    self.with_project(&made.id, |root| settings::write_settings(root, &patch))?;
+                }
+                out(made)
             }
             // The first free name of the series "Untitled", "Untitled 2", …, creating nothing:
             // for a host to offer in its New Project field.

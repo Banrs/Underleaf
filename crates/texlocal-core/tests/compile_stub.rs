@@ -109,7 +109,8 @@ async fn compile_happy_path_parses_the_log_it_wrote() {
     let result = compile(&mgr, &root).await;
 
     assert!(result.ok);
-    assert_eq!(result.pdf.as_deref(), Some("build/main.pdf"));
+    let pdf = root.join("build/main.pdf");
+    assert_eq!(result.pdf.as_deref(), pdf.to_str(), "absolute");
     assert!(result.pdf_changed);
     assert_eq!(result.errors.len(), 1);
     assert_eq!(result.errors[0].file.as_deref(), Some("main.tex"));
@@ -428,7 +429,8 @@ async fn a_failed_run_shows_the_pdf_it_wrote_with_its_errors() {
     let result = compile(&mgr, &root).await;
 
     assert!(!result.ok);
-    assert_eq!(result.pdf.as_deref(), Some("build/main.pdf"));
+    let pdf = root.join("build/main.pdf");
+    assert_eq!(result.pdf.as_deref(), pdf.to_str(), "absolute");
     assert!(result.pdf_changed);
     assert_eq!(result.errors.len(), 1);
     assert_eq!(result.errors[0].line, Some(4));

@@ -412,7 +412,7 @@ fn version_line(stdout: &str) -> String {
 
 /// A build's outcome. `ok`: latexmk finished cleanly and the PDF exists.
 /// `pdf`: the successful build's PDF, or one a failed build wrote while
-/// compiling past errors. `stopped`: Stop, a newer build
+/// compiling past errors, as an absolute path. `stopped`: Stop, a newer build
 /// of the same project, or quitting ended it.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -849,7 +849,7 @@ fn finish(run: CompileRun, end: End, output: String) -> CompileResult {
         stopped: end == End::Stopped,
         duration_ms: run.request_started.elapsed().as_millis() as u64,
         // A failed run can only advertise a PDF it actually wrote.
-        pdf: (ok || wrote_pdf).then(|| format!("{BUILD_DIR}/{}.pdf", run.base)),
+        pdf: (ok || wrote_pdf).then(|| run.output("pdf").to_string_lossy().into_owned()),
         pdf_changed: wrote_pdf,
         errors,
         warnings,

@@ -897,9 +897,10 @@ impl Actor {
     }
 
     /// A request during a build queues one more. An automatic build waits
-    /// while live preview runs. Err: a save someone asked for failed.
+    /// while live preview runs, and needs TeX found (`status`). Err: a save
+    /// someone asked for failed.
     pub fn compile(&mut self, auto: bool) -> Result<(), CoreError> {
-        if self.closed || auto && self.live_previewing() {
+        if self.closed || auto && (self.live_previewing() || !self.service.tex_found()) {
             return Ok(());
         }
         if self.build.compiling {

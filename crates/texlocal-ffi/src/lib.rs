@@ -1,11 +1,12 @@
 //! The C ABI the Mac app links and the Windows app loads: one JSON-in,
 //! JSON-out call over `texlocal_core::service`. See `include/texlocal.h`.
 //!
-//! `tl_call` blocks until the command finishes (a compile can take minutes),
-//! so hosts call it off their UI thread, or use `tl_call_async`. Concurrent
-//! calls from several threads are fine: each drives the handle's runtime on
-//! its own thread. `session_*` commands go to `texlocal_core::session`, whose
-//! events reach the listener `tl_set_listener` sets.
+//! `tl_call` blocks until the command finishes, so hosts call it off their UI
+//! thread, or use `tl_call_async`. Concurrent calls from several threads are
+//! fine: each drives the handle's runtime on its own thread. `session_*`
+//! commands go to `texlocal_core::session`, whose events reach the listener
+//! `tl_set_listener` sets; `tl_call_async` queues a session's commands for it
+//! as they are sent, so it takes them in that order.
 //!
 //! `tl_source_*` are the editor's: `texlocal_core::syntax`'s view of a file's text,
 //! answering in UTF-16 offsets, on the editor's thread. A source from
@@ -38,17 +39,12 @@ struct Host {
 }
 
 impl Host {
-    /// The command's answer, handed to `deliver`, which makes the host's copy of it. A new
-    /// session's events are held until `deliver` returns, so none comes before the answer.
-    fn call_then<T, F>(&self, command: &str, args: &Value, deliver: F) -> T
-    where
-        F: FnOnce(Result<Value, CoreError>) -> T,
-    {
+    /// The command's answer, waited for on this thread.
+    fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
         if command.starts_with("session_") {
-            let answered = self.sessions.call_then(command, args, deliver);
-            self.runtime.block_on(answered)
+            self.runtime.block_on(self.sessions.call(command, args))
         } else {
-            deliver(self.runtime.block_on(self.service.call(command, args)))
+            self.runtime.block_on(self.service.call(command, args))
         }
     }
 }
@@ -82,15 +78,9 @@ impl Callback {
 ///
 /// # Safety
 /// `source` is null or came from `tl_source_new` and is not freed, and no
-/// two calls on it overlap: one thread at a time, `const` queries included,
-/// as `body` gets `&mut` (the host's `const` only marks those that leave the
-/// text as it is).
-unsafe fn on_source<T>(
-    source: *const TlSource,
-    none: T,
-    body: impl FnOnce(&mut TlSource) -> T,
-) -> T {
-    match unsafe { source.cast_mut().as_mut() } {
+/// two calls on it overlap: one thread at a time, queries included.
+unsafe fn on_source<T>(source: *mut TlSource, none: T, body: impl FnOnce(&mut TlSource) -> T) -> T {
+    match unsafe { source.as_mut() } {
         Some(source) => caught(|| body(source)).unwrap_or(none),
         None => none,
     }
@@ -140,8 +130,8 @@ pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
 }
 
 /// Run `command` with a JSON object of arguments (null means `{}`). Returns
-/// `{"ok": value}` or `{"error": message, "status": code}`; free it with
-/// `tl_free`.
+/// `{"ok": value}` or `{"error": message, "status": code}`, never null; free
+/// it with `tl_free`.
 ///
 /// # Safety
 /// `handle` came from `tl_open` and is not closed; the strings are null or
@@ -152,17 +142,17 @@ pub unsafe extern "C" fn tl_call(
     command: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {
-    let made = caught(|| {
+    let answer = caught(|| {
         let handle =
             unsafe { handle.as_ref() }.ok_or_else(|| CoreError::bad_request("No handle"))?;
         let (command, args) = unsafe { command_args(command, args_json) }?;
-        // The envelope is made inside the call: a new session's events wait for it.
-        Ok(handle
-            .host
-            .call_then(command, &args, |result| json_string(envelope(result))))
-    })
-    .unwrap_or_else(|| Err(CoreError::internal("The command panicked")));
-    made.unwrap_or_else(|err| json_string(envelope(Err(err))))
+        handle.host.call(command, &args)
+    });
+    json_string(envelope(answer.unwrap_or_else(|| Err(panicked()))))
+}
+
+fn panicked() -> CoreError {
+    CoreError::internal("The command panicked")
 }
 
 /// # Safety
@@ -190,9 +180,31 @@ fn envelope(result: Result<Value, CoreError>) -> Value {
     }
 }
 
+/// A host's `done` for one call, called once: with the answer, or, should the
+/// command panic before it answers, with that error as this is dropped.
+struct Done(Option<Callback>);
+
+impl Done {
+    fn send(mut self, result: Result<Value, CoreError>) {
+        if let Some(done) = self.0.take() {
+            done.send(&envelope(result));
+        }
+    }
+}
+
+impl Drop for Done {
+    fn drop(&mut self) {
+        if let Some(done) = self.0.take() {
+            done.send(&envelope(Err(panicked())));
+        }
+    }
+}
+
 /// `tl_call` without waiting: the command runs on a core thread, which then
 /// calls `done` with the envelope `tl_call` would answer, valid only during
-/// the call. A null `done` runs the command for its effect alone.
+/// the call. A null `done` runs the command for its effect alone. A session's
+/// commands (all `session_*` but `session_open`) are queued for it before
+/// this returns, so it takes them in the order they were sent.
 ///
 /// # Safety
 /// As `tl_call`; `done`, if not null, may be called from any thread with
@@ -205,28 +217,25 @@ pub unsafe extern "C" fn tl_call_async(
     done: Option<extern "C" fn(*mut c_void, *const c_char)>,
     ctx: *mut c_void,
 ) {
-    let done = done.map(|call| Callback { call, ctx });
-    let reply = move |result| {
-        if let Some(done) = done {
-            let _ = caught(|| done.send(&envelope(result)));
-        }
-    };
+    let done = Done(done.map(|call| Callback { call, ctx }));
     let Some(handle) = (unsafe { handle.as_ref() }) else {
-        return reply(Err(CoreError::bad_request("No handle")));
+        return done.send(Err(CoreError::bad_request("No handle")));
     };
-    let parsed = unsafe { command_args(command, args_json) };
-    let parsed = parsed.map(|(command, args)| (command.to_owned(), args));
-    let host = Arc::clone(&handle.host);
-    handle.runtime.spawn_blocking(move || {
-        // `done` is called inside the call: a new session's events wait for it to return.
-        let answered = caught(|| match &parsed {
-            Ok((command, args)) => host.call_then(command, args, reply),
-            Err(err) => reply(Err(err.clone())),
-        });
-        if answered.is_none() {
-            reply(Err(CoreError::internal("The command panicked")));
-        }
-    });
+    let (command, args) = match unsafe { command_args(command, args_json) } {
+        Ok(parsed) => parsed,
+        Err(err) => return done.send(Err(err)),
+    };
+    if command.starts_with("session_") && command != "session_open" {
+        let Some(answer) = caught(|| handle.host.sessions.send(command, &args)) else {
+            return done.send(Err(panicked()));
+        };
+        handle.runtime.spawn(async move { done.send(answer.await) });
+    } else {
+        let (host, command) = (Arc::clone(&handle.host), command.to_owned());
+        handle
+            .runtime
+            .spawn_blocking(move || done.send(host.call(&command, &args)));
+    }
 }
 
 /// Sets the function the core's events go to, one JSON object at a time
@@ -357,8 +366,8 @@ pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSo
 ///
 /// # Safety
 /// `source` came from `tl_source_new` and is not freed, and no other call
-/// on it (`const` queries included) overlaps this one; `text` is null
-/// (nothing) or `len` bytes of UTF-8.
+/// on it (queries included) overlaps this one; `text` is null (nothing) or
+/// `len` bytes of UTF-8.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_edit(
     source: *mut TlSource,
@@ -395,21 +404,21 @@ pub unsafe extern "C" fn tl_source_reload(source: *mut TlSource, text: *const u8
 /// # Safety
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_source_line_at(source: *const TlSource, offset: u32) -> u32 {
+pub unsafe extern "C" fn tl_source_line_at(source: *mut TlSource, offset: u32) -> u32 {
     unsafe { on_source(source, 0, |source| source.with(|doc| doc.line_at(offset))) }
 }
 
 /// # Safety
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_source_line_start(source: *const TlSource, line: u32) -> u32 {
+pub unsafe extern "C" fn tl_source_line_start(source: *mut TlSource, line: u32) -> u32 {
     unsafe { on_source(source, 0, |source| source.with(|doc| doc.line_start(line))) }
 }
 
 /// # Safety
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_source_line_count(source: *const TlSource) -> u32 {
+pub unsafe extern "C" fn tl_source_line_count(source: *mut TlSource) -> u32 {
     unsafe { on_source(source, 0, |source| source.with(|doc| doc.line_count())) }
 }
 
@@ -459,7 +468,7 @@ pub unsafe extern "C" fn tl_source_free_runs(runs: *mut u32, count: usize) {
 /// As `tl_source_edit`; the strings are null or NUL-terminated.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_call(
-    source: *const TlSource,
+    source: *mut TlSource,
     command: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {

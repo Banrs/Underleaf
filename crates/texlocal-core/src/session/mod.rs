@@ -6,7 +6,8 @@
 //! changes and build and preview results as messages, one at a time, and
 //! tells the host what changed through the event hub. A document's text is
 //! the session's (`Document`): the host's editor sends each edit to it once,
-//! and the session saves, previews and highlights from that same text.
+//! and the session saves, previews and highlights from that same text. A
+//! host numbers its sessions, so it listens for one before opening it.
 //! docs/core-api.md is the contract.
 
 mod actor;
@@ -18,7 +19,7 @@ mod tests;
 mod watch;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::hash_map::Entry;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -30,7 +31,7 @@ use crate::events::{Hub, Listener};
 use crate::projects::{SymbolScan, Symbols};
 use crate::service::{Service, arg, string_arg};
 use crate::texpresso::Events;
-use crate::{CoreError, lock};
+use crate::{CoreError, lock, settings};
 
 pub use document::Document;
 pub(crate) use engine::{Engine, ServiceEngine};
@@ -101,29 +102,19 @@ pub(crate) enum Msg {
     Fs(Vec<Change>),
 }
 
-/// Lets a new session's events go out when dropped.
-struct Release<'a>(&'a Hub, u64);
-
-impl Drop for Release<'_> {
-    fn drop(&mut self) {
-        self.0.release(self.1);
-    }
-}
-
 struct Open {
     tx: mpsc::UnboundedSender<Msg>,
     /// The session's documents by path, for the host's editor to edit.
     docs: Arc<Mutex<HashMap<String, Document>>>,
 }
 
-/// Every open session, and the hub their events go out through.
+/// Every open session, by the number its host gave it, and the hub their events go out through.
 pub struct Sessions {
     service: Arc<Service>,
     hub: Hub,
     engine: Arc<dyn Engine>,
     timings: Timings,
-    open: Mutex<HashMap<u64, Open>>,
-    next: AtomicU64,
+    open: Arc<Mutex<HashMap<u64, Open>>>,
 }
 
 impl Sessions {
@@ -142,8 +133,7 @@ impl Sessions {
             hub: Hub::default(),
             engine,
             timings,
-            open: Mutex::default(),
-            next: AtomicU64::new(1),
+            open: Arc::default(),
         }
     }
 
@@ -164,40 +154,23 @@ impl Sessions {
         lock(&docs).get(path).cloned()
     }
 
-    /// `call_then`, answering what it is given.
-    #[cfg(test)]
-    pub(crate) async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
-        self.call_then(command, args, |answer| answer).await
-    }
-
-    /// Answers a `session_*` command, handing the answer to `deliver` and returning what
-    /// it does; the host sends every other command to `Service::call`. Must run inside a
-    /// tokio runtime that goes on running its tasks between calls.
-    ///
-    /// No event of a session reaches the listener before `deliver` has returned for the
-    /// answer to its `session_open`: `deliver` is where a host's callback gets the answer,
-    /// so none of the events can come first.
-    pub async fn call_then<T, F>(&self, command: &str, args: &Value, deliver: F) -> T
-    where
-        F: FnOnce(Result<Value, CoreError>) -> T,
-    {
-        let answer = match command {
+    /// Answers a `session_*` command; the host sends every other command to `Service::call`.
+    /// Must run inside a tokio runtime that goes on running its tasks between calls.
+    pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
+        match command {
             "session_open" => self.open(args),
             _ => self.send(command, args).await,
-        };
-        // Released however `deliver` ends.
-        let _release = (command == "session_open")
-            .then(|| answer.as_ref().ok()?["session"].as_u64())
-            .flatten()
-            .map(|session| Release(&self.hub, session));
-        deliver(answer)
+        }
     }
 
+    /// Opens the session numbered `session`, a number its host chose and listens for
+    /// already: the session's first events may come before this answers. A number open
+    /// already is refused (409).
     fn open(&self, args: &Value) -> Result<Value, CoreError> {
+        let id: u64 = arg(args, "session")?;
         let project = string_arg(args, "id")?.to_owned();
         let root = dunce::canonicalize(self.service.project_root(&project)?)?;
         let auto_compile = arg::<Option<bool>>(args, "autoCompile")?.unwrap_or(false);
-        let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::unbounded_channel();
         let docs = Arc::default();
         let (actor, opened) = actor::Actor::new(actor::Setup {
@@ -212,41 +185,53 @@ impl Sessions {
             timings: self.timings.clone(),
             auto_compile,
         })?;
-        // Before the task can make an event (a build, say, for `autoCompile`), and let go
-        // once the host has the answer that names the session (`call_then`).
-        self.hub.hold(id);
+        match lock(&self.open).entry(id) {
+            Entry::Occupied(_) => return Err(CoreError::conflict("That session is open already")),
+            Entry::Vacant(entry) => entry.insert(Open { tx, docs }),
+        };
         tokio::spawn(actor.run(rx));
-        lock(&self.open).insert(id, Open { tx, docs });
-        Ok(
-            json!({ "session": id, "root": root.to_string_lossy(), "pdf": opened.pdf, "tree": opened.tree }),
-        )
+        // All a host shows as the project opens, so it need ask for nothing first.
+        Ok(json!({
+            "session": id,
+            "root": root.to_string_lossy(),
+            "pdf": opened.pdf,
+            "tree": opened.tree,
+            "settings": settings::read_settings(&root),
+            "ui": settings::read_ui(&root),
+        }))
     }
 
-    async fn send(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
-        let id: u64 = arg(args, "session")?;
-        let tx = lock(&self.open)
-            .get(&id)
-            .map(|open| open.tx.clone())
-            .ok_or_else(|| CoreError::not_found("No such session"))?;
-        let (reply, answer) = oneshot::channel();
+    /// A command for an open session (any but `session_open`), queued for its task as this
+    /// is called, so a session takes its commands in the order they were sent however
+    /// their answers are awaited.
+    pub fn send(
+        &self,
+        command: &str,
+        args: &Value,
+    ) -> impl Future<Output = Result<Value, CoreError>> + Send + use<> {
+        let gone = || CoreError::not_found("No such session");
         let name = command.trim_start_matches("session_").to_owned();
         let closing = name == "close";
-        let message = Msg::Command {
-            name,
-            args: args.clone(),
-            reply,
-        };
-        tx.send(message)
-            .map_err(|_| CoreError::not_found("No such session"))?;
-        let answer = answer
-            .await
-            .unwrap_or_else(|_| Err(CoreError::not_found("No such session")));
-        if closing {
-            lock(&self.open).remove(&id);
-            // A session closed before its open was released lets go of its events.
-            self.hub.release(id);
+        let (reply, answer) = oneshot::channel();
+        let queued = arg::<u64>(args, "session").and_then(|id| {
+            let tx = lock(&self.open).get(&id).map(|open| open.tx.clone());
+            let message = Msg::Command {
+                name,
+                args: args.clone(),
+                reply,
+            };
+            tx.ok_or_else(gone)?.send(message).map_err(|_| gone())?;
+            Ok(id)
+        });
+        let open = Arc::clone(&self.open);
+        async move {
+            let id = queued?;
+            let answer = answer.await.unwrap_or_else(|_| Err(gone()));
+            if closing {
+                lock(&open).remove(&id);
+            }
+            answer
         }
-        answer
     }
 
     #[cfg(test)]

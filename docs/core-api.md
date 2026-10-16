@@ -12,8 +12,8 @@ Windows loads `texlocal_ffi.dll`):
 | Function | Use |
 |---|---|
 | `tl_open(data_dir)` / `tl_close(h)` | One handle per app. `tl_close` closes every session (saving what it can) and stops builds and previews; no call may be in flight. |
-| `tl_call(h, command, args_json)` | Blocking, JSON in, `{"ok": value}` or `{"error": message, "status": code}` out; free with `tl_free`. Never on the UI thread. |
-| `tl_call_async(h, command, args_json, done, ctx)` | The same on a core thread; `done(ctx, envelope_json)` gets the envelope. `done` may be NULL. |
+| `tl_call(h, command, args_json)` | Blocking, JSON in, `{"ok": value}` or `{"error": message, "status": code}` out, never NULL; free with `tl_free`. Never on the UI thread. |
+| `tl_call_async(h, command, args_json, done, ctx)` | The same on a core thread; `done(ctx, envelope_json)` gets the envelope. `done` may be NULL. A session's commands are queued for it before this returns (see Threading). |
 | `tl_set_listener(h, listener, ctx)` | Events, below. NULL removes it; it returns once no call to the old listener runs. |
 | `tl_session_source(h, session, path)` | A session's open document as a `TlSource` (see Documents). Free with `tl_source_free`. Each source handed out starts with no typing state: the brackets the editor closed and a snippet's fields from an earlier visit are forgotten. |
 | `tl_source_*` | Highlighting, completions and editing commands on a source, as before; `tl_source_reload` takes a reloaded text. |
@@ -28,25 +28,28 @@ the call.
   never wait in the listener. Work that only delays the events after it may be done there:
   the Mac app reads a `live_page`'s or `live_document`'s PDF before its one hop to the main
   queue.
-- **No event of a session reaches the listener before the answer to that session's
-  `session_open`.** A new session's events (an `autoCompile` build's `build`, a `tree`) are
-  held by the core until the answer has been handed over, then go out
-  in the order they were made; a host needs no buffering by id. "Handed over" is exact for
-  `tl_call_async`: the hold ends when `done` returns, so a `done` that queues the answer
-  for the UI thread queues it before any event. With `tl_call` the hold ends as the call
-  returns, so the host's own code after it may still run alongside the first events: open
-  with `tl_call_async` if the order matters to it. In Rust, `Sessions::call_then` takes
-  a `deliver` closure and holds until it returns.
+- **A host numbers its sessions, and listens for one before it opens it.** `session_open`
+  takes the number (`session`); the core holds nothing back, so a new session's first events
+  (an `autoCompile` build's `build`, say) can reach the listener before the answer to its
+  `session_open` reaches the host. A host routes events by the number it chose before the
+  call, and keeps what they say. The answer describes the session as it opened: a `tree` event
+  that came before it is the newer tree.
 - `tl_call` may be called from any thread, several at once. `session_*` commands are quick
   (they never wait for a build or TeXpresso to finish), but go through the session's queue:
   keep them off the UI thread or use `tl_call_async`.
+- `tl_call_async` queues a session's commands (every `session_*` but `session_open`) for it
+  before it returns, so the session takes them in the order they were sent, though their
+  answers may come back on different threads in another order. Send a session's commands
+  after its `session_open` has answered. Other commands each run on a thread of their own, in
+  no set order: a host that needs one done before the next (a `set_ui_state`, then the
+  `get_ui_state` after a rename) waits for the first's answer.
 - A `TlSource` is used by one thread at a time (the editor's). A session's document is also
   read by the core's threads; it locks itself, so the editor's calls never see a half edit.
 
 ## Lifecycle
 
 ```
-session_open {id, autoCompile}          -> {session, root, pdf, tree}
+session_open {id, session, autoCompile} -> {session, root, pdf, tree, settings, ui}
   session_open_document {session, path} -> {text}       load text into the editor verbatim
   tl_session_source(h, session, path)   -> TlSource     every editor edit: tl_source_edit
   ... the session autosaves, builds, watches the folder, previews; events tell the host ...
@@ -54,7 +57,8 @@ session_open {id, autoCompile}          -> {session, root, pdf, tree}
 session_close {session}                 -> {saved}
 ```
 
-Ids: `session` is a number from `session_open`; `path` is project-relative with `/`.
+Ids: `session` is a number the host chooses for each session it opens, and no two of its open
+sessions share; `path` is project-relative with `/`.
 
 ## Session commands
 
@@ -62,10 +66,10 @@ All take `session` (except `session_open`). Results are the `ok` value.
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `session_open` | `id`, `autoCompile?` | `{session, root, pdf, tree}` | `pdf`: the last build's, if any. With `autoCompile` and no PDF, a build starts. |
+| `session_open` | `id`, `session`, `autoCompile?` | `{session, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` as `get_ui_state`: all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
 | `session_state` | | `{documents: [document state], build, live, autoCompile}` | A snapshot, for a host coming up; a document's state also has `dirty` and `conflict` (`changed`/`gone`/null), the build's `queued`. |
-| `session_set_options` | `autoCompile` | null | Pass the preference and whether TeX is available, together. |
+| `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
 | `session_open_document` | `path` | `{text}` | Text files only. Opening an open one answers its current text. |
 | `session_close_document` | `path` | `{closed}` | Saves first, asking about conflicts; `closed: false` if that failed. |
 | `session_composing` | `path`, `composing` | null | Marked (IME) text: the autosave waits until it ends. |
@@ -87,10 +91,10 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_live_status` | | TeXpresso status (`log`, `output`, `error`, …) | For the Live Preview Log; fetch when `live.revision` rises and the log shows. |
 
 Every other command (`file_tree`, `read_file`, `analyze_project`, `synctex_*`,
-`get_ui_state`, …) is the service's, unchanged. With live preview on, pass
-`live: true, session: <live.token>` to the SyncTeX commands.
+`get_ui_state`, `pdf_path` for a new main file's PDF, …) is the service's, unchanged. With live
+preview on, pass `live: true, session: <live.token>` to the SyncTeX commands.
 
-`session_open` first: its answer comes before any event of the session (see Threading).
+A session's events can come before its `session_open` has answered (see Threading).
 The session keeps no analysis of the project (`analyze_project` depends on the file
 shown, and the host asks again after each `saved`), so there is no `session_outline_current`:
 a host keeps the outline it last got and asks `outline_current {outline, file, line}`.
@@ -101,7 +105,7 @@ Service commands (`tl_call`):
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `create_project` | `name`, `template?` (article) | the project (`{id, name, mtime, mainFile}`) | A name taken is numbered past (“Paper 2”); `id`/`name` say which. A name the path rules refuse is 400. |
+| `create_project` | `name`, `template?` (article), `engine?` | the project (`{id, name, mtime, mainFile}`) | A name taken is numbered past (“Paper 2”); `id`/`name` say which. A name the path rules refuse is 400. With `engine`, the project is made with it; an unknown engine is 400, and nothing is made. |
 | `free_project_name` | `name?` (“Untitled”) | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
 
 Syntax commands (`tl_syntax_call`), JSON in, JSON out:
@@ -125,7 +129,7 @@ Each is `{"type", "session", …}`.
 | `conflict` | `path`, `kind` | `changed`: alert with Save Anyway, Revert, Cancel and no default button; `gone`: alert whose default saves again, Close, Cancel. Answer with `session_resolve`. |
 | `issues` | `path`, `lines: [{line, error, message, short, command, others}]` | The gutter and line-end boxes; `[]` clears them (an edit does). |
 | `build` | `compiling`, `auto`, `outdated` | Compile/Stop button, spinner, “Preview out of date”. Announce “Compiling” for a manual start. |
-| `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`; open the panel on a failed manual build; announce when `announce`; sync after compile if `ok` and not `outdated`. |
+| `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce`; sync after compile if `ok` and not `outdated`. |
 | `build_cleaned` | | Clear the PDF unless live. |
 | `tree` | `tree` (as `file_tree`) | Redraw the sidebar. |
 | `files_changed` | `paths` | Listed files changed in place that aren't open (an image shown, say). |
@@ -149,7 +153,8 @@ Each is `{"type", "session", …}`.
   hidden files and `build/` never do). An open document's file changed: reloaded if it has no
   unsaved edits, else asked about once. Gone: closed, or asked about if it has unsaved edits.
 - **Builds**: one at a time; a request during one queues one more (manual wins over
-  automatic); Stop drops it. Automatic builds wait while live preview runs or is restarting.
+  automatic); Stop drops it. Automatic builds wait while live preview runs or is restarting,
+  and run only once `status` has found TeX (both hosts ask it as they start).
   `outdated`: edits since the shown PDF's build began. Issues mark a document's lines only if
   it hasn't been edited since that build began, closed and opened again since or not.
 - **Live preview**: keys go to TeXpresso as made; one its copy can't take sends the whole text
@@ -159,6 +164,47 @@ Each is `{"type", "session", …}`.
   the error is reported. A stopped run shows `halted` once it has lasted 1 s.
 - **Symbols** (labels and citations) are scanned 150 ms after a save and when the session
   opens; the session's documents complete from them.
+
+## Changes for hosts (October 2026)
+
+Every change a host follows since commit d6bee12, in the order made.
+
+- Service commands removed: `texpresso_status`, `texpresso_start`, `texpresso_update`,
+  `texpresso_edit`, `texpresso_view`, `texpresso_caret`, `texpresso_wait`, `texpresso_stop`,
+  `texpresso_rescan`, `compile`, `clean_build`, `rename_entry`, `scan_symbols`, and
+  `create_project`'s `free` option. Sessions do all of it.
+- `session_close_document` has no `discard` option.
+- The `symbols` event is gone: a session's documents complete from its own scan.
+- The `document` event is `{path, error, held}`, sent only as a document opens or moves and
+  when `error` or `held` changes.
+- The `build` event is `{compiling, auto, outdated}`.
+- `tl_source_call` no longer answers `indent`, `set_symbols`, `reset_typing` or the commands
+  that need no source; `tl_syntax_call` no longer answers `contrast`.
+- texlocal-ffi builds a static library and an rlib only: Windows builds its DLL with
+  `cargo rustc --crate-type cdylib`.
+- **A host numbers its sessions.** `session_open` takes `session`, the host's number for it
+  (409 if one of that number is open), and the core no longer holds a new session's events
+  back until its answer is handed over: a host listens for the number before the call and
+  keeps the events that come before the answer. Windows: choose the number in WorkspacePage's
+  two `session_open` call sites and filter events by it from before the call. This removes
+  the cause of Windows dropping a new session's first events (its filter took the number from
+  the answer, whose continuation may run after Listen has posted them).
+- `session_open` also answers `settings` and `ui`, so a host need not call `get_settings` and
+  `get_ui_state` after it.
+- A build's `result.pdf` (`build_finished`) is an absolute path, as `session_open`'s `pdf` is;
+  it was relative to the project. Windows' `Full(pdf)` still finds it, as `Path.Combine` keeps
+  a rooted second path, but can go.
+- `session_set_options` takes the preference alone: the session builds by itself only once
+  `status` has found TeX, so a host no longer combines the two, nor sends the option again when
+  TeX comes or goes.
+- `create_project` takes `engine?`, so a new project is made with its engine in one call.
+- `tl_call_async` queues a session's commands for it as they are sent, so it takes them in
+  that order; other commands run side by side, as before.
+- The header: `tl_call` never answers NULL, and every `tl_source_*` takes a `TlSource *`
+  (it took `const` for the queries, which change the source's state all the same). Neither
+  changes what Swift or C# sees.
+- In Rust, `Sessions::call_then` is gone: `Sessions::call` answers a session command, and
+  `Sessions::send` queues one as it is called and answers later.
 
 ## From the Mac app's Swift
 

@@ -69,6 +69,18 @@ async fn a_free_project_name_is_the_next_untitled() {
 }
 
 #[tokio::test]
+async fn a_new_project_is_made_with_its_engine_or_not_at_all() {
+    let (_dir, service) = service();
+    let args = json!({ "name": "Xe", "template": "blank", "engine": "xelatex" });
+    let made = call(&service, "create_project", args).await;
+    let settings = call(&service, "get_settings", json!({ "id": made["id"] })).await;
+    assert_eq!(settings["engine"], "xelatex");
+    let unknown = json!({ "name": "Odd", "engine": "troff" });
+    assert_eq!(status_of(&service, "create_project", unknown).await, 400);
+    assert!(!service.data_dir.join("Odd").exists(), "no project made");
+}
+
+#[tokio::test]
 async fn dispatch_round_trips_project_and_file_commands() {
     let (_dir, service) = service();
     let info = call(

@@ -6,6 +6,7 @@
 //! cargo test -p texlocal-core --test texpresso_live -- --ignored --nocapture
 
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -47,11 +48,15 @@ struct Client {
     sessions: Sessions,
     events: Arc<Mutex<Vec<Value>>>,
     id: String,
+    /// The last session's number: a host numbers its own.
+    numbered: AtomicU64,
 }
 
 impl Client {
     async fn open(&self) -> u64 {
-        let opened = self.call("session_open", json!({ "id": self.id })).await;
+        let session = self.numbered.fetch_add(1, Ordering::Relaxed) + 1;
+        let args = json!({ "id": self.id, "session": session });
+        let opened = self.call("session_open", args).await;
         opened["session"].as_u64().unwrap()
     }
 
@@ -62,10 +67,7 @@ impl Client {
     }
 
     async fn call(&self, command: &str, args: Value) -> Value {
-        let answer = self
-            .sessions
-            .call_then(command, &args, |answer| answer)
-            .await;
+        let answer = self.sessions.call(command, &args).await;
         answer.unwrap_or_else(|err| panic!("{command}: {} {}", err.status, err.message))
     }
 
@@ -193,6 +195,7 @@ async fn run(library: &Path) {
         sessions,
         events,
         id: id.clone(),
+        numbered: AtomicU64::new(0),
     };
     let main = "\\documentclass{article}\n\\begin{document}\n\\typeout{UL_MAIN_INITIAL}\nHello café. $x^2+y^2=z^2$\n\\input{section.tex}\n\\end{document}\n";
     let section = "\\typeout{UL_SECTION_INITIAL}\nIncluded text.\n";
@@ -271,7 +274,7 @@ async fn run(library: &Path) {
     let built = client.event(&mut from, a, "build_finished", |_| true).await;
     let result = &built["result"];
     assert_eq!(result["ok"], true, "{}", result["log"]);
-    is_pdf(&root.join(result["pdf"].as_str().unwrap()));
+    is_pdf(Path::new(result["pdf"].as_str().unwrap()));
     let status = client.ask(a, "live_status", json!({})).await;
     assert_eq!(status["running"], true, "a build stopped the preview");
 
