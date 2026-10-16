@@ -25,7 +25,7 @@ extension NSToolbarItem.Identifier {
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
     /// Renamed as the defaults change: a layout saved under an earlier name would bring back or lack items.
-    let toolbar = NSToolbar(identifier: "Workspace 4")
+    let toolbar = NSToolbar(identifier: "Workspace 5")
     /// Compile as its symbol, which the workspace sets where its word would be the first tool without room.
     var compactCompile: Bool {
         get { fit.compact }
@@ -68,9 +68,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     // MARK: - Items
 
+    /// Each pane's tools at its trailing end, as each column's in Mail and the tools after the title in the UI kit's
+    /// toolbar: Zoom beside Compile, the window's one prominent action, on the trailing side (HIG, Toolbars).
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .format, .math, .insert,
-         .pdfSeparator, .zoom, .flexibleSpace, .compile,
+         .pdfSeparator, .flexibleSpace, .zoom, .compile,
          .inspectorTrackingSeparator, .flexibleSpace, .togglePDF, .toggleInspector]
     }
 
