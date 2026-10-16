@@ -26,7 +26,7 @@ struct StatusBar: View {
             content(.short).labelStyle(.iconOnly)
         }
         .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
-        // Its line's row, where the folded File Outline's divider is beside it.
+        // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`).
         .padding(.top, BarMetrics.line)
         // No ground of its own: AppKit's scroll edge lies under the bar (`buildArea`) and draws no line, so the bar has its own.
         .overlay(alignment: .top) { Divider() }
