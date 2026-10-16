@@ -555,6 +555,16 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// The rename's answer has the state the core moved, written before the rename asked for it.
+    @Test func anOpenFolderStaysOpenUnderItsNewName() async throws {
+        let project = try await opened().project
+        try await Core.shared.call("write_file", ["id": project.id, "path": "ch/a.tex", "text": ""])
+        project.expandedFolders = ["ch"]
+        await project.renameEntry("ch", to: "chapters")
+        #expect(project.expandedFolders == ["chapters"])
+        await app.close()
+    }
+
     @Test func aNewProjectOpensItsSheetWithTheTemplateAndAFreeName() async throws {
         app.newProject(.report)
         // Once the core has named it.

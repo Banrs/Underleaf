@@ -37,7 +37,7 @@ final class ProjectModel {
     /// Each open document's state, as the session's `document` events give it.
     private var documents: [String: DocumentState] = [:]
     /// Why a document held after Cancel in an alert isn't saved, for the status bar.
-    @ObservationIgnored private var heldReasons: [String: String] = [:]
+    private var heldReasons: [String: String] = [:]
     @ObservationIgnored private var lineIssues: [String: [Int: SourceTextView.LineIssue]] = [:]
     @ObservationIgnored private var composingPath: String?
     /// A `tree` event came before the answer to the session's open, whose tree is older.
@@ -289,12 +289,6 @@ final class ProjectModel {
         _ = enqueue(&uiStateWrites) { [core] in try? await core.call("set_ui_state", args) }
     }
 
-    private func readUIState() async {
-        await uiStateWrites?.value
-        guard let state = try? await core.call("get_ui_state", ["id": id], as: UIState.self), !closed else { return }
-        showUIState(state)
-    }
-
     private func showUIState(_ state: UIState) {
         showingUIState = true
         (expandedFolders, foldedHeadings) = (Set(state.expandedFolders), Set(state.foldedHeadings))
@@ -351,16 +345,18 @@ final class ProjectModel {
         if openPath == event.path, event.reason != "closed" { clearOpenFile() }
     }
 
-    /// The editor follows the rename's own answer, which covers a folder's files it keeps too.
+    /// The editor and the file shown follow the rename's own answer (`performRename`), which covers a file previewed too.
     private func documentRenamed(_ event: RenamedEvent) {
         documents[event.to] = documents.removeValue(forKey: event.from)
         heldReasons[event.to] = heldReasons.removeValue(forKey: event.from)
         lineIssues[event.to] = lineIssues.removeValue(forKey: event.from)
-        if openPath == event.from { openPath = event.to }
     }
 
     private func conflict(_ event: ConflictEvent) {
-        if event.kind == "gone" { missingFile = event.path } else { diskConflict = event.path }
+        switch event.kind {
+        case .changed: diskConflict = event.path
+        case .gone: missingFile = event.path
+        }
     }
 
     private func markIssues(_ event: IssuesEvent) {
@@ -859,21 +855,23 @@ final class ProjectModel {
     }
 
     func renameEntry(_ from: String, to: String, action: String = String(localized: "Rename")) async {
-        if let result = await performRename(from, to: to) { registerRenameUndo(result, action: action) }
+        if let result = await performRename(from, to: to) { registerRenameUndo(from: result.from, to: result.to, action: action) }
     }
 
-    private func registerRenameUndo(_ result: RenameResult, action: String) {
+    private func registerRenameUndo(from: String, to: String, action: String) {
         app?.undoManager?.registerAsyncUndo(withTarget: self, actionName: action, reversal: {
-            self.registerRenameUndo(RenameResult(from: result.to, to: result.from, mainFile: result.mainFile), action: action)
+            self.registerRenameUndo(from: to, to: from, action: action)
         }, work: {
-            await self.performRename(result.to, to: result.from) != nil
+            await self.performRename(to, to: from) != nil
         })
     }
 
-    /// The session saves first and moves its open documents; the editor keeps its text and undo under the new name.
+    /// The session saves first and moves its open documents, and the sidebar's state, written first, with them; the
+    /// editor keeps its text and undo under the new name.
     private func performRename(_ from: String, to: String) async -> RenameResult? {
         guard to != from, let session, !closed else { return nil }
         let (before, wasText) = (openPath, editsText)
+        await uiStateWrites?.value
         let renamed: RenameResult?
         do {
             renamed = try await core.call("session_rename", ["session": session, "from": from, "to": to], as: RenameResult?.self)
@@ -888,9 +886,9 @@ final class ProjectModel {
         if moved { openPath = now }
         let mainChanged = result.mainFile != settings?.mainFile
         settings?.mainFile = result.mainFile
-        // The new name's kind is the tree's; the sidebar's state moved with it.
+        // The new name's kind is the tree's.
         await tree.reload()
-        await readUIState()
+        showUIState(result.ui)
         if moved, let now, openPath == now, !closed {
             // A text file now previewed, or the other way: shown afresh.
             if isText(now) != wasText {
@@ -1115,7 +1113,12 @@ nonisolated struct PathEvent: Decodable, Sendable { let path: String }
 /// `reason`: `gone`, `deleted`, or `closed` when the app closed it.
 nonisolated struct ClosedEvent: Decodable { let path, reason: String }
 nonisolated struct RenamedEvent: Decodable { let from, to: String }
-nonisolated struct ConflictEvent: Decodable { let path, kind: String }
+nonisolated struct ConflictEvent: Decodable {
+    nonisolated enum Kind: String, Decodable { case changed, gone }
+
+    let path: String
+    let kind: Kind
+}
 nonisolated struct TreeEvent: Decodable { let tree: [TreeNode] }
 nonisolated struct PathsEvent: Decodable { let paths: [String] }
 nonisolated struct BuildState: Decodable { let compiling, auto, outdated: Bool }

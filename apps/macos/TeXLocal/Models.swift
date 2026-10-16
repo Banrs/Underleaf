@@ -198,6 +198,8 @@ nonisolated struct RenameResult: Decodable {
     let from: String
     let to: String
     let mainFile: String
+    /// The sidebar's state, its paths moved with the entry.
+    let ui: UIState
 }
 
 func remapPath(_ path: String, from: String, to: String) -> String {
