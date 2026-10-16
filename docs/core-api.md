@@ -111,7 +111,7 @@ Service commands (`tl_call`):
 |---|---|---|---|
 | `create_project` | `name`, `template?` (article), `engine?` | the project (`{id, name, mtime, mainFile}`) | A name taken is numbered past (“Paper 2”); `id`/`name` say which. A name the path rules refuse is 400. With `engine`, the project is made with it; an unknown engine is 400, and nothing is made. |
 | `free_project_name` | `name?` (“Untitled”) | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
-| `search_project` | `id`, `query` | `[{file, hits: [{file, line, before, match, after}]}]` | The first 100 lines that have `query` (in any case), by file, the files in order of their paths. |
+| `search_project` | `id`, `query` | `[{file, hits: [{file, line, column, length, before, match, after}]}]` | The first 100 lines that have `query` (in any case), by file, the files in order of their paths. `line` counts from 1; `column` (from 0) and `length` place a line's first match in UTF-16 units of the line as written, for the editor to select. |
 | `status` | | `{available, version, latexmkVersion, texDir, found, texpresso, texpressoDir}` | `latexmkVersion`: the number latexmk's version line names (“4.86”), or null. `set_tex_dir` and `set_texpresso_dir` answer the same. |
 
 Syntax commands (`tl_syntax_call`), JSON in, JSON out:

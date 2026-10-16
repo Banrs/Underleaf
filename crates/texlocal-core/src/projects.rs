@@ -64,6 +64,10 @@ pub struct RenameResult {
 pub struct SearchHit {
     pub file: String,
     pub line: u32,
+    /// Where the match starts in its line and how long it is, in UTF-16 units
+    /// of the line's own text, as an editor counts them.
+    pub column: u32,
+    pub length: u32,
     pub before: String,
     #[serde(rename = "match")]
     pub matched: String,
@@ -699,9 +703,12 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
             let matched: String = chars[col..col + q_len].iter().collect();
             let after_end = (col + q_len + 60).min(chars.len());
             let after: String = chars[col + q_len..after_end].iter().collect();
+            let utf16 = |cs: &[char]| -> u32 { cs.iter().map(|c| c.len_utf16() as u32).sum() };
             hits.push(SearchHit {
                 file: rel.to_owned(),
                 line: (i + 1) as u32,
+                column: utf16(&chars[..col]),
+                length: utf16(&chars[col..col + q_len]),
                 before: format!("{ellipsis}{before}").trim_start().to_string(),
                 matched,
                 after: after.trim_end().to_string(),
