@@ -37,7 +37,7 @@ final class ProjectModel {
     private var documents: [String: DocumentState] = [:]
     /// Why a document held after Cancel in an alert isn't saved, for the status bar.
     private var heldReasons: [String: String] = [:]
-    @ObservationIgnored private var lineIssues: [String: [Int: SourceTextView.LineIssue]] = [:]
+    @ObservationIgnored private var lineIssues: [String: [Int: IssuesEvent.Line]] = [:]
     @ObservationIgnored private var composingPath: String?
     /// A `tree` event came before the answer to the session's open, whose tree is older.
     @ObservationIgnored private var treeChanged = false
@@ -326,12 +326,9 @@ final class ProjectModel {
     }
 
     private func markIssues(_ event: IssuesEvent) {
-        let lines = Dictionary(event.lines.map { line in
-            (line.line, SourceTextView.LineIssue(isError: line.error, message: line.message, short: line.short, compact: line.compact,
-                                                 tokens: line.tokens.map(\.range), others: line.others))
-        }) { $1 }
+        let lines = Dictionary(event.lines.map { ($0.line, $0) }) { $1 }
         lineIssues[event.path] = lines.isEmpty ? nil : lines
-        if editor.path == event.path { editor.textView.issueLines = lines }
+        if editor.path == event.path { editor.textView.issues.lines = lines }
     }
 
     private func showTree(_ event: TreeEvent) {
@@ -397,7 +394,7 @@ final class ProjectModel {
             return
         }
         editor.open(path: path, text: source.text, source: source, focus: focus)
-        editor.textView.issueLines = lineIssues[path] ?? [:]
+        editor.textView.issues.lines = lineIssues[path] ?? [:]
     }
 
     /// Saved first; false, staying open, if that failed or asks about the disk.

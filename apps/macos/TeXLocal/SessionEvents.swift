@@ -85,7 +85,7 @@ nonisolated struct BuildFinished: Decodable {
 }
 
 nonisolated struct IssuesEvent: Decodable {
-    nonisolated struct Line: Decodable {
+    nonisolated struct Line: Decodable, Equatable {
         let line: Int
         let error: Bool
         let message: String
