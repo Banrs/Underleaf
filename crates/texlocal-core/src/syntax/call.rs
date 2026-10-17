@@ -1,138 +1,32 @@
 //! The commands by name, a JSON object of arguments in and the answer's JSON
 //! out, as the C ABI forwards them. An unknown command, or arguments that
-//! aren't an object of the command's, answer none.
+//! aren't an object with the command's, answer none.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::theme::{self, Rgba};
-use super::{Checker, SnippetField, SourceDocument, Style, TextEdit, TextRange, map_selections};
+use super::{SourceDocument, TextEdit, TextRange, map_selections};
 use super::{catalog, headings, render};
-
-/// The arguments of the document's commands, one struct for each shape. What
-/// a command needs it is sent: an argument left out is no call, not the
-/// text's start. Optional ones say what they are when left out.
-#[derive(Deserialize)]
-struct Caret {
-    caret: u32,
-}
-
-#[derive(Deserialize)]
-struct At {
-    at: u32,
-}
-
-#[derive(Deserialize)]
-struct Selection {
-    selection: TextRange,
-}
-
-#[derive(Deserialize)]
-struct Selections {
-    selections: Vec<TextRange>,
-}
-
-#[derive(Deserialize)]
-struct Offer {
-    caret: u32,
-    /// Asked for by the user, not typed.
-    #[serde(default)]
-    explicit: bool,
-}
-
-#[derive(Deserialize)]
-struct Heading {
-    caret: u32,
-    /// A sectioning command, or none for plain text.
-    command: String,
-}
-
-#[derive(Deserialize)]
-struct Block {
-    id: String,
-    selection: TextRange,
-}
-
-#[derive(Deserialize)]
-struct Symbol {
-    command: String,
-    selection: TextRange,
-}
-
-#[derive(Deserialize)]
-struct Checking {
-    selection: TextRange,
-    #[serde(rename = "for")]
-    checker: Checker,
-}
-
-/// Whether typing closes brackets for the user; true when left out.
-fn closing() -> bool {
-    true
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Typed {
-    selection: TextRange,
-    text: String,
-    #[serde(default = "closing")]
-    auto_pair: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Deleting {
-    selection: TextRange,
-    #[serde(default = "closing")]
-    auto_pair: bool,
-}
-
-#[derive(Deserialize)]
-struct Fields {
-    fields: Vec<SnippetField>,
-    at: u32,
-}
-
-/// Which way Tab goes; 1, forwards, when left out.
-fn forwards() -> i64 {
-    1
-}
-
-#[derive(Deserialize)]
-struct Tabbing {
-    selections: Vec<TextRange>,
-    #[serde(default = "forwards")]
-    step: i64,
-}
-
-#[derive(Deserialize)]
-struct Moving {
-    selections: Vec<TextRange>,
-    up: bool,
-}
-
-#[derive(Deserialize)]
-struct Styling {
-    selections: Vec<TextRange>,
-    style: Style,
-}
-
-#[derive(Deserialize)]
-struct Wrapping {
-    selections: Vec<TextRange>,
-    template: String,
-}
-
-#[derive(Deserialize)]
-struct Mapping {
-    edits: Vec<TextEdit>,
-    selections: Vec<TextRange>,
-}
 
 fn json(value: impl Serialize) -> Option<String> {
     serde_json::to_string(&value).ok()
+}
+
+/// The argument `key`: none when it is left out or isn't of its type, as a
+/// command is sent what it needs, never given the text's start for it.
+fn get<T: DeserializeOwned>(args: &Value, key: &str) -> Option<T> {
+    T::deserialize(args.get(key)?).ok()
+}
+
+/// An optional argument: `default` when it is left out or null, none when
+/// it isn't of its type.
+fn optional<T: DeserializeOwned>(args: &Value, key: &str, default: T) -> Option<T> {
+    match args.get(key) {
+        None | Some(Value::Null) => Some(default),
+        Some(value) => T::deserialize(value).ok(),
+    }
 }
 
 /// `args_json`, if it is a JSON object.
@@ -140,18 +34,6 @@ fn object(args_json: &str) -> Option<Value> {
     serde_json::from_str(args_json)
         .ok()
         .filter(Value::is_object)
-}
-
-fn args<T: DeserializeOwned>(args: &Value) -> Option<T> {
-    T::deserialize(args).ok()
-}
-
-/// The answer `command` gives to arguments of the shape `T`, as JSON.
-fn answer<T: DeserializeOwned, R: Serialize>(
-    value: &Value,
-    command: impl FnOnce(T) -> R,
-) -> Option<String> {
-    json(command(args(value)?))
 }
 
 impl SourceDocument {
@@ -167,51 +49,49 @@ impl SourceDocument {
     /// "end_snippet", "tab" (`selections`, `step`); "move_lines"
     /// (`selections`, `up`), "toggle_style" (`selections`, `style`: "bold",
     /// "italic" or "underline"), "wrap" (`selections`, `template`) and
-    /// "map_selections" (`edits`, `selections`). An edit's following and a
-    /// selection's are the C ABI's own (`tl_source_edit`, `tl_source_select`),
-    /// as is the text; those that need no document are `call`'s.
+    /// "map_selections" (`edits`, `selections`). `explicit` is false when
+    /// left out, `autoPair` true and `step` 1 (forwards). An edit's
+    /// following and a selection's are the C ABI's own (`tl_source_edit`,
+    /// `tl_source_select`), as is the text; those that need no document are
+    /// `call`'s.
     pub fn call(&mut self, command: &str, args_json: &str) -> Option<String> {
         let a = &object(args_json)?;
+        let caret = || get::<u32>(a, "caret");
+        let selection = || get::<TextRange>(a, "selection");
+        let selections = || get::<Vec<TextRange>>(a, "selections");
+        let string = |key| get::<String>(a, key);
+        let auto_pair = || optional(a, "autoPair", true);
         match command {
-            "completions" => answer(a, |o: Offer| {
-                self.completions(o.caret, o.explicit, &self.labels, &self.citations)
-            }),
-            "toggle_comment" => answer(a, |s: Selections| self.toggle_comment(&s.selections)),
-            "set_heading" => answer(a, |h: Heading| self.set_heading(h.caret, &h.command)),
-            "insert_block" => answer(a, |b: Block| self.insert_block(&b.id, b.selection)),
-            "insert_symbol" => answer(a, |s: Symbol| self.insert_symbol(&s.command, s.selection)),
-            "math_at" => answer(a, |c: Caret| self.math_at(c.caret)),
-            "text_styles" => answer(a, |s: Selection| self.text_styles(s.selection)),
-            "code_ranges" => answer(a, |c: Checking| self.code_ranges(c.selection, c.checker)),
-            "type" => answer(a, |t: Typed| {
-                self.type_text(t.selection, &t.text, t.auto_pair)
-            }),
-            "delete_backward" => answer(a, |d: Deleting| {
-                self.delete_backward(d.selection, d.auto_pair)
-            }),
-            "insert_newline" => answer(a, |s: Selection| self.insert_newline(s.selection)),
-            "partner" => answer(a, |p: At| self.partner(p.at)),
-            "start_snippet" => answer(a, |f: Fields| self.start_snippet(&f.fields, f.at)),
+            "completions" => {
+                let explicit = optional(a, "explicit", false)?;
+                json(self.completions(caret()?, explicit, &self.labels, &self.citations))
+            }
+            "toggle_comment" => json(self.toggle_comment(&selections()?)),
+            "set_heading" => json(self.set_heading(caret()?, &string("command")?)),
+            "insert_block" => json(self.insert_block(&string("id")?, selection()?)),
+            "insert_symbol" => json(self.insert_symbol(&string("command")?, selection()?)),
+            "math_at" => json(self.math_at(caret()?)),
+            "text_styles" => json(self.text_styles(selection()?)),
+            "code_ranges" => json(self.code_ranges(selection()?, get(a, "for")?)),
+            "type" => json(self.type_text(selection()?, &string("text")?, auto_pair()?)),
+            "delete_backward" => json(self.delete_backward(selection()?, auto_pair()?)),
+            "insert_newline" => json(self.insert_newline(selection()?)),
+            "partner" => json(self.partner(get(a, "at")?)),
+            "start_snippet" => {
+                json(self.start_snippet(&get::<Vec<_>>(a, "fields")?, get(a, "at")?))
+            }
             "end_snippet" => json(self.end_snippet()),
-            "tab" => answer(a, |t: Tabbing| self.tab(&t.selections, t.step)),
-            "move_lines" => answer(a, |m: Moving| self.move_lines(&m.selections, m.up)),
-            "toggle_style" => answer(a, |s: Styling| self.toggle_style(&s.selections, s.style)),
-            "wrap" => answer(a, |w: Wrapping| self.wrap(&w.selections, &w.template)),
-            "map_selections" => answer(a, |m: Mapping| map_selections(&m.edits, &m.selections)),
+            "tab" => json(self.tab(&selections()?, optional(a, "step", 1)?)),
+            "move_lines" => json(self.move_lines(&selections()?, get(a, "up")?)),
+            "toggle_style" => json(self.toggle_style(&selections()?, get(a, "style")?)),
+            "wrap" => json(self.wrap(&selections()?, &string("template")?)),
+            "map_selections" => {
+                let edits: Vec<TextEdit> = get(a, "edits")?;
+                json(map_selections(&edits, &selections()?))
+            }
             _ => None,
         }
     }
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct Maths {
-    tex: String,
-    display: bool,
-    command: String,
-    size: Option<f64>,
-    side: Option<f64>,
-    color: Option<Rgba>,
 }
 
 /// An SVG, or why there's none.
@@ -220,34 +100,6 @@ fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
         Ok(svg) => json(svg),
         Err(error) => json(json!({ "error": error })),
     }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Legible {
-    color: Rgba,
-    background: Rgba,
-    fill: Rgba,
-    #[serde(default)]
-    increase_contrast: bool,
-    /// The contrast to raise to; without it, text's (`theme::text_contrast`).
-    ratio: Option<f64>,
-}
-
-/// The document class the levels are for; without a `class`, none.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Styles {
-    class: Option<String>,
-    /// The class option, 10 when left out.
-    #[serde(default = "ten")]
-    point_size: u32,
-    #[serde(default)]
-    has_chapters: bool,
-}
-
-fn ten() -> u32 {
-    10
 }
 
 /// What a file dropped on the editor does: an image or PDF dropped on a
@@ -264,58 +116,73 @@ fn dropped(path: &str, kind: &str, into: &str) -> Value {
     }
 }
 
+const BLACK: Rgba = [0.0, 0.0, 0.0, 1.0];
+
 /// The commands that need no document: "themes", the themes' colours;
 /// "theme_colors", a theme's (`theme`, its id) legible in an appearance
 /// (`theme::Appearance`'s fields), by highlight kind; "legible" (`color`,
 /// `background`, `fill`, `increaseContrast`, `ratio`), one colour raised to
 /// `ratio` (default 4.5, or 7 with `increaseContrast`). "menus", the
 /// catalogue's templates and symbol groups; "heading_styles" (`class`,
-/// `pointSize`, `hasChapters`), the levels the class has, as it sets and
-/// numbers them (a session's analysis answers the main file's). "drop_text" (`path`, `kind`,
-/// `into`), what a project file dropped on the editor does: {"insert": text}
-/// or {"open": true}, or null for a folder. "math_svg" (`tex`, `display`,
-/// `size`, `color`) and "glyph_svg" (`command`, `size`, `side`, `color`):
-/// `render::MathSvg`, or {"error": why}.
+/// `pointSize`, 10 when left out, `hasChapters`), the levels the class has,
+/// as it sets and numbers them, every level without a class (a session's
+/// analysis answers the main file's). "drop_text" (`path`, `kind`, `into`,
+/// "tex" when left out), what a project file dropped on the editor does:
+/// {"insert": text} or {"open": true}, or null for a folder. "math_svg"
+/// (`tex`, `display`, `size`, 13 points, `color`, black) and "glyph_svg"
+/// (`command`, `size`, 19, `side`, 24, `color`): `render::MathSvg`, or
+/// {"error": why}.
 pub fn call(command: &str, args_json: &str) -> Option<String> {
-    let value = object(args_json)?;
-    let string = |key: &str| value.get(key).and_then(Value::as_str);
+    let a = &object(args_json)?;
+    let string = |key, default: &str| optional(a, key, default.to_owned());
+    let color = || optional(a, "color", BLACK);
     match command {
-        "drop_text" => json(dropped(
-            string("path")?,
-            string("kind").unwrap_or_default(),
-            string("into").unwrap_or("tex"),
-        )),
+        "drop_text" => {
+            let (kind, into) = (string("kind", "")?, string("into", "tex")?);
+            json(dropped(&get::<String>(a, "path")?, &kind, &into))
+        }
         "themes" => json(theme::THEMES),
-        "math_svg" | "glyph_svg" => {
-            let m: Maths = args(&value)?;
-            let color = m.color.unwrap_or([0.0, 0.0, 0.0, 1.0]);
-            rendered(if command == "math_svg" {
-                render::math_svg(&m.tex, m.display, m.size.unwrap_or(13.0), color)
-            } else {
-                let (size, side) = (m.size.unwrap_or(19.0), m.side.unwrap_or(24.0));
-                render::glyph_svg(&m.command, size, side, color)
-            })
+        "math_svg" => {
+            let (tex, display) = (string("tex", "")?, optional(a, "display", false)?);
+            rendered(render::math_svg(
+                &tex,
+                display,
+                optional(a, "size", 13.0)?,
+                color()?,
+            ))
+        }
+        "glyph_svg" => {
+            let (size, side) = (optional(a, "size", 19.0)?, optional(a, "side", 24.0)?);
+            rendered(render::glyph_svg(
+                &string("command", "")?,
+                size,
+                side,
+                color()?,
+            ))
         }
         "menus" => {
             let catalog = &*catalog::CATALOG;
             json(json!({ "templates": catalog.templates, "symbolGroups": catalog.symbol_groups }))
         }
         "heading_styles" => {
-            let a: Styles = args(&value)?;
-            let class = a.class.map(|name| headings::DocumentClass {
-                name,
-                point_size: a.point_size,
-            });
-            json(headings::heading_styles(class.as_ref(), a.has_chapters))
+            let class: Option<String> = optional(a, "class", None)?;
+            let point_size = optional(a, "pointSize", 10)?;
+            let class = class.map(|name| headings::DocumentClass { name, point_size });
+            let has_chapters = optional(a, "hasChapters", false)?;
+            json(headings::heading_styles(class.as_ref(), has_chapters))
         }
         "theme_colors" => {
-            let theme = theme::theme(string("theme")?)?;
-            json(theme::theme_colors(theme, &args(&value)?))
+            let theme = theme::theme(&get::<String>(a, "theme")?)?;
+            json(theme::theme_colors(
+                theme,
+                &Deserialize::deserialize(a).ok()?,
+            ))
         }
         "legible" => {
-            let a: Legible = args(&value)?;
-            let ratio = a.ratio.unwrap_or(theme::text_contrast(a.increase_contrast));
-            json(theme::legible(a.color, a.background, a.fill, ratio))
+            let increase_contrast = optional(a, "increaseContrast", false)?;
+            let ratio = optional(a, "ratio", theme::text_contrast(increase_contrast))?;
+            let (background, fill) = (get(a, "background")?, get(a, "fill")?);
+            json(theme::legible(get(a, "color")?, background, fill, ratio))
         }
         _ => None,
     }

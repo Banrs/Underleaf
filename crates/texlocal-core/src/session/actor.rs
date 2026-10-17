@@ -18,7 +18,7 @@ use super::build::Builds;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions, Timings};
-use crate::analyze::{self, ProjectAnalysis};
+use crate::analyze;
 use crate::events::Emitter;
 use crate::paths::{self, within};
 use crate::projects::{self, SymbolScan, Symbols, file_kind};
@@ -939,7 +939,6 @@ impl Actor {
         tokio::task::spawn_blocking(move || {
             // Read each time: another app, or another host's `set_settings`, may have changed it.
             let main = settings::read_settings(&root).main_file;
-            let analysis = analyze::analyze_project(&root, &main, &path);
             let open = paths::rel_key(&main)
                 .ok()
                 .and_then(|main| lock(&docs).get(&main).cloned());
@@ -951,7 +950,8 @@ impl Actor {
                     .map(|(text, _)| text),
             };
             let class = main_text.as_deref().and_then(headings::document_class);
-            let answer = out(ProjectAnalysis::new(&analysis, class.as_ref()));
+            let analysis = analyze::analyze_project(&root, &main, &path, class.as_ref());
+            let answer = out(&analysis);
             let mut kept = lock(&outline);
             if seq > kept.seq {
                 (kept.seq, kept.headings) = (seq, analysis.outline);

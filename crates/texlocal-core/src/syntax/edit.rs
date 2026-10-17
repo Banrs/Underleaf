@@ -9,9 +9,10 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use super::scan::{blank_line, closing_brace, strip_comment};
 use super::{
-    Insertion, SourceDocument, Text, TextEdit, TextRange, blank, catalog, clamp, complete, edit,
-    is, space, span, splice, utf16,
+    Insertion, Line, SourceDocument, Text, TextEdit, TextRange, catalog, clamp, complete, edit,
+    indentation, is, span, splice, utf16,
 };
 
 /// Edits, applied from the last as one undo step, and the selections after.
@@ -52,40 +53,12 @@ fn touched_lines(text: &Text, selections: &[TextRange]) -> BTreeSet<usize> {
 static HEADING: LazyLock<Regex> = LazyLock::new(|| {
     // The levels the menus offer, then the one they don't.
     let levels = catalog::CATALOG.heading_levels.iter();
-    let names = levels.map(|level| level.command.as_str());
-    let names = catalog::alternation(names.chain(["subparagraph"]));
+    let names = levels
+        .map(|level| level.command.as_str())
+        .chain(["subparagraph"]);
+    let names = names.map(regex::escape).collect::<Vec<_>>().join("|");
     Regex::new(&format!(r"\\({names})(\*?)\s*(\[[^\]]*\])?\s*\{{")).unwrap()
 });
-
-/// Where a line's comment starts: its first "%" that no backslash escapes.
-fn comment_start(line: &str) -> usize {
-    let mut slashes = 0;
-    for (i, c) in line.char_indices() {
-        match c {
-            '%' if slashes % 2 == 0 => return i,
-            '\\' => slashes += 1,
-            _ => slashes = 0,
-        }
-    }
-    line.len()
-}
-
-/// Where the brace that closes a command's argument is, in the text after
-/// its opening brace; none if that's on another line.
-fn closing_brace(body: &str) -> Option<usize> {
-    let (mut depth, mut slashes) = (1, 0);
-    body.find(|c| {
-        if slashes % 2 == 0 {
-            depth += match c {
-                '{' => 1,
-                '}' => -1,
-                _ => 0,
-            };
-        }
-        slashes = if c == '\\' { slashes + 1 } else { 0 };
-        depth == 0
-    })
-}
 
 impl SourceDocument {
     /// "%" comments on or off for the lines the selections touch: off when
@@ -94,19 +67,18 @@ impl SourceDocument {
     pub fn toggle_comment(&self, selections: &[TextRange]) -> Vec<TextEdit> {
         let text = &self.text;
         let lines = touched_lines(text, selections);
-        let indent = |line: &[u16]| line.iter().take_while(|&&u| space(u)).count();
-        let commented = |line: &[u16]| line.get(indent(line)).is_some_and(|&u| is(u, '%'));
+        let commented = |line: &[u16]| line.get(indentation(line)).is_some_and(|&u| is(u, '%'));
         let uncomment = lines
             .iter()
-            .all(|&l| commented(text.line(l)) || blank(text.line(l)));
+            .all(|&l| commented(text.line(l)) || blank_line(text.line(l)));
         lines
             .into_iter()
             .filter_map(|l| {
                 let (line, start) = (text.line(l), text.lines[l]);
                 if !uncomment {
-                    return (!blank(line)).then(|| edit(start, 0, "% "));
+                    return (!blank_line(line)).then(|| edit(start, 0, "% "));
                 }
-                let at = indent(line);
+                let at = indentation(line);
                 let space_after = line.get(at + 1).is_some_and(|&u| is(u, ' '));
                 commented(line).then(|| edit(start + at as u32, 1 + space_after as u32, ""))
             })
@@ -125,7 +97,7 @@ impl SourceDocument {
                     return Some(edit(start, 0, "  "));
                 }
                 let line = text.line(l);
-                let indent = &line[..line.iter().take_while(|&&u| space(u)).count()];
+                let indent = &line[..indentation(line)];
                 if indent.is_empty() {
                     return None;
                 }
@@ -166,7 +138,7 @@ impl SourceDocument {
         let (line, start) = (text.line(index), text.lines[index]);
         let length = line.len() as u32;
         let line = String::from_utf16_lossy(line);
-        let (code, comment) = line.split_at(comment_start(&line));
+        let (code, comment) = line.split_at(strip_comment(&line).len());
         let (before, title, rest, marks, closed) = match HEADING.captures(code) {
             Some(c) => {
                 let open = c.get_match();
@@ -227,7 +199,7 @@ impl SourceDocument {
         let before = &text.units[text.lines[line] as usize..selection.start as usize];
         // On a line of its own: after text, a line feed first. The template ends
         // with its own.
-        let newline = if blank(before) { "" } else { "\n" };
+        let newline = if blank_line(before) { "" } else { "\n" };
         let (block, fields) =
             complete::expand(text, selection.start, &format!("{newline}{template}"));
         Some(Insertion {
@@ -264,64 +236,57 @@ impl SourceDocument {
     pub fn move_lines(&self, selections: &[TextRange], up: bool) -> Option<Change> {
         let text = &self.text;
         let (units, len) = (&text.units[..], text.units.len());
-        // Each selection's whole lines, in order; one ending at a line's start
-        // doesn't take that line. Runs that touch are one.
-        let mut runs: Vec<(usize, usize)> = selections
-            .iter()
-            .map(|&selection| {
-                let (start, end) = clamp(selection, text.len()).bounds();
-                let last = if end > start { end - 1 } else { start };
-                (text.around(start).start, text.around(last).next)
-            })
-            .collect();
-        runs.sort_unstable();
-        let mut merged: Vec<(usize, usize)> = Vec::new();
-        for run in runs {
-            match merged.last_mut() {
-                Some(previous) if run.0 <= previous.1 => previous.1 = previous.1.max(run.1),
-                _ => merged.push(run),
+        // Runs of the lines the selections touch, by their first and last.
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for line in touched_lines(text, selections) {
+            match runs.last_mut() {
+                Some(run) if line == run.1 + 1 => run.1 = line,
+                _ => runs.push((line, line)),
             }
         }
         let mut edits = Vec::new();
-        // Each run, and where its first line goes.
+        // Each run's bounds, and where its first line goes.
         let mut moves = Vec::new();
-        for &(start, end) in &merged {
+        for (first, last) in runs {
+            let (start, end) = (text.bounds(first).start, text.bounds(last).next);
             // The empty line after a final line break has nothing to move.
-            if end == start || (if up { start == 0 } else { end >= len }) {
+            if end == start || (if up { first == 0 } else { end >= len }) {
                 return None;
             }
-            let neighbour = text.around(if up { start - 1 } else { end });
-            let whole = (start.min(neighbour.start), end.max(neighbour.next));
-            // The lines' text trades places; the line breaks stay where they were,
-            // so a last line without one keeps none.
-            let mut lines = Vec::new();
-            let mut at = whole.0;
-            while at < whole.1 {
-                let line = text.around(at);
-                let contents = String::from_utf16_lossy(&units[line.start..line.end]);
-                let line_break = String::from_utf16_lossy(&units[line.end..line.next]);
-                lines.push((contents, line_break));
-                at = line.next;
-            }
-            // The neighbour is one line, first going up and last going down.
-            let mut moved: Vec<&String> = lines.iter().map(|(contents, _)| contents).collect();
+            // With the line above or below, the lines' text trades places;
+            // the line breaks stay where they were, so a last line without
+            // one keeps none.
+            let (from, to) = if up {
+                (first - 1, last)
+            } else {
+                (first, last + 1)
+            };
+            let lines: Vec<Line> = (from..=to).map(|l| text.bounds(l)).collect();
+            let mut moved: Vec<&[u16]> = lines.iter().map(|l| &units[l.start..l.end]).collect();
             if up {
                 moved.rotate_left(1);
             } else {
                 moved.rotate_right(1);
             }
-            let joined: String = moved
+            let joined: Vec<u16> = moved
                 .iter()
                 .zip(&lines)
-                .flat_map(|(contents, (_, line_break))| [contents.as_str(), line_break.as_str()])
+                .flat_map(|(contents, l)| contents.iter().chain(&units[l.end..l.next]))
+                .copied()
                 .collect();
-            edits.push(splice(whole.0, whole.1 - whole.0, joined));
-            let first = if up {
-                whole.0
+            let whole = lines[0].start..lines[lines.len() - 1].next;
+            let at = if up {
+                whole.start
             } else {
-                whole.0 + utf16(moved[0]) + utf16(&lines[0].1)
+                whole.start + moved[0].len() + (lines[0].next - lines[0].end)
             };
-            moves.push((start, end, first));
+            let length = whole.end - whole.start;
+            edits.push(splice(
+                whole.start,
+                length,
+                String::from_utf16_lossy(&joined),
+            ));
+            moves.push((start, end, at));
         }
         let selections = selections
             .iter()
@@ -341,10 +306,6 @@ impl SourceDocument {
     /// after, still selected, or the caret between them.
     pub fn wrap(&self, selections: &[TextRange], template: &str) -> Change {
         let (prefix, suffix) = template.split_once("$0").unwrap_or((template, ""));
-        self.wrap_in(selections, prefix, suffix)
-    }
-
-    fn wrap_in(&self, selections: &[TextRange], prefix: &str, suffix: &str) -> Change {
         let first = selections.first().copied().unwrap_or_default();
         let (start, end) = clamp(first, self.text.len()).bounds();
         let selected = String::from_utf16_lossy(&self.text.units[start..end]);
@@ -363,17 +324,17 @@ impl SourceDocument {
     /// selections following the text; on otherwise, round the selection.
     pub fn toggle_style(&mut self, selections: &[TextRange], style: Style) -> Change {
         let styles = self.text_styles(selections.first().copied().unwrap_or_default());
-        let (unwrap, command) = match style {
-            Style::Bold => (styles.bold, "\\textbf{"),
-            Style::Italic => (styles.italic, "\\textit{"),
-            Style::Underline => (styles.underline, "\\underline{"),
+        let (unwrap, template) = match style {
+            Style::Bold => (styles.bold, "\\textbf{$0}"),
+            Style::Italic => (styles.italic, "\\textit{$0}"),
+            Style::Underline => (styles.underline, "\\underline{$0}"),
         };
         match unwrap {
             Some(edits) => Change {
                 selections: map_selections(&edits, selections),
                 edits,
             },
-            None => self.wrap_in(selections, command, "}"),
+            None => self.wrap(selections, template),
         }
     }
 }
