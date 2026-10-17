@@ -251,7 +251,7 @@ final class WorkspaceController: DetentSplitViewController {
         area.splitView.autosaveName = "Area"
         let columnsItem = NSSplitViewItem(viewController: columns)
         columnsItem.minimumThickness = ColumnMetrics.columnsMinimum
-        buildStatusBar()
+        columnsItem.addBottomAlignedAccessoryViewController(statusBar())
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         area.loaded = { [unowned self] in if !project.panel.shown { panelItem.isCollapsed = true } }
@@ -261,36 +261,20 @@ final class WorkspaceController: DetentSplitViewController {
     }
 
     /// The editors' own bar, across both panes at the columns' foot: their text and the PDF's pages scroll on beneath it, and
-    /// it rides up with them as the panel opens. Its scroll-through is Xcode's: the editor's colour at rest and a soft ghost of
-    /// what passes beneath (`StatusBar`), over a blur of its own. AppKit's edge can't draw that over an NSTextView or a PDFView
-    /// (it rests lighter than the editor in Dark and takes each pane's colour), so each pane's empty accessory, there for its
-    /// safe area and scrollers, asks for the soft edge, which draws nothing over them (27.2).
-    private func buildStatusBar() {
-        for item in [sourceItem!, pdfItem!] {
-            let space = NSSplitViewItemAccessoryViewController()
-            space.view = NSView()
-            space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line).isActive = true
-            // 27.2: AppKit's insets would pad it, and the pane's safe area with it.
-            space.automaticallyAppliesContentInsets = false
-            space.preferredScrollEdgeEffectStyle = .soft
-            item.addBottomAlignedAccessoryViewController(space)
-        }
-        let ground = NSView()
-        ground.blurBackdrop()
+    /// it rides up with them as the panel opens. It is the columns' bottom accessory, as Xcode's editor bar is its editor's,
+    /// so AppKit draws what passes beneath it, with the hard edge a bar of text and controls takes, and insets both panes.
+    private func statusBar() -> NSSplitViewItemAccessoryViewController {
+        let accessory = NSSplitViewItemAccessoryViewController()
         let bar = NSHostingView(rootView: StatusBar(project: project).environment(app))
         bar.sizingOptions = []
         // Not the toolbar's inset the columns take for its last section (`buildArea`).
         bar.safeAreaRegions = []
-        for view in [ground, bar] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            columns.view.addSubview(view)
-            NSLayoutConstraint.activate([
-                view.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
-                view.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
-                view.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
-                view.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line),
-            ])
-        }
+        bar.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line).isActive = true
+        accessory.view = bar
+        // The bar keeps its own spacing (`BarMetrics`).
+        accessory.automaticallyAppliesContentInsets = false
+        accessory.preferredScrollEdgeEffectStyle = .hard
+        return accessory
     }
 
     private func buildInspector() {

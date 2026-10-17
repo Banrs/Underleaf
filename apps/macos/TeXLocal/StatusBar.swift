@@ -17,12 +17,7 @@ enum BarMetrics {
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let project: ProjectModel
-
-    /// Xcode's bar, measured over solid lines of text: the editor's colour at rest over a blur of what scrolls beneath
-    /// (`blurBackdrop`), passing about an eighth of a line's contrast, the same at every depth in the bar.
-    private var wash: Double { reduceTransparency ? 1 : 0.8 }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -31,10 +26,9 @@ struct StatusBar: View {
             content(.short).labelStyle(.iconOnly)
         }
         .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
-        // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`).
+        // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`): the accessory's
+        // hard scroll edge draws the line, and what scrolls beneath it (`WorkspaceController.statusBar`).
         .padding(.top, BarMetrics.line)
-        .background(.textSurface.opacity(wash))
-        .overlay(alignment: .top) { Divider() }
         // Clicks between its controls stay with the bar, not the text or pages scrolled beneath it.
         .contentShape(.rect)
         .monospacedDigit()
@@ -198,16 +192,5 @@ extension View {
 
     fileprivate func hitTarget() -> some View {
         frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect)
-    }
-}
-
-extension NSView {
-    /// A blur of what the window draws behind the view, with no colour of its own: every material and Liquid Glass tints what
-    /// it blurs. 27.2: the filter draws nothing on an accessory's view or a hosting view.
-    func blurBackdrop(radius: Double = 6.5) {
-        wantsLayer = true
-        layerUsesCoreImageFilters = true
-        layer?.masksToBounds = true
-        layer?.backgroundFilters = CIFilter(name: "CIGaussianBlur", parameters: [kCIInputRadiusKey: radius]).map { [$0] }
     }
 }
