@@ -124,11 +124,7 @@ impl SourceDocument {
         let caret = start + (utf16(&head) + utf16(title) + utf16(after)) as u32;
         let new = format!("{head}{title}{close}{rest}");
         let edit = edit(start, units.len() as u32, new);
-        Insertion {
-            edit,
-            caret,
-            fields: vec![],
-        }
+        Insertion { edit, caret, fields: vec![] }
     }
 
     /// A block by its id (the catalog's `blocks`) in place of the selection,
@@ -146,10 +142,6 @@ impl SourceDocument {
         let newline = if blank(before) { "" } else { "\n" };
         let (block, fields) = complete::expand(text, start, &format!("{newline}{template}"));
         let caret = start + fields.first().map_or(utf16(&block) as u32, |f| f.start);
-        Some(Insertion {
-            edit: edit(start, length, block),
-            caret,
-            fields,
-        })
+        Some(Insertion { edit: edit(start, length, block), caret, fields })
     }
 }

@@ -6,15 +6,11 @@ const BIB: &str = include_str!("../templates/references.bib");
 pub(crate) fn files(template: &str) -> &'static [(&'static str, &'static str)] {
     match template {
         "blank" => &[("main.tex", include_str!("../templates/blank.tex"))],
-        "report" => &[
-            ("main.tex", include_str!("../templates/report.tex")),
-            ("references.bib", BIB),
-        ],
+        "report" => {
+            &[("main.tex", include_str!("../templates/report.tex")), ("references.bib", BIB)]
+        }
         "beamer" => &[("main.tex", include_str!("../templates/beamer.tex"))],
-        _ => &[
-            ("main.tex", include_str!("../templates/article.tex")),
-            ("references.bib", BIB),
-        ],
+        _ => &[("main.tex", include_str!("../templates/article.tex")), ("references.bib", BIB)],
     }
 }
 
@@ -30,10 +26,7 @@ mod tests {
             let template = files(name);
             assert_eq!(template[0].0, "main.tex", "{name}");
             for (file, text) in template {
-                assert!(
-                    !file.contains('/') && !file.starts_with('.'),
-                    "{name}: {file}"
-                );
+                assert!(!file.contains('/') && !file.starts_with('.'), "{name}: {file}");
                 // A checkout's line ends don't reach a new project.
                 assert!(!text.contains('\r'), "{name}: {file}");
             }

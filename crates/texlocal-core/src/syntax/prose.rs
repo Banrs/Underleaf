@@ -13,13 +13,7 @@ pub fn not_prose(text: &Text, scans: &mut Scans, start: u32, end: u32) -> Vec<Te
     let mut point = scans.resume(text, start as usize, end as usize);
     let ranges = Vec::from_iter(point.run.map(|(from, to)| range(from, to)));
     let (end, reading, names) = (end as usize, point.names, Vec::new());
-    let mut found = Found {
-        text,
-        end,
-        ranges,
-        names,
-        reading,
-    };
+    let mut found = Found { text, end, ranges, names, reading };
     found.reading.resume(text, end, &mut found.names);
     let units = &text.units()[..end];
     point.scanner.run(units, end, &[], &mut found);

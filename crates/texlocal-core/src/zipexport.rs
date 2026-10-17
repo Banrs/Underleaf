@@ -58,11 +58,7 @@ impl Export<'_> {
             {
                 continue;
             }
-            let rel = if top {
-                name.into_owned()
-            } else {
-                format!("{prefix}/{name}")
-            };
+            let rel = if top { name.into_owned() } else { format!("{prefix}/{name}") };
             let path = entry.path();
             let kind = entry.file_type()?;
             if kind.is_symlink() {

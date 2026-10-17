@@ -277,9 +277,7 @@ pub type TlSource = Document;
 /// What `body` answers for a source: `none` for a null source or a panic.
 unsafe fn on_source<T>(source: Source, none: T, body: impl FnOnce(&Document) -> T) -> T {
     let source = unsafe { source.as_ref() };
-    source
-        .and_then(|source| caught(|| body(source)))
-        .unwrap_or(none)
+    source.and_then(|source| caught(|| body(source))).unwrap_or(none)
 }
 
 unsafe fn on_doc<T>(source: Source, none: T, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
@@ -417,8 +415,7 @@ pub unsafe extern "C" fn tl_source_highlights(
     };
     let runs = |doc: &mut SourceDocument| {
         let runs = doc.highlights(start, length).into_iter();
-        runs.flat_map(|h| [h.start, h.length, h.kind as u32])
-            .collect()
+        runs.flat_map(|h| [h.start, h.length, h.kind as u32]).collect()
     };
     slice_out(unsafe { on_doc(source, Vec::new(), runs) }, count)
 }

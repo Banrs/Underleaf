@@ -92,10 +92,7 @@ pub struct Symbols {
 }
 
 fn mtime_ms(meta: &fs::Metadata) -> u64 {
-    let since = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok());
+    let since = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok());
     since.map_or(0, |since| since.as_millis() as u64)
 }
 
@@ -121,11 +118,7 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
 /// The tree of `dir`, whose project path is `prefix`, under the canonical `root`.
 fn tree(root: &Path, dir: &Path, prefix: &str) -> Result<Vec<TreeNode>, CoreError> {
     let top = prefix.is_empty();
-    let read = if top {
-        Some(fs::read_dir(dir)?)
-    } else {
-        skip_unreadable(fs::read_dir(dir))?
-    };
+    let read = if top { Some(fs::read_dir(dir)?) } else { skip_unreadable(fs::read_dir(dir))? };
     let mut nodes = Vec::new();
     for entry in read.into_iter().flatten() {
         let Some(entry) = skip_unreadable(entry)? else {
@@ -139,11 +132,7 @@ fn tree(root: &Path, dir: &Path, prefix: &str) -> Result<Vec<TreeNode>, CoreErro
         let Some(kind) = skip_unreadable(entry.file_type())? else {
             continue;
         };
-        let path = if top {
-            name.clone()
-        } else {
-            format!("{prefix}/{name}")
-        };
+        let path = if top { name.clone() } else { format!("{prefix}/{name}") };
         // No directory links (cycles), nor any without a proven in-project target.
         let linked = |t: PathBuf| t.starts_with(root) && t.is_file();
         let children = if kind.is_dir() {
@@ -164,11 +153,7 @@ fn tree(root: &Path, dir: &Path, prefix: &str) -> Result<Vec<TreeNode>, CoreErro
         });
     }
     nodes.sort_by_cached_key(|n| {
-        (
-            n.children.is_none(),
-            n.name.to_lowercase(),
-            Reverse(n.name.clone()),
-        )
+        (n.children.is_none(), n.name.to_lowercase(), Reverse(n.name.clone()))
     });
     Ok(nodes)
 }
@@ -258,9 +243,7 @@ pub(crate) fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<S
         Err(err) => return Err(err.into()),
     };
     let mut names = numbered(clean, String::new());
-    Ok(names
-        .find(|name| !taken.contains(&fold_case(name)))
-        .expect("a free name"))
+    Ok(names.find(|name| !taken.contains(&fold_case(name))).expect("a free name"))
 }
 
 /// `stem` + `ext`, then the copies Finder would number: "stem 2" + `ext`,
@@ -304,13 +287,8 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
         fs::read(root.join(name.as_str()))
             .is_ok_and(|bytes| String::from_utf8_lossy(&bytes).contains("\\documentclass"))
     };
-    let main = tex
-        .iter()
-        .find(|name| name.eq_ignore_ascii_case("main.tex"));
-    Ok(main
-        .or_else(|| tex.iter().find(starts_document))
-        .or(tex.first())
-        .cloned())
+    let main = tex.iter().find(|name| name.eq_ignore_ascii_case("main.tex"));
+    Ok(main.or_else(|| tex.iter().find(starts_document)).or(tex.first()).cloned())
 }
 
 /// Rename a project, calling `before_move` once the rename is sure to go
@@ -333,9 +311,7 @@ pub fn rename_project(
     if reserved {
         match fs::create_dir(&dest) {
             Err(err) if err.kind() == AlreadyExists => {
-                return Err(CoreError::conflict(
-                    "A project with that name already exists",
-                ));
+                return Err(CoreError::conflict("A project with that name already exists"));
             }
             made => made?,
         }
@@ -429,16 +405,10 @@ pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> + use<> {
 /// trashed still compares with the library.
 pub(crate) fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError> {
     let library = fs::canonicalize(data_dir)?;
-    let real = path.ancestors().find_map(|head| {
-        Some(
-            fs::canonicalize(head)
-                .ok()?
-                .join(path.strip_prefix(head).ok()?),
-        )
-    });
-    let rest = real
-        .as_deref()
-        .and_then(|real| real.strip_prefix(&library).ok());
+    let real = path
+        .ancestors()
+        .find_map(|head| Some(fs::canonicalize(head).ok()?.join(path.strip_prefix(head).ok()?)));
+    let rest = real.as_deref().and_then(|real| real.strip_prefix(&library).ok());
     let Some(rest) = rest.filter(|_| path.is_absolute()) else {
         return Ok(None);
     };
@@ -454,10 +424,7 @@ pub(crate) fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, Co
     };
     // The folders list_projects shows.
     let shown = !id.starts_with('.') && data_dir.join(&**id).is_dir();
-    Ok(shown.then(|| Located {
-        id: id.to_string(),
-        path: inside.join("/"),
-    }))
+    Ok(shown.then(|| Located { id: id.to_string(), path: inside.join("/") }))
 }
 
 pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<atomic::Stamp, CoreError> {
@@ -485,9 +452,7 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
         return Err(CoreError::conflict("Destination already exists"));
     }
     if is_under(&to_rel, &from_rel) {
-        return Err(CoreError::bad_request(
-            "A folder can't be moved into itself",
-        ));
+        return Err(CoreError::bad_request("A folder can't be moved into itself"));
     }
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
@@ -511,11 +476,7 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
     }
     move_ui(root, moved);
     let main_file = moved_main.unwrap_or(main_file);
-    Ok(RenameResult {
-        from: from_rel,
-        to: to_rel,
-        main_file,
-    })
+    Ok(RenameResult { from: from_rel, to: to_rel, main_file })
 }
 
 /// Move to the Trash an entry an incoming file of its name replaces, so a
@@ -541,10 +502,7 @@ pub(crate) fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {
     for hit in hits {
         match groups.last_mut() {
             Some(group) if group.file == hit.file => group.hits.push(hit),
-            _ => groups.push(SearchGroup {
-                file: hit.file.clone(),
-                hits: vec![hit],
-            }),
+            _ => groups.push(SearchGroup { file: hit.file.clone(), hits: vec![hit] }),
         }
     }
     groups
@@ -622,12 +580,8 @@ pub(crate) fn search_project(
 /// The hit of `chars` characters at character `column` of `text`, a line,
 /// with up to 24 characters before it and 60 after.
 fn hit(file: &str, line: usize, text: &str, column: usize, chars: usize) -> SearchHit {
-    let skip = |from: usize, n| {
-        text[from..]
-            .char_indices()
-            .nth(n)
-            .map_or(text.len(), |(i, _)| from + i)
-    };
+    let skip =
+        |from: usize, n| text[from..].char_indices().nth(n).map_or(text.len(), |(i, _)| from + i);
     let (from, cut) = (skip(0, column), skip(0, column.saturating_sub(24)));
     let to = skip(from, chars);
     let units = |s: &str| s.encode_utf16().count() as u32;
@@ -637,9 +591,7 @@ fn hit(file: &str, line: usize, text: &str, column: usize, chars: usize) -> Sear
         line: line as u32,
         column: units(&text[..from]),
         length: units(&text[from..to]),
-        before: format!("{ellipsis}{}", &text[cut..from])
-            .trim_start()
-            .to_owned(),
+        before: format!("{ellipsis}{}", &text[cut..from]).trim_start().to_owned(),
         matched: text[from..to].to_owned(),
         after: text[to..skip(to, 60)].trim_end().to_owned(),
     }
@@ -659,11 +611,8 @@ static BIBITEM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\bibitem\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}").unwrap());
 
 fn parse_symbols(bytes: &[u8], bib: bool) -> Symbols {
-    let keys = |re: &Regex, text| {
-        re.captures_iter(text)
-            .map(|m| m[1].to_owned())
-            .collect::<Vec<_>>()
-    };
+    let keys =
+        |re: &Regex, text| re.captures_iter(text).map(|m| m[1].to_owned()).collect::<Vec<_>>();
     let text = String::from_utf8_lossy(bytes);
     let mut found = Symbols::default();
     if bib {
@@ -794,10 +743,8 @@ mod tests {
             write_creating(&root.join(file), text.as_bytes()).unwrap();
         }
         let hits = search_project(&root, "NEEDLE", 10).unwrap();
-        let found: Vec<_> = hits
-            .iter()
-            .map(|h| (h.file.as_str(), h.line, h.column, h.after.as_str()))
-            .collect();
+        let found: Vec<_> =
+            hits.iter().map(|h| (h.file.as_str(), h.line, h.column, h.after.as_str())).collect();
         let want = [
             ("a.txt", 1, 0, ""),
             ("a/z.tex", 1, 0, ""),
@@ -806,10 +753,7 @@ mod tests {
         ];
         assert_eq!(found, want);
         let groups = search_groups(search_project(&root, "needle", 3).unwrap());
-        let files: Vec<_> = groups
-            .iter()
-            .map(|g| (g.file.as_str(), g.hits.len()))
-            .collect();
+        let files: Vec<_> = groups.iter().map(|g| (g.file.as_str(), g.hits.len())).collect();
         assert_eq!(files, [("a.txt", 1), ("a/z.tex", 1), ("main.tex", 1)]);
         // A long line's snippet is cut, and marked so, before the match.
         let long = format!("{}needle{}", "é".repeat(30), "b".repeat(70));
@@ -825,26 +769,15 @@ mod tests {
     #[test]
     fn a_new_entry_takes_the_next_free_name() {
         let (_data, root) = project();
-        let made: Vec<_> = (0..3)
-            .map(|_| create_free(&root, "notes/untitled.tex", false).unwrap())
-            .collect();
-        assert_eq!(
-            made,
-            [
-                "notes/untitled.tex",
-                "notes/untitled 2.tex",
-                "notes/untitled 3.tex"
-            ]
-        );
-        let folders: Vec<_> = (0..2)
-            .map(|_| create_free(&root, "untitled folder", true).unwrap())
-            .collect();
+        let made: Vec<_> =
+            (0..3).map(|_| create_free(&root, "notes/untitled.tex", false).unwrap()).collect();
+        assert_eq!(made, ["notes/untitled.tex", "notes/untitled 2.tex", "notes/untitled 3.tex"]);
+        let folders: Vec<_> =
+            (0..2).map(|_| create_free(&root, "untitled folder", true).unwrap()).collect();
         assert_eq!(folders, ["untitled folder", "untitled folder 2"]);
         assert!(root.join("untitled folder 2").is_dir());
-        let copies: Vec<_> = copy_paths("a.b/.rc")
-            .take(2)
-            .chain(copy_paths("a.b/c").skip(1).take(1))
-            .collect();
+        let copies: Vec<_> =
+            copy_paths("a.b/.rc").take(2).chain(copy_paths("a.b/c").skip(1).take(1)).collect();
         assert_eq!(copies, ["a.b/.rc", "a.b/.rc 2", "a.b/c 2"]);
         // Names the path rules refuse are refused, not numbered.
         for bad in [".texlocal.json", "../x.tex"] {
@@ -854,12 +787,8 @@ mod tests {
 
     #[test]
     fn files_have_a_kind_in_any_case() {
-        let names = [
-            "a.TEX", "r.bib", "p.JPG", "f.pdf", "s.sty", "d.csv", "z.zip", "x",
-        ];
-        let kinds = [
-            "tex", "bib", "image", "pdf", "text", "text", "other", "other",
-        ];
+        let names = ["a.TEX", "r.bib", "p.JPG", "f.pdf", "s.sty", "d.csv", "z.zip", "x"];
+        let kinds = ["tex", "bib", "image", "pdf", "text", "text", "other", "other"];
         assert_eq!(names.map(file_kind), kinds);
     }
 
@@ -882,10 +811,7 @@ mod tests {
         assert_eq!(at(&root.join("a/b.tex")).as_deref(), Some("a/b.tex"));
         assert_eq!(at(&root).as_deref(), Some(""));
         // One not made yet, or just trashed, is where it was.
-        assert_eq!(
-            at(&root.join("a/gone/x.tex")).as_deref(),
-            Some("a/gone/x.tex")
-        );
+        assert_eq!(at(&root.join("a/gone/x.tex")).as_deref(), Some("a/gone/x.tex"));
         // Not in a project: the library, a hidden folder, a missing one, a path
         // that leaves, a relative one.
         for outside in [
@@ -906,19 +832,13 @@ mod tests {
         let strings = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
         let patch = UiPatch {
             expanded_folders: Some(strings(&["other", "chapters/deep", "chapters"])),
-            folded_headings: Some(strings(&[
-                "main.tex\t1:Intro#1",
-                "chapters/a.tex\t1:Intro#1",
-            ])),
+            folded_headings: Some(strings(&["main.tex\t1:Intro#1", "chapters/a.tex\t1:Intro#1"])),
         };
         write_ui(&root, patch).unwrap();
         rename_entry(&root, "chapters", "content").unwrap();
         let ui = read_ui(&root);
         assert_eq!(ui.expanded_folders, ["content", "content/deep", "other"]);
-        assert_eq!(
-            ui.folded_headings,
-            ["content/a.tex\t1:Intro#1", "main.tex\t1:Intro#1"]
-        );
+        assert_eq!(ui.folded_headings, ["content/a.tex\t1:Intro#1", "main.tex\t1:Intro#1"]);
         // A file's fold follows it alone.
         rename_entry(&root, "content/a.tex", "content/b.tex").unwrap();
         let folds = read_ui(&root).folded_headings;

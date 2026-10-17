@@ -51,11 +51,7 @@ const fn rgb(light: u32, dark: u32) -> ThemeColor {
 /// A system colour by name, or none for "".
 const fn system(name: &'static str, light: Rgba, dark: Rgba) -> ThemeColor {
     let system = if name.is_empty() { None } else { Some(name) };
-    ThemeColor {
-        system,
-        light,
-        dark,
-    }
+    ThemeColor { system, light, dark }
 }
 
 pub const THEMES: [Theme; 3] = [
@@ -126,11 +122,7 @@ fn blend(a: Rgba, b: Rgba, fraction: f64) -> Rgba {
 /// components, as the window server mixes them.
 fn over(color: Rgba, background: Rgba) -> Rgba {
     let [r, g, b, _] = blend(background, color, color[3]);
-    if color[3] >= 1.0 {
-        color
-    } else {
-        [r, g, b, 1.0]
-    }
+    if color[3] >= 1.0 { color } else { [r, g, b, 1.0] }
 }
 
 /// Mixed towards black on a light background or white on a dark one, by
@@ -179,9 +171,7 @@ pub struct Appearance {
 /// `HighlightKind`'s order.
 pub fn theme_colors(t: &Theme, a: &Appearance) -> Vec<Rgba> {
     let (command, argument, maths) = (t.command, t.argument, t.maths);
-    let by_kind = [
-        command, argument, maths, maths, maths, t.comment, t.invalid, maths, argument,
-    ];
+    let by_kind = [command, argument, maths, maths, maths, t.comment, t.invalid, maths, argument];
     let legible = |c: ThemeColor| {
         let published = if a.dark { c.dark } else { c.light };
         let resolved = c.system.and_then(|name| a.system.get(name).copied());
@@ -205,13 +195,7 @@ mod tests {
             let ink = if dark { 1.0 } else { 0.0 };
             let (background, fill) = ([ground, ground, ground, 1.0], [ink, ink, ink, 0.08]);
             let system = HashMap::from([("systemPink".into(), [0., 0., 0., 1.])]);
-            let a = Appearance {
-                dark,
-                increase_contrast,
-                background,
-                fill,
-                system,
-            };
+            let a = Appearance { dark, increase_contrast, background, fill, system };
             let ratio = text_contrast(increase_contrast);
             let grounds = [background, over(fill, background)];
             for theme in &THEMES {

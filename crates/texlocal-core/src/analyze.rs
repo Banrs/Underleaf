@@ -123,22 +123,13 @@ pub(crate) fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
             let file = heading.file.as_deref().unwrap_or_default();
             // An untitled heading's key is as it was before it had a title,
             // so its saved fold stays.
-            let title = if heading.untitled {
-                "(untitled)"
-            } else {
-                &heading.title
-            };
+            let title = if heading.untitled { "(untitled)" } else { &heading.title };
             let key = format!("{file}\t{}:{title}", heading.depth);
             let count = seen.entry(key.clone()).or_default();
             *count += 1;
             let fold_key = format!("{key}#{count}");
             let children = nest(outline, next, Some(heading.depth), seen);
-            nodes.push(OutlineNode {
-                index,
-                heading: heading.clone(),
-                fold_key,
-                children,
-            });
+            nodes.push(OutlineNode { index, heading: heading.clone(), fold_key, children });
         }
         nodes
     }
@@ -149,9 +140,7 @@ pub(crate) fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
 /// file's last at or above the line. None above the file's first, since where
 /// the file is read in isn't known.
 pub(crate) fn current_heading(outline: &[Heading], file: &str, line: usize) -> Option<usize> {
-    outline
-        .iter()
-        .rposition(|h| h.file.as_deref() == Some(file) && h.line <= line)
+    outline.iter().rposition(|h| h.file.as_deref() == Some(file) && h.line <= line)
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Serialize)]
@@ -187,10 +176,7 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
     if !seen.insert(paths::fold_case(&file)) {
         return;
     }
-    let Some(text) = paths::safe_path(root, &file)
-        .ok()
-        .and_then(|path| fs::read(path).ok())
-    else {
+    let Some(text) = paths::safe_path(root, &file).ok().and_then(|path| fs::read(path).ok()) else {
         return;
     };
     let text = crate::lossy_string(text);
@@ -229,8 +215,7 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
                     let mut levels = CATALOG.heading_levels.iter();
                     let depth = levels.position(|l| l.command == heading.as_str()).unwrap();
                     let (title, line) = (plain_title(title), index + 1);
-                    into.outline
-                        .push(Heading::new(depth, title, line, Some(file.clone())));
+                    into.outline.push(Heading::new(depth, title, line, Some(file.clone())));
                 }
                 heading_on_line = true;
             } else if let Some(name) = m.name("braced").or_else(|| m.name("bare")) {
@@ -346,45 +331,22 @@ mod tests {
         let cases: &[(&str, &[&str], usize)] = &[
             ("", &[], 0),
             ("Hello world\n", &[], 2),
-            (
-                "one\r\n\\section{Two}\r\n\\section{Three}\nfour",
-                &["Two 2:2", "Three 2:3"],
-                4,
-            ),
+            ("one\r\n\\section{Two}\r\n\\section{Three}\nfour", &["Two 2:2", "Three 2:3"], 4),
             (
                 "\\part{P}\n\\chapter{C}\n\\section{S}\n\\subsection{Sub}\n\\subsubsection{SubSub}\n\
                  \\paragraph{Para}\n\\subparagraph{Not in the outline}",
-                &[
-                    "P 0:1",
-                    "C 1:2",
-                    "S 2:3",
-                    "Sub 3:4",
-                    "SubSub 4:5",
-                    "Para 5:6",
-                ],
+                &["P 0:1", "C 1:2", "S 2:3", "Sub 3:4", "SubSub 4:5", "Para 5:6"],
                 10,
             ),
             (
                 "\\section*{Starred}\n\\section[Short]{Long title}\n\\subsection * [x] {Spaced}\n\
                  \\section\u{a0}{After a no-break space}",
-                &[
-                    "Starred 2:1",
-                    "Long title 2:2",
-                    "After a no-break space 2:4",
-                ],
+                &["Starred 2:1", "Long title 2:2", "After a no-break space 2:4"],
                 9,
             ),
-            (
-                "\\section{}\n\\chapter*{}",
-                &["Untitled Section 2:1", "Untitled Chapter 1:2"],
-                0,
-            ),
+            ("\\section{}\n\\chapter*{}", &["Untitled Section 2:1", "Untitled Chapter 1:2"], 0),
             // One heading a line; one that doesn't close on its line is none.
-            (
-                "Text \\section{A} and \\subsection{B}\n\\section{Open",
-                &["A 2:1"],
-                5,
-            ),
+            ("Text \\section{A} and \\subsection{B}\n\\section{Open", &["A 2:1"], 5),
             (
                 "% \\section{Hidden}\n  \t% \\section{Indented}\n\\section{Shown} % \\section{After}",
                 &["Shown 2:3"],
@@ -403,17 +365,9 @@ mod tests {
                 ],
                 18,
             ),
-            (
-                "Hello \\textbf{bold} world \\cite[p.~3]{key} text \\\\ done",
-                &[],
-                6,
-            ),
+            ("Hello \\textbf{bold} world \\cite[p.~3]{key} text \\\\ done", &[], 6),
             // A line break, \\, before a % doesn't escape it.
-            (
-                "one two % three four\n50\\% off % really\nend\\\\% gone",
-                &[],
-                4,
-            ),
+            ("one two % three four\n50\\% off % really\nend\\\\% gone", &[], 4),
             ("x^2 + y_1 = $a$ and~b & c{d}e \\x*[y] z", &[], 9),
             ("123 456 7.5 foo123 [a", &[], 2),
             ("Café naïve Ελληνικά Русский 中文 123 \\é", &[], 6),
@@ -426,11 +380,7 @@ mod tests {
         ];
         for &(text, outline, words) in cases {
             let outline = outline.iter().map(ToString::to_string).collect();
-            assert_eq!(
-                analyse(&[("main.tex", text)], "main.tex"),
-                (outline, words),
-                "{text}"
-            );
+            assert_eq!(analyse(&[("main.tex", text)], "main.tex"), (outline, words), "{text}");
         }
     }
 
@@ -455,21 +405,16 @@ mod tests {
             ("part.tex.tex", "\\section{Wrong}"),
             ("loose.tex", "\\section{Loose}\nthree"),
         ];
-        let whole = ["Intro 2:1", "A 2:1 chapters/a.tex", "B 3:1 b.tex"]
-            .into_iter()
-            .chain(["Chapter 2:1 chapter.tex", "Part 2:1 part.tex", "End 2:15"]);
+        let whole = ["Intro 2:1", "A 2:1 chapters/a.tex", "B 3:1 b.tex"].into_iter().chain([
+            "Chapter 2:1 chapter.tex",
+            "Part 2:1 part.tex",
+            "End 2:15",
+        ]);
         let whole: Vec<String> = whole.map(String::from).collect();
-        for open in [
-            "chapters/a.tex",
-            "./chapters/a.tex",
-            "chapters/../chapters/a.tex",
-        ] {
+        for open in ["chapters/a.tex", "./chapters/a.tex", "chapters/../chapters/a.tex"] {
             assert_eq!(analyse(&project, open), (whole.clone(), 24), "{open}");
         }
-        assert_eq!(
-            analyse(&project, "loose.tex"),
-            (vec!["Loose 2:1 loose.tex".into()], 2)
-        );
+        assert_eq!(analyse(&project, "loose.tex"), (vec!["Loose 2:1 loose.tex".into()], 2));
         assert_eq!(analyse(&project, "../outside.tex"), (vec![], 0));
     }
 
@@ -502,10 +447,7 @@ mod tests {
         );
         assert_eq!(
             shape(&tree[1].children),
-            [
-                (2, "a.tex\t3:Intro#1".into(), 0),
-                (3, "a.tex\t3:Intro#2".into(), 0)
-            ]
+            [(2, "a.tex\t3:Intro#1".into(), 0), (3, "a.tex\t3:Intro#2".into(), 0)]
         );
         // On the wire: the heading's own fields, camelCase keys, no empty children.
         assert_eq!(

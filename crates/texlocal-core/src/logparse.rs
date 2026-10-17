@@ -32,14 +32,7 @@ impl LogItem {
         if short.starts_with("LaTeX Error: ") {
             short.drain(.."LaTeX Error: ".len());
         }
-        Self {
-            kind,
-            file,
-            line,
-            message,
-            command: undefined_command(&short),
-            short,
-        }
+        Self { kind, file, line, message, command: undefined_command(&short), short }
     }
 
     pub(crate) fn error(message: impl Into<String>) -> Self {
@@ -144,10 +137,8 @@ fn append(message: &mut String, prev: &str, next: &str) {
         return;
     }
     let next = next.trim_start();
-    let next = next
-        .strip_prefix('(')
-        .and_then(|rest| rest.split_once(')'))
-        .map_or(next, |(_, rest)| rest);
+    let next =
+        next.strip_prefix('(').and_then(|rest| rest.split_once(')')).map_or(next, |(_, rest)| rest);
     message.push(' ');
     message.push_str(next.trim());
 }
@@ -155,9 +146,7 @@ fn append(message: &mut String, prev: &str, next: &str) {
 pub(crate) fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     let lines: Vec<&str> = log.lines().collect();
     let blank_from = |from: usize| {
-        (from..lines.len())
-            .find(|&j| lines[j].trim().is_empty())
-            .unwrap_or(lines.len())
+        (from..lines.len()).find(|&j| lines[j].trim().is_empty()).unwrap_or(lines.len())
     };
     let mut items = Vec::new();
     let mut open = Vec::new();
@@ -226,35 +215,24 @@ pub(crate) fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
             continue;
         }
         // TeX's context or source echo names the undefined command.
-        if message
-            .trim_start()
-            .starts_with("Undefined control sequence.")
+        if message.trim_start().starts_with("Undefined control sequence.")
             && let Some(j) = echo
             && let Some(cs) = lines[i + 1..=j].iter().find_map(|l| LAST_CS.captures(l))
         {
             message = format!("Undefined control sequence: {}", &cs[1]);
         }
         let line_no = if !error {
-            ON_LINE
-                .find(&message)
-                .map(|m| &m.as_str()["on input line ".len()..])
+            ON_LINE.find(&message).map(|m| &m.as_str()["on input line ".len()..])
         } else if summary && named.is_some() {
             None
         } else {
-            named
-                .map(|(_, n)| n)
-                .or_else(|| Some(&L_NO.find(lines[echo?])?.as_str()[2..]))
+            named.map(|(_, n)| n).or_else(|| Some(&L_NO.find(lines[echo?])?.as_str()[2..]))
         };
         let line_no = line_no.and_then(|n| n.parse().ok());
         let named = named.map(|(file, _)| file);
         let (file, line_no) = locate(named, line_no, &open, main_file, &mut message);
         let kind = if error { "error" } else { "warning" };
-        items.push(LogItem::new(
-            kind,
-            file,
-            line_no,
-            message.trim().to_string(),
-        ));
+        items.push(LogItem::new(kind, file, line_no, message.trim().to_string()));
         had_error |= error;
         if !error && i >= quiet_until {
             track(&mut open, line);
@@ -278,19 +256,12 @@ pub(crate) fn parse_blg(blg: &str) -> Vec<LogItem> {
         .filter_map(|line| {
             let above = std::mem::replace(&mut previous, line);
             let Some(m) = BIBTEX_ERROR.captures(line) else {
-                return BIBER_ERROR
-                    .captures(line)
-                    .map(|m| LogItem::error(m[1].trim()));
+                return BIBER_ERROR.captures(line).map(|m| LogItem::error(m[1].trim()));
             };
             let file = project_path(m[3].trim());
             let message = if m[1].trim().is_empty() { above } else { &m[1] };
             let line = file.as_ref().and(m[2].parse().ok());
-            Some(LogItem::new(
-                "error",
-                file,
-                line,
-                message.trim().to_string(),
-            ))
+            Some(LogItem::new("error", file, line, message.trim().to_string()))
         })
         .collect()
 }
@@ -340,14 +311,8 @@ mod tests {
                 &format!("./main.tex:12: Missing $.\nl.12 x\n\n./main.tex:12:  {fatal}\n"),
                 &["error main.tex:12 Missing $."],
             ),
-            (
-                &format!("./main.tex:12:  {fatal}\n"),
-                &[&format!("error -:- {fatal}")],
-            ),
-            (
-                &format!("! Emergency stop.\n! {fatal}\n"),
-                &["error -:- Emergency stop."],
-            ),
+            (&format!("./main.tex:12:  {fatal}\n"), &[&format!("error -:- {fatal}")]),
+            (&format!("! Emergency stop.\n! {fatal}\n"), &["error -:- Emergency stop."]),
             // TeX's context or source echo names an undefined command.
             (
                 "./main.tex:19: Undefined control sequence.\n\
@@ -529,10 +494,7 @@ mod tests {
             ("./main.tex", Some("main.tex")),
             ("chapters/a.tex", Some("chapters/a.tex")),
             ("/usr/local/texlive/a.sty", None),
-            (
-                "C:/texlive/2026/texmf-dist/tex/latex/base/article.cls",
-                None,
-            ),
+            ("C:/texlive/2026/texmf-dist/tex/latex/base/article.cls", None),
             (r"c:\Program Files\MiKTeX\tex/latex/base\article.cls", None),
             (r"\\server\texmf\a.sty", None),
             // A file named like a drive is still the project's.

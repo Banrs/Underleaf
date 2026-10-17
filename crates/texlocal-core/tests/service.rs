@@ -29,11 +29,7 @@ fn library(ids: &[&str]) -> Library {
     let (dir, service) = support::library(ids);
     let mut runtime = tokio::runtime::Builder::new_current_thread();
     let runtime = runtime.enable_all().build().unwrap();
-    Library {
-        dir,
-        service,
-        runtime,
-    }
+    Library { dir, service, runtime }
 }
 
 impl Library {
@@ -553,10 +549,7 @@ fn the_scans_read_every_file_but_the_build_s_and_the_unreadable() {
             let nodes = tree.as_array().unwrap();
             let locked = nodes.iter().find(|n| n["name"] == "locked");
             assert_eq!(locked.unwrap()["children"], json!([]));
-            assert_eq!(
-                (hits, labels),
-                (vec![found.into()], vec!["deep:one".into()])
-            );
+            assert_eq!((hits, labels), (vec![found.into()], vec!["deep:one".into()]));
         }
         lock("locked", 0o755);
     }

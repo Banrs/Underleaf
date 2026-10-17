@@ -95,10 +95,7 @@ impl Live {
     }
 
     fn errors(&self) -> impl Iterator<Item = String> {
-        let rejected = self
-            .rejected
-            .iter()
-            .map(|(path, error)| format!("{path}: {error}"));
+        let rejected = self.rejected.iter().map(|(path, error)| format!("{path}: {error}"));
         self.failure.iter().cloned().chain(rejected)
     }
 }
@@ -127,12 +124,7 @@ impl Actor {
         let status = self.live.owns.then(|| self.live_call(Call::Status));
         let mut parts: Vec<&str> = failure.into_iter().collect();
         if let Some(Ok(status)) = &status {
-            parts.extend(
-                status
-                    .error
-                    .as_deref()
-                    .filter(|&error| Some(error) != failure),
-            );
+            parts.extend(status.error.as_deref().filter(|&error| Some(error) != failure));
             let texts = [status.log.as_str(), status.output.as_str()];
             parts.extend(texts.into_iter().filter(|text| !text.is_empty()));
         }
@@ -252,10 +244,7 @@ impl Actor {
         let files = self.docs.iter().map(|doc| {
             let (text, version) = doc.doc.snapshot();
             versions.insert(doc.path.clone(), version);
-            FileBuffer {
-                path: doc.path.clone(),
-                text,
-            }
+            FileBuffer { path: doc.path.clone(), text }
         });
         let files: Vec<FileBuffer> = files.collect();
         let caret = self.live.wanted.clone().filter(|_| !self.live.window);
@@ -265,12 +254,7 @@ impl Actor {
         });
         let root = &self.root;
         let pane = pane.as_ref();
-        match self.live_call(Call::Start {
-            root,
-            files: &files,
-            replacing,
-            pane,
-        }) {
+        match self.live_call(Call::Start { root, files: &files, replacing, pane }) {
             Ok(status) => {
                 self.live.owns = true;
                 self.live.synced = versions.keys().cloned().collect();
@@ -329,12 +313,7 @@ impl Actor {
         // Typing takes the engine's snapshot along: the caret there is no news.
         let end = start as usize + text.encode_utf16().count();
         self.live.caret = Some((path.to_owned(), end));
-        if self
-            .live
-            .sent
-            .get(path)
-            .is_some_and(|sent| version <= *sent)
-        {
+        if self.live.sent.get(path).is_some_and(|sent| version <= *sent) {
             return;
         }
         if self.live.fits(path) {
@@ -467,10 +446,8 @@ impl Actor {
     /// a rescan as it typesets the edit stalled it (TeXpresso e8df770).
     pub fn refresh_live_disk(&mut self) {
         let paths = std::mem::take(&mut self.live.disk_paths);
-        let others: Vec<String> = paths
-            .into_iter()
-            .filter(|path| self.doc(path).is_none())
-            .collect();
+        let others: Vec<String> =
+            paths.into_iter().filter(|path| self.doc(path).is_none()).collect();
         if !self.live.active() || others.is_empty() {
             return;
         }
@@ -541,10 +518,7 @@ impl Actor {
         if events.running {
             return self.listen(events.seq);
         }
-        let lasted = self
-            .live
-            .started
-            .is_some_and(|at| at.elapsed() > RESTARTABLE_AFTER);
+        let lasted = self.live.started.is_some_and(|at| at.elapsed() > RESTARTABLE_AFTER);
         let restartable = events.error.is_some() && self.live.owns && lasted;
         if !restartable && let Some(error) = events.error {
             self.live.failure = Some(error);

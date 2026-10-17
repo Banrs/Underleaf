@@ -61,10 +61,7 @@ fn open_main(h: Handle, session: u64, text: &str) -> Source {
     let args = json!({ "id": "P", "session": session });
     assert_eq!(call(h, "session_open", args)["ok"]["session"], session);
     let args = json!({ "session": session, "path": "main.tex" });
-    assert_eq!(
-        call(h, "session_open_document", args),
-        json!({ "ok": null })
-    );
+    assert_eq!(call(h, "session_open_document", args), json!({ "ok": null }));
     unsafe { session_source(h, session, "main.tex") }
 }
 
@@ -88,11 +85,7 @@ unsafe fn new_source(text: &str) -> Source {
 unsafe fn edit(source: Source, start: u32, length: u32, text: &[u8]) -> Option<Value> {
     let range = TextRange { start, length };
     let (bytes, len, range) = (text.as_ptr(), text.len(), &raw const range);
-    unsafe {
-        take(tl_source_edit(
-            source, start, length, bytes, len, range, false,
-        ))
-    }
+    unsafe { take(tl_source_edit(source, start, length, bytes, len, range, false)) }
 }
 
 unsafe fn text_of(source: Source) -> String {
@@ -133,9 +126,7 @@ fn ctx<T>(value: &T) -> *mut c_void {
 /// `command` through `tl_call_async`, its answer going to `sink`, if any.
 fn call_async(h: Handle, command: &str, args: &[u8], sink: Option<&Sender<Value>>) {
     let (command, args) = (c(command), c(args));
-    let done = sink.map_or((None, null_mut()), |sink| {
-        (Some(collect as Callback), ctx(sink))
-    });
+    let done = sink.map_or((None, null_mut()), |sink| (Some(collect as Callback), ctx(sink)));
     unsafe { tl_call_async(h, command.as_ptr(), args.as_ptr(), done.0, done.1) };
 }
 
@@ -181,11 +172,7 @@ fn tl_call_answers_an_envelope_for_every_input() {
         ("read_file", Some(r#"{"id": "P", "path": "../x"}"#), 400),
         ("project_root", Some(r#"{"id": "../x"}"#), 400),
         ("import_files", Some(r#"{"id": "P", "paths": [42]}"#), 400),
-        (
-            "import_files",
-            Some(r#"{"id": "P", "conflict": "merge"}"#),
-            400,
-        ),
+        ("import_files", Some(r#"{"id": "P", "conflict": "merge"}"#), 400),
         ("session_save", Some(r#"{"session": 9}"#), 404),
         ("list_projects", Some("{not json"), 400),
         ("nope", None, 404),
@@ -245,12 +232,7 @@ fn a_session_takes_its_async_commands_in_the_order_they_were_sent() {
         let last = round % 2 == 0;
         for stop in [!last, last, !last, last] {
             let patch = json!({ "session": 7, "patch": { "stopOnFirstError": stop } });
-            call_async(
-                h,
-                "session_set_settings",
-                patch.to_string().as_bytes(),
-                Some(&sink),
-            );
+            call_async(h, "session_set_settings", patch.to_string().as_bytes(), Some(&sink));
         }
         let read = br#"{"session": 7, "patch": {}}"#;
         call_async(h, "session_set_settings", read, Some(&probe));
@@ -325,11 +307,7 @@ fn a_session_source_is_the_sessions_document() {
 
         assert_eq!(text_of(source), "\\x\n");
         edit(source, 0, 0, b"% n\n");
-        assert_eq!(
-            runs_of(source, 0, 3),
-            [0, 3, 5],
-            "highlighted from its text"
-        );
+        assert_eq!(runs_of(source, 0, 3), [0, 3, 5], "highlighted from its text");
         let again = session_source(h, 1, "main.tex");
         assert_eq!(text_of(again), "% n\n\\x\n", "a second source shares it");
         tl_source_free(again);
@@ -379,10 +357,7 @@ fn a_source_counts_utf16_units_and_keeps_every_byte() {
         assert_eq!(text_of(source), "é😀\n \\emph{x}");
         let lines = [3, 4].map(|offset| tl_source_line_at(source, offset));
         assert_eq!(lines, [1, 2]);
-        assert_eq!(
-            [2, 99].map(|line| tl_source_line_start(source, line)),
-            [4, 4]
-        );
+        assert_eq!([2, 99].map(|line| tl_source_line_start(source, line)), [4, 4]);
 
         // U+0000 is text like any other, going in and coming out.
         tl_source_reload(source, b"a\0\nb".as_ptr(), 4);

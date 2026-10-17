@@ -90,13 +90,7 @@ impl Sessions {
 
     pub(crate) fn with_engine(service: Arc<Service>, engine: Arc<dyn Engine>, watch: bool) -> Self {
         let (hub, open) = (Hub::default(), Arc::default());
-        Self {
-            service,
-            hub,
-            engine,
-            watch,
-            open,
-        }
+        Self { service, hub, engine, watch, open }
     }
 
     /// Sets the function the sessions' events go to; see `Hub::set_listener`.
@@ -185,9 +179,5 @@ impl Sessions {
 fn outline_current(shared: &Shared, args: &Value) -> Result<Value, CoreError> {
     let path = paths::rel_key(string_arg(args, "path")?)?;
     let line = arg(args, "line")?;
-    out(analyze::current_heading(
-        &lock(&shared.outline).1,
-        &path,
-        line,
-    ))
+    out(analyze::current_heading(&lock(&shared.outline).1, &path, line))
 }

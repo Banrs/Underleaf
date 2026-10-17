@@ -71,9 +71,7 @@ impl Service {
             let mut locks = lock(&self.edits);
             locks.retain(|_, held| Arc::strong_count(held) > 1);
             let keys: BTreeSet<_> = names.iter().map(|name| paths::fold_case(name)).collect();
-            let held = keys
-                .into_iter()
-                .map(|key| Arc::clone(locks.entry(key).or_default()));
+            let held = keys.into_iter().map(|key| Arc::clone(locks.entry(key).or_default()));
             held.collect()
         };
         let _guards: Vec<_> = held.iter().map(|project| lock(project)).collect();
@@ -87,9 +85,7 @@ impl Service {
         id: &str,
         use_project: impl FnOnce(&Path) -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
-        self.locked(&[paths::project_name(id)?], || {
-            use_project(&self.project_root(id)?)
-        })
+        self.locked(&[paths::project_name(id)?], || use_project(&self.project_root(id)?))
     }
 
     /// Writes a project file's text under the project's lock; the file's
@@ -294,9 +290,7 @@ impl Service {
             )?),
             "locate" => out(projects::locate(&self.data_dir, Path::new(s("path")?))?),
             // The compiled PDF's location; it may not exist yet.
-            "pdf_path" => Ok(json!(
-                settings::compiled_pdf_path(&root()?)?.to_string_lossy()
-            )),
+            "pdf_path" => Ok(json!(settings::compiled_pdf_path(&root()?)?.to_string_lossy())),
             "project_root" => Ok(json!(root()?.to_string_lossy())),
             "export_zip" => out(zipexport::export_zip(&root()?, Path::new(s("dest")?))?),
             // On quit, while a compile call may still be in flight — which rules
@@ -339,9 +333,7 @@ pub(crate) fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, Cor
 /// A required string, borrowed (a document's text is not copied), with
 /// `arg`'s errors.
 pub(crate) fn string_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, CoreError> {
-    args.get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| arg::<String>(args, key).unwrap_err())
+    args.get(key).and_then(Value::as_str).ok_or_else(|| arg::<String>(args, key).unwrap_err())
 }
 
 pub(crate) fn out<T: Serialize>(value: T) -> Result<Value, CoreError> {
@@ -393,9 +385,7 @@ mod tests {
             let calls = calls.map(|(command, args)| {
                 let start = &start;
                 scope.spawn(move || {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .build()
-                        .unwrap();
+                    let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
                     start.wait();
                     runtime.block_on(service.call(command, &args))
                 })
@@ -416,10 +406,7 @@ mod tests {
             let other = if renaming {
                 ("rename_project", json!({ "id": "Q", "name": "R" }))
             } else {
-                (
-                    "create_project",
-                    json!({ "name": "R", "template": "blank" }),
-                )
+                ("create_project", json!({ "name": "R", "template": "blank" }))
             };
             let first = ("rename_project", json!({ "id": "P", "name": "R" }));
             let [renamed, other] = race(&service, [first, other]);
@@ -428,11 +415,7 @@ mod tests {
                 Err(409) => "P",
                 Err(status) => panic!("round {round}: rename {status}"),
             };
-            let expected = if renaming && kept == "R" {
-                Err(409)
-            } else {
-                Ok(200)
-            };
+            let expected = if renaming && kept == "R" { Err(409) } else { Ok(200) };
             assert_eq!(other.map(|_| 200), expected, "round {round}");
             let text = fs::read_to_string(service.data_dir.join(kept).join("main.tex")).unwrap();
             assert_eq!(text, "the user's", "round {round}");

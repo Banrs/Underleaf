@@ -97,11 +97,7 @@ pub(crate) fn completions(
     let commands = matching(&CATALOG.commands, m.as_str(), |c| &c.0).into_iter();
     let items = commands.map(|(name, _, snippet)| {
         let (text, fields) = expand(text, caret, snippet);
-        Completion {
-            label: name.clone(),
-            text,
-            fields,
-        }
+        Completion { label: name.clone(), text, fields }
     });
     offer(m.start(), CompletionKind::Command, items.collect())
 }
@@ -110,11 +106,7 @@ pub(crate) fn completions(
 fn words(names: Vec<&String>, prefix: &str) -> Vec<Completion> {
     let word = |name| {
         let label = format!("{prefix}{name}");
-        Completion {
-            text: label.clone(),
-            label,
-            fields: vec![],
-        }
+        Completion { text: label.clone(), label, fields: vec![] }
     };
     names.into_iter().map(word).collect()
 }

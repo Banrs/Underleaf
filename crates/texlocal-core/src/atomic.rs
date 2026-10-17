@@ -63,9 +63,7 @@ pub(crate) fn create_temp(
         use std::os::unix::fs::PermissionsExt;
         builder.permissions(Permissions::from_mode(0o666));
     }
-    let (file, path) = builder
-        .tempfile_in(parent.unwrap_or(Path::new(".")))?
-        .into_parts();
+    let (file, path) = builder.tempfile_in(parent.unwrap_or(Path::new(".")))?.into_parts();
     // Before the contents, so a private file's text is never readable
     // under the temporary file's default mode.
     if let Some(permissions) = existing {
@@ -159,10 +157,7 @@ mod tests {
         fs::create_dir(&folder).unwrap();
         fs::write(folder.join("inside.tex"), "keep").unwrap();
         assert!(write(&folder, b"new").is_err());
-        assert_eq!(
-            fs::read_to_string(folder.join("inside.tex")).unwrap(),
-            "keep"
-        );
+        assert_eq!(fs::read_to_string(folder.join("inside.tex")).unwrap(), "keep");
         assert_eq!(names(dir.path()), ["folder", "locked.tex"]);
     }
 
@@ -178,12 +173,7 @@ mod tests {
         fs::set_permissions(&target, fs::Permissions::from_mode(0o640)).unwrap();
         std::os::unix::fs::symlink(&target, &link).unwrap();
         write(&link, b"new").unwrap();
-        assert!(
-            fs::symlink_metadata(&link)
-                .unwrap()
-                .file_type()
-                .is_symlink()
-        );
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
         assert_eq!(mode(&target), 0o640);
 

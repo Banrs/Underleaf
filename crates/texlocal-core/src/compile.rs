@@ -44,10 +44,7 @@ pub(crate) fn engine_flags(engine: &str) -> Option<&'static [&'static str]> {
 
 /// What `dir` holds; nothing if it can't be read.
 fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
-    fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| Some(entry.ok()?.path()))
+    fs::read_dir(dir).into_iter().flatten().filter_map(|entry| Some(entry.ok()?.path()))
 }
 
 /// PATH for spawned TeX tools: the folder the user chose first, then the
@@ -90,12 +87,8 @@ fn usual_tex_dirs() -> Vec<PathBuf> {
 /// Folders as a PATH, in the platform's form. A folder whose name holds the
 /// separator can't be one of them, and is left out.
 pub(crate) fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
-    let dirs = dirs
-        .into_iter()
-        .filter(|dir| std::env::join_paths([dir]).is_ok());
-    std::env::join_paths(dirs)
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_default()
+    let dirs = dirs.into_iter().filter(|dir| std::env::join_paths([dir]).is_ok());
+    std::env::join_paths(dirs).map(|path| path.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
 /// A PATH's absolute folders: an empty or relative entry would be looked up
@@ -155,9 +148,7 @@ impl Tree {
             // window for each pass.
             command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
             let mut child = command.spawn()?;
-            let handle = child
-                .raw_handle()
-                .expect("a child just spawned has its handle");
+            let handle = child.raw_handle().expect("a child just spawned has its handle");
             // Joined as it starts, long before it has loaded, let alone run a
             // program of its own.
             match job_of(handle) {
@@ -218,11 +209,7 @@ fn job_of(
             && AssignProcessToJobObject(handle, process) != 0
     };
     // The error is read before closing the job could change it.
-    if joined {
-        Ok(job)
-    } else {
-        Err(Error::last_os_error())
-    }
+    if joined { Ok(job) } else { Err(Error::last_os_error()) }
 }
 
 fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> std::io::Result<Command> {
@@ -486,9 +473,7 @@ impl CompileRun {
     /// A fresh output, or an existing one for a successful no-op build.
     fn read(&self, ext: &str, allow_existing: bool) -> Option<String> {
         let fresh = allow_existing || self.wrote(ext);
-        fresh
-            .then(|| read_tail(&self.output(ext), LOG_READ_MAX).ok())?
-            .map(lossy_string)
+        fresh.then(|| read_tail(&self.output(ext), LOG_READ_MAX).ok())?.map(lossy_string)
     }
 }
 
@@ -500,13 +485,10 @@ fn user_latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
     let dir = |key| var(key).map(PathBuf::from).filter(|p| p.is_absolute());
     let home = dir("HOME").or_else(|| dir("USERPROFILE").filter(|_| cfg!(windows)))?;
     let config = dir("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"));
-    [
-        config.join("latexmk").join("latexmkrc"),
-        home.join(".latexmkrc"),
-    ]
-    .into_iter()
-    .find(|rc| rc.is_file())
-    .map(|rc| rc.to_string_lossy().into_owned())
+    [config.join("latexmk").join("latexmkrc"), home.join(".latexmkrc")]
+        .into_iter()
+        .find(|rc| rc.is_file())
+        .map(|rc| rc.to_string_lossy().into_owned())
 }
 
 impl CompileManager {
@@ -577,9 +559,8 @@ impl CompileManager {
         // honoured only in a project trusted with shell escape. -norc turns
         // off every automatic rc file, and the user's own is named again.
         let shell_escape = settings.shell_escape;
-        let user_rc = (!shell_escape)
-            .then(|| user_latexmkrc(|key| std::env::var_os(key)))
-            .flatten();
+        let user_rc =
+            (!shell_escape).then(|| user_latexmkrc(|key| std::env::var_os(key))).flatten();
         let (outdir_arg, main_arg) = (format!("-outdir={BUILD_DIR}"), format!("./{main_rel}"));
         let mut args = flags.to_vec();
         args.extend([
@@ -589,17 +570,9 @@ impl CompileManager {
             // By default, past errors as Overleaf compiles: TeX carries on
             // and latexmk finishes its passes (-f), so the PDF shows all that
             // compiled and the log every error.
-            if settings.stop_on_first_error {
-                "-halt-on-error"
-            } else {
-                "-f"
-            },
+            if settings.stop_on_first_error { "-halt-on-error" } else { "-f" },
             &outdir_arg,
-            if shell_escape {
-                "-shell-escape"
-            } else {
-                "-norc"
-            },
+            if shell_escape { "-shell-escape" } else { "-norc" },
         ]);
         if let Some(rc) = &user_rc {
             args.extend(["-r", rc]);
@@ -695,11 +668,7 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
     let unchanged = ok && !run.wrote("pdf") && !run.wrote("log");
     let engine_log = run.read("log", unchanged);
     let mut items = parse_log(engine_log.as_deref().unwrap_or(&output), &run.main_rel);
-    items.extend(
-        run.read("blg", unchanged)
-            .iter()
-            .flat_map(|blg| parse_blg(blg)),
-    );
+    items.extend(run.read("blg", unchanged).iter().flat_map(|blg| parse_blg(blg)));
     let (mut errors, warnings): (Vec<_>, Vec<_>) =
         items.into_iter().partition(|item| item.kind == "error");
 
@@ -862,10 +831,7 @@ mod tests {
         let rc = |path: PathBuf| Some(path.to_string_lossy().into_owned());
         assert_eq!(user_latexmkrc(env("HOME", home)), None);
         fs::write(home.join(".latexmkrc"), "").unwrap();
-        assert_eq!(
-            user_latexmkrc(env("HOME", home)),
-            rc(home.join(".latexmkrc"))
-        );
+        assert_eq!(user_latexmkrc(env("HOME", home)), rc(home.join(".latexmkrc")));
         let config = home.join(".config").join("latexmk").join("latexmkrc");
         fs::create_dir_all(config.parent().unwrap()).unwrap();
         fs::write(&config, "").unwrap();

@@ -9,10 +9,7 @@ pub struct CoreError {
 
 impl CoreError {
     fn new(status: u16, message: impl Into<String>) -> Self {
-        Self {
-            status,
-            message: message.into(),
-        }
+        Self { status, message: message.into() }
     }
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::new(400, message)

@@ -60,12 +60,9 @@ impl Engine for Service {
         let manager = &self.texpresso;
         let done = |result: Result<(), CoreError>| result.map(|()| Status::default());
         match call {
-            Call::Start {
-                root,
-                files,
-                replacing,
-                pane,
-            } => manager.start(owner, root, files, replacing, &self.tool_paths().1, pane),
+            Call::Start { root, files, replacing, pane } => {
+                manager.start(owner, root, files, replacing, &self.tool_paths().1, pane)
+            }
             Call::Update(path, text) => done(manager.update(owner, path, text)),
             Call::Edit(path, start, remove, text) => {
                 done(manager.edit(owner, path, start, remove, text))

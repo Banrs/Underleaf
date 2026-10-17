@@ -38,10 +38,7 @@ impl Default for Settings {
 
 /// A JSON object from a file; empty if the file is missing or not one.
 pub(crate) fn read_object(path: &Path) -> Map<String, Value> {
-    fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+    fs::read(path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
 }
 
 fn object(value: impl Serialize) -> Map<String, Value> {
@@ -214,10 +211,9 @@ impl Settings {
 
 /// The main file's name without its extension ("chapters/paper.tex" → "paper").
 pub(crate) fn main_base_name(rel_slash: &str) -> String {
-    Path::new(rel_slash).file_stem().map_or_else(
-        || rel_slash.to_string(),
-        |s| s.to_string_lossy().into_owned(),
-    )
+    Path::new(rel_slash)
+        .file_stem()
+        .map_or_else(|| rel_slash.to_string(), |s| s.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]
@@ -242,10 +238,7 @@ mod tests {
         assert_eq!(read_ui(root).folded_headings, list(&["x\t1:T#1"]));
         assert_eq!(read_settings(root).engine, "lualatex");
         let flood = (0..=UI_LIMIT).map(|n| n.to_string()).collect();
-        let flood = UiPatch {
-            expanded_folders: Some(flood),
-            ..UiPatch::default()
-        };
+        let flood = UiPatch { expanded_folders: Some(flood), ..UiPatch::default() };
         assert_eq!(write_ui(root, flood).unwrap_err().status, 400);
     }
 }

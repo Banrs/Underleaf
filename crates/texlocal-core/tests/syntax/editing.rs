@@ -44,11 +44,7 @@ fn range(start: u32, length: u32) -> TextRange {
 /// Whether the end of `before` is in maths, as a symbol put there finds it.
 fn in_maths(before: &str) -> bool {
     let at = range(units(before), 0);
-    SourceDocument::new(before)
-        .insert_symbol("\\x", at)
-        .edit
-        .text
-        == "\\x"
+    SourceDocument::new(before).insert_symbol("\\x", at).edit.text == "\\x"
 }
 
 /// The document without the "|" that marks a position, and that position.
@@ -78,10 +74,7 @@ fn math_mode_is_known_at_a_place() {
     // \verb's delimiter is the fixture's marker, so these are here. An unclosed
     // \verb ends with its line, and the maths it was in goes on; a line feed
     // straight after \verb ends it; closed, it's skipped, delimiters and all.
-    assert!(
-        !in_maths("\\verb|$| x") && !in_maths("\\verb|$"),
-        "inside \\verb"
-    );
+    assert!(!in_maths("\\verb|$| x") && !in_maths("\\verb|$"), "inside \\verb");
     for text in ["$ \\verb|x\ny", "\\verb\n$y", "\\verb*+x+ $a"] {
         assert!(in_maths(text), "{text}");
     }
@@ -148,10 +141,7 @@ fn comments_and_indentation_go_by_line() {
             "comment" => doc.toggle_comment(&selections),
             more => doc.indent(&selections, more == "indent"),
         };
-        let found: Vec<_> = found
-            .into_iter()
-            .map(|e| (e.start, e.length, e.text))
-            .collect();
+        let found: Vec<_> = found.into_iter().map(|e| (e.start, e.length, e.text)).collect();
         assert_eq!(found, edits, "{command} {text:?}: {note}");
     }
 }

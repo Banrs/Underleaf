@@ -49,12 +49,7 @@ fn group(
     command: Option<(usize, usize)>,
 ) -> Group {
     let end = end.into();
-    Group {
-        math,
-        end,
-        open,
-        command,
-    }
+    Group { math, end, open, command }
 }
 
 /// What a scan reports as it reads: maths and literal code as ranges, which
@@ -394,11 +389,7 @@ pub fn math_at(text: &Text, caret: u32) -> Option<MathPreview> {
     let window = before + &after;
     let preview = |start: usize, tex: String, display| {
         let start = start as u32;
-        (!tex.is_empty()).then_some(MathPreview {
-            start,
-            tex,
-            display,
-        })
+        (!tex.is_empty()).then_some(MathPreview { start, tex, display })
     };
     for (re, is_environment) in [(&*BEGIN, true), (&*DOLLARS, false), (&*BRACKETS, false)] {
         let mut offset = 0;

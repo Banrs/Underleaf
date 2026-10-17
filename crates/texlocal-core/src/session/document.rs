@@ -46,11 +46,7 @@ impl Document {
     ) -> Self {
         Self(Arc::new(Cell {
             id,
-            text: Mutex::new(Text {
-                source: SourceDocument::new(text),
-                version: 0,
-                symbols: None,
-            }),
+            text: Mutex::new(Text { source: SourceDocument::new(text), version: 0, symbols: None }),
             tx,
             symbols,
         }))
@@ -81,10 +77,7 @@ impl Document {
         held.version += 1;
         if let Some(tx) = &self.0.tx {
             let version = held.version;
-            let _ = tx.send(Msg::Reloaded {
-                doc: self.0.id,
-                version,
-            });
+            let _ = tx.send(Msg::Reloaded { doc: self.0.id, version });
         }
     }
 
@@ -98,11 +91,7 @@ impl Document {
     pub fn with<T>(&self, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
         let symbols = self.symbols();
         let mut held = lock(&self.0.text);
-        if !held
-            .symbols
-            .as_ref()
-            .is_some_and(|s| Arc::ptr_eq(s, &symbols))
-        {
+        if !held.symbols.as_ref().is_some_and(|s| Arc::ptr_eq(s, &symbols)) {
             let (labels, citations) = (symbols.labels.clone(), symbols.citations.clone());
             held.source.set_symbols(labels, citations);
             held.symbols = Some(symbols);

@@ -114,10 +114,7 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
         let value = value.trim().parse().ok().filter(|v: &f64| v.is_finite());
         let last = boxes.last_mut().unwrap();
         match key {
-            "Page" => boxes.push(ForwardLoc {
-                page: value.unwrap_or(0.0),
-                ..Default::default()
-            }),
+            "Page" => boxes.push(ForwardLoc { page: value.unwrap_or(0.0), ..Default::default() }),
             "h" => last.h = value,
             "v" => last.v = value,
             "W" => last.width = value,
@@ -163,9 +160,7 @@ pub(crate) async fn synctex_inverse(
     let input = field("Input:").map(str::trim).filter(|s| !s.is_empty());
     let line = field("Line:").and_then(|s| s.trim().parse::<u32>().ok());
     let (Some(input), Some(line)) = (input, line) else {
-        return Err(CoreError::not_found(
-            "Nothing in the source matches this spot.",
-        ));
+        return Err(CoreError::not_found("Nothing in the source matches this spot."));
     };
 
     // Generated files (.toc/.aux in the build dir) and anything outside the
@@ -185,12 +180,7 @@ pub(crate) async fn synctex_inverse(
         .ok_or_else(no_source)?;
     // Links within the project can still lead to generated output, and the
     // reserved build name is case-insensitive on every platform.
-    let generated = |path: &str| {
-        path.split('/')
-            .next()
-            .unwrap()
-            .eq_ignore_ascii_case(BUILD_DIR)
-    };
+    let generated = |path: &str| path.split('/').next().unwrap().eq_ignore_ascii_case(BUILD_DIR);
     if !source.is_file() || generated(&file) || generated(&physical) {
         return Err(no_source());
     }
@@ -213,9 +203,7 @@ pub(crate) fn match_forward(
     pages: &[PdfPage],
 ) -> Result<Option<PdfHit>, CoreError> {
     let text = crate::lossy_string(std::fs::read(safe_path(root, file)?)?);
-    let line = line
-        .checked_sub(1)
-        .and_then(|n| text.lines().nth(n as usize));
+    let line = line.checked_sub(1).and_then(|n| text.lines().nth(n as usize));
     Ok(line.and_then(|line| find_in_pdf(line, column, pages)))
 }
 
@@ -324,20 +312,15 @@ impl Letters {
     ) -> impl Iterator<Item = (usize, usize, usize, usize)> + 'a {
         let (n, target) = (word.len(), &from.chars[word.clone()]);
         let windows = self.chars.windows(n).enumerate();
-        windows
-            .filter(move |(_, w)| *w == target)
-            .map(move |(k, _)| {
-                let back = from.chars[..word.start]
-                    .iter()
-                    .rev()
-                    .zip(self.chars[..k].iter().rev());
-                let before = back.take_while(|(a, b)| a == b).count();
-                let ahead = from.chars[word.end..].iter().zip(&self.chars[k + n..]);
-                let after = ahead.take_while(|(a, b)| a == b).count();
-                let edges = usize::from(k == 0 || !self.joined(k - 1))
-                    + usize::from(!self.joined(k + n - 1));
-                (k, before, after, edges)
-            })
+        windows.filter(move |(_, w)| *w == target).map(move |(k, _)| {
+            let back = from.chars[..word.start].iter().rev().zip(self.chars[..k].iter().rev());
+            let before = back.take_while(|(a, b)| a == b).count();
+            let ahead = from.chars[word.end..].iter().zip(&self.chars[k + n..]);
+            let after = ahead.take_while(|(a, b)| a == b).count();
+            let edges =
+                usize::from(k == 0 || !self.joined(k - 1)) + usize::from(!self.joined(k + n - 1));
+            (k, before, after, edges)
+        })
     }
 }
 
@@ -372,17 +355,15 @@ pub(crate) fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Optio
         boxes.iter().map(gap).min().unwrap_or(usize::MAX / 4)
     };
     let (n, spans) = (word.len(), &pdf.spans);
-    let ranked = pdf
-        .occurrences(&source, &word)
-        .filter_map(|(k, before, after, edges)| {
-            let near = dist(k).min(dist(k + n - 1));
-            let whole = before == word.start && after == source.chars.len() - word.end;
-            // The two ends of the matched text apart tell identical sentences apart.
-            let ends = dist(k - before) + dist(k + n + after - 1);
-            let rank = (Reverse(before + after), Reverse(edges), near, ends);
-            (spans[k].group == spans[k + n - 1].group && (whole || near <= BOX_REACH))
-                .then_some((rank, k))
-        });
+    let ranked = pdf.occurrences(&source, &word).filter_map(|(k, before, after, edges)| {
+        let near = dist(k).min(dist(k + n - 1));
+        let whole = before == word.start && after == source.chars.len() - word.end;
+        // The two ends of the matched text apart tell identical sentences apart.
+        let ends = dist(k - before) + dist(k + n + after - 1);
+        let rank = (Reverse(before + after), Reverse(edges), near, ends);
+        (spans[k].group == spans[k + n - 1].group && (whole || near <= BOX_REACH))
+            .then_some((rank, k))
+    });
     let k = unique(ranked)?;
     let page = pages[spans[k].group as usize].page;
     let (start, end) = (spans[k].start as usize, spans[k + n - 1].end as usize);
@@ -413,20 +394,10 @@ pub(crate) fn find_in_source(
     for (n, text) in (first..=line.saturating_add(LINE_REACH)).zip(lines) {
         src.push(text, n, true);
     }
-    let ranked = src
-        .occurrences(&pdf, &word)
-        .map(|(k, before, after, edges)| {
-            let n = src.spans[k].group;
-            (
-                (
-                    Reverse(before + after),
-                    Reverse(edges),
-                    n.abs_diff(line),
-                    n > line,
-                ),
-                k,
-            )
-        });
+    let ranked = src.occurrences(&pdf, &word).map(|(k, before, after, edges)| {
+        let n = src.spans[k].group;
+        ((Reverse(before + after), Reverse(edges), n.abs_diff(line), n > line), k)
+    });
     let found = src.spans[unique(ranked)? + clicked - word.start];
     Some((found.group, found.start))
 }
@@ -437,31 +408,14 @@ mod tests {
 
     #[test]
     fn forward_keeps_every_box_in_reading_order_after_the_first() {
-        let boxes = [
-            "Page:2\nv:80",
-            "Page:1\nv:60\nh:x",
-            "Page:2\nv:40",
-            "Page:2\nv:40",
-            "Page:0",
-        ];
+        let boxes = ["Page:2\nv:80", "Page:1\nv:60\nh:x", "Page:2\nv:40", "Page:2\nv:40", "Page:0"];
         let result = parse_forward(&format!("h:5\nW:100\n{}\n", boxes.join("\nW:9\n"))).unwrap();
         assert_eq!(
             (result.page, result.v, result.h, result.width),
             (2.0, Some(80.0), None, Some(9.0))
         );
-        let order: Vec<_> = result
-            .matches
-            .iter()
-            .map(|r| (r.page, r.v, r.matches.len()))
-            .collect();
-        assert_eq!(
-            order,
-            [
-                (1.0, Some(60.0), 0),
-                (2.0, Some(40.0), 0),
-                (2.0, Some(80.0), 0)
-            ]
-        );
+        let order: Vec<_> = result.matches.iter().map(|r| (r.page, r.v, r.matches.len())).collect();
+        assert_eq!(order, [(1.0, Some(60.0), 0), (2.0, Some(40.0), 0), (2.0, Some(80.0), 0)]);
         assert!(parse_forward("Page:0\nOutput:x\n").is_err());
     }
 
@@ -488,11 +442,7 @@ mod tests {
                 "🙂 echo first, echo second, echo third.",
                 "echo",
             ),
-            (
-                "office first, office second.",
-                "oﬃce first, oﬃce second.",
-                "office",
-            ),
+            ("office first, office second.", "oﬃce first, oﬃce second.", "office"),
             (
                 "well-known first. well-known second.",
                 "well-\nknown first. well-known second.",
@@ -584,10 +534,7 @@ mod tests {
         let line = "Next, the \\emph{echo} repeats here.";
         let (start, end) = nth(text, "echo", 1);
         for near in [vec![], vec![nth(text, "Last", 0)]] {
-            assert_eq!(
-                forward(line, 16, &[page(3, text, &near)]),
-                Some((3, start, end))
-            );
+            assert_eq!(forward(line, 16, &[page(3, text, &near)]), Some((3, start, end)));
         }
     }
 
@@ -607,10 +554,7 @@ mod tests {
         assert_eq!(forward(line, 1, &[page(1, &text, &[middle])]), None);
         // Two copies equally near, the same all round: no guess.
         let twins = "same words here. same words here.";
-        assert_eq!(
-            forward("same words here.", 1, &[page(1, twins, &[(0, 33)])]),
-            None
-        );
+        assert_eq!(forward("same words here.", 1, &[page(1, twins, &[(0, 33)])]), None);
     }
 
     #[test]
@@ -623,9 +567,6 @@ mod tests {
         assert_eq!(forward(line, 14, &pages), Some((5, 8, 12)));
         // A caret in a command's name, or on no word, finds none; after a word, that word.
         assert_eq!(forward("\\emph", 2, &[page(1, "emph", &[])]), None);
-        assert_eq!(
-            forward("say echo", 8, &[page(1, "say echo", &[])]),
-            Some((1, 4, 8))
-        );
+        assert_eq!(forward("say echo", 8, &[page(1, "say echo", &[])]), Some((1, 4, 8)));
     }
 }

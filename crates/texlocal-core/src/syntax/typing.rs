@@ -196,12 +196,7 @@ fn closer_after(units: &[u16], caret: usize) -> Option<usize> {
 }
 
 fn key(e: Option<TextEdit>, s: Option<TextRange>, p: Option<u32>, c: Completing) -> Keystroke {
-    Keystroke {
-        edit: e,
-        selection: s,
-        partner: p,
-        completions: c,
-    }
+    Keystroke { edit: e, selection: s, partner: p, completions: c }
 }
 
 impl SourceDocument {

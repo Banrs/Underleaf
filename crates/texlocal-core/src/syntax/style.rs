@@ -64,11 +64,7 @@ pub(crate) fn text_styles(text: &Text, scans: &mut Scans, selection: TextRange) 
     use Shape::*;
     let (src, start) = (text.units(), selection.start as usize);
     let end = start + selection.length as usize;
-    let mut found = Found {
-        start,
-        end,
-        ..Found::default()
-    };
+    let mut found = Found { start, end, ..Found::default() };
     let mut scanner = scans.resume(text, start, src.len()).scanner;
     scanner.run(src, src.len(), &[start, end], &mut found);
     let (first, last) = (&found.open[0], &found.open[1]);
@@ -102,11 +98,7 @@ pub(crate) fn text_styles(text: &Text, scans: &mut Scans, selection: TextRange) 
         let head = edit(backslash as u32, (group.open + 1 - backslash) as u32, "");
         Some(vec![head, edit(close as u32, 1, "")])
     };
-    TextStyles {
-        bold: unwrap(bold),
-        italic: unwrap(italic),
-        underline: unwrap(underline),
-    }
+    TextStyles { bold: unwrap(bold), italic: unwrap(italic), underline: unwrap(underline) }
 }
 
 #[cfg(test)]

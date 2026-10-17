@@ -13,11 +13,7 @@ fn range(start: u32, length: u32) -> TextRange {
 
 fn edit(start: u32, length: u32, text: &str) -> TextEdit {
     let text = text.into();
-    TextEdit {
-        start,
-        length,
-        text,
-    }
+    TextEdit { start, length, text }
 }
 
 fn units(s: &str) -> u32 {
@@ -55,13 +51,7 @@ impl Editor {
             selections.push(range(units(&text), 0));
         }
         let (doc, text) = (SourceDocument::new(&text), text.encode_utf16().collect());
-        let mut editor = Self {
-            doc,
-            text,
-            selections: vec![],
-            auto_pair: true,
-            mirroring: false,
-        };
+        let mut editor = Self { doc, text, selections: vec![], auto_pair: true, mirroring: false };
         editor.select(selections);
         editor
     }
@@ -97,16 +87,11 @@ impl Editor {
         self.text.splice(start..end, e.text.encode_utf16());
         self.doc.edit(e.start, e.length, &e.text);
         let delta = units(&e.text) as i64 - e.length as i64;
-        self.doc
-            .follow(range(e.start, e.length), delta, None, self.mirroring);
+        self.doc.follow(range(e.start, e.length), delta, None, self.mirroring);
         let moved = map_selections(std::slice::from_ref(e), &self.selections);
         self.select(after.map_or(moved, |after| vec![after]));
         // What's typed in a field goes in its other places too.
-        let edits = if self.mirroring {
-            vec![]
-        } else {
-            self.doc.mirror_snippet()
-        };
+        let edits = if self.mirroring { vec![] } else { self.doc.mirror_snippet() };
         if !edits.is_empty() {
             let selection = self.selections[0];
             self.mirroring = true;
@@ -174,10 +159,7 @@ impl Editor {
     fn insert(&mut self, e: TextEdit, caret: u32, fields: &[SnippetField]) {
         let at = e.start;
         let selections = vec![range(caret, 0)];
-        self.apply(Change {
-            edits: vec![e],
-            selections,
-        });
+        self.apply(Change { edits: vec![e], selections });
         if let Some(first) = self.doc.start_snippet(fields, at) {
             self.select(vec![first]);
         }
@@ -277,10 +259,7 @@ fn keys_say_what_the_completion_list_does() {
     assert_eq!((key.edit, key.selection), (None, None));
     let typed = doc.type_text(caret, "日本", true);
     assert_eq!(typed.completions, Completing::Close);
-    assert_eq!(
-        doc.type_text(caret, "{", true).completions,
-        Completing::Offer
-    );
+    assert_eq!(doc.type_text(caret, "{", true).completions, Completing::Offer);
     // A closing bracket typed shows its partner.
     assert_eq!(doc.type_text(caret, ")", true).partner, Some(1));
 }
@@ -331,11 +310,7 @@ fn a_block_tabs_through_its_fields_and_ends_at_the_last() {
         e.tab(1);
     }
     // Past the last field, Tab indents again.
-    assert!(
-        e.doc.text().contains("\n    \\label{fig:}"),
-        "{}",
-        e.shown()
-    );
+    assert!(e.doc.text().contains("\n    \\label{fig:}"), "{}", e.shown());
 }
 
 #[test]
@@ -363,11 +338,7 @@ fn a_field_in_two_places_is_typed_in_both_until_the_snippet_ends() {
     e.keys("y");
     assert_eq!(e.shown(), "x\\begin{y‸env}\n  \n\\end{env}");
     // As do Escape and showing the document again.
-    let fields = [0, 1].map(|at| SnippetField {
-        start: at,
-        length: 0,
-        index: at,
-    });
+    let fields = [0, 1].map(|at| SnippetField { start: at, length: 0, index: at });
     let mut doc = SourceDocument::new("ab");
     assert!(doc.start_snippet(&fields, 0).is_some());
     assert!(doc.end_snippet() && !doc.end_snippet());

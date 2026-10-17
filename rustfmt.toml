@@ -1,0 +1,2 @@
+# Lines as wide as the width allows, as rust-lang/rust formats its own code.
+use_small_heuristics = "Max"

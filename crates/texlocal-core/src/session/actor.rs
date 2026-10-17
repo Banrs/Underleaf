@@ -210,10 +210,7 @@ impl Actor {
             edits: 0,
             last_edits: HashMap::new(),
             auto_compile,
-            build: Build {
-                pdf: pdf.is_some(),
-                ..Build::default()
-            },
+            build: Build { pdf: pdf.is_some(), ..Build::default() },
             issues: Vec::new(),
             chosen: None,
             analyses: 0,
@@ -271,13 +268,9 @@ impl Actor {
 
     fn handle(&mut self, message: Msg) {
         match message {
-            Msg::Edited {
-                doc,
-                version,
-                start,
-                length,
-                text,
-            } => self.edited(doc, version, start, length, &text),
+            Msg::Edited { doc, version, start, length, text } => {
+                self.edited(doc, version, start, length, &text);
+            }
             Msg::Reloaded { doc, version } => self.reloaded(doc, version),
             Msg::Command { name, args, reply } => self.command(&name, &args, reply),
             Msg::Fs(changes) => {
@@ -475,12 +468,7 @@ impl Actor {
 
     /// The path of the document `id`, which an edit or reload changed: its issues go.
     fn touched(&mut self, id: u64) -> Option<String> {
-        let path = self
-            .docs
-            .iter()
-            .find(|doc| doc.doc.id() == id)?
-            .path
-            .clone();
+        let path = self.docs.iter().find(|doc| doc.doc.id() == id)?.path.clone();
         self.edits += 1;
         self.last_edits.insert(path.clone(), self.edits);
         self.clear_issues(&path);
@@ -545,10 +533,7 @@ impl Actor {
     /// Writes one document. Ok(false): not written, and not to be (a conflict,
     /// asked about when `reporting`, or a reload or deletion under way).
     fn save_doc(&mut self, path: &str, reporting: bool, autosave: bool) -> Result<bool, CoreError> {
-        let deleting = self
-            .deleting
-            .as_deref()
-            .is_some_and(|dir| within(path, dir));
+        let deleting = self.deleting.as_deref().is_some_and(|dir| within(path, dir));
         let Some(doc) = self.doc_mut(path).filter(|doc| doc.dirty()) else {
             return Ok(true);
         };
@@ -645,9 +630,7 @@ impl Actor {
                 return Ok(Value::Null);
             }
             _ => {
-                return Err(CoreError::bad_request(format!(
-                    "Can't answer “{answer}” here"
-                )));
+                return Err(CoreError::bad_request(format!("Can't answer “{answer}” here")));
             }
         }
         self.publish_doc(path);
@@ -679,11 +662,8 @@ impl Actor {
         for path in &meaning.docs {
             self.check_disk(path);
         }
-        let others: Vec<&String> = meaning
-            .listed
-            .iter()
-            .filter(|p| self.doc(p).is_none())
-            .collect();
+        let others: Vec<&String> =
+            meaning.listed.iter().filter(|p| self.doc(p).is_none()).collect();
         if !others.is_empty() {
             self.emit("files_changed", json!({ "paths": others }));
         }
@@ -826,12 +806,7 @@ impl Actor {
         let announce = !build.auto || result.errors.len() != build.errors;
         (build.errors, build.shown_began) = (result.errors.len(), build.began);
         let (auto, outdated) = (build.auto, build.outdated);
-        self.issues = result
-            .errors
-            .iter()
-            .chain(&result.warnings)
-            .cloned()
-            .collect();
+        self.issues = result.errors.iter().chain(&result.warnings).cloned().collect();
         self.chosen = None;
         self.mark_issues();
         let fields =
@@ -865,12 +840,7 @@ impl Actor {
     }
 
     pub fn publish_build(&mut self) {
-        let Build {
-            compiling,
-            auto,
-            outdated,
-            ..
-        } = self.build;
+        let Build { compiling, auto, outdated, .. } = self.build;
         let auto = compiling && auto;
         if self.build.shown.changed(&(compiling, auto, outdated)) {
             let event = json!({ "compiling": compiling, "auto": auto, "outdated": outdated });
@@ -920,9 +890,8 @@ impl Actor {
             // Read each time: another app, or another host's `set_settings`, may have changed it.
             let main = settings::read_settings(&root).main_file;
             let analysis = analyze::analyze_project(&root, &main, &path);
-            let open = paths::rel_key(&main)
-                .ok()
-                .and_then(|main| lock(&shared.docs).get(&main).cloned());
+            let open =
+                paths::rel_key(&main).ok().and_then(|main| lock(&shared.docs).get(&main).cloned());
             let main_text = match open {
                 Some(doc) => Some(doc.snapshot().0),
                 None => paths::safe_path(&root, &main)
@@ -976,10 +945,7 @@ impl Actor {
     }
 
     fn chosen_issue(&self) -> Value {
-        match self
-            .chosen
-            .and_then(|index| Some((index, self.issues.get(index)?)))
-        {
+        match self.chosen.and_then(|index| Some((index, self.issues.get(index)?))) {
             Some((index, issue)) => json!({ "index": index, "issue": issue }),
             None => Value::Null,
         }
@@ -992,10 +958,8 @@ impl Actor {
         if !next {
             places.reverse();
         }
-        let beyond = |place: usize| {
-            self.chosen
-                .is_none_or(|c| if next { place > c } else { place < c })
-        };
+        let beyond =
+            |place: usize| self.chosen.is_none_or(|c| if next { place > c } else { place < c });
         let Some(&place) = places.iter().find(|&&p| beyond(p)).or(places.first()) else {
             return Value::Null;
         };

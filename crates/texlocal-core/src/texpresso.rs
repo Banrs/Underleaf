@@ -230,10 +230,7 @@ impl Text {
             suffix -= 1;
         }
         let inserted = &new[start..new.len() - suffix];
-        let (from, to) = (
-            self.0.byte_to_char(start),
-            self.0.byte_to_char(old - suffix),
-        );
+        let (from, to) = (self.0.byte_to_char(start), self.0.byte_to_char(old - suffix));
         let (offset, removed) = self.replace(from, to, inserted);
         (offset, removed, inserted)
     }
@@ -504,9 +501,7 @@ impl Manager {
             inner.paths.insert(file.path.clone(), path.clone());
             inner.bytes += file.text.len();
             if inner.texts.insert(path, Text::from(&*file.text)).is_some() {
-                return Err(CoreError::bad_request(
-                    "Files sent to TeXpresso repeat a path.",
-                ));
+                return Err(CoreError::bad_request("Files sent to TeXpresso repeat a path."));
             }
         }
         check_limits(inner.texts.len(), inner.bytes)?;
@@ -526,11 +521,7 @@ impl Manager {
         }
         let failed = |error: String| {
             let (error, revision) = (Some(error), REVISION.load(Ordering::Relaxed));
-            Ok(Status {
-                error,
-                revision,
-                ..Status::default()
-            })
+            Ok(Status { error, revision, ..Status::default() })
         };
         let Some(executable) = discover(path_env) else {
             return failed(MISSING.into());
@@ -796,9 +787,7 @@ fn validate_buffer(
     }
     let path = root.join(paths::write_paths(root, path)?.1);
     if path.is_dir() {
-        return Err(CoreError::bad_request(
-            "TeXpresso opens files, not folders.",
-        ));
+        return Err(CoreError::bad_request("TeXpresso opens files, not folders."));
     }
     Ok(path)
 }
@@ -972,9 +961,7 @@ mod tests {
         let mut held = Text::from(&*plain);
         let mut seed = 7u64;
         let mut next = |below: usize| {
-            seed = seed
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
             (seed >> 33) as usize % below.max(1)
         };
         for round in 0..1500 {

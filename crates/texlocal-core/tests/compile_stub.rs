@@ -90,10 +90,7 @@ fn outcome(result: &CompileResult) -> String {
 
 /// A script's parts, which a case names in braces.
 const PARTS: [(&str, &str); 5] = [
-    (
-        "{LOG}",
-        "printf './main.tex:3: Undefined control sequence.\\nl.3 x\\n' > build/main.log\n",
-    ),
+    ("{LOG}", "printf './main.tex:3: Undefined control sequence.\\nl.3 x\\n' > build/main.log\n"),
     ("{QUIET}", "printf 'No errors here.\\n' > build/main.log\n"),
     ("{PDF}", "printf 'fake' > build/main.pdf\n"),
     (
@@ -127,9 +124,8 @@ async fn a_build_shows_the_pdf_and_the_errors_of_its_own_run() {
         "ok; pdf | sleep 30 &\n{PDF}exit 0",
     ] {
         let parts: Vec<_> = case.split(" | ").collect();
-        let script = PARTS
-            .iter()
-            .fold(parts[parts.len() - 1].to_owned(), |script, (name, part)| {
+        let script =
+            PARTS.iter().fold(parts[parts.len() - 1].to_owned(), |script, (name, part)| {
                 script.replace(name, part)
             });
         let (_tmp, service, root) = setup(&format!("mkdir -p build\n{script}"));
@@ -226,10 +222,7 @@ async fn a_new_build_ends_the_one_running_and_a_third_the_waiting_one() {
     let second = compile(&service.compile, &root).await;
     let first = first.await.unwrap();
     assert_eq!((first.ok, first.pdf, second.ok), (false, None, true));
-    assert_eq!(
-        fs::read_to_string(root.join("build/main.pdf")).unwrap(),
-        "new"
-    );
+    assert_eq!(fs::read_to_string(root.join("build/main.pdf")).unwrap(), "new");
 
     // Each build reads the engine as it starts, which tells the three apart.
     let script = "case \"$*\" in\n  *-lualatex*) mkdir -p build; printf 'third' > build/main.pdf ;;\n  \
@@ -252,10 +245,7 @@ async fn a_new_build_ends_the_one_running_and_a_third_the_waiting_one() {
     let ok = tokio::time::timeout(Duration::from_secs(5), all).await;
     assert_eq!(ok.expect("the builds deadlocked"), [true, false, false]);
     assert!(!root.join("replacement_started").exists());
-    assert_eq!(
-        fs::read_to_string(root.join("build/main.pdf")).unwrap(),
-        "third"
-    );
+    assert_eq!(fs::read_to_string(root.join("build/main.pdf")).unwrap(), "third");
 }
 
 #[tokio::test]
@@ -273,10 +263,7 @@ async fn a_waiting_build_cancelled_lets_no_later_one_overtake_the_one_running() 
     let third = tokio::time::timeout(Duration::from_secs(5), compile(&service.compile, &root));
     assert!(third.await.expect("the third build waited forever").ok);
     assert!(first.await.unwrap().stopped);
-    assert!(
-        !root.join("overlap").exists(),
-        "the third overtook the first"
-    );
+    assert!(!root.join("overlap").exists(), "the third overtook the first");
 }
 
 /// Dropping the build kills latexmk, and the engine it started must not keep
@@ -289,10 +276,7 @@ async fn a_cancelled_build_takes_its_whole_tree_down() {
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     tokio::time::sleep(Duration::from_millis(1500)).await;
-    assert!(
-        !root.join("late").exists(),
-        "a descendant outlived the cancel"
-    );
+    assert!(!root.join("late").exists(), "a descendant outlived the cancel");
 }
 
 /// An unchanged build leaves latexmk free to skip the engine (no -g); a build
@@ -311,14 +295,8 @@ async fn latexmk_is_given_the_arguments_the_settings_call_for() {
         compile(&service.compile, &root).await;
         let args = fs::read_to_string(root.join("build/args")).unwrap();
         let passed: Vec<_> = args.split_whitespace().collect();
-        assert!(
-            given.split(' ').all(|arg| passed.contains(&arg)),
-            "{passed:?}"
-        );
-        assert!(
-            !not_given.split(' ').any(|arg| passed.contains(&arg)),
-            "{passed:?}"
-        );
+        assert!(given.split(' ').all(|arg| passed.contains(&arg)), "{passed:?}");
+        assert!(!not_given.split(' ').any(|arg| passed.contains(&arg)), "{passed:?}");
     }
 }
 
@@ -334,17 +312,11 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     let call = async |command: &str, args: Value| service.call(command, &args).await;
 
     let started = Instant::now();
-    assert_eq!(
-        call("stop_compile", json!({ "id": "one" })).await.unwrap(),
-        true
-    );
+    assert_eq!(call("stop_compile", json!({ "id": "one" })).await.unwrap(), true);
     let one = one.await.unwrap();
     assert!(one.stopped && !one.ok);
     promptly(started);
-    assert!(
-        !two.is_finished() && !three.is_finished(),
-        "another's build stopped too"
-    );
+    assert!(!two.is_finished() && !three.is_finished(), "another's build stopped too");
     // The project builds again after a Stop.
     fs::write(roots[0].join("fast"), "").unwrap();
     let again = in_flight(&service, &roots[0]).await.unwrap();
@@ -359,9 +331,7 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!two.is_finished());
     let started = Instant::now();
-    call("rename_project", json!({ "id": "two", "name": "uno" }))
-        .await
-        .unwrap();
+    call("rename_project", json!({ "id": "two", "name": "uno" })).await.unwrap();
     assert!(two.await.unwrap().stopped);
     promptly(started);
     assert!(!three.is_finished());
@@ -405,28 +375,16 @@ async fn inverse_sync_finds_a_source_of_the_project_by_any_name_tex_gives_it() {
     let bin = tmp.path().join("bin");
     fs::create_dir(&bin).unwrap();
     support::program(&bin, "latexmk", "exit 0\n");
-    service
-        .call("set_tex_dir", &json!({ "dir": bin }))
-        .await
-        .unwrap();
+    service.call("set_tex_dir", &json!({ "dir": bin })).await.unwrap();
 
     let physical = format!("{}/./chapter.tex", real.join("P").display());
     let found = json!({ "file": "chapter.tex", "line": 7 });
     assert_eq!(inverse(&service, &physical, None).await, found);
-    assert_eq!(
-        inverse(&service, "/old/Paper/./chapter.tex", None).await,
-        found
-    );
+    assert_eq!(inverse(&service, "/old/Paper/./chapter.tex", None).await, found);
     // The letter clicked is looked for on the line TeX recorded or one near.
     let word = inverse(&service, "chapter.tex", Some(("theword", 4))).await;
-    assert_eq!(
-        word,
-        json!({ "file": "chapter.tex", "line": 6, "column": 1 })
-    );
-    assert_eq!(
-        inverse(&service, "chapter.tex", Some(("absent", 0))).await,
-        found
-    );
+    assert_eq!(word, json!({ "file": "chapter.tex", "line": 6, "column": 1 }));
+    assert_eq!(inverse(&service, "chapter.tex", Some(("absent", 0))).await, found);
 
     fs::write(root.join("build/generated.tex"), "secret").unwrap();
     fs::create_dir_all(root.join("Build")).unwrap(); // build/ itself where the volume ignores case
@@ -475,9 +433,6 @@ async fn tools_report_their_version_and_start_by_posix_spawn_never_a_fork() {
     let mut missing = CompileManager::default();
     missing.path_env = Some("/nonexistent-dir-for-test".into());
     let failed = outcome(&compile(&missing, &root).await);
-    assert!(
-        failed.starts_with("failed; :: Couldn't start latexmk"),
-        "{failed}"
-    );
+    assert!(failed.starts_with("failed; :: Couldn't start latexmk"), "{failed}");
     assert_eq!(forks(), before);
 }

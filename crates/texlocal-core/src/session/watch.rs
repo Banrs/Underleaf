@@ -36,10 +36,8 @@ pub(crate) fn watch(root: &Path, tx: mpsc::UnboundedSender<Msg>) -> Option<Recom
             // Changes may have been lost: the whole folder is looked at again.
             _ => (vec![base.clone()], true),
         };
-        let changes: Vec<Change> = paths
-            .into_iter()
-            .map(|path| Change { path, structural })
-            .collect();
+        let changes: Vec<Change> =
+            paths.into_iter().map(|path| Change { path, structural }).collect();
         if !changes.is_empty() {
             let _ = tx.send(Msg::Fs(changes));
         }
@@ -106,9 +104,8 @@ pub(crate) fn classify(
             }
             continue;
         };
-        let touched = docs
-            .iter()
-            .filter(|doc| **doc == rel || change.structural && within(doc, &rel));
+        let touched =
+            docs.iter().filter(|doc| **doc == rel || change.structural && within(doc, &rel));
         meaning.docs.extend(touched.map(ToString::to_string));
         let parent = rel.rsplit_once('/').map_or("", |(parent, _)| parent);
         let shown_folder = parent.is_empty() || index.folders.contains(parent);
@@ -168,11 +165,8 @@ mod tests {
             change(root, "main.tex", false),
         ];
         let meaning = classify(root, &changes, &index(&["main.tex"], &[]), &["main.tex"]);
-        let expected = Meaning {
-            tree: false,
-            docs: set(&["main.tex"]),
-            listed: set(&["main.tex"]),
-        };
+        let expected =
+            Meaning { tree: false, docs: set(&["main.tex"]), listed: set(&["main.tex"]) };
         assert_eq!(meaning, expected);
     }
 
@@ -207,9 +201,6 @@ mod tests {
         // A file that only starts like the folder's name isn't in it.
         assert!(of("c").docs.is_empty());
         let elsewhere = change(root.parent().unwrap(), "other", true);
-        assert_eq!(
-            classify(root, &[elsewhere], &index, &docs),
-            Meaning::default()
-        );
+        assert_eq!(classify(root, &[elsewhere], &index, &docs), Meaning::default());
     }
 }

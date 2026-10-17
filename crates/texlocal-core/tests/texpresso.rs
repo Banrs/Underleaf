@@ -76,12 +76,7 @@ impl Stub {
         support::program(&bin, "texpresso", &script);
         let path_env = bin.to_string_lossy().into_owned();
         let manager = Arc::default();
-        Self {
-            tmp,
-            root,
-            path_env,
-            manager,
-        }
+        Self { tmp, root, path_env, manager }
     }
 
     fn start(
@@ -91,10 +86,7 @@ impl Stub {
         replacing: bool,
         pane: Option<&Pane>,
     ) -> Result<Status, CoreError> {
-        let file = |text: &str| FileBuffer {
-            path: "main.tex".into(),
-            text: text.into(),
-        };
+        let file = |text: &str| FileBuffer { path: "main.tex".into(), text: text.into() };
         let files: Vec<_> = main.map(file).into_iter().collect();
         let manager = &self.manager;
         manager.start(owner, &self.root, &files, replacing, &self.path_env, pane)
@@ -102,8 +94,7 @@ impl Stub {
 
     /// The user's Start, with the main file open as `main` says.
     fn begin(&self, owner: u64, main: Option<&str>) -> Status {
-        self.start(owner, main, false, Some(&Pane::default()))
-            .unwrap()
+        self.start(owner, main, false, Some(&Pane::default())).unwrap()
     }
 
     /// The owner's own restart, which takes back only a preview still its own.
@@ -129,10 +120,7 @@ impl Stub {
 
     /// The process ids of the stand-ins started.
     fn pids(&self) -> Vec<i32> {
-        self.read("pids")
-            .lines()
-            .map(|p| p.parse().unwrap())
-            .collect()
+        self.read("pids").lines().map(|p| p.parse().unwrap()).collect()
     }
 
     fn main(&self) -> PathBuf {
@@ -240,9 +228,7 @@ async fn a_preview_has_the_buffers_their_changes_and_a_folder_of_its_own() {
     assert_eq!(refused(stub.restart(OWNER)), 409);
     let restarted = stub.begin(OWNER, None);
     assert!(restarted.running && restarted.revision > second.revision);
-    stub.manager
-        .update(OWNER, "main.tex", "EXIT_CLEAN")
-        .unwrap();
+    stub.manager.update(OWNER, "main.tex", "EXIT_CLEAN").unwrap();
     stub.stopped(OWNER).await;
     assert!(stub.manager.status(OWNER).unwrap().error.is_none());
     stub.begin(OWNER, None);
@@ -343,16 +329,9 @@ async fn another_sessions_start_takes_over_and_a_stop_ends_ownership() {
 async fn a_keystroke_goes_as_bytes_at_once_and_one_that_does_not_fit_is_refused() {
     let stub = Stub::new(PATCHED);
     let manager = &stub.manager;
-    let caret = Caret {
-        path: "main.tex".into(),
-        offset: 4,
-    };
-    let pane = Pane {
-        view: Some((2, 3)),
-        caret: Some(caret),
-    };
-    stub.start(OWNER, Some("aé😀b"), false, Some(&pane))
-        .unwrap();
+    let caret = Caret { path: "main.tex".into(), offset: 4 };
+    let pane = Pane { view: Some((2, 3)), caret: Some(caret) };
+    stub.start(OWNER, Some("aé😀b"), false, Some(&pane)).unwrap();
     let path = stub.main();
     // Four units in: after a, é and the pair, seven bytes in.
     manager.edit(OWNER, "main.tex", 4, 0, "X").unwrap();
@@ -384,10 +363,7 @@ async fn a_keystroke_goes_as_bytes_at_once_and_one_that_does_not_fit_is_refused(
     manager.update(OWNER, "main.tex", "aXb😀").unwrap();
     manager.edit(OWNER, "main.tex", 5, 0, "!").unwrap();
     let sent = stub.sent(|sent| sent.len() >= 9).await;
-    let changes = [
-        json!(["change", path, 3, 0, "😀"]),
-        json!(["change", path, 7, 0, "!"]),
-    ];
+    let changes = [json!(["change", path, 3, 0, "😀"]), json!(["change", path, 7, 0, "!"])];
     assert_eq!(sent[7..], changes);
     // No finishing passes of upstream's kind, which start the document over.
     assert!(!has("rerun")(&sent));
@@ -416,8 +392,7 @@ async fn waiting_hands_over_the_latest_of_each_page_and_ends_with_the_session() 
     assert_eq!(live, Path::new(&document.path));
     // It said it sends pages, so it is told the pages in view.
     stub.manager.view(OWNER, 0, 0).unwrap();
-    stub.sent(|sent| sent.contains(&json!(["view", 0, 0])))
-        .await;
+    stub.sent(|sent| sent.contains(&json!(["view", 0, 0]))).await;
 
     // Nothing new: the wait goes on, and other calls go on meanwhile.
     let began = Instant::now();
@@ -491,9 +466,7 @@ async fn texpresso_is_told_no_view_or_caret_by_an_older_build_or_without_a_pane(
     stub.start(OWNER, Some("abc"), false, None).unwrap();
     stub.manager.view(OWNER, 0, 1).unwrap();
     stub.manager.caret(OWNER, "main.tex", 1).unwrap();
-    stub.manager
-        .update(OWNER, "main.tex", "EXIT_CLEAN")
-        .unwrap();
+    stub.manager.update(OWNER, "main.tex", "EXIT_CLEAN").unwrap();
     stub.stopped(OWNER).await;
     assert_eq!(stub.read("pdf"), "none\n");
     // Its stand-in printed a document all the same, with no path to write it to.

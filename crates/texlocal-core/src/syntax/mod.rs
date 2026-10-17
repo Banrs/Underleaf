@@ -52,11 +52,7 @@ fn range(start: u32, length: u32) -> TextRange {
 
 fn edit(start: u32, length: u32, text: impl Into<String>) -> TextEdit {
     let text = text.into();
-    TextEdit {
-        start,
-        length,
-        text,
-    }
+    TextEdit { start, length, text }
 }
 
 /// What asks for `SourceDocument::code_ranges`: the spelling checker or
@@ -105,14 +101,7 @@ impl Text {
         let buf: Vec<u16> = text.encode_utf16().collect();
         let starts = std::iter::once(0).chain(line_starts(&buf, 0)).collect();
         let (gap, len) = (buf.len(), buf.len());
-        Self {
-            buf,
-            gap,
-            len,
-            starts,
-            moved: 1,
-            shift: 0,
-        }
+        Self { buf, gap, len, starts, moved: 1, shift: 0 }
     }
 
     fn len(&self) -> u32 {
@@ -193,8 +182,7 @@ impl Text {
             kept.iter_mut().for_each(|s| *s = s.wrapping_sub(shift));
         }
         let count = self.starts.len();
-        self.starts
-            .splice(first..last, line_starts(text, start as u32));
+        self.starts.splice(first..last, line_starts(text, start as u32));
         self.moved = last + self.starts.len() - count;
         let grown = (text.len() as u32).wrapping_sub(length as u32);
         self.shift = shift.wrapping_add(grown);
@@ -367,11 +355,7 @@ impl SourceDocument {
         let text = format!("{0}{command}{0}", if scanner.in_math() { "" } else { "$" });
         let caret = start + utf16(&text) as u32;
         let edit = edit(start, length, text);
-        Insertion {
-            edit,
-            caret,
-            fields: vec![],
-        }
+        Insertion { edit, caret, fields: vec![] }
     }
 }
 

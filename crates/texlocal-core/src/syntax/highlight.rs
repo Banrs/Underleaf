@@ -63,11 +63,7 @@ impl Cache {
             tokenize(text.line(index), &mut state, |from, to, kind| {
                 let (start, length) = (base + from as u32, (to - from) as u32);
                 if index >= first {
-                    runs.push(Highlight {
-                        start,
-                        length,
-                        kind,
-                    });
+                    runs.push(Highlight { start, length, kind });
                 }
             });
             if self.states.len() == index + 1 {

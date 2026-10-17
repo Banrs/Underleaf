@@ -47,9 +47,7 @@ fn physical_within(root: &Path, target: &Path, escape_err: &str) -> Result<PathB
         existing = existing.parent().ok_or_else(escape)?;
     }
     let resolved = dunce::canonicalize(existing).map_err(|_| escape())?;
-    let inside = resolved
-        .strip_prefix(&canonical_root)
-        .map_err(|_| escape())?;
+    let inside = resolved.strip_prefix(&canonical_root).map_err(|_| escape())?;
     let suffix = target.strip_prefix(existing).unwrap_or(Path::new(""));
     // Collected, so a whole existing path keeps no trailing slash.
     Ok(inside.join(suffix).components().collect())
@@ -88,9 +86,7 @@ fn check_reserved<S: AsRef<str>>(segments: &[S], write: bool) -> Result<(), Core
         return Err(CoreError::bad_request("Reserved file"));
     }
     if write && first.eq_ignore_ascii_case(BUILD_DIR) {
-        return Err(CoreError::bad_request(
-            "“build” holds the compiled PDF. Choose another name.",
-        ));
+        return Err(CoreError::bad_request("“build” holds the compiled PDF. Choose another name."));
     }
     Ok(())
 }
@@ -143,19 +139,14 @@ pub(crate) fn write_paths(root: &Path, rel: &str) -> Result<(PathBuf, PathBuf), 
 /// A path as the volume compares it: macOS and Windows volumes usually
 /// ignore case.
 pub(crate) fn fold_case(path: &str) -> String {
-    if cfg!(any(target_os = "macos", windows)) {
-        path.to_lowercase()
-    } else {
-        path.to_owned()
-    }
+    if cfg!(any(target_os = "macos", windows)) { path.to_lowercase() } else { path.to_owned() }
 }
 
 /// Whether `path` is the entry `entry` or inside it, both forward-slash project
 /// paths with names spelt as the core listed or made them: open documents'
 /// paths, and the paths a rename or delete names.
 pub(crate) fn within(path: &str, entry: &str) -> bool {
-    path.strip_prefix(entry)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    path.strip_prefix(entry).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 /// What follows the entry `entry` in `path`, both forward-slash project
@@ -191,9 +182,7 @@ pub(crate) fn rel_key(rel: &str) -> Result<String, CoreError> {
 pub fn safe_rel_file(root: &Path, rel: &str) -> Result<String, CoreError> {
     let key = rel_key(rel)?;
     if key.split('/').any(|segment| segment.starts_with('-')) {
-        return Err(CoreError::bad_request(
-            "Path segments cannot start with \"-\"",
-        ));
+        return Err(CoreError::bad_request("Path segments cannot start with \"-\""));
     }
     join_within(root, &key, false)?;
     Ok(key)
@@ -206,12 +195,7 @@ pub(crate) fn sanitize_name(name: &str) -> Result<String, CoreError> {
     let refused = |c: char| {
         std::path::is_separator(c) || (cfg!(windows) && (c.is_control() || "<>:\"|?*".contains(c)))
     };
-    let mut clean: String = name
-        .trim()
-        .chars()
-        .filter(|&c| !refused(c))
-        .take(80)
-        .collect();
+    let mut clean: String = name.trim().chars().filter(|&c| !refused(c)).take(80).collect();
     if cfg!(windows) {
         clean.truncate(clean.trim_end_matches(['.', ' ']).len());
     }

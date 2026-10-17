@@ -11,11 +11,7 @@ use texlocal_core::syntax::{SourceDocument, TextRange};
 /// How many of a random test's documents or rounds: fewer in a debug build, where
 /// each takes about ten times as long, and still every kind of each.
 const fn runs(release: usize, debug: usize) -> usize {
-    if cfg!(debug_assertions) {
-        debug
-    } else {
-        release
-    }
+    if cfg!(debug_assertions) { debug } else { release }
 }
 
 #[rustfmt::skip]
@@ -88,9 +84,7 @@ const SPACING: usize = 4096;
 /// blank line, so an argument an edit leaves open runs on over the rest.
 fn article(seed: &mut Seeded, paragraphs: bool) -> String {
     let mut prose = |pieces: usize| -> String {
-        (0..pieces)
-            .map(|_| PROSE[seed.next(PROSE.len() - !paragraphs as usize)])
-            .collect()
+        (0..pieces).map(|_| PROSE[seed.next(PROSE.len() - !paragraphs as usize)]).collect()
     };
     format!(
         "\\documentclass{{article}}\r\n\\usepackage[utf8]{{inputenc}}\r\n\\begin{{document}}\r\n\
@@ -169,11 +163,7 @@ fn every_answer_after_every_edit_is_a_fresh_reading_s() {
             let length = [0, 1, seed.next(400)][seed.next(3)].min(len - start);
             let selection = range(start as u32, length as u32);
             let at = format!("document {document}, round {round}, {start}+{length}");
-            assert_eq!(
-                answers(&mut doc, selection),
-                answers(&mut fresh, selection),
-                "{at}"
-            );
+            assert_eq!(answers(&mut doc, selection), answers(&mut fresh, selection), "{at}");
             // As a document's first question, read from the start alone.
             let first = SourceDocument::new(&text).insert_symbol("\\alpha", selection);
             assert_eq!(doc.insert_symbol("\\alpha", selection), first, "{at}");
@@ -189,20 +179,14 @@ fn every_answer_after_every_edit_is_a_fresh_reading_s() {
         }
     }
     let asked = documents * rounds;
-    assert!(
-        styled > asked / 8,
-        "{styled} of {asked} selections in a text style"
-    );
+    assert!(styled > asked / 8, "{styled} of {asked} selections in a text style");
 }
 
 #[test]
 fn a_kept_point_s_names_follow_an_edit_past_it() {
     // A \cite argument runs over the point kept at 4096 and closes at 5000.
-    let source = format!(
-        "\\cite{{{}}} word \\ref{{x}} {} end",
-        "a".repeat(4994),
-        "word ".repeat(1200)
-    );
+    let source =
+        format!("\\cite{{{}}} word \\ref{{x}} {} end", "a".repeat(4994), "word ".repeat(1200));
     let mut doc = SourceDocument::new(&source);
     assert!(doc.not_prose(9_000, 10).is_empty()); // keeps the points at 4096 and 8192
     doc.edit(5_000, 1, ""); // the closing brace goes: the argument runs on
@@ -212,11 +196,7 @@ fn a_kept_point_s_names_follow_an_edit_past_it() {
 
     // The mirror: an unclosed \cite{ over the point is closed by a typed brace,
     // and a later unclosed \ref{ is a command again.
-    let source = format!(
-        "\\cite{{{} word \\ref{{ {} end",
-        "a".repeat(5994),
-        "word ".repeat(1200)
-    );
+    let source = format!("\\cite{{{} word \\ref{{ {} end", "a".repeat(5994), "word ".repeat(1200));
     let mut doc = SourceDocument::new(&source);
     doc.not_prose(9_000, 10);
     doc.edit(5_000, 0, "}");
@@ -241,22 +221,14 @@ fn what_runs_over_a_kept_point_keeps_its_start() {
     let maths = "x = 1 \\\\\n\n".repeat(1_000);
     let source = format!("Text \\begin{{equation}}\n{maths}\\end{{equation}} prose");
     let found = SourceDocument::new(&source).not_prose(9_000, 5);
-    assert_eq!(
-        found,
-        [range(5, 9_000)],
-        "from the maths' start to the question's end"
-    );
+    assert_eq!(found, [range(5, 9_000)], "from the maths' start to the question's end");
 
     // A name argument, the same: and what's in it is no command.
     let names = "key, \\label{inside} ".repeat(500);
     let source = format!("See \\cite{{{names}}} and \\ref{{fig}}.");
     let mut doc = SourceDocument::new(&source);
     let found = doc.not_prose(9_000, 5);
-    assert_eq!(
-        found,
-        [range(10, 8_995)],
-        "from the argument's start to the question's end"
-    );
+    assert_eq!(found, [range(10, 8_995)], "from the argument's start to the question's end");
     let after = source.find("fig").unwrap() as u32;
     assert_eq!(doc.not_prose(after, 3), [range(after, 3)]);
 }

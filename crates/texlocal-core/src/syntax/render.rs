@@ -42,29 +42,15 @@ fn display_list(tex: &str, display: bool, color: Rgba) -> Result<DisplayList, St
     for item in &mut list.items {
         let (points, lengths): (Vec<&mut f64>, Vec<&mut f64>) = match item {
             DisplayItem::GlyphPath { x, y, scale, .. } => (vec![x, y], vec![scale]),
-            DisplayItem::Line {
-                x,
-                y,
-                width,
-                thickness: height,
-                ..
-            }
-            | DisplayItem::Rect {
-                x,
-                y,
-                width,
-                height,
-                ..
-            } => (vec![x, y], vec![width, height]),
+            DisplayItem::Line { x, y, width, thickness: height, .. }
+            | DisplayItem::Rect { x, y, width, height, .. } => (vec![x, y], vec![width, height]),
             DisplayItem::Path { x, y, commands, .. } => {
                 let values = commands.iter_mut().flat_map(path_values);
                 ([x, y].into_iter().chain(values).collect(), vec![])
             }
         };
         points.into_iter().for_each(|v| *v = coordinate(*v));
-        lengths
-            .into_iter()
-            .for_each(|v| *v = coordinate(*v).max(0.0));
+        lengths.into_iter().for_each(|v| *v = coordinate(*v).max(0.0));
     }
     list.width = coordinate(list.width).max(0.0);
     (list.height, list.depth) = (coordinate(list.height), coordinate(list.depth));
@@ -82,14 +68,7 @@ fn path_values(command: &mut PathCommand) -> Vec<&mut f64> {
     match command {
         PathCommand::MoveTo { x, y } | PathCommand::LineTo { x, y } => vec![x, y],
         PathCommand::QuadTo { x1, y1, x, y } => vec![x1, y1, x, y],
-        PathCommand::CubicTo {
-            x1,
-            y1,
-            x2,
-            y2,
-            x,
-            y,
-        } => vec![x1, y1, x2, y2, x, y],
+        PathCommand::CubicTo { x1, y1, x2, y2, x, y } => vec![x1, y1, x2, y2, x, y],
         PathCommand::Close => vec![],
     }
 }
@@ -142,14 +121,7 @@ fn glyph_bounds(font: &str, char_code: u32) -> Option<(ttf_parser::Rect, f64)> {
 /// The ink a display list covers, in ems: left, top, right and bottom.
 fn ink(list: &DisplayList) -> Option<[f64; 4]> {
     let boxes = list.items.iter().flat_map(|item| match item {
-        DisplayItem::GlyphPath {
-            x,
-            y,
-            scale,
-            font,
-            char_code,
-            ..
-        } => {
+        DisplayItem::GlyphPath { x, y, scale, font, char_code, .. } => {
             let bounds = glyph_bounds(font, *char_code).map(|(rect, units_per_em)| {
                 let s = scale / units_per_em;
                 let [x0, y0, x1, y1] =
@@ -158,20 +130,10 @@ fn ink(list: &DisplayList) -> Option<[f64; 4]> {
             });
             bounds.into_iter().collect()
         }
-        DisplayItem::Line {
-            x,
-            y,
-            width,
-            thickness,
-            ..
-        } => vec![[*x, y - thickness / 2.0, x + width, y + thickness / 2.0]],
-        DisplayItem::Rect {
-            x,
-            y,
-            width,
-            height,
-            ..
-        } => vec![[*x, *y, x + width, y + height]],
+        DisplayItem::Line { x, y, width, thickness, .. } => {
+            vec![[*x, y - thickness / 2.0, x + width, y + thickness / 2.0]]
+        }
+        DisplayItem::Rect { x, y, width, height, .. } => vec![[*x, *y, x + width, y + height]],
         DisplayItem::Path { x, y, commands, .. } => {
             let mut commands = commands.clone();
             let values = commands.iter_mut().flat_map(path_values).map(|v| *v);
@@ -210,12 +172,7 @@ pub fn glyph_svg(command: &str, size: f64, side: f64, color: Rgba) -> Result<Mat
     let svg = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {s} {s}" width="{s}pt" height="{s}pt"><g transform="translate({dx} {dy})">{body}</g></svg>"#
     );
-    Ok(MathSvg {
-        svg,
-        width: side,
-        height: side,
-        baseline,
-    })
+    Ok(MathSvg { svg, width: side, height: side, baseline })
 }
 
 #[cfg(test)]

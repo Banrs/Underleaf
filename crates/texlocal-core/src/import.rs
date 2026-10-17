@@ -75,28 +75,18 @@ struct Allowance {
 
 /// Far past any real project, so only a dropped home folder or a zip bomb
 /// meets it, before it has filled the disk.
-const IMPORT: Allowance = Allowance {
-    files: 50_000,
-    entries: 500_000,
-    bytes: 4 << 30,
-};
+const IMPORT: Allowance = Allowance { files: 50_000, entries: 500_000, bytes: 4 << 30 };
 
 /// A .tex brings its folder only while that is no larger than a project:
 /// Overleaf's limit on a project's files, and one upload's bytes.
-const TEX_FOLDER: Allowance = Allowance {
-    files: 2000,
-    entries: 20_000,
-    bytes: UPLOAD_MAX_BYTES,
-};
+const TEX_FOLDER: Allowance = Allowance { files: 2000, entries: 20_000, bytes: UPLOAD_MAX_BYTES };
 
 impl Allowance {
     /// Takes `files` files and `bytes` bytes, these one file's: no more than an upload's.
     fn take(&mut self, files: u64, bytes: u64) -> Result<(), CoreError> {
         if bytes > UPLOAD_MAX_BYTES {
             let mb = UPLOAD_MAX_BYTES >> 20;
-            return Err(CoreError::bad_request(format!(
-                "File exceeds the {mb} MB upload limit"
-            )));
+            return Err(CoreError::bad_request(format!("File exceeds the {mb} MB upload limit")));
         }
         let files = self.files.checked_sub(files);
         self.files = files.ok_or_else(|| CoreError::bad_request(TOO_MANY))?;
@@ -344,13 +334,9 @@ fn zip_files(
             files.push(Incoming { path, from });
         }
     }
-    let top = files
-        .first()
-        .and_then(|f| Some(format!("{}/", f.path.split_once('/')?.0)));
+    let top = files.first().and_then(|f| Some(format!("{}/", f.path.split_once('/')?.0)));
     if let Some(top) = top.filter(|top| files.iter().all(|f| f.path.starts_with(top))) {
-        files
-            .iter_mut()
-            .for_each(|f| drop(f.path.drain(..top.len())));
+        files.iter_mut().for_each(|f| drop(f.path.drain(..top.len())));
     }
     Ok(files)
 }
@@ -379,15 +365,9 @@ fn import_project_within(
         Some((src, collect(src, String::new(), &meta, &mut { allowance })?))
     } else {
         src.parent().zip(tex.as_ref()).and_then(|(dir, tex)| {
-            let found = collect(dir, String::new(), &fs::metadata(dir).ok()?, &mut {
-                TEX_FOLDER
-            });
-            let files = found
-                .ok()
-                .filter(|files| files.iter().any(|f| &f.path == tex))?;
-            sanitize_name(&named(dir.file_name()))
-                .ok()
-                .map(|_| (dir, files))
+            let found = collect(dir, String::new(), &fs::metadata(dir).ok()?, &mut { TEX_FOLDER });
+            let files = found.ok().filter(|files| files.iter().any(|f| &f.path == tex))?;
+            sanitize_name(&named(dir.file_name())).ok().map(|_| (dir, files))
         })
     };
     let (base, mut zip, mut files) = if let Some((dir, files)) = folder {
@@ -400,13 +380,7 @@ fn import_project_within(
         let files = collect(src, named(src.file_name()), &meta, &mut { allowance })?;
         (named(src.file_stem()), None, files)
     };
-    files.retain(|f| {
-        !f.path
-            .split('/')
-            .next()
-            .unwrap_or_default()
-            .eq_ignore_ascii_case(BUILD_DIR)
-    });
+    files.retain(|f| !f.path.split('/').next().unwrap_or_default().eq_ignore_ascii_case(BUILD_DIR));
 
     // Made in a hidden folder beside the projects, which no listing or scan
     // shows, then moved into place whole: a failure or panic, which drops
@@ -432,11 +406,7 @@ fn import_project_within(
         allowance.copy(&file.from, zip.as_mut(), &mut dest)?;
         dest.flush()?;
     }
-    let main = if tex.is_some() {
-        tex
-    } else {
-        projects::guess_main_file(staged)?
-    };
+    let main = if tex.is_some() { tex } else { projects::guess_main_file(staged)? };
     let main = main.map_or_else(
         || {
             let (file, content) = templates::files("blank")[0];
@@ -525,10 +495,7 @@ mod tests {
     }
 
     fn incoming(paths: &[&str]) -> Vec<Incoming> {
-        let file = |path: &&str| Incoming {
-            path: path.to_string(),
-            from: Source::Zip(0),
-        };
+        let file = |path: &&str| Incoming { path: path.to_string(), from: Source::Zip(0) };
         paths.iter().map(file).collect()
     }
 
@@ -552,24 +519,10 @@ mod tests {
             let err = clashes(&root, "", &incoming(&batch)).unwrap_err();
             assert_eq!(err.status, 400);
         }
-        let old = [
-            ("figs/a.png", "old"),
-            ("figs/a 2.png", "older"),
-            ("notes", "file"),
-        ];
+        let old = [("figs/a.png", "old"), ("figs/a 2.png", "older"), ("notes", "file")];
         write_files(&root, &old);
-        let batch = [
-            "main.tex",
-            "figs/a.png",
-            "figs/b.png",
-            "notes/x.tex",
-            "notes/y.tex",
-        ];
-        assert!(
-            clashes(&root, "img/", &incoming(&batch))
-                .unwrap()
-                .is_empty()
-        );
+        let batch = ["main.tex", "figs/a.png", "figs/b.png", "notes/x.tex", "notes/y.tex"];
+        assert!(clashes(&root, "img/", &incoming(&batch)).unwrap().is_empty());
         // Keep Both must not pick a name the import itself brings.
         let batch = incoming(&[&batch[..], &["main 2.tex"]].concat());
         let existing = clashes(&root, "", &batch).unwrap();
@@ -610,11 +563,7 @@ mod tests {
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(root.join("figs"), root.join("link")).unwrap();
-            assert!(
-                clashes(&root, "", &incoming(&["link/c.png"]))
-                    .unwrap()
-                    .is_empty()
-            );
+            assert!(clashes(&root, "", &incoming(&["link/c.png"])).unwrap().is_empty());
             put(&service, "link/c.png", b"png", false).unwrap();
             assert_eq!(fs::read(root.join("figs/c.png")).unwrap(), b"png");
         }
@@ -635,10 +584,7 @@ mod tests {
         let paths = [drop.join("figs"), drop.join("main.tex")];
         // Hidden files inside a dropped folder stay behind.
         let out = import_files(&service, "P", "in", &paths, None).unwrap();
-        assert_eq!(
-            sorted(out),
-            ["in/figs/a.png", "in/figs/sub/b.png", "in/main.tex"]
-        );
+        assert_eq!(sorted(out), ["in/figs/a.png", "in/figs/sub/b.png", "in/main.tex"]);
         assert_eq!(fs::read(root.join("in/figs/sub/b.png")).unwrap(), b"b");
         // A batch that would collide writes nothing.
         let twice = [drop.join("main.tex"), drop.join("main.tex")];
@@ -687,10 +633,7 @@ mod tests {
             let handle = {
                 use std::os::windows::fs::OpenOptionsExt;
                 let mut options = fs::OpenOptions::new();
-                options
-                    .access_mode(0x100)
-                    .custom_flags(0x0200_0000)
-                    .open(&path)
+                options.access_mode(0x100).custom_flags(0x0200_0000).open(&path)
             };
             #[cfg(not(windows))]
             let handle = File::open(&path);
@@ -711,35 +654,14 @@ mod tests {
     #[test]
     fn an_import_past_its_allowance_or_that_fails_makes_no_project() {
         let (dir, service) = library(&[]);
-        let small = Allowance {
-            files: 3,
-            entries: 8,
-            bytes: 25,
-        };
-        let fails = |src: &Path| {
-            import_project_within(&service, src, small)
-                .unwrap_err()
-                .message
-        };
+        let small = Allowance { files: 3, entries: 8, bytes: 25 };
+        let fails = |src: &Path| import_project_within(&service, src, small).unwrap_err().message;
         let many = dir.path().join("many.zip");
-        zip_of(
-            &many,
-            &[
-                ("a.tex", "a"),
-                ("b.tex", "b"),
-                ("c.tex", "c"),
-                ("d.tex", "d"),
-            ],
-            false,
-        );
+        zip_of(&many, &[("a.tex", "a"), ("b.tex", "b"), ("c.tex", "c"), ("d.tex", "d")], false);
         assert_eq!(fails(&many), TOO_MANY);
         let large = dir.path().join("large.zip");
         let text = "0123456789";
-        zip_of(
-            &large,
-            &[("a.tex", text), ("b.tex", text), ("c.tex", text)],
-            false,
-        );
+        zip_of(&large, &[("a.tex", text), ("b.tex", text), ("c.tex", text)], false);
         assert_eq!(fails(&large), TOO_BIG);
 
         // A zip whose headers both say its file is 1 byte stops at the bytes
@@ -760,10 +682,7 @@ mod tests {
 
         // A folder's files count, and so do its entries, even empty folders.
         let src = dir.path().join("Many");
-        write_files(
-            &src,
-            &[("a.tex", ""), ("b.tex", ""), ("c.tex", ""), ("d.tex", "")],
-        );
+        write_files(&src, &[("a.tex", ""), ("b.tex", ""), ("c.tex", ""), ("d.tex", "")]);
         assert_eq!(fails(&src), TOO_MANY);
         for i in 0..10 {
             fs::create_dir_all(dir.path().join(format!("Hollow/d{i}"))).unwrap();
@@ -772,11 +691,7 @@ mod tests {
 
         // A zip whose second file's bytes no longer match its checksum.
         let broken = dir.path().join("broken.zip");
-        zip_of(
-            &broken,
-            &[("a.tex", "fine"), ("b.tex", "CORRUPTED-LATER")],
-            true,
-        );
+        zip_of(&broken, &[("a.tex", "fine"), ("b.tex", "CORRUPTED-LATER")], true);
         let mut bytes = fs::read(&broken).unwrap();
         let at = bytes.windows(15).position(|w| w == b"CORRUPTED-LATER");
         bytes[at.unwrap()] = b'X';
@@ -890,10 +805,7 @@ mod tests {
         // file joins it.
         let info = import_project(&service, &src.join("refs.bib")).unwrap();
         assert_eq!(info.main_file, "main.tex");
-        assert_eq!(
-            files_in(&service.data_dir.join("refs")),
-            ["main.tex", "refs.bib"]
-        );
+        assert_eq!(files_in(&service.data_dir.join("refs")), ["main.tex", "refs.bib"]);
 
         // In a folder larger than a project, by its bytes or by more than 2000
         // files, a .tex comes alone.

@@ -140,11 +140,7 @@ impl Client {
     /// The events of `kind` from `from` on.
     fn since(&self, from: usize, kind: &str) -> Vec<Value> {
         let events = self.events.lock().unwrap();
-        events[from..]
-            .iter()
-            .filter(|e| e["type"] == kind)
-            .cloned()
-            .collect()
+        events[from..].iter().filter(|e| e["type"] == kind).cloned().collect()
     }
 }
 
@@ -155,12 +151,7 @@ fn retype(document: &Document, text: &str) {
     let new: Vec<u16> = text.encode_utf16().collect();
     let start = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
     let (old, new) = (&old[start..], &new[start..]);
-    let end = old
-        .iter()
-        .rev()
-        .zip(new.iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
+    let end = old.iter().rev().zip(new.iter().rev()).take_while(|(a, b)| a == b).count();
     let inserted = String::from_utf16(&new[..new.len() - end]).unwrap();
     document.edit(start as u32, (old.len() - end) as u32, &inserted);
 }
@@ -189,12 +180,7 @@ async fn run(library: &Path) {
     let listener = move |event: &Value| sink.lock().unwrap().push(event.clone());
     sessions.set_listener(Some(Box::new(listener)));
     let opened = AtomicU64::new(0);
-    let c = Client {
-        sessions,
-        events,
-        id,
-        opened,
-    };
+    let c = Client { sessions, events, id, opened };
     let main = "\\documentclass{article}\n\\begin{document}\n\\typeout{UL_MAIN_INITIAL}\nHello café. $x^2+y^2=z^2$\n\\input{section.tex}\n\\end{document}\n";
     let section = "\\typeout{UL_SECTION_INITIAL}\nIncluded text.\n";
     let write = |path: &str, text: &str| {
@@ -211,8 +197,7 @@ async fn run(library: &Path) {
     // pane. The main file and the file it includes.
     let a = c.open().await;
     let main_doc = c.document(a, "main.tex").await;
-    c.ask(a, "live_view", json!({ "first": 1, "last": 1 }))
-        .await;
+    c.ask(a, "live_view", json!({ "first": 1, "last": 1 })).await;
     c.start(a).await;
     c.shows(a, "UL_SECTION_INITIAL").await;
 
@@ -267,20 +252,14 @@ async fn run(library: &Path) {
 
     // A main file in a folder, its inputs from there: the session starts the preview
     // again for it.
-    write(
-        "nested/main.tex",
-        &main.replace("UL_MAIN_INITIAL", "UL_NESTED_MAIN"),
-    );
+    write("nested/main.tex", &main.replace("UL_MAIN_INITIAL", "UL_NESTED_MAIN"));
     let nested = section.replace("UL_SECTION_INITIAL", "UL_NESTED_SECTION");
     write("nested/section.tex", &nested);
     let nested = json!({ "patch": { "mainFile": "nested/main.tex" } });
     c.ask(a, "set_settings", nested).await;
     c.shows(a, "UL_NESTED_SECTION").await;
     let nested_doc = c.document(a, "nested/section.tex").await;
-    retype(
-        &nested_doc,
-        "\\typeout{UL_NESTED_UNSAVED}\nNested live edit.\n",
-    );
+    retype(&nested_doc, "\\typeout{UL_NESTED_UNSAVED}\nNested live edit.\n");
     c.shows(a, "UL_NESTED_UNSAVED").await;
 
     // The pages in view as PDFs of their own as they change, and the whole document when
@@ -305,19 +284,13 @@ async fn run(library: &Path) {
     let second = |e: &Value| e["page"] == 1;
     let page = c.event(&mut from, a, "live_page", second).await;
     is_pdf(&page["path"]);
-    println!(
-        "A key on the page in view: {} ms",
-        began.elapsed().as_millis()
-    );
+    println!("A key on the page in view: {} ms", began.elapsed().as_millis());
     let complete = |e: &Value| e["complete"] == true;
     let after = c.event(&mut from, a, "live_document", complete).await;
     assert_eq!(after["changed"], json!([[1, 1]]));
     let pages = c.since(paging, "live_page");
     let first = pages.iter().find(|p| p["page"] == 0);
-    assert!(
-        first.is_none(),
-        "a page out of view, and unchanged, was sent"
-    );
+    assert!(first.is_none(), "a page out of view, and unchanged, was sent");
 
     // A run a half-typed construct stops shows as halted once it has lasted, and no longer
     // once the construct is closed.
@@ -341,10 +314,7 @@ async fn run(library: &Path) {
     let stopped = |e: &Value| e["phase"] == "stopped";
     c.event(&mut ended, a, "live", stopped).await;
     c.ask(a, "close", json!({})).await;
-    retype(
-        &taken,
-        &owner.replace("UL_REPLACEMENT_OWNER", "UL_AFTER_CLOSE"),
-    );
+    retype(&taken, &owner.replace("UL_REPLACEMENT_OWNER", "UL_AFTER_CLOSE"));
     c.shows(b, "UL_AFTER_CLOSE").await;
 
     // TeXpresso never ended on its own, and no failure was reported.

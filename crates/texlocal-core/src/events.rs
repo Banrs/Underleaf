@@ -23,21 +23,16 @@ impl Default for Hub {
         let listener: Arc<RwLock<Option<Listener>>> = Arc::default();
         let held = Arc::clone(&listener);
         // Ends once every sender has gone: the hub's and its sessions'.
-        let spawned = std::thread::Builder::new()
-            .name("texlocal-events".into())
-            .spawn(move || {
-                for event in events {
-                    let listener = held.read().unwrap_or_else(PoisonError::into_inner);
-                    if let Some(listen) = listener.as_ref() {
-                        // A host's panic must not end delivery for the rest.
-                        let _ = catch_unwind(AssertUnwindSafe(|| listen(&event)));
-                    }
+        let spawned = std::thread::Builder::new().name("texlocal-events".into()).spawn(move || {
+            for event in events {
+                let listener = held.read().unwrap_or_else(PoisonError::into_inner);
+                if let Some(listen) = listener.as_ref() {
+                    // A host's panic must not end delivery for the rest.
+                    let _ = catch_unwind(AssertUnwindSafe(|| listen(&event)));
                 }
-            });
-        Self {
-            queue: spawned.ok().map(|_| queue),
-            listener,
-        }
+            }
+        });
+        Self { queue: spawned.ok().map(|_| queue), listener }
     }
 }
 
@@ -46,10 +41,7 @@ impl Hub {
     /// so a host may free what it captured: the thread holds the read lock
     /// through each call.
     pub(crate) fn set_listener(&self, listener: Option<Listener>) {
-        *self
-            .listener
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = listener;
+        *self.listener.write().unwrap_or_else(PoisonError::into_inner) = listener;
     }
 
     /// A sender for one session's events, in the hub's order.
@@ -95,9 +87,7 @@ mod tests {
             emitter.send(json!({ "n": n }));
         }
         let wait = Duration::from_secs(5);
-        let received: Vec<u64> = (0..50)
-            .map(|_| numbers.recv_timeout(wait).unwrap())
-            .collect();
+        let received: Vec<u64> = (0..50).map(|_| numbers.recv_timeout(wait).unwrap()).collect();
         assert_eq!(received, (0..50).collect::<Vec<_>>());
         hub.set_listener(None);
         one.send(json!({ "n": 99 }));
@@ -130,9 +120,6 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
             release.send(()).unwrap();
         });
-        assert_eq!(
-            log.try_iter().collect::<Vec<_>>(),
-            ["call ended", "replaced"]
-        );
+        assert_eq!(log.try_iter().collect::<Vec<_>>(), ["call ended", "replaced"]);
     }
 }
