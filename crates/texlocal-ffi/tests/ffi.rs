@@ -16,6 +16,10 @@ use texlocal_ffi::{
     tl_syntax_call,
 };
 
+fn c(s: &str) -> CString {
+    CString::new(s).unwrap()
+}
+
 /// The JSON a call answered, read and handed back to the library to free; None
 /// for no answer.
 unsafe fn take_json(out: *mut c_char) -> Option<Value> {
@@ -31,16 +35,10 @@ unsafe fn take_json(out: *mut c_char) -> Option<Value> {
 /// source answers, if any.
 unsafe fn edit(source: *mut TlSource, start: u32, length: u32, text: &[u8]) -> Option<Value> {
     let changing = TextRange { start, length };
-    let (bytes, len) = (text.as_ptr(), text.len());
+    let (bytes, len, changing) = (text.as_ptr(), text.len(), &raw const changing);
     unsafe {
         take_json(tl_source_edit(
-            source,
-            start,
-            length,
-            bytes,
-            len,
-            &raw const changing,
-            false,
+            source, start, length, bytes, len, changing, false,
         ))
     }
 }
@@ -56,31 +54,23 @@ unsafe fn text_of(source: *mut TlSource) -> String {
 
 /// A command to a source mirror, as the editor sends one.
 unsafe fn source_call(source: *mut TlSource, command: &str, args: Value) -> Option<Value> {
-    let command = CString::new(command).unwrap();
-    let args = CString::new(args.to_string()).unwrap();
-    unsafe { take_json(tl_source_call(source, command.as_ptr(), args.as_ptr())) }
+    let args = c(&args.to_string());
+    unsafe { take_json(tl_source_call(source, c(command).as_ptr(), args.as_ptr())) }
 }
 
-fn call(handle: *const TlHandle, command: &str, args: Option<Value>) -> Value {
-    call_raw(handle, command, args.map(|a| a.to_string()).as_deref())
-}
-
+/// `command` through `tl_call`, its arguments null for none.
 fn call_raw(handle: *const TlHandle, command: &str, args: Option<&str>) -> Value {
-    let command = CString::new(command).unwrap();
-    let args = args.map(|a| CString::new(a).unwrap());
-    unsafe {
-        let out = tl_call(
-            handle,
-            command.as_ptr(),
-            args.as_ref().map_or(ptr::null(), |a| a.as_ptr()),
-        );
-        take_json(out).unwrap()
-    }
+    let args = args.map(c);
+    let args = args.as_ref().map_or(ptr::null(), |a| a.as_ptr());
+    unsafe { take_json(tl_call(handle, c(command).as_ptr(), args)).unwrap() }
+}
+
+fn call(handle: *const TlHandle, command: &str, args: Value) -> Value {
+    call_raw(handle, command, Some(&args.to_string()))
 }
 
 fn open(data: &Path) -> *mut TlHandle {
-    let path = CString::new(data.to_str().unwrap()).unwrap();
-    let handle = unsafe { tl_open(path.as_ptr()) };
+    let handle = unsafe { tl_open(c(data.to_str().unwrap()).as_ptr()) };
     assert!(!handle.is_null());
     handle
 }
@@ -91,49 +81,51 @@ fn open_with_project(data: &Path) -> *mut TlHandle {
     let created = call(
         handle,
         "create_project",
-        Some(json!({ "name": "P", "template": "blank" })),
+        json!({ "name": "P", "template": "blank" }),
     );
     assert_eq!(created["ok"]["id"], "P");
     handle
+}
+
+/// A session on `P` with main.tex open in it: the session's number.
+fn open_main(handle: *const TlHandle) -> u64 {
+    let opened = call(handle, "session_open", json!({ "id": "P", "session": 1 }));
+    let session = opened["ok"]["session"].as_u64().unwrap();
+    let args = json!({ "session": session, "path": "main.tex" });
+    let opened = call(handle, "session_open_document", args);
+    assert_eq!(opened, json!({ "ok": null }));
+    session
+}
+
+/// The source of a document `session` has open.
+unsafe fn session_source(handle: *const TlHandle, session: u64, path: &str) -> *mut TlSource {
+    unsafe { tl_session_source(handle, session, c(path).as_ptr()) }
 }
 
 #[test]
 fn commands_round_trip_through_the_c_abi() {
     let dir = tempfile::tempdir().unwrap();
     let handle = open_with_project(dir.path());
-    assert_eq!(call(handle, "list_projects", None)["ok"][0]["id"], "P");
+    assert_eq!(call_raw(handle, "list_projects", None)["ok"][0]["id"], "P");
 
     call(
         handle,
         "write_file",
-        Some(json!({ "id": "P", "path": "a.tex", "text": "x" })),
+        json!({ "id": "P", "path": "a.tex", "text": "x" }),
     );
-    assert_eq!(
-        call(
-            handle,
-            "read_file",
-            Some(json!({ "id": "P", "path": "a.tex" }))
-        )["ok"]["text"],
-        "x"
-    );
+    let read = call(handle, "read_file", json!({ "id": "P", "path": "a.tex" }));
+    assert_eq!(read["ok"]["text"], "x");
 
+    let found = call(handle, "search_project", json!({ "id": "P", "query": "x" }));
     assert_eq!(
-        call(
-            handle,
-            "search_project",
-            Some(json!({ "id": "P", "query": "x" }))
-        )["ok"],
+        found["ok"],
         json!([{ "file": "a.tex", "hits": [{ "file": "a.tex", "line": 1, "column": 0, "length": 1, "before": "", "match": "x", "after": "" }] }])
     );
 
     // Errors come back as an envelope with the core's status, never a crash.
-    let bad = call(
-        handle,
-        "read_file",
-        Some(json!({ "id": "P", "path": "../x" })),
-    );
+    let bad = call(handle, "read_file", json!({ "id": "P", "path": "../x" }));
     assert_eq!(bad["status"], 400);
-    assert_eq!(call(handle, "nope", None)["status"], 404);
+    assert_eq!(call_raw(handle, "nope", None)["status"], 404);
 
     unsafe { tl_close(handle) };
 }
@@ -143,18 +135,14 @@ fn native_only_commands_resolve_absolute_paths() {
     let dir = tempfile::tempdir().unwrap();
     let handle = open_with_project(dir.path());
 
-    let escape = call(handle, "project_root", Some(json!({ "id": "../x" })));
+    let escape = call(handle, "project_root", json!({ "id": "../x" }));
     assert_eq!(escape["status"], 400);
-    let root = call(handle, "project_root", Some(json!({ "id": "P" })));
+    let root = call(handle, "project_root", json!({ "id": "P" }));
     assert!(root["ok"].as_str().unwrap().ends_with("P"));
 
     let dest = dir.path().join("out.zip");
-    let exported = call(
-        handle,
-        "export_zip",
-        Some(json!({ "id": "P", "dest": dest.to_str().unwrap() })),
-    );
-    assert_eq!(exported, json!({ "ok": null }));
+    let args = json!({ "id": "P", "dest": dest.to_str().unwrap() });
+    assert_eq!(call(handle, "export_zip", args), json!({ "ok": null }));
     assert!(dest.is_file());
 
     unsafe { tl_close(handle) };
@@ -162,23 +150,21 @@ fn native_only_commands_resolve_absolute_paths() {
 
 #[test]
 fn null_and_malformed_inputs_are_rejected_safely() {
-    let out = call(ptr::null(), "list_projects", None);
+    let out = call_raw(ptr::null(), "list_projects", None);
     assert_eq!(out["status"], 400);
     // The host names its library folder: there is no default.
     assert!(unsafe { tl_open(ptr::null()) }.is_null());
 
     let dir = tempfile::tempdir().unwrap();
     let handle = open(dir.path());
-    assert_eq!(
-        call_raw(handle, "list_projects", Some("{not json"))["status"],
-        400
-    );
+    let bad = call_raw(handle, "list_projects", Some("{not json"));
+    assert_eq!(bad["status"], 400);
     // Import arguments of the wrong type are the caller's mistake, not an I/O error.
     for args in [
         json!({ "id": "P", "paths": [42] }),
         json!({ "id": "P", "conflict": "merge" }),
     ] {
-        assert_eq!(call(handle, "import_files", Some(args))["status"], 400);
+        assert_eq!(call(handle, "import_files", args)["status"], 400);
     }
     unsafe {
         tl_free(ptr::null_mut());
@@ -200,13 +186,9 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         assert_eq!(std::slice::from_raw_parts(runs, count), [3, 5, 0]);
         tl_source_free_runs(runs, count);
         assert_eq!(text_of(source), "é \n\\emph{x}");
-        let symbol = source_call(
-            source,
-            "insert_symbol",
-            json!({ "command": "\\alpha", "selection": { "start": 0, "length": 1 } }),
-        );
+        let symbol = json!({ "command": "\\alpha", "selection": { "start": 0, "length": 1 } });
         assert_eq!(
-            symbol,
+            source_call(source, "insert_symbol", symbol),
             Some(
                 json!({ "edit": { "start": 0, "length": 1, "text": "$\\alpha$" }, "caret": 8, "fields": [] })
             )
@@ -229,11 +211,8 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         let text = "\\begin{}\n\\end{}";
         let source = tl_source_new(text.as_ptr(), text.len());
         let fields = json!([{ "start": 7, "length": 0, "index": 0 }, { "start": 14, "length": 0, "index": 0 }]);
-        source_call(
-            source,
-            "start_snippet",
-            json!({ "fields": fields, "at": 0 }),
-        );
+        let snippet = json!({ "fields": fields, "at": 0 });
+        source_call(source, "start_snippet", snippet);
         let mirror = edit(source, 7, 0, b"x");
         assert_eq!(
             mirror,
@@ -244,8 +223,9 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         tl_source_select(source, 8, 0, false);
         assert_eq!(text_of(source), "\\begin{x}\n\\end{x}");
         // The snippet lasts while the selection is in its fields.
+        let mirror = edit(source, 8, 0, b"y");
         assert_eq!(
-            edit(source, 8, 0, b"y"),
+            mirror,
             Some(json!([{ "start": 16, "length": 1, "text": "xy" }]))
         );
         tl_source_select(source, 0, 0, false);
@@ -258,7 +238,6 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
 /// theme's colours this way.
 #[test]
 fn syntax_commands_round_trip_through_the_c_abi() {
-    let c = |s: &str| CString::new(s).unwrap();
     let light = json!({ "theme": "overleaf", "dark": false, "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0.08] });
     unsafe {
         let args = c(&light.to_string());
@@ -275,7 +254,6 @@ fn syntax_commands_round_trip_through_the_c_abi() {
 
 #[test]
 fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
-    let c = |s: &str| CString::new(s).unwrap();
     unsafe {
         let none: *mut TlSource = ptr::null_mut();
         assert_eq!(edit(none, 0, 0, b"x"), None);
@@ -349,23 +327,29 @@ fn until(seen: &mpsc::Receiver<Value>, found: impl Fn(&Value) -> bool) -> Value 
     }
 }
 
+/// `command` with `args` through `tl_call_async`, its answer going to `sink`.
+fn call_async(handle: *const TlHandle, command: &str, args: Value, sink: &mpsc::Sender<Value>) {
+    let (command, args) = (c(command), c(&args.to_string()));
+    unsafe {
+        tl_call_async(
+            handle,
+            command.as_ptr(),
+            args.as_ptr(),
+            Some(collect),
+            context(sink),
+        );
+    }
+}
+
 #[test]
 fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
     let dir = tempfile::tempdir().unwrap();
     let handle = open_with_project(dir.path());
     let empty = json!({ "id": "P", "path": "main.tex", "text": "" });
-    call(handle, "write_file", Some(empty));
-    let opened = call(
-        handle,
-        "session_open",
-        Some(json!({ "id": "P", "session": 1 })),
-    );
-    let session = opened["ok"]["session"].as_u64().unwrap();
-    let args = json!({ "session": session, "path": "main.tex" });
-    call(handle, "session_open_document", Some(args));
-    let path = CString::new("main.tex").unwrap();
+    call(handle, "write_file", empty);
+    let session = open_main(handle);
     unsafe {
-        let source = tl_session_source(handle, session, path.as_ptr());
+        let source = session_source(handle, session, "main.tex");
         // The editor closed a bracket for the user at the start of the file.
         let typed = json!({ "selection": { "start": 0, "length": 0 }, "text": "{" });
         let key = source_call(source, "type", typed).unwrap();
@@ -378,18 +362,18 @@ fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
         tl_source_free(source);
 
         // A bracket closed in one visit is only text in the next.
-        let source = tl_session_source(handle, session, path.as_ptr());
+        let source = session_source(handle, session, "main.tex");
         let typed = json!({ "selection": { "start": 2, "length": 0 }, "text": "(" });
         source_call(source, "type", typed);
         edit(source, 2, 0, b"()");
         tl_source_free(source);
-        let source = tl_session_source(handle, session, path.as_ptr());
+        let source = session_source(handle, session, "main.tex");
         let closing = json!({ "selection": { "start": 3, "length": 0 }, "text": ")" });
         let key = source_call(source, "type", closing).unwrap();
         assert_eq!(key["selection"], Value::Null, "the closer was forgotten");
         tl_source_free(source);
+        tl_close(handle);
     }
-    unsafe { tl_close(handle) };
 }
 
 #[test]
@@ -398,21 +382,11 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
     let handle = open_with_project(dir.path());
     let (sink, events) = collector();
     unsafe { tl_set_listener(handle, Some(collect), context(&sink)) };
-    let opened = call(
-        handle,
-        "session_open",
-        Some(json!({ "id": "P", "session": 1 })),
-    );
-    let session = opened["ok"]["session"].as_u64().unwrap();
-    let args = json!({ "session": session, "path": "main.tex" });
-    let opened = call(handle, "session_open_document", Some(args));
-    assert_eq!(opened, json!({ "ok": null }));
-    let path = CString::new("main.tex").unwrap();
-    let source = unsafe { tl_session_source(handle, session, path.as_ptr()) };
+    let session = open_main(handle);
+    let source = unsafe { session_source(handle, session, "main.tex") };
     assert!(!source.is_null());
     let text = unsafe { text_of(source) };
-    let missing = CString::new("other.tex").unwrap();
-    assert!(unsafe { tl_session_source(handle, session, missing.as_ptr()) }.is_null());
+    assert!(unsafe { session_source(handle, session, "other.tex") }.is_null());
     let added = "% note\n";
     unsafe { edit(source, 0, 0, added.as_bytes()) };
     // The highlighting reads the session's text.
@@ -420,47 +394,27 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
     let runs = unsafe { tl_source_highlights(source, 0, 6, &raw mut count) };
     assert_eq!(count, 3);
     unsafe { tl_source_free_runs(runs, count) };
-    let saved = call(handle, "session_save", Some(json!({ "session": session })));
+    let saved = call(handle, "session_save", json!({ "session": session }));
     assert_eq!(saved["ok"]["saved"], true);
     let disk = std::fs::read_to_string(dir.path().join("P/main.tex")).unwrap();
     assert_eq!(disk, format!("{added}{text}"));
     until(&events, |e| e["type"] == "saved" && e["session"] == session);
     // A reload is the disk's text, not an edit to save.
     unsafe { tl_source_reload(source, b"x".as_ptr(), 1) };
-    let state = call(handle, "session_state", Some(json!({ "session": session })));
+    let state = call(handle, "session_state", json!({ "session": session }));
     assert_eq!(state["ok"]["documents"][0]["dirty"], false);
     unsafe { tl_source_free(source) };
     // Without blocking: the answer comes to the callback.
     let (answered, answers) = collector();
-    let command = CString::new("session_state").unwrap();
-    let args = CString::new(json!({ "session": session }).to_string()).unwrap();
-    unsafe {
-        tl_call_async(
-            handle,
-            command.as_ptr(),
-            args.as_ptr(),
-            Some(collect),
-            context(&answered),
-        );
-    };
+    call_async(
+        handle,
+        "session_state",
+        json!({ "session": session }),
+        &answered,
+    );
     let answer = until(&answers, |_| true);
     assert!(answer["ok"]["documents"].is_array());
     unsafe { tl_close(handle) };
-}
-
-/// `command` with `args` through `tl_call_async`, its answer going to `sink`.
-fn call_async(handle: *const TlHandle, command: &str, args: Value, sink: &mpsc::Sender<Value>) {
-    let command = CString::new(command).unwrap();
-    let args = CString::new(args.to_string()).unwrap();
-    unsafe {
-        tl_call_async(
-            handle,
-            command.as_ptr(),
-            args.as_ptr(),
-            Some(collect),
-            context(sink),
-        );
-    };
 }
 
 #[test]
@@ -468,20 +422,11 @@ fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
     let dir = tempfile::tempdir().unwrap();
     let handle = open_with_project(dir.path());
     let (sink, answers) = collector();
-    call_async(
-        handle,
-        "session_open",
-        json!({ "id": "P", "session": 7 }),
-        &sink,
-    );
+    let seven = json!({ "id": "P", "session": 7 });
+    call_async(handle, "session_open", seven.clone(), &sink);
     assert_eq!(until(&answers, |_| true)["ok"]["session"], 7);
     // The host numbers its sessions: a number open already is refused.
-    let taken = call(
-        handle,
-        "session_open",
-        Some(json!({ "id": "P", "session": 7 })),
-    );
-    assert_eq!(taken["status"], 409);
+    assert_eq!(call(handle, "session_open", seven)["status"], 409);
     for round in 0..50 {
         let last = round % 2 == 0;
         for auto in [!last, last, !last, last] {

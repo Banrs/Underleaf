@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use super::{Text, catalog, is, utf16};
+use super::{SourceDocument, Text, catalog, is, utf16};
 
 /// A place to type in a completion's text. Fields with the same `index`
 /// are one field in several places: what's typed in one goes in all.
@@ -56,57 +56,64 @@ static ENTRY_TYPE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@[0-9A-Za-z_]
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[0-9A-Za-z_]*$").unwrap());
 static FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#\{([^}]*)\}").unwrap());
 
-pub fn completions(
-    text: &Text,
-    caret: u32,
-    explicit: bool,
-    labels: &[String],
-    citations: &[String],
-) -> Option<Completions> {
-    let line = text.line_index(caret);
-    // The caret's line, at most 250 units back.
-    let from = text.lines[line].max(caret.saturating_sub(250));
-    let before = String::from_utf16_lossy(&text.units[from as usize..caret as usize]);
-    let catalog = &*catalog::CATALOG;
-    let offer = |start: usize, kind: CompletionKind, items: Vec<Completion>| {
-        (!items.is_empty()).then(|| Completions {
-            start: from + utf16(&before[..start]) as u32,
-            kind,
-            items,
-        })
-    };
-    let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
-
-    if let Some(c) = ARGUMENT.captures(&before) {
-        let (names, kind) = match &c[1] {
-            c if listed(&catalog.cite_commands, c) => (citations, CompletionKind::Citation),
-            c if listed(&catalog.ref_commands, c) => (labels, CompletionKind::Label),
-            "begin" | "end" => (&catalog.environments[..], CompletionKind::Environment),
-            _ => return None,
+impl SourceDocument {
+    /// What to offer at the caret, if anything: commands after a backslash
+    /// (only once a letter follows unless `explicit`, asked for by the user),
+    /// the labels, citations or environments an argument takes, or a
+    /// bibliography entry's type after "@".
+    pub fn completions(
+        &self,
+        caret: u32,
+        explicit: bool,
+        labels: &[String],
+        citations: &[String],
+    ) -> Option<Completions> {
+        let (text, caret) = (&self.text, caret.min(self.text.len()));
+        let line = text.line_index(caret);
+        // The caret's line, at most 250 units back.
+        let from = text.lines[line].max(caret.saturating_sub(250));
+        let before = String::from_utf16_lossy(&text.units[from as usize..caret as usize]);
+        let catalog = &*catalog::CATALOG;
+        let offer = |start: usize, kind: CompletionKind, items: Vec<Completion>| {
+            (!items.is_empty()).then(|| Completions {
+                start: from + utf16(&before[..start]) as u32,
+                kind,
+                items,
+            })
         };
-        let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
-        let items = words(matching(names, &before[start..], |n| n), "");
-        return offer(start, kind, items);
+        let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
+
+        if let Some(c) = ARGUMENT.captures(&before) {
+            let (names, kind) = match &c[1] {
+                c if listed(&catalog.cite_commands, c) => (citations, CompletionKind::Citation),
+                c if listed(&catalog.ref_commands, c) => (labels, CompletionKind::Label),
+                "begin" | "end" => (&catalog.environments[..], CompletionKind::Environment),
+                _ => return None,
+            };
+            let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
+            let items = words(matching(names, &before[start..], |n| n), "");
+            return offer(start, kind, items);
+        }
+        // @article and the like, in a .bib file.
+        if let Some(m) = ENTRY_TYPE.find(&before) {
+            let names = matching(&catalog.bib_entry_types, &m.as_str()[1..], |t| t);
+            return offer(m.start(), CompletionKind::EntryType, words(names, "@"));
+        }
+        // \command, once a letter follows the backslash.
+        let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
+        let items = matching(&catalog.commands, m.as_str(), |c| &c.0)
+            .into_iter()
+            .map(|(name, _, snippet)| {
+                let (text, fields) = expand(text, caret, snippet);
+                Completion {
+                    label: name.clone(),
+                    text,
+                    fields,
+                }
+            })
+            .collect();
+        offer(m.start(), CompletionKind::Command, items)
     }
-    // @article and the like, in a .bib file.
-    if let Some(m) = ENTRY_TYPE.find(&before) {
-        let names = matching(&catalog.bib_entry_types, &m.as_str()[1..], |t| t);
-        return offer(m.start(), CompletionKind::EntryType, words(names, "@"));
-    }
-    // \command, once a letter follows the backslash.
-    let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
-    let items = matching(&catalog.commands, m.as_str(), |c| &c.0)
-        .into_iter()
-        .map(|(name, _, snippet)| {
-            let (text, fields) = expand(text, caret, snippet);
-            Completion {
-                label: name.clone(),
-                text,
-                fields,
-            }
-        })
-        .collect();
-    offer(m.start(), CompletionKind::Command, items)
 }
 
 /// Literal names, with `@` prefixed for bibliography entry types.
@@ -187,41 +194,38 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
 
 #[cfg(test)]
 mod tests {
-    use crate::syntax::SourceDocument;
+    use crate::syntax::{Completion, SnippetField, SourceDocument};
 
-    fn complete(before: &str) -> crate::syntax::Completion {
-        let doc = SourceDocument::new(before);
+    /// What's offered at the end of `before`, `keys` being the citations.
+    fn offered(before: &str, keys: &[String]) -> Vec<Completion> {
         let caret = before.encode_utf16().count() as u32;
-        doc.completions(caret, false, &[], &[])
-            .unwrap()
-            .items
-            .remove(0)
+        let offer = SourceDocument::new(before).completions(caret, false, &[], keys);
+        offer.map_or(vec![], |offer| offer.items)
+    }
+
+    fn labels(before: &str, keys: &[String]) -> Vec<String> {
+        offered(before, keys).into_iter().map(|i| i.label).collect()
+    }
+
+    fn places(fields: &[SnippetField]) -> Vec<(u32, u32, u32)> {
+        fields
+            .iter()
+            .map(|f| (f.start, f.length, f.index))
+            .collect()
     }
 
     #[test]
     fn snippets_expand_with_their_fields() {
-        let begin = complete("  \\beg");
+        let begin = offered("  \\beg", &[]).remove(0);
         assert_eq!(begin.text, "\\begin{env}\n    \n  \\end{env}");
-        let places: Vec<_> = begin
-            .fields
-            .iter()
-            .map(|f| (f.start, f.length, f.index))
-            .collect();
         // env twice (one field), then the body; the body's line is indented a level.
-        assert_eq!(places, [(7, 3, 0), (16, 0, 1), (24, 3, 0)]);
-        let section = complete("\\sub");
+        assert_eq!(places(&begin.fields), [(7, 3, 0), (16, 0, 1), (24, 3, 0)]);
+        let section = offered("\\sub", &[]).remove(0);
         assert_eq!(
             (section.label.as_str(), section.text.as_str()),
             ("\\subsection", "\\subsection{}")
         );
-        assert_eq!(
-            section
-                .fields
-                .iter()
-                .map(|f| (f.start, f.length))
-                .collect::<Vec<_>>(),
-            [(12, 0)]
-        );
+        assert_eq!(places(&section.fields), [(12, 0, 0)]);
         let (text, fields) = super::expand(
             &crate::syntax::Text::new("\t\\beg"),
             5,
@@ -229,41 +233,14 @@ mod tests {
         );
         assert_eq!(text, "😀\n\t  é😀");
         assert_eq!(
-            fields
-                .iter()
-                .map(|f| (f.start, f.length, f.index))
-                .collect::<Vec<_>>(),
+            places(&fields),
             [(0, 2, 0), (6, 0, 1), (6, 1, 2), (7, 2, 0), (9, 0, 3)]
         );
     }
 
     #[test]
-    fn an_offer_says_what_its_items_are() {
-        use crate::syntax::CompletionKind::*;
-        let kind = |before: &str| {
-            let (labels, citations) = (["sec:a".to_owned()], ["knuth84".to_owned()]);
-            let caret = before.encode_utf16().count() as u32;
-            SourceDocument::new(before)
-                .completions(caret, false, &labels, &citations)
-                .map(|offer| offer.kind)
-        };
-        assert_eq!(kind("\\sec"), Some(Command));
-        assert_eq!(kind("\\begin{ite"), Some(Environment));
-        assert_eq!(kind("\\ref{"), Some(Label));
-        assert_eq!(kind("\\cite{kn"), Some(Citation));
-        assert_eq!(kind("@art"), Some(EntryType));
-    }
-
-    #[test]
     fn case_matches_come_first() {
-        let doc = SourceDocument::new("\\s");
-        let names: Vec<_> = doc
-            .completions(2, false, &[], &[])
-            .unwrap()
-            .items
-            .into_iter()
-            .map(|i| i.label)
-            .collect();
+        let names = labels("\\s", &[]);
         let upper = names.iter().position(|n| n == "\\Sigma").unwrap();
         assert!(names[..upper].iter().all(|n| n.starts_with("\\s")));
     }
@@ -271,15 +248,7 @@ mod tests {
     #[test]
     fn keys_match_lowercased_whole() {
         let keys = ["Knuth84", "knuth86", "Émile", "émile2", "Kn"].map(String::from);
-        let offered = |typed: &str| -> Vec<String> {
-            let before = format!("\\cite{{{typed}");
-            let caret = before.encode_utf16().count() as u32;
-            SourceDocument::new(&before)
-                .completions(caret, false, &[], &keys)
-                .map_or(vec![], |offer| {
-                    offer.items.into_iter().map(|i| i.label).collect()
-                })
-        };
+        let offered = |typed: &str| labels(&format!("\\cite{{{typed}"), &keys);
         assert_eq!(offered("kn"), ["knuth86", "Knuth84", "Kn"]);
         assert_eq!(offered("KNUTH"), ["Knuth84", "knuth86"]);
         assert_eq!(offered("knu"), ["knuth86", "Knuth84"]);

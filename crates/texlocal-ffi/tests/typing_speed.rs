@@ -37,13 +37,8 @@ fn typing_speed() {
     for key in typed.chars() {
         let key = key.to_string();
         let selection = json!({ "start": caret, "length": 0 });
-        let stroke = unsafe {
-            source_call(
-                source,
-                "type",
-                json!({ "selection": selection, "text": key }),
-            )
-        };
+        let args = json!({ "selection": selection, "text": key });
+        let stroke = unsafe { source_call(source, "type", args) };
         let edit = &stroke["edit"];
         let (at, length, put) = if !edit.is_null() {
             let unit = |key: &str| edit[key].as_u64().unwrap() as u32;
@@ -60,20 +55,11 @@ fn typing_speed() {
             (caret, 0, key)
         };
         let changing = TextRange { start: at, length };
+        let (bytes, len, changing) = (put.as_ptr(), put.len(), &raw const changing);
         let timed = Instant::now();
-        unsafe {
-            let mirror = tl_source_edit(
-                source,
-                at,
-                length,
-                put.as_ptr(),
-                put.len(),
-                &raw const changing,
-                false,
-            );
-            edit_only += timed.elapsed();
-            assert!(mirror.is_null());
-        }
+        let mirror = unsafe { tl_source_edit(source, at, length, bytes, len, changing, false) };
+        edit_only += timed.elapsed();
+        assert!(mirror.is_null());
         caret = at + 1;
         unsafe { tl_source_select(source, caret, 0, false) };
         edit_and_select += timed.elapsed();

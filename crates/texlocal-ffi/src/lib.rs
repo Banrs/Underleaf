@@ -395,12 +395,8 @@ pub unsafe extern "C" fn tl_source_edit(
         let delta = text.encode_utf16().count() as i64 - length as i64;
         source.with(|doc| {
             doc.follow(old, delta, changing, mirroring);
-            let mirror = if mirroring {
-                vec![]
-            } else {
-                doc.mirror_snippet()
-            };
-            (!mirror.is_empty()).then(|| json_string(mirror))
+            let mirror = (!mirroring).then(|| doc.mirror_snippet());
+            mirror.filter(|edits| !edits.is_empty()).map(json_string)
         })
     };
     unsafe { on_source(source, None, followed) }.unwrap_or(std::ptr::null_mut())
@@ -420,11 +416,8 @@ pub unsafe extern "C" fn tl_source_select(
     mirroring: bool,
 ) {
     let selection = TextRange { start, length };
-    unsafe {
-        on_source(source, (), |source| {
-            source.with(|doc| doc.select(selection, mirroring));
-        });
-    }
+    let select = |source: &mut TlSource| source.with(|doc| doc.select(selection, mirroring));
+    unsafe { on_source(source, (), select) }
 }
 
 /// The source's whole text as UTF-8, `*len` bytes with no NUL after them
@@ -438,11 +431,8 @@ pub unsafe extern "C" fn tl_source_text(source: *mut TlSource, len: *mut usize) 
     let Some(len) = (unsafe { len.as_mut() }) else {
         return std::ptr::null_mut();
     };
-    let text = unsafe {
-        on_source(source, String::new(), |source| {
-            source.with(|doc| doc.text())
-        })
-    };
+    let text = |source: &mut TlSource| source.with(|doc| doc.text());
+    let text = unsafe { on_source(source, String::new(), text) };
     let bytes = text.into_bytes().into_boxed_slice();
     *len = bytes.len();
     Box::into_raw(bytes).cast()
@@ -512,14 +502,13 @@ pub unsafe extern "C" fn tl_source_highlights(
     let Some(count) = (unsafe { count.as_mut() }) else {
         return std::ptr::null_mut();
     };
-    let runs: Box<[u32]> = unsafe {
-        on_source(source, Box::default(), |source| {
-            let runs = source.with(|doc| doc.highlights(start, length));
-            let runs = runs.into_iter();
-            runs.flat_map(|h| [h.start, h.length, h.kind as u32])
-                .collect()
-        })
+    let runs = |source: &mut TlSource| {
+        let runs = source.with(|doc| doc.highlights(start, length));
+        let runs = runs.into_iter();
+        runs.flat_map(|h| [h.start, h.length, h.kind as u32])
+            .collect()
     };
+    let runs: Box<[u32]> = unsafe { on_source(source, Box::default(), runs) };
     *count = runs.len();
     Box::into_raw(runs).cast()
 }

@@ -4,6 +4,8 @@
 //! text through the editor's edits and answers in UTF-16 offsets, which
 //! NSString and WinUI both count in. A session's open file
 //! (`session::Document`) holds one, as does each of the FFI's own sources.
+//! Its commands are its methods, each in the file of its kind: typing.rs,
+//! edit.rs and complete.rs.
 
 mod call;
 pub(crate) mod catalog;
@@ -44,6 +46,10 @@ pub struct TextEdit {
     pub text: String,
 }
 
+fn range(start: u32, length: u32) -> TextRange {
+    TextRange { start, length }
+}
+
 fn edit(start: u32, length: u32, text: impl Into<String>) -> TextEdit {
     TextEdit {
         start,
@@ -78,18 +84,19 @@ pub(crate) struct Text {
     pub lines: Vec<u32>,
 }
 
+/// Where the lines after the line feeds in `units`, put at `at`, start.
+fn line_starts(units: &[u16], at: u32) -> impl Iterator<Item = u32> + '_ {
+    units
+        .iter()
+        .enumerate()
+        .filter(|&(_, &u)| u == NEWLINE)
+        .map(move |(i, _)| at + i as u32 + 1)
+}
+
 impl Text {
     fn new(text: &str) -> Self {
         let units: Vec<u16> = text.encode_utf16().collect();
-        let lines = std::iter::once(0)
-            .chain(
-                units
-                    .iter()
-                    .enumerate()
-                    .filter(|&(_, &u)| u == NEWLINE)
-                    .map(|(i, _)| i as u32 + 1),
-            )
-            .collect();
+        let lines = std::iter::once(0).chain(line_starts(&units, 0)).collect();
         Self { units, lines }
     }
 
@@ -122,12 +129,7 @@ impl Text {
         for line in &mut self.lines[last..] {
             *line = (*line as i64 + delta) as u32;
         }
-        let added = text
-            .iter()
-            .enumerate()
-            .filter(|&(_, &u)| u == NEWLINE)
-            .map(|(i, _)| start + i as u32 + 1);
-        self.lines.splice(first..last, added);
+        self.lines.splice(first..last, line_starts(text, start));
         self.units
             .splice(start as usize..end as usize, text.iter().copied());
         first
@@ -225,10 +227,7 @@ impl SourceDocument {
             .into_iter();
         let mut ranges: Vec<TextRange> = highlighted
             .filter(|h| code(h.kind))
-            .map(|h| TextRange {
-                start: h.start,
-                length: h.length,
-            })
+            .map(|h| range(h.start, h.length))
             .collect();
         ranges.extend(self.not_prose(selection.start, selection.length));
         ranges
@@ -247,18 +246,8 @@ impl SourceDocument {
         let units = self.text.line(index);
         // TeX's letters, with `@` as in a class's or a package's own source.
         let tex_letter = |u: u16| letter(u) || is(u, '@');
-        // After a backslash that is not itself escaped, as the bracket of `\[` is.
-        let escaped = |at: usize| {
-            units[..at]
-                .iter()
-                .rev()
-                .take_while(|&&u| is(u, '\\'))
-                .count()
-                % 2
-                == 1
-        };
         let end = (0..units.len())
-            .find(|&i| is(units[i], '%') && !escaped(i))
+            .find(|&i| is(units[i], '%') && !escaped(units, i))
             .unwrap_or(units.len());
         let word = name.get(1).is_some_and(|&u| tex_letter(u));
         let (mut found, mut from) = (vec![], 0);
@@ -266,49 +255,11 @@ impl SourceDocument {
             let at = from + at;
             from = at + name.len();
             let longer = word && units.get(from).is_some_and(|&u| tex_letter(u));
-            if !escaped(at) && !longer {
-                found.push(TextRange {
-                    start: at as u32,
-                    length: name.len() as u32,
-                });
+            if !escaped(units, at) && !longer {
+                found.push(range(at as u32, name.len() as u32));
             }
         }
         found
-    }
-
-    /// What to offer at the caret, if anything: commands after a backslash
-    /// (only once a letter follows unless `explicit`, asked for by the user),
-    /// the labels, citations or environments an argument takes, or a
-    /// bibliography entry's type after "@".
-    pub fn completions(
-        &self,
-        caret: u32,
-        explicit: bool,
-        labels: &[String],
-        citations: &[String],
-    ) -> Option<Completions> {
-        let caret = caret.min(self.text.len());
-        complete::completions(&self.text, caret, explicit, labels, citations)
-    }
-
-    /// "%" comments on or off for the lines the selections touch: off when
-    /// every one is already commented (or blank), on otherwise. In order;
-    /// the editor applies them from the last.
-    pub fn toggle_comment(&self, selections: &[TextRange]) -> Vec<TextEdit> {
-        edit::toggle_comment(&self.text, selections)
-    }
-
-    /// Two spaces more, or up to two fewer, at the start of each line the
-    /// selections touch.
-    pub fn indent(&self, selections: &[TextRange], more: bool) -> Vec<TextEdit> {
-        edit::indent(&self.text, selections, more)
-    }
-
-    /// The caret's line as a heading of `command` ("section"), or as plain
-    /// text given none, as a paragraph style does: a heading changes level
-    /// and keeps its title, a line of text becomes the title.
-    pub fn set_heading(&self, caret: u32, command: &str) -> Insertion {
-        edit::set_heading(&self.text, caret.min(self.text.len()), command)
     }
 
     /// The bold, italic and underline the whole selection is in, each as the
@@ -318,101 +269,15 @@ impl SourceDocument {
         style::text_styles(&self.text, &mut self.scans, selection)
     }
 
-    /// A character typed in place of the selection: a bracket closed for the
-    /// user (`auto_pair`) or stepped over, or none of that.
-    pub fn type_text(&mut self, selection: TextRange, typed: &str, auto_pair: bool) -> Keystroke {
-        let selection = clamp(selection, self.text.len());
-        self.typing
-            .type_text(&self.text, selection, typed, auto_pair)
-    }
-
-    /// Delete at the caret: an empty pair put in for the user goes whole,
-    /// and in the indentation it goes back to a two-column stop.
-    pub fn delete_backward(&mut self, selection: TextRange, auto_pair: bool) -> Keystroke {
-        let selection = clamp(selection, self.text.len());
-        self.typing
-            .delete_backward(&self.text, selection, auto_pair)
-    }
-
-    /// Return, keeping the line's indentation.
-    pub fn insert_newline(&mut self, selection: TextRange) -> Keystroke {
-        let selection = clamp(selection, self.text.len());
-        self.typing.insert_newline(&self.text, selection)
-    }
-
-    /// Where the bracket at `at` is matched, within 10,000 units.
-    pub fn partner(&self, at: u32) -> Option<u32> {
-        typing::partner(&self.text, at)
-    }
-
-    /// The editor changed `old` by `delta` units (`Typing::follow`).
-    pub fn follow(
-        &mut self,
-        old: TextRange,
-        delta: i64,
-        changing: Option<TextRange>,
-        mirroring: bool,
-    ) {
-        self.typing.follow(old, delta, changing, mirroring);
-    }
-
-    /// The editor's selection (its first) moved.
-    pub fn select(&mut self, selection: TextRange, mirroring: bool) {
-        self.typing.select(&self.text, selection, mirroring);
-    }
-
-    /// A completion's or block's fields, from `at`: the first to select.
-    pub fn start_snippet(&mut self, fields: &[SnippetField], at: u32) -> Option<TextRange> {
-        self.typing.start_snippet(fields, at)
-    }
-
     /// Forgets the closers and snippet fields typing keeps, as when the
     /// editor shows the document again: they belong to a visit, not to the text.
     pub fn reset_typing(&mut self) {
         self.typing = typing::Typing::default();
     }
 
-    /// Whether there was a snippet to end.
-    pub fn end_snippet(&mut self) -> bool {
-        self.typing.end_snippet()
-    }
-
-    /// Tab (`step` 1) or Shift-Tab (-1).
-    pub fn tab(&mut self, selections: &[TextRange], step: i64) -> Tab {
-        self.typing.tab(&self.text, selections, step)
-    }
-
-    /// What's typed in a snippet's field, for its other places.
-    pub fn mirror_snippet(&mut self) -> Vec<TextEdit> {
-        self.typing.mirror_snippet(&self.text)
-    }
-
-    /// Move Line Up or Down; none when a line has nowhere to go.
-    pub fn move_lines(&self, selections: &[TextRange], up: bool) -> Option<Change> {
-        typing::move_lines(&self.text, selections, up)
-    }
-
-    /// Bold, Italic or Underline, on or off.
-    pub fn toggle_style(&mut self, selections: &[TextRange], style: Style) -> Change {
-        let styles = self.text_styles(selections.first().copied().unwrap_or_default());
-        typing::toggle_style(&self.text, styles, selections, style)
-    }
-
-    /// The selection round a template's "$0".
-    pub fn wrap(&self, selections: &[TextRange], template: &str) -> Change {
-        typing::wrap(&self.text, selections, template)
-    }
-
     /// The maths to preview at the caret, if it's in some.
     pub fn math_at(&self, caret: u32) -> Option<MathPreview> {
         maths::math_at(&self.text, caret.min(self.text.len()))
-    }
-
-    /// A block by its id (the catalog's `blocks`) in place of the selection,
-    /// on a line of its own, the caret in its first field; none for an id
-    /// the catalog hasn't.
-    pub fn insert_block(&self, id: &str, selection: TextRange) -> Option<Insertion> {
-        edit::insert_block(&self.text, id, clamp(selection, self.text.len()))
     }
 
     /// A maths symbol's command in place of the selection: as it is in
@@ -439,6 +304,17 @@ impl SourceDocument {
 
 fn is(u: u16, c: char) -> bool {
     u == c as u16
+}
+
+/// Whether the unit at `at` follows a backslash that is not itself escaped,
+/// as the bracket of `\[` does.
+fn escaped(units: &[u16], at: usize) -> bool {
+    let slashes = units[..at]
+        .iter()
+        .rev()
+        .take_while(|&&u| is(u, '\\'))
+        .count();
+    slashes % 2 == 1
 }
 
 /// The longest command name `ascii` reads; longer than any in the catalog.
@@ -475,12 +351,9 @@ fn utf16(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-fn clamp(range: TextRange, len: u32) -> TextRange {
-    let start = range.start.min(len);
-    TextRange {
-        start,
-        length: range.length.min(len - start),
-    }
+fn clamp(selection: TextRange, len: u32) -> TextRange {
+    let start = selection.start.min(len);
+    range(start, selection.length.min(len - start))
 }
 
 #[cfg(test)]
@@ -564,10 +437,7 @@ mod tests {
     fn checkers_leave_code_alone() {
         let text = "Prose \\emph{word} $x$ % note";
         let mut doc = SourceDocument::new(text);
-        let all = TextRange {
-            start: 0,
-            length: utf16(text) as u32,
-        };
+        let all = range(0, utf16(text) as u32);
         let ranges = |doc: &mut SourceDocument, checker| -> Vec<(u32, u32)> {
             let mut found: Vec<_> = doc
                 .code_ranges(all, checker)

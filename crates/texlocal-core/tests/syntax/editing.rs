@@ -2,19 +2,31 @@
 //! maths at a place, the maths to preview, completions, headings and blocks.
 
 use serde::Deserialize;
-use texlocal_core::syntax::{SourceDocument, TextEdit, TextRange, math_mode_at};
+use serde_json::Value;
+use texlocal_core::syntax::{Insertion, SourceDocument, TextRange, math_mode_at};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Fixture {
     math_mode: Vec<(String, bool, String)>,
     headings: Vec<(String, String, String, u32)>,
-    math_at: Vec<(String, serde_json::Value)>,
-    completions: Vec<(String, bool, Option<u32>, Option<String>)>,
+    math_at: Vec<(String, Value)>,
+    completions: Vec<Offer>,
     blocks: Vec<(String, String, String, Fields)>,
+    by_line: Vec<ByLine>,
 }
 
-/// Each field's start and length, from the block's start, in Tab's order.
+/// The text before the caret, whether asked for, and the offer's start, an
+/// item it has and its kind.
+#[derive(Deserialize)]
+struct Offer(String, bool, Option<u32>, Option<String>, Option<Value>);
+
+/// The text, "comment", "indent" or "outdent", the selections, the edits and
+/// what the case shows.
+#[derive(Deserialize)]
+struct ByLine(String, String, Fields, Vec<(u32, u32, String)>, String);
+
+/// Each field's (or selection's) start and length, in Tab's order.
 type Fields = Vec<(u32, u32)>;
 
 fn fixture() -> Fixture {
@@ -51,21 +63,22 @@ fn math_mode_is_known_at_a_place() {
 fn the_maths_to_preview_is_found_around_a_place() {
     for (source, expected) in fixture().math_at {
         let (doc, at) = marked(&source);
-        assert_eq!(
-            serde_json::to_value(doc.math_at(at)).unwrap(),
-            expected,
-            "{source}"
-        );
+        let found = serde_json::to_value(doc.math_at(at)).unwrap();
+        assert_eq!(found, expected, "{source}");
     }
 }
 
 #[test]
 fn completions_are_offered_for_what_is_typed() {
     let (labels, citations) = (["sec:intro".to_string()], ["knuth84".to_string()]);
-    for (before, explicit, start, offered) in fixture().completions {
+    for Offer(before, explicit, start, offered, kind) in fixture().completions {
         let doc = SourceDocument::new(&before);
         let found = doc.completions(units(&before), explicit, &labels, &citations);
-        assert_eq!(found.as_ref().map(|c| c.start), start, "{before}");
+        // Where it starts, and what its items are, all of them.
+        let place = found
+            .as_ref()
+            .map(|c| (c.start, serde_json::to_value(c.kind).unwrap()));
+        assert_eq!(place, start.zip(kind), "{before}");
         let labels: Vec<_> = found
             .iter()
             .flat_map(|c| &c.items)
@@ -79,17 +92,10 @@ fn completions_are_offered_for_what_is_typed() {
 fn a_line_becomes_a_heading() {
     for (line, command, text, cursor) in fixture().headings {
         let doc = SourceDocument::new(&format!("above\n{line}\nbelow"));
-        let insertion = doc.set_heading(7, &command);
-        assert_eq!(
-            insertion.edit,
-            TextEdit {
-                start: 6,
-                length: units(&line),
-                text
-            },
-            "{line} as {command}"
-        );
-        assert_eq!(insertion.caret, 6 + cursor, "{line} as {command}");
+        let Insertion { edit, caret, .. } = doc.set_heading(7, &command);
+        let found = (edit.start, edit.length, edit.text, caret);
+        let expected = (6, units(&line), text, 6 + cursor);
+        assert_eq!(found, expected, "{line} as {command}");
     }
 }
 
@@ -99,60 +105,37 @@ fn blocks_go_in_with_their_fields() {
         let doc = SourceDocument::new(&before);
         let end = units(&before);
         let block = doc.insert_block(&id, range(end, 0)).unwrap();
-        let found: Vec<_> = block.fields.iter().map(|f| (f.start, f.length)).collect();
-        assert_eq!(
-            (block.edit.text, found),
-            (text, fields),
-            "{id} after {before:?}"
-        );
         assert_eq!(block.caret, end + block.fields[0].start, "{id}");
+        let found: Vec<_> = block.fields.iter().map(|f| (f.start, f.length)).collect();
+        let expected = (text, fields);
+        assert_eq!((block.edit.text, found), expected, "{id} after {before:?}");
     }
-    assert!(
-        SourceDocument::new("")
-            .insert_block("nothing", range(0, 0))
-            .is_none()
-    );
+    let nothing = SourceDocument::new("").insert_block("nothing", range(0, 0));
+    assert!(nothing.is_none());
 }
 
 #[test]
 fn comments_and_indentation_go_by_line() {
-    let edit = |start, length, text: &str| TextEdit {
-        start,
-        length,
-        text: text.into(),
-    };
-    let on = SourceDocument::new("a\n  b\n\nc").toggle_comment(&[range(0, 8)]);
-    assert_eq!(
-        on,
-        [edit(0, 0, "% "), edit(2, 0, "% "), edit(7, 0, "% ")],
-        "blank lines stay as they are"
-    );
-    let off = SourceDocument::new("% a\n  %b\n").toggle_comment(&[range(0, 9)]);
-    assert_eq!(off, [edit(0, 2, ""), edit(6, 1, "")]);
-    let indented = SourceDocument::new("a\n b\n").indent(&[range(0, 3), range(5, 0)], true);
-    assert_eq!(
-        indented,
-        [edit(0, 0, "  "), edit(2, 0, "  "), edit(5, 0, "  ")]
-    );
-    let outdented = SourceDocument::new("   a\nb").indent(&[range(0, 6)], false);
-    assert_eq!(outdented, [edit(1, 2, "")]);
-    // A selection that ends at a line's start leaves that line alone.
-    assert_eq!(
-        SourceDocument::new("a\nb").toggle_comment(&[range(0, 2)]),
-        [edit(0, 0, "% ")]
-    );
+    for ByLine(text, command, selections, edits, note) in fixture().by_line {
+        let doc = SourceDocument::new(&text);
+        let selections: Vec<_> = selections.into_iter().map(|(s, l)| range(s, l)).collect();
+        let found = match command.as_str() {
+            "comment" => doc.toggle_comment(&selections),
+            more => doc.indent(&selections, more == "indent"),
+        };
+        let found: Vec<_> = found
+            .into_iter()
+            .map(|e| (e.start, e.length, e.text))
+            .collect();
+        assert_eq!(found, edits, "{command} {text:?}: {note}");
+    }
 }
 
 #[test]
 fn symbols_go_in_as_maths() {
     let mut doc = SourceDocument::new("text $x$ and $");
     let in_text = doc.insert_symbol("\\alpha", range(5, 0));
-    assert_eq!(
-        (in_text.edit.text.as_str(), in_text.caret),
-        ("$\\alpha$", 13)
-    );
-    assert_eq!(
-        doc.insert_symbol("\\alpha", range(14, 0)).edit.text,
-        "\\alpha"
-    );
+    assert_eq!((in_text.edit.text, in_text.caret), ("$\\alpha$".into(), 13));
+    let in_maths = doc.insert_symbol("\\alpha", range(14, 0));
+    assert_eq!(in_maths.edit.text, "\\alpha");
 }
