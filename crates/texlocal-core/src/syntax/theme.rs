@@ -4,9 +4,9 @@
 //! background and on its current line. Hosts resolve their backgrounds and
 //! system colours and map the sRGB answers to their own colour type.
 
-use serde::Serialize;
+use std::collections::HashMap;
 
-use super::HighlightKind;
+use serde::{Deserialize, Serialize};
 
 /// sRGB components and alpha, 0 to 1.
 pub type Rgba = [f64; 4];
@@ -40,25 +40,19 @@ pub struct Theme {
 }
 
 const fn hex(rgb: u32) -> Rgba {
-    [
-        (rgb >> 16 & 0xff) as f64 / 255.0,
-        (rgb >> 8 & 0xff) as f64 / 255.0,
-        (rgb & 0xff) as f64 / 255.0,
-        1.0,
-    ]
+    let [_, r, g, b] = rgb.to_be_bytes();
+    [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0, 1.0]
 }
 
 const fn rgb(light: u32, dark: u32) -> ThemeColor {
-    ThemeColor {
-        system: None,
-        light: hex(light),
-        dark: hex(dark),
-    }
+    system("", hex(light), hex(dark))
 }
 
+/// A system colour by name, or none for "".
 const fn system(name: &'static str, light: Rgba, dark: Rgba) -> ThemeColor {
+    let system = if name.is_empty() { None } else { Some(name) };
     ThemeColor {
-        system: Some(name),
+        system,
         light,
         dark,
     }
@@ -103,41 +97,16 @@ pub const THEMES: [Theme; 3] = [
         command: system("systemPink", hex(0xFF2D55), hex(0xFF375F)),
         argument: system("systemTeal", hex(0x30B0C7), hex(0x40C8E0)),
         maths: system("systemPurple", hex(0xAF52DE), hex(0xBF5AF2)),
-        comment: system(
-            "secondaryLabelColor",
-            [0.0, 0.0, 0.0, 0.5],
-            [1.0, 1.0, 1.0, 0.55],
-        ),
+        comment: system("secondaryLabelColor", [0., 0., 0., 0.5], [1., 1., 1., 0.55]),
         invalid: system("systemRed", hex(0xFF3B30), hex(0xFF453A)),
     },
 ];
 
-pub fn theme(id: &str) -> Option<&'static Theme> {
-    THEMES.iter().find(|t| t.id == id)
-}
-
-impl Theme {
-    /// The colour of a highlight kind.
-    pub fn color(&self, kind: HighlightKind) -> &ThemeColor {
-        use HighlightKind::*;
-        match kind {
-            Command => &self.command,
-            Argument | Builtin => &self.argument,
-            MathDelimiter | MathIdentifier | Number | StringLiteral => &self.maths,
-            Comment => &self.comment,
-            Invalid => &self.invalid,
-        }
-    }
-}
-
 /// WCAG's relative luminance.
 pub fn luminance(c: Rgba) -> f64 {
-    let linear = |v: f64| {
-        if v <= 0.04045 {
-            v / 12.92
-        } else {
-            ((v + 0.055) / 1.055).powf(2.4)
-        }
+    let linear = |v: f64| match v <= 0.04045 {
+        true => v / 12.92,
+        false => ((v + 0.055) / 1.055).powf(2.4),
     };
     0.2126 * linear(c[0]) + 0.7152 * linear(c[1]) + 0.0722 * linear(c[2])
 }
@@ -149,40 +118,31 @@ pub fn contrast(a: Rgba, b: Rgba) -> f64 {
 }
 
 /// `a` mixed with `fraction` of `b`, component by component.
-pub fn blend(a: Rgba, b: Rgba, fraction: f64) -> Rgba {
+fn blend(a: Rgba, b: Rgba, fraction: f64) -> Rgba {
     std::array::from_fn(|i| a[i] * (1.0 - fraction) + b[i] * fraction)
 }
 
 /// A translucent colour as it shows on an opaque background, mixed by sRGB's
 /// components, as the window server mixes them.
-pub fn over(color: Rgba, background: Rgba) -> Rgba {
-    let alpha = color[3];
-    if alpha >= 1.0 {
-        return color;
+fn over(color: Rgba, background: Rgba) -> Rgba {
+    let [r, g, b, _] = blend(background, color, color[3]);
+    if color[3] >= 1.0 {
+        color
+    } else {
+        [r, g, b, 1.0]
     }
-    let mut shown = blend(background, color, alpha);
-    shown[3] = 1.0;
-    shown
 }
 
 /// Mixed towards black on a light background or white on a dark one, by
 /// twentieths, as little as gives `ratio` on it, so it keeps its hue; as it
 /// is when it has that already.
-pub fn contrasting(color: Rgba, background: Rgba, ratio: f64) -> Rgba {
+fn contrasting(color: Rgba, background: Rgba, ratio: f64) -> Rgba {
     // Where black and white contrast equally with a colour.
-    let ink = if luminance(background) > 0.179 {
-        [0.0, 0.0, 0.0, 1.0]
-    } else {
-        [1.0, 1.0, 1.0, 1.0]
-    };
-    let mut mixed = color;
-    for step in 1..=20 {
-        if contrast(mixed, background) >= ratio {
-            break;
-        }
-        mixed = blend(color, ink, f64::from(step) / 20.0);
-    }
-    mixed
+    let light = luminance(background) > 0.179;
+    let ink = if light { [0., 0., 0., 1.] } else { [1.0; 4] };
+    let mut mixes = (0..=20).map(|step| blend(color, ink, f64::from(step) / 20.0));
+    let enough = |&mixed: &Rgba| contrast(mixed, background) >= ratio;
+    mixes.find(enough).unwrap_or(ink)
 }
 
 /// The contrast text wants: the HIG's 4.5:1 for text under 18 points, or
@@ -196,16 +156,12 @@ pub fn text_contrast(increase_contrast: bool) -> f64 {
 /// (`text_contrast`), or 3:1, the HIG's for large text and graphics, such as
 /// a border.
 pub fn legible(color: Rgba, background: Rgba, fill: Rgba, ratio: f64) -> Rgba {
-    let line = over(fill, background);
-    contrasting(
-        contrasting(over(color, background), background, ratio),
-        line,
-        ratio,
-    )
+    let on_background = contrasting(over(color, background), background, ratio);
+    contrasting(on_background, over(fill, background), ratio)
 }
 
 /// What the host resolved for one appearance.
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Appearance {
     pub dark: bool,
@@ -216,87 +172,63 @@ pub struct Appearance {
     /// The system theme's colours by name, as resolved; a name left out
     /// takes its `ThemeColor`'s published value.
     #[serde(default)]
-    pub system: std::collections::HashMap<String, Rgba>,
+    pub system: HashMap<String, Rgba>,
 }
 
 /// A theme's legible colours in an appearance, by highlight kind, in
 /// `HighlightKind`'s order.
-pub fn theme_colors(theme: &Theme, appearance: &Appearance) -> Vec<Rgba> {
-    use HighlightKind::*;
-    [
-        Command,
-        Argument,
-        MathDelimiter,
-        MathIdentifier,
-        Number,
-        Comment,
-        Invalid,
-        StringLiteral,
-        Builtin,
-    ]
-    .into_iter()
-    .map(|kind| {
-        let color = theme.color(kind);
-        let resolved = color
-            .system
-            .and_then(|name| appearance.system.get(name).copied())
-            .unwrap_or(if appearance.dark {
-                color.dark
-            } else {
-                color.light
-            });
-        legible(
-            resolved,
-            appearance.background,
-            appearance.fill,
-            text_contrast(appearance.increase_contrast),
-        )
-    })
-    .collect()
+pub fn theme_colors(t: &Theme, a: &Appearance) -> Vec<Rgba> {
+    let (command, argument, maths) = (t.command, t.argument, t.maths);
+    let by_kind = [
+        command, argument, maths, maths, maths, t.comment, t.invalid, maths, argument,
+    ];
+    let legible = |c: ThemeColor| {
+        let published = if a.dark { c.dark } else { c.light };
+        let resolved = c.system.and_then(|name| a.system.get(name).copied());
+        let ratio = text_contrast(a.increase_contrast);
+        legible(resolved.unwrap_or(published), a.background, a.fill, ratio)
+    };
+    by_kind.into_iter().map(legible).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use HighlightKind::Command;
-
-    /// The Mac's text background and its current line's fill, resolved in
-    /// Light and Dark (27.2): white and 30, the fill giving 235 and 48.
-    fn appearance(dark: bool, increase_contrast: bool) -> Appearance {
-        let (ground, ink) = if dark {
-            (30.0 / 255.0, 1.0)
-        } else {
-            (1.0, 0.0)
-        };
-        Appearance {
-            dark,
-            increase_contrast,
-            background: [ground, ground, ground, 1.0],
-            fill: [ink, ink, ink, 0.08],
-            system: Default::default(),
-        }
-    }
 
     #[test]
     fn the_themes_are_legible() {
-        for (dark, increase_contrast) in
-            [(false, false), (true, false), (false, true), (true, true)]
-        {
-            let a = appearance(dark, increase_contrast);
-            let line = over(a.fill, a.background);
-            let ratio = if increase_contrast { 7.0 } else { 4.5 };
+        let appearances = [(false, false), (true, false), (false, true), (true, true)];
+        for (dark, increase_contrast) in appearances {
+            // The Mac's text background and its current line's fill, resolved in
+            // Light and Dark (27.2): white and 30, the fill giving 235 and 48.
+            let ground = if dark { 30.0 / 255.0 } else { 1.0 };
+            let ink = if dark { 1.0 } else { 0.0 };
+            let (background, fill) = ([ground, ground, ground, 1.0], [ink, ink, ink, 0.08]);
+            let system = HashMap::from([("systemPink".into(), [0., 0., 0., 1.])]);
+            let a = Appearance {
+                dark,
+                increase_contrast,
+                background,
+                fill,
+                system,
+            };
+            let ratio = text_contrast(increase_contrast);
+            let grounds = [background, over(fill, background)];
             for theme in &THEMES {
-                for color in theme_colors(theme, &a) {
-                    for ground in [a.background, line] {
-                        let c = contrast(color, ground);
-                        assert!(c >= ratio, "{} {color:?} on {ground:?}: {c}", theme.id);
-                    }
+                let colors = theme_colors(theme, &a);
+                assert_eq!(colors.len(), 9);
+                for (color, ground) in colors.iter().flat_map(|&c| grounds.map(|g| (c, g))) {
+                    let c = contrast(color, ground);
+                    assert!(c >= ratio, "{} {color:?} on {ground:?}: {c}", theme.id);
                 }
             }
+            if !dark && !increase_contrast {
+                // Overleaf's Light commands, at 8.6:1, are its own blue; the System
+                // theme's are the host's.
+                assert_eq!(theme_colors(&THEMES[0], &a)[0], [0.0, 0.0, 1.0, 1.0]);
+                assert_eq!(theme_colors(&THEMES[2], &a)[0], [0.0, 0.0, 0.0, 1.0]);
+            }
         }
-        // Overleaf's Light commands, at 8.6:1, are its own blue.
-        let colors = theme_colors(theme("overleaf").unwrap(), &appearance(false, false));
-        assert_eq!(colors[Command as usize], [0.0, 0.0, 1.0, 1.0]);
     }
 
     #[test]
@@ -305,8 +237,8 @@ mod tests {
         // Overleaf's comments, 4.2:1 on white, a twentieth towards black.
         let comment = hex(0x4C886B);
         assert!(contrast(comment, white) < 4.5);
-        let raised = contrasting(comment, white, 4.5);
-        assert_eq!(raised, blend(comment, [0.0, 0.0, 0.0, 1.0], 0.05));
+        let darker = blend(comment, [0., 0., 0., 1.], 0.05);
+        assert_eq!(contrasting(comment, white, 4.5), darker);
         // On a dark background, towards white.
         let dark = [0.1, 0.1, 0.1, 1.0];
         let raised = contrasting(hex(0x333333), dark, 4.5);
@@ -314,20 +246,5 @@ mod tests {
         // A translucent label shows as its mix with the background.
         assert_eq!(over([0.0, 0.0, 0.0, 0.5], white), [0.5, 0.5, 0.5, 1.0]);
         assert!((contrast([0.0, 0.0, 0.0, 1.0], white) - 21.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn system_colours_are_the_hosts() {
-        let mut a = appearance(false, false);
-        a.system.insert("systemPink".into(), [0.0, 0.0, 0.0, 1.0]);
-        let colors = theme_colors(theme("system").unwrap(), &a);
-        assert_eq!(colors[Command as usize], [0.0, 0.0, 0.0, 1.0]);
-        let json = serde_json::to_string(&THEMES[2].command).unwrap();
-        assert!(
-            json.starts_with(r#"{"system":"systemPink","light":[1.0,"#),
-            "{json}"
-        );
-        let json = serde_json::to_string(&THEMES[0].command).unwrap();
-        assert!(!json.contains("system"), "{json}");
     }
 }

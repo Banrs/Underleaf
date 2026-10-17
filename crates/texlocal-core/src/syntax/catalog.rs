@@ -12,9 +12,6 @@ pub struct Catalog {
     pub blocks: BTreeMap<String, String>,
     pub environments: Vec<String>,
     pub bib_entry_types: Vec<String>,
-    /// The sectioning commands the editor recognises, outermost first: the
-    /// heading levels, then `subparagraph`, which the menus don't offer.
-    pub sections: Vec<String>,
     pub cite_commands: Vec<String>,
     pub ref_commands: Vec<String>,
     /// Commands whose options and first argument are names, not prose:
@@ -29,16 +26,25 @@ pub struct Catalog {
     pub preview_environments: Vec<String>,
     /// (name, a word for its kind, snippet); "#{…}" marks a snippet field.
     pub commands: Vec<(String, IgnoredAny, String)>,
-    pub templates: Templates,
     /// The levels a line's style can be, outermost first: indexed by the
-    /// outline's depth.
+    /// outline's depth. The sectioning commands the editor recognises are
+    /// their commands and then `subparagraph`, which the menus don't offer.
     pub heading_levels: Vec<HeadingLevel>,
+    #[serde(flatten)]
+    pub menus: Menus,
+}
+
+/// What a host's menus are made from: "menus"' answer.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Menus {
+    pub templates: Templates,
     /// The maths symbols by kind, each inserted as its command.
     pub symbol_groups: Vec<SymbolGroup>,
 }
 
 /// What the toolbar and the Insert, Format and Math menus put in.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Templates {
     pub math: Vec<Template>,
     pub insert: Vec<Template>,
@@ -51,7 +57,7 @@ pub struct Templates {
 /// A block of `blocks` by its id, or with `inline` a command with "$0" for
 /// the selection (the "wrap" command's template). `symbol` names the SF
 /// Symbol the Mac's toolbar shows it by, which makes it a toolbar button.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Template {
     pub title: String,
     pub body: String,
@@ -68,32 +74,17 @@ pub struct HeadingLevel {
     pub command: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct SymbolGroup {
     pub title: String,
     pub symbols: Vec<Symbol>,
 }
 
 /// A symbol as Unicode has it, and the command that sets it.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Symbol {
     pub glyph: String,
     pub command: String,
-}
-
-/// What a host's menus are made from.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Menus<'a> {
-    pub templates: &'a Templates,
-    pub symbol_groups: &'a [SymbolGroup],
-}
-
-pub fn menus() -> Menus<'static> {
-    Menus {
-        templates: &CATALOG.templates,
-        symbol_groups: &CATALOG.symbol_groups,
-    }
 }
 
 pub static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
@@ -102,25 +93,6 @@ pub static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
 
 /// A list as a regex alternation: `a|b|c`.
 pub fn alternation<S: AsRef<str>>(names: impl IntoIterator<Item = S>) -> String {
-    names
-        .into_iter()
-        .map(|n| regex::escape(n.as_ref()))
-        .collect::<Vec<_>>()
-        .join("|")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::CATALOG;
-
-    #[test]
-    fn the_sections_are_the_heading_levels_then_subparagraph() {
-        let mut commands: Vec<&str> = CATALOG
-            .heading_levels
-            .iter()
-            .map(|level| level.command.as_str())
-            .collect();
-        commands.push("subparagraph");
-        assert_eq!(CATALOG.sections, commands);
-    }
+    let names = names.into_iter().map(|n| regex::escape(n.as_ref()));
+    names.collect::<Vec<_>>().join("|")
 }

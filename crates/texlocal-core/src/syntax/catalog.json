@@ -11,7 +11,6 @@
   },
   "environments": ["document","abstract","itemize","enumerate","description","figure","table","tabular","array","equation","equation*","align","align*","gather","gather*","multline","cases","matrix","pmatrix","bmatrix","vmatrix","center","flushleft","flushright","quote","quotation","verbatim","lstlisting","minipage","frame","theorem","lemma","proof","definition","corollary","example","remark","algorithm","algorithmic","tikzpicture","thebibliography","titlepage","appendix"],
   "bibEntryTypes": ["article","book","inbook","incollection","inproceedings","conference","manual","mastersthesis","phdthesis","misc","techreport","unpublished","online"],
-  "sections": ["part","chapter","section","subsection","subsubsection","paragraph","subparagraph"],
   "citeCommands": ["cite","citep","citet","citeauthor","citeyear","textcite","parencite","autocite"],
   "refCommands": ["ref","eqref","pageref","autoref","cref","Cref","vref"],
   "nameCommands": ["documentclass","usepackage","RequirePackage","begin","end","label","input","include","includeonly","includegraphics","bibliography","bibliographystyle","addbibresource"],

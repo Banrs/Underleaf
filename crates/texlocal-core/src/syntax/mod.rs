@@ -51,10 +51,11 @@ fn range(start: u32, length: u32) -> TextRange {
 }
 
 fn edit(start: u32, length: u32, text: impl Into<String>) -> TextEdit {
+    let text = text.into();
     TextEdit {
         start,
         length,
-        text: text.into(),
+        text,
     }
 }
 
@@ -76,62 +77,136 @@ pub struct Insertion {
     pub fields: Vec<SnippetField>,
 }
 
-const NEWLINE: u16 = b'\n' as u16;
-
-/// The editor's text and where its lines start (after each line feed).
+/// The editor's text, in a gap buffer, and where its lines start. An edit
+/// moves only the units between it and the one before, which typing keeps
+/// close: a flat buffer moved all those after each key's, 11 of an edit's
+/// 13 µs in a 24,000-line document. A question reads `units`, the text
+/// before the gap, once `reach` has moved the gap past what it reads.
 pub(crate) struct Text {
-    pub units: Vec<u16>,
-    pub lines: Vec<u32>,
+    buf: Vec<u16>,
+    gap: usize,
+    len: usize,
+    /// After each line feed. Those from `moved` on are `shift` (wrapping)
+    /// on from what's kept, so an edit shifts only those between it and
+    /// the one before, as the gap does.
+    starts: Vec<u32>,
+    moved: usize,
+    shift: u32,
 }
 
 /// Where the lines after the line feeds in `units`, put at `at`, start.
 fn line_starts(units: &[u16], at: u32) -> impl Iterator<Item = u32> + '_ {
-    units
-        .iter()
-        .enumerate()
-        .filter(|&(_, &u)| u == NEWLINE)
-        .map(move |(i, _)| at + i as u32 + 1)
+    let feeds = units.iter().enumerate().filter(|&(_, &u)| is(u, '\n'));
+    feeds.map(move |(i, _)| at + i as u32 + 1)
 }
 
 impl Text {
     fn new(text: &str) -> Self {
-        let units: Vec<u16> = text.encode_utf16().collect();
-        let lines = std::iter::once(0).chain(line_starts(&units, 0)).collect();
-        Self { units, lines }
+        let buf: Vec<u16> = text.encode_utf16().collect();
+        let starts = std::iter::once(0).chain(line_starts(&buf, 0)).collect();
+        let (gap, len) = (buf.len(), buf.len());
+        Self {
+            buf,
+            gap,
+            len,
+            starts,
+            moved: 1,
+            shift: 0,
+        }
     }
 
     fn len(&self) -> u32 {
-        self.units.len() as u32
+        self.len as u32
+    }
+
+    /// The text before the gap: as far as `reach` was asked, at least.
+    pub fn units(&self) -> &[u16] {
+        &self.buf[..self.gap]
+    }
+
+    fn reach(&mut self, end: usize) {
+        let end = end.min(self.len);
+        if self.gap < end {
+            self.move_gap(end);
+        }
+    }
+
+    /// Past `offset`'s line, and as far again as typing looks for a character.
+    fn reach_line(&mut self, offset: u32) {
+        self.reach(self.line_end(self.line_index(offset)) + 64);
+    }
+
+    fn move_gap(&mut self, to: usize) {
+        let size = self.buf.len() - self.len;
+        if to < self.gap {
+            self.buf.copy_within(to..self.gap, to + size);
+        } else {
+            self.buf.copy_within(self.gap + size..to + size, self.gap);
+        }
+        self.gap = to;
+    }
+
+    fn string(&self) -> String {
+        let after = &self.buf[self.gap + self.buf.len() - self.len..];
+        String::from_utf16_lossy(&[self.units(), after].concat())
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.starts.len()
+    }
+
+    pub fn line_start(&self, index: usize) -> u32 {
+        let shift = if index < self.moved { 0 } else { self.shift };
+        self.starts[index].wrapping_add(shift)
+    }
+
+    /// Where a line ends, before its line feed.
+    pub fn line_end(&self, index: usize) -> usize {
+        let next = (index + 1 < self.starts.len()).then(|| self.line_start(index + 1) - 1);
+        next.map_or(self.len, |end| end as usize)
     }
 
     /// The line an offset is on, from 0.
     pub fn line_index(&self, offset: u32) -> usize {
-        self.lines.partition_point(|&start| start <= offset) - 1
-    }
-
-    /// A line's units, without its line feed.
-    pub fn line(&self, index: usize) -> &[u16] {
-        let start = self.lines[index] as usize;
-        let end = self
-            .lines
-            .get(index + 1)
-            .map_or(self.units.len(), |&next| next as usize - 1);
-        &self.units[start..end]
-    }
-
-    /// Replaces a range, keeping the line starts; returns the first line
-    /// whose start the edit may have moved.
-    fn replace(&mut self, start: u32, length: u32, text: &[u16]) -> usize {
-        let end = start + length;
-        let first = self.lines.partition_point(|&s| s <= start);
-        let last = self.lines.partition_point(|&s| s <= end);
-        let delta = text.len() as i64 - length as i64;
-        for line in &mut self.lines[last..] {
-            *line = (*line as i64 + delta) as u32;
+        let (kept, moved) = self.starts.split_at(self.moved);
+        match kept.partition_point(|&start| start <= offset) {
+            k if k < kept.len() => k - 1,
+            k => k + moved.partition_point(|&s| s.wrapping_add(self.shift) <= offset) - 1,
         }
-        self.lines.splice(first..last, line_starts(text, start));
-        self.units
-            .splice(start as usize..end as usize, text.iter().copied());
+    }
+
+    /// A line's units, without its line feed, once reached.
+    pub fn line(&self, index: usize) -> &[u16] {
+        &self.units()[self.line_start(index) as usize..self.line_end(index)]
+    }
+
+    /// Replaces a range; returns the first line whose start it may have moved.
+    fn replace(&mut self, start: usize, length: usize, text: &[u16]) -> usize {
+        let first = self.line_index(start as u32) + 1;
+        let last = self.line_index((start + length) as u32) + 1;
+        let shift = self.shift;
+        if self.moved < last {
+            let moving = &mut self.starts[self.moved..last];
+            moving.iter_mut().for_each(|s| *s = s.wrapping_add(shift));
+        } else {
+            let kept = &mut self.starts[last..self.moved];
+            kept.iter_mut().for_each(|s| *s = s.wrapping_sub(shift));
+        }
+        let count = self.starts.len();
+        self.starts
+            .splice(first..last, line_starts(text, start as u32));
+        self.moved = last + self.starts.len() - count;
+        let grown = (text.len() as u32).wrapping_sub(length as u32);
+        self.shift = shift.wrapping_add(grown);
+        // The units replaced join the gap, which grows when the text won't fit.
+        self.move_gap(start + length);
+        (self.gap, self.len) = (start, self.len - length);
+        if self.buf.len() - self.len < text.len() {
+            let more = std::iter::repeat_n(0, text.len() + self.len / 16);
+            self.buf.splice(start..start, more);
+        }
+        self.buf[start..start + text.len()].copy_from_slice(text);
+        (self.gap, self.len) = (start + text.len(), self.len + text.len());
         first
     }
 }
@@ -171,16 +246,15 @@ impl SourceDocument {
     /// The editor replaced `length` units at `start` with `text`. A range
     /// past the end is cut to the text: the mirror never fails the editor.
     pub fn edit(&mut self, start: u32, length: u32, text: &str) {
-        let start = start.min(self.text.len());
-        let length = length.min(self.text.len() - start);
+        let TextRange { start, length } = clamp(range(start, length), self.text.len());
         let units: Vec<u16> = text.encode_utf16().collect();
-        let first = self.text.replace(start, length, &units);
+        let first = self.text.replace(start as usize, length as usize, &units);
         self.highlighter.forget_from(first);
         self.scans.forget_from(start as usize);
     }
 
     pub fn text(&self) -> String {
-        String::from_utf16_lossy(&self.text.units)
+        self.text.string()
     }
 
     /// The line an offset is on, from 1.
@@ -190,17 +264,18 @@ impl SourceDocument {
 
     /// Where a line (from 1) starts; past the last line, the last line's start.
     pub fn line_start(&self, line: u32) -> u32 {
-        let index = (line.max(1) as usize - 1).min(self.text.lines.len() - 1);
-        self.text.lines[index]
+        let index = line.max(1) as usize - 1;
+        self.text.line_start(index.min(self.text.line_count() - 1))
     }
 
     pub fn line_count(&self) -> u32 {
-        self.text.lines.len() as u32
+        self.text.line_count() as u32
     }
 
     /// The highlighted runs of the lines a range touches.
     pub fn highlights(&mut self, start: u32, length: u32) -> Vec<Highlight> {
         let end = start.saturating_add(length).min(self.text.len());
+        self.text.reach_line(end);
         self.highlighter.highlights(&self.text, start.min(end), end)
     }
 
@@ -209,6 +284,7 @@ impl SourceDocument {
     /// files), each from its start, however far before the range.
     pub fn not_prose(&mut self, start: u32, length: u32) -> Vec<TextRange> {
         let end = start.saturating_add(length).min(self.text.len());
+        self.text.reach(usize::MAX);
         prose::not_prose(&self.text, &mut self.scans, start.min(end), end)
     }
 
@@ -218,18 +294,13 @@ impl SourceDocument {
     /// maths, which is prose to `not_prose`.
     pub fn code_ranges(&mut self, selection: TextRange, checker: Checker) -> Vec<TextRange> {
         use HighlightKind::*;
-        let code = |kind| {
-            checker == Checker::WritingTools
-                || matches!(kind, Command | Argument | StringLiteral | Builtin)
-        };
-        let highlighted = self
-            .highlights(selection.start, selection.length)
-            .into_iter();
-        let mut ranges: Vec<TextRange> = highlighted
-            .filter(|h| code(h.kind))
-            .map(|h| range(h.start, h.length))
-            .collect();
-        ranges.extend(self.not_prose(selection.start, selection.length));
+        let TextRange { start, length } = selection;
+        let all = checker == Checker::WritingTools;
+        let code =
+            |h: &Highlight| all || matches!(h.kind, Command | Argument | StringLiteral | Builtin);
+        let highlights = self.highlights(start, length).into_iter().filter(code);
+        let mut ranges: Vec<TextRange> = highlights.map(|h| range(h.start, h.length)).collect();
+        ranges.extend(self.not_prose(start, length));
         ranges
     }
 
@@ -237,18 +308,18 @@ impl SourceDocument {
     /// time it does, in units from the line's start: not as the start of a
     /// longer name, not after a backslash that is itself a command's (`\\foo`
     /// is a line break and a word), and not in a comment.
-    pub fn command_ranges(&self, line: u32, command: &str) -> Vec<TextRange> {
+    pub fn command_ranges(&mut self, line: u32, command: &str) -> Vec<TextRange> {
         let index = line.max(1) as usize - 1;
         let name: Vec<u16> = command.encode_utf16().collect();
-        if index >= self.text.lines.len() || name.is_empty() {
+        if index >= self.text.line_count() || name.is_empty() {
             return vec![];
         }
+        self.text.reach_line(self.text.line_start(index));
         let units = self.text.line(index);
         // TeX's letters, with `@` as in a class's or a package's own source.
         let tex_letter = |u: u16| letter(u) || is(u, '@');
-        let end = (0..units.len())
-            .find(|&i| is(units[i], '%') && !escaped(units, i))
-            .unwrap_or(units.len());
+        let comment = (0..units.len()).find(|&i| is(units[i], '%') && !escaped(units, i));
+        let end = comment.unwrap_or(units.len());
         let word = name.get(1).is_some_and(|&u| tex_letter(u));
         let (mut found, mut from) = (vec![], 0);
         while let Some(at) = units[from..end].windows(name.len()).position(|w| w == name) {
@@ -266,6 +337,7 @@ impl SourceDocument {
     /// edits that unwrap the command giving it, in order.
     pub fn text_styles(&mut self, selection: TextRange) -> TextStyles {
         let selection = clamp(selection, self.text.len());
+        self.text.reach(usize::MAX);
         style::text_styles(&self.text, &mut self.scans, selection)
     }
 
@@ -276,26 +348,27 @@ impl SourceDocument {
     }
 
     /// The maths to preview at the caret, if it's in some.
-    pub fn math_at(&self, caret: u32) -> Option<MathPreview> {
-        maths::math_at(&self.text, caret.min(self.text.len()))
+    pub fn math_at(&mut self, caret: u32) -> Option<MathPreview> {
+        let caret = caret.min(self.text.len());
+        self.text.reach_line(caret);
+        self.text.reach(caret as usize + maths::PREVIEW_READS);
+        maths::math_at(&self.text, caret)
     }
 
     /// A maths symbol's command in place of the selection: as it is in
     /// maths, and between dollars in text, where the bare command would stop
     /// the build.
     pub fn insert_symbol(&mut self, command: &str, selection: TextRange) -> Insertion {
-        let selection = clamp(selection, self.text.len());
-        let at = selection.start as usize;
+        let TextRange { start, length } = clamp(selection, self.text.len());
+        self.text.reach(usize::MAX);
+        let at = start as usize;
         let mut scanner = self.scans.resume(&self.text, at, at).scanner;
-        scanner.run(&self.text.units[..at], at, &[], &mut ());
-        let text = if scanner.in_math() {
-            command.to_string()
-        } else {
-            format!("${command}$")
-        };
-        let caret = selection.start + utf16(&text) as u32;
+        scanner.run(&self.text.units()[..at], at, &[], &mut ());
+        let text = format!("{0}{command}{0}", if scanner.in_math() { "" } else { "$" });
+        let caret = start + utf16(&text) as u32;
+        let edit = edit(start, length, text);
         Insertion {
-            edit: edit(selection.start, selection.length, text),
+            edit,
             caret,
             fields: vec![],
         }
@@ -309,12 +382,8 @@ fn is(u: u16, c: char) -> bool {
 /// Whether the unit at `at` follows a backslash that is not itself escaped,
 /// as the bracket of `\[` does.
 fn escaped(units: &[u16], at: usize) -> bool {
-    let slashes = units[..at]
-        .iter()
-        .rev()
-        .take_while(|&&u| is(u, '\\'))
-        .count();
-    slashes % 2 == 1
+    let slashes = units[..at].iter().rev().take_while(|&&u| is(u, '\\'));
+    slashes.count() % 2 == 1
 }
 
 /// The longest command name `ascii` reads; longer than any in the catalog.
@@ -361,22 +430,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn line_starts_follow_edits() {
+    fn lines_follow_edits_in_utf16() {
         let mut doc = SourceDocument::new("a\nb\nc");
-        assert_eq!(doc.line_count(), 3);
         doc.edit(1, 2, "x\ny\nz"); // "a" + "x\ny\nz" + "\nc"
         assert_eq!(doc.text(), "ax\ny\nz\nc");
-        assert_eq!(
-            (0..4).map(|l| doc.line_start(l + 1)).collect::<Vec<_>>(),
-            [0, 3, 5, 7]
-        );
-        doc.edit(0, 7, "");
-        assert_eq!(doc.text(), "c");
-        assert_eq!(doc.line_count(), 1);
-        assert_eq!(doc.line_at(1), 1);
+        let starts: Vec<u32> = (1..=5).map(|l| doc.line_start(l)).collect();
+        assert_eq!(starts, [0, 3, 5, 7, 7]);
+        doc.edit(0, 7, "é😀\nx");
+        // é is one unit, the emoji two, then the line feed.
+        assert_eq!(doc.text(), "é😀\nxc");
+        assert_eq!((doc.line_count(), doc.line_start(2)), (2, 4));
         // Past the end: cut to the text, never a panic.
         doc.edit(10, 5, "!");
-        assert_eq!(doc.text(), "c!");
+        assert_eq!((doc.text().as_str(), doc.line_at(7)), ("é😀\nxc!", 2));
     }
 
     /// The labels and citations are the document's, set when they change
@@ -385,28 +451,23 @@ mod tests {
     #[test]
     fn completions_offer_the_symbols_set_on_the_document() {
         let offered = |doc: &mut SourceDocument, caret: u32| -> Vec<String> {
-            let answer = doc.call("completions", &format!(r#"{{"caret": {caret}}}"#));
-            let value: serde_json::Value = serde_json::from_str(&answer.unwrap()).unwrap();
-            value["items"].as_array().map_or(vec![], |items| {
-                items
-                    .iter()
-                    .map(|i| i["label"].as_str().unwrap().to_owned())
-                    .collect()
-            })
+            let args = format!(r#"{{"caret": {caret}}}"#);
+            let answer = doc.call("completions", &args).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&answer).unwrap();
+            let items = value["items"].as_array().cloned().unwrap_or_default();
+            let label = |i: &serde_json::Value| i["label"].as_str().unwrap().to_owned();
+            items.iter().map(label).collect()
         };
-        let owned = |names: &[&str]| names.iter().map(|&n| n.to_owned()).collect();
+        let owned = |names: &str| names.split(' ').map(str::to_owned).collect();
         let mut doc = SourceDocument::new("\\cite{sm} \\ref{fig");
         assert!(offered(&mut doc, 8).is_empty(), "a new document has none");
-        doc.set_symbols(
-            owned(&["fig:one", "sec:two"]),
-            owned(&["smith2020", "jones"]),
-        );
+        doc.set_symbols(owned("fig:one sec:two"), owned("smith2020 jones"));
         assert_eq!(offered(&mut doc, 8), ["smith2020"]);
         assert_eq!(offered(&mut doc, 18), ["fig:one"]);
         // Kept through edits, and replaced whole.
         doc.edit(0, 0, "x ");
         assert_eq!(offered(&mut doc, 10), ["smith2020"]);
-        doc.set_symbols(vec![], owned(&["smyth"]));
+        doc.set_symbols(vec![], owned("smyth"));
         assert_eq!(offered(&mut doc, 10), ["smyth"]);
         assert!(offered(&mut doc, 20).is_empty());
     }
@@ -415,20 +476,23 @@ mod tests {
     /// that starts with it, nor a comment's, nor one after an escaped backslash.
     #[test]
     fn a_command_is_found_on_its_line() {
-        let found = |line: &str, command: &str| -> Vec<(u32, u32)> {
-            let doc = SourceDocument::new(&format!("first\n{line}\nlast"));
+        for (line, command, found) in [
+            ("a \\foo b \\foo{c}", "\\foo", "2 9"),
+            ("\\foobar \\foo@ \\\\foo \\foo1", "\\foo", "20"),
+            ("\\foo % \\foo", "\\foo", "0"),
+            ("50\\% \\foo", "\\foo", "5"),
+            ("a\\;b \\\\;", "\\;", "1"),
+            ("no such command", "\\foo", ""),
+            ("\\foo", "", ""),
+        ] {
+            let mut doc = SourceDocument::new(&format!("first\n{line}\nlast"));
             let ranges = doc.command_ranges(2, command);
-            ranges.iter().map(|r| (r.start, r.length)).collect()
-        };
-        assert_eq!(found("a \\foo b \\foo{c}", "\\foo"), [(2, 4), (9, 4)]);
-        assert_eq!(found("\\foobar \\foo@ \\\\foo \\foo1", "\\foo"), [(20, 4)]);
-        assert_eq!(found("\\foo % \\foo", "\\foo"), [(0, 4)]);
-        assert_eq!(found("50\\% \\foo", "\\foo"), [(5, 4)]);
-        assert_eq!(found("a\\;b \\\\;", "\\;"), [(1, 2)]);
-        assert!(found("no such command", "\\foo").is_empty());
-        let doc = SourceDocument::new("\\foo");
-        assert!(doc.command_ranges(2, "\\foo").is_empty(), "no such line");
-        assert!(doc.command_ranges(1, "").is_empty());
+            assert!(ranges.iter().all(|r| r.length == utf16(command) as u32));
+            let starts: Vec<String> = ranges.iter().map(|r| r.start.to_string()).collect();
+            assert_eq!(starts.join(" "), found, "{command} in {line}");
+        }
+        let none = SourceDocument::new("\\foo").command_ranges(2, "\\foo");
+        assert!(none.is_empty(), "no such line");
     }
 
     /// Spelling passes over the code that is never words; Writing Tools over
@@ -437,31 +501,15 @@ mod tests {
     fn checkers_leave_code_alone() {
         let text = "Prose \\emph{word} $x$ % note";
         let mut doc = SourceDocument::new(text);
-        let all = range(0, utf16(text) as u32);
-        let ranges = |doc: &mut SourceDocument, checker| -> Vec<(u32, u32)> {
-            let mut found: Vec<_> = doc
-                .code_ranges(all, checker)
-                .iter()
-                .map(|r| (r.start, r.length))
-                .collect();
+        let mut ranges = |checker| {
+            let ranges = doc.code_ranges(range(0, utf16(text) as u32), checker);
+            let mut found: Vec<_> = ranges.iter().map(|r| (r.start, r.length)).collect();
             found.sort_unstable();
             found
         };
         // The command, then the maths not_prose finds; the comment is prose to spelling.
-        assert_eq!(ranges(&mut doc, Checker::Spelling), [(6, 5), (18, 3)]);
-        let writing = ranges(&mut doc, Checker::WritingTools);
-        assert!(writing.contains(&(22, 6)), "the comment: {writing:?}");
-        assert!(
-            writing.contains(&(18, 1)) && writing.contains(&(18, 3)),
-            "the maths: {writing:?}"
-        );
-    }
-
-    #[test]
-    fn offsets_are_utf16() {
-        let mut doc = SourceDocument::new("é😀\nx");
-        assert_eq!(doc.line_start(2), 4); // é is one unit, the emoji two, then the line feed
-        doc.edit(1, 2, "");
-        assert_eq!(doc.text(), "é\nx");
+        assert_eq!(ranges(Checker::Spelling), [(6, 5), (18, 3)]);
+        let (writing, expected) = (ranges(Checker::WritingTools), [(22, 6), (18, 1), (18, 3)]);
+        assert!(expected.iter().all(|r| writing.contains(r)), "{writing:?}");
     }
 }

@@ -62,7 +62,7 @@ fn math_mode_is_known_at_a_place() {
 #[test]
 fn the_maths_to_preview_is_found_around_a_place() {
     for (source, expected) in fixture().math_at {
-        let (doc, at) = marked(&source);
+        let (mut doc, at) = marked(&source);
         let found = serde_json::to_value(doc.math_at(at)).unwrap();
         assert_eq!(found, expected, "{source}");
     }
@@ -72,7 +72,7 @@ fn the_maths_to_preview_is_found_around_a_place() {
 fn completions_are_offered_for_what_is_typed() {
     let (labels, citations) = (["sec:intro".to_string()], ["knuth84".to_string()]);
     for Offer(before, explicit, start, offered, kind) in fixture().completions {
-        let doc = SourceDocument::new(&before);
+        let mut doc = SourceDocument::new(&before);
         let found = doc.completions(units(&before), explicit, &labels, &citations);
         // Where it starts, and what its items are, all of them.
         let place = found
@@ -91,7 +91,7 @@ fn completions_are_offered_for_what_is_typed() {
 #[test]
 fn a_line_becomes_a_heading() {
     for (line, command, text, cursor) in fixture().headings {
-        let doc = SourceDocument::new(&format!("above\n{line}\nbelow"));
+        let mut doc = SourceDocument::new(&format!("above\n{line}\nbelow"));
         let Insertion { edit, caret, .. } = doc.set_heading(7, &command);
         let found = (edit.start, edit.length, edit.text, caret);
         let expected = (6, units(&line), text, 6 + cursor);
@@ -102,7 +102,7 @@ fn a_line_becomes_a_heading() {
 #[test]
 fn blocks_go_in_with_their_fields() {
     for (before, id, text, fields) in fixture().blocks {
-        let doc = SourceDocument::new(&before);
+        let mut doc = SourceDocument::new(&before);
         let end = units(&before);
         let block = doc.insert_block(&id, range(end, 0)).unwrap();
         assert_eq!(block.caret, end + block.fields[0].start, "{id}");
@@ -117,7 +117,7 @@ fn blocks_go_in_with_their_fields() {
 #[test]
 fn comments_and_indentation_go_by_line() {
     for ByLine(text, command, selections, edits, note) in fixture().by_line {
-        let doc = SourceDocument::new(&text);
+        let mut doc = SourceDocument::new(&text);
         let selections: Vec<_> = selections.into_iter().map(|(s, l)| range(s, l)).collect();
         let found = match command.as_str() {
             "comment" => doc.toggle_comment(&selections),
