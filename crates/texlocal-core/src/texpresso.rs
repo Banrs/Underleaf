@@ -1365,6 +1365,8 @@ done
             assert!(!manager.status(current).unwrap().running);
             let restarted = stub.restart(current).unwrap();
             assert!(restarted.running && !session.status().running);
+            // The stopped one's task has let it go: its writer, readers and wait are over.
+            until(|| Arc::strong_count(&session) == 1).await;
             // The owner's Stop ends its ownership too.
             assert!(!manager.stop_request(current).unwrap().running);
             assert_eq!(refused(stub.restart(current)), 409);

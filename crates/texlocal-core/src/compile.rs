@@ -227,12 +227,8 @@ fn job_of(
 fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> std::io::Result<Command> {
     // A full path avoids std's fork fallback, which can crash a child of the
     // multithreaded Mac app before exec.
-    let program = find_tool(program, path_env).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("{program} is not on the PATH"),
-        )
-    })?;
+    let missing = || std::io::Error::other(format!("{program} is not on the PATH"));
+    let program = find_tool(program, path_env).ok_or_else(missing)?;
     let mut cmd = Command::new(program);
     // TeX Live's engines read texmf.cnf's variables from the environment
     // first. Unwrapped, the log keeps each message and path on one line;
@@ -252,12 +248,8 @@ fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> std::io::R
 /// Keeps bounded output while reading to EOF, so a full pipe cannot block the
 /// child. The caller keeps what was read if it ends the read early.
 async fn read_capped(mut reader: impl tokio::io::AsyncRead + Unpin, kept: &mut Vec<u8>) {
-    if (&mut reader)
-        .take(MAX_OUTPUT as u64)
-        .read_to_end(kept)
-        .await
-        .is_ok()
-    {
+    let mut capped = (&mut reader).take(MAX_OUTPUT as u64);
+    if capped.read_to_end(kept).await.is_ok() {
         let _ = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await;
     }
 }
