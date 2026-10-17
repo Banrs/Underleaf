@@ -8,20 +8,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 use super::engine::Fut;
 use super::watch::Change;
-use super::{Document, Engine, Msg, Sessions, Timings};
+use super::{Document, Engine, Msg, Preview, Sessions, Timings};
 use crate::compile::CompileResult;
 use crate::logparse::LogItem;
 use crate::service::Service;
-use crate::texpresso::{Document as LiveDocument, Events, FileBuffer, Pane, RunEnd, Status};
+use crate::texpresso::{FileBuffer, LiveEvent, Pane, Sink, Status};
 use crate::{CoreError, lock};
 
 // MARK: - A fake engine
-
-type News = Result<Events, CoreError>;
 
 #[derive(Default)]
 struct Fake {
@@ -35,14 +33,15 @@ struct Fake {
     edits: Mutex<Vec<(String, usize, usize, String)>>,
     /// What the next edits answer; Ok once none is left.
     edit_answers: Mutex<VecDeque<Result<(), CoreError>>>,
-    news: Mutex<Option<Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<News>>>>>,
-    news_tx: Mutex<Option<mpsc::UnboundedSender<News>>>,
+    /// Where the last start's preview tells what it shows.
+    sink: Mutex<Option<Sink>>,
+    /// TeX's log, as the Live Preview Log shows it.
+    log: Mutex<String>,
 }
 
 fn status(running: bool) -> Status {
     Status {
         running,
-        revision: 1,
         ..Status::default()
     }
 }
@@ -69,20 +68,8 @@ fn issue(line: u32, message: &str) -> LogItem {
     }
 }
 
-fn news(running: bool) -> Events {
-    Events {
-        seq: 1,
-        running,
-        revision: 1,
-        ..Events::default()
-    }
-}
-
-fn exited() -> Events {
-    Events {
-        error: Some("TeXpresso exited".into()),
-        ..news(false)
-    }
+fn exited() -> LiveEvent {
+    LiveEvent::Ended(Some("TeXpresso exited".into()))
 }
 
 impl Fake {
@@ -100,12 +87,11 @@ impl Fake {
         let _ = build.expect("a build runs").send(Ok(result));
     }
 
-    fn send_news(&self, events: Events) {
-        let tx = self.news_tx.lock().unwrap();
-        tx.as_ref()
-            .expect("a preview runs")
-            .send(Ok(events))
-            .unwrap();
+    /// What the preview shows, told as TeXpresso's manager tells it.
+    fn tell(&self, event: LiveEvent) {
+        if let Some(sink) = self.sink.lock().unwrap().as_ref() {
+            sink(event);
+        }
     }
 
     /// The next key's edit is refused with `error`.
@@ -138,32 +124,34 @@ impl Engine for Fake {
         self.log("clean");
         Box::pin(async { Ok(()) })
     }
+}
 
-    fn live_start(
+impl Preview for Fake {
+    fn start(
         &self,
         _owner: u64,
         _root: &Path,
         files: &[FileBuffer],
         replacing: bool,
+        _path_env: &str,
         pane: Option<&Pane>,
+        sink: Sink,
     ) -> Result<Status, CoreError> {
         self.log("live_start");
         self.panes.lock().unwrap().push(pane.is_some());
         let paths = files.iter().map(|f| f.path.clone()).collect();
         self.starts.lock().unwrap().push((paths, replacing));
-        let (tx, rx) = mpsc::unbounded_channel();
-        *self.news_tx.lock().unwrap() = Some(tx);
-        *self.news.lock().unwrap() = Some(Arc::new(tokio::sync::Mutex::new(rx)));
+        *self.sink.lock().unwrap() = Some(sink);
         Ok(status(true))
     }
 
-    fn live_update(&self, _owner: u64, path: &str, text: &str) -> Result<(), CoreError> {
+    fn update(&self, _owner: u64, path: &str, text: &str) -> Result<(), CoreError> {
         let update = (path.to_owned(), text.to_owned());
         self.updates.lock().unwrap().push(update);
         Ok(())
     }
 
-    fn live_edit(
+    fn edit(
         &self,
         _owner: u64,
         path: &str,
@@ -179,43 +167,39 @@ impl Engine for Fake {
         answer.unwrap_or(Ok(()))
     }
 
-    fn live_view(&self, _owner: u64, _first: u32, _last: u32) {
+    fn view(&self, _owner: u64, _first: u32, _last: u32) -> Result<(), CoreError> {
         self.log("live_view");
+        Ok(())
     }
 
-    fn live_caret(&self, _owner: u64, _path: &str, _offset: usize) {
+    fn caret(&self, _owner: u64, _path: &str, _offset: usize) -> Result<(), CoreError> {
         self.log("live_caret");
+        Ok(())
     }
 
-    fn live_wait(&self, _owner: u64, _after: u64) -> Fut<News> {
-        let news = self.news.lock().unwrap().clone();
-        Box::pin(async move {
-            if let Some(news) = news
-                && let Some(next) = news.lock().await.recv().await
-            {
-                return next;
-            }
-            std::future::pending().await
-        })
-    }
-
-    fn live_stop(&self, _owner: u64) -> Result<Status, CoreError> {
-        self.log("live_stop");
-        Ok(status(false))
-    }
-
-    fn live_rescan(&self, _owner: u64) -> Result<Status, CoreError> {
+    fn rescan(&self, _owner: u64) -> Result<(), CoreError> {
         self.log("live_rescan");
-        Ok(status(true))
+        Ok(())
     }
 
-    /// TeXpresso's log and output, as the Live Preview Log shows them.
-    fn live_status(&self, _owner: u64) -> Result<Status, CoreError> {
+    fn status(&self, _owner: u64) -> Result<Status, CoreError> {
         Ok(Status {
-            log: "TeX's log".into(),
+            log: self.log.lock().unwrap().clone(),
             output: "TeX's output".into(),
             ..status(true)
         })
+    }
+
+    /// As the manager's, which ends the preview: its end is told.
+    fn stop_request(&self, _owner: u64) -> Result<Status, CoreError> {
+        self.log("live_stop");
+        self.tell(LiveEvent::Ended(None));
+        Ok(status(false))
+    }
+
+    fn stop(&self, _root: &Path) -> Result<(), CoreError> {
+        self.tell(LiveEvent::Ended(None));
+        Ok(())
     }
 }
 
@@ -245,13 +229,16 @@ impl Rig {
         let service = Arc::new(Service::new(data.path().to_path_buf()));
         // As if `status` had found TeX, which automatic builds wait for.
         service.tex_found.send_replace(true);
-        let fake = Arc::new(Fake::default());
+        let fake = Arc::new(Fake {
+            log: Mutex::new("TeX's log".into()),
+            ..Fake::default()
+        });
         let timings = Timings {
             watch,
             ..Timings::default()
         };
-        let engine = Arc::clone(&fake) as Arc<dyn Engine>;
-        let sessions = Sessions::with_engine(service, engine, timings);
+        let (engine, preview) = (Arc::clone(&fake), Arc::clone(&fake));
+        let sessions = Sessions::with_engine(service, engine, preview, timings);
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
         sessions.set_listener(Some(Box::new(move |event| {
@@ -430,9 +417,13 @@ async fn requests_during_a_build_queue_one_more_and_stop_drops_it() {
     rig.fake.finish_build(built(true, Vec::new()));
     rig.state().await;
     assert_eq!(rig.fake.called("compile"), 2);
-    let finished = rig.of_type("build_finished").await;
+    let events = rig.events().await;
+    let of = |kind: &'static str| events.iter().filter(move |e| e["type"] == kind);
+    let finished: Vec<&Value> = of("build_finished").collect();
     assert_eq!(finished.len(), 1);
     assert_eq!(finished[0]["auto"], false);
+    // Compile's word and spinner stay as they are from one build to the next.
+    assert!(of("build").all(|b| b["compiling"] == true), "{events:?}");
     // Stop drops the queued one too.
     rig.ok("compile", json!({})).await;
     rig.ok("stop_compile", json!({})).await;
@@ -617,9 +608,11 @@ async fn a_failed_build_announces_and_an_automatic_one_only_when_the_errors_chan
 // MARK: - Changes on disk
 
 #[tokio::test(start_paused = true)]
-async fn another_apps_change_to_a_clean_document_reloads_it() {
+async fn another_apps_change_to_a_clean_document_reloads_it_and_the_pdf_is_out_of_date() {
     let mut rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
+    rig.ok("compile", json!({})).await;
+    rig.fake.finish_build(built(true, Vec::new()));
     rig.write_elsewhere("main.tex", "From elsewhere");
     wait(300).await;
     let reloads = rig.of_type("document_reload").await;
@@ -629,6 +622,7 @@ async fn another_apps_change_to_a_clean_document_reloads_it() {
     doc.reload("From elsewhere");
     let state = rig.state().await;
     assert_eq!(state["documents"][0]["dirty"], false);
+    assert_eq!(state["build"]["outdated"], true);
     wait(800).await;
     assert_eq!(rig.disk("main.tex"), "From elsewhere");
 }
@@ -704,38 +698,36 @@ async fn cancel_leaves_the_edits_unsaved_until_a_save_is_asked_for() {
     assert_eq!(rig.of_type("conflict").await.len(), 1);
 }
 
+/// Files deleted elsewhere: one without edits closes; one with unsaved edits is asked about,
+/// and nothing puts it back until Save does.
 #[tokio::test(start_paused = true)]
-async fn a_deleted_file_with_unsaved_edits_is_asked_about_and_not_put_back() {
+async fn a_deleted_file_closes_and_one_with_unsaved_edits_is_asked_about_not_put_back() {
     let mut rig = Rig::new(false).await;
+    fs::write(rig.root.join("ch.tex"), "chapter").unwrap();
+    rig.open("ch.tex").await;
     let doc = rig.open("main.tex").await;
     doc.edit(5, 0, " mine");
-    fs::remove_file(rig.root.join("main.tex")).unwrap();
-    rig.changed("main.tex", true);
+    for path in ["ch.tex", "main.tex"] {
+        fs::remove_file(rig.root.join(path)).unwrap();
+        rig.changed(path, true);
+    }
     wait(300).await;
-    let conflicts = rig.of_type("conflict").await;
-    assert_eq!(conflicts[0]["kind"], "gone");
+    let events = rig.events().await;
+    let of = |kind: &'static str| events.iter().filter(move |e| e["type"] == kind);
+    let closed: Vec<&Value> = of("document_closed").collect();
+    assert_eq!(
+        (closed[0]["path"].as_str(), closed.len()),
+        (Some("ch.tex"), 1)
+    );
+    assert_eq!(closed[0]["reason"], "gone");
+    assert!(rig.sessions.document(rig.session, "ch.tex").is_none());
+    // The listing changed too.
+    assert_eq!(of("tree").count(), 1);
+    assert_eq!(of("conflict").next().unwrap()["kind"], "gone");
     wait(800).await;
     assert!(!rig.root.join("main.tex").exists());
     rig.resolve("save").await;
     assert_eq!(rig.disk("main.tex"), "Hello mine");
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_deleted_file_without_edits_closes() {
-    let mut rig = Rig::new(false).await;
-    rig.open("main.tex").await;
-    fs::remove_file(rig.root.join("main.tex")).unwrap();
-    rig.changed("main.tex", true);
-    wait(300).await;
-    let events = rig.events().await;
-    let closed = events
-        .iter()
-        .find(|e| e["type"] == "document_closed")
-        .unwrap();
-    assert_eq!(closed["reason"], "gone");
-    // The listing changed too.
-    assert!(events.iter().any(|e| e["type"] == "tree"));
-    assert!(rig.sessions.document(rig.session, "main.tex").is_none());
 }
 
 #[tokio::test(start_paused = true)]
@@ -866,46 +858,59 @@ async fn keys_go_to_texpresso_as_made_and_a_refused_one_sends_the_whole_text() {
     assert_eq!(rig.fake.edits.lock().unwrap().len(), 2);
 }
 
+/// The phases the `live` events among `events` say, in order.
+fn phases(events: &[Value]) -> Vec<&str> {
+    let lives = events.iter().filter(|e| e["type"] == "live");
+    lives.map(|e| e["phase"].as_str().unwrap()).collect()
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_stopped_run_is_halted_only_once_it_has_lasted_a_second() {
     let mut rig = Rig::new(false).await;
     live(&rig).await;
-    let stopped = |run: &str| Events {
-        done: Some(RunEnd { run: run.into() }),
-        ..news(true)
-    };
-    rig.fake.send_news(stopped("stopped"));
+    let stopped = |run: &str| LiveEvent::Done(run.into());
+    rig.fake.tell(stopped("stopped"));
     wait(500).await;
-    rig.fake.send_news(stopped("complete"));
+    rig.fake.tell(stopped("complete"));
     wait(1000).await;
     assert_eq!(rig.state().await["live"]["halted"], false);
-    rig.fake.send_news(stopped("stopped"));
+    rig.fake.tell(stopped("stopped"));
     wait(1100).await;
     let lives = rig.of_type("live").await;
     assert_eq!(lives.last().unwrap()["halted"], true);
 }
 
 #[tokio::test(start_paused = true)]
-async fn documents_and_pages_go_to_the_host() {
+async fn documents_and_pages_go_to_the_host_as_they_come_and_none_of_a_start_before() {
     let mut rig = Rig::new(false).await;
     live(&rig).await;
-    let document = LiveDocument {
-        path: "/tmp/live.pdf".into(),
-        version: 2,
-        serial: 3,
-        pages: 4,
-        run: Some("complete".into()),
-        changed: Some(vec![[1, 1]]),
+    let earlier = rig.fake.sink.lock().unwrap().take();
+    rig.ok("live_stop", json!({})).await;
+    live(&rig).await;
+    let page = |path: &str| LiveEvent::Page {
+        page: 1,
+        path: path.into(),
     };
-    rig.fake.send_news(Events {
-        pdf: Some(document),
-        ..news(true)
+    earlier.unwrap()(page("/tmp/stale.pdf"));
+    rig.fake.tell(LiveEvent::Document {
+        path: "/tmp/live.pdf".into(),
+        pages: 4,
+        run: Some("partial".into()),
+        changed: Some(vec![[1, 1]]),
     });
-    wait(1).await;
-    let shown = rig.of_type("live_document").await;
-    // Version 1 never came: any page may differ.
-    assert_eq!(shown[0]["changed"], Value::Null);
-    assert_eq!(shown[0]["complete"], true);
+    rig.fake.tell(page("/tmp/page.pdf"));
+    let events = rig.events().await;
+    let shown: Vec<&Value> = events.iter().filter(|e| e["type"] != "live").collect();
+    let session = rig.session;
+    assert_eq!(
+        shown,
+        [
+            &json!({ "type": "live_document", "session": session, "path": "/tmp/live.pdf",
+                "version": 1, "serial": 1, "pages": 4, "changed": [[1, 1]], "complete": false }),
+            &json!({ "type": "live_page", "session": session, "page": 1, "path": "/tmp/page.pdf",
+                "serial": 2 }),
+        ]
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -913,15 +918,17 @@ async fn a_preview_that_ends_after_ten_seconds_restarts_and_a_new_one_reports() 
     let mut rig = Rig::new(false).await;
     live(&rig).await;
     wait(11_000).await;
-    rig.fake.send_news(exited());
+    rig.events().await;
+    rig.fake.tell(exited());
     wait(1).await;
-    rig.state().await;
     let starts = rig.fake.starts.lock().unwrap().clone();
     assert_eq!(starts.len(), 2);
     assert!(starts[1].1, "a restart of its own");
-    assert_eq!(rig.of_type("live_restarted").await.len(), 1);
+    let events = rig.events().await;
+    assert_eq!(phases(&events), ["starting", "running"]);
+    assert!(events.iter().any(|e| e["type"] == "live_restarted"));
     // At once after its start, the end is reported.
-    rig.fake.send_news(exited());
+    rig.fake.tell(exited());
     wait(1).await;
     let state = rig.state().await;
     assert_eq!(state["live"]["phase"], "stopped");
@@ -975,14 +982,14 @@ async fn the_live_event_carries_the_log_while_the_host_shows_it() {
     rig.ok("live_log", json!({ "shown": true })).await;
     assert_eq!(logs(rig.of_type("live").await), [log]);
     // What went wrong comes first.
-    rig.fake.send_news(exited());
+    rig.fake.tell(exited());
     wait(1).await;
     assert_eq!(logs(rig.of_type("live").await).last().unwrap(), failed);
     // Hidden, the log is no longer sent, but with an alert, which opens it.
     rig.ok("live_log", json!({ "shown": false })).await;
     live(&rig).await;
     assert!(logs(rig.of_type("live").await).iter().all(Value::is_null));
-    rig.fake.send_news(exited());
+    rig.fake.tell(exited());
     wait(1).await;
     let lives = rig.of_type("live").await;
     let (alerts, others): (Vec<Value>, Vec<Value>) =
@@ -991,20 +998,50 @@ async fn the_live_event_carries_the_log_while_the_host_shows_it() {
     assert!(logs(others).iter().all(Value::is_null));
 }
 
+/// A rename stops the preview, which starts again once the change settles. It shows only as
+/// `starting` meanwhile, as a host told it stopped would show the build's PDF; a Start then
+/// leaves the restart to finish, and a Stop then a Start start once.
 #[tokio::test(start_paused = true)]
-async fn a_rename_restarts_the_preview_once_it_settles() {
-    let rig = Rig::new(false).await;
+async fn a_rename_restarts_the_preview_once_it_settles_showing_it_as_starting_meanwhile() {
+    let mut rig = Rig::new(false).await;
     fs::write(rig.root.join("ch.tex"), "chapter").unwrap();
     live(&rig).await;
+    rig.events().await;
     rig.ok("rename", json!({ "from": "ch.tex", "to": "one.tex" }))
         .await;
     wait(100).await;
+    let started = rig.ok("live_start", json!({})).await;
+    assert_eq!(started["phase"], "starting");
     assert_eq!(rig.fake.starts.lock().unwrap().len(), 1);
     wait(100).await;
-    rig.state().await;
+    assert_eq!(phases(&rig.events().await), ["starting", "running"]);
+    // The user's Start after their Stop is the one start: the restart due would stop it.
+    rig.ok("rename", json!({ "from": "one.tex", "to": "ch.tex" }))
+        .await;
+    rig.ok("live_stop", json!({})).await;
+    live(&rig).await;
+    wait(200).await;
     let starts = rig.fake.starts.lock().unwrap().clone();
-    assert_eq!(starts.len(), 2);
-    assert!(starts[1].1, "a restart of its own");
+    let restarts: Vec<bool> = starts.into_iter().map(|(_, restart)| restart).collect();
+    assert_eq!(restarts, [false, true, false]);
+}
+
+/// While the host shows the log it follows TeX's, at most every 200 ms.
+#[tokio::test(start_paused = true)]
+async fn the_log_follows_tex_at_most_five_times_a_second() {
+    let mut rig = Rig::new(false).await;
+    live(&rig).await;
+    rig.ok("live_log", json!({ "shown": true })).await;
+    rig.events().await;
+    for line in 0..20 {
+        *rig.fake.log.lock().unwrap() = format!("line {line}");
+        rig.fake.tell(LiveEvent::Log);
+        wait(20).await;
+    }
+    wait(200).await;
+    let lives = rig.of_type("live").await;
+    assert_eq!(lives.len(), 2, "{lives:?}");
+    assert_eq!(lives[1]["log"], "line 19\n\nTeX's output");
 }
 
 #[tokio::test(start_paused = true)]
@@ -1024,20 +1061,11 @@ async fn the_caret_is_told_once_it_settles() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn in_texpressos_own_window_the_preview_is_told_no_view_or_caret_and_restarts_there() {
+async fn texpressos_own_window_is_kept_through_the_sessions_restarts() {
     let rig = Rig::new(false).await;
     fs::write(rig.root.join("ch.tex"), "chapter").unwrap();
-    rig.open("main.tex").await;
-    rig.ok("live_view", json!({ "first": 0, "last": 1 })).await;
     let started = rig.ok("live_start", json!({ "window": true })).await;
     assert_eq!(started["phase"], "running");
-    rig.ok("live_view", json!({ "first": 1, "last": 2 })).await;
-    rig.ok("live_caret", json!({ "path": "main.tex", "offset": 2 }))
-        .await;
-    wait(200).await;
-    rig.state().await;
-    assert_eq!(rig.fake.called("live_view"), 0);
-    assert_eq!(rig.fake.called("live_caret"), 0);
     // A restart of its own keeps to the window; the user's next Start chooses again.
     rig.ok("rename", json!({ "from": "ch.tex", "to": "one.tex" }))
         .await;
@@ -1212,32 +1240,6 @@ async fn an_automatic_build_whose_saves_are_held_shows_nothing() {
     rig.ok("compile", json!({ "auto": true })).await;
     assert_eq!(rig.of_type("build").await, Vec::<Value>::new());
     assert_eq!(rig.fake.called("compile"), 0);
-}
-
-/// Compile's word and spinner stay as they are from one build to the next.
-#[tokio::test(start_paused = true)]
-async fn a_build_queued_behind_another_follows_with_no_pause_shown() {
-    let mut rig = Rig::new(false).await;
-    rig.ok("compile", json!({ "auto": true })).await;
-    rig.ok("compile", json!({})).await;
-    rig.fake.finish_build(built(true, Vec::new()));
-    rig.state().await;
-    assert_eq!(rig.fake.called("compile"), 2);
-    let builds = rig.of_type("build").await;
-    assert!(builds.iter().all(|b| b["compiling"] == true), "{builds:?}");
-    assert_eq!(builds.last().unwrap()["auto"], false);
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_reload_from_disk_puts_the_preview_out_of_date() {
-    let rig = Rig::new(false).await;
-    let doc = rig.open("main.tex").await;
-    rig.ok("compile", json!({})).await;
-    rig.fake.finish_build(built(true, Vec::new()));
-    rig.write_elsewhere("main.tex", "From elsewhere");
-    wait(300).await;
-    doc.reload("From elsewhere");
-    assert_eq!(rig.state().await["build"]["outdated"], true);
 }
 
 /// A bug that panics ends the session, but loudly: the edits it held are written, each

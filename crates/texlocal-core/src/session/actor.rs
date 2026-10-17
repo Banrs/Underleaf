@@ -6,6 +6,7 @@ use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::time::Duration;
 
 use notify::RecommendedWatcher;
 use serde::Serialize;
@@ -16,7 +17,7 @@ use tokio::time::Instant;
 use super::build::Builds;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
-use super::{Document, Engine, Msg, Outline, Reply, Sessions, Timings};
+use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions, Timings};
 use crate::analyze::{self, ProjectAnalysis};
 use crate::atomic::Stamp;
 use crate::events::Emitter;
@@ -89,12 +90,33 @@ impl Doc {
 
 pub(crate) enum Later {
     Compile(bool),
-    /// Start live preview again; `ended`: because it ended by itself.
-    Restart {
-        ended: bool,
-    },
+    /// Start live preview again; true: because it ended by itself.
+    Restart(bool),
     FlushLive,
     Rescan,
+}
+
+/// What the session waits for, each due at its time; those due together go in this order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Timer {
+    /// From the last edit to the autosave.
+    Autosave,
+    /// From a save, or a change elsewhere, to the scan of labels and citations.
+    Symbols,
+    /// The folder's changes, taken together once they settle.
+    Fs,
+    /// A stopped run, shown as halted once it has lasted.
+    Halting,
+    /// The caret, told to TeXpresso where it settled.
+    Caret,
+    /// A whole text TeXpresso couldn't be sent, sent again.
+    Retry,
+    /// The preview, started again after a rename, a new main file or a file gone.
+    Restart,
+    /// Files changed on disk, sent to TeXpresso.
+    Disk,
+    /// The Live Preview Log, sent since TeX's changed.
+    Log,
 }
 
 /// What woke the session's task.
@@ -110,6 +132,7 @@ pub(crate) struct Actor {
     pub root: PathBuf,
     pub service: Arc<Service>,
     pub engine: Arc<dyn Engine>,
+    pub preview: Arc<dyn Preview>,
     events: Emitter,
     pub tx: mpsc::UnboundedSender<Msg>,
     pub shared: Arc<Mutex<HashMap<String, Document>>>,
@@ -119,7 +142,6 @@ pub(crate) struct Actor {
     next_doc: u64,
     symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
-    symbols_at: Option<Instant>,
     /// What the last scan read; taken out while a scan runs, so one beside it starts afresh.
     symbol_scan: SymbolScan,
     pub edits: u64,
@@ -133,9 +155,8 @@ pub(crate) struct Actor {
     pub outline: Arc<Mutex<Outline>>,
     /// The analyses asked for.
     analyses: u64,
-    autosave_at: Option<Instant>,
+    pub timers: BTreeMap<Timer, Instant>,
     fs_pending: Vec<Change>,
-    fs_at: Option<Instant>,
     /// The listing as last read: the same files and folders make the same tree.
     pub tree: TreeIndex,
     _watcher: Option<RecommendedWatcher>,
@@ -181,6 +202,7 @@ impl Actor {
             root,
             service: Arc::clone(&sessions.service),
             engine: Arc::clone(&sessions.engine),
+            preview: Arc::clone(&sessions.preview),
             events: sessions.hub.emitter(),
             tx,
             shared: Arc::default(),
@@ -190,7 +212,6 @@ impl Actor {
             next_doc: 1,
             symbols: Arc::default(),
             symbols_seq: 0,
-            symbols_at: Some(Instant::now()),
             symbol_scan: SymbolScan::default(),
             edits: 0,
             last_edits: HashMap::new(),
@@ -199,9 +220,8 @@ impl Actor {
             tex: sessions.service.tex_found.subscribe(),
             outline: Arc::default(),
             analyses: 0,
-            autosave_at: None,
+            timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
             fs_pending: Vec::new(),
-            fs_at: None,
             tree: TreeIndex::of(&tree),
             _watcher: watcher,
             deleting: BTreeSet::new(),
@@ -234,22 +254,20 @@ impl Actor {
                 return true;
             }
             if self.closed {
-                break;
+                return false;
             }
-            let deadline = self.next_deadline();
+            let deadline = self.timers.values().min().copied();
             let sleep = tokio::time::sleep_until(deadline.unwrap_or_else(Instant::now));
             let waiting_for_tex = self.builds.waiting_for_tex;
             woken = tokio::select! {
                 message = rx.recv() => match message {
                     Some(message) => Some(Wake::Message(message)),
-                    None => break,
+                    None => return false,
                 },
                 () = sleep, if deadline.is_some() => Some(Wake::Deadline),
                 Ok(()) = self.tex.changed(), if waiting_for_tex => Some(Wake::TexFound),
             };
         }
-        self.live_reset();
-        false
     }
 
     /// An automatic build skipped for want of TeX runs once `status` finds it.
@@ -271,15 +289,15 @@ impl Actor {
             let _ = self.flush_all(false);
             self.stop_compile();
             self.live_stop();
-            self.live_reset();
         }));
         for doc in self.docs.values() {
-            let error = if doc.dirty() {
+            let mut state = doc.state();
+            state["error"] = (if doc.dirty() {
                 STOPPED_UNSAVED
             } else {
                 STOPPED_SAVED
-            };
-            let state = json!({ "path": doc.path, "error": error, "held": doc.held });
+            })
+            .into();
             self.emit("document", state);
         }
         rx.close();
@@ -315,70 +333,37 @@ impl Actor {
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
             Msg::Symbols(seq, scan, result) => self.symbols_done(seq, scan, result),
-            Msg::LiveNews(seq, news) => self.live_news(seq, news),
+            Msg::Live(generation, event) => self.live_event(generation, event),
             Msg::Fs(changes) => {
                 self.fs_pending.extend(changes);
-                self.fs_at.get_or_insert(Instant::now() + self.t.settle);
+                let at = Instant::now() + self.t.settle;
+                self.timers.entry(Timer::Fs).or_insert(at);
             }
         }
     }
 
-    fn next_deadline(&self) -> Option<Instant> {
-        let live = &self.live;
-        [
-            self.autosave_at,
-            self.symbols_at,
-            self.fs_at,
-            live.halting_at,
-            live.settle.as_ref().map(|(at, _)| *at),
-            live.retry_at,
-            live.restart_at,
-            live.disk_at,
-            live.log_at,
-        ]
-        .into_iter()
-        .flatten()
-        .min()
-    }
-
+    /// Each timer due, in its order: one that a timer before it changed is looked at again.
     fn fire(&mut self) {
         let now = Instant::now();
-        let due = |at: Option<Instant>| at.is_some_and(|at| at <= now);
-        if due(self.autosave_at) {
-            self.autosave_at = None;
-            self.autosave();
+        while let Some((&timer, _)) = self.timers.iter().find(|(_, at)| **at <= now) {
+            self.timers.remove(&timer);
+            match timer {
+                Timer::Autosave => self.autosave(),
+                Timer::Symbols => self.scan_symbols(),
+                Timer::Fs => self.files_changed_on_disk(),
+                Timer::Halting => self.live_halted(),
+                Timer::Caret => self.caret_settled(),
+                Timer::Retry => self.flush_pending(),
+                Timer::Restart => self.later.push_back(Later::Restart(false)),
+                Timer::Disk => self.refresh_live_disk(),
+                Timer::Log => self.publish_live(false),
+            }
         }
-        if due(self.symbols_at) {
-            self.symbols_at = None;
-            self.scan_symbols();
-        }
-        if due(self.fs_at) {
-            self.fs_at = None;
-            self.files_changed_on_disk();
-        }
-        if due(self.live.halting_at) {
-            self.live.halting_at = None;
-            self.live.halted = true;
-            self.publish_live(false);
-        }
-        if due(self.live.settle.as_ref().map(|(at, _)| *at)) {
-            self.caret_settled();
-        }
-        if due(self.live.retry_at) {
-            self.live.retry_at = None;
-            self.flush_pending();
-        }
-        if due(self.live.restart_at) {
-            self.live.restart_at = None;
-            self.later.push_back(Later::Restart { ended: false });
-        }
-        if due(self.live.disk_at) {
-            self.live.disk_at = None;
-            self.refresh_live_disk();
-        }
-        if due(self.live.log_at) {
-            self.log_due();
-        }
+    }
+
+    /// `timer` is due `wait` from now, in place of when it was.
+    pub fn after(&mut self, timer: Timer, wait: Duration) {
+        self.timers.insert(timer, Instant::now() + wait);
     }
 
     fn run_later(&mut self) {
@@ -391,7 +376,7 @@ impl Actor {
                 Later::Compile(auto) => {
                     let _ = self.compile(auto);
                 }
-                Later::Restart { ended } => self.live_restart(ended),
+                Later::Restart(ended) => self.live_restart(ended),
                 Later::FlushLive => self.flush_pending(),
                 Later::Rescan => self.live_rescan(),
             }
@@ -434,7 +419,7 @@ impl Actor {
                 if let Some(doc) = self.docs.get_mut(&path) {
                     doc.composing = composing;
                     if !composing && doc.dirty() {
-                        self.autosave_at = Some(Instant::now() + self.t.autosave);
+                        self.after(Timer::Autosave, self.t.autosave);
                     }
                 }
             }
@@ -468,7 +453,6 @@ impl Actor {
                 return Ok(self.live_start_asked(window));
             }
             "live_stop" => {
-                self.live_cancel_work();
                 self.live_stop();
                 return Ok(self.live_state());
             }
@@ -509,7 +493,6 @@ impl Actor {
         let saved = self.flush_all(false).unwrap_or(false);
         self.stop_compile();
         self.closed = true;
-        self.live_cancel_work();
         self.live_stop();
         lock(&self.shared).clear();
         json!({ "saved": saved })
@@ -578,7 +561,7 @@ impl Actor {
         };
         self.text_changed(&path);
         self.publish_doc(&path);
-        self.autosave_at = Some(Instant::now() + self.t.autosave);
+        self.after(Timer::Autosave, self.t.autosave);
         self.live_edited(&path, version, start, length, text);
     }
 
@@ -588,7 +571,7 @@ impl Actor {
         };
         self.text_changed(&path);
         // Its labels and citations may have changed with it.
-        self.symbols_at = Some(Instant::now() + self.t.symbols);
+        self.after(Timer::Symbols, self.t.symbols);
         let Some(doc) = self.docs.get_mut(&path) else {
             return;
         };
@@ -698,7 +681,7 @@ impl Actor {
                 Ok(Some(stamp)) => {
                     (doc.disk_text, doc.disk_stamp) = (text, Some(stamp));
                     (doc.saved, doc.force, doc.held, doc.error) = (version, false, false, None);
-                    self.symbols_at = Some(Instant::now() + self.t.symbols);
+                    self.after(Timer::Symbols, self.t.symbols);
                     self.emit("saved", json!({ "path": path }));
                     Ok(true)
                 }
@@ -716,7 +699,7 @@ impl Actor {
     /// Writes every document with unsaved edits; typing during a write is
     /// written too, so a build or a trash that follows has it.
     pub fn flush_all(&mut self, reporting: bool) -> Result<bool, CoreError> {
-        self.autosave_at = None;
+        self.timers.remove(&Timer::Autosave);
         self.flush(None, reporting)
     }
 
@@ -837,7 +820,7 @@ impl Actor {
         // document's are scanned as it reloads.
         let scan = |path: &&String| matches!(file_kind(path), "tex" | "bib");
         if meaning.tree || others.iter().any(scan) {
-            self.symbols_at = Some(Instant::now() + self.t.symbols);
+            self.after(Timer::Symbols, self.t.symbols);
         }
         if !others.is_empty() {
             self.emit("files_changed", json!({ "paths": others }));
@@ -849,7 +832,7 @@ impl Actor {
             self.reload_tree();
         }
         if self.live.active() && !self.live.disk_paths.is_empty() {
-            self.live.disk_at = Some(Instant::now() + self.t.live_follow);
+            self.after(Timer::Disk, self.t.live_follow);
         }
     }
 
@@ -981,16 +964,14 @@ impl Actor {
         if !self.save_edits(true)? {
             return Ok(Value::Null);
         }
-        let (live, intent) = (self.live.active(), self.live.intent);
-        let renamed = self.service.with_project(&self.project, |root| {
+        let (renamed, main) = self.service.with_project(&self.project, |root| {
             let main = settings::read_settings(root).main_file;
             let renamed = projects::rename_entry(root, from, to)?;
-            // What the preview shows may have moved: it starts again after (`keep_live`).
-            self.service.texpresso.stop(root)?;
+            // What the preview shows may have moved: it starts again after.
+            self.preview.stop(root)?;
             Ok((renamed, main))
-        });
-        self.keep_live(live, intent, renamed.is_ok());
-        let (renamed, main) = renamed?;
+        })?;
+        self.live_follow();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
         // Whatever was open at the new name is stale: the name was free.
         for path in self.docs_within(to) {
@@ -1025,19 +1006,17 @@ impl Actor {
     }
 
     fn set_settings(&mut self, patch: &Value) -> Result<Value, CoreError> {
-        let (live, intent) = (self.live.active(), self.live.intent);
         let (updated, main_changed) = self.service.with_project(&self.project, |root| {
             let main = settings::read_settings(root).main_file;
             let updated = settings::write_settings(root, patch)?;
             let main_changed = updated.main_file != main;
             if main_changed {
-                // The preview shows the old main file: it starts again after (`keep_live`).
-                self.service.texpresso.stop(root)?;
+                // The preview shows the old main file: it starts again after.
+                self.preview.stop(root)?;
             }
             Ok((updated, main_changed))
         })?;
         if main_changed {
-            self.keep_live(live, intent, true);
             self.main_file_changed();
         } else if self.auto_compile {
             self.later.push_back(Later::Compile(true));
@@ -1045,22 +1024,13 @@ impl Actor {
         out(updated)
     }
 
+    /// The build and the preview follow a new main file.
     fn main_file_changed(&mut self) {
+        self.live_follow();
         let building = self.builds.compiling;
         self.stop_compile();
-        if self.live.active() {
-            self.live.restart_at = Some(Instant::now() + self.t.live_follow);
-        }
         if self.auto_compile || building {
             self.later.push_back(Later::Compile(self.auto_compile));
-        }
-    }
-
-    /// The core ends a live preview when a rename or a new main file changes what it shows;
-    /// one live before starts again after, unless stopped or started meanwhile.
-    pub fn keep_live(&mut self, live: bool, intent: u64, changed: bool) {
-        if live && changed && intent == self.live.intent && !self.closed {
-            self.live.restart_at = Some(Instant::now() + self.t.live_follow);
         }
     }
 

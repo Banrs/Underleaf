@@ -32,7 +32,7 @@ use crate::compile::CompileResult;
 use crate::events::{Hub, Listener};
 use crate::projects::{SymbolScan, Symbols};
 use crate::service::{Service, arg, out, string_arg};
-use crate::texpresso::Events;
+use crate::texpresso::{LiveEvent, Preview};
 use crate::{CoreError, lock, paths};
 
 pub use document::Document;
@@ -100,7 +100,8 @@ pub(crate) enum Msg {
     Cleaned(Result<(), CoreError>),
     /// A scan's sequence number, what it read for the next, and what it found.
     Symbols(u64, SymbolScan, Result<Symbols, CoreError>),
-    LiveNews(u64, Result<Events, CoreError>),
+    /// What the preview of a start, by its number, tells (`Live::generation`).
+    Live(u64, LiveEvent),
     Fs(Vec<Change>),
 }
 
@@ -152,6 +153,7 @@ pub struct Sessions {
     service: Arc<Service>,
     hub: Hub,
     engine: Arc<dyn Engine>,
+    preview: Arc<dyn Preview>,
     timings: Timings,
     open: Arc<Mutex<HashMap<u64, Open>>>,
 }
@@ -159,18 +161,21 @@ pub struct Sessions {
 impl Sessions {
     pub fn new(service: Arc<Service>) -> Self {
         let engine = Arc::new(ServiceEngine(Arc::clone(&service)));
-        Self::with_engine(service, engine, Timings::default())
+        let preview = Arc::clone(&service.texpresso);
+        Self::with_engine(service, engine, preview, Timings::default())
     }
 
     pub(crate) fn with_engine(
         service: Arc<Service>,
         engine: Arc<dyn Engine>,
+        preview: Arc<dyn Preview>,
         timings: Timings,
     ) -> Self {
         Self {
             service,
             hub: Hub::default(),
             engine,
+            preview,
             timings,
             open: Arc::default(),
         }
