@@ -123,7 +123,7 @@ fn commands_round_trip_through_the_c_abi() {
             "search_project",
             Some(json!({ "id": "P", "query": "x" }))
         )["ok"],
-        json!([{ "file": "a.tex", "hits": [{ "file": "a.tex", "line": 1, "before": "", "match": "x", "after": "" }] }])
+        json!([{ "file": "a.tex", "hits": [{ "file": "a.tex", "line": 1, "column": 0, "length": 1, "before": "", "match": "x", "after": "" }] }])
     );
 
     // Errors come back as an envelope with the core's status, never a crash.
