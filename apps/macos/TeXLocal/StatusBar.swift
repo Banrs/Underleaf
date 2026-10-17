@@ -2,7 +2,6 @@ import SwiftUI
 
 enum BarMetrics {
     static let height: CGFloat = 36
-    static let line: CGFloat = 1
     static let leading: CGFloat = 14
     static let trailing: CGFloat = 16.5
     static let spacing: CGFloat = 9
@@ -17,7 +16,6 @@ enum BarMetrics {
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
-    @Environment(\.displayScale) private var displayScale
     let project: ProjectModel
 
     var body: some View {
@@ -27,11 +25,8 @@ struct StatusBar: View {
             content(.short).labelStyle(.iconOnly)
         }
         .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
-        // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`). No ground of its own:
-        // AppKit's scroll edge lies under the bar (`WorkspaceController.buildStatusBar`), and draws no line, so the bar has its own.
-        .padding(.top, BarMetrics.line)
-        // A device pixel, as the hard scroll edge's line and the splits' thin dividers are.
-        .overlay(alignment: .top) { Rectangle().fill(.separator).frame(height: 1 / displayScale) }
+        // No ground or line of its own: AppKit's scroll edge lies under the bar and draws its line over it
+        // (`WorkspaceController.buildStatusBar`), level with the File Outline header's (`HeaderEdge`).
         // Clicks between its controls stay with the bar, not the text or pages scrolled beneath it.
         .contentShape(.rect)
         .monospacedDigit()

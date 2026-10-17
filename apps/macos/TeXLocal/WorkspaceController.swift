@@ -256,7 +256,7 @@ final class WorkspaceController: DetentSplitViewController {
         area.addSplitViewItem(panelItem)
         area.loaded = { [unowned self] in if !project.panel.shown { panelItem.isCollapsed = true } }
         // The panel resizes from the status bar's top line, as Xcode's debug area does from its bar's: a split view is flipped.
-        area.grip = { _, rect in rect.offsetBy(dx: 0, dy: -(BarMetrics.height + BarMetrics.line)) }
+        area.grip = { _, rect in rect.offsetBy(dx: 0, dy: -BarMetrics.height) }
 
         areaItem = NSSplitViewItem(viewController: area)
         addSplitViewItem(areaItem)
@@ -272,7 +272,7 @@ final class WorkspaceController: DetentSplitViewController {
         for item in [sourceItem!, pdfItem!] {
             let space = NSSplitViewItemAccessoryViewController()
             space.view = NSView()
-            space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line).isActive = true
+            space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
             // 27.2: AppKit's insets would pad it, and the pane's safe area with it.
             space.automaticallyAppliesContentInsets = false
             item.addBottomAlignedAccessoryViewController(space)
@@ -287,7 +287,7 @@ final class WorkspaceController: DetentSplitViewController {
             bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
             bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
-            bar.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line),
+            bar.heightAnchor.constraint(equalToConstant: BarMetrics.height),
         ])
     }
 

@@ -53,14 +53,17 @@ the hosts' contract with the core.
   the build panel on it. Its measures follow the text's size. Underline styles set as
   rendering attributes aren't drawn (27.2), so an undefined command's underline is drawn
   under the text.
-- **Status bar**: across the source and PDF columns at Xcode's spacing (`BarMetrics`), over
+- **Status bar**: across the source and PDF columns at Xcode's height (`BarMetrics`), over
   AppKit's own scroll edge, its automatic style, as Xcode's editor bar has; the bar draws no
-  ground, only its line, a device pixel as the hard edge over the File Outline is. The build
-  panel resizes from that line, as Xcode's debug area does (`area.grip`). Each pane has an empty bottom accessory of the bar's height for
-  its own edge, safe area and scrollers, and the bar lies over both (`buildStatusBar`): one
+  ground and no line: each pane has an empty bottom accessory of the bar's height for its own
+  edge, line, safe area and scrollers, and the bar lies over both (`buildStatusBar`). One
   accessory across the columns gave its edge to only one pane, about half the launches (27.2).
-  In Dark each pane's edge takes that pane's tone, AppKit's look, kept on purpose. After a failed
-  save, or a Cancel in an alert about the file on disk, it says Not Saved and that button saves.
+  The File Outline's header folded is the same height under the files' hard edge, so the two
+  lines meet on one device pixel and the titles are level. The splits' dividers are a device
+  pixel too (`DraggedSplitView`), taking drags 2 pt either side; the build panel resizes from
+  the bar's line, as Xcode's debug area does (`area.grip`). In Dark each pane's edge takes
+  that pane's tone, AppKit's look. After a failed save, or a Cancel in an alert about the file
+  on disk, it says Not Saved and that button saves.
 - **Build panel**: below the columns, so the status bar rides up as it opens. A bar at its
   foot, as Xcode's console bar: a pop-up for Issues, Build Log and Live Preview Log, then
   Warnings or Copy Log, then a filter. The bar is a SwiftUI safe-area bar, where the filter

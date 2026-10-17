@@ -47,6 +47,15 @@ extension NSCursor {
 class DraggedSplitView: NSSplitView {
     var dragging: (Bool) -> Void = { _ in }
 
+    /// A device pixel, as the window's sidebar divider and the hard scroll edge's line: the thin style is a point. The divider
+    /// still takes drags 2 pt either side.
+    override var dividerThickness: CGFloat { 1 / (window?.backingScaleFactor ?? 2) }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        adjustSubviews()
+    }
+
     override func mouseDown(with event: NSEvent) {
         dragging(true)
         defer { dragging(false) }
@@ -95,9 +104,10 @@ class DetentSplitViewController: NSSplitViewController {
 
     override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
                             forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
-        fixed(dividerIndex) ? .zero
-            : grip(dividerIndex, super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect,
-                                                 ofDividerAt: dividerIndex))
+        guard !fixed(dividerIndex) else { return .zero }
+        // 2 pt either side of the device pixel the divider draws (`DraggedSplitView`).
+        let rect = super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect, ofDividerAt: dividerIndex)
+        return grip(dividerIndex, splitView.isVertical ? rect.insetBy(dx: -2, dy: 0) : rect.insetBy(dx: 0, dy: -2))
     }
 }
 
@@ -131,8 +141,8 @@ final class SidebarSplitViewController: DetentSplitViewController {
 final class ColumnsSplitView: DraggedSplitView {
     override func drawDivider(in rect: NSRect) {
         var shown = rect
-        // Short of the bar and the line over it, at its foot: a split view is flipped.
-        shown.size.height -= BarMetrics.height + BarMetrics.line
+        // Short of the bar, at its foot: a split view is flipped.
+        shown.size.height -= BarMetrics.height
         super.drawDivider(in: shown)
     }
 
