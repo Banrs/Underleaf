@@ -1237,6 +1237,26 @@ async fn a_reload_from_disk_puts_the_preview_out_of_date() {
     assert_eq!(rig.state().await["build"]["outdated"], true);
 }
 
+/// A bug that panics ends the session, but loudly: the edits it held are written, each
+/// document says nothing more is saved, and commands waiting are told the session stopped.
+#[tokio::test(start_paused = true)]
+async fn a_panic_ends_the_session_with_its_edits_written_and_the_host_told() {
+    let rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    doc.edit(5, 0, " mine");
+    let args = json!({ "session": rig.session });
+    let panicked = rig.sessions.send("session_panic", &args);
+    let behind = rig.sessions.send("session_state", &args);
+    assert_eq!(panicked.await.unwrap_err().status, 500);
+    assert_eq!(behind.await.unwrap_err().status, 500);
+    assert_eq!(rig.disk("main.tex"), "Hello mine");
+    let told = until_event(&rig.seen, |e| {
+        e["type"] == "document" && e["error"].as_str().is_some_and(|e| e.contains("saved"))
+    });
+    assert!(told.is_some());
+    assert_eq!(rig.call("state", json!({})).await.unwrap_err().status, 404);
+}
+
 #[tokio::test]
 async fn a_sessions_commands_are_taken_in_the_order_sent_however_they_are_awaited() {
     let rig = Rig::new(false).await;

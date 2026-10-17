@@ -104,7 +104,8 @@ pub(crate) enum Msg {
     Fs(Vec<Change>),
 }
 
-/// A command's answer, sent once.
+/// A command's answer, sent once. One a panic drops says the session stopped, where
+/// the host would otherwise be told there is no such session.
 pub(crate) struct Reply(Option<oneshot::Sender<Result<Value, CoreError>>>);
 
 impl Reply {
@@ -113,6 +114,21 @@ impl Reply {
             let _ = reply.send(answer);
         }
     }
+}
+
+impl Drop for Reply {
+    fn drop(&mut self) {
+        if std::thread::panicking()
+            && let Some(reply) = self.0.take()
+        {
+            let _ = reply.send(Err(stopped()));
+        }
+    }
+}
+
+/// The answer of a session that a panic ended (`Actor::stopped`).
+pub(crate) fn stopped() -> CoreError {
+    CoreError::internal("The project stopped after an internal error. Close it and open it again.")
 }
 
 struct Open {
@@ -201,9 +217,9 @@ impl Sessions {
         let root = dunce::canonicalize(self.service.project_root(&project)?)?;
         let auto_compile = arg::<Option<bool>>(args, "autoCompile")?.unwrap_or(false);
         let (tx, rx) = mpsc::unbounded_channel();
-        let (actor, opened) = actor::Actor::new(self, id, project, root, tx, auto_compile)?;
+        let (actor, opened) = actor::Actor::new(self, id, project, root, tx.clone(), auto_compile)?;
         let open = Open {
-            tx: actor.tx.clone(),
+            tx: tx.clone(),
             docs: Arc::clone(&actor.shared),
             outline: Arc::clone(&actor.outline),
         };
@@ -211,7 +227,16 @@ impl Sessions {
             Entry::Occupied(_) => return Err(taken()),
             Entry::Vacant(entry) => entry.insert(open),
         };
-        tokio::spawn(actor.run(rx));
+        let sessions = Arc::clone(&self.open);
+        tokio::spawn(async move {
+            // A session a panic ended is gone, and the host's next command is told so.
+            if actor.run(rx).await {
+                let mut open = lock(&sessions);
+                if open.get(&id).is_some_and(|open| open.tx.same_channel(&tx)) {
+                    open.remove(&id);
+                }
+            }
+        });
         Ok(opened)
     }
 

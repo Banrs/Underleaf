@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
@@ -27,6 +28,10 @@ use crate::syntax::headings;
 use crate::{CoreError, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
+/// Not Saved after a panic ended the session (`stopped`), for a document whose text was written,
+/// and for one whose edits couldn't be.
+const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
+const STOPPED_UNSAVED: &str = "Saving stopped after an internal error, and this file’s edits couldn’t be saved. Copy them out, then close the project and open it again.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -210,16 +215,24 @@ impl Actor {
         Ok((actor, opened))
     }
 
-    pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) {
+    /// Whether the session ended by a panic, which `stopped` makes good as far as it can.
+    pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) -> bool {
         let mut woken = None;
         loop {
-            match woken.take() {
-                Some(Wake::Message(message)) => self.handle(message),
-                Some(Wake::Deadline) => self.fire(),
-                Some(Wake::TexFound) => self.tex_changed(),
-                None => {}
+            // A panic is a bug: the session ends, but the edits it holds mustn't end with it.
+            let step = catch_unwind(AssertUnwindSafe(|| {
+                match woken.take() {
+                    Some(Wake::Message(message)) => self.handle(message),
+                    Some(Wake::Deadline) => self.fire(),
+                    Some(Wake::TexFound) => self.tex_changed(),
+                    None => {}
+                }
+                self.run_later();
+            }));
+            if step.is_err() {
+                self.stopped(&mut rx);
+                return true;
             }
-            self.run_later();
             if self.closed {
                 break;
             }
@@ -236,6 +249,7 @@ impl Actor {
             };
         }
         self.live_reset();
+        false
     }
 
     /// An automatic build skipped for want of TeX runs once `status` finds it.
@@ -245,6 +259,37 @@ impl Actor {
             if self.auto_compile {
                 self.later.push_back(Later::Compile(true));
             }
+        }
+    }
+
+    /// After a panic, a bug: each document's edits are written as a save would write
+    /// them, the host is told that nothing more is saved, and every command waiting is
+    /// answered so.
+    fn stopped(&mut self, rx: &mut mpsc::UnboundedReceiver<Msg>) {
+        self.closed = true;
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _ = self.flush_all(false);
+            self.stop_compile();
+            self.live_stop();
+            self.live_reset();
+        }));
+        for doc in self.docs.values() {
+            let error = if doc.dirty() {
+                STOPPED_UNSAVED
+            } else {
+                STOPPED_SAVED
+            };
+            let state = json!({ "path": doc.path, "error": error, "held": doc.held });
+            self.emit("document", state);
+        }
+        rx.close();
+        while let Ok(message) = rx.try_recv() {
+            if let Msg::Command { reply, .. } = message {
+                reply.send(Err(super::stopped()));
+            }
+        }
+        for reply in std::mem::take(&mut self.builds.cleaners) {
+            reply.send(Err(super::stopped()));
         }
     }
 
@@ -358,6 +403,8 @@ impl Actor {
                 Ok(path) => self.analyze(path, reply),
                 Err(err) => reply.send(Err(err)),
             },
+            #[cfg(test)]
+            "panic" => panic!("a bug in the session"),
             _ => {
                 let answer = self.answer(name, args);
                 reply.send(answer);
