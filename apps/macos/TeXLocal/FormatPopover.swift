@@ -83,10 +83,13 @@ struct FormatPanel: View {
         let current = project.headingCommand
         VStack(spacing: 0) {
             // The three share the width, edge to edge with the levels' highlights below.
-            HStack(spacing: Self.highlightInset) {
-                toggle(.editBold, symbol: "bold", on: styles.bold != nil, help: "Make text bold")
-                toggle(.editItalic, symbol: "italic", on: styles.italic != nil, help: "Make text italic")
-                toggle(.editUnderline, symbol: "underline", on: styles.underline != nil, help: "Underline text")
+            // One container for the three glass tiles; with no merging distance, two lit neighbours keep their own shapes.
+            GlassEffectContainer(spacing: 0) {
+                HStack(spacing: Self.highlightInset) {
+                    toggle(.editBold, symbol: "bold", on: styles.bold != nil, help: "Make text bold")
+                    toggle(.editItalic, symbol: "italic", on: styles.italic != nil, help: "Make text italic")
+                    toggle(.editUnderline, symbol: "underline", on: styles.underline != nil, help: "Underline text")
+                }
             }
             .padding(.horizontal, Self.highlightInset)
             .padding(.vertical, Self.menuTop)
