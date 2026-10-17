@@ -4,9 +4,8 @@ import Observation
 
 /// Applies the value of observable state each time it changes to something new, once a turn on: changes made together
 /// reach `apply` as the last of them, and a change back to what was applied is none. `initial` off leaves the value
-/// the state has now. For a view that can lag a turn behind its model; the toolbar's `WorkspaceToolbar.watch` applies
-/// each change as it is made instead, as a column's resize refits the PDF during layout and the toolbar must draw
-/// that frame once, not twice.
+/// the state has now. For a view that can lag a turn behind its model; one that must draw a change in the frame it is
+/// made in (the toolbar, as a column's resize refits the PDF during layout) observes with `withObservationTracking`.
 func track<Value: Sendable & Equatable>(_ value: @escaping @MainActor @Sendable () -> Value, initial: Bool = true,
                                           _ apply: @escaping @MainActor (Value) -> Void) -> Task<Void, Never> {
     Task { @MainActor in

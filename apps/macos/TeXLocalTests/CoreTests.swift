@@ -21,6 +21,9 @@ struct CoreTests {
             _ = try await core.call("file_tree", ["id": info.id], as: FileText.self)
         }
         #expect(fault?.message.hasPrefix("Something went wrong inside TeXLocal.") == true && fault?.status == nil)
+        // Arguments JSON can't hold are the same fault, not an exception.
+        let unsent = await #expect(throws: CoreError.self) { try await core.call("file_tree", ["id": info.id, "n": Double.nan]) }
+        #expect(unsent?.message == fault?.message)
     }
 
     /// The app numbers its sessions, and their events reach the observer of the number, decoded.
@@ -45,3 +48,5 @@ struct CoreTests {
         try await core.call("session_close", ["session": session])
     }
 }
+
+private nonisolated struct FileText: Decodable { let text: String }

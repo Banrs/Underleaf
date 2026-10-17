@@ -131,8 +131,6 @@ nonisolated struct SearchGroup: Decodable, Identifiable {
     var id: String { file }
 }
 
-nonisolated struct FileText: Decodable { let text: String }
-
 /// In PDF points, origin at the page's top-left: the baseline point (h, v) and the box's width and height above it.
 nonisolated struct ForwardLoc: Decodable {
     let page: Double
