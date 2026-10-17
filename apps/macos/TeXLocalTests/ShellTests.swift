@@ -48,9 +48,9 @@ struct ShellTests {
         try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == id })
     }
 
-    /// A wide window has Compile as its word. The narrowest keeps the panes at their least and Compile in the toolbar,
-    /// narrower than its word, and nothing has left the toolbar but for its overflow menu, where each tool that can go has
-    /// a menu form.
+    /// A wide window has Compile as its word. Narrower, it is its symbol's circle, never a capsule between the two, and
+    /// still Compile to the overflow menu and VoiceOver; the narrowest keeps the panes at their least, and nothing has left
+    /// the toolbar but for its overflow menu, where each tool that can go has a menu form. Wide again, it is the word.
     @Test func aNarrowWindowKeepsEveryToolOrItsMenuForm() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
@@ -58,12 +58,16 @@ struct ShellTests {
         let button = try #require(compile.view)
         let word = button.frame.width
         #expect(word > 60 && compile.style == .prominent)
-        try await resize(window, to: 300)
+        var symbol = false
+        for width in stride(from: 1200, through: 300, by: -50) as StrideThrough<CGFloat> {
+            try await resize(window, to: width)
+            guard workspace.toolbar.toolbar.visibleItems?.contains(compile) == true else { continue }
+            #expect(button.frame.width == word || button.frame.width == 36, "\(button.frame.width) at \(width)")
+            symbol = symbol || button.frame.width == 36
+        }
+        #expect(symbol)
         let panes = workspace.columns.splitView.arrangedSubviews.map(\.frame.width)
         #expect(panes.count == 2 && panes[0] >= ColumnMetrics.sourceMinimum && panes[1] >= ColumnMetrics.pdfMinimum)
-        // Compile as its symbol, still Compile to the overflow menu and VoiceOver.
-        #expect(workspace.toolbar.toolbar.visibleItems?.contains(compile) == true)
-        #expect(button.frame.width < word)
         #expect(compile.label == MenuCommand.compileRun.title)
         #expect(compile.menuFormRepresentation?.title == MenuCommand.compileRun.title)
         for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {

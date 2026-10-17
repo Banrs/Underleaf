@@ -34,6 +34,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private lazy var format = FormatPopover(app: app, project: project)
     private var applied: State?
     private var closed = false
+    private var resized: NotificationCenter.ObservationToken?
 
     init(app: AppModel, project: ProjectModel) {
         self.app = app
@@ -132,11 +133,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.compileRun.title
             if flag {
-                let view = NSHostingView(rootView: compileButton(state))
-                // The toolbar sizes it between its symbol and its word by these, as AppKit's search item shrinks to its
-                // button: the word while there is room for it, the symbol before a tool goes to the overflow menu.
+                let view = CompileHost(rootView: compileButton(state))
                 view.sizingOptions = [.minSize, .maxSize]
                 item.view = view
+                // A wider section may have room for the word again.
+                if let split = workspace?.columns.splitView {
+                    resized = NotificationCenter.default.addObserver(of: split, for: .didResizeSubviews) { _ in
+                        view.offerWord()
+                    }
+                }
             } else {
                 item.title = MenuCommand.compileRun.title
             }
@@ -305,7 +310,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                 item.backgroundTintColor = state.compiling ? .clear : nil
             }
             item.isEnabled = state.canCompile
-            (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
+            if let view = item.view as? CompileHost {
+                view.rootView = compileButton(state, compact: view.rootView.compact)
+            }
         case .togglePDF:
             item.toolTip = app.title(.viewTogglePDF, on: project)
         default:
@@ -363,8 +370,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         app.perform(project.compiling ? .compileStop : .compileRun, on: project)
     }
 
-    private func compileButton(_ state: State) -> CompileButton {
-        CompileButton(compiling: state.compiling, enabled: state.canCompile) { [weak self] in
+    private func compileButton(_ state: State, compact: Bool = false) -> CompileButton {
+        CompileButton(compiling: state.compiling, compact: compact, enabled: state.canCompile) { [weak self] in
             self?.compile()
         }
     }
@@ -418,21 +425,34 @@ private final class ZoomControl: NSSegmentedControl {
     }
 }
 
+/// Compile's view. The toolbar sizes a custom view anywhere between its least and greatest widths, which would leave the
+/// symbol in a capsule as wide as the room: given less than the word, it takes the symbol's circle, and a wider section
+/// offers the word again (`offerWord`), as AppKit's search item folds to its button.
+private final class CompileHost: NSHostingView<CompileButton> {
+    /// The word's width, Compile's or Stop's, whichever is wider: the item's own `fittingSize` is its least.
+    private lazy var word = NSHostingView(rootView: CompileButton(compiling: false, compact: false, enabled: true) {})
+        .intrinsicContentSize.width
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        if !rootView.compact, newSize.width < word - 0.5 { rootView.compact = true }
+    }
+
+    func offerWord() {
+        if rootView.compact { rootView.compact = false }
+    }
+}
+
 /// Compile as its word, or as its symbol where the toolbar has no room for the word, and Stop with the build's spinner in
 /// the width Compile has there. It fills the item's glass, which doesn't pass clicks on to an undersized custom view.
 private struct CompileButton: View {
-    let compiling, enabled: Bool
+    let compiling: Bool
+    var compact: Bool
+    let enabled: Bool
     let action: () -> Void
     @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            form(compact: false)
-            form(compact: true)
-        }
-    }
-
-    private func form(compact: Bool) -> some View {
         Button(action: action) {
             ZStack {
                 idle(compact).opacity(compiling ? 0 : 1)
@@ -443,10 +463,9 @@ private struct CompileButton: View {
             // Faint in a window that isn't the active one, as AppKit's own items, Stop as Compile.
             .foregroundStyle(appearsActive ? .primary : .tertiary)
             // The item's glass as AppKit draws a titled item's and a symbol's: 36 points high (the UI kit's toolbar
-            // controls), a title 12 points in from each end, and a circle for a symbol (27.2). The symbol fills the
-            // width the toolbar gives it.
+            // controls), a title 12 points in from each end, and a circle for a symbol (27.2).
             .padding(.horizontal, compact ? 0 : 12)
-            .frame(minWidth: 36, maxWidth: compact ? .infinity : nil, minHeight: 36)
+            .frame(minWidth: 36, maxWidth: compact ? 36 : nil, minHeight: 36)
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
@@ -461,7 +480,7 @@ private struct CompileButton: View {
             // At the size AppKit draws an item's symbol (27.2), measured.
             Image(systemName: "play.fill").font(.system(size: 17))
         } else {
-            Text(MenuCommand.compileRun.title)
+            Text(MenuCommand.compileRun.title).lineLimit(1)
         }
     }
 
@@ -476,7 +495,7 @@ private struct CompileButton: View {
         } else {
             HStack(spacing: 4) {
                 ProgressView().controlSize(.small)
-                Text(MenuCommand.compileStop.title)
+                Text(MenuCommand.compileStop.title).lineLimit(1)
             }
         }
     }
