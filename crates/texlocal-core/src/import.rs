@@ -363,10 +363,10 @@ fn save(
 ) -> Result<(), CoreError> {
     let root = service.project_root(id)?;
     // In the target's folder, or the nearest on its way while that is to be made, so the
-    // rename stays on one volume; any name there, as the temporary file is made beside it.
+    // rename stays on one volume.
     let abs = paths::safe_write_path(&root, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
-    let (temp, mut file) = atomic::create_temp(&folder.unwrap_or(&root).join("incoming"), None)?;
+    let (temp, mut file) = atomic::create_temp(folder.unwrap_or(&root))?;
     let origin = File::open(source).map_err(CoreError::at(source))?;
     allowance.copy(rel, origin, &mut file)?;
     file.sync_all()?;

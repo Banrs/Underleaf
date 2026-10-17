@@ -2,17 +2,15 @@
 //! are coarse, so a word is placed by matching the text round it
 //! (`wordmatch`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::BUILD_DIR;
 use crate::error::CoreError;
-use crate::paths::{rel_to_root, safe_path, safe_rel_file};
+use crate::paths::{safe_path, safe_rel_file, source_rel};
 use crate::process::{PROBE_TIMEOUT, run};
-use crate::settings::compiled_pdf_path;
-pub use crate::wordmatch::{PdfHit, PdfPage};
-use crate::wordmatch::{find_in_pdf, find_in_source};
+use crate::settings::read_settings;
+use crate::wordmatch::{PdfHit, PdfPage, find_in_pdf, find_in_source};
 
 /// Only `page` is required. The rest are omitted when synctex didn't report
 /// them, because the PDF viewer falls back with `??` — which fires on an
@@ -45,11 +43,11 @@ pub struct InverseLoc {
 }
 
 /// The PDF to sync with: `live`, TeXpresso's (with its live.synctex beside it), or the build's.
-fn pdf_for(root: &Path, live: Option<&Path>) -> Result<std::path::PathBuf, CoreError> {
+fn pdf_for(root: &Path, live: Option<&Path>) -> Result<PathBuf, CoreError> {
     if let Some(live) = live {
         return Ok(live.to_path_buf());
     }
-    let pdf = compiled_pdf_path(root)?;
+    let pdf = read_settings(root).output(root, "pdf")?;
     if !pdf.exists() {
         return Err(CoreError::not_found("No compiled PDF yet"));
     }
@@ -171,35 +169,12 @@ pub async fn synctex_inverse(
         ));
     };
 
-    let abs = root.join(file);
     // Generated files (.toc/.aux in the build dir) and anything outside the
     // project aren't real sources — report "no match" so the UI shows a toast.
-    // TeX records the physical working directory, even if root is a link.
-    let no_source = || CoreError::not_found("No source file at this location");
-    let canonical_root = dunce::canonicalize(root)?;
-    let rel = rel_to_root(root, &abs)
-        .or_else(|| rel_to_root(&canonical_root, &abs))
-        // A moved project can retain TeX's old "<folder>/./<file>" spelling.
-        .or_else(|| safe_rel_file(root, file.split_once("/./")?.1).ok())
-        .ok_or_else(no_source)?;
-    let rel = safe_rel_file(root, &rel).map_err(|_| no_source())?;
-    let source = dunce::canonicalize(root.join(&rel)).map_err(|_| no_source())?;
-    let physical = rel_to_root(&canonical_root, &source)
-        .and_then(|rel| safe_rel_file(root, &rel).ok())
-        .ok_or_else(no_source)?;
-    // Links within the project can still lead to generated output, and the
-    // reserved build name is case-insensitive on every platform.
-    if !source.is_file()
-        || [&rel, &physical].iter().any(|path| {
-            path.split('/')
-                .next()
-                .is_some_and(|top| top.eq_ignore_ascii_case(BUILD_DIR))
-        })
-    {
-        return Err(no_source());
-    }
+    let rel = source_rel(root, file)
+        .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
     let found = click.and_then(|(text, at)| {
-        let source = crate::lossy_string(std::fs::read(&source).ok()?);
+        let source = crate::lossy_string(std::fs::read(root.join(&rel)).ok()?);
         find_in_source(&source, line, text, at)
     });
     let (line, column) = found.map_or((line, None), |(line, column)| (line, Some(column)));

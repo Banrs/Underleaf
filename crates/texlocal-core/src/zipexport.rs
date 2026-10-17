@@ -23,17 +23,17 @@ use crate::{BUILD_DIR, SETTINGS_FILE};
 
 pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let root_canonical = dunce::canonicalize(root)?;
-    let (temp_path, file) = create_temp(dest, None).map_err(CoreError::at(dest))?;
+    let parent = dest.parent().filter(|p| !p.as_os_str().is_empty());
+    let parent = parent.unwrap_or(Path::new("."));
+    let (temp_path, file) = create_temp(parent).map_err(CoreError::at(dest))?;
 
     // Resolve the archive folder as the walk resolves the project, so a
     // destination spelled through a link is still recognised there.
-    let parent = dest.parent().filter(|p| !p.as_os_str().is_empty());
     let mut export = Export {
         writer: ZipWriter::new(file),
         options: SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
         root_canonical: &root_canonical,
-        archive_dir: dunce::canonicalize(parent.unwrap_or(Path::new(".")))
-            .map_err(CoreError::at(dest))?,
+        archive_dir: dunce::canonicalize(parent).map_err(CoreError::at(dest))?,
         archive_names: [dest.file_name(), temp_path.file_name()],
     };
     export.add_dir(root, &root_canonical, "")?;
@@ -198,7 +198,7 @@ mod tests {
         fs::remove_file(root.join("gone.tex")).unwrap();
 
         let dest = dir.path().join("out.zip");
-        let (temp, file) = create_temp(&dest, None).unwrap();
+        let (temp, file) = create_temp(dir.path()).unwrap();
         let mut export = Export {
             writer: ZipWriter::new(file),
             options: SimpleFileOptions::default(),

@@ -18,12 +18,12 @@ use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Reply, Sessions, Timings};
 use crate::analyze::{self, ProjectAnalysis};
-use crate::atomic::Stamp;
 use crate::events::Emitter;
 use crate::paths::{self, within};
 use crate::projects::{self, SymbolScan, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
+use crate::stamp::Stamp;
 use crate::syntax::headings;
 use crate::{CoreError, lock};
 
@@ -163,7 +163,10 @@ impl Actor {
             .then(|| watch::watch(&root, tx.clone()))
             .flatten();
         let settings = settings::read_settings(&root);
-        let pdf = settings.pdf_path(&root).ok().filter(|pdf| pdf.is_file());
+        let pdf = settings
+            .output(&root, "pdf")
+            .ok()
+            .filter(|pdf| pdf.is_file());
         // All a host shows as the project opens, so it need ask for nothing first.
         let opened = json!({
             "session": id,

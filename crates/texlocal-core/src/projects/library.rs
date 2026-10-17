@@ -381,7 +381,10 @@ mod tests {
             (made.id.as_str(), made.main_file.as_str()),
             ("Thesis", "main.tex")
         );
-        assert_eq!(read_settings(&data.join("Thesis")).engine, "lualatex");
+        assert_eq!(
+            read_settings(&data.join("Thesis")).engine.as_str(),
+            "lualatex"
+        );
 
         // A refusal leaves nothing behind, not even the folder it was built in.
         let refused = create_project_with_engine(data, "Other", "blank", Some("word"));

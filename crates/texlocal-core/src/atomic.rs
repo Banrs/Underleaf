@@ -3,41 +3,26 @@
 //! or a crash part-way leaves the old file as it was, where writing in place
 //! would leave it empty or cut short.
 
-use std::fs::{self, File, Permissions};
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
 use tempfile::TempPath;
 
-// Stamp has a module of its own; what imports it from here has yet to move.
-pub use crate::stamp::Stamp;
+use crate::stamp::Stamp;
 
-/// A new, empty temporary file beside `path`, removed if it is not persisted,
-/// with the mode it should have once it takes `path`'s place: `existing`, a
-/// replaced file's own, else a new file's (0666 less the umask), as any other
-/// way of making a file gives it. tempfile's own 0600 would leave every file
-/// the app made unreadable to the accounts and tools a project is shared with.
-/// A replaced file's extended attributes go to the new one on macOS.
-pub(crate) fn create_temp(
-    path: &Path,
-    existing: Option<Permissions>,
-) -> io::Result<(TempPath, File)> {
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+/// A new, empty temporary file in `dir`, removed if it is not persisted, with
+/// a new file's mode (0666 less the umask), as any other way of making a file
+/// gives it. tempfile's own 0600 would leave every file the app made
+/// unreadable to the accounts and tools a project is shared with.
+pub(crate) fn create_temp(dir: &Path) -> io::Result<(TempPath, File)> {
     let mut builder = tempfile::Builder::new();
     builder.prefix(".texlocal-");
     #[cfg(unix)]
-    if existing.is_none() {
+    {
         use std::os::unix::fs::PermissionsExt;
-        builder.permissions(Permissions::from_mode(0o666));
+        builder.permissions(fs::Permissions::from_mode(0o666));
     }
-    let temp = builder.tempfile_in(parent.unwrap_or(Path::new(".")))?;
-    let (file, temp_path) = temp.into_parts();
-    // Before the contents, so a private file's text is never readable
-    // under the temporary file's default mode.
-    if let Some(permissions) = existing {
-        file.set_permissions(permissions)?;
-        #[cfg(target_os = "macos")]
-        copy_xattrs(path, &file);
-    }
+    let (file, temp_path) = builder.tempfile_in(dir)?.into_parts();
     Ok((temp_path, file))
 }
 
@@ -75,10 +60,11 @@ pub(crate) fn persist(temp: TempPath, path: &Path) -> io::Result<()> {
 
 /// Replace `path`'s contents with `bytes`, or create it. A symlinked file is
 /// written through, so the link stays a link, and the file keeps its
-/// permissions; a read-only file is refused, as writing it in place would be.
-/// The stamp is the temporary file's, which the rename keeps: one taken
-/// after it could be another app's write landing in between. It is taken
-/// once the file is closed, as Windows dates the last write then.
+/// permissions, and on macOS its extended attributes; a read-only file is
+/// refused, as writing it in place would be. The stamp is the temporary
+/// file's, which the rename keeps: one taken after it could be another app's
+/// write landing in between. It is taken once the file is closed, as Windows
+/// dates the last write then.
 pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     let target = match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => dunce::canonicalize(path)?,
@@ -88,7 +74,15 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     if permissions.as_ref().is_some_and(fs::Permissions::readonly) {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
-    let (temp, mut file) = create_temp(&target, permissions)?;
+    let dir = target.parent().filter(|p| !p.as_os_str().is_empty());
+    let (temp, mut file) = create_temp(dir.unwrap_or(Path::new(".")))?;
+    // Before the contents, so a private file's text is never readable
+    // under a new file's mode.
+    if let Some(permissions) = permissions {
+        file.set_permissions(permissions)?;
+        #[cfg(target_os = "macos")]
+        copy_xattrs(&target, &file);
+    }
     file.write_all(bytes)?;
     file.sync_all()?;
     drop(file);

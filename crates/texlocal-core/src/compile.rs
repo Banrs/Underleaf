@@ -3,7 +3,6 @@
 //! stale-output guard. The process and TeX discovery it stands on are in
 //! `process` and `tex`.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -17,31 +16,19 @@ use tokio::sync::OwnedMutexGuard;
 use crate::error::CoreError;
 use crate::logparse::{LogItem, Severity, latexmk_errors, parse_blg, parse_log};
 use crate::paths::safe_rel_file;
-use crate::process::{self, drive};
-use crate::settings::{main_base_name, read_settings};
+use crate::process::{self, Tree, drive};
+use crate::settings::read_settings;
 use crate::stamp::Stamp;
 use crate::{BUILD_DIR, lock};
-
-// Where these were before compile.rs was split; the code that reaches TeX
-// discovery and the process tree through here has yet to move to the modules.
-pub(crate) use crate::process::Tree;
-pub use crate::tex::{TexStatus, tex_available, tex_path};
-pub(crate) use crate::tex::{find_tool, join_path, program_at, tex_bin_dir};
 
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 const LOG_TAIL: usize = 200_000;
 /// How much of the log file is parsed. A real document's log is a few MB at
 /// most; one that loops on `\message` until the timeout can reach gigabytes.
 const LOG_READ_MAX: u64 = 16 * 1024 * 1024;
-
-pub(crate) fn engine_flags(engine: &str) -> Option<&'static [&'static str]> {
-    match engine {
-        "pdflatex" => Some(&["-pdf"]),
-        "xelatex" => Some(&["-xelatex"]),
-        "lualatex" => Some(&["-lualatex"]),
-        _ => None,
-    }
-}
+/// The outputs a build reads, or removes: the engine's log and PDF, bibtex's
+/// or biber's log, the .aux a killed run cuts short, and latexmk's record.
+const OUTPUTS: [&str; 5] = ["log", "pdf", "blg", "aux", "fdb_latexmk"];
 
 /// A build's outcome. `ok`: latexmk finished cleanly and the PDF exists.
 /// `pdf`: the successful build's PDF, or one a failed build wrote while
@@ -92,7 +79,6 @@ pub struct CompileManager {
     /// Set by `kill_all`, for good: a build asked for after quitting began
     /// (a queued one, an automatic one) would start an engine nothing kills.
     shutdown: AtomicBool,
-    pub path_env: Option<String>,
 }
 
 /// Keeps the project's gate alive through waiting, running, and cancellation.
@@ -157,10 +143,10 @@ enum End {
 
 struct CompileRun {
     main_rel: String,
-    base: String,
-    outdir: PathBuf,
-    /// The outputs finish() reads, as they were before the run: it wrote one
-    /// if its stamp has changed.
+    /// Each of `OUTPUTS`, where this build writes it.
+    outputs: HashMap<&'static str, PathBuf>,
+    /// The outputs as they were before the run: it wrote one if its stamp has
+    /// changed.
     before: HashMap<&'static str, Stamp>,
     request_started: Instant,
 }
@@ -170,20 +156,20 @@ fn stamp(path: &Path) -> Option<Stamp> {
 }
 
 impl CompileRun {
-    fn output(&self, ext: &str) -> PathBuf {
-        self.outdir.join(format!("{}.{ext}", self.base))
+    fn output(&self, ext: &str) -> &Path {
+        &self.outputs[ext]
     }
 
     /// Whether this run wrote an output. Its stamp (a file's length and
     /// time to the nanosecond) tells, whatever the volume's clock.
     fn wrote(&self, ext: &str) -> bool {
-        stamp(&self.output(ext)).is_some_and(|now| self.before.get(ext) != Some(&now))
+        stamp(self.output(ext)).is_some_and(|now| self.before.get(ext) != Some(&now))
     }
 
     /// A fresh output, or an existing one for a successful no-op build.
     fn read(&self, ext: &str, allow_existing: bool) -> Option<String> {
         (allow_existing || self.wrote(ext))
-            .then(|| read_tail(&self.output(ext), LOG_READ_MAX).ok())
+            .then(|| read_tail(self.output(ext), LOG_READ_MAX).ok())
             .flatten()
             .map(crate::lossy_string)
     }
@@ -300,18 +286,12 @@ impl CompileManager {
         }
     }
 
-    /// Build with the project's settings, as they are when the build is asked for.
-    pub async fn compile(
-        &self,
-        root: &Path,
-        tex_dir: Option<&Path>,
-    ) -> Result<CompileResult, CoreError> {
+    /// Build with the project's settings, as they are when the build is asked
+    /// for, running TeX's tools from `path_env`.
+    pub async fn compile(&self, root: &Path, path_env: &str) -> Result<CompileResult, CoreError> {
         let request_started = Instant::now();
         let settings = read_settings(root);
-        let (engine, shell_escape) = (settings.engine.as_str(), settings.shell_escape);
-
-        let flags = engine_flags(engine)
-            .ok_or_else(|| CoreError::bad_request(format!("Unknown engine: {engine}")))?;
+        let shell_escape = settings.shell_escape;
         let main_rel = safe_rel_file(root, &settings.main_file)?;
         if !root.join(&main_rel).exists() {
             return Err(CoreError::bad_request(format!(
@@ -324,7 +304,7 @@ impl CompileManager {
         // before the stop check below could be a ghost of a project renamed
         // meanwhile.
         let outdir_arg = format!("-outdir={BUILD_DIR}");
-        let mut args: Vec<&str> = flags.to_vec();
+        let mut args = vec![settings.engine.flag()];
         args.extend([
             "-interaction=batchmode",
             "-file-line-error",
@@ -354,6 +334,10 @@ impl CompileManager {
             args.extend(["-r", rc]);
         }
         args.push(&main_arg);
+        let outputs: HashMap<_, _> = OUTPUTS
+            .into_iter()
+            .map(|ext| Ok((ext, settings.output(root, ext)?)))
+            .collect::<Result<_, CoreError>>()?;
 
         let mut registration = self.register(root);
 
@@ -364,22 +348,15 @@ impl CompileManager {
 
         // Capture the outputs' stamps after the predecessor has stopped,
         // otherwise its final writes can be mistaken for output from this run.
-        let mut run = CompileRun {
-            base: main_base_name(&main_rel),
+        let run = CompileRun {
             main_rel,
-            outdir: root.join(BUILD_DIR),
-            before: HashMap::new(),
+            before: (outputs.iter())
+                .filter_map(|(&ext, path)| Some((ext, stamp(path)?)))
+                .collect(),
+            outputs,
             request_started,
         };
-        run.before = ["log", "pdf", "blg", "aux"]
-            .into_iter()
-            .filter_map(|ext| Some((ext, stamp(&run.output(ext))?)))
-            .collect();
 
-        let path_env = self
-            .path_env
-            .as_deref()
-            .map_or_else(|| Cow::Owned(tex_path(tex_dir)), Cow::Borrowed);
         let spawned = {
             // Hold the registry lock across synchronous spawn + tree publication.
             // A successor or Stop therefore sees either no child or its tree,
@@ -389,8 +366,8 @@ impl CompileManager {
                 return Ok(Self::stopped_early(request_started));
             }
             let entry = running.get_mut(root).expect("registered project");
-            entry.record = Some(run.output("fdb_latexmk"));
-            process::command("latexmk", Some(root), &path_env)
+            entry.record = Some(run.output("fdb_latexmk").to_path_buf());
+            process::command("latexmk", Some(root), path_env)
                 .and_then(|mut cmd| Tree::spawn(cmd.args(&args)))
                 .inspect(|(_, tree)| entry.tree = Some(tree.clone()))
         };
