@@ -341,21 +341,13 @@ extension View {
 /// into the list above.
 struct OutlineList: View {
     let project: ProjectModel
-
-    var body: some View {
-        // The rows only when the current heading changes, not at each line the caret moves to.
-        OutlineRows(project: project, current: project.currentHeading)
-    }
-}
-
-private struct OutlineRows: View {
-    let project: ProjectModel
-    let current: Int?
     @Environment(\.sidebarRowSize) private var rowSize
     @State private var chosen: Int?
 
     var body: some View {
         let outline = project.outline
+        // The model sets it only when the heading changes, not at each line the caret moves to.
+        let current = project.currentHeading
         // A list sends nothing for a click on the row already selected, so the rows tap for those two.
         let selection = Binding<Int?>(get: { chosen ?? current }, set: { id in
             guard let id, id != current, outline.indices.contains(id) else { return }
