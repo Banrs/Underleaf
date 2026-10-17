@@ -6,7 +6,9 @@ struct SectionLevelItems: View {
 
     var body: some View {
         // The levels the class has, by name: the numbers are Aa's (`FormatPanel`).
-        ForEach(project?.headingStyles ?? HeadingStyle.standard, id: \.command) { style in
+        let styles = project?.headingStyles ?? HeadingStyle.standard
+        ForEach(styles, id: \.command) { style in
+            if style == styles.first(where: \.isRunIn) { Divider() }
             Toggle(style.title,
                    isOn: Binding(get: { project?.headingCommand == style.command },
                                  set: { _ in project?.editor.perform(.heading(style.command)) }))

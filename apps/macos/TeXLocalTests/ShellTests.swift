@@ -166,7 +166,7 @@ struct ShellTests {
         }
         #expect(headings.contains { $0.marker == "1.1" })
         let layout = FormatPanel.Layout(headings)
-        #expect(layout.markers > 0 && layout.pitch >= 24)
+        #expect(layout.markers > 0 && headings.allSatisfy { layout.height($0) >= FormatPanel.item })
     }
 
     /// The File Outline's header is at the files' foot from the first, over an outline folded for a file that has none, and

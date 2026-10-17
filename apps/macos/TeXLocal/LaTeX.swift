@@ -65,6 +65,10 @@ nonisolated struct HeadingStyle: Equatable, Decodable, Sendable {
     /// Its number as its heading prints it, with the class's counters: "1.1" for a subsection.
     let marker: String?
 
+    /// \paragraph starts its paragraph's text in every standard class, where the other levels stand on a line of their own:
+    /// Aa and the menus set it apart, as Notes sets its lists apart from its styles.
+    var isRunIn: Bool { command == "paragraph" }
+
     /// Without a class: every level, set as the standard classes set them (`heading_styles`).
     static let standard: [HeadingStyle] = Syntax.call("heading_styles", [:])
         ?? [HeadingStyle(title: "Normal Text", command: "", font: Font(scale: 1, bold: false, shape: .upright), marker: nil)]
