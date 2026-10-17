@@ -223,16 +223,11 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     var hasShownArea: Bool { bounds.width > 0 && shownHeight > 0 }
 
-    /// `currentDestination` lies behind the bars.
-    var shownDestination: PDFDestination? {
-        let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
-        return page(for: top, nearest: true).map { PDFDestination(page: $0, at: convert(top, to: $0)) }
-    }
-
-    /// `shownDestination` as its page's index and its point.
+    /// The page and point at the top of what shows: `currentDestination` lies behind the bars.
     var shownPlace: (index: Int, point: CGPoint)? {
-        guard let destination = shownDestination, let page = destination.page, let document else { return nil }
-        return (index: document.index(for: page), point: destination.point)
+        let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
+        guard let document, let page = page(for: top, nearest: true) else { return nil }
+        return (index: document.index(for: page), point: convert(top, to: page))
     }
 
     /// A double-click whose pointer has moved by the time PDFKit's handling returns was dragged on to select by words.
