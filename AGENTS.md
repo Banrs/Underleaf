@@ -146,6 +146,9 @@ Platform quirks met on the way (27.2) are in the code's comments where they're h
   (Swift Testing). The tests run a host app that shares the app's defaults unless built
   with another bundle identifier: pass `TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev`, as CI
   does with its own, or quit the installed app first.
+- The Windows app: `dotnet test apps/windows/TeXLocal.Tests -c Debug`; `TeXLocal.exe --smoke`
+  opens Home and exits 0. Run dev builds with a scratch `TEXLOCAL_DATA`, never beside the
+  installed copy (`docs/windows.md`, Building and testing).
 - Quicker than a build: `zsh tools/qa/typecheck.sh` type-checks the app and its tests in about
   20 s; `tools/qa/xctest.sh <repo> <derived data> [-only-testing:…]` runs the native tests one
   at a time per session. Worktree agents use these rather than parallel `xcodebuild`s.
@@ -162,6 +165,12 @@ Requires Xcode 27 and Rust stable. `zsh tools/install-mac.sh` builds the checkou
 (Release, derived data in `/private/tmp/underleaf-release`), quits TeXLocal, ad-hoc signs and
 installs `/Applications/TeXLocal.app`, verifies its signature, compares the installed and built
 binaries, and reopens it.
+
+## Build and install the Windows app
+
+Requires the .NET 10 SDK and Rust stable. Quit TeXLocal, then run `apps/windows/install.ps1`:
+it publishes a self-contained Release build to `%LOCALAPPDATA%\Programs\TeXLocal`, replacing
+what is there, and points the Start menu's TeXLocal shortcut at it.
 
 ## Open
 

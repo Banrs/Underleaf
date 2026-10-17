@@ -497,6 +497,9 @@ dotnet build TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64
 dotnet test TeXLocal.Tests -c Debug
 ```
 
+`install.ps1` publishes a self-contained Release build to `%LOCALAPPDATA%\Programs\TeXLocal` and
+adds it to the Start menu, until the zip and winget release replace it.
+
 Run dev builds with a scratch `TEXLOCAL_DATA`, never next to an installed copy; drive them with UI
 Automation, not clicks. `TeXLocal.exe --smoke` opens Home, lists projects and exits 0 (CI); a
 failure exits 1 and writes the reason to stderr. With the display asleep, a newly opened WinUI
