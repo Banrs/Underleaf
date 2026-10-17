@@ -11,6 +11,7 @@
 //! docs/core-api.md is the contract.
 
 mod actor;
+mod build;
 mod document;
 mod engine;
 mod live;
@@ -93,7 +94,7 @@ pub(crate) enum Msg {
     Command {
         name: String,
         args: Value,
-        reply: oneshot::Sender<Result<Value, CoreError>>,
+        reply: Reply,
     },
     BuildDone(Result<CompileResult, CoreError>),
     Cleaned(Result<(), CoreError>),
@@ -101,6 +102,17 @@ pub(crate) enum Msg {
     Symbols(u64, SymbolScan, Result<Symbols, CoreError>),
     LiveNews(u64, Result<Events, CoreError>),
     Fs(Vec<Change>),
+}
+
+/// A command's answer, sent once.
+pub(crate) struct Reply(Option<oneshot::Sender<Result<Value, CoreError>>>);
+
+impl Reply {
+    pub fn send(mut self, answer: Result<Value, CoreError>) {
+        if let Some(reply) = self.0.take() {
+            let _ = reply.send(answer);
+        }
+    }
 }
 
 struct Open {
@@ -161,8 +173,9 @@ impl Sessions {
     /// The document the session `session` has open at `path`, for the host's
     /// editor: its edits go to it, and its highlighting reads from it.
     pub fn document(&self, session: u64, path: &str) -> Option<Document> {
+        let path = paths::rel_key(path).ok()?;
         let docs = Arc::clone(&lock(&self.open).get(&session)?.docs);
-        lock(&docs).get(path).cloned()
+        lock(&docs).get(&path).cloned()
     }
 
     /// Answers a `session_*` command; the host sends every other command to `Service::call`.
@@ -179,6 +192,11 @@ impl Sessions {
     /// already is refused (409).
     fn open(&self, args: &Value) -> Result<Value, CoreError> {
         let id: u64 = arg(args, "session")?;
+        let taken = || CoreError::conflict("That session is open already");
+        // Before the tree is read and the folder watched for a session that won't be.
+        if lock(&self.open).contains_key(&id) {
+            return Err(taken());
+        }
         let project = string_arg(args, "id")?.to_owned();
         let root = dunce::canonicalize(self.service.project_root(&project)?)?;
         let auto_compile = arg::<Option<bool>>(args, "autoCompile")?.unwrap_or(false);
@@ -190,7 +208,7 @@ impl Sessions {
             outline: Arc::clone(&actor.outline),
         };
         match lock(&self.open).entry(id) {
-            Entry::Occupied(_) => return Err(CoreError::conflict("That session is open already")),
+            Entry::Occupied(_) => return Err(taken()),
             Entry::Vacant(entry) => entry.insert(open),
         };
         tokio::spawn(actor.run(rx));
@@ -211,18 +229,20 @@ impl Sessions {
         let (reply, answer) = oneshot::channel();
         let queued = arg::<u64>(args, "session").and_then(|id| {
             let open = lock(&self.open);
-            let open = open.get(&id).ok_or_else(gone)?;
+            let session = open.get(&id).ok_or_else(gone)?;
             if name == "outline_current" {
                 // From the outline kept, so it waits for none of the session's work.
-                let _ = reply.send(outline_current(&open.outline, args));
+                let outline = Arc::clone(&session.outline);
+                drop(open);
+                let _ = reply.send(outline_current(&outline, args));
                 return Ok(id);
             }
             let message = Msg::Command {
                 name,
                 args: args.clone(),
-                reply,
+                reply: Reply(Some(reply)),
             };
-            open.tx.send(message).map_err(|_| gone())?;
+            session.tx.send(message).map_err(|_| gone())?;
             Ok(id)
         });
         let open = Arc::clone(&self.open);

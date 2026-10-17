@@ -1,7 +1,7 @@
 //! One project session's task: its documents, saves, builds and the file
 //! watcher's news, handled one message at a time, so no two of them race.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -9,22 +9,21 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use notify::RecommendedWatcher;
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, watch as signal};
 use tokio::time::Instant;
 
+use super::build::Builds;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
-use super::{Document, Engine, Msg, Outline, Sessions, Timings};
+use super::{Document, Engine, Msg, Outline, Reply, Sessions, Timings};
 use crate::analyze::{self, ProjectAnalysis};
 use crate::atomic::Stamp;
-use crate::compile::CompileResult;
 use crate::events::Emitter;
-use crate::logparse::LogItem;
 use crate::paths::{self, within};
-use crate::projects::{self, SymbolScan, Symbols};
+use crate::projects::{self, SymbolScan, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
-use crate::syntax::{TextRange, headings};
+use crate::syntax::headings;
 use crate::{CoreError, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
@@ -52,8 +51,10 @@ pub(crate) struct Doc {
     saved: u64,
     /// Save Anyway: written though the text is the disk's.
     force: bool,
-    disk_text: Option<String>,
-    /// While a stat still gives it, a change told of is the session's own save, or none.
+    /// The text the disk has, as the session last wrote or read it.
+    disk_text: String,
+    /// While a stat still gives it, a change told of is the session's own save, or none;
+    /// None once the file has gone.
     disk_stamp: Option<Stamp>,
     /// Asked about once; until answered, no save writes over the other app's change
     /// or puts the file back.
@@ -66,7 +67,7 @@ pub(crate) struct Doc {
     /// A `document_reload` the host has yet to apply: nothing is saved meanwhile.
     reload: Option<Reload>,
     composing: bool,
-    issues: Vec<Value>,
+    pub issues: Vec<Value>,
     shown: Value,
 }
 
@@ -81,18 +82,6 @@ impl Doc {
     }
 }
 
-#[derive(Default)]
-struct Build {
-    compiling: bool,
-    /// One more build asked for during this one; `Some(true)` while every request was automatic.
-    queued: Option<bool>,
-    auto: bool,
-    /// The edit count when it began.
-    built: u64,
-    /// Its saves went through: else what it queued would build stale text.
-    saved: bool,
-}
-
 pub(crate) enum Later {
     Compile(bool),
     /// Start live preview again; `ended`: because it ended by itself.
@@ -103,13 +92,18 @@ pub(crate) enum Later {
     Rescan,
 }
 
-type Reply = oneshot::Sender<Result<Value, CoreError>>;
+/// What woke the session's task.
+enum Wake {
+    Message(Msg),
+    Deadline,
+    TexFound,
+}
 
 pub(crate) struct Actor {
     pub id: u64,
     project: String,
     pub root: PathBuf,
-    service: Arc<Service>,
+    pub service: Arc<Service>,
     pub engine: Arc<dyn Engine>,
     events: Emitter,
     pub tx: mpsc::UnboundedSender<Msg>,
@@ -123,31 +117,25 @@ pub(crate) struct Actor {
     symbols_at: Option<Instant>,
     /// What the last scan read; taken out while a scan runs, so one beside it starts afresh.
     symbol_scan: SymbolScan,
-    edits: u64,
+    pub edits: u64,
     /// The edit each path last had, kept for the session's life: a document closed since
     /// isn't marked with a build's issues on lines that may have moved.
-    last_edits: HashMap<String, u64>,
-    result_edits: u64,
-    build_pdf: bool,
-    outdated: bool,
+    pub last_edits: HashMap<String, u64>,
     pub auto_compile: bool,
-    build: Build,
-    issues: Vec<LogItem>,
+    pub builds: Builds,
+    /// Whether the last look for TeX found it (`Service::tex_found`).
+    tex: signal::Receiver<bool>,
     pub outline: Arc<Mutex<Outline>>,
     /// The analyses asked for.
     analyses: u64,
-    error_count: usize,
-    chosen: Option<usize>,
     autosave_at: Option<Instant>,
     fs_pending: Vec<Change>,
     fs_at: Option<Instant>,
     /// The listing as last read: the same files and folders make the same tree.
     pub tree: TreeIndex,
     _watcher: Option<RecommendedWatcher>,
-    deleting: Option<String>,
-    clean_waiting: Option<Reply>,
-    cleaning: Option<(Reply, bool, u64)>,
-    shown_build: Value,
+    /// The entries on their way to the Trash (`prepare_delete`): nothing saves into them.
+    deleting: BTreeSet<String>,
     pub live: Live,
     pub later: VecDeque<Later>,
     pub closed: bool,
@@ -180,7 +168,8 @@ impl Actor {
             "settings": settings,
             "ui": settings::read_ui(&root),
         });
-        let build_pdf = pdf.is_some();
+        let mut builds = Builds::default();
+        builds.pdf = pdf.is_some();
         let mut actor = Self {
             id,
             project,
@@ -200,57 +189,63 @@ impl Actor {
             symbol_scan: SymbolScan::default(),
             edits: 0,
             last_edits: HashMap::new(),
-            result_edits: 0,
-            build_pdf,
-            outdated: false,
             auto_compile,
-            build: Build::default(),
-            issues: Vec::new(),
+            builds,
+            tex: sessions.service.tex_found.subscribe(),
             outline: Arc::default(),
             analyses: 0,
-            error_count: 0,
-            chosen: None,
             autosave_at: None,
             fs_pending: Vec::new(),
             fs_at: None,
             tree: TreeIndex::of(&tree),
             _watcher: watcher,
-            deleting: None,
-            clean_waiting: None,
-            cleaning: None,
-            shown_build: Value::Null,
+            deleting: BTreeSet::new(),
             live: Live::default(),
             later: VecDeque::new(),
             closed: false,
         };
-        if actor.auto_compile && !build_pdf {
+        if actor.auto_compile && !actor.builds.pdf {
             actor.later.push_back(Later::Compile(true));
         }
         Ok((actor, opened))
     }
 
     pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) {
+        let mut woken = None;
         loop {
+            match woken.take() {
+                Some(Wake::Message(message)) => self.handle(message),
+                Some(Wake::Deadline) => self.fire(),
+                Some(Wake::TexFound) => self.tex_changed(),
+                None => {}
+            }
             self.run_later();
             if self.closed {
                 break;
             }
-            let message = match self.next_deadline() {
-                Some(at) => tokio::select! {
-                    message = rx.recv() => message,
-                    () = tokio::time::sleep_until(at) => {
-                        self.fire();
-                        continue;
-                    }
+            let deadline = self.next_deadline();
+            let sleep = tokio::time::sleep_until(deadline.unwrap_or_else(Instant::now));
+            let waiting_for_tex = self.builds.waiting_for_tex;
+            woken = tokio::select! {
+                message = rx.recv() => match message {
+                    Some(message) => Some(Wake::Message(message)),
+                    None => break,
                 },
-                None => rx.recv().await,
+                () = sleep, if deadline.is_some() => Some(Wake::Deadline),
+                Ok(()) = self.tex.changed(), if waiting_for_tex => Some(Wake::TexFound),
             };
-            match message {
-                Some(message) => self.handle(message),
-                None => break,
-            }
         }
         self.live_reset();
+    }
+
+    /// An automatic build skipped for want of TeX runs once `status` finds it.
+    fn tex_changed(&mut self) {
+        if *self.tex.borrow_and_update() {
+            self.builds.waiting_for_tex = false;
+            if self.auto_compile {
+                self.later.push_back(Later::Compile(true));
+            }
+        }
     }
 
     pub fn emit(&self, kind: &str, mut fields: Value) {
@@ -361,13 +356,11 @@ impl Actor {
             "clean" => self.clean(reply),
             "analyze" => match string_arg(args, "path").and_then(paths::rel_key) {
                 Ok(path) => self.analyze(path, reply),
-                Err(err) => {
-                    let _ = reply.send(Err(err));
-                }
+                Err(err) => reply.send(Err(err)),
             },
             _ => {
                 let answer = self.answer(name, args);
-                let _ = reply.send(answer);
+                reply.send(answer);
             }
         }
     }
@@ -402,10 +395,7 @@ impl Actor {
             "compile" => self.compile(arg::<Option<bool>>(args, "auto")?.unwrap_or(false))?,
             "stop_compile" => self.stop_compile(),
             "issue" => return Ok(self.next_issue(arg(args, "next")?)),
-            "choose_issue" => {
-                self.chosen = arg(args, "index")?;
-                return Ok(self.chosen_issue());
-            }
+            "choose_issue" => return Ok(self.choose_issue(arg(args, "index")?)),
             "rename" => {
                 let from = paths::rel_key(string_arg(args, "from")?)?;
                 return self.rename(&from, string_arg(args, "to")?);
@@ -414,7 +404,7 @@ impl Actor {
             "prepare_delete" => return self.prepare_delete(&path()?),
             "deleted" => {
                 let path = path()?;
-                self.deleting = None;
+                self.deleting.remove(&path);
                 if arg::<Option<bool>>(args, "trashed")?.unwrap_or(true) {
                     for doc in self.docs_within(&path) {
                         self.close_doc(&doc, "deleted");
@@ -457,7 +447,7 @@ impl Actor {
             })
             .collect();
         let mut build = self.build_state();
-        build["queued"] = self.build.queued.is_some().into();
+        build["queued"] = self.builds.queued.is_some().into();
         json!({
             "documents": docs,
             "build": build,
@@ -494,7 +484,7 @@ impl Actor {
             path: path.to_owned(),
             saved: 0,
             force: false,
-            disk_text: Some(text),
+            disk_text: text,
             disk_stamp: stamp,
             conflict: None,
             asking: None,
@@ -518,13 +508,8 @@ impl Actor {
         if !self.docs.contains_key(path) {
             return Ok(json!({ "closed": true }));
         }
-        for _ in 0..3 {
-            if !self.save_doc(path, true, false)? {
-                return Ok(json!({ "closed": false }));
-            }
-            if !self.docs.get(path).is_some_and(Doc::dirty) {
-                break;
-            }
+        if !self.flush(Some(path), true)? {
+            return Ok(json!({ "closed": false }));
         }
         self.close_doc(path, "closed");
         Ok(json!({ "closed": true }))
@@ -542,13 +527,7 @@ impl Actor {
         let Some(path) = self.by_id.get(&doc).cloned() else {
             return;
         };
-        self.edits += 1;
-        self.last_edits.insert(path.clone(), self.edits);
-        self.clear_issues(&path);
-        if self.has_pdf() && !self.outdated {
-            self.outdated = true;
-            self.publish_build();
-        }
+        self.text_changed(&path);
         self.publish_doc(&path);
         self.autosave_at = Some(Instant::now() + self.t.autosave);
         self.live_edited(&path, version, start, length, text);
@@ -558,8 +537,9 @@ impl Actor {
         let Some(path) = self.by_id.get(&doc).cloned() else {
             return;
         };
-        self.edits += 1;
-        self.last_edits.insert(path.clone(), self.edits);
+        self.text_changed(&path);
+        // Its labels and citations may have changed with it.
+        self.symbols_at = Some(Instant::now() + self.t.symbols);
         let Some(doc) = self.docs.get_mut(&path) else {
             return;
         };
@@ -569,7 +549,6 @@ impl Actor {
             // Written back: a save under way when the change came may have written over it.
             doc.force = true;
         }
-        self.clear_issues(&path);
         self.publish_doc(&path);
         self.live_whole(&path);
         match reason {
@@ -581,6 +560,15 @@ impl Actor {
             Some(Reload::Disk) if self.auto_compile => self.later.push_back(Later::Compile(true)),
             _ => {}
         }
+    }
+
+    /// `path`'s text changed, by an edit or from the disk: the build's marks on it
+    /// go, and the PDF it showed is out of date.
+    fn text_changed(&mut self, path: &str) {
+        self.edits += 1;
+        self.last_edits.insert(path.to_owned(), self.edits);
+        self.clear_issues(path);
+        self.mark_outdated();
     }
 
     pub fn publish_doc(&mut self, path: &str) {
@@ -621,53 +609,75 @@ impl Actor {
 
     /// Writes one document. Ok(false): not written, and not to be (a conflict,
     /// asked about when `reporting`, or a reload or deletion under way).
+    ///
+    /// The disk is looked at under the project's lock first: another app's write
+    /// that the watcher hasn't told of yet (its changes settle for 250 ms) is taken
+    /// as the watcher would take it, not written over. A touch that left the text
+    /// as it was leaves nothing to ask, and the write goes on at the second look.
     fn save_doc(&mut self, path: &str, reporting: bool, autosave: bool) -> Result<bool, CoreError> {
-        let deleting = self
-            .deleting
-            .as_deref()
-            .is_some_and(|dir| within(path, dir));
-        let Some(doc) = self.docs.get_mut(path) else {
-            return Ok(true);
-        };
-        if !doc.dirty() {
-            return Ok(true);
-        }
-        if doc.reload.is_some() || deleting || doc.asking.is_some() || autosave && doc.composing {
-            return Ok(false);
-        }
-        if let Some(kind) = doc.conflict {
-            if reporting {
-                self.ask(path, kind);
+        for _ in 0..2 {
+            let deleting = self.deleting.iter().any(|entry| within(path, entry));
+            let Some(doc) = self.docs.get_mut(path) else {
+                return Ok(true);
+            };
+            if !doc.dirty() {
+                return Ok(true);
             }
-            return Ok(false);
+            if doc.reload.is_some() || deleting || doc.asking.is_some() || autosave && doc.composing
+            {
+                return Ok(false);
+            }
+            if let Some(kind) = doc.conflict {
+                if reporting {
+                    self.ask(path, kind);
+                }
+                return Ok(false);
+            }
+            let (text, version) = doc.doc.snapshot();
+            let written = self.service.with_project(&self.project, |root| {
+                let abs = paths::safe_write_path(root, path)?;
+                if !as_left(&abs, doc.disk_stamp, &doc.disk_text) {
+                    return Ok(None);
+                }
+                projects::write_creating(&abs, text.as_bytes()).map(Some)
+            });
+            let result = match written {
+                Ok(None) => {
+                    self.check_disk(path);
+                    continue;
+                }
+                Ok(Some(stamp)) => {
+                    (doc.disk_text, doc.disk_stamp) = (text, Some(stamp));
+                    (doc.saved, doc.force, doc.held, doc.error) = (version, false, false, None);
+                    self.symbols_at = Some(Instant::now() + self.t.symbols);
+                    self.emit("saved", json!({ "path": path }));
+                    Ok(true)
+                }
+                Err(err) => {
+                    doc.error = Some(err.message.clone());
+                    Err(err)
+                }
+            };
+            self.publish_doc(path);
+            return result;
         }
-        let (text, version) = doc.doc.snapshot();
-        let written = self.service.write_text(&self.project, path, &text);
-        let doc = self.docs.get_mut(path).expect("the document is open");
-        let result = match written {
-            Ok(stamp) => {
-                (doc.disk_text, doc.disk_stamp) = (Some(text), Some(stamp));
-                (doc.saved, doc.force, doc.held, doc.error) = (version, false, false, None);
-                self.symbols_at = Some(Instant::now() + self.t.symbols);
-                self.emit("saved", json!({ "path": path }));
-                Ok(true)
-            }
-            Err(err) => {
-                doc.error = Some(err.message.clone());
-                Err(err)
-            }
-        };
-        self.publish_doc(path);
-        result
+        Ok(false)
     }
 
     /// Writes every document with unsaved edits; typing during a write is
     /// written too, so a build or a trash that follows has it.
-    fn flush_all(&mut self, reporting: bool) -> Result<bool, CoreError> {
+    pub fn flush_all(&mut self, reporting: bool) -> Result<bool, CoreError> {
         self.autosave_at = None;
+        self.flush(None, reporting)
+    }
+
+    /// Writes the documents with unsaved edits, or `only` that one, again while
+    /// typing during a write leaves them unsaved.
+    fn flush(&mut self, only: Option<&str>, reporting: bool) -> Result<bool, CoreError> {
         let mut failure = None;
         for _ in 0..3 {
-            let dirty = self.dirty_paths();
+            let mut dirty = self.dirty_paths();
+            dirty.retain(|path| only.is_none_or(|only| only == path));
             if dirty.is_empty() {
                 break;
             }
@@ -719,7 +729,6 @@ impl Actor {
         let Some(kind) = doc.asking.or(doc.conflict) else {
             return Ok(Value::Null);
         };
-        let disk_text = doc.disk_text.clone();
         match (kind, answer) {
             (_, "cancel") => (doc.asking, doc.held) = (None, true),
             // The autosave was held while asking, or the edits were saved before the other app's change.
@@ -743,9 +752,8 @@ impl Actor {
         match answer {
             "save" => Ok(json!({ "saved": self.save_edits(true)? })),
             "revert" => {
-                if let Some(text) = disk_text {
-                    self.request_reload(path, &text, Reload::Revert);
-                }
+                let text = self.docs[path].disk_text.clone();
+                self.request_reload(path, &text, Reload::Revert);
                 Ok(Value::Null)
             }
             _ => Ok(Value::Null),
@@ -776,6 +784,12 @@ impl Actor {
             .iter()
             .filter(|p| !self.docs.contains_key(*p))
             .collect();
+        // Labels and citations another app wrote reach completion too; an open
+        // document's are scanned as it reloads.
+        let scan = |path: &&String| matches!(file_kind(path), "tex" | "bib");
+        if meaning.tree || others.iter().any(scan) {
+            self.symbols_at = Some(Instant::now() + self.t.symbols);
+        }
         if !others.is_empty() {
             self.emit("files_changed", json!({ "paths": others }));
         }
@@ -802,19 +816,17 @@ impl Actor {
         if doc.conflict == Some(Conflict::Gone) {
             doc.conflict = None;
         }
-        // A volume that keeps whole seconds could give a same-length write in the same second this stamp.
-        let exact = doc.disk_stamp.filter(|stamp| stamp.nanoseconds != 0);
-        if exact.is_some() && fs::metadata(&abs).ok().map(|meta| Stamp::of(&meta)) == exact {
+        if as_left(&abs, doc.disk_stamp, &doc.disk_text) {
             return;
         }
         let Ok((text, stamp)) = read_disk(&abs) else {
             return;
         };
         doc.disk_stamp = stamp;
-        if doc.disk_text.as_deref() == Some(text.as_str()) {
+        if doc.disk_text == text {
             return;
         }
-        doc.disk_text = Some(text.clone());
+        doc.disk_text.clone_from(&text);
         if doc.dirty() {
             if doc.conflict.replace(Conflict::Changed).is_none() {
                 self.ask(path, Conflict::Changed);
@@ -831,6 +843,8 @@ impl Actor {
         if !doc.dirty() {
             return self.close_doc(path, "gone");
         }
+        // Gone as the session last saw it: Save puts it back.
+        doc.disk_stamp = None;
         if doc.conflict.replace(Conflict::Gone) != Some(Conflict::Gone) {
             self.ask(path, Conflict::Gone);
         }
@@ -876,145 +890,6 @@ impl Actor {
         *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
     }
 
-    // MARK: - Builds
-
-    fn has_pdf(&self) -> bool {
-        self.build_pdf || self.live.document_seen
-    }
-
-    pub fn live_previewing(&self) -> bool {
-        self.live.active() || self.live.restart_at.is_some()
-    }
-
-    /// A request during a build queues one more. An automatic build waits
-    /// while live preview runs, and needs TeX found (`status`). Err: a save
-    /// someone asked for failed.
-    pub fn compile(&mut self, auto: bool) -> Result<(), CoreError> {
-        if self.closed || auto && (self.live_previewing() || !self.service.tex_found()) {
-            return Ok(());
-        }
-        if self.build.compiling {
-            self.build.queued = Some(self.build.queued.unwrap_or(true) && auto);
-            return Ok(());
-        }
-        // Before the save, so a second request queues instead of racing this one.
-        (self.build.compiling, self.build.auto) = (true, auto);
-        self.publish_build();
-        let saved = self.flush_all(!auto);
-        self.build.saved = saved.as_ref().is_ok_and(|saved| *saved);
-        self.build.built = self.edits;
-        if self.build.saved && !(auto && self.live_previewing()) {
-            let (build, tx) = (self.engine.compile(self.root.clone()), self.tx.clone());
-            tokio::spawn(async move {
-                let _ = tx.send(Msg::BuildDone(build.await));
-            });
-        } else {
-            self.finish_build();
-        }
-        saved.map(|_| ())
-    }
-
-    pub fn stop_compile(&mut self) {
-        if self.build.compiling {
-            self.build.queued = None;
-            self.engine.stop_compile(&self.root);
-        }
-    }
-
-    fn build_done(&mut self, result: Result<CompileResult, CoreError>) {
-        let result = result.unwrap_or_else(|err| CompileResult {
-            errors: vec![LogItem::error(err.message)],
-            ..CompileResult::default()
-        });
-        if !self.closed {
-            if result.pdf.is_some() {
-                self.build_pdf = true;
-                self.outdated = self.edits != self.build.built;
-            }
-            let before = self.error_count;
-            self.issues = result
-                .errors
-                .iter()
-                .chain(&result.warnings)
-                .cloned()
-                .collect();
-            self.error_count = result.errors.len();
-            self.result_edits = self.build.built;
-            self.chosen = None;
-            self.mark_issues();
-            let auto = self.build.auto;
-            let announce = !auto || self.error_count != before;
-            let fields = json!({ "auto": auto, "announce": announce, "outdated": self.outdated, "result": result });
-            self.emit("build_finished", fields);
-        }
-        self.finish_build();
-    }
-
-    fn finish_build(&mut self) {
-        self.build.compiling = false;
-        // After a failed save the queued build would only build stale text.
-        let saved = self.build.saved && !self.closed;
-        let again = self.build.queued.take().filter(|_| saved);
-        self.publish_build();
-        if let Some(reply) = self.clean_waiting.take() {
-            self.start_clean(reply);
-        }
-        if let Some(auto) = again {
-            self.later.push_back(Later::Compile(auto));
-        }
-    }
-
-    fn build_state(&self) -> Value {
-        json!({
-            "compiling": self.build.compiling,
-            "auto": self.build.compiling && self.build.auto,
-            "outdated": self.outdated,
-        })
-    }
-
-    pub fn publish_build(&mut self) {
-        let state = self.build_state();
-        if state != self.shown_build {
-            self.shown_build = state.clone();
-            self.emit("build", state);
-        }
-    }
-
-    fn clean(&mut self, reply: Reply) {
-        self.stop_compile();
-        if self.build.compiling {
-            self.clean_waiting = Some(reply);
-        } else {
-            self.start_clean(reply);
-        }
-    }
-
-    fn start_clean(&mut self, reply: Reply) {
-        self.cleaning = Some((reply, self.live.active(), self.live.intent));
-        let (clean, tx) = (self.engine.clean(self.root.clone()), self.tx.clone());
-        tokio::spawn(async move {
-            let _ = tx.send(Msg::Cleaned(clean.await));
-        });
-    }
-
-    fn cleaned(&mut self, result: Result<(), CoreError>) {
-        let Some((reply, live, intent)) = self.cleaning.take() else {
-            return;
-        };
-        self.keep_live(live, intent, result.is_ok());
-        if result.is_ok() && !self.closed {
-            (self.build_pdf, self.outdated) = (false, false);
-            (self.issues, self.error_count, self.chosen) = (Vec::new(), 0, None);
-            self.mark_issues();
-            self.publish_build();
-            self.emit("build_cleaned", json!({}));
-            if self.auto_compile {
-                self.later.push_back(Later::Compile(true));
-            }
-        }
-        let _ = reply.send(result.map(|()| Value::Null));
-    }
-
     // MARK: - Analysis
 
     /// The document the main file reads, as `analyze::analyze_project` finds it for
@@ -1047,69 +922,8 @@ impl Actor {
                 (kept.seq, kept.headings) = (seq, analysis.outline);
             }
             drop(kept);
-            let _ = reply.send(answer);
+            reply.send(answer);
         });
-    }
-
-    // MARK: - Issues
-
-    fn clear_issues(&mut self, path: &str) {
-        if let Some(doc) = self.docs.get_mut(path)
-            && !doc.issues.is_empty()
-        {
-            doc.issues.clear();
-            self.emit("issues", json!({ "path": path, "lines": [] }));
-        }
-    }
-
-    /// The build's issues on the lines of each document not edited since it started.
-    fn mark_issues(&mut self) {
-        let mut changed = Vec::new();
-        for (path, doc) in &mut self.docs {
-            let last_edit = self.last_edits.get(path).copied().unwrap_or(0);
-            let lines = if last_edit <= self.result_edits {
-                let tokens = |line, command: &str| {
-                    doc.doc.with(|source| source.command_ranges(line, command))
-                };
-                issue_lines(&self.issues, path, tokens)
-            } else {
-                Vec::new()
-            };
-            if lines != doc.issues {
-                doc.issues.clone_from(&lines);
-                changed.push(json!({ "path": path, "lines": lines }));
-            }
-        }
-        for issues in changed {
-            self.emit("issues", issues);
-        }
-    }
-
-    fn chosen_issue(&self) -> Value {
-        let Some(index) = self.chosen.filter(|i| *i < self.issues.len()) else {
-            return Value::Null;
-        };
-        json!({ "index": index, "issue": self.issues[index] })
-    }
-
-    /// The next (or previous) issue with a place in a file, round to the first.
-    fn next_issue(&mut self, next: bool) -> Value {
-        let places: Vec<usize> = (0..self.issues.len())
-            .filter(|&i| self.issues[i].file.is_some())
-            .collect();
-        let chosen = self.chosen;
-        let place = if next {
-            let after = places.iter().find(|&&p| chosen.is_none_or(|c| p > c));
-            after.or(places.first())
-        } else {
-            let before = places.iter().rev().find(|&&p| chosen.is_none_or(|c| p < c));
-            before.or(places.last())
-        };
-        let Some(&place) = place else {
-            return Value::Null;
-        };
-        self.chosen = Some(place);
-        self.chosen_issue()
     }
 
     // MARK: - Files
@@ -1183,7 +997,7 @@ impl Actor {
     }
 
     fn main_file_changed(&mut self) {
-        let building = self.build.compiling;
+        let building = self.builds.compiling;
         self.stop_compile();
         if self.live.active() {
             self.live.restart_at = Some(Instant::now() + self.t.live_follow);
@@ -1195,63 +1009,39 @@ impl Actor {
 
     /// The core ends a live preview when a rename or a new main file changes what it shows;
     /// one live before starts again after, unless stopped or started meanwhile.
-    fn keep_live(&mut self, live: bool, intent: u64, changed: bool) {
+    pub fn keep_live(&mut self, live: bool, intent: u64, changed: bool) {
         if live && changed && intent == self.live.intent && !self.closed {
             self.live.restart_at = Some(Instant::now() + self.t.live_follow);
         }
     }
 
-    /// Saved first, so no autosave can make the file again; the main file stays.
+    /// Saved first, so no autosave can make the file again, and held until `deleted`;
+    /// the main file stays, however the settings spell it.
     fn prepare_delete(&mut self, path: &str) -> Result<Value, CoreError> {
         if !self.flush_all(true)? || !self.dirty_paths().is_empty() {
             return Ok(json!({ "ready": false }));
         }
-        if within(&settings::read_settings(&self.root).main_file, path) {
+        let main = settings::read_settings(&self.root).main_file;
+        if paths::after_entry(&main, path).is_some() {
             return Err(CoreError::conflict(MAIN_FILE_TRASH));
         }
-        self.deleting = Some(path.to_owned());
+        self.deleting.insert(path.to_owned());
         Ok(json!({ "ready": true }))
     }
 }
 
-/// The build's issues on `path`'s lines, as the editor marks them: the
-/// first issue of a line with the rest after it. An undefined command's
-/// issue has where the line has the command (as `tokens` finds it, from the
-/// line's start), and a `compact` message that names it in fewer words.
-fn issue_lines(
-    issues: &[LogItem],
-    path: &str,
-    tokens: impl Fn(u32, &str) -> Vec<TextRange>,
-) -> Vec<Value> {
-    let mut lines: BTreeMap<u32, (&LogItem, Vec<String>)> = BTreeMap::new();
-    for item in issues.iter().rev() {
-        let (Some(file), Some(line)) = (&item.file, item.line) else {
-            continue;
-        };
-        if file != path {
-            continue;
+/// Whether the file at `abs` is as the session last wrote or read it (`stamp`,
+/// `text`), or gone as it was. A volume that keeps whole seconds could give a
+/// same-length write in the same second that stamp: there the text tells.
+fn as_left(abs: &Path, stamp: Option<Stamp>, text: &str) -> bool {
+    let now = fs::metadata(abs).ok().map(|meta| Stamp::of(&meta));
+    match (stamp, now) {
+        (Some(stamp), Some(now)) if stamp == now => {
+            stamp.nanoseconds != 0
+                || fs::read(abs).is_ok_and(|bytes| crate::lossy_string(bytes) == text)
         }
-        let others = lines.remove(&line).map(|(later, mut others)| {
-            others.insert(0, later.message.clone());
-            others
-        });
-        lines.insert(line, (item, others.unwrap_or_default()));
+        (stamp, now) => stamp.is_none() && now.is_none(),
     }
-    let lines = lines.into_iter();
-    lines
-        .map(|(line, (item, others))| {
-            let command = item.command.as_deref();
-            json!({
-                "line": line,
-                "error": item.kind == "error",
-                "message": item.message,
-                "short": item.short,
-                "compact": command.map(|command| format!("Undefined: {command}")),
-                "tokens": command.map_or_else(Vec::new, |command| tokens(line, command)),
-                "others": others,
-            })
-        })
-        .collect()
 }
 
 /// A file's text, and its stamp from before the read: a write meanwhile gives
