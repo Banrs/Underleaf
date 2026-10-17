@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::scan::{blank_line, closing_brace, strip_comment};
 use super::{
-    Insertion, SourceDocument, Text, TextEdit, TextRange, catalog, clamp, complete, edit,
+    Insertion, Line, SourceDocument, Text, TextEdit, TextRange, catalog, clamp, complete, edit,
     indentation, is, span, splice, utf16,
 };
 
@@ -236,64 +236,57 @@ impl SourceDocument {
     pub fn move_lines(&self, selections: &[TextRange], up: bool) -> Option<Change> {
         let text = &self.text;
         let (units, len) = (&text.units[..], text.units.len());
-        // Each selection's whole lines, in order; one ending at a line's start
-        // doesn't take that line. Runs that touch are one.
-        let mut runs: Vec<(usize, usize)> = selections
-            .iter()
-            .map(|&selection| {
-                let (start, end) = clamp(selection, text.len()).bounds();
-                let last = if end > start { end - 1 } else { start };
-                (text.around(start).start, text.around(last).next)
-            })
-            .collect();
-        runs.sort_unstable();
-        let mut merged: Vec<(usize, usize)> = Vec::new();
-        for run in runs {
-            match merged.last_mut() {
-                Some(previous) if run.0 <= previous.1 => previous.1 = previous.1.max(run.1),
-                _ => merged.push(run),
+        // Runs of the lines the selections touch, by their first and last.
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for line in touched_lines(text, selections) {
+            match runs.last_mut() {
+                Some(run) if line == run.1 + 1 => run.1 = line,
+                _ => runs.push((line, line)),
             }
         }
         let mut edits = Vec::new();
-        // Each run, and where its first line goes.
+        // Each run's bounds, and where its first line goes.
         let mut moves = Vec::new();
-        for &(start, end) in &merged {
+        for (first, last) in runs {
+            let (start, end) = (text.bounds(first).start, text.bounds(last).next);
             // The empty line after a final line break has nothing to move.
-            if end == start || (if up { start == 0 } else { end >= len }) {
+            if end == start || (if up { first == 0 } else { end >= len }) {
                 return None;
             }
-            let neighbour = text.around(if up { start - 1 } else { end });
-            let whole = (start.min(neighbour.start), end.max(neighbour.next));
-            // The lines' text trades places; the line breaks stay where they were,
-            // so a last line without one keeps none.
-            let mut lines = Vec::new();
-            let mut at = whole.0;
-            while at < whole.1 {
-                let line = text.around(at);
-                let contents = String::from_utf16_lossy(&units[line.start..line.end]);
-                let line_break = String::from_utf16_lossy(&units[line.end..line.next]);
-                lines.push((contents, line_break));
-                at = line.next;
-            }
-            // The neighbour is one line, first going up and last going down.
-            let mut moved: Vec<&String> = lines.iter().map(|(contents, _)| contents).collect();
+            // With the line above or below, the lines' text trades places;
+            // the line breaks stay where they were, so a last line without
+            // one keeps none.
+            let (from, to) = if up {
+                (first - 1, last)
+            } else {
+                (first, last + 1)
+            };
+            let lines: Vec<Line> = (from..=to).map(|l| text.bounds(l)).collect();
+            let mut moved: Vec<&[u16]> = lines.iter().map(|l| &units[l.start..l.end]).collect();
             if up {
                 moved.rotate_left(1);
             } else {
                 moved.rotate_right(1);
             }
-            let joined: String = moved
+            let joined: Vec<u16> = moved
                 .iter()
                 .zip(&lines)
-                .flat_map(|(contents, (_, line_break))| [contents.as_str(), line_break.as_str()])
+                .flat_map(|(contents, l)| contents.iter().chain(&units[l.end..l.next]))
+                .copied()
                 .collect();
-            edits.push(splice(whole.0, whole.1 - whole.0, joined));
-            let first = if up {
-                whole.0
+            let whole = lines[0].start..lines[lines.len() - 1].next;
+            let at = if up {
+                whole.start
             } else {
-                whole.0 + utf16(moved[0]) + utf16(&lines[0].1)
+                whole.start + moved[0].len() + (lines[0].next - lines[0].end)
             };
-            moves.push((start, end, first));
+            let length = whole.end - whole.start;
+            edits.push(splice(
+                whole.start,
+                length,
+                String::from_utf16_lossy(&joined),
+            ));
+            moves.push((start, end, at));
         }
         let selections = selections
             .iter()

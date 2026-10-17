@@ -442,43 +442,26 @@ mod tests {
         assert!(in_math("$x\r\ny"));
     }
 
-    #[test]
-    fn a_probed_scan_stops_in_an_open_environment() {
-        // Only a brace group reports its close, so the document environment
-        // (open to the end of every real file) keeps no scan reading.
-        let source = format!(
-            "\\begin{{document}}\n\\textbf{{a b}} c\n{}\\end{{document}}\n",
-            "More words in a paragraph.\n\n".repeat(1_000)
-        );
+    /// How far a scan probed twice at " b}" in `source` reads.
+    fn probed_read(source: &str) -> usize {
         let units: Vec<u16> = source.encode_utf16().collect();
         let at = source.find(" b}").unwrap();
         let mut scanner = Scanner::default();
         scanner.run(&units, units.len(), &[at, at], &mut ());
-        assert!(
-            scanner.i < 100,
-            "read on to {} of {}",
-            scanner.i,
-            units.len()
-        );
+        scanner.i
     }
 
     #[test]
-    fn a_probed_scan_stops_at_the_paragraph_after_its_probes() {
-        // A brace nobody closes, above: the scan had read on to the end.
-        let source = format!(
-            "{{ stray\n\\textbf{{a b}} c\n\n{}",
-            "More {words}.\n".repeat(1_000)
-        );
-        let units: Vec<u16> = source.encode_utf16().collect();
-        let at = source.find(" b}").unwrap();
-        let mut scanner = Scanner::default();
-        scanner.run(&units, units.len(), &[at, at], &mut ());
-        assert!(
-            scanner.i < 40,
-            "read on to {} of {}",
-            scanner.i,
-            units.len()
-        );
+    fn a_probed_scan_stops_once_its_probes_are_answered() {
+        // Only a brace group reports its close, so the document environment
+        // (open to the end of every real file) keeps no scan reading.
+        let words = "More words in a paragraph.\n\n".repeat(1_000);
+        let source = format!("\\begin{{document}}\n\\textbf{{a b}} c\n{words}\\end{{document}}\n");
+        assert!(probed_read(&source) < 100);
+        // A brace nobody closes, above: the scan had read on to the end, and
+        // now stops at the paragraph's end after the probes.
+        let words = "More {words}.\n".repeat(1_000);
+        assert!(probed_read(&format!("{{ stray\n\\textbf{{a b}} c\n\n{words}")) < 40);
     }
 
     #[test]
