@@ -1,0 +1,32 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.28 (MiKTeX 25.4) (preloaded format=pdflatex 2025.5.1)  1 MAY 2025 10:00
+entering extended mode
+ restricted \write18 enabled.
+ file:line:error style messages enabled.
+**./main.tex
+(./main.tex
+LaTeX2e <2024-11-01> patch level 2
+L3 programming layer <2025-01-18>
+(C:\Users\Alex\AppData\Local\Programs\MiKTeX\tex/latex/base\article.cls
+Document Class: article 2024/06/29 v1.4n Standard LaTeX document class
+(C:\Users\Alex\AppData\Local\Programs\MiKTeX\tex/latex/base\size10.clo))
+(C:\Users\Alex\AppData\Local\Programs\MiKTeX\tex/latex/graphics\graphicx.sty
+Package: graphicx 2024/12/31 v1.2e Enhanced LaTeX Graphics (DPC,SPQR)
+)
+(main.aux)
+(chapters/intro.tex
+
+LaTeX Warning: Reference `fig:nope' on page 1 undefined on input line 3.
+
+C:\Users\Alex\AppData\Local\Programs\MiKTeX\tex/latex/graphics\graphicx.sty:27: Undefined control sequence.
+l.27 \foo
+
+)
+./main.tex:9: Undefined control sequence.
+l.9 \bar
+
+(C:\Users\Alex\AppData\Local\Programs\MiKTeX\tex/latex/base\ulem.sty
+
+Package ulem Warning: A warning from an engine that wraps its log at column 79 
+and breaks a word in two on input line 12.
+
+)

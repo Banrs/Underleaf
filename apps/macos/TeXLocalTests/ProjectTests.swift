@@ -4,60 +4,17 @@ import PDFKit
 import Testing
 @testable import TeXLocal
 
-/// Projects are removed, not trashed: `delete_project` trashes through Finder, which a headless test host can't drive.
-struct CoreTests {
-    init() throws {
-        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
-    }
-
-    @Test func aCoreErrorIsDecodedAndAMisshapenAnswerIsSaidInTheAppsWords() async throws {
-        let core = Core.shared
-        let info = try await core.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"], as: ProjectInfo.self)
-        defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
-        let error = await #expect(throws: CoreError.self) {
-            _ = try await core.call("read_file", ["id": info.id, "path": "../../x"], as: FileText.self)
-        }
-        #expect(error?.message == "Path escapes project")
-        // An answer in another shape than was asked for is said in the app's words, without the command's name.
-        let fault = await #expect(throws: CoreError.self) {
-            _ = try await core.call("file_tree", ["id": info.id], as: FileText.self)
-        }
-        #expect(fault?.message.hasPrefix("Something went wrong inside TeXLocal.") == true && fault?.status == nil)
-    }
-
-    /// The app numbers its sessions, and their events reach the observer of the number, decoded.
-    @Test func aSessionsEventsReachTheObserverOfItsNumber() async throws {
-        let core = Core.shared
-        let info = try await core.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"], as: ProjectInfo.self)
-        defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
-        var events: [SessionEvent] = []
-        let session = core.observe { events.append($0) }
-        defer { core.forget(session) }
-        let opened = try await core.call("session_open", ["id": info.id, "session": session], as: SessionOpened.self)
-        #expect(opened.settings.mainFile == info.mainFile && opened.pdf == nil)
-        let taken = await #expect(throws: CoreError.self) {
-            _ = try await core.call("session_open", ["id": info.id, "session": session], as: SessionOpened.self)
-        }
-        #expect(taken?.status == 409)
-        try await core.call("session_open_document", ["session": session, "path": info.mainFile])
-        _ = try await core.call("session_close_document", ["session": session, "path": info.mainFile], as: Closed.self)
-        try await waitUntil {
-            events.contains { if case .closed(let closed) = $0 { closed.path == info.mainFile && closed.reason == "closed" } else { false } }
-        }
-        try await core.call("session_close", ["session": session])
-    }
-}
-
 @Suite(.serialized, .timeLimit(.minutes(2)))
 final class ProjectFlowTests {
     private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects]
     private let kept: [Any?]
     private var folders: [URL] = []
-    private let files = FileManager.default
+    let files = FileManager.default
     let app = AppModel()
 
     init() throws {
-        // Removed rather than trashed, as `CoreTests` explains: only in the test library.
+        // Removed rather than trashed, as `CoreTests` explains: only in the test library. Home's, the Dock menu's and the
+        // file tree's flows are in this suite too, in HomeTests.swift and FileTreeTests.swift.
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         kept = keys.map { UserDefaults.standard.object(forKey: $0) }
         app.autoCompile = false
@@ -69,7 +26,7 @@ final class ProjectFlowTests {
         for folder in folders { try? files.removeItem(at: folder) }
     }
 
-    private func project(_ text: String = "text") async throws -> (info: ProjectInfo, folder: URL) {
+    func project(_ text: String = "text") async throws -> (info: ProjectInfo, folder: URL) {
         let info = try await Core.shared.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"],
                                               as: ProjectInfo.self)
         let folder = Core.libraryFolder.appending(path: info.id)
@@ -239,16 +196,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func aRefusalOnHomeIsAnAlertThatNamesIt() async throws {
-        let missing = files.temporaryDirectory.appending(path: "\(UUID().uuidString).zip")
-        await app.importProject(from: missing)
-        #expect(app.alert?.title == "Couldn’t Open “\(missing.lastPathComponent)”" && app.project == nil && !app.isOpening)
-        let recents = app.recentProjects
-        let gone = ProjectInfo(id: "No Such Project \(UUID().uuidString.prefix(8))", name: "Gone", mtime: 0, mainFile: "main.tex")
-        await app.rename(gone, to: "Elsewhere")
-        #expect(app.alert?.title == "Couldn’t Rename “Gone”" && app.recentProjects == recents)
-    }
-
     @Test func aLibraryFileOpensItsOwnProject() async throws {
         let (info, folder) = try await project()
         try "notes".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
@@ -311,48 +258,22 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func aCleanBuildClosesOnlyThePanelAFailureOpened() {
-        let panel = BuildPanelModel()
-        panel.openForFailedBuild()
-        #expect(panel.shown && panel.tab == .issues)
-        panel.tab = .log
-        panel.closeAfterCleanBuild()
-        #expect(panel.shown)
-        panel.tab = .issues
-        panel.closeAfterCleanBuild()
-        #expect(!panel.shown)
-        panel.show(.log)
-        panel.openForFailedBuild()
-        panel.closeAfterCleanBuild()
-        #expect(panel.shown && panel.tab == .issues)
-        panel.shown = false
-        panel.openForFailedBuild()
-        panel.shown = false
-        panel.show(.texpresso)
-        #expect(panel.showsLiveLog)
-        panel.tab = .issues
-        #expect(!panel.showsLiveLog)
-        panel.closeAfterCleanBuild()
-        #expect(panel.shown)
-        panel.tab = .texpresso
-        panel.shown = false
-        #expect(!panel.showsLiveLog)
-    }
-
     @Test func theOutlineFollowsTheTopHeadingOnly() async throws {
         let project = try await opened("\\section{A}\n1\n2\n\\section{B}\n3").project
         try await waitUntil { project.outline.count == 2 }
-        let scrolled = { (line: Int) in
-            project.editor.onScroll(line)
-            await project.findingHeadings?.value
-        }
-        await scrolled(2)
+        // The caret's move as the file opened is a turn behind.
+        await settle()
+        project.editor.onScroll(2)
         let told = OSAllocatedUnfairLock(initialState: false)
         withObservationTracking { _ = project.currentHeading } onChange: { told.withLock { $0 = true } }
-        await scrolled(3)
+        project.editor.onScroll(3)
         #expect(!told.withLock { $0 } && project.topLine == 3)
-        await scrolled(4)
+        project.editor.onScroll(4)
         #expect(told.withLock { $0 } && project.currentHeading == project.outline[1].id && project.topHeading == project.outline[1].id)
+        // A scroll the caret's move makes, in the same turn, leaves the caret's heading current.
+        project.editor.onCursor(5, 0)
+        project.editor.onScroll(1)
+        #expect(project.topHeading == project.outline[0].id && project.currentHeading == project.outline[1].id)
         await app.close()
     }
 
@@ -365,7 +286,8 @@ final class ProjectFlowTests {
         #expect(project.initialLoadComplete)
         #expect(project.outline.count == 2)
         #expect(project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
-        #expect(project.words == 6)
+        // Prose only: the headings' titles and the text, not \include's file name.
+        #expect(project.words == 5)
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
         #expect(project.headingCommand == "section")
@@ -496,6 +418,61 @@ final class ProjectFlowTests {
         #expect(await refused.value == false)
         #expect(project.settings?.engine == "pdflatex" && project.settings?.shellEscape == true)
         app.alert = nil
+        // Their answers can come back in either order; the settings shown are the last patch's.
+        let both = [Task.immediate { await project.patchSettings(.stopOnFirstError(true)) },
+                    Task.immediate { await project.patchSettings(.shellEscape(false)) }]
+        for patch in both { #expect(await patch.value) }
+        #expect(project.settings?.stopOnFirstError == true && project.settings?.shellEscape == false)
+        await app.close()
+    }
+
+    /// Arrowing down the sidebar's files: each open closes the one before, and one a later open overtook closes its own.
+    @Test func onlyTheFileShownStaysOpenInTheSession() async throws {
+        let (project, _) = try await opened()
+        for name in ["a.tex", "b.tex"] { try await Core.shared.call("write_file", ["id": project.id, "path": name, "text": name]) }
+        await project.tree.reload()
+        let session = try #require(project.session)
+        let paths = ["main.tex", "a.tex", "b.tex"]
+        // A few turns apart, so the later open comes at different points in the earlier one's.
+        for (round, turns) in [0, 1, 3, 10, 30].enumerated() {
+            let first = paths[(2 * round + 1) % 3], last = paths[(2 * round + 2) % 3]
+            let opening = Task { await project.open(first) }
+            for _ in 0..<turns { await Task.yield() }
+            await Task { await project.open(last) }.value
+            await opening.value
+            let state = try await Core.shared.call("session_state", ["session": session], as: OpenDocuments.self)
+            #expect(project.openPath == last && project.editor.document?.path == last)
+            #expect(state.documents.map(\.path) == [last], "after \(turns) turns")
+        }
+        #expect(app.alert == nil)
+        await app.close()
+    }
+
+    /// Stop and the session's word that Live Preview ended each put the build's PDF back: the pane never empties, and the
+    /// build's pages go into the document showing.
+    @Test func stoppingLivePreviewGoesBackToTheBuildsPDF() async throws {
+        setenv("TEXLOCAL_TEXPRESSO", try liveTeXpresso().path, 1)
+        defer { unsetenv("TEXLOCAL_TEXPRESSO") }
+        let (info, folder) = try await project("\\documentclass{article}\\begin{document}x\\end{document}")
+        try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
+        #expect(try textPDF(["one", "two", "three"]).write(to: folder.appending(path: "build/main.pdf")))
+        await app.open(info.id)
+        let project = try #require(app.project)
+        #expect(project.hasPDF && project.pdf.pageCount == 3)
+        project.startTeXpresso()
+        try await waitUntil(timeout: .seconds(10)) { project.livePDF && project.pdf.pageCount == 1 } state: {
+            "phase \(project.texpresso.phase), log \(project.texpresso.log)"
+        }
+        let shown = project.pdf.view.document
+        let emptied = OSAllocatedUnfairLock(initialState: false)
+        let watch = track({ project.hasPDF }) { if !$0 { emptied.withLock { $0 = true } } }
+        defer { watch.cancel() }
+        project.stopTeXpresso()
+        try await waitUntil(timeout: .seconds(10)) { project.texpresso.phase == .stopped && !project.livePDF }
+        await settle()
+        #expect(!emptied.withLock { $0 } && project.hasPDF && project.pdf.pageCount == 3)
+        #expect(project.pdf.view.document === shown)
+        await app.close()
     }
 
     @Test func cleanBuildFolderRemovesTheBuildFolder() async throws {
@@ -525,23 +502,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func theTreeTellsOfAChangeOnly() async throws {
-        let info = try await project().info, tree = FileTree(id: info.id)
-        var changes = 0
-        tree.onChange = { changes += 1 }
-        try await tree.read()
-        #expect(changes == 1 && tree.node(at: info.mainFile)?.isDirectory == false)
-        await tree.reload()
-        #expect(changes == 1)
-        try await Core.shared.call("write_file", ["id": info.id, "path": "notes.tex", "text": "x"])
-        await tree.reload()
-        #expect(changes == 2 && tree.node(at: "notes.tex") != nil)
-        tree.close()
-        try await Core.shared.call("write_file", ["id": info.id, "path": "more.tex", "text": "x"])
-        await tree.reload()
-        #expect(changes == 2 && tree.node(at: "more.tex") == nil)
-    }
-
     @Test func theSidebarsStateIsKeptForTheProject() async throws {
         let project = try await opened().project
         project.expandedFolders = ["chapters", "chapters/appendix"]
@@ -561,36 +521,6 @@ final class ProjectFlowTests {
         project.expandedFolders = ["ch"]
         await project.renameEntry("ch", to: "chapters")
         #expect(project.expandedFolders == ["chapters"])
-        await app.close()
-    }
-
-    @Test func aNewProjectOpensItsSheetWithTheTemplateAndAFreeName() async throws {
-        app.newProject(.report)
-        // Once the core has named it.
-        try await waitUntil { app.newProjectDraft != nil }
-        #expect(app.newProjectDraft?.template == .report && app.newProjectDraft?.name.isEmpty == false)
-        app.newProjectDraft = nil
-    }
-
-    @Test func theDockMenuOpensARecentProject() async throws {
-        let first = try await project("first").info, second = try await project("second").info
-        await app.refresh()
-        var shown = 0
-        let dock = DockMenu(app: app) { shown += 1 }
-        app.recentProjects = []
-        #expect(dock.menu.items.map(\.title) == ["New Project…"])
-        app.recentProjects = [second.id, "Gone", first.id]
-        let menu = dock.menu
-        #expect(menu.items.map(\.title) == [second.name, first.name, "", "New Project…"])
-        menu.performActionForItem(at: 3)
-        // Once the core has named it.
-        try await waitUntil { app.newProjectDraft != nil }
-        #expect(shown == 1)
-        app.newProjectDraft = nil
-        menu.performActionForItem(at: 1)
-        try await waitUntil(timeout: .seconds(5)) { app.project?.id == first.id && app.project?.initialLoadComplete == true }
-        #expect(shown == 2 && app.recentProjects.first == first.id)
-        #expect(NSApp.delegate?.responds(to: #selector((any NSApplicationDelegate).applicationDockMenu(_:))) == true)
         await app.close()
     }
 
@@ -631,60 +561,7 @@ final class ProjectFlowTests {
     }
 }
 
-@Suite(.timeLimit(.minutes(1)))
-struct UndoableTrashTests {
-    @Test func undoPutsATrashedItemBackAndRedoTrashesItAgain() async throws {
-        let files = FileManager.default
-        let url = files.temporaryDirectory.appending(path: "undo-\(UUID().uuidString.prefix(8)).tex")
-        try "text".write(to: url, atomically: false, encoding: .utf8)
-        let undo = UndoManager()
-        undo.groupsByEvent = false
-        var listed = 0
-        // Not kept here: the undo manager's entries keep it, as in the app.
-        var item: UndoableTrash? = UndoableTrash(original: url, name: url.lastPathComponent, undoManager: undo,
-                                 trash: { item in (try? item.recycle()) != nil },
-                                 changed: { listed += 1 }, failed: { title, _ in Issue.record("\(title)") })
-        undo.beginUndoGrouping()
-        await item?.moveToTrash()
-        undo.endUndoGrouping()
-        item = nil
-        #expect(!files.fileExists(atPath: url.path) && undo.undoActionName == "Move to Trash")
-
-        undo.undo()
-        try await waitUntil { files.fileExists(atPath: url.path) && listed == 1 }
-        #expect(try String(contentsOf: url, encoding: .utf8) == "text" && undo.canRedo && listed == 1)
-
-        undo.redo()
-        try await waitUntil { !files.fileExists(atPath: url.path) && listed == 2 }
-        #expect(undo.canUndo)
-
-        undo.undo()
-        try await waitUntil { files.fileExists(atPath: url.path) }
-        try files.removeItem(at: url)
-    }
-
-    /// An Undo asked while a Redo is still on its way to the Trash waits for it, rather than finding nothing to put back (#36).
-    @Test func anUndoDuringARedoWaitsForIt() async throws {
-        let files = FileManager.default
-        let url = files.temporaryDirectory.appending(path: "undo-\(UUID().uuidString.prefix(8)).tex")
-        try "text".write(to: url, atomically: false, encoding: .utf8)
-        let undo = UndoManager()
-        undo.groupsByEvent = false
-        var listed = 0
-        // Slow, as the project's lane can be behind a save.
-        let item = UndoableTrash(original: url, name: url.lastPathComponent, undoManager: undo,
-                                 trash: { item in try? await Task.sleep(for: .milliseconds(200)); return (try? item.recycle()) != nil },
-                                 changed: { listed += 1 }, failed: { title, _ in Issue.record("\(title)") })
-        undo.beginUndoGrouping()
-        await item.moveToTrash()
-        undo.endUndoGrouping()
-        undo.undo()
-        try await waitUntil { files.fileExists(atPath: url.path) && listed == 1 }
-
-        undo.redo()
-        undo.undo()
-        try await waitUntil { listed == 3 }
-        #expect(files.fileExists(atPath: url.path) && undo.canRedo && !undo.canUndo)
-        try files.removeItem(at: url)
-    }
+/// `session_state`'s documents: those the session has open.
+private nonisolated struct OpenDocuments: Decodable {
+    let documents: [DocumentState]
 }

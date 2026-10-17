@@ -365,7 +365,12 @@ fn blocks_tab_through_their_fields() {
     assert_eq!(e.selection(), caret(at("\\caption{") + 9));
     e.tab(1);
     assert_eq!(e.selection(), caret(at("fig:") + 4));
-    // The last field ends the snippet: Tab indents again.
+    // The last field keeps the snippet, so Shift-Tab goes back; Tab from it
+    // ends the snippet, and indents again.
+    e.tab(-1);
+    assert_eq!(e.selection(), caret(at("\\caption{") + 9));
+    e.tab(1);
+    assert_eq!(e.selection(), caret(at("fig:") + 4));
     e.tab(1);
     assert!(e.string().contains("\n    \\label{fig:}"), "{}", e.string());
 }
@@ -401,6 +406,65 @@ fn a_field_in_two_places_is_typed_in_both() {
     assert!(doc.start_snippet(&[field(0, 0), field(1, 1)], 0).is_some());
     assert!(doc.end_snippet());
     assert!(!doc.end_snippet());
+}
+
+/// Fields that are empty, `index` being each one's in Tab's order.
+fn snippet(e: &mut Editor, places: &[(u32, u32)]) {
+    let fields: Vec<_> = places
+        .iter()
+        .map(|&(start, index)| field(start, index))
+        .collect();
+    let first = e.doc.start_snippet(&fields, 0).unwrap();
+    e.set_selection(first);
+}
+
+#[test]
+fn the_last_field_is_mirrored_and_left_by_shift_tab() {
+    let mut e = Editor::open("   ", Some(0));
+    // The second field is in two places, and the last.
+    snippet(&mut e, &[(0, 0), (1, 1), (2, 1)]);
+    e.tab(1);
+    e.keys("z");
+    e.shows(" z z ", caret(2));
+    e.tab(-1);
+    assert_eq!(e.selection(), caret(0));
+    // Before the first field there is nowhere to go, and nothing is outdented.
+    e.tab(-1);
+    e.shows(" z z ", caret(0));
+    // Tab to the last field, and from it: the lines are indented.
+    e.tab(1);
+    assert_eq!(e.selection(), range(1, 1));
+    e.tab(1);
+    e.shows("   z z ", range(3, 1));
+}
+
+#[test]
+fn a_completions_own_bracket_is_stepped_over() {
+    let mut e = Editor::open("\\textb", None);
+    let offer = e.doc.completions(6, false, &[], &[]).unwrap();
+    let item = &offer.items[0];
+    assert_eq!(item.text, "\\textbf{}");
+    e.put(edit(offer.start, 6, &item.text), 9);
+    // One field is no snippet, but the bracket after it is still the user's to step over.
+    let first = e.doc.start_snippet(&item.fields, offer.start).unwrap();
+    e.set_selection(first);
+    e.keys("x}");
+    e.shows("\\textbf{x}", caret(10));
+}
+
+#[test]
+fn the_range_an_editor_says_it_changes_stands_for_the_edit() {
+    // TextKit may report an insertion as the paragraph's tail replaced by itself
+    // with the text in it; the change alone leaves a closer after it standing.
+    let mut doc = SourceDocument::new("");
+    doc.type_text(caret(0), "(", true);
+    doc.edit(0, 0, "()");
+    doc.follow(range(0, 0), 2, None, false);
+    doc.edit(1, 1, "x)");
+    doc.follow(range(1, 1), 1, Some(range(1, 0)), false);
+    doc.select(caret(2), false);
+    let key = doc.type_text(caret(2), ")", true);
+    assert_eq!(key.selection, Some(caret(3)));
 }
 
 #[test]
@@ -446,6 +510,25 @@ fn lines_move_up_and_down() {
     let mut e = Editor::open("a\r\nb", None);
     e.change(|doc, s| doc.move_lines(s, true).unwrap());
     e.shows("b\r\na", caret(1));
+    // Counted in UTF-16 units: an emoji is two.
+    let mut e = Editor::open("😀\nb", Some(3));
+    e.change(|doc, s| doc.move_lines(s, true).unwrap());
+    e.shows("b\n😀", caret(0));
+    // Return keeps the indentation of a CRLF line, whose carriage return is no part of it.
+    let mut e = Editor::open("  a\r\n  b", Some(3));
+    e.newline();
+    e.shows("  a\n  \r\n  b", caret(6));
+}
+
+#[test]
+fn selections_in_any_order_move_together() {
+    let mut e = Editor::open("1\n2\n3\n4\n5", Some(0));
+    // Line 5, line 2, and line 5 again.
+    e.set_selections(vec![range(8, 1), range(2, 1), caret(8)]);
+    e.change(|doc, s| doc.move_lines(s, true).unwrap());
+    assert_eq!(e.string(), "2\n1\n3\n5\n4");
+    assert_eq!(e.selections, [range(6, 1), range(0, 1), caret(6)]);
+    assert_eq!(e.doc.text(), e.string());
 }
 
 #[test]
@@ -472,6 +555,28 @@ fn a_bracket_finds_its_partner() {
     assert_eq!(SourceDocument::new(&far).partner(0), None);
     let near = format!("({})", "x".repeat(9_999));
     assert_eq!(SourceDocument::new(&near).partner(0), Some(10_000));
+}
+
+#[test]
+fn a_partner_is_not_an_escaped_bracket_nor_one_in_a_comment() {
+    // The escaped brace is no one's partner for the plain ones.
+    let doc = SourceDocument::new("{a \\} b}");
+    assert_eq!(doc.partner(0), Some(7));
+    assert_eq!(doc.partner(7), Some(0));
+    // The escaped pair is a pair of its own.
+    let doc = SourceDocument::new("\\{ {a} \\}");
+    assert_eq!(doc.partner(1), Some(8));
+    assert_eq!(doc.partner(8), Some(1));
+    assert_eq!(doc.partner(3), Some(5));
+    // A double backslash escapes nothing.
+    assert_eq!(SourceDocument::new("{a \\\\}").partner(0), Some(5));
+    // A bracket in a comment is passed over, and has no partner of its own;
+    // the next line is no comment, nor is an escaped percent one.
+    let doc = SourceDocument::new("(a % b )\nc)");
+    assert_eq!(doc.partner(0), Some(10));
+    assert_eq!(doc.partner(7), None);
+    let doc = SourceDocument::new("(a 5\\% )");
+    assert_eq!(doc.partner(0), Some(7));
 }
 
 #[test]

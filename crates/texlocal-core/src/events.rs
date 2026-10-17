@@ -10,12 +10,10 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use serde_json::Value;
 
-use crate::lock;
-
 pub type Listener = Box<dyn Fn(&Value) + Send + Sync>;
 
 pub struct Hub {
-    queue: std::sync::Mutex<Option<mpsc::Sender<Value>>>,
+    queue: Option<mpsc::Sender<Value>>,
     listener: Arc<RwLock<Option<Listener>>>,
 }
 
@@ -37,7 +35,7 @@ impl Default for Hub {
                 }
             });
         Self {
-            queue: std::sync::Mutex::new(spawned.ok().map(|_| queue)),
+            queue: spawned.ok().map(|_| queue),
             listener,
         }
     }
@@ -55,14 +53,13 @@ impl Hub {
 
     /// A sender for one session's events, in the hub's order.
     pub(crate) fn emitter(&self) -> Emitter {
-        Emitter(lock(&self.queue).clone())
+        Emitter(self.queue.clone())
     }
 }
 
 impl Drop for Hub {
     fn drop(&mut self) {
         self.set_listener(None);
-        lock(&self.queue).take();
     }
 }
 

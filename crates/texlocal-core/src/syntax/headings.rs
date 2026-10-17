@@ -5,13 +5,13 @@
 //! every level, set as the standard classes set them, and numbers them as a
 //! book's once the document has chapters.
 
-use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::Serialize;
 
 use super::catalog::{CATALOG, HeadingLevel};
+use super::scan::strip_comment;
 
 /// The class a main file's `\documentclass` names, and the type size its
 /// options set.
@@ -23,9 +23,6 @@ pub struct DocumentClass {
     pub point_size: u32,
 }
 
-/// A comment, from a % that isn't escaped to the line's end, however the line ends.
-static COMMENT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new("(?m)(^|[^\\\\])%[^\n\r\u{85}\u{2028}\u{2029}]*").unwrap());
 static CLASS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\\documentclass\s*(?:\[([^\]]*)\])?\s*\{\s*([^}\s]+)\s*\}").unwrap()
 });
@@ -35,7 +32,9 @@ static CLASS: LazyLock<Regex> = LazyLock::new(|| {
 /// is named is read first, and the whole only when that has none.
 pub fn document_class(text: &str) -> Option<DocumentClass> {
     let named = |text: &str| {
-        let uncommented = COMMENT.replace_all(text, "$1");
+        // A comment ends at either line break.
+        let lines: Vec<&str> = text.split(['\n', '\r']).map(strip_comment).collect();
+        let uncommented = lines.join("\n");
         let c = CLASS.captures(&uncommented)?;
         let options: Vec<&str> = c
             .get(1)
@@ -88,33 +87,138 @@ pub struct Level {
     pub marker: Option<String>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Family {
-    Article,
-    Book,
-    AmsArticle,
-    AmsBook,
-    KomaArticle,
-    KomaBook,
-    Ieee,
-    Llncs,
-    Beamer,
-    Unsectioned,
+/// A level's size: a step of the class's sizes (`points`), or fixed points.
+#[derive(Clone, Copy)]
+enum Size {
+    Step(usize),
+    Points(f64),
 }
 
-fn family(class: &str) -> Option<Family> {
-    use Family::*;
-    Some(match class {
-        "article" | "proc" => Article,
-        "report" | "book" | "memoir" => Book,
-        "amsart" | "amsproc" => AmsArticle,
-        "amsbook" => AmsBook,
-        "scrartcl" => KomaArticle,
-        "scrreprt" | "scrbook" => KomaBook,
-        "IEEEtran" => Ieee,
-        "llncs" => Llncs,
-        "beamer" => Beamer,
-        "letter" | "minimal" => Unsectioned,
+/// A level a class has, and its look: its command, size, weight and shape.
+type Look = (&'static str, Size, bool, Shape);
+
+const NORMAL: usize = 0;
+const LARGE_: usize = 1;
+const LARGE: usize = 2;
+const HUGE_: usize = 4;
+const HUGE: usize = 5;
+
+const fn bold(command: &'static str, step: usize) -> Look {
+    (command, Size::Step(step), true, Shape::Upright)
+}
+
+const fn plain(command: &'static str, shape: Shape) -> Look {
+    (command, Size::Step(NORMAL), false, shape)
+}
+
+/// The standard classes' (book.cls, report.cls): every level bold, and so
+/// memoir's, and a class it doesn't know.
+const BOOK: &[Look] = &[
+    bold("part", HUGE),
+    bold("chapter", HUGE),
+    bold("section", LARGE),
+    bold("subsection", LARGE_),
+    bold("subsubsection", NORMAL),
+    bold("paragraph", NORMAL),
+];
+const ARTICLE: &[Look] = &[
+    bold("part", HUGE_),
+    bold("section", LARGE),
+    bold("subsection", LARGE_),
+    bold("subsubsection", NORMAL),
+    bold("paragraph", NORMAL),
+];
+const AMS_ARTICLE: &[Look] = &[
+    bold("part", NORMAL),
+    plain("section", Shape::SmallCaps),
+    bold("subsection", NORMAL),
+    plain("subsubsection", Shape::Italic),
+    plain("paragraph", Shape::Upright),
+];
+const AMS_BOOK: &[Look] = &[
+    // \@xxpt and \@xivpt, whatever the size option.
+    ("part", Size::Points(20.74), true, Shape::Upright),
+    ("chapter", Size::Points(14.4), true, Shape::Upright),
+    bold("section", NORMAL),
+    bold("subsection", NORMAL),
+    plain("subsubsection", Shape::Italic),
+    plain("paragraph", Shape::Upright),
+];
+const KOMA_ARTICLE: &[Look] = &[
+    bold("part", HUGE),
+    bold("section", LARGE),
+    bold("subsection", LARGE_),
+    bold("subsubsection", NORMAL),
+    bold("paragraph", NORMAL),
+];
+/// headings=big, KOMA-Script's default.
+const KOMA_BOOK: &[Look] = &[
+    bold("part", HUGE),
+    bold("chapter", HUGE_),
+    bold("section", LARGE),
+    bold("subsection", LARGE_),
+    bold("subsubsection", NORMAL),
+    bold("paragraph", NORMAL),
+];
+const IEEE: &[Look] = &[
+    plain("section", Shape::SmallCaps),
+    plain("subsection", Shape::Italic),
+    plain("subsubsection", Shape::Italic),
+    plain("paragraph", Shape::Italic),
+];
+const LLNCS: &[Look] = &[
+    bold("part", HUGE),
+    bold("section", LARGE_),
+    bold("subsection", NORMAL),
+    bold("subsubsection", NORMAL),
+    plain("paragraph", Shape::Italic),
+];
+/// beamer.cls defines neither \chapter nor \paragraph.
+const BEAMER: &[Look] = &[
+    bold("part", HUGE),
+    bold("section", LARGE),
+    bold("subsection", LARGE_),
+    bold("subsubsection", NORMAL),
+];
+
+/// How a class sets its headings: its levels, the deepest it numbers
+/// (LaTeX's secnumdepth: chapter 0, section 1), whether its sections are
+/// numbered within chapters, and whether its numbers are IEEEtran's (I, A,
+/// 1, a).
+struct Class {
+    looks: &'static [Look],
+    numbered: i64,
+    chapters: bool,
+    roman: bool,
+}
+
+impl Class {
+    const fn new(looks: &'static [Look], numbered: i64, chapters: bool) -> Self {
+        Self {
+            looks,
+            numbered,
+            chapters,
+            roman: false,
+        }
+    }
+}
+
+fn known(name: &str) -> Option<Class> {
+    Some(match name {
+        "article" | "proc" => Class::new(ARTICLE, 3, false),
+        "report" | "book" | "memoir" => Class::new(BOOK, 2, true),
+        "amsart" | "amsproc" => Class::new(AMS_ARTICLE, 3, false),
+        "amsbook" => Class::new(AMS_BOOK, 3, true),
+        "scrartcl" => Class::new(KOMA_ARTICLE, 3, false),
+        "scrreprt" | "scrbook" => Class::new(KOMA_BOOK, 2, true),
+        "IEEEtran" => Class {
+            roman: true,
+            ..Class::new(IEEE, 4, false)
+        },
+        "llncs" => Class::new(LLNCS, 2, false),
+        // Frames print no section headings: only the part page has a number.
+        "beamer" => Class::new(BEAMER, 0, false),
+        "letter" | "minimal" => Class::new(&[], 0, false),
         _ => return None,
     })
 }
@@ -129,107 +233,20 @@ fn points(size: u32) -> [f64; 6] {
     }
 }
 
-const NORMAL: usize = 0;
-const LARGE_: usize = 1;
-const LARGE: usize = 2;
-const HUGE_: usize = 4;
-const HUGE: usize = 5;
-
 /// The levels a class has, Normal Text first, as it sets and numbers them;
 /// `class` none for a document without one.
 pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<Level> {
-    use Family::*;
-    let family = class.and_then(|c| family(&c.name));
     let sizes = points(class.map_or(10, |c| c.point_size));
-    let bold = |size: usize| Font {
-        scale: sizes[size] / sizes[0],
-        bold: true,
-        shape: Shape::Upright,
-    };
-    let plain = |shape| Font {
-        scale: 1.0,
-        bold: false,
-        shape,
-    };
-    // The standard classes' (article.cls, book.cls): every level bold, and so memoir's.
-    let mut fonts: HashMap<&str, Font> = HashMap::from([
-        ("part", bold(HUGE)),
-        ("chapter", bold(HUGE)),
-        ("section", bold(LARGE)),
-        ("subsection", bold(LARGE_)),
-        ("subsubsection", bold(NORMAL)),
-        ("paragraph", bold(NORMAL)),
-    ]);
-    let sections = &CATALOG.heading_levels;
-    let mut commands: Vec<&str> = sections.iter().map(|l| l.command.as_str()).collect();
-    let (numbered, chapters, roman) = match family {
-        Some(Article | KomaArticle | AmsArticle) => (3, false, false),
-        Some(Book | KomaBook) => (2, true, false),
-        Some(AmsBook) => (3, true, false),
-        Some(Ieee) => (4, false, true),
-        Some(Llncs) => (2, false, false),
-        // Frames print no section headings: only the part page has a number.
-        Some(Beamer) => (0, false, false),
-        Some(Unsectioned) => (0, false, false),
-        None => (if has_chapters { 2 } else { 3 }, has_chapters, false),
-    };
-    let without = |commands: &mut Vec<&str>, gone: &[&str]| commands.retain(|c| !gone.contains(c));
-    match family {
-        Some(Article) => {
-            fonts.insert("part", bold(HUGE_));
-            without(&mut commands, &["chapter"]);
-        }
-        Some(AmsArticle) => {
-            fonts = HashMap::from([
-                ("part", bold(NORMAL)),
-                ("section", plain(Shape::SmallCaps)),
-                ("subsection", bold(NORMAL)),
-                ("subsubsection", plain(Shape::Italic)),
-                ("paragraph", plain(Shape::Upright)),
-            ]);
-            without(&mut commands, &["chapter"]);
-        }
-        Some(AmsBook) => {
-            // \@xxpt and \@xivpt, whatever the size option.
-            let fixed = |points: f64| Font {
-                scale: points / sizes[0],
-                bold: true,
-                shape: Shape::Upright,
-            };
-            fonts = HashMap::from([
-                ("part", fixed(20.74)),
-                ("chapter", fixed(14.4)),
-                ("section", bold(NORMAL)),
-                ("subsection", bold(NORMAL)),
-                ("subsubsection", plain(Shape::Italic)),
-                ("paragraph", plain(Shape::Upright)),
-            ]);
-        }
-        Some(KomaArticle) => without(&mut commands, &["chapter"]),
-        // headings=big, KOMA-Script's default.
-        Some(KomaBook) => {
-            fonts.insert("chapter", bold(HUGE_));
-        }
-        Some(Ieee) => {
-            fonts = HashMap::from([
-                ("section", plain(Shape::SmallCaps)),
-                ("subsection", plain(Shape::Italic)),
-                ("subsubsection", plain(Shape::Italic)),
-                ("paragraph", plain(Shape::Italic)),
-            ]);
-            without(&mut commands, &["part", "chapter"]);
-        }
-        Some(Llncs) => {
-            fonts.insert("section", bold(LARGE_));
-            fonts.insert("subsection", bold(NORMAL));
-            fonts.insert("paragraph", plain(Shape::Italic));
-            without(&mut commands, &["chapter"]);
-        }
-        // beamer.cls defines neither \chapter nor \paragraph.
-        Some(Beamer) => without(&mut commands, &["chapter", "paragraph"]),
-        Some(Unsectioned) => commands.clear(),
-        Some(Book) | None => {}
-    }
+    let Class {
+        looks,
+        numbered,
+        chapters,
+        roman,
+    } = class.and_then(|c| known(&c.name)).unwrap_or(Class::new(
+        BOOK,
+        if has_chapters { 2 } else { 3 },
+        has_chapters,
+    ));
     let marker = |index: usize| {
         // LaTeX's depths: part -1, chapter 0, section 1.
         let depth = index as i64 - 1;
@@ -250,22 +267,31 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
     let normal = Level {
         title: "Normal Text".to_owned(),
         command: String::new(),
-        font: plain(Shape::Upright),
+        font: Font {
+            scale: 1.0,
+            bold: false,
+            shape: Shape::Upright,
+        },
         marker: None,
     };
-    let levels = sections
-        .iter()
-        .enumerate()
-        .filter(|(_, l)| commands.contains(&l.command.as_str()))
-        .map(|(index, HeadingLevel { title, command })| Level {
+    let levels = CATALOG.heading_levels.iter().enumerate();
+    let levels = levels.filter_map(|(index, HeadingLevel { title, command })| {
+        let &(_, size, bold, shape) = looks.iter().find(|look| look.0 == command)?;
+        let points = match size {
+            Size::Step(step) => sizes[step],
+            Size::Points(points) => points,
+        };
+        Some(Level {
             title: title.clone(),
             command: command.clone(),
-            font: fonts
-                .get(command.as_str())
-                .copied()
-                .unwrap_or(plain(Shape::Upright)),
+            font: Font {
+                scale: points / sizes[NORMAL],
+                bold,
+                shape,
+            },
             marker: marker(index),
-        });
+        })
+    });
     std::iter::once(normal).chain(levels).collect()
 }
 

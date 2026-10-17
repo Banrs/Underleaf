@@ -14,6 +14,7 @@ extension ProjectModel {
             return nil
         }
         guard !closed else { return nil }
+        // For the sidebar's rename that follows: the open below can be overtaken by a later one, which reads no tree for it.
         await tree.reload()
         if !directory { await open(made, focus: false) }
         return made

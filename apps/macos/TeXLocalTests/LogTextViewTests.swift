@@ -41,13 +41,32 @@ struct LogTextViewTests {
         #expect(scroll.contentView.bounds.origin.y > end)
     }
 
+    @Test func aBarInsetKeepsAnAtEndLogFollowing() throws {
+        let (scroll, view) = try logScroll()
+        // The inset the build panel's bar gives the scroll view, which SwiftUI's safe area does not reach.
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets.bottom = 28
+        view.scrollToEndOfDocument(nil)
+        let end = scroll.contentView.bounds.origin.y
+        LogTextView(text: view.string + String(repeating: "more output\n", count: 50)).updateText(in: scroll)
+        #expect(scroll.contentView.bounds.origin.y > end)
+
+        // Scrolled up to read, it stays where it is.
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: 60))
+        let reading = scroll.contentView.bounds.origin
+        LogTextView(text: view.string + String(repeating: "more output\n", count: 50)).updateText(in: scroll)
+        #expect(scroll.contentView.bounds.origin == reading)
+    }
+
+    /// Laid out through the text layout manager: asking an NSTextView for its `layoutManager` switches it to TextKit 1, which the app's log view is not.
     private func logScroll() throws -> (NSScrollView, NSTextView) {
         let scroll = NSTextView.scrollableTextView()
         scroll.setFrameSize(NSSize(width: 400, height: 160))
         let view = try #require(scroll.documentView as? NSTextView)
         view.isEditable = false
         view.string = String(repeating: "error on line 42\n", count: 200)
-        view.layoutManager?.ensureLayout(for: try #require(view.textContainer))
+        let layout = try #require(view.textLayoutManager)
+        layout.ensureLayout(for: layout.documentRange)
         view.scrollToBeginningOfDocument(nil)
         return (scroll, view)
     }

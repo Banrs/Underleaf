@@ -26,9 +26,10 @@ final class ProjectModel {
     @ObservationIgnored private(set) var topHeading: Int?
     /// The outline's row for where the writer is: the caret's heading, or the top line's once a scroll passes a heading.
     private(set) var currentHeading: Int?
+    /// The line `currentHeading` is for: the caret's, or the top line's once a scroll passed a heading.
     @ObservationIgnored private var currentLine = 1
+    /// For the rest of the turn the caret moved in, so a scroll that move made leaves the caret's heading current.
     @ObservationIgnored private var caretMoved = false
-    @ObservationIgnored private(set) var findingHeadings: Task<Void, Never>?
 
     @ObservationIgnored private(set) var session: UInt64?
     @ObservationIgnored private var root: URL?
@@ -83,8 +84,11 @@ final class ProjectModel {
     @ObservationIgnored weak var app: AppModel?
     let core = Core.shared
     @ObservationIgnored private var analysis: Task<Void, Never>?
+    /// Files open one at a time, and only the latest asked for carries on: the editor never shows one file while
+    /// `openPath` names another, and no open leaves the session a document it doesn't show.
+    @ObservationIgnored private var opens: Task<Void, Never>?
+    @ObservationIgnored private var openRequests = 0
     // Each of these is cancelled by the next request of its kind, which then has the editor or viewer.
-    @ObservationIgnored private var openTask: Task<Void, Never>?
     @ObservationIgnored var syncTask: Task<Void, Never>?
     @ObservationIgnored var pdfLoad: Task<Bool, Never>?
     /// The build's events in turn: a finished build's PDF is shown before the next event says what follows it.
@@ -191,6 +195,8 @@ final class ProjectModel {
             await analysis?.value
         } catch {
             core.forget(session)
+            // The core may have opened it and failed only in its answer; one it never opened is a 404, logged.
+            core.send("session_close", ["session": session])
             // Home stays, with the alert over it: a workspace would have no files to show.
             guard !closed else { return }
             report(error, "Couldn’t Open “\(id)”")
@@ -208,7 +214,11 @@ final class ProjectModel {
             guard let self, line != cursorLine || column != cursorColumn else { return }
             cursorLine = line
             cursorColumn = column
-            (currentLine, caretMoved) = (line, true)
+            currentLine = line
+            if !caretMoved {
+                caretMoved = true
+                Task { [weak self] in self?.caretMoved = false }
+            }
             findHeadings()
             liveCaret()
         }
@@ -344,36 +354,42 @@ final class ProjectModel {
 
     // MARK: - Editing
 
-    /// Only the latest open carries on, so the editor can't show one file while `openPath` names another.
+    /// After the opens asked for before it; one superseded meanwhile stops, closing the document it opened.
     func open(_ path: String, line: Int? = nil, column: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
-        await restart(&openTask) { [self] in
+        openRequests += 1
+        let request = openRequests
+        let latest = { request == self.openRequests && !self.closed }
+        await enqueue(&opens) { [self] in
+            guard latest() else { return }
             if path != openPath {
                 guard let session else { return }
+                let text: Bool
                 do {
                     // A file made a moment ago may not be in the tree yet.
                     if tree.node(at: path) == nil { await tree.reload() }
-                    // Read first and closed last, with nothing awaited between the close and the switch.
-                    if isText(path) {
-                        try await core.call("session_open_document", ["session": session, "path": path])
-                    }
-                    guard !Task.isCancelled, !closed else { return }
-                    if let was = openPath, editsText {
-                        guard await closeDocument(was), !closed else { return }
-                    }
-                    show(path, focus: focus)
+                    text = isText(path)
+                    if text { try await core.call("session_open_document", ["session": session, "path": path]) }
                 } catch {
-                    if !Task.isCancelled, !closed { report(error, "Couldn’t Open “\(path.fileName)”") }
+                    if latest() { report(error, "Couldn’t Open “\(path.fileName)”") }
                     return
                 }
+                // Read first and closed last, with nothing awaited between the close and the switch.
+                var shows = latest()
+                if shows, let was = openPath, editsText { shows = await closeDocument(was) && latest() }
+                guard shows else {
+                    // The session keeps no document the editor doesn't show; a later open of it opens it again.
+                    if text, path != openPath, !closed { core.send("session_close_document", ["session": session, "path": path]) }
+                    return
+                }
+                show(path, focus: focus)
             }
-            if let line, editsText, !Task.isCancelled, !closed { editor.reveal(line: line, column: column, atTop: atTop, focus: focus) }
+            if let line, editsText, latest() { editor.reveal(line: line, column: column, atTop: atTop, focus: focus) }
         }.value
     }
 
     /// Its text as the session's document has it now, whatever reloads came while it opened.
     private func show(_ path: String, focus: Bool) {
         openPath = path
-        openKind = tree.node(at: path)?.kind
         analyze()
         guard editsText else { return }
         guard let session, let source = SourceDocument(session: session, path: path) else {
@@ -457,60 +473,38 @@ final class ProjectModel {
     }
 
     /// A scroll makes the top line's heading the current one only as it passes a heading, and a caret's move wins over a
-    /// scroll at the same time.
+    /// scroll in the same turn.
     private func findHeadings() {
-        let top = topLine
-        findingHeadings?.cancel()
-        findingHeadings = Task {
-            let atTop = await heading(at: top)
-            guard !Task.isCancelled else { return }
-            if atTop != topHeading {
-                topHeading = atTop
-                if !caretMoved { currentLine = top }
-            }
-            caretMoved = false
-            var current = atTop
-            if currentLine != top { current = await heading(at: currentLine) }
-            if !Task.isCancelled, current != currentHeading { currentHeading = current }
+        let atTop = heading(at: topLine)
+        if atTop != topHeading {
+            topHeading = atTop
+            if !caretMoved { currentLine = topLine }
         }
+        let current = currentLine == topLine ? atTop : heading(at: currentLine)
+        if current != currentHeading { currentHeading = current }
     }
 
-    private func heading(at line: Int) async -> Int? {
+    /// At once: the core answers it from the outline it keeps, without the session's queue (docs/core-api.md).
+    private func heading(at line: Int) -> Int? {
         guard let session, let openPath, !outline.isEmpty else { return nil }
-        return try? await core.call("session_outline_current", ["session": session, "path": openPath, "line": line], as: Int?.self)
+        return try? core.now("session_outline_current", ["session": session, "path": openPath, "line": line], as: Int?.self)
     }
 
     // MARK: - Changes on disk
 
-    func keepEdits(_ path: String) {
-        diskConflict = nil
-        resolve(path, "save")
-    }
-
-    func revertToDisk(_ path: String) {
-        diskConflict = nil
-        resolve(path, "revert")
-    }
-
-    func saveMissingFile(_ path: String) {
-        missingFile = nil
-        resolve(path, "save")
-    }
-
-    func closeMissingFile(_ path: String) {
-        missingFile = nil
-        resolve(path, "close")
-        if openPath == path { clearOpenFile() }
-    }
-
+    func keepEdits(_ path: String) { answer(path, "save") }
+    func revertToDisk(_ path: String) { answer(path, "revert") }
+    func saveMissingFile(_ path: String) { answer(path, "save") }
+    func closeMissingFile(_ path: String) { answer(path, "close") }
     /// Cancel: the edits stay unsaved, and the autosave quiet, until a save is asked for, which asks again.
-    func leaveUnsaved(_ path: String, _ reason: String) {
-        (diskConflict, missingFile) = (nil, nil)
-        heldReasons[path] = reason
-        resolve(path, "cancel")
-    }
+    func leaveUnsaved(_ path: String, _ reason: String) { answer(path, "cancel", holding: reason) }
 
-    private func resolve(_ path: String, _ answer: String) {
+    /// The question about `path` is answered; one about another file still waits for its alert.
+    func answer(_ path: String, _ answer: String, holding reason: String? = nil) {
+        if diskConflict == path { diskConflict = nil }
+        if missingFile == path { missingFile = nil }
+        if let reason { heldReasons[path] = reason }
+        if answer == "close", openPath == path { clearOpenFile() }
         guard let session else { return }
         Task {
             do {
@@ -537,7 +531,6 @@ final class ProjectModel {
         notices.cancel()
         analysis?.cancel()
         tree.close()
-        openTask?.cancel()
         syncTask?.cancel()
         pdfLoad?.cancel()
         // The session saves what it can, and stops its build and Live Preview.
@@ -557,20 +550,25 @@ final class ProjectModel {
 
     // MARK: - Settings
 
+    @ObservationIgnored private var settingsPatches = 0
+
     /// Shown at once; put back if the session refuses it. A build follows when automatic: the session's.
     @discardableResult func patchSettings(_ change: SettingsChange) async -> Bool {
         guard let session, !closed else { return false }
-        let before = settings
+        settingsPatches += 1
+        let patch = settingsPatches, before = settings
         settings?.apply(change)
+        // The session takes patches in order, but its answers can come back in another: the latest's has them all.
+        let latest = { patch == self.settingsPatches }
         do {
             let updated = try await core.call("session_set_settings", ["session": session, "patch": change.patch], as: ProjectSettings.self)
             guard !closed else { return false }
-            settings = updated
+            if latest() { settings = updated }
             if updated.mainFile != before?.mainFile { mainFileChanged() }
             return true
         } catch {
             if !closed {
-                settings = before
+                if latest() { settings = before }
                 report(error, "Couldn’t Change the Project’s Settings")
             }
             return false

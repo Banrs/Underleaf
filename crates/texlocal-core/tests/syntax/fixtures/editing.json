@@ -98,7 +98,14 @@
     ["\\section[S]{T} x","paragraph","\\paragraph[S]{T} x",15],
     ["🙂 \\section{A \\{set}","subsection","🙂 \\subsection{A \\{set}",22],
     ["\\section{A \\} note}","","A \\} note",9],
-    ["\\subsection{Unclosed {title","section","\\section{Unclosed {title}",24],
+    ["\\subsection{Unclosed {title","section","\\section{Unclosed {title",24],
+    ["\\section{A title that","","\\section{A title that",1],
+    ["Intro text \\section{X} % c","","Intro text X % c",13],
+    ["Introduction % TODO reword","section","\\section{Introduction} % TODO reword",21],
+    ["Intro   % c","section","\\section{Intro}   % c",14],
+    ["% note","section","\\section{}% note",9],
+    ["\\section{Title} % \\section{x}","subsection","\\subsection{Title} % \\section{x}",17],
+    ["50\\% done","section","\\section{50\\% done}",18],
     ["   ","section","   \\section{}",12],
     ["\\sectionmark{x} words","chapter","\\chapter{\\sectionmark{x} words}",30]
   ],
@@ -117,7 +124,9 @@
     ["\\begin{cases} a |\\end{cases}",{"start":0,"tex":"\\begin{cases}a\\end{cases}","display":true}],
     ["\\begin{itemize} |x \\end{itemize}",null],
     ["\\begin{equation} a |",null],
-    ["$a\n|b$",null]
+    ["$a\n|b$",{"start":0,"tex":"a\nb","display":false}],
+    ["% costs $5 and $|6",null],
+    ["It costs \\$5 and \\$|6",null]
   ],
   "completions": [
     ["\\footnote{see \\cite{kn",false,20,"knuth84","citation"],
@@ -125,6 +134,10 @@
     ["\\cite[p.~5]{kn",false,12,"knuth84","citation"],
     ["\\cite[a[b]{kn",false,11,"knuth84","citation"],
     ["\\cite{a,kn",false,8,"knuth84","citation"],
+    ["\\cite{a, kn",false,9,"knuth84","citation"],
+    ["\\cite{a,  kn",false,10,"knuth84","citation"],
+    ["\\cite{a, ",false,9,"knuth84","citation"],
+    ["\\begin{document, ite",false,17,"itemize","environment"],
     ["\\begin{ite",false,7,"itemize","environment"],
     ["\\emph{x",false,null,null,null],
     ["\\frac{\\al",false,6,"\\alpha","command"],
@@ -132,7 +145,11 @@
     ["\\",true,0,"\\alpha","command"],
     ["\\{",false,null,null,null],
     ["@inp",false,0,"@inproceedings","entryType"],
-    ["  @inp",false,2,"@inproceedings","entryType"]
+    ["  @inp",false,2,"@inproceedings","entryType"],
+    ["write to jane@m",false,null,null,null],
+    ["a@b",false,null,null,null],
+    ["\\@in",false,null,null,null],
+    ["x\n@art",false,2,"@article","entryType"]
   ],
   "blocks": [
     ["Some text","equation","\n\\begin{equation}\n  \n  \\label{eq:}\n\\end{equation}\n",[[20,0],[33,0]]],
@@ -146,6 +163,9 @@
     ["a\nb","comment",[[0,2]],[[0,0,"% "]],"a selection that ends at a line's start leaves that line alone"],
     ["a\n b\n","indent",[[0,3],[5,0]],[[0,0,"  "],[2,0,"  "],[5,0,"  "]],""],
     ["   a\nb","outdent",[[0,6]],[[1,2,""]],""],
+    ["a\r\n  \r\n b","outdent",[[0,9]],[[3,2,""],[7,1,""]],"CRLF: the carriage return is no indentation"],
+    ["a\r\n\r\nb","comment",[[0,6]],[[0,0,"% "],[5,0,"% "]],"CRLF: an empty line is blank"],
+    ["a\r\n\r\nb","outdent",[[0,6]],[],"CRLF: nothing to outdent"],
     ["🙂\n\tb\n \tc\n    d","outdent",[[3,12]],[[3,1,"  "],[7,1," "],[12,2,""]],"visual columns, keeping the matching prefix"]
   ]
 }

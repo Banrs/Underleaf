@@ -1,15 +1,18 @@
 //! The kernel's text styles a selection is in, as a word processor's Bold,
 //! Italic and Underline show theirs, and the edits that take each away.
 
+use std::ops::Range;
+
 use serde::Serialize;
 
-use super::maths::{Group, Scans, Visit};
+use super::scan::{Group, Visit};
+use super::scans::Scans;
 use super::{NAME, Text, TextEdit, TextRange, ascii, edit};
 
 /// The styles the whole selection has, each as the edits that unwrap the
 /// innermost command giving it: its name and opening brace, then its closing
 /// brace. Declarations ({\bfseries …}) aren't read, and nor is a command
-/// whose argument doesn't close.
+/// whose argument doesn't close by the end of the selection's paragraph.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TextStyles {
     pub bold: Option<Vec<TextEdit>>,
@@ -42,8 +45,8 @@ impl Visit for Found {
         self.open.push(groups);
     }
 
-    fn closed(&mut self, group: &Group, close: usize) {
-        let Some((command, _)) = group.command else {
+    fn closed(&mut self, group: &Group, close: Range<usize>) {
+        let (Some((command, _)), close) = (group.command, close.start) else {
             return;
         };
         if close >= self.end && group.open < self.start {
@@ -56,7 +59,7 @@ impl Visit for Found {
 }
 
 /// The scan resumes from a kept point before the selection, and stops once
-/// the groups open at its end have closed.
+/// the groups open at its end have closed, or at its paragraph's end.
 pub(crate) fn text_styles(text: &Text, scans: &mut Scans, selection: TextRange) -> TextStyles {
     let src = &text.units;
     let start = selection.start as usize;
@@ -234,8 +237,9 @@ mod tests {
             styles("\\textbf{a\n\\begin{verbatim}\n}\n\\end{verbatim}\nb‸}"),
             BOLD
         );
-        // Unclosed, there's nothing to unwrap.
+        // Unclosed, there's nothing to unwrap, nor closed past the paragraph.
         assert_eq!(styles(r"\textbf{a‸"), NONE);
+        assert_eq!(styles("\\textbf{a‸\n\nb}"), NONE);
     }
 
     #[test]

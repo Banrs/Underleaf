@@ -26,12 +26,40 @@ pub(crate) fn normalize_segments<'a>(
                     return Err(CoreError::bad_request(escape_err));
                 }
             }
-            // Components of a UTF-8 input are themselves UTF-8.
-            Component::Normal(segment) => segments.push(segment.to_str().unwrap()),
+            Component::Normal(segment) => {
+                // Components of a UTF-8 input are themselves UTF-8.
+                let segment = segment.to_str().unwrap();
+                if cfg!(windows) && windows_refuses(segment) {
+                    return Err(CoreError::bad_request(format!(
+                        "“{segment}” isn't a name Windows allows"
+                    )));
+                }
+                segments.push(segment);
+            }
             _ => return Err(CoreError::bad_request(escape_err)),
         }
     }
     Ok(segments)
+}
+
+/// Whether Windows would not take `segment` as a name, or would take it for
+/// another: it drops trailing dots and spaces ("build." is "build"), reads
+/// ':' as a data stream and refuses `<>"|?*` and controls, and keeps the
+/// device names (CON, NUL, COM1…) whatever extension follows. Held on every
+/// platform so it can be tested anywhere; only Windows applies it.
+pub(crate) fn windows_refuses(segment: &str) -> bool {
+    let stem = segment.split('.').next().unwrap_or_default();
+    let device = stem.trim_end().to_ascii_uppercase();
+    let numbered = |prefix: &str| {
+        device
+            .strip_prefix(prefix)
+            .is_some_and(|n| matches!(n.as_bytes(), [b'1'..=b'9']))
+    };
+    segment.ends_with(['.', ' '])
+        || segment.contains(|c: char| c.is_control() || "<>:\"|?*".contains(c))
+        || matches!(device.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || numbered("COM")
+        || numbered("LPT")
 }
 
 /// Resolve only the closest path component that already exists. This retains
@@ -187,14 +215,6 @@ pub(crate) fn fold_case(path: &str) -> String {
     }
 }
 
-/// Whether `path` is the entry `entry` or inside it, both forward-slash project
-/// paths with names spelt as the core listed or made them: open documents'
-/// paths, and the paths a rename or delete names.
-pub(crate) fn within(path: &str, entry: &str) -> bool {
-    path.strip_prefix(entry)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-}
-
 /// What follows the entry `entry` in `path`, both forward-slash project
 /// paths, with names compared as the volume compares them (`fold_case`), for a
 /// path as a user or the settings file spells it, such as the main file: ""
@@ -212,6 +232,30 @@ pub(crate) fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
         rest = &rest[end..];
     }
     Some(rest)
+}
+
+/// Whether `path` is the entry `entry` or inside it, as `after_entry` compares:
+/// open documents' paths, and the paths a rename or delete names.
+pub(crate) fn within(path: &str, entry: &str) -> bool {
+    after_entry(path, entry).is_some()
+}
+
+/// Whether two paths name one entry, a link itself rather than its target.
+#[cfg(unix)]
+pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+/// Whether two paths name one entry. Windows' file identity is had only by
+/// opening the file, which follows a link, so a link is only ever itself.
+#[cfg(windows)]
+pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
+    let link = |path| fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
+    !link(a) && !link(b) && same_file::is_same_file(a, b).unwrap_or(false)
 }
 
 /// The normalized forward-slash spelling of a user-supplied project path, for
@@ -254,7 +298,7 @@ pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
     if cfg!(windows) {
         clean.truncate(clean.trim_end_matches(['.', ' ']).len());
     }
-    if clean.is_empty() || clean.starts_with('.') {
+    if clean.is_empty() || clean.starts_with('.') || (cfg!(windows) && windows_refuses(&clean)) {
         return Err(CoreError::bad_request("Invalid name"));
     }
     Ok(clean)
@@ -283,4 +327,66 @@ pub fn rel_to_root(root: &Path, abs: &Path) -> Option<String> {
     let rel = abs.strip_prefix(normalize_abs(root)).ok()?;
     let parts: Vec<_> = rel.iter().map(|part| part.to_string_lossy()).collect();
     (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn main_file_guards_compare_names_as_the_volume_does() {
+        // On a Mac's or Windows' case-insensitive volume, Main.tex is main.tex.
+        let insensitive = cfg!(any(target_os = "macos", windows));
+        for (path, entry, after) in [
+            ("chapters/main.tex", "chapters", Some("/main.tex")),
+            ("chapters/main.tex", "chapters/main.tex", Some("")),
+            ("chapters2/main.tex", "chapters", None),
+            ("chapters", "chapters/main.tex", None),
+            ("main.tex", "Main.tex", insensitive.then_some("")),
+            (
+                "Chapters/a.tex",
+                "chapters",
+                insensitive.then_some("/a.tex"),
+            ),
+        ] {
+            assert_eq!(after_entry(path, entry), after, "{path} in {entry}");
+            assert_eq!(within(path, entry), after.is_some(), "{path} in {entry}");
+        }
+    }
+
+    #[test]
+    fn windows_names_that_alias_another_or_a_device_are_refused() {
+        for name in [
+            "build.",
+            "build ",
+            "a:b.tex",
+            "a<b",
+            "a\"b",
+            "q?",
+            "tab\there",
+            "CON",
+            "con.txt",
+            "Nul.tar.gz",
+            "aux",
+            "COM1",
+            "lpt9.log",
+            "PRN ",
+        ] {
+            assert!(windows_refuses(name), "{name:?}");
+        }
+        for name in [
+            "build",
+            "main.tex",
+            ".hidden",
+            "a b.tex",
+            "console",
+            "COM0",
+            "COM10",
+            "LPT",
+            "auxiliary",
+            "comma.tex",
+        ] {
+            assert!(!windows_refuses(name), "{name:?}");
+        }
+    }
 }

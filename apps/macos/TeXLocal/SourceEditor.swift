@@ -61,7 +61,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let clip = scrollView.contentView
         clip.postsBoundsChangedNotifications = true
         scrolling = NotificationCenter.default.addObserver(of: clip, for: .boundsDidChange) { [weak self] _ in
-            self?.textView.previewMath()
+            self?.textView.scrolled()
             self?.reportTop()
         }
         // A jump's new top line is known once the viewport is laid out there.
@@ -90,10 +90,15 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         if focus { self.focus() }
     }
 
-    /// Another app's text for the file shown, from the session: its undo was the old text's.
+    /// Another app's text for the file shown, from the session: its undo was the old text's. The caret and the top line
+    /// stay where they were, as Xcode's do, within the new text.
     func reload(text: String) {
         undo = UndoManager()
+        let selection = textView.selectedRange(), top = textView.shownTop
         textView.reload(text)
+        let length = textView.text.length, start = min(selection.location, length)
+        textView.setSelectedRange(NSRange(location: start, length: min(NSMaxRange(selection), length) - start))
+        top.map(textView.scroll(toShownTop:))
         reportCursor()
     }
 
@@ -134,20 +139,13 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             textView.selectionRange(forProposedRange: NSRange(location: min(start + $0, end), length: 0), granularity: .selectByWord)
         }
         textView.setSelectedRange(word ?? NSRange(location: start, length: 0))
-        scroll(to: start, atTop: atTop)
+        textView.scroll(to: start, atTop: atTop)
         if focus { self.focus() }
         let shown = word ?? NSRange(location: start, length: end - start)
         if shown.length > 0, !textView.reducesMotion() {
             // Once the scroll's layout is done.
             Task { self.textView.showFindIndicator(for: shown) }
         }
-    }
-
-    private func scroll(to offset: Int, atTop: Bool) {
-        guard let target = textView.textRange(NSRange(location: offset, length: 0)) else { return }
-        // Under the clip view's top: the shown text's top and middle.
-        let shown = textView.shownRect, clipTop = scrollView.contentView.bounds.minY
-        textView.scroll(target.location) { atTop ? $0.minY - (shown.minY - clipTop) : $0.midY - (shown.midY - clipTop) }
     }
 
     private func reportTop() {
@@ -221,7 +219,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let document = textView.document, selection = textView.selectedRange(), selections = textView.selectedRanges.map(\.rangeValue)
         let insert = { (insertion: Insertion?, name: String) in
             guard let insertion else { return false }
-            self.textView.apply([insertion.edit], named: name, select: NSRange(location: insertion.caret, length: 0))
+            self.textView.apply([insertion.edit], named: name, selecting: [NSRange(location: insertion.caret, length: 0)])
             self.textView.startSnippet(insertion.fields, at: insertion.edit.start)
             return true
         }

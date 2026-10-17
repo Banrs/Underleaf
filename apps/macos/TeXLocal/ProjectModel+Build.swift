@@ -8,18 +8,21 @@ extension ProjectModel {
     // MARK: - The build's PDF
 
     /// The build's PDF at `path`, if it has one. A no-op build's PDF is already shown: reopening every page would lose
-    /// PDFKit's state.
+    /// PDFKit's state. True too when a newer load took over, which has the pane from then on.
     @discardableResult func showBuildPDF(_ path: String?, reloadIfUnchanged: Bool = true, replacingLive: Bool = false) async -> Bool {
         await restart(&pdfLoad) { [self] in
             guard let path, !closed else { return false }
             let url = URL(filePath: path)
-            var live: Bool { replacingLive ? texpresso.active : livePDF }
+            // A live PDF stays only while Live Preview runs: once Stop is clicked, a build's PDF can take its place.
+            var live: Bool { texpresso.active && (replacingLive || livePDF) }
             if live {
                 buildPDF = FileManager.default.fileExists(atPath: path) ? url : nil
                 return true
             }
             if !reloadIfUnchanged, shown == .build(url) { return true }
-            guard let document = await PDFController.loadDocument(url), !Task.isCancelled, !closed, !live else { return false }
+            let document = await PDFController.loadDocument(url)
+            if Task.isCancelled { return true }
+            guard let document, !closed, !live else { return false }
             buildPDF = url
             shown = .build(url)
             pdf.show(document)
@@ -96,7 +99,8 @@ extension ProjectModel {
         guard !closed else { return }
         pdfLoad?.cancel()
         buildPDF = nil
-        if !livePDF {
+        // A live PDF stays while Live Preview runs; once it has ended, the load it was waiting for is gone with the build.
+        if !livePDF || !texpresso.active {
             shown = .none
             pdf.clear()
         }

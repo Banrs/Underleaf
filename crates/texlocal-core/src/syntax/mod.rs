@@ -4,8 +4,9 @@
 //! text through the editor's edits and answers in UTF-16 offsets, which
 //! NSString and WinUI both count in. A session's open file
 //! (`session::Document`) holds one, as does each of the FFI's own sources.
-//! Its commands are its methods, each in the file of its kind: typing.rs,
-//! edit.rs and complete.rs.
+//! Its commands are its methods, each in the file of its kind: typing.rs
+//! (keys and brackets), snippet.rs (the fields Tab goes through), edit.rs
+//! (the menus' and shortcuts' commands) and complete.rs.
 
 mod call;
 pub(crate) mod catalog;
@@ -13,9 +14,12 @@ mod complete;
 mod edit;
 pub(crate) mod headings;
 mod highlight;
-mod maths;
-mod prose;
+mod preview;
+pub(crate) mod prose;
 pub(crate) mod render;
+pub(crate) mod scan;
+mod scans;
+mod snippet;
 mod stack;
 mod style;
 pub(crate) mod theme;
@@ -25,10 +29,13 @@ use serde::{Deserialize, Serialize};
 
 pub use call::call;
 pub use complete::{Completion, CompletionKind, Completions, SnippetField};
+pub use edit::{Change, Style, map_selections};
 pub use highlight::{Highlight, HighlightKind};
-pub use maths::{MathPreview, math_mode_at};
+pub use preview::MathPreview;
+pub use scan::math_mode_at;
+pub use snippet::Tab;
 pub use style::TextStyles;
-pub use typing::{Change, Completing, Keystroke, Style, Tab, map_selections};
+pub use typing::{Completing, Keystroke};
 
 /// A range of the text, in UTF-16 units; `TlRange` in the C ABI.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +53,14 @@ pub struct TextEdit {
     pub text: String,
 }
 
+impl TextRange {
+    /// Where it starts and ends, as indexes.
+    fn bounds(self) -> (usize, usize) {
+        let start = self.start as usize;
+        (start, start + self.length as usize)
+    }
+}
+
 fn range(start: u32, length: u32) -> TextRange {
     TextRange { start, length }
 }
@@ -56,6 +71,16 @@ fn edit(start: u32, length: u32, text: impl Into<String>) -> TextEdit {
         length,
         text: text.into(),
     }
+}
+
+/// `range` and `edit` for the commands that count in indexes: the cast to
+/// the API's UTF-16 offsets is made here, once.
+fn span(start: usize, length: usize) -> TextRange {
+    range(start as u32, length as u32)
+}
+
+fn splice(start: usize, length: usize, text: impl Into<String>) -> TextEdit {
+    edit(start as u32, length as u32, text)
 }
 
 /// What asks for `SourceDocument::code_ranges`: the spelling checker or
@@ -77,6 +102,16 @@ pub struct Insertion {
 }
 
 const NEWLINE: u16 = b'\n' as u16;
+const CARRIAGE_RETURN: u16 = b'\r' as u16;
+
+/// A line's bounds in the text: where it starts, where its contents end and
+/// where the next line starts (the text's end, for the last).
+#[derive(Clone, Copy)]
+pub(crate) struct Line {
+    pub start: usize,
+    pub end: usize,
+    pub next: usize,
+}
 
 /// The editor's text and where its lines start (after each line feed).
 pub(crate) struct Text {
@@ -109,13 +144,31 @@ impl Text {
         self.lines.partition_point(|&start| start <= offset) - 1
     }
 
-    /// A line's units, without its line feed.
-    pub fn line(&self, index: usize) -> &[u16] {
+    /// Where a line starts, where its contents end and where the next line
+    /// starts. Lines end at line feeds; a carriage return before one is part
+    /// of the line break, so a CRLF file has the lines a LF file has.
+    pub fn bounds(&self, index: usize) -> Line {
         let start = self.lines[index] as usize;
-        let end = self
+        let last = index + 1 == self.lines.len();
+        let next = self
             .lines
             .get(index + 1)
-            .map_or(self.units.len(), |&next| next as usize - 1);
+            .map_or(self.units.len(), |&next| next as usize);
+        let mut end = if last { next } else { next - 1 };
+        if end > start && self.units[end - 1] == CARRIAGE_RETURN {
+            end -= 1;
+        }
+        Line { start, end, next }
+    }
+
+    /// The line an offset is on.
+    pub fn around(&self, offset: usize) -> Line {
+        self.bounds(self.line_index(offset as u32))
+    }
+
+    /// A line's units, without its line break.
+    pub fn line(&self, index: usize) -> &[u16] {
+        let Line { start, end, .. } = self.bounds(index);
         &self.units[start..end]
     }
 
@@ -141,7 +194,7 @@ pub struct SourceDocument {
     text: Text,
     highlighter: highlight::Cache,
     /// Kept for the questions that read the text from its start.
-    scans: maths::Scans,
+    scans: scans::Scans,
     /// The project's, which "completions" offers in `\ref{` and `\cite{`.
     labels: Vec<String>,
     citations: Vec<String>,
@@ -154,7 +207,7 @@ impl SourceDocument {
         Self {
             text: Text::new(text),
             highlighter: highlight::Cache::default(),
-            scans: maths::Scans::default(),
+            scans: scans::Scans::default(),
             labels: Vec::new(),
             citations: Vec::new(),
             typing: typing::Typing::default(),
@@ -276,29 +329,8 @@ impl SourceDocument {
     }
 
     /// The maths to preview at the caret, if it's in some.
-    pub fn math_at(&self, caret: u32) -> Option<MathPreview> {
-        maths::math_at(&self.text, caret.min(self.text.len()))
-    }
-
-    /// A maths symbol's command in place of the selection: as it is in
-    /// maths, and between dollars in text, where the bare command would stop
-    /// the build.
-    pub fn insert_symbol(&mut self, command: &str, selection: TextRange) -> Insertion {
-        let selection = clamp(selection, self.text.len());
-        let at = selection.start as usize;
-        let mut scanner = self.scans.resume(&self.text, at, at).scanner;
-        scanner.run(&self.text.units[..at], at, &[], &mut ());
-        let text = if scanner.in_math() {
-            command.to_string()
-        } else {
-            format!("${command}$")
-        };
-        let caret = selection.start + utf16(&text) as u32;
-        Insertion {
-            edit: edit(selection.start, selection.length, text),
-            caret,
-            fields: vec![],
-        }
+    pub fn math_at(&mut self, caret: u32) -> Option<MathPreview> {
+        preview::math_at(&self.text, &mut self.scans, caret.min(self.text.len()))
     }
 }
 
@@ -337,9 +369,9 @@ fn letter(u: u16) -> bool {
     u < 128 && (u as u8).is_ascii_alphabetic()
 }
 
-/// ECMAScript's \s.
+/// Whether a unit is whitespace; half of a surrogate pair is not.
 fn space(u: u16) -> bool {
-    matches!(u, 0x09..=0x0d | 0x20 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
+    char::from_u32(u.into()).is_some_and(char::is_whitespace)
 }
 
 /// A line of nothing but spaces, or of nothing.

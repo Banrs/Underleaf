@@ -27,14 +27,15 @@ pub struct MathSvg {
     pub baseline: f64,
 }
 
-/// No box or move is drawn larger than this, in ems: `\rule{1e9pt}{1pt}`
-/// would otherwise ask the host for an image of millions of points.
+/// The drawing is no larger than this, in ems: `\rule{1e9pt}{1pt}` would
+/// otherwise ask the host for an image of millions of points. What lies
+/// beyond it is outside the SVG's view box, so it isn't drawn.
 const MAX_EM: f64 = 1000.0;
 
 /// The type sizes drawn, in points.
 const SIZES: std::ops::RangeInclusive<f64> = 1.0..=512.0;
 
-/// RaTeX's display list for some maths, clamped, or why it has none.
+/// RaTeX's display list for some maths, its size clamped, or why it has none.
 fn display_list(tex: &str, display: bool, color: Rgba) -> Result<DisplayList, String> {
     let nodes = ratex_parser::parse(tex).map_err(|e| e.to_string())?;
     let style = if display {
@@ -47,61 +48,18 @@ fn display_list(tex: &str, display: bool, color: Rgba) -> Result<DisplayList, St
         .with_style(style)
         .with_color(Color::new(r, g, b, a));
     let mut list = to_display_list(&layout(&nodes, &options));
-    for item in &mut list.items {
-        clamp_item(item);
-    }
-    list.width = length(list.width);
-    list.height = coordinate(list.height);
-    list.depth = coordinate(list.depth);
+    let clamp = |v: f64| {
+        if v.is_finite() {
+            v.clamp(-MAX_EM, MAX_EM)
+        } else {
+            0.0
+        }
+    };
+    list.width = clamp(list.width).max(0.0);
+    list.height = clamp(list.height);
     // A box's height and depth can be negative; the drawing's can't.
-    let total = (list.height + list.depth).clamp(0.0, MAX_EM);
-    list.depth = total - list.height;
+    list.depth = (list.height + clamp(list.depth)).clamp(0.0, MAX_EM) - list.height;
     Ok(list)
-}
-
-fn coordinate(v: f64) -> f64 {
-    if v.is_finite() {
-        v.clamp(-MAX_EM, MAX_EM)
-    } else {
-        0.0
-    }
-}
-
-fn length(v: f64) -> f64 {
-    coordinate(v).max(0.0)
-}
-
-fn clamp_item(item: &mut DisplayItem) {
-    match item {
-        DisplayItem::GlyphPath { x, y, scale, .. } => {
-            (*x, *y, *scale) = (coordinate(*x), coordinate(*y), length(*scale));
-        }
-        DisplayItem::Line {
-            x,
-            y,
-            width,
-            thickness: height,
-            ..
-        }
-        | DisplayItem::Rect {
-            x,
-            y,
-            width,
-            height,
-            ..
-        } => {
-            (*x, *y) = (coordinate(*x), coordinate(*y));
-            (*width, *height) = (length(*width), length(*height));
-        }
-        DisplayItem::Path { x, y, commands, .. } => {
-            (*x, *y) = (coordinate(*x), coordinate(*y));
-            for command in commands {
-                for v in path_values(command) {
-                    *v = coordinate(*v);
-                }
-            }
-        }
-    }
 }
 
 fn path_values(command: &mut PathCommand) -> Vec<&mut f64> {
@@ -133,6 +91,10 @@ fn svg(list: &DisplayList, size: f64) -> Result<String, String> {
     // A glyph without an outline falls back to text in a font the host may lack.
     if svg.contains("<text") || svg.contains("<image") {
         return Err("The maths fonts can't draw this".into());
+    }
+    // A length past what a number holds, which no SVG reader takes.
+    if svg.contains("inf") || svg.contains("NaN") {
+        return Err("The maths is too large to draw".into());
     }
     Ok(svg)
 }
@@ -232,11 +194,12 @@ pub fn glyph_svg(command: &str, size: f64, side: f64, color: Rgba) -> Result<Mat
     let (left, top, right, bottom) = ink(&list).unwrap_or((0.0, 0.0, list.width, list.height));
     let dx = side / 2.0 - (left + right) / 2.0 * size;
     let dy = side / 2.0 - (top + bottom) / 2.0 * size;
-    // RaTeX's drawing, without its own <svg> element, moved into the square.
+    // RaTeX's drawing, without its own <svg> element (which has no `>` in
+    // its attributes), moved into the square.
     let body = inner
         .split_once('>')
         .and_then(|(_, rest)| rest.strip_suffix("</svg>"))
-        .unwrap_or_default();
+        .ok_or("The maths' drawing isn't as RaTeX writes it")?;
     // As RaTeX writes its numbers: six places at most, no trailing zeros.
     let n = |v: f64| {
         let s = format!("{v:.6}");
@@ -341,6 +304,19 @@ mod tests {
         }
         let huge = math_svg("x", false, 1e12, BLACK).unwrap();
         assert!(huge.width < 1e4);
+        // Past what a number holds: drawn within the size, or an error.
+        let digits = "9".repeat(400);
+        for tex in [
+            format!(r"\rule{{{digits}pt}}{{1pt}}"),
+            format!(r"a\kern{digits}em b"),
+        ] {
+            if let Ok(svg) = math_svg(&tex, false, 10.0, BLACK) {
+                assert!(
+                    svg.width <= MAX_EM * 10.0 && !svg.svg.contains("inf"),
+                    "{tex}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -8,33 +8,127 @@ use serde_json::{Value, json};
 
 use super::theme::{self, Rgba};
 use super::{Checker, SnippetField, SourceDocument, Style, TextEdit, TextRange, map_selections};
-use super::{headings, render};
+use super::{catalog, headings, render};
 
-/// The arguments the document's commands take, each what it needs; any left
-/// out are empty.
-#[derive(Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct Args {
+/// The arguments of the document's commands, one struct for each shape. What
+/// a command needs it is sent: an argument left out is no call, not the
+/// text's start. Optional ones say what they are when left out.
+#[derive(Deserialize)]
+struct Caret {
     caret: u32,
+}
+
+#[derive(Deserialize)]
+struct At {
+    at: u32,
+}
+
+#[derive(Deserialize)]
+struct Selection {
+    selection: TextRange,
+}
+
+#[derive(Deserialize)]
+struct Selections {
+    selections: Vec<TextRange>,
+}
+
+#[derive(Deserialize)]
+struct Offer {
+    caret: u32,
+    /// Asked for by the user, not typed.
+    #[serde(default)]
     explicit: bool,
+}
+
+#[derive(Deserialize)]
+struct Heading {
+    caret: u32,
+    /// A sectioning command, or none for plain text.
     command: String,
+}
+
+#[derive(Deserialize)]
+struct Block {
     id: String,
     selection: TextRange,
-    selections: Vec<TextRange>,
-    /// What's typed.
-    text: String,
-    /// Whether typing closes brackets for the user; true when left out.
-    auto_pair: Option<bool>,
-    at: u32,
+}
+
+#[derive(Deserialize)]
+struct Symbol {
+    command: String,
+    selection: TextRange,
+}
+
+#[derive(Deserialize)]
+struct Checking {
+    selection: TextRange,
     #[serde(rename = "for")]
-    checker: Option<Checker>,
+    checker: Checker,
+}
+
+/// Whether typing closes brackets for the user; true when left out.
+fn closing() -> bool {
+    true
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Typed {
+    selection: TextRange,
+    text: String,
+    #[serde(default = "closing")]
+    auto_pair: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Deleting {
+    selection: TextRange,
+    #[serde(default = "closing")]
+    auto_pair: bool,
+}
+
+#[derive(Deserialize)]
+struct Fields {
     fields: Vec<SnippetField>,
-    /// Which way Tab goes; 1, forwards, when left out.
-    step: Option<i64>,
+    at: u32,
+}
+
+/// Which way Tab goes; 1, forwards, when left out.
+fn forwards() -> i64 {
+    1
+}
+
+#[derive(Deserialize)]
+struct Tabbing {
+    selections: Vec<TextRange>,
+    #[serde(default = "forwards")]
+    step: i64,
+}
+
+#[derive(Deserialize)]
+struct Moving {
+    selections: Vec<TextRange>,
     up: bool,
-    style: Option<Style>,
+}
+
+#[derive(Deserialize)]
+struct Styling {
+    selections: Vec<TextRange>,
+    style: Style,
+}
+
+#[derive(Deserialize)]
+struct Wrapping {
+    selections: Vec<TextRange>,
     template: String,
+}
+
+#[derive(Deserialize)]
+struct Mapping {
     edits: Vec<TextEdit>,
+    selections: Vec<TextRange>,
 }
 
 fn json(value: impl Serialize) -> Option<String> {
@@ -52,10 +146,20 @@ fn args<T: DeserializeOwned>(args: &Value) -> Option<T> {
     T::deserialize(args).ok()
 }
 
+/// The answer `command` gives to arguments of the shape `T`, as JSON.
+fn answer<T: DeserializeOwned, R: Serialize>(
+    value: &Value,
+    command: impl FnOnce(T) -> R,
+) -> Option<String> {
+    json(command(args(value)?))
+}
+
 impl SourceDocument {
-    /// The commands on the document's text: "completions", "toggle_comment",
-    /// "set_heading", "insert_block", "insert_symbol", "math_at",
-    /// "text_styles" and "code_ranges" (`selection`, `for`: "spelling" or
+    /// The commands on the document's text: "completions" (`caret`,
+    /// `explicit`), "toggle_comment" (`selections`), "set_heading" (`caret`,
+    /// `command`), "insert_block" (`id`, `selection`), "insert_symbol"
+    /// (`command`, `selection`), "math_at" (`caret`), "text_styles"
+    /// (`selection`) and "code_ranges" (`selection`, `for`: "spelling" or
     /// "writingTools"). Typing's (typing.rs), each the method of its name:
     /// "type" (`selection`, `text`, `autoPair`), "delete_backward"
     /// (`selection`, `autoPair`) and "insert_newline" (`selection`), each a
@@ -67,30 +171,33 @@ impl SourceDocument {
     /// selection's are the C ABI's own (`tl_source_edit`, `tl_source_select`),
     /// as is the text; those that need no document are `call`'s.
     pub fn call(&mut self, command: &str, args_json: &str) -> Option<String> {
-        let a: Args = args(&object(args_json)?)?;
-        let auto_pair = a.auto_pair.unwrap_or(true);
+        let a = &object(args_json)?;
         match command {
-            "completions" => {
-                json(self.completions(a.caret, a.explicit, &self.labels, &self.citations))
-            }
-            "toggle_comment" => json(self.toggle_comment(&a.selections)),
-            "set_heading" => json(self.set_heading(a.caret, &a.command)),
-            "insert_block" => json(self.insert_block(&a.id, a.selection)),
-            "insert_symbol" => json(self.insert_symbol(&a.command, a.selection)),
-            "math_at" => json(self.math_at(a.caret)),
-            "text_styles" => json(self.text_styles(a.selection)),
-            "code_ranges" => json(self.code_ranges(a.selection, a.checker?)),
-            "type" => json(self.type_text(a.selection, &a.text, auto_pair)),
-            "delete_backward" => json(self.delete_backward(a.selection, auto_pair)),
-            "insert_newline" => json(self.insert_newline(a.selection)),
-            "partner" => json(self.partner(a.at)),
-            "start_snippet" => json(self.start_snippet(&a.fields, a.at)),
+            "completions" => answer(a, |o: Offer| {
+                self.completions(o.caret, o.explicit, &self.labels, &self.citations)
+            }),
+            "toggle_comment" => answer(a, |s: Selections| self.toggle_comment(&s.selections)),
+            "set_heading" => answer(a, |h: Heading| self.set_heading(h.caret, &h.command)),
+            "insert_block" => answer(a, |b: Block| self.insert_block(&b.id, b.selection)),
+            "insert_symbol" => answer(a, |s: Symbol| self.insert_symbol(&s.command, s.selection)),
+            "math_at" => answer(a, |c: Caret| self.math_at(c.caret)),
+            "text_styles" => answer(a, |s: Selection| self.text_styles(s.selection)),
+            "code_ranges" => answer(a, |c: Checking| self.code_ranges(c.selection, c.checker)),
+            "type" => answer(a, |t: Typed| {
+                self.type_text(t.selection, &t.text, t.auto_pair)
+            }),
+            "delete_backward" => answer(a, |d: Deleting| {
+                self.delete_backward(d.selection, d.auto_pair)
+            }),
+            "insert_newline" => answer(a, |s: Selection| self.insert_newline(s.selection)),
+            "partner" => answer(a, |p: At| self.partner(p.at)),
+            "start_snippet" => answer(a, |f: Fields| self.start_snippet(&f.fields, f.at)),
             "end_snippet" => json(self.end_snippet()),
-            "tab" => json(self.tab(&a.selections, a.step.unwrap_or(1))),
-            "move_lines" => json(self.move_lines(&a.selections, a.up)),
-            "toggle_style" => json(self.toggle_style(&a.selections, a.style?)),
-            "wrap" => json(self.wrap(&a.selections, &a.template)),
-            "map_selections" => json(map_selections(&a.edits, &a.selections)),
+            "tab" => answer(a, |t: Tabbing| self.tab(&t.selections, t.step)),
+            "move_lines" => answer(a, |m: Moving| self.move_lines(&m.selections, m.up)),
+            "toggle_style" => answer(a, |s: Styling| self.toggle_style(&s.selections, s.style)),
+            "wrap" => answer(a, |w: Wrapping| self.wrap(&w.selections, &w.template)),
+            "map_selections" => answer(a, |m: Mapping| map_selections(&m.edits, &m.selections)),
             _ => None,
         }
     }
@@ -125,6 +232,22 @@ struct Legible {
     increase_contrast: bool,
     /// The contrast to raise to; without it, text's (`theme::text_contrast`).
     ratio: Option<f64>,
+}
+
+/// The document class the levels are for; without a `class`, none.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Styles {
+    class: Option<String>,
+    /// The class option, 10 when left out.
+    #[serde(default = "ten")]
+    point_size: u32,
+    #[serde(default)]
+    has_chapters: bool,
+}
+
+fn ten() -> u32 {
+    10
 }
 
 /// What a file dropped on the editor does: an image or PDF dropped on a
@@ -173,15 +296,17 @@ pub fn call(command: &str, args_json: &str) -> Option<String> {
                 render::glyph_svg(&m.command, size, side, color)
             })
         }
-        "menus" => json(super::catalog::menus()),
+        "menus" => {
+            let catalog = &*catalog::CATALOG;
+            json(json!({ "templates": catalog.templates, "symbolGroups": catalog.symbol_groups }))
+        }
         "heading_styles" => {
-            let class = string("class").map(|name| headings::DocumentClass {
-                name: name.to_owned(),
-                point_size: value.get("pointSize").and_then(Value::as_u64).unwrap_or(10) as u32,
+            let a: Styles = args(&value)?;
+            let class = a.class.map(|name| headings::DocumentClass {
+                name,
+                point_size: a.point_size,
             });
-            let chapters = value.get("hasChapters").and_then(Value::as_bool);
-            let styles = headings::heading_styles(class.as_ref(), chapters.unwrap_or(false));
-            json(styles)
+            json(headings::heading_styles(class.as_ref(), a.has_chapters))
         }
         "theme_colors" => {
             let theme = theme::theme(string("theme")?)?;
@@ -205,10 +330,17 @@ mod tests {
     #[test]
     fn commands_answer_by_name() {
         let mut doc = SourceDocument::new("\\cite{kn");
-        assert_eq!(doc.call("partner", "{}").as_deref(), Some("null"));
+        assert_eq!(doc.call("partner", r#"{"at": 0}"#).as_deref(), Some("null"));
         assert_eq!(doc.call("no such command", "{}"), None);
         assert_eq!(doc.call("partner", "[]"), None);
         assert_eq!(doc.call("toggle_comment", r#"{"selections": 3}"#), None);
+        // An argument a command needs is not made up when left out; one that
+        // is optional is.
+        assert_eq!(doc.call("partner", "{}"), None);
+        assert_eq!(doc.call("math_at", r#"{"selection": 1}"#), None);
+        assert_eq!(doc.call("move_lines", r#"{"selections": []}"#), None);
+        assert!(doc.call("completions", r#"{"caret": 3}"#).is_some());
+        assert!(doc.call("tab", r#"{"selections": []}"#).is_some());
         // Those that need no document are only `call`'s.
         assert_eq!(doc.call("themes", "{}"), None);
     }
@@ -260,8 +392,15 @@ mod tests {
         assert!((3.0..3.5).contains(&border), "{border}");
         let enhanced = ratio_of(r#", "increaseContrast": true"#);
         assert!((7.0..7.6).contains(&enhanced), "{enhanced}");
-        let menus = call("menus", "{}").unwrap();
-        assert!(menus.contains(r#"{"glyph":"α","command":"\\alpha"}"#));
+        let menus: serde_json::Value = serde_json::from_str(&call("menus", "{}").unwrap()).unwrap();
+        let alpha = serde_json::json!({ "glyph": "α", "command": "\\alpha" });
+        assert!(
+            menus["symbolGroups"][0]["symbols"]
+                .as_array()
+                .unwrap()
+                .contains(&alpha)
+        );
+        assert!(menus["templates"]["math"].is_array());
         let levels = call("heading_styles", r#"{"class": "letter"}"#).unwrap();
         assert!(levels.starts_with(r#"[{"title":"Normal Text","command":"""#));
         let maths = call("math_svg", r#"{"tex": "x^2", "size": 10}"#);

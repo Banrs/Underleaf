@@ -244,10 +244,10 @@ async fn a_timed_out_compile_is_killed_and_reported_failed_with_the_output_it_wr
     assert_eq!(result.pdf, None);
     assert!(result.log.contains("Running pdflatex"), "{:?}", result.log);
     assert_eq!(result.errors.len(), 1);
-    assert!(
-        result.errors[0].message.contains("stopped after"),
-        "{result:?}"
-    );
+    let message = &result.errors[0].message;
+    assert!(message.contains("stopped after"), "{result:?}");
+    // It says the build ran long, not that the document is at fault.
+    assert!(!message.contains("forever"), "{message}");
     promptly(started);
 }
 
@@ -489,6 +489,59 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     assert!(three.await.unwrap().stopped);
 }
 
+#[tokio::test]
+async fn quitting_stops_a_build_asked_for_after_it_and_one_waiting_to_start() {
+    // Each run of the stub adds a line to `starts`.
+    let script = "echo x >> starts\nsleep 20\n";
+    let (_tmp, root, mgr) = setup(script);
+    let mgr = Arc::new(mgr);
+    let first = in_flight(&mgr, &root);
+    appears(&root.join("starts"), "first latexmk did not start").await;
+    let mut waiting = Box::pin(mgr.compile(&root, None));
+    waits(waiting.as_mut()).await;
+
+    mgr.kill_all();
+
+    let started = Instant::now();
+    let (waiting, first) = tokio::join!(waiting, first);
+    assert!(first.unwrap().stopped);
+    assert!(waiting.unwrap().stopped);
+    // A build asked for once the app has begun to quit.
+    let late = compile(&mgr, &root).await;
+    assert!(late.stopped && !late.ok);
+    assert_eq!(fs::read_to_string(root.join("starts")).unwrap(), "x\n");
+    promptly(started);
+}
+
+#[tokio::test]
+async fn a_stopped_build_removes_the_aux_and_pdf_it_cut_short_and_leaves_the_rest() {
+    // The engine has begun both, and is killed with them half-written.
+    let (_tmp, root, mgr) = setup(
+        "mkdir -p build\nprintf 'half' > build/main.aux\nprintf '%%PDF-half' > build/main.pdf\ntouch printed\nsleep 20\n",
+    );
+    let mgr = Arc::new(mgr);
+    let task = in_flight(&mgr, &root);
+    appears(&root.join("printed"), "latexmk did not write").await;
+    assert!(mgr.stop(&root));
+    let result = task.await.unwrap();
+    assert!(result.stopped);
+    assert!(!root.join("build/main.aux").exists());
+    assert!(!root.join("build/main.pdf").exists());
+
+    // Killed before it wrote them, the last build's stay.
+    let (_tmp, root, mgr) = setup("touch printed\nsleep 20\n");
+    fs::create_dir_all(root.join("build")).unwrap();
+    fs::write(root.join("build/main.aux"), "whole").unwrap();
+    fs::write(root.join("build/main.pdf"), "whole").unwrap();
+    let mgr = Arc::new(mgr);
+    let task = in_flight(&mgr, &root);
+    appears(&root.join("printed"), "latexmk did not start").await;
+    assert!(mgr.stop(&root));
+    assert!(task.await.unwrap().stopped);
+    assert_eq!(fs::read(root.join("build/main.aux")).unwrap(), b"whole");
+    assert_eq!(fs::read(root.join("build/main.pdf")).unwrap(), b"whole");
+}
+
 /// An inverse sync from a spot the stub synctex answers for, with the clicked
 /// page's text and the index clicked in it.
 async fn inverse(
@@ -541,6 +594,19 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
     );
     let loc = inverse(&root, None, &path).await.unwrap();
     assert_eq!((loc.file.as_str(), loc.line), ("chapter.tex", 7));
+}
+
+#[tokio::test]
+async fn sync_without_a_synctex_program_says_it_is_not_available() {
+    let tmp = TempDir::new().unwrap();
+    let root = project(tmp.path());
+    fs::create_dir_all(root.join("build")).unwrap();
+    fs::write(root.join("build/main.pdf"), "fake").unwrap();
+    let err = inverse(&root, None, "/nonexistent-dir-for-test")
+        .await
+        .unwrap_err();
+    assert_eq!(err.status, 404);
+    assert!(err.message.contains("not available"), "{err}");
 }
 
 #[tokio::test]

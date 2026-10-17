@@ -13,8 +13,10 @@ final class MathPopover {
 
     init() {
         popover.behavior = .applicationDefined
-        // It follows the caret in and out of maths as the person types: no motion each time.
+        // It follows the caret in and out of maths as the person types: no motion as it shows, closes or moves.
         popover.animates = false
+        // The popover takes its size from what the content draws.
+        content.sizingOptions = .preferredContentSize
         popover.contentViewController = content
     }
 
@@ -53,8 +55,11 @@ final class MathPopover {
             let drawing = await Self.draw(asked.maths.tex, display: asked.maths.display, size: Double(em))
             guard wanted?.maths == asked.maths, wanted?.size == asked.size else { continue }
             rendered = (asked.maths, asked.size)
+            // Only a change of size between two drawings is eased, so it isn't taken for a new popover (HIG, Popovers). The
+            // content reports its size as the drawing is set, and the popover follows it then.
+            popover.animates = popover.isShown
             content.rootView = MathView(tex: asked.maths.tex, em: em, image: drawing.flatMap { NSImage(drawing: $0) })
-            popover.contentSize = content.view.fittingSize
+            popover.animates = false
             present()
         }
     }
