@@ -155,23 +155,14 @@ impl Client {
 /// Types `text` over the document's own, as one edit of the range that differs, in
 /// UTF-16 units as the editor counts. The texts here differ by whole characters.
 fn retype(document: &Document, text: &str) {
-    let old: Vec<u16> = document
-        .with(|source| source.text())
-        .encode_utf16()
-        .collect();
+    let old: Vec<u16> = document.with(|source| source.text().encode_utf16().collect());
     let new: Vec<u16> = text.encode_utf16().collect();
     let start = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
-    let (old_rest, new_rest) = (&old[start..], &new[start..]);
-    let same = |(a, b): &(&u16, &u16)| a == b;
-    let end = old_rest
-        .iter()
-        .rev()
-        .zip(new_rest.iter().rev())
-        .take_while(same)
-        .count();
-    let inserted = String::from_utf16(&new_rest[..new_rest.len() - end]).unwrap();
-    let removed = old_rest.len() - end;
-    document.edit(start as u32, removed as u32, &inserted);
+    let (old, new) = (&old[start..], &new[start..]);
+    let backwards = old.iter().rev().zip(new.iter().rev());
+    let end = backwards.take_while(|(a, b)| a == b).count();
+    let inserted = String::from_utf16(&new[..new.len() - end]).unwrap();
+    document.edit(start as u32, (old.len() - end) as u32, &inserted);
 }
 
 fn is_pdf(path: &Path) {

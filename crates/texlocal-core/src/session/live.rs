@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
@@ -18,24 +19,14 @@ use crate::texpresso::{Caret, Events, FileBuffer, Pane, Status};
 const DIDNT_START: &str =
     "TeXpresso didn’t start. Check its location in Settings and the log below.";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum Phase {
     #[default]
     Stopped,
     Starting,
     Running,
     Stopping,
-}
-
-impl Phase {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Stopped => "stopped",
-            Self::Starting => "starting",
-            Self::Running => "running",
-            Self::Stopping => "stopping",
-        }
-    }
 }
 
 #[derive(Default)]
@@ -88,6 +79,13 @@ impl Live {
         matches!(self.phase, Phase::Starting | Phase::Running)
     }
 
+    /// Whether a key's edit or a caret at `path` fits the copy TeXpresso has.
+    fn fits(&self, path: &str) -> bool {
+        self.phase == Phase::Running
+            && self.synced.contains(path)
+            && !self.pending.contains_key(path)
+    }
+
     fn errors(&self) -> Vec<String> {
         let rejected = self
             .rejected
@@ -103,7 +101,7 @@ impl Actor {
         let errors = live.errors();
         let failure = (!errors.is_empty()).then(|| errors.join("\n\n"));
         json!({
-            "phase": live.phase.name(),
+            "phase": live.phase,
             "halted": live.halted,
             "log": live.log_shown.then(|| self.live_log(failure.as_deref())),
             "failure": failure,
@@ -114,19 +112,11 @@ impl Actor {
     /// The Live Preview Log as the host shows it: what went wrong, then the preview's own
     /// error, its log and its output.
     fn live_log(&self, failure: Option<&str>) -> String {
-        let status = if self.live.owns {
-            self.engine.live_status(self.id).ok()
-        } else {
-            None
-        };
+        let status = self.live.owns.then(|| self.engine.live_status(self.id));
         let mut parts: Vec<&str> = failure.into_iter().collect();
-        if let Some(status) = &status {
-            parts.extend(
-                status
-                    .error
-                    .as_deref()
-                    .filter(|&error| Some(error) != failure),
-            );
+        if let Some(Ok(status)) = &status {
+            let error = status.error.as_deref();
+            parts.extend(error.filter(|&error| Some(error) != failure));
             let texts = [status.log.as_str(), status.output.as_str()];
             parts.extend(texts.into_iter().filter(|text| !text.is_empty()));
         }
@@ -194,6 +184,14 @@ impl Actor {
         self.report();
     }
 
+    /// A failure that ends the preview, if `fail` hasn't already.
+    fn give_up(&mut self, error: CoreError) {
+        self.fail(error);
+        if self.live.phase != Phase::Stopped {
+            self.ended(false);
+        }
+    }
+
     fn ended(&mut self, restartable: bool) {
         self.live.phase = Phase::Stopped;
         self.live_reset();
@@ -216,12 +214,11 @@ impl Actor {
         self.live.status = Some(status);
         if running {
             self.live.phase = Phase::Running;
-            self.report();
-        } else {
-            if failed {
-                self.live.failure = Some(DIDNT_START.into());
-            }
-            self.report();
+        } else if failed {
+            self.live.failure = Some(DIDNT_START.into());
+        }
+        self.report();
+        if !running {
             self.ended(false);
         }
     }
@@ -272,12 +269,7 @@ impl Actor {
                     self.flush_pending();
                 }
             }
-            Err(error) => {
-                self.fail(error);
-                if self.live.phase != Phase::Stopped {
-                    self.ended(false);
-                }
-            }
+            Err(error) => self.give_up(error),
         }
         true
     }
@@ -307,11 +299,8 @@ impl Actor {
                     self.live.owns = false;
                     self.live.status = Some(status);
                 }
-                Err(error) => {
-                    if !self.closed {
-                        self.fail(error);
-                    }
-                }
+                Err(error) if !self.closed => self.fail(error),
+                Err(_) => {}
             }
         }
         if self.live.phase != Phase::Stopped {
@@ -329,19 +318,11 @@ impl Actor {
         // Typing takes the engine's snapshot along: the caret there is no news.
         let end = start as usize + text.encode_utf16().count();
         self.live.caret = Some((path.to_owned(), end));
-        if self
-            .live
-            .sent
-            .get(path)
-            .is_some_and(|sent| version <= *sent)
-        {
+        let live = &self.live;
+        if live.sent.get(path).is_some_and(|sent| version <= *sent) {
             return;
         }
-        let live = &self.live;
-        if live.phase == Phase::Running
-            && live.synced.contains(path)
-            && !live.pending.contains_key(path)
-        {
+        if live.fits(path) {
             let sent = self
                 .engine
                 .live_edit(self.id, path, start as usize, length as usize, text);
@@ -408,11 +389,10 @@ impl Actor {
                 }
                 Err(error) => {
                     self.fail(error);
-                    if self.live.phase != Phase::Running {
-                        return;
+                    if self.live.phase == Phase::Running {
+                        self.live.pending.entry(path).or_insert(Some(text));
+                        self.live.retry_at = Some(Instant::now() + self.t.retry);
                     }
-                    self.live.pending.entry(path).or_insert(Some(text));
-                    self.live.retry_at = Some(Instant::now() + self.t.retry);
                     return;
                 }
             }
@@ -458,13 +438,8 @@ impl Actor {
         let Some((_, (path, offset))) = self.live.settle.take() else {
             return;
         };
-        let live = &self.live;
         let moved = Some((path.clone(), offset));
-        if live.phase == Phase::Running
-            && live.synced.contains(&path)
-            && !live.pending.contains_key(&path)
-            && live.caret != moved
-        {
+        if self.live.fits(&path) && self.live.caret != moved {
             self.live.caret = moved;
             self.engine.live_caret(self.id, &path, offset);
         }
@@ -545,14 +520,8 @@ impl Actor {
         }
         let events = match news {
             Ok(events) => events,
-            Err(error) => {
-                // Another window's preview now, or a core that can't be asked.
-                self.fail(error);
-                if self.live.phase != Phase::Stopped {
-                    self.ended(false);
-                }
-                return;
-            }
+            // Another window's preview now, or a core that can't be asked.
+            Err(error) => return self.give_up(error),
         };
         if events.revision > self.live.revision {
             self.live.revision = events.revision;
