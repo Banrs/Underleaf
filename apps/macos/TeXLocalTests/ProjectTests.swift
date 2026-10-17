@@ -286,7 +286,8 @@ final class ProjectFlowTests {
         #expect(project.initialLoadComplete)
         #expect(project.outline.count == 2)
         #expect(project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
-        #expect(project.words == 6)
+        // Prose only: the headings' titles and the text, not \include's file name.
+        #expect(project.words == 5)
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
         #expect(project.headingCommand == "section")
