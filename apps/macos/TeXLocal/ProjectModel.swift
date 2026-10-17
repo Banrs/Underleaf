@@ -284,7 +284,8 @@ final class ProjectModel {
         if state.error != nil, before?.error == nil { notices.announce(String(localized: "“\(state.path.fileName)” Wasn’t Saved")) }
     }
 
-    /// Another app's text, or the disk's after Revert: shown without an edit, as the session waits for to save the file again.
+    /// Another app's text, or the disk's after Revert: shown without an edit, which the session waits for before it saves
+    /// the file again.
     private func reload(_ event: ReloadEvent) {
         if editor.path == event.path {
             editor.reload(text: event.text)
