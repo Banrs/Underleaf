@@ -28,19 +28,17 @@ pub struct LogItem {
 
 impl LogItem {
     fn new(kind: &'static str, file: Option<String>, line: Option<u32>, message: String) -> Self {
-        let flat = message.split_whitespace().collect::<Vec<_>>().join(" ");
-        let short = flat
-            .strip_prefix("LaTeX Error: ")
-            .unwrap_or(&flat)
-            .to_owned();
-        let command = undefined_command(&short);
+        let mut short = message.split_whitespace().collect::<Vec<_>>().join(" ");
+        if short.starts_with("LaTeX Error: ") {
+            short.drain(.."LaTeX Error: ".len());
+        }
         Self {
             kind,
             file,
             line,
             message,
+            command: undefined_command(&short),
             short,
-            command,
         }
     }
 
@@ -58,19 +56,20 @@ fn undefined_command(message: &str) -> Option<String> {
     ((!name.is_empty() && letters) || name.chars().count() == 1).then(|| format!("\\{name}"))
 }
 
-// Sources, and the files LaTeX writes and reads back (.aux, .toc, .bbl …),
-// where a fragile command or a bibliography entry raises its error.
-static ERROR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:(?i:(?P<file>.+?\.(?:tex|ltx|sty|cls|bib|bbl|aux|toc|lof|lot|out|ind|nav|snm|def|clo|cfg|fd|tikz|pgf))):(?P<line>\d+):\s*|! )(?P<message>.*)$").unwrap()
+// An error's place: sources, and the files LaTeX writes and reads back (.aux,
+// .toc, .bbl …), where a fragile command or a bibliography entry raises it.
+// The prefixes of lines are matched, not captured, as capturing costs most of
+// a long log's parse.
+static PLACE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?i:.+?\.(?:tex|ltx|sty|cls|bib|bbl|aux|toc|lof|lot|out|ind|nav|snm|def|clo|cfg|fd|tikz|pgf)):\d+:\s*").unwrap()
 });
-static L_NO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^l\.(\d+)").unwrap());
+static L_NO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^l\.\d+").unwrap());
 static LAST_CS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(\\(?:[A-Za-z@]+|.))\s*$").unwrap());
 static WARNING: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:LaTeX(?: Font| NFSS)?|Package \S+|Class \S+) Warning:\s*(?P<message>.*)$")
-        .unwrap()
+    Regex::new(r"^(?:LaTeX(?: Font| NFSS)?|Package \S+|Class \S+) Warning:\s*").unwrap()
 });
-static ON_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"on input line (\d+)").unwrap());
+static ON_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"on input line \d+").unwrap());
 static BIBTEX_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.*)---line (\d+) of file (.+)$").unwrap());
 static BIBER_ERROR: LazyLock<Regex> =
@@ -91,7 +90,7 @@ fn project_path(path: &str) -> Option<String> {
 /// it opens, or None for a parenthesis in text, and each ")" pops.
 fn track<'a>(open: &mut Vec<Option<&'a str>>, line: &'a str) {
     let mut rest = line;
-    while let Some(i) = rest.find(['(', ')']) {
+    while let Some(i) = memchr::memchr2(b'(', b')', rest.as_bytes()) {
         let paren = rest.as_bytes()[i];
         rest = &rest[i + 1..];
         if paren == b')' {
@@ -136,8 +135,9 @@ fn locate(
     (files.find_map(project_path), None)
 }
 
-/// Join after TeX's 79-column wrap without a space; otherwise separate lines
-/// and drop an indented package "(name)" prefix.
+/// Join after TeX's 79-column wrap (bytes in pdfTeX, characters in the
+/// Unicode engines) without a space; otherwise separate lines and drop an
+/// indented package "(name)" prefix.
 fn append(message: &mut String, prev: &str, next: &str) {
     if prev.len() == 79 || prev.chars().count() == 79 {
         message.push_str(next);
@@ -152,101 +152,111 @@ fn append(message: &mut String, prev: &str, next: &str) {
     message.push_str(next.trim());
 }
 
-/// The first blank line from `from`, or the end.
-fn blank_from(lines: &[&str], from: usize) -> usize {
-    (from..lines.len())
-        .find(|&j| lines[j].trim().is_empty())
-        .unwrap_or(lines.len())
-}
-
 pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     let lines: Vec<&str> = log.lines().collect();
-    let mut items: Vec<LogItem> = Vec::new();
+    let blank_from = |from: usize| {
+        (from..lines.len())
+            .find(|&j| lines[j].trim().is_empty())
+            .unwrap_or(lines.len())
+    };
+    let mut items = Vec::new();
     let mut open = Vec::new();
+    let mut had_error = false;
     // Lines before this one echo source or a box's contents, whose
     // parentheses needn't pair up, so they aren't tracked.
     let mut quiet_until = 0;
 
     for (i, &line) in lines.iter().enumerate() {
-        // Skip both regexes for most lines of a long log: an error starts
-        // "! " or names its file and line with colons.
-        let may_err = line.starts_with("! ") || line.contains(':');
-        let diagnostic = may_err.then(|| ERROR.captures(line)).flatten().or_else(|| {
-            line.contains(" Warning:")
-                .then(|| WARNING.captures(line))
-                .flatten()
-        });
-        if let Some(m) = diagnostic {
-            let named = m.name("file").map(|m| m.as_str());
-            let error = named.is_some() || line.starts_with("! ");
-            let mut message = m["message"].to_string();
-            // Find the source echo without borrowing the next error's.
-            let echo = error.then(|| {
+        // Most lines of a long log are neither: an error names its file and
+        // line with colons or starts "! ", and a warning says so.
+        let place = line.contains(':').then(|| PLACE.find(line)).flatten();
+        let (error, named, rest) = if let Some(m) = place {
+            let place = m.as_str().trim_end().strip_suffix(':').unwrap();
+            (true, place.rsplit_once(':'), &line[m.end()..])
+        } else if let Some(rest) = line.strip_prefix("! ") {
+            (true, None, rest)
+        } else if line.contains(" Warning:")
+            && let Some(m) = WARNING.find(line)
+        {
+            (false, None, &line[m.end()..])
+        } else {
+            if line.starts_with("Overfull \\") || line.starts_with("Underfull \\") {
+                // The box's contents follow, up to a blank line.
+                quiet_until = blank_from(i + 1);
+            } else if i >= quiet_until {
+                track(&mut open, line);
+            }
+            continue;
+        };
+        let mut message = rest.to_string();
+        // The source echo, short of the next error's.
+        let echo = error
+            .then(|| {
                 lines[i + 1..(i + 12).min(lines.len())]
                     .iter()
-                    .take_while(|next| !next.starts_with('!') && !ERROR.is_match(next))
+                    .take_while(|next| !next.starts_with('!') && !PLACE.is_match(next))
                     .position(|next| L_NO.is_match(next))
                     .map(|k| i + 1 + k)
-            });
-            let echo = echo.flatten();
-            if error {
-                quiet_until = echo.map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
-            }
-            let continuation = match (named, error) {
-                (Some(_), _) => 3,
-                (None, true) => 0,
-                (None, false) => 2,
-            };
-            let mut prev = line;
-            for next in &lines[i + 1..(i + 1 + continuation).min(lines.len())] {
-                if next.trim().is_empty()
-                    || next.starts_with('!')
-                    || if error {
-                        next.starts_with('<') || L_NO.is_match(next)
-                    } else {
-                        next.contains("Warning") || next.contains("Error")
-                    }
-                {
-                    break;
-                }
-                append(&mut message, prev, next);
-                prev = next;
-            }
-            // A fatal summary repeats the stopping error; keep it only alone.
-            let summary = error && message.trim_start().starts_with("==>");
-            if summary && items.iter().any(|item| item.kind == "error") {
-                continue;
-            }
-            // TeX's context or source echo names the undefined command.
-            if message
-                .trim_start()
-                .starts_with("Undefined control sequence.")
-                && let Some(j) = echo
-                && let Some(m) = lines[i + 1..=j].iter().find_map(|l| LAST_CS.captures(l))
-            {
-                message = format!("Undefined control sequence: {}", &m[1]);
-            }
-            let line_no = if summary && named.is_some() {
-                None
-            } else if error {
-                m.name("line")
-                    .or_else(|| echo.and_then(|j| L_NO.captures(lines[j])?.get(1)))
-                    .and_then(|line| line.as_str().parse().ok())
-            } else {
-                ON_LINE.captures(&message).and_then(|lm| lm[1].parse().ok())
-            };
-            let (file, line_no) = locate(named, line_no, &open, main_file, &mut message);
-            items.push(LogItem::new(
-                if error { "error" } else { "warning" },
-                file,
-                line_no,
-                message.trim().to_string(),
-            ));
-        } else if line.starts_with("Overfull \\") || line.starts_with("Underfull \\") {
-            // The box's contents follow, up to a blank line.
-            quiet_until = blank_from(&lines, i + 1);
+            })
+            .flatten();
+        if error {
+            quiet_until = echo.map_or_else(|| blank_from(i + 1), |j| j + 2);
         }
-        if i >= quiet_until {
+        let continuation = match (named, error) {
+            (Some(_), _) => 3,
+            (None, true) => 0,
+            (None, false) => 2,
+        };
+        let mut prev = line;
+        for &next in lines[i + 1..].iter().take(continuation) {
+            let ends = if error {
+                next.starts_with('<') || L_NO.is_match(next)
+            } else {
+                next.contains("Warning") || next.contains("Error")
+            };
+            if ends || next.trim().is_empty() || next.starts_with('!') {
+                break;
+            }
+            append(&mut message, prev, next);
+            prev = next;
+        }
+        // A fatal summary repeats the stopping error; keep it only alone.
+        let summary = error && message.trim_start().starts_with("==>");
+        if summary && had_error {
+            continue;
+        }
+        // TeX's context or source echo names the undefined command.
+        if message
+            .trim_start()
+            .starts_with("Undefined control sequence.")
+            && let Some(j) = echo
+            && let Some(cs) = lines[i + 1..=j].iter().find_map(|l| LAST_CS.captures(l))
+        {
+            message = format!("Undefined control sequence: {}", &cs[1]);
+        }
+        let line_no = if !error {
+            ON_LINE
+                .find(&message)
+                .map(|m| &m.as_str()["on input line ".len()..])
+        } else if summary && named.is_some() {
+            None
+        } else {
+            named
+                .map(|(_, n)| n)
+                .or_else(|| Some(&L_NO.find(lines[echo?])?.as_str()[2..]))
+        };
+        let line_no = line_no.and_then(|n| n.parse().ok());
+        let named = named.map(|(file, _)| file);
+        let (file, line_no) = locate(named, line_no, &open, main_file, &mut message);
+        let kind = if error { "error" } else { "warning" };
+        items.push(LogItem::new(
+            kind,
+            file,
+            line_no,
+            message.trim().to_string(),
+        ));
+        had_error |= error;
+        if !error && i >= quiet_until {
             track(&mut open, line);
         }
     }
@@ -267,20 +277,20 @@ pub fn parse_blg(blg: &str) -> Vec<LogItem> {
     blg.lines()
         .filter_map(|line| {
             let above = std::mem::replace(&mut previous, line);
-            if let Some(m) = BIBTEX_ERROR.captures(line) {
-                let file = project_path(m[3].trim());
-                let message = if m[1].trim().is_empty() { above } else { &m[1] };
-                Some(LogItem::new(
-                    "error",
-                    file.clone(),
-                    file.and(m[2].parse().ok()),
-                    message.trim().to_string(),
-                ))
-            } else {
-                BIBER_ERROR
+            let Some(m) = BIBTEX_ERROR.captures(line) else {
+                return BIBER_ERROR
                     .captures(line)
-                    .map(|m| LogItem::error(m[1].trim()))
-            }
+                    .map(|m| LogItem::error(m[1].trim()));
+            };
+            let file = project_path(m[3].trim());
+            let message = if m[1].trim().is_empty() { above } else { &m[1] };
+            let line = file.as_ref().and(m[2].parse().ok());
+            Some(LogItem::new(
+                "error",
+                file,
+                line,
+                message.trim().to_string(),
+            ))
         })
         .collect()
 }
@@ -300,95 +310,165 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LogItem, latexmk_errors, parse_blg, parse_log, project_path, undefined_command};
+    use super::{LogItem, latexmk_errors, parse_blg, parse_log, project_path};
 
-    /// Each item's file and line.
-    fn places(items: &[LogItem]) -> Vec<(Option<&str>, Option<u32>)> {
-        items
-            .iter()
-            .map(|it| (it.file.as_deref(), it.line))
-            .collect()
+    /// Each item as "kind file:line message", `-` for no file or line.
+    fn read(items: &[LogItem]) -> Vec<String> {
+        let place = |it: &LogItem| {
+            let line = it.line.map_or("-".into(), |l| l.to_string());
+            format!("{}:{line}", it.file.as_deref().unwrap_or("-"))
+        };
+        let read = |it: &LogItem| format!("{} {} {}", it.kind, place(it), it.message);
+        items.iter().map(read).collect()
     }
 
     #[test]
-    fn an_error_without_its_own_line_names_no_place() {
-        let error = "./main.tex:12: Undefined control sequence.\nl.12 \\foo\n";
+    fn a_log_reads_as_its_errors_and_warnings_in_place() {
         let fatal = "==> Fatal error occurred, no output PDF file produced!";
-        let cases: [(String, &[_]); 4] = [
-            // A "!" error doesn't take the next error's "l.<n>".
+        let cases: &[(&str, &[&str])] = &[
+            // A "!" error has no place, and doesn't take the next error's "l.<n>".
             (
-                format!("! Emergency stop.\n{error}"),
-                &[(None, None), (Some("main.tex"), Some(12))],
+                "! Emergency stop.\n./main.tex:12: Undefined control sequence.\nl.12 \\foo\n",
+                &[
+                    "error -:- Emergency stop.",
+                    "error main.tex:12 Undefined control sequence: \\foo",
+                ],
             ),
-            // TeX's closing summary names the stopping error's line, not its
-            // own, and folds into the error before it.
+            // TeX's closing summary repeats the stopping error, so goes; alone,
+            // it is the failure's one record, with no place.
             (
-                format!("{error}\n./main.tex:12:  {fatal}\n"),
-                &[(Some("main.tex"), Some(12))],
+                &format!("./main.tex:12: Missing $.\nl.12 x\n\n./main.tex:12:  {fatal}\n"),
+                &["error main.tex:12 Missing $."],
             ),
-            // Alone, it is the failure's one record, with no place.
-            (format!("./main.tex:12:  {fatal}\n"), &[(None, None)]),
-            (format!("! Emergency stop.\n! {fatal}\n"), &[(None, None)]),
+            (
+                &format!("./main.tex:12:  {fatal}\n"),
+                &[&format!("error -:- {fatal}")],
+            ),
+            (
+                &format!("! Emergency stop.\n! {fatal}\n"),
+                &["error -:- Emergency stop."],
+            ),
+            // TeX's context or source echo names an undefined command.
+            (
+                "./main.tex:19: Undefined control sequence.\n\
+                 l.19 ...ndefined control sequence: \\undefinedmacro\n\
+                 \x20                                                 .\n\
+                 \n\
+                 ./main.tex:21: Missing $ inserted.\n\
+                 <inserted text> \n\
+                 \x20               $\n\
+                 l.21 x^\n\
+                 \n\
+                 ./main.tex:24: Undefined control sequence.\n\
+                 \\x ->\\foo\n\
+                 \x20        \n\
+                 l.24 \\x\n\
+                 \n\
+                 ./main.tex:5: Emergency stop.\n\
+                 <read *> \n\
+                 l.5 \\input{chapters/intro}\n",
+                &[
+                    "error main.tex:19 Undefined control sequence: \\undefinedmacro",
+                    "error main.tex:21 Missing $ inserted.",
+                    "error main.tex:24 Undefined control sequence: \\foo",
+                    "error main.tex:5 Emergency stop.",
+                ],
+            ),
+            // Reruns repeat messages: the first of each stays, in order.
+            (
+                "LaTeX Warning: A on input line 1.\n\n./a.tex:2: Boom.\n\n\
+                 LaTeX Warning: A on input line 1.\n\nLaTeX Warning: A on input line 2.\n\n\
+                 ./a.tex:2: Boom.\n",
+                &[
+                    "warning root.tex:1 A on input line 1.",
+                    "error a.tex:2 Boom.",
+                    "warning root.tex:2 A on input line 2.",
+                ],
+            ),
+            // Errors in the files LaTeX writes and reads back.
+            (
+                &format!(
+                    "(build/main.bbl\nbuild/main.bbl:5: Misplaced alignment tab character &.\n\
+                     l.5 \\newblock Cats &\n\nbuild/main.bbl:5:  {fatal}\n"
+                ),
+                &["error build/main.bbl:5 Misplaced alignment tab character &."],
+            ),
+            // A warning takes the file TeX has open; parentheses in echoed source
+            // and in an overfull box's contents don't pair up, so close none.
+            (
+                "(./main.tex\n\
+                 (/usr/local/texlive/2026/texmf-dist/tex/latex/base/article.cls\n\
+                 Document Class: article 2025/01/22 v1.4n Standard LaTeX document class\n\
+                 )\n\
+                 ./main.tex:4: Undefined control sequence.\n\
+                 l.4 Hello \\foo\n\
+                 \x20              world (unbalanced paren.\n\
+                 \n\
+                 (./chapters/intro.tex\n\
+                 LaTeX Warning: Reference `nope' on page 1 undefined on input line 3.\n\
+                 \n\
+                 )\n\
+                 Overfull \\hbox (182.7699pt too wide) detected at line 7\n\
+                 \\OT1/cmr/m/n/10 Some very long text (that overflows\n\
+                 \n\
+                 LaTeX Warning: Reference `x' on page 1 undefined on input line 9.\n\
+                 \n\
+                 )\n\
+                 LaTeX Warning: Unused global option(s) on input line 2.\n",
+                &[
+                    "error main.tex:4 Undefined control sequence: \\foo",
+                    "warning chapters/intro.tex:3 Reference `nope' on page 1 undefined on input line 3.",
+                    "warning main.tex:9 Reference `x' on page 1 undefined on input line 9.",
+                    "warning root.tex:2 Unused global option(s) on input line 2.",
+                ],
+            ),
+            // A place in a TeX distribution file goes to the file that loaded it,
+            // without a line, the distribution file named in the message.
+            (
+                "(./main.tex\n\
+                 (/usr/local/texlive/2026/texmf-dist/tex/latex/graphics/graphicx.sty\n\
+                 /usr/local/texlive/2026/texmf-dist/tex/latex/graphics/graphicx.sty:27: Undefine\n\
+                 d control sequence.\n\
+                 l.27 \\foo\n",
+                &["error main.tex:- graphicx.sty: Undefined control sequence: \\foo"],
+            ),
+            // Warnings run on over package-prefixed lines, without a space after
+            // TeX's 79-column wrap, and stop at the next message.
+            (
+                "LaTeX Warning: First\nPackage x Warning: Second\n! Undefined control sequence.\n",
+                &[
+                    "warning -:- First",
+                    "warning -:- Second",
+                    "error -:- Undefined control sequence.",
+                ],
+            ),
+            (
+                "LaTeX Warning: Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on in\n\
+                 put line 3.\n",
+                &[
+                    "warning root.tex:3 Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on input line 3.",
+                ],
+            ),
+            (
+                "LaTeX Font Warning: Font shape `OT1/nonexistentfam/m/n' undefined\n\
+                 (Font)              using `OT1/cmr/m/n' instead on input line 3.\n",
+                &[
+                    "warning root.tex:3 Font shape `OT1/nonexistentfam/m/n' undefined using `OT1/cmr/m/n' instead on input line 3.",
+                ],
+            ),
+            (
+                "Package biblatex Warning: Please (re)run Biber on the file:\n\
+                 (biblatex)                main\n\
+                 (biblatex)                and rerun LaTeX afterwards.\n",
+                &["warning -:- Please (re)run Biber on the file: main and rerun LaTeX afterwards."],
+            ),
         ];
         for (log, expected) in cases {
-            assert_eq!(places(&parse_log(&log, "main.tex")), expected, "{log}");
+            assert_eq!(read(&parse_log(log, "root.tex")), *expected, "{log}");
+            // CRLF logs read as LF ones.
+            let crlf = log.replace('\n', "\r\n");
+            assert_eq!(parse_log(&crlf, "root.tex"), parse_log(log, "root.tex"));
         }
-    }
-
-    #[test]
-    fn crlf_logs_parse_like_lf_logs() {
-        let lf = "./main.tex:3: Undefined control sequence.\n\
-                  <recently read> \\foo\n\
-                  l.3 \\foo\n\
-                  \n\
-                  ! Emergency stop.\n\
-                  l.9 \\end\n\
-                  Package hyperref Warning: Token not allowed\n\
-                  (hyperref) removing `math shift' on input line 44.\n";
-        let crlf = lf.replace('\n', "\r\n");
-        let items = parse_log(&crlf, "main.tex");
-        assert_eq!(items, parse_log(lf, "main.tex"));
-        // The log's ./main.tex, without its ./
-        assert_eq!(items[0].file.as_deref(), Some("main.tex"));
-        assert_eq!(items[0].message, "Undefined control sequence: \\foo");
-        assert_eq!(items[1].message, "Emergency stop.");
-        assert_eq!(items[1].line, Some(9));
-        assert_eq!(items[2].line, Some(44));
-    }
-
-    #[test]
-    fn messages_name_the_undefined_control_sequence_without_tex_context() {
-        let log = "./main.tex:19: Undefined control sequence.\n\
-                   l.19 ...ndefined control sequence: \\undefinedmacro\n\
-                   \x20                                                 .\n\
-                   \n\
-                   ./main.tex:21: Missing $ inserted.\n\
-                   <inserted text> \n\
-                   \x20               $\n\
-                   l.21 x^\n\
-                   \n\
-                   ./main.tex:24: Undefined control sequence.\n\
-                   \\x ->\\foo\n\
-                   \x20        \n\
-                   l.24 \\x\n\
-                   \n\
-                   ./main.tex:5: Emergency stop.\n\
-                   <read *> \n\
-                   \x20        \n\
-                   l.5 \\input{chapters/intro}\n";
-        let messages: Vec<_> = parse_log(log, "main.tex")
-            .into_iter()
-            .map(|it| it.message)
-            .collect();
-        assert_eq!(
-            messages,
-            [
-                "Undefined control sequence: \\undefinedmacro",
-                "Missing $ inserted.",
-                "Undefined control sequence: \\foo",
-                "Emergency stop.",
-            ]
-        );
     }
 
     #[test]
@@ -401,177 +481,16 @@ mod tests {
                    l.4 \\foo@x\n\
                    \n\
                    ./main.tex:5: Undefined control sequence.\n\
-                   l.5 \\&\n";
+                   l.5 \\&\n\
+                   (/tex/x.sty\n\
+                   /tex/x.sty:7: Undefined control sequence.\n\
+                   l.7 \\a\n";
         let items = parse_log(log, "main.tex");
+        assert_eq!(items[0].message, "LaTeX Error: Environment foo undefined.");
         assert_eq!(items[0].short, "Environment foo undefined.");
-        assert_eq!(items[0].command, None);
-        let commands: Vec<_> = items[1..].iter().map(|it| it.command.as_deref()).collect();
-        assert_eq!(commands, [Some("\\foo@x"), Some("\\&")]);
-        // The name of a file TeX loaded comes first in its message: not this file's command.
-        for message in [
-            "x.sty: Undefined control sequence: \\a",
-            "Undefined control sequence: \\ab-c",
-        ] {
-            assert_eq!(undefined_command(message), None, "{message}");
-        }
-    }
-
-    #[test]
-    fn duplicates_collapse_to_the_first_and_order_is_kept() {
-        let log = "LaTeX Warning: A on input line 1.\n\
-                   \n\
-                   ./a.tex:2: Boom.\n\
-                   \n\
-                   LaTeX Warning: A on input line 1.\n\
-                   \n\
-                   LaTeX Warning: A on input line 2.\n\
-                   \n\
-                   ./a.tex:2: Boom.\n";
-        let summary: Vec<_> = parse_log(log, "main.tex")
-            .into_iter()
-            .map(|it| (it.kind, it.line, it.message))
-            .collect();
-        assert_eq!(
-            summary,
-            [
-                ("warning", Some(1), "A on input line 1.".to_string()),
-                ("error", Some(2), "Boom.".to_string()),
-                ("warning", Some(2), "A on input line 2.".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn errors_in_generated_files_are_reported() {
-        let log = "(build/main.bbl\n\
-                   build/main.bbl:5: Misplaced alignment tab character &.\n\
-                   l.5 \\newblock Cats &\n\
-                   \n\
-                   build/main.bbl:5:  ==> Fatal error occurred, no output PDF file produced!\n";
-        let items = parse_log(log, "main.tex");
-        assert_eq!(places(&items), [(Some("build/main.bbl"), Some(5))]);
-        assert_eq!(items[0].message, "Misplaced alignment tab character &.");
-    }
-
-    #[test]
-    fn a_message_takes_the_file_tex_has_open() {
-        // Parentheses in the echoed source and in an overfull box's contents
-        // don't pair up, and mustn't close a file.
-        let log = "(./main.tex\n\
-                   (/usr/local/texlive/2026/texmf-dist/tex/latex/base/article.cls\n\
-                   Document Class: article 2025/01/22 v1.4n Standard LaTeX document class\n\
-                   )\n\
-                   ./main.tex:4: Undefined control sequence.\n\
-                   l.4 Hello \\foo\n\
-                   \x20              world (unbalanced paren.\n\
-                   The control sequence at the end of the top line\n\
-                   \n\
-                   (./chapters/intro.tex\n\
-                   \n\
-                   LaTeX Warning: Reference `nope' on page 1 undefined on input line 3.\n\
-                   \n\
-                   )\n\
-                   \n\
-                   Overfull \\hbox (182.7699pt too wide) detected at line 7\n\
-                   \\OT1/cmr/m/n/10 Some very long text (that overflows\n\
-                   \x20[]\n\
-                   \n\
-                   \n\
-                   LaTeX Warning: Reference `x' on page 1 undefined on input line 9.\n\
-                   \n\
-                   \x20)\n";
-        assert_eq!(
-            places(&parse_log(log, "other.tex")),
-            [
-                (Some("main.tex"), Some(4)),
-                (Some("chapters/intro.tex"), Some(3)),
-                (Some("main.tex"), Some(9)),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_place_in_a_tex_distribution_file_goes_to_the_file_that_loaded_it() {
-        let log = "(./main.tex\n\
-                   (/usr/local/texlive/2026/texmf-dist/tex/latex/graphics/graphicx.sty\n\
-                   /usr/local/texlive/2026/texmf-dist/tex/latex/graphics/graphicx.sty:27: Undefine\n\
-                   d control sequence.\n\
-                   l.27 \\foo\n";
-        let items = parse_log(log, "main.tex");
-        assert_eq!(places(&items), [(Some("main.tex"), None)]);
-        assert_eq!(
-            items[0].message,
-            "graphicx.sty: Undefined control sequence: \\foo"
-        );
-    }
-
-    #[test]
-    fn warnings_run_on_over_wrapped_and_continued_lines_and_stop_at_the_next_message() {
-        // The log, the line of its first item, and each item's kind and message.
-        type Case<'a> = (&'a str, Option<u32>, &'a [(&'a str, &'a str)]);
-        let cases: [Case; 5] = [
-            (
-                "LaTeX Warning: First\n\
-                 Package x Warning: Second\n\
-                 ! Undefined control sequence.\n",
-                None,
-                &[
-                    ("warning", "First"),
-                    ("warning", "Second"),
-                    ("error", "Undefined control sequence."),
-                ],
-            ),
-            // A line wrapped at 79 columns runs on without a space.
-            (
-                "LaTeX Warning: Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on in\n\
-                 put line 3.\n\
-                 \n\
-                 ./main.tex:9: Missing number, treated as zero.\n\
-                 l.9 x\n",
-                Some(3),
-                &[
-                    (
-                        "warning",
-                        "Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on input line 3.",
-                    ),
-                    ("error", "Missing number, treated as zero."),
-                ],
-            ),
-            // A line that wasn't wrapped still gets a space.
-            (
-                "Package x Warning: First\n(x)                second on input line 2.\n",
-                Some(2),
-                &[("warning", "First second on input line 2.")],
-            ),
-            (
-                "LaTeX Font Warning: Font shape `OT1/nonexistentfam/m/n' undefined\n\
-                 (Font)              using `OT1/cmr/m/n' instead on input line 3.\n",
-                Some(3),
-                &[(
-                    "warning",
-                    "Font shape `OT1/nonexistentfam/m/n' undefined using `OT1/cmr/m/n' instead on input line 3.",
-                )],
-            ),
-            (
-                "Package biblatex Warning: Please (re)run Biber on the file:\n\
-                 (biblatex)                main\n\
-                 (biblatex)                and rerun LaTeX afterwards.\n",
-                None,
-                &[(
-                    "warning",
-                    "Please (re)run Biber on the file: main and rerun LaTeX afterwards.",
-                )],
-            ),
-        ];
-        for (log, line, expected) in cases {
-            let items = parse_log(log, "main.tex");
-            let got: Vec<_> = items
-                .iter()
-                .map(|it| (it.kind, it.message.as_str()))
-                .collect();
-            assert_eq!(got, expected, "{log}");
-            assert_eq!(items[0].line, line, "{log}");
-        }
+        // Not a name TeX reads, nor this project's command.
+        let commands: Vec<_> = items.iter().map(|it| it.command.as_deref()).collect();
+        assert_eq!(commands, [None, Some("\\foo@x"), Some("\\&"), None]);
     }
 
     #[test]
@@ -580,24 +499,28 @@ mod tests {
                    I was expecting a `,' or a `}'---line 1 of file refs.bib\n\
                    \x20: @article{a \n\
                    Warning--empty title in a\n\
-                   [812] Utils.pm:465> ERROR - BibTeX subsystem: syntax error\n";
-        let items = parse_blg(blg);
-        assert_eq!(places(&items), [(Some("refs.bib"), Some(1)), (None, None)]);
-        assert_eq!(items[0].message, "I was expecting a `,' or a `}'");
-        assert_eq!(items[1].message, "BibTeX subsystem: syntax error");
-        // A BibTeX error takes its message from the line above its place.
-        let items = parse_blg("I couldn't open database file .bib\n---line 5 of file main.aux\n");
-        assert_eq!(items[0].message, "I couldn't open database file .bib");
-        assert_eq!(items[0].line, Some(5));
-
+                   [812] Utils.pm:465> ERROR - BibTeX subsystem: syntax error\n\
+                   I couldn't open database file .bib\n\
+                   ---line 5 of file main.aux\n\
+                   Oops---line 2 of file /usr/share/x.bst\n";
+        assert_eq!(
+            read(&parse_blg(blg)),
+            [
+                "error refs.bib:1 I was expecting a `,' or a `}'",
+                "error -:- BibTeX subsystem: syntax error",
+                "error main.aux:5 I couldn't open database file .bib",
+                "error -:- Oops",
+            ]
+        );
         let output = "Latexmk: Errors, so I did not complete making targets\n\
                       Collected error summary (may duplicate other messages):\n\
                       \x20 biber main: Could not find main.bcf\n\
                       \x20     Refer to 'build/main.log' for details\n\
                       Latexmk: done\n";
-        let items = latexmk_errors(output);
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].message, "biber main: Could not find main.bcf");
+        assert_eq!(
+            read(&latexmk_errors(output)),
+            ["error -:- biber main: Could not find main.bcf"]
+        );
     }
 
     #[test]
