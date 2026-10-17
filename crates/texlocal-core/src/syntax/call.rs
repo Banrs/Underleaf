@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::theme::{self, Rgba};
-use super::{Checker, SnippetField, SourceDocument, Style, TextEdit, TextRange, map_selections};
-use super::{headings, render};
+use super::{Checker, SnippetField, SourceDocument, Style, TextEdit, TextRange};
+use super::{catalog::CATALOG, complete::completions, headings, map_selections, render};
 
 /// The arguments the document's commands take, each what it needs; any left
 /// out are empty.
@@ -41,11 +41,11 @@ fn json(value: impl Serialize) -> Option<String> {
     serde_json::to_string(&value).ok()
 }
 
-/// `args_json`, if it is a JSON object.
-fn object(args_json: &str) -> Option<Value> {
-    serde_json::from_str(args_json)
-        .ok()
-        .filter(Value::is_object)
+/// `args_json` read as a `T`, if it is a JSON object: a struct would read
+/// from an array as well.
+fn object<T: DeserializeOwned>(args_json: &str) -> Option<T> {
+    let object = args_json.trim_start().starts_with('{');
+    object.then(|| serde_json::from_str(args_json).ok())?
 }
 
 fn args<T: DeserializeOwned>(args: &Value) -> Option<T> {
@@ -67,12 +67,11 @@ impl SourceDocument {
     /// selection's are the C ABI's own (`tl_source_edit`, `tl_source_select`),
     /// as is the text; those that need no document are `call`'s.
     pub fn call(&mut self, command: &str, args_json: &str) -> Option<String> {
-        let a: Args = args(&object(args_json)?)?;
+        let a: Args = object(args_json)?;
         let auto_pair = a.auto_pair.unwrap_or(true);
+        let symbols = (&self.labels[..], &self.citations[..]);
         match command {
-            "completions" => {
-                json(self.completions(a.caret, a.explicit, &self.labels, &self.citations))
-            }
+            "completions" => json(completions(&mut self.text, (a.caret, a.explicit), symbols)),
             "toggle_comment" => json(self.toggle_comment(&a.selections)),
             "set_heading" => json(self.set_heading(a.caret, &a.command)),
             "insert_block" => json(self.insert_block(&a.id, a.selection)),
@@ -107,14 +106,6 @@ struct Maths {
     color: Option<Rgba>,
 }
 
-/// An SVG, or why there's none.
-fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
-    match result {
-        Ok(svg) => json(svg),
-        Err(error) => json(json!({ "error": error })),
-    }
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Legible {
@@ -127,20 +118,6 @@ struct Legible {
     ratio: Option<f64>,
 }
 
-/// What a file dropped on the editor does: an image or PDF dropped on a
-/// LaTeX file is `\includegraphics` to put at the caret; any other file
-/// opens. `kind` is the file's `file_tree` kind, none for a folder (which
-/// does nothing); `into` the kind of the file dropped on.
-fn dropped(path: &str, kind: &str, into: &str) -> Value {
-    match kind {
-        "" => Value::Null,
-        "image" | "pdf" if into == "tex" => {
-            json!({ "insert": format!("\\includegraphics{{{path}}}") })
-        }
-        _ => json!({ "open": true }),
-    }
-}
-
 /// The commands that need no document: "themes", the themes' colours;
 /// "theme_colors", a theme's (`theme`, its id) legible in an appearance
 /// (`theme::Appearance`'s fields), by highlight kind; "legible" (`color`,
@@ -148,43 +125,54 @@ fn dropped(path: &str, kind: &str, into: &str) -> Value {
 /// `ratio` (default 4.5, or 7 with `increaseContrast`). "menus", the
 /// catalogue's templates and symbol groups; "heading_styles" (`class`,
 /// `pointSize`, `hasChapters`), the levels the class has, as it sets and
-/// numbers them (a session's analysis answers the main file's). "drop_text" (`path`, `kind`,
-/// `into`), what a project file dropped on the editor does: {"insert": text}
-/// or {"open": true}, or null for a folder. "math_svg" (`tex`, `display`,
-/// `size`, `color`) and "glyph_svg" (`command`, `size`, `side`, `color`):
+/// numbers them (a session's analysis answers the main file's). "drop_text"
+/// (`path`, `kind`, `into`), what a project file dropped on the editor does:
+/// an image or PDF dropped on a LaTeX file is {"insert": its
+/// `\includegraphics`} to put at the caret, any other file {"open": true},
+/// and a folder (no `kind`) null. "math_svg" (`tex`, `display`, `size`,
+/// `color`) and "glyph_svg" (`command`, `size`, `side`, `color`):
 /// `render::MathSvg`, or {"error": why}.
 pub fn call(command: &str, args_json: &str) -> Option<String> {
-    let value = object(args_json)?;
+    let value: Value = object(args_json)?;
     let string = |key: &str| value.get(key).and_then(Value::as_str);
     match command {
-        "drop_text" => json(dropped(
-            string("path")?,
-            string("kind").unwrap_or_default(),
-            string("into").unwrap_or("tex"),
-        )),
+        "drop_text" => {
+            let path = string("path")?;
+            json(match (string("kind").unwrap_or_default(), string("into")) {
+                ("", _) => Value::Null,
+                ("image" | "pdf", None | Some("tex")) => {
+                    json!({ "insert": format!("\\includegraphics{{{path}}}") })
+                }
+                _ => json!({ "open": true }),
+            })
+        }
         "themes" => json(theme::THEMES),
         "math_svg" | "glyph_svg" => {
             let m: Maths = args(&value)?;
-            let color = m.color.unwrap_or([0.0, 0.0, 0.0, 1.0]);
-            rendered(if command == "math_svg" {
-                render::math_svg(&m.tex, m.display, m.size.unwrap_or(13.0), color)
-            } else {
-                let (size, side) = (m.size.unwrap_or(19.0), m.side.unwrap_or(24.0));
-                render::glyph_svg(&m.command, size, side, color)
-            })
+            let (size, color) = (m.size.unwrap_or(13.0), m.color.unwrap_or([0., 0., 0., 1.]));
+            let drawn = match command {
+                "math_svg" => render::math_svg(&m.tex, m.display, size, color),
+                _ => {
+                    let (size, side) = (m.size.unwrap_or(19.0), m.side.unwrap_or(24.0));
+                    render::glyph_svg(&m.command, size, side, color)
+                }
+            };
+            drawn.map_or_else(|error| json(json!({ "error": error })), json)
         }
-        "menus" => json(super::catalog::menus()),
+        "menus" => json(&CATALOG.menus),
         "heading_styles" => {
-            let class = string("class").map(|name| headings::DocumentClass {
-                name: name.to_owned(),
-                point_size: value.get("pointSize").and_then(Value::as_u64).unwrap_or(10) as u32,
+            let point_size = value.get("pointSize").and_then(Value::as_u64).unwrap_or(10) as u32;
+            let class = string("class").map(|name| {
+                let name = name.to_owned();
+                headings::DocumentClass { name, point_size }
             });
             let chapters = value.get("hasChapters").and_then(Value::as_bool);
-            let styles = headings::heading_styles(class.as_ref(), chapters.unwrap_or(false));
-            json(styles)
+            let levels = headings::heading_styles(class.as_ref(), chapters.unwrap_or(false));
+            json(levels)
         }
         "theme_colors" => {
-            let theme = theme::theme(string("theme")?)?;
+            let id = string("theme")?;
+            let theme = theme::THEMES.iter().find(|t| t.id == id)?;
             json(theme::theme_colors(theme, &args(&value)?))
         }
         "legible" => {
@@ -205,73 +193,52 @@ mod tests {
     #[test]
     fn commands_answer_by_name() {
         let mut doc = SourceDocument::new("\\cite{kn");
-        assert_eq!(doc.call("partner", "{}").as_deref(), Some("null"));
-        assert_eq!(doc.call("no such command", "{}"), None);
-        assert_eq!(doc.call("partner", "[]"), None);
-        assert_eq!(doc.call("toggle_comment", r#"{"selections": 3}"#), None);
+        assert_eq!(doc.call("partner", " {} ").as_deref(), Some("null"));
+        let none = r#"no such|{};partner|[];partner|{} x;toggle_comment|{"selections":3}"#;
+        for (command, args) in none.split(';').map(|c| c.split_once('|').unwrap()) {
+            assert_eq!(doc.call(command, args), None, "{command} {args}");
+        }
         // Those that need no document are only `call`'s.
         assert_eq!(doc.call("themes", "{}"), None);
-    }
-
-    #[test]
-    fn a_dropped_file_is_inserted_or_opened() {
-        let drop = |args: &str| call("drop_text", args);
-        let image = r#"{"path": "figs/plot.png", "kind": "image"}"#;
-        assert_eq!(
-            drop(image).as_deref(),
-            Some(r#"{"insert":"\\includegraphics{figs/plot.png}"}"#)
-        );
-        let pdf = r#"{"path": "a.pdf", "kind": "pdf", "into": "tex"}"#;
-        assert!(drop(pdf).unwrap().contains("includegraphics{a.pdf}"));
-        // Into any other file, or any other kind, it opens.
-        let into_bib = r#"{"path": "a.pdf", "kind": "pdf", "into": "bib"}"#;
-        assert_eq!(drop(into_bib).as_deref(), Some(r#"{"open":true}"#));
-        let tex = r#"{"path": "ch1.tex", "kind": "tex"}"#;
-        assert_eq!(drop(tex).as_deref(), Some(r#"{"open":true}"#));
-        // A folder does nothing; a call without a path is no call.
-        assert_eq!(drop(r#"{"path": "figs"}"#).as_deref(), Some("null"));
-        assert_eq!(drop("{}"), None);
+        assert_eq!(call("themes", "[]"), None);
     }
 
     /// The answers' shapes, and the arguments reaching what answers them: the
     /// colours, headings and drawings themselves are tested beside them.
     #[test]
     fn the_free_commands_answer_by_name() {
-        let themes = call("themes", "{}").unwrap();
-        assert!(themes.starts_with(
-            r#"[{"id":"overleaf","title":"Overleaf","command":{"light":[0.0,0.0,1.0,1.0]"#
-        ));
-        let light = r#"{"theme": "texstudio", "dark": false, "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0.08]}"#;
-        let colors: Vec<[f64; 4]> =
-            serde_json::from_str(&call("theme_colors", light).unwrap()).unwrap();
-        assert_eq!(colors.len(), 9);
-        assert_eq!(call("theme_colors", r#"{"theme": "solarized"}"#), None);
+        // Each a command, its arguments and its answer, or a part of it; or none.
+        for case in [
+            r#"drop_text {"path":"f/p.png","kind":"image"} {"insert":"\\includegraphics{f/p.png}"}"#,
+            r#"drop_text {"path":"a.pdf","kind":"pdf","into":"tex"} {"insert":"\\includegraphics{a.pdf}"}"#,
+            // Into any other file, or any other kind, it opens; a folder does nothing.
+            r#"drop_text {"path":"a.pdf","kind":"pdf","into":"bib"} {"open":true}"#,
+            r#"drop_text {"path":"ch1.tex","kind":"tex"} {"open":true}"#,
+            r#"drop_text {"path":"figs"} null"#,
+            r#"drop_text {} none"#,
+            r#"themes {} [{"id":"overleaf","title":"Overleaf","command":{"light":[0.0,0.0,1.0,1.0]"#,
+            r#"themes {} {"system":"systemPink","light":[1.0,"#,
+            r#"theme_colors {"theme":"solarized"} none"#,
+            r#"theme_colors {"theme":"texstudio","dark":false,"background":[1,1,1,1],"fill":[0,0,0,0]} [[0.50"#,
+            r#"menus {} {"glyph":"α","command":"\\alpha"}"#,
+            r#"heading_styles {"class":"letter"} [{"title":"Normal Text","command":"""#,
+            r#"math_svg {"tex":"x^2","size":10} "width":"#,
+            r#"math_svg {"tex":"x^"} {"error":"#,
+            r#"glyph_svg {"command":"\\alpha"} "width":24.0,"height":24.0"#,
+        ] {
+            let (command, rest) = case.split_once(' ').unwrap();
+            let (args, part) = rest.split_once(' ').unwrap();
+            let answer = call(command, args).unwrap_or("none".into());
+            assert!(answer.contains(part), "{case}: {answer}");
+        }
         // A ratio asked for is the one it is raised to; without one, text's.
         let ratio_of = |extra: &str| {
-            let args = format!(
-                r#"{{"color": [0.6, 0.6, 0.6, 1], "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0]{extra}}}"#
-            );
-            let raised: [f64; 4] = serde_json::from_str(&call("legible", &args).unwrap()).unwrap();
-            contrast(raised, [1.0; 4])
+            let grey = r#""color":[0.6,0.6,0.6,1],"background":[1,1,1,1],"fill":[0,0,0,0]"#;
+            let raised = call("legible", &format!("{{{grey}{extra}}}")).unwrap();
+            contrast(serde_json::from_str(&raised).unwrap(), [1.0; 4])
         };
-        let plain = ratio_of("");
-        assert!((4.5..5.0).contains(&plain), "{plain}");
-        let border = ratio_of(r#", "ratio": 3.0"#);
-        assert!((3.0..3.5).contains(&border), "{border}");
-        let enhanced = ratio_of(r#", "increaseContrast": true"#);
-        assert!((7.0..7.6).contains(&enhanced), "{enhanced}");
-        let menus = call("menus", "{}").unwrap();
-        assert!(menus.contains(r#"{"glyph":"α","command":"\\alpha"}"#));
-        let levels = call("heading_styles", r#"{"class": "letter"}"#).unwrap();
-        assert!(levels.starts_with(r#"[{"title":"Normal Text","command":"""#));
-        let maths = call("math_svg", r#"{"tex": "x^2", "size": 10}"#);
-        let maths: serde_json::Value = serde_json::from_str(&maths.unwrap()).unwrap();
-        for key in ["svg", "width", "height", "baseline"] {
-            assert!(maths.get(key).is_some(), "{key}");
-        }
-        let error = call("math_svg", r#"{"tex": "x^"}"#).unwrap();
-        assert!(error.starts_with(r#"{"error":"#), "{error}");
-        let glyph = call("glyph_svg", r#"{"command": "\\alpha"}"#).unwrap();
-        assert!(glyph.contains(r#""width":24.0,"height":24.0"#), "{glyph}");
+        assert!((4.5..5.0).contains(&ratio_of("")));
+        assert!((3.0..3.5).contains(&ratio_of(r#","ratio":3.0"#)));
+        assert!((7.0..7.6).contains(&ratio_of(r#","increaseContrast":true"#)));
     }
 }

@@ -440,7 +440,7 @@ fn lines_move_up_and_down() {
     e.shows("b\na\nc\nd", range(4, 1));
     assert_eq!(e.doc.text(), e.string());
     // The empty line after a final line break has nothing to move.
-    let e = Editor::open("a\n", None);
+    let mut e = Editor::open("a\n", None);
     assert_eq!(e.doc.move_lines(&e.selections, true), None);
     // CRLF ends a line as one.
     let mut e = Editor::open("a\r\nb", None);
@@ -461,7 +461,7 @@ fn several_selections_move_together() {
 
 #[test]
 fn a_bracket_finds_its_partner() {
-    let doc = SourceDocument::new("(a [b] {c}) ]");
+    let mut doc = SourceDocument::new("(a [b] {c}) ]");
     assert_eq!(doc.partner(0), Some(10));
     assert_eq!(doc.partner(10), Some(0));
     assert_eq!(doc.partner(3), Some(5));

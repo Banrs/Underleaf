@@ -77,16 +77,8 @@ impl<T> Stack<T> {
     /// Take off the innermost item `pick` takes (the outermost, given
     /// `outermost`) and all above it, handing it to `taken` first.
     pub fn pop_to(&mut self, outermost: bool, pick: impl Fn(&T) -> bool, taken: impl FnOnce(&T)) {
-        let mut found = None;
-        for frame in self.frames() {
-            if pick(&frame.item) {
-                found = Some(frame);
-                if !outermost {
-                    break;
-                }
-            }
-        }
-        if let Some(frame) = found {
+        let picked = self.frames().filter(|frame| pick(&frame.item));
+        if let Some(frame) = picked.take(if outermost { usize::MAX } else { 1 }).last() {
             let below = frame.below.clone();
             taken(&frame.item);
             *self = below;

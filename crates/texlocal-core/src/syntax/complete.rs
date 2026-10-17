@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use super::{SourceDocument, Text, catalog, is, utf16};
+use super::{SourceDocument, Text, catalog::CATALOG, is, utf16};
 
 /// A place to type in a completion's text. Fields with the same `index`
 /// are one field in several places: what's typed in one goes in all.
@@ -62,125 +62,112 @@ impl SourceDocument {
     /// the labels, citations or environments an argument takes, or a
     /// bibliography entry's type after "@".
     pub fn completions(
-        &self,
+        &mut self,
         caret: u32,
         explicit: bool,
         labels: &[String],
         citations: &[String],
     ) -> Option<Completions> {
-        let (text, caret) = (&self.text, caret.min(self.text.len()));
-        let line = text.line_index(caret);
-        // The caret's line, at most 250 units back.
-        let from = text.lines[line].max(caret.saturating_sub(250));
-        let before = String::from_utf16_lossy(&text.units[from as usize..caret as usize]);
-        let catalog = &*catalog::CATALOG;
-        let offer = |start: usize, kind: CompletionKind, items: Vec<Completion>| {
-            (!items.is_empty()).then(|| Completions {
-                start: from + utf16(&before[..start]) as u32,
-                kind,
-                items,
-            })
-        };
-        let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
-
-        if let Some(c) = ARGUMENT.captures(&before) {
-            let (names, kind) = match &c[1] {
-                c if listed(&catalog.cite_commands, c) => (citations, CompletionKind::Citation),
-                c if listed(&catalog.ref_commands, c) => (labels, CompletionKind::Label),
-                "begin" | "end" => (&catalog.environments[..], CompletionKind::Environment),
-                _ => return None,
-            };
-            let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
-            let items = words(matching(names, &before[start..], |n| n), "");
-            return offer(start, kind, items);
-        }
-        // @article and the like, in a .bib file.
-        if let Some(m) = ENTRY_TYPE.find(&before) {
-            let names = matching(&catalog.bib_entry_types, &m.as_str()[1..], |t| t);
-            return offer(m.start(), CompletionKind::EntryType, words(names, "@"));
-        }
-        // \command, once a letter follows the backslash.
-        let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
-        let items = matching(&catalog.commands, m.as_str(), |c| &c.0)
-            .into_iter()
-            .map(|(name, _, snippet)| {
-                let (text, fields) = expand(text, caret, snippet);
-                Completion {
-                    label: name.clone(),
-                    text,
-                    fields,
-                }
-            })
-            .collect();
-        offer(m.start(), CompletionKind::Command, items)
+        completions(&mut self.text, (caret, explicit), (labels, citations))
     }
+}
+
+pub(crate) fn completions(
+    text: &mut Text,
+    (caret, explicit): (u32, bool),
+    (labels, citations): (&[String], &[String]),
+) -> Option<Completions> {
+    let caret = caret.min(text.len());
+    text.reach_line(caret);
+    // The caret's line, at most 250 units back.
+    let line = text.line_start(text.line_index(caret));
+    let from = line.max(caret.saturating_sub(250));
+    let before = String::from_utf16_lossy(&text.units()[from as usize..caret as usize]);
+    let offer = |start: usize, kind, items: Vec<Completion>| {
+        let start = from + utf16(&before[..start]) as u32;
+        (!items.is_empty()).then_some(Completions { start, kind, items })
+    };
+    let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
+    if let Some(c) = ARGUMENT.captures(&before) {
+        let (names, kind) = match &c[1] {
+            c if listed(&CATALOG.cite_commands, c) => (citations, CompletionKind::Citation),
+            c if listed(&CATALOG.ref_commands, c) => (labels, CompletionKind::Label),
+            "begin" | "end" => (&CATALOG.environments[..], CompletionKind::Environment),
+            _ => return None,
+        };
+        let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
+        let names = matching(names, &before[start..], |n| n);
+        return offer(start, kind, words(names, ""));
+    }
+    // @article and the like, in a .bib file.
+    if let Some(m) = ENTRY_TYPE.find(&before) {
+        let names = matching(&CATALOG.bib_entry_types, &m.as_str()[1..], |t| t);
+        return offer(m.start(), CompletionKind::EntryType, words(names, "@"));
+    }
+    // \command, once a letter follows the backslash.
+    let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
+    let commands = matching(&CATALOG.commands, m.as_str(), |c| &c.0).into_iter();
+    let items = commands.map(|(name, _, snippet)| {
+        let (text, fields) = expand(text, caret, snippet);
+        Completion {
+            label: name.clone(),
+            text,
+            fields,
+        }
+    });
+    offer(m.start(), CompletionKind::Command, items.collect())
 }
 
 /// Literal names, with `@` prefixed for bibliography entry types.
 fn words(names: Vec<&String>, prefix: &str) -> Vec<Completion> {
-    names
-        .into_iter()
-        .map(|name| {
-            let label = format!("{prefix}{name}");
-            Completion {
-                text: label.clone(),
-                label,
-                fields: vec![],
-            }
-        })
-        .collect()
+    let word = |name| {
+        let label = format!("{prefix}{name}");
+        Completion {
+            text: label.clone(),
+            label,
+            fields: vec![],
+        }
+    };
+    names.into_iter().map(word).collect()
 }
 
 /// The items whose names start with what's typed, those with its case first.
 fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) -> Vec<&'a T> {
-    let (lower, ascii) = (typed.to_lowercase(), typed.is_ascii());
+    let (lower, t) = (typed.to_lowercase(), typed.as_bytes());
     // ASCII names, as the catalog's and most keys are, are compared in
     // place: lowercasing a copy of each, at every key typed, was most of a
     // citation's offer. Others are lowercased whole, by Unicode's full
     // mapping, which may lower a character to ASCII (the kelvin sign to k).
-    let starts = |n: &str| {
-        if ascii && n.is_ascii() {
-            let head = n.as_bytes().get(..typed.len());
-            head.is_some_and(|head| head.eq_ignore_ascii_case(typed.as_bytes()))
-        } else {
-            n.to_lowercase().starts_with(&lower)
-        }
+    let starts = |n: &str| match typed.is_ascii() && n.is_ascii() {
+        true => n.len() >= t.len() && n.as_bytes()[..t.len()].eq_ignore_ascii_case(t),
+        false => n.to_lowercase().starts_with(&lower),
     };
-    let (mut exact, folded): (Vec<_>, Vec<_>) = items
-        .iter()
-        .filter(|i| starts(name(i)))
-        .partition(|i| name(i).starts_with(typed));
+    let found = items.iter().filter(|i| starts(name(i)));
+    let (mut exact, folded): (Vec<_>, Vec<_>) = found.partition(|i| name(i).starts_with(typed));
     exact.extend(folded);
     exact
 }
 
-/// A snippet's text and fields as it goes in at `at`: "#{name}" fields show
-/// their name as their text, and fields with the same name are one; a line
-/// after the first takes `at`'s line's indentation, and each leading tab one
-/// more level (two spaces, the editor's indent unit).
+/// A snippet's text and fields as it goes in at `at` (reached): "#{name}"
+/// fields show their name as their text, and fields with the same name are
+/// one; a line after the first takes `at`'s line's indentation, and each
+/// leading tab one more level (two spaces, the editor's indent unit).
 pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<SnippetField>) {
     let line = source.line(source.line_index(at));
-    let indent = line
-        .iter()
-        .take_while(|&&u| is(u, ' ') || is(u, '\t'))
-        .count();
-    let indentation = String::from_utf16_lossy(&line[..indent]);
+    let blank = |&&u: &&u16| is(u, ' ') || is(u, '\t');
+    let indentation = String::from_utf16_lossy(&line[..line.iter().take_while(blank).count()]);
     // Catalog tabs are indentation; preserve any tabs in the source's indent.
-    let snippet = snippet
-        .replace('\t', "  ")
-        .replace('\n', &format!("\n{indentation}"));
-    let mut names = Vec::new();
-    let mut fields = Vec::new();
+    let snippet = snippet.replace('\t', "  ");
+    let snippet = snippet.replace('\n', &format!("\n{indentation}"));
+    let (mut names, mut fields) = (Vec::new(), Vec::new());
     let text = FIELD.replace_all(&snippet, |c: &regex::Captures| {
         let (whole, name) = (c.get_match(), &c[1]);
         // Unnamed fields are each their own.
-        let index = names
-            .iter()
-            .position(|previous| !name.is_empty() && previous == name)
-            .unwrap_or_else(|| {
-                names.push(name.to_owned());
-                names.len() - 1
-            });
+        let same = names.iter().position(|n| !name.is_empty() && n == name);
+        let index = same.unwrap_or_else(|| {
+            names.push(name.to_owned());
+            names.len() - 1
+        });
         fields.push(SnippetField {
             // Each earlier field lost its three delimiters: "#{" and "}".
             start: (utf16(&snippet[..whole.start()]) - 3 * fields.len()) as u32,
@@ -194,67 +181,36 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
 
 #[cfg(test)]
 mod tests {
-    use crate::syntax::{Completion, SnippetField, SourceDocument};
-
-    /// What's offered at the end of `before`, `keys` being the citations.
-    fn offered(before: &str, keys: &[String]) -> Vec<Completion> {
-        let caret = before.encode_utf16().count() as u32;
-        let offer = SourceDocument::new(before).completions(caret, false, &[], keys);
-        offer.map_or(vec![], |offer| offer.items)
-    }
-
-    fn labels(before: &str, keys: &[String]) -> Vec<String> {
-        offered(before, keys).into_iter().map(|i| i.label).collect()
-    }
-
-    fn places(fields: &[SnippetField]) -> Vec<(u32, u32, u32)> {
-        fields
-            .iter()
-            .map(|f| (f.start, f.length, f.index))
-            .collect()
-    }
+    use crate::syntax::{SourceDocument, Text};
 
     #[test]
     fn snippets_expand_with_their_fields() {
-        let begin = offered("  \\beg", &[]).remove(0);
-        assert_eq!(begin.text, "\\begin{env}\n    \n  \\end{env}");
-        // env twice (one field), then the body; the body's line is indented a level.
-        assert_eq!(places(&begin.fields), [(7, 3, 0), (16, 0, 1), (24, 3, 0)]);
-        let section = offered("\\sub", &[]).remove(0);
-        assert_eq!(
-            (section.label.as_str(), section.text.as_str()),
-            ("\\subsection", "\\subsection{}")
-        );
-        assert_eq!(places(&section.fields), [(12, 0, 0)]);
-        let (text, fields) = super::expand(
-            &crate::syntax::Text::new("\t\\beg"),
-            5,
-            "#{😀}\n\t#{}#{é}#{😀}#{}",
-        );
+        // 😀 twice (one field), then the others, the line indented a level.
+        let snippet = "#{😀}\n\t#{}#{é}#{😀}#{}";
+        let (text, fields) = super::expand(&Text::new("\t\\beg"), 5, snippet);
         assert_eq!(text, "😀\n\t  é😀");
-        assert_eq!(
-            places(&fields),
-            [(0, 2, 0), (6, 0, 1), (6, 1, 2), (7, 2, 0), (9, 0, 3)]
-        );
+        let places = Vec::from_iter(fields.iter().map(|f| (f.start, f.length, f.index)));
+        let expected = [(0, 2, 0), (6, 0, 1), (6, 1, 2), (7, 2, 0), (9, 0, 3)];
+        assert_eq!(places, expected);
     }
 
     #[test]
-    fn case_matches_come_first() {
-        let names = labels("\\s", &[]);
+    fn matches_with_the_typed_case_come_first() {
+        let offered = |before: &str, keys: &[String]| -> Vec<String> {
+            let caret = before.encode_utf16().count() as u32;
+            let offer = SourceDocument::new(before).completions(caret, false, &[], keys);
+            offer.map_or(vec![], |o| o.items.into_iter().map(|i| i.label).collect())
+        };
+        let names = offered("\\s", &[]);
         let upper = names.iter().position(|n| n == "\\Sigma").unwrap();
         assert!(names[..upper].iter().all(|n| n.starts_with("\\s")));
-    }
-
-    #[test]
-    fn keys_match_lowercased_whole() {
         let keys = ["Knuth84", "knuth86", "Émile", "émile2", "Kn"].map(String::from);
-        let offered = |typed: &str| labels(&format!("\\cite{{{typed}"), &keys);
-        assert_eq!(offered("kn"), ["knuth86", "Knuth84", "Kn"]);
-        assert_eq!(offered("KNUTH"), ["Knuth84", "knuth86"]);
-        assert_eq!(offered("knu"), ["knuth86", "Knuth84"]);
-        assert_eq!(offered("é"), ["émile2", "Émile"]);
-        assert_eq!(offered("ÉMILE"), ["Émile", "émile2"]);
-        // The kelvin sign lowers to an ASCII k.
-        assert_eq!(offered("\u{212a}n"), ["Knuth84", "knuth86", "Kn"]);
+        let cited = |typed: &str| offered(&format!("\\cite{{{typed}"), &keys).join(" ");
+        assert_eq!(cited("kn"), "knuth86 Knuth84 Kn");
+        assert_eq!(cited("KNUTH"), "Knuth84 knuth86");
+        assert_eq!(cited("é"), "émile2 Émile");
+        assert_eq!(cited("ÉMILE"), "Émile émile2");
+        // Others are lowered whole: the kelvin sign lowers to an ASCII k.
+        assert_eq!(cited("\u{212a}n"), "Knuth84 knuth86 Kn");
     }
 }

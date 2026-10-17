@@ -5,13 +5,12 @@
 //! every level, set as the standard classes set them, and numbers them as a
 //! book's once the document has chapters.
 
-use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::Serialize;
 
-use super::catalog::{CATALOG, HeadingLevel};
+use super::catalog::CATALOG;
 
 /// The class a main file's `\documentclass` names, and the type size its
 /// options set.
@@ -37,21 +36,13 @@ pub fn document_class(text: &str) -> Option<DocumentClass> {
     let named = |text: &str| {
         let uncommented = COMMENT.replace_all(text, "$1");
         let c = CLASS.captures(&uncommented)?;
-        let options: Vec<&str> = c
-            .get(1)
-            .map_or(vec![], |o| o.as_str().split(',').map(str::trim).collect());
         // KOMA-Script's fontsize=11pt as well as the standard 11pt.
-        let point_size = [11, 12]
-            .into_iter()
-            .find(|size| {
-                let (standard, koma) = (format!("{size}pt"), format!("fontsize={size}pt"));
-                options.iter().any(|&o| o == standard || o == koma)
-            })
-            .unwrap_or(10);
-        Some(DocumentClass {
-            name: c[2].to_owned(),
-            point_size,
-        })
+        let options = c.get(1).map_or("", |o| o.as_str()).replace("fontsize=", "");
+        let sizes: Vec<&str> = options.split(',').map(str::trim).collect();
+        let set = |size: &u32| sizes.contains(&format!("{size}pt").as_str());
+        let point_size = [11, 12].into_iter().find(set).unwrap_or(10);
+        let name = c[2].to_owned();
+        Some(DocumentClass { name, point_size })
     };
     let preamble = text.find("\\documentclass").and_then(|at| {
         let after = at + "\\documentclass".len();
@@ -88,35 +79,14 @@ pub struct Level {
     pub marker: Option<String>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Family {
-    Article,
-    Book,
-    AmsArticle,
-    AmsBook,
-    KomaArticle,
-    KomaBook,
-    Ieee,
-    Llncs,
-    Beamer,
-    Unsectioned,
-}
-
-fn family(class: &str) -> Option<Family> {
-    use Family::*;
-    Some(match class {
-        "article" | "proc" => Article,
-        "report" | "book" | "memoir" => Book,
-        "amsart" | "amsproc" => AmsArticle,
-        "amsbook" => AmsBook,
-        "scrartcl" => KomaArticle,
-        "scrreprt" | "scrbook" => KomaBook,
-        "IEEEtran" => Ieee,
-        "llncs" => Llncs,
-        "beamer" => Beamer,
-        "letter" | "minimal" => Unsectioned,
-        _ => return None,
-    })
+/// How a class sets a level: bold at one of `points`' sizes, bold at a size
+/// of its own (amsbook's \@xxpt and \@xivpt, whatever the size option), or
+/// at the text's size in a shape.
+#[derive(Clone, Copy)]
+enum Look {
+    Bold(usize),
+    Points(f64),
+    Plain(Shape),
 }
 
 /// size10.clo, size11.clo and size12.clo, in points: \normalsize, \large,
@@ -129,229 +99,162 @@ fn points(size: u32) -> [f64; 6] {
     }
 }
 
-const NORMAL: usize = 0;
-const LARGE_: usize = 1;
-const LARGE: usize = 2;
-const HUGE_: usize = 4;
-const HUGE: usize = 5;
+const NORMAL: Option<Look> = Some(Look::Bold(0));
+const LARGE_: Option<Look> = Some(Look::Bold(1));
+const LARGE: Option<Look> = Some(Look::Bold(2));
+const HUGE_: Option<Look> = Some(Look::Bold(4));
+const HUGE: Option<Look> = Some(Look::Bold(5));
+const UPRIGHT: Option<Look> = Some(Look::Plain(Shape::Upright));
+const ITALIC: Option<Look> = Some(Look::Plain(Shape::Italic));
+const SMALL_CAPS: Option<Look> = Some(Look::Plain(Shape::SmallCaps));
 
 /// The levels a class has, Normal Text first, as it sets and numbers them;
 /// `class` none for a document without one.
 pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<Level> {
-    use Family::*;
-    let family = class.and_then(|c| family(&c.name));
-    let sizes = points(class.map_or(10, |c| c.point_size));
-    let bold = |size: usize| Font {
-        scale: sizes[size] / sizes[0],
-        bold: true,
-        shape: Shape::Upright,
-    };
-    let plain = |shape| Font {
-        scale: 1.0,
-        bold: false,
-        shape,
-    };
-    // The standard classes' (article.cls, book.cls): every level bold, and so memoir's.
-    let mut fonts: HashMap<&str, Font> = HashMap::from([
-        ("part", bold(HUGE)),
-        ("chapter", bold(HUGE)),
-        ("section", bold(LARGE)),
-        ("subsection", bold(LARGE_)),
-        ("subsubsection", bold(NORMAL)),
-        ("paragraph", bold(NORMAL)),
-    ]);
-    let sections = &CATALOG.heading_levels;
-    let mut commands: Vec<&str> = sections.iter().map(|l| l.command.as_str()).collect();
-    let (numbered, chapters, roman) = match family {
-        Some(Article | KomaArticle | AmsArticle) => (3, false, false),
-        Some(Book | KomaBook) => (2, true, false),
-        Some(AmsBook) => (3, true, false),
-        Some(Ieee) => (4, false, true),
-        Some(Llncs) => (2, false, false),
-        // Frames print no section headings: only the part page has a number.
-        Some(Beamer) => (0, false, false),
-        Some(Unsectioned) => (0, false, false),
-        None => (if has_chapters { 2 } else { 3 }, has_chapters, false),
-    };
-    let without = |commands: &mut Vec<&str>, gone: &[&str]| commands.retain(|c| !gone.contains(c));
-    match family {
-        Some(Article) => {
-            fonts.insert("part", bold(HUGE_));
-            without(&mut commands, &["chapter"]);
+    // The standard classes' (article.cls, book.cls), part to paragraph:
+    // every level bold, and so memoir's. None for a level the class hasn't.
+    let [part, chapter, s, ss, sss, paragraph] = [HUGE, HUGE, LARGE, LARGE_, NORMAL, NORMAL];
+    let (name, mut unknown) = (class.map_or("", |c| &c.name), false);
+    let looks = match name {
+        "article" | "proc" => [HUGE_, None, s, ss, sss, paragraph],
+        "report" | "book" | "memoir" => [part, chapter, s, ss, sss, paragraph],
+        "amsart" | "amsproc" => [NORMAL, None, SMALL_CAPS, NORMAL, ITALIC, UPRIGHT],
+        "amsbook" => {
+            let [part, chapter] = [20.74, 14.4].map(|p| Some(Look::Points(p)));
+            [part, chapter, NORMAL, NORMAL, ITALIC, UPRIGHT]
         }
-        Some(AmsArticle) => {
-            fonts = HashMap::from([
-                ("part", bold(NORMAL)),
-                ("section", plain(Shape::SmallCaps)),
-                ("subsection", bold(NORMAL)),
-                ("subsubsection", plain(Shape::Italic)),
-                ("paragraph", plain(Shape::Upright)),
-            ]);
-            without(&mut commands, &["chapter"]);
-        }
-        Some(AmsBook) => {
-            // \@xxpt and \@xivpt, whatever the size option.
-            let fixed = |points: f64| Font {
-                scale: points / sizes[0],
-                bold: true,
-                shape: Shape::Upright,
-            };
-            fonts = HashMap::from([
-                ("part", fixed(20.74)),
-                ("chapter", fixed(14.4)),
-                ("section", bold(NORMAL)),
-                ("subsection", bold(NORMAL)),
-                ("subsubsection", plain(Shape::Italic)),
-                ("paragraph", plain(Shape::Upright)),
-            ]);
-        }
-        Some(KomaArticle) => without(&mut commands, &["chapter"]),
+        "scrartcl" => [part, None, s, ss, sss, paragraph],
         // headings=big, KOMA-Script's default.
-        Some(KomaBook) => {
-            fonts.insert("chapter", bold(HUGE_));
-        }
-        Some(Ieee) => {
-            fonts = HashMap::from([
-                ("section", plain(Shape::SmallCaps)),
-                ("subsection", plain(Shape::Italic)),
-                ("subsubsection", plain(Shape::Italic)),
-                ("paragraph", plain(Shape::Italic)),
-            ]);
-            without(&mut commands, &["part", "chapter"]);
-        }
-        Some(Llncs) => {
-            fonts.insert("section", bold(LARGE_));
-            fonts.insert("subsection", bold(NORMAL));
-            fonts.insert("paragraph", plain(Shape::Italic));
-            without(&mut commands, &["chapter"]);
-        }
+        "scrreprt" | "scrbook" => [part, HUGE_, s, ss, sss, paragraph],
+        "IEEEtran" => [None, None, SMALL_CAPS, ITALIC, ITALIC, ITALIC],
+        "llncs" => [part, None, LARGE_, NORMAL, sss, ITALIC],
+        // Frames print no section headings: only the part page has a number;
         // beamer.cls defines neither \chapter nor \paragraph.
-        Some(Beamer) => without(&mut commands, &["chapter", "paragraph"]),
-        Some(Unsectioned) => commands.clear(),
-        Some(Book) | None => {}
-    }
-    let marker = |index: usize| {
-        // LaTeX's depths: part -1, chapter 0, section 1.
-        let depth = index as i64 - 1;
-        if depth < 0 {
-            return Some("I".to_owned());
+        "beamer" => [part, None, s, ss, sss, None],
+        "letter" | "minimal" => [None; 6],
+        _ => {
+            unknown = true;
+            [part, chapter, s, ss, sss, paragraph]
         }
-        if depth > numbered {
-            return None;
-        }
-        if roman {
-            return Some(["I", "A", "1", "a"][depth as usize - 1].to_owned());
-        }
-        if depth == 0 {
-            return chapters.then(|| "1".to_owned());
-        }
-        Some(vec!["1"; (depth + chapters as i64) as usize].join("."))
     };
-    let normal = Level {
-        title: "Normal Text".to_owned(),
-        command: String::new(),
-        font: plain(Shape::Upright),
-        marker: None,
+    // Whether it has chapters, how deep its headings are numbered, and
+    // whether its numbers are IEEEtran's Roman and letters.
+    let chapters = looks[1].is_some() && (has_chapters || !unknown);
+    let numbered = match name {
+        "IEEEtran" => 4,
+        "amsbook" => 3,
+        "llncs" => 2,
+        "beamer" => 0,
+        _ => 3 - chapters as i64,
     };
-    let levels = sections
-        .iter()
-        .enumerate()
-        .filter(|(_, l)| commands.contains(&l.command.as_str()))
-        .map(|(index, HeadingLevel { title, command })| Level {
-            title: title.clone(),
-            command: command.clone(),
-            font: fonts
-                .get(command.as_str())
-                .copied()
-                .unwrap_or(plain(Shape::Upright)),
-            marker: marker(index),
-        });
-    std::iter::once(normal).chain(levels).collect()
+    let sizes = points(class.map_or(10, |c| c.point_size));
+    let font = |look| {
+        let (scale, bold, shape) = match look {
+            Look::Bold(size) => (sizes[size] / sizes[0], true, Shape::Upright),
+            Look::Points(points) => (points / sizes[0], true, Shape::Upright),
+            Look::Plain(shape) => (1.0, false, shape),
+        };
+        Font { scale, bold, shape }
+    };
+    // LaTeX's depths: part -1, chapter 0, section 1; Normal Text has none.
+    let marker = |depth: i64| match depth {
+        -2 => None,
+        -1 => Some("I".to_owned()),
+        _ if depth > numbered => None,
+        _ if name == "IEEEtran" => Some(["I", "A", "1", "a"][depth as usize - 1].to_owned()),
+        0 => chapters.then(|| "1".to_owned()),
+        _ => Some(vec!["1"; (depth + chapters as i64) as usize].join(".")),
+    };
+    let headings = CATALOG.heading_levels.iter();
+    let levels = headings.map(|l| (l.title.as_str(), &*l.command));
+    let all = std::iter::once(("Normal Text", "")).chain(levels);
+    let all = all.zip(std::iter::once(UPRIGHT).chain(looks)).enumerate();
+    let level = |(index, ((title, command), look)): (usize, ((&str, &str), Option<Look>))| {
+        Some(Level {
+            title: title.to_owned(),
+            command: command.to_owned(),
+            font: font(look?),
+            marker: marker(index as i64 - 2),
+        })
+    };
+    all.filter_map(level).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn styles(name: Option<&str>, size: u32, chapters: bool) -> Vec<Level> {
-        let class = name.map(|name| DocumentClass {
-            name: name.to_owned(),
-            point_size: size,
-        });
-        heading_styles(class.as_ref(), chapters)
-    }
-
-    fn titles(levels: &[Level]) -> String {
-        let titles: Vec<&str> = levels.iter().map(|l| l.title.as_str()).collect();
-        titles.join(", ")
-    }
-
-    /// The levels' markers, "-" for none.
-    fn markers(levels: &[Level]) -> String {
-        let markers: Vec<&str> = levels
-            .iter()
-            .map(|l| l.marker.as_deref().unwrap_or("-"))
-            .collect();
-        markers.join(" ")
+    fn styles(name: &str, point_size: u32, chapters: bool) -> Vec<Level> {
+        let name = name.to_owned();
+        let class = DocumentClass { name, point_size };
+        heading_styles(Some(&class).filter(|c| !c.name.is_empty()), chapters)
     }
 
     #[test]
     fn the_class_has_its_levels_and_numbers_them() {
-        let article = styles(Some("article"), 10, false);
-        let titled = "Normal Text, Part, Section, Subsection, Subsubsection, Paragraph";
-        assert_eq!(titles(&article), titled);
-        assert_eq!(markers(&article), "- I 1 1.1 1.1.1 -");
-        let report = "- I 1 1.1 1.1.1 - -";
-        assert_eq!(markers(&styles(Some("report"), 10, false)), report);
-        let ieee = styles(Some("IEEEtran"), 10, false);
-        assert_eq!(markers(&ieee), "- I A 1 a");
-        let titled = "Normal Text, Section, Subsection, Subsubsection, Paragraph";
-        assert_eq!(titles(&ieee), titled);
-        assert_eq!(titles(&styles(Some("letter"), 10, false)), "Normal Text");
-        let beamer = styles(Some("beamer"), 10, false);
-        let titled = "Normal Text, Part, Section, Subsection, Subsubsection";
-        assert_eq!(titles(&beamer), titled);
-        assert_eq!(markers(&beamer), "- I - - -");
-        // A class it doesn't know has every level, numbered as a book's once there are chapters.
-        assert_eq!(markers(&styles(Some("thesis"), 10, true)), report);
-        let none = "- I - 1 1.1 1.1.1 -";
-        assert_eq!(markers(&styles(None, 10, false)), none);
+        // A class, whether the document has chapters, and its levels'
+        // commands and markers, "-" for none.
+        for case in [
+            "article: text -, part I, section 1, subsection 1.1, subsubsection 1.1.1, paragraph -",
+            "report: text -, part I, chapter 1, section 1.1, subsection 1.1.1, subsubsection -, paragraph -",
+            "IEEEtran: text -, section I, subsection A, subsubsection 1, paragraph a",
+            "letter: text -",
+            "beamer: text -, part I, section -, subsection -, subsubsection -",
+            "amsbook: text -, part I, chapter 1, section 1.1, subsection 1.1.1, subsubsection 1.1.1.1, paragraph -",
+            // A class it doesn't know has every level, numbered as a book's once
+            // there are chapters.
+            "thesis chapters: text -, part I, chapter 1, section 1.1, subsection 1.1.1, subsubsection -, paragraph -",
+            ": text -, part I, chapter -, section 1, subsection 1.1, subsubsection 1.1.1, paragraph -",
+        ] {
+            let (class, expected) = case.split_once(": ").unwrap();
+            let name = class.trim_end_matches(" chapters");
+            let level = |l: &Level| {
+                let c = &l.command;
+                let command = if c.is_empty() { "text" } else { c };
+                format!("{command} {}", l.marker.as_deref().unwrap_or("-"))
+            };
+            let levels: Vec<_> = styles(name, 10, name != class).iter().map(level).collect();
+            assert_eq!(levels.join(", "), expected);
+        }
     }
 
     #[test]
     fn the_class_sets_the_levels_sizes() {
-        let font = |levels: &[Level], command: &str| {
-            let font = levels.iter().find(|l| l.command == command).unwrap().font;
-            (font.scale, font.bold, font.shape)
-        };
-        let book = styles(Some("book"), 10, false);
-        assert_eq!(font(&book, "part"), (2.488, true, Shape::Upright));
-        assert!((font(&styles(Some("article"), 10, false), "part").0 - 2.074).abs() < 0.001);
-        assert!((font(&styles(Some("article"), 12, false), "section").0 - 1.44).abs() < 0.001);
-        assert_eq!(font(&book, ""), (1.0, false, Shape::Upright));
-        let amsart = styles(Some("amsart"), 10, false);
-        assert_eq!(font(&amsart, "section"), (1.0, false, Shape::SmallCaps));
+        // A class, its size option and a level's command, and how it sets the level.
+        for case in [
+            "book 10 part: 2.488 true Upright",
+            "book 10: 1.000 false Upright",
+            "article 10 part: 2.074 true Upright",
+            "article 12 section: 1.440 true Upright",
+            "amsart 10 section: 1.000 false SmallCaps",
+            "amsbook 12 chapter: 1.200 true Upright",
+        ] {
+            let (class, expected) = case.split_once(": ").unwrap();
+            let mut class = class.split(' ');
+            let name = class.next().unwrap();
+            let size = class.next().unwrap().parse().unwrap();
+            let command = class.next().unwrap_or("");
+            let levels = styles(name, size, false);
+            let f = levels.iter().find(|l| l.command == command).unwrap().font;
+            assert_eq!(format!("{:.3} {} {:?}", f.scale, f.bold, f.shape), expected);
+        }
     }
 
     #[test]
     fn the_class_is_the_one_named_outside_comments() {
-        let class = |text: &str| {
-            document_class(text).map_or(String::new(), |c| format!("{} {}pt", c.name, c.point_size))
-        };
-        assert_eq!(
-            class("% \\documentclass{book}\n\\documentclass[a4paper, 12pt]{ article }"),
-            "article 12pt"
-        );
-        assert_eq!(
-            class("\\documentclass[fontsize=11pt]{scrartcl}"),
-            "scrartcl 11pt"
-        );
-        assert_eq!(class("50\\% \\documentclass{memoir}"), "memoir 10pt");
-        assert_eq!(class("no class"), "");
-        // The preamble's first: a class named in the body doesn't count.
-        let body = "\\documentclass{report}\n\\begin{document}\n\\documentclass{book}";
-        assert_eq!(class(body), "report 10pt");
-        // A comment ends at any line break.
-        assert_eq!(class("% x\r\\documentclass{book}"), "book 10pt");
+        for case in [
+            "% \\documentclass{book}\n\\documentclass[a4paper, 12pt]{ article } => article 12",
+            "\\documentclass[fontsize=11pt]{scrartcl} => scrartcl 11",
+            "50\\% \\documentclass{memoir} => memoir 10",
+            "no class => none",
+            // The preamble's first: a class named in the body doesn't count.
+            "\\documentclass{report}\n\\begin{document}\n\\documentclass{book} => report 10",
+            // A comment ends at any line break.
+            "% x\r\\documentclass{book} => book 10",
+        ] {
+            let (text, class) = case.split_once(" => ").unwrap();
+            let found = document_class(text).map(|c| format!("{} {}", c.name, c.point_size));
+            assert_eq!(found.as_deref().unwrap_or("none"), class, "{text}");
+        }
     }
 }
