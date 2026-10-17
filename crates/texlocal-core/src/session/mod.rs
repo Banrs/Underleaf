@@ -2,13 +2,12 @@
 //! text, autosave, conflicts with other apps, builds and their issues, live
 //! preview, the folder's watcher), kept here once for every host.
 //!
-//! Each session is one task (`actor.rs`) that takes commands, edits, file
-//! changes and build and preview results as messages, one at a time, and
-//! tells the host what changed through the event hub. A document's text is
-//! the session's (`Document`): the host's editor sends each edit to it once,
-//! and the session saves, previews and highlights from that same text. A
-//! host numbers its sessions, so it listens for one before opening it.
-//! docs/core-api.md is the contract.
+//! Each session is one task (`actor.rs`) that takes commands, edits and file
+//! changes as messages, and the work it waits on (a build, TeXpresso's news),
+//! one at a time, and tells the host what changed through the event hub. A
+//! document's text is the session's (`Document`): the host's editor sends each
+//! edit to it once, and the session saves, previews and highlights from that
+//! same text. docs/core-api.md is the contract.
 
 mod actor;
 mod document;
@@ -21,61 +20,19 @@ mod watch;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::analyze::{self, Heading};
-use crate::compile::CompileResult;
 use crate::events::{Hub, Listener};
-use crate::projects::{SymbolScan, Symbols};
 use crate::service::{Service, arg, out, string_arg};
-use crate::texpresso::Events;
 use crate::{CoreError, lock, paths};
 
 pub use document::Document;
-pub(crate) use engine::{Engine, ServiceEngine};
-use watch::Change;
+pub(crate) use engine::Engine;
 
-/// The session's waits.
-#[derive(Debug, Clone)]
-pub(crate) struct Timings {
-    /// From the last edit to the autosave.
-    pub autosave: Duration,
-    /// From a save to the scan of labels and citations.
-    pub symbols: Duration,
-    /// FSEvents' latency: changes this close together are taken together.
-    pub settle: Duration,
-    /// A stopped run is shown as halted only once it has lasted this long.
-    pub halts_after: Duration,
-    /// From a caret's move to telling TeXpresso where it settled.
-    pub caret: Duration,
-    /// From a rename, a new main file or a changed file to the preview catching up.
-    pub live_follow: Duration,
-    /// From a failed whole text to sending it again.
-    pub retry: Duration,
-    /// A preview that ends by itself after this long is started again.
-    pub restartable_after: Duration,
-    /// Whether the folder is watched; tests send the changes themselves.
-    pub watch: bool,
-}
-
-impl Default for Timings {
-    fn default() -> Self {
-        Self {
-            autosave: Duration::from_millis(700),
-            symbols: Duration::from_millis(150),
-            settle: Duration::from_millis(250),
-            halts_after: Duration::from_secs(1),
-            caret: Duration::from_millis(150),
-            live_follow: Duration::from_millis(180),
-            retry: Duration::from_millis(750),
-            restartable_after: Duration::from_secs(10),
-            watch: true,
-        }
-    }
-}
+type Reply = oneshot::Sender<Result<Value, CoreError>>;
 
 /// What reaches a session's task.
 pub(crate) enum Msg {
@@ -93,30 +50,26 @@ pub(crate) enum Msg {
     Command {
         name: String,
         args: Value,
-        reply: oneshot::Sender<Result<Value, CoreError>>,
+        reply: Reply,
     },
-    BuildDone(Result<CompileResult, CoreError>),
-    Cleaned(Result<(), CoreError>),
-    /// A scan's sequence number, what it read for the next, and what it found.
-    Symbols(u64, SymbolScan, Result<Symbols, CoreError>),
-    LiveNews(u64, Result<Events, CoreError>),
-    Fs(Vec<Change>),
+    Fs(Vec<watch::Change>),
+    #[cfg(test)]
+    Probe(Box<dyn FnOnce(&mut actor::Actor) + Send>),
+}
+
+/// What other threads read without waiting for the session's task.
+#[derive(Default)]
+pub(crate) struct Shared {
+    /// The documents by path, for the host's editor to edit.
+    docs: Mutex<HashMap<String, Document>>,
+    /// The outline of the last `analyze` asked for of those finished, by its place in
+    /// the order asked, for `outline_current`.
+    outline: Mutex<(u64, Vec<Heading>)>,
 }
 
 struct Open {
     tx: mpsc::UnboundedSender<Msg>,
-    /// The session's documents by path, for the host's editor to edit.
-    docs: Arc<Mutex<HashMap<String, Document>>>,
-    outline: Arc<Mutex<Outline>>,
-}
-
-/// The outline of the last `analyze` asked for of those finished, which
-/// `outline_current` reads without waiting for the session's task.
-#[derive(Default)]
-pub(crate) struct Outline {
-    /// The analysis's place in the order they were asked for.
-    seq: u64,
-    headings: Vec<Heading>,
+    shared: Arc<Shared>,
 }
 
 /// Every open session, by the number its host gave it, and the hub their events go out through.
@@ -124,27 +77,25 @@ pub struct Sessions {
     service: Arc<Service>,
     hub: Hub,
     engine: Arc<dyn Engine>,
-    timings: Timings,
+    /// Whether folders are watched; tests send the changes themselves.
+    watch: bool,
     open: Arc<Mutex<HashMap<u64, Open>>>,
 }
 
 impl Sessions {
     pub fn new(service: Arc<Service>) -> Self {
-        let engine = Arc::new(ServiceEngine(Arc::clone(&service)));
-        Self::with_engine(service, engine, Timings::default())
+        let engine = Arc::clone(&service) as Arc<dyn Engine>;
+        Self::with_engine(service, engine, true)
     }
 
-    pub(crate) fn with_engine(
-        service: Arc<Service>,
-        engine: Arc<dyn Engine>,
-        timings: Timings,
-    ) -> Self {
+    pub(crate) fn with_engine(service: Arc<Service>, engine: Arc<dyn Engine>, watch: bool) -> Self {
+        let (hub, open) = (Hub::default(), Arc::default());
         Self {
             service,
-            hub: Hub::default(),
+            hub,
             engine,
-            timings,
-            open: Arc::default(),
+            watch,
+            open,
         }
     }
 
@@ -153,16 +104,11 @@ impl Sessions {
         self.hub.set_listener(listener);
     }
 
-    #[cfg(test)]
-    pub(crate) fn hub(&self) -> &Hub {
-        &self.hub
-    }
-
     /// The document the session `session` has open at `path`, for the host's
     /// editor: its edits go to it, and its highlighting reads from it.
     pub fn document(&self, session: u64, path: &str) -> Option<Document> {
-        let docs = Arc::clone(&lock(&self.open).get(&session)?.docs);
-        lock(&docs).get(path).cloned()
+        let shared = Arc::clone(&lock(&self.open).get(&session)?.shared);
+        lock(&shared.docs).get(path).cloned()
     }
 
     /// Answers a `session_*` command; the host sends every other command to `Service::call`.
@@ -182,18 +128,12 @@ impl Sessions {
         let project = string_arg(args, "id")?.to_owned();
         let root = dunce::canonicalize(self.service.project_root(&project)?)?;
         let auto_compile = arg::<Option<bool>>(args, "autoCompile")?.unwrap_or(false);
-        let (tx, rx) = mpsc::unbounded_channel();
-        let (actor, opened) = actor::Actor::new(self, id, project, root, tx, auto_compile)?;
-        let open = Open {
-            tx: actor.tx.clone(),
-            docs: Arc::clone(&actor.shared),
-            outline: Arc::clone(&actor.outline),
-        };
+        let (actor, opened) = actor::Actor::new(self, id, project, root, auto_compile)?;
         match lock(&self.open).entry(id) {
             Entry::Occupied(_) => return Err(CoreError::conflict("That session is open already")),
-            Entry::Vacant(entry) => entry.insert(open),
+            Entry::Vacant(entry) => entry.insert(actor.open()),
         };
-        tokio::spawn(actor.run(rx));
+        tokio::spawn(actor.run());
         Ok(opened)
     }
 
@@ -213,15 +153,11 @@ impl Sessions {
             let open = lock(&self.open);
             let open = open.get(&id).ok_or_else(gone)?;
             if name == "outline_current" {
-                // From the outline kept, so it waits for none of the session's work.
-                let _ = reply.send(outline_current(&open.outline, args));
+                let _ = reply.send(outline_current(&open.shared, args));
                 return Ok(id);
             }
-            let message = Msg::Command {
-                name,
-                args: args.clone(),
-                reply,
-            };
+            let args = args.clone();
+            let message = Msg::Command { name, args, reply };
             open.tx.send(message).map_err(|_| gone())?;
             Ok(id)
         });
@@ -236,18 +172,6 @@ impl Sessions {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn outline(&self, session: u64) -> Arc<Mutex<Outline>> {
-        Arc::clone(&lock(&self.open)[&session].outline)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn inject(&self, session: u64, message: Msg) {
-        if let Some(open) = lock(&self.open).get(&session) {
-            let _ = open.tx.send(message);
-        }
-    }
-
     /// Closes every session, saving what can be saved, as a host does when it quits.
     pub async fn close_all(&self) {
         let ids: Vec<u64> = lock(&self.open).keys().copied().collect();
@@ -258,9 +182,12 @@ impl Sessions {
 }
 
 /// The heading a line of `path` is under, as its place in the outline kept.
-fn outline_current(outline: &Mutex<Outline>, args: &Value) -> Result<Value, CoreError> {
+fn outline_current(shared: &Shared, args: &Value) -> Result<Value, CoreError> {
     let path = paths::rel_key(string_arg(args, "path")?)?;
     let line = arg(args, "line")?;
-    let current = analyze::current_heading(&lock(outline).headings, &path, line);
-    out(current)
+    out(analyze::current_heading(
+        &lock(&shared.outline).1,
+        &path,
+        line,
+    ))
 }

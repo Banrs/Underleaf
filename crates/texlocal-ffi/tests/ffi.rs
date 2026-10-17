@@ -341,7 +341,7 @@ fn a_session_source_is_the_sessions_document() {
         // A reload is the disk's text, not an edit to save.
         tl_source_reload(source, b"r".as_ptr(), 1);
         assert_eq!(text_of(source), "r");
-        save(h, 1);
+        assert_eq!(save(h, 1)["ok"]["saved"], true);
         assert_eq!(disk(dir.path()), "% n\n\\x\n");
         tl_source_free(source);
         tl_close(h);
