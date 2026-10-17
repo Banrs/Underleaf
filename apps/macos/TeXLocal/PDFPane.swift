@@ -14,7 +14,8 @@ struct PDFPane: View {
         } else {
             emptyState
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.textSurface)
+                // The canvas PDFView itself draws on, so the pane keeps its colour when the first build shows.
+                .background(Color(nsColor: .underPageBackgroundColor))
         }
     }
 

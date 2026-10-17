@@ -250,14 +250,12 @@ pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Whether two existing paths name one entry, as the volume compares names
-/// (`fold_case`): Windows' file identity is had only by opening the file,
-/// which follows a link. The paths compared are both made from the project's
-/// or library's folder, so their spelling alone tells.
+/// Whether two paths name one entry. Windows' file identity is had only by
+/// opening the file, which follows a link, so a link is only ever itself.
 #[cfg(windows)]
 pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
-    let exists = |path| fs::symlink_metadata(path).is_ok();
-    exists(a) && exists(b) && fold_case(&a.to_string_lossy()) == fold_case(&b.to_string_lossy())
+    let link = |path| fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
+    !link(a) && !link(b) && same_file::is_same_file(a, b).unwrap_or(false)
 }
 
 /// The normalized forward-slash spelling of a user-supplied project path, for

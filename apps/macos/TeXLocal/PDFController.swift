@@ -65,7 +65,6 @@ final class PDFController: NSObject {
     override init() {
         find = PDFFind(view: view)
         super.init()
-        view.backgroundColor = .untintedTextBackground
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }

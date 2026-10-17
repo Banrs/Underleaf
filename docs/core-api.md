@@ -209,7 +209,7 @@ editor's thread.
   | `insert_symbol` | `command`, `selection` | the insertion |
   | `math_at` | `caret` | the maths under the caret, or null |
   | `text_styles` | `selection` | the styles the selection has |
-  | `code_ranges` | `selection`, `for` (`spelling` or `writingTools`) | `[{start, length}]`: what the checker leaves alone in the lines the range touches |
+  | `code_ranges` | `selection`, `for` (`spelling` or `writingTools`) | `[{start, length}]`, merged: what the checker leaves alone that overlaps the range (or holds the caret) |
 
   Lines end at a line feed, and a carriage return before it belongs to the break (CRLF is one).
   A lone CR, NEL (U+0085), LS (U+2028) or PS (U+2029) is not a line break for Return, Delete
