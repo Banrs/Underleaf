@@ -9,8 +9,8 @@ hosts map to their own colour type.
 ## Syntax themes
 
 The editor's colours are a setting (Settings › Editor › Theme): Overleaf (the default),
-TeXstudio and System, each in Light and Dark. Every theme colours five kinds. Text, braces
-and brackets are plain, and none draws bold or italic.
+TeXstudio and System, each in Light and Dark. Every theme has five colours, which the nine highlight kinds share (`theme_colors` answers one
+per kind). Text, braces and brackets are plain, and none draws bold or italic.
 
 | Kind | Overleaf | TeXstudio | System |
 | --- | --- | --- | --- |

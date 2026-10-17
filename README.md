@@ -99,7 +99,9 @@ crates/texlocal-core/    Projects, path safety, latexmk/SyncTeX, log parsing, ZI
 crates/texlocal-ffi/     C ABI (header in include/): a static library for the Mac app; the
                          Windows app builds it as a DLL.
 apps/macos/              AppKit and SwiftUI app, UI only.
-docs/                    core-api.md (the hosts' contract) · texpresso.md (live preview) ·
+apps/windows/            WinUI 3 app, UI only.
+docs/                    core-api.md (the hosts' contract) · windows.md (the Windows app's
+                         design and the core gaps it waits on) · texpresso.md (live preview) ·
                          design-tokens.md (editor themes and surfaces)
 tools/texpresso/         Builds and installs TeXpresso with Underleaf's patch.
 ```
