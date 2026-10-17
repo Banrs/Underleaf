@@ -317,7 +317,7 @@ fn occupant(base: &Path, rel: &str) -> Option<String> {
 }
 
 /// Write the file at `source` to the project path `rel`. It is copied to a
-/// temporary file in the project's folder first, so a source that fails or
+/// temporary file beside the target first, so a source that fails or
 /// outgrows the allowance part-way replaces nothing, then renamed into place
 /// whole. An occupied path conflicts unless `replace` first moves it to the
 /// Trash. The path written.
@@ -330,8 +330,11 @@ fn save(
     allowance: &mut Allowance,
 ) -> Result<String, CoreError> {
     let root = service.project_root(id)?;
-    // Any name in the folder: the temporary file is made beside it.
-    let (temp, mut file) = atomic::create_temp(&root.join("incoming"), None)?;
+    // In the target's folder, or the nearest on its way while that is to be made, so the
+    // rename stays on one volume; any name there, as the temporary file is made beside it.
+    let abs = paths::safe_write_path(&root, rel)?;
+    let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
+    let (temp, mut file) = atomic::create_temp(&folder.unwrap_or(&root).join("incoming"), None)?;
     allowance.copy(File::open(source)?, &mut file)?;
     file.sync_all()?;
     drop(file);
@@ -661,12 +664,19 @@ mod tests {
         assert_eq!(put(&service, "CH", b"x", true).unwrap_err().status, 409);
         assert!(root.join("ch/main.tex").is_file());
         // Nothing is left beside the project's files by the refused saves.
-        assert!(fs::read_dir(&root).unwrap().flatten().all(|entry| {
-            !entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".texlocal-")
-        }));
+        for folder in ["", "figs"] {
+            assert!(
+                fs::read_dir(root.join(folder))
+                    .unwrap()
+                    .flatten()
+                    .all(|entry| {
+                        !entry
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(".texlocal-")
+                    })
+            );
+        }
     }
 
     #[cfg(unix)]
