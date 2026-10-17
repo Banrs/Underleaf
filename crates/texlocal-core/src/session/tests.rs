@@ -17,7 +17,6 @@ use super::watch::Change;
 use super::{Document, Engine, Msg, Sessions};
 use crate::compile::CompileResult;
 use crate::logparse::LogItem;
-use crate::service::Service;
 use crate::texpresso::{Document as LiveDocument, Events, Status};
 use crate::{CoreError, lock};
 
@@ -219,11 +218,10 @@ impl Rig {
 
     /// Project "P"'s session, its main.tex "Hello"; with `watch`, the folder's watcher runs.
     async fn watching(auto_compile: bool, watch: bool) -> Self {
-        let data = tempfile::tempdir().unwrap();
-        crate::projects::create_project(data.path(), "P", "blank").unwrap();
-        let root = dunce::canonicalize(data.path().join("P")).unwrap();
+        let (data, service) = crate::testing::library(&["P"]);
+        let root = dunce::canonicalize(service.project_root("P").unwrap()).unwrap();
         fs::write(root.join("main.tex"), "Hello").unwrap();
-        let service = Arc::new(Service::new(data.path().to_path_buf()));
+        let service = Arc::new(service);
         // As if `status` had found TeX, which automatic builds wait for.
         service.tex_found.store(true, Ordering::Relaxed);
         let fake = Arc::new(Fake::new());

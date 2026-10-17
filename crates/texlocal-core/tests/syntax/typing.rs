@@ -340,12 +340,12 @@ fn a_block_tabs_through_its_fields_and_ends_at_the_last() {
 
 #[test]
 fn a_field_in_two_places_is_typed_in_both_until_the_snippet_ends() {
-    let mut doc = SourceDocument::new("\\beg");
-    let offer = doc.completions(4, false, &[], &[]).unwrap();
-    let item = &offer.items[0];
-    let text = &item.text;
+    let offer = SourceDocument::new("\\beg").call("completions", r#"{"caret": 4}"#);
+    let item = &serde_json::from_str::<serde_json::Value>(&offer.unwrap()).unwrap()["items"][0];
+    let text = item["text"].as_str().unwrap();
+    let fields: Vec<SnippetField> = serde_json::from_value(item["fields"].clone()).unwrap();
     let mut e = Editor::open("\\beg");
-    e.insert(edit(0, 4, text), units(text), &item.fields);
+    e.insert(edit(0, 4, text), units(text), &fields);
     assert_eq!(e.shown(), "\\begin{«env»}\n  \n\\end{env}");
     e.keys("fig");
     assert_eq!(e.shown(), "\\begin{fig‸}\n  \n\\end{fig}");
@@ -356,7 +356,7 @@ fn a_field_in_two_places_is_typed_in_both_until_the_snippet_ends() {
 
     // Selecting outside the fields ends it.
     let mut e = Editor::open("\\beg");
-    e.insert(edit(0, 4, text), 0, &item.fields);
+    e.insert(edit(0, 4, text), 0, &fields);
     e.select(vec![range(0, 0)]);
     e.keys("x");
     e.select(vec![range(8, 0)]);

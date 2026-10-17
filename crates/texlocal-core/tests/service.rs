@@ -26,12 +26,7 @@ struct Library {
 
 /// A library holding the blank projects `ids`.
 fn library(ids: &[&str]) -> Library {
-    let mut dir = tempfile::Builder::new();
-    let dir = dir.prefix("texlocal-library-").tempdir().unwrap();
-    for id in ids {
-        create_project(dir.path(), id, "blank").unwrap();
-    }
-    let service = Service::new(dir.path().to_path_buf());
+    let (dir, service) = support::library(ids);
     let mut runtime = tokio::runtime::Builder::new_current_thread();
     let runtime = runtime.enable_all().build().unwrap();
     Library {

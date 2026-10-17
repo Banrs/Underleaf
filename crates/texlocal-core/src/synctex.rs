@@ -18,7 +18,7 @@ use crate::syntax::headings::uncommented;
 /// them, because the PDF viewer falls back with `??` — which fires on an
 /// absent field but not on a zero, and a zero-size highlight is invisible.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct ForwardLoc {
+pub(crate) struct ForwardLoc {
     pub page: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub h: Option<f64>,
@@ -35,7 +35,7 @@ pub struct ForwardLoc {
 }
 
 #[derive(Debug, Serialize)]
-pub struct InverseLoc {
+pub(crate) struct InverseLoc {
     pub file: String,
     pub line: u32,
     /// The clicked letter's place in the line, in UTF-16 units (the hosts'
@@ -47,7 +47,7 @@ pub struct InverseLoc {
 /// One page of a forward match: its number and text, and the UTF-16 ranges of
 /// that text which lie in SyncTeX's boxes.
 #[derive(Debug, Deserialize)]
-pub struct PdfPage {
+pub(crate) struct PdfPage {
     pub page: u32,
     pub text: String,
     #[serde(default)]
@@ -56,7 +56,7 @@ pub struct PdfPage {
 
 /// The word's place in a page's text, in UTF-16 units.
 #[derive(Debug, PartialEq, Eq, Serialize)]
-pub struct PdfHit {
+pub(crate) struct PdfHit {
     pub page: u32,
     pub start: usize,
     pub end: usize,
@@ -85,7 +85,7 @@ async fn synctex(root: &Path, args: &[&str], path_env: &str) -> Result<String, C
 
 /// The optional column is zero-based, as in an inverse result. Some TeX
 /// engines only record lines, so retain every box even when given a column.
-pub async fn synctex_forward_at(
+pub(crate) async fn synctex_forward_at(
     root: &Path,
     file: &str,
     line: u32,
@@ -144,7 +144,7 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
 /// PDF location (page, x, y in TeX points from top-left) -> source file:line,
 /// and with `click`, the page's text and the UTF-16 index of the clicked
 /// character in it, the column of that letter (`find_in_source`).
-pub async fn synctex_inverse(
+pub(crate) async fn synctex_inverse(
     root: &Path,
     page: f64,
     x: f64,
@@ -205,7 +205,7 @@ pub async fn synctex_inverse(
 /// Where the word at `column` (UTF-16) of a source line is in the PDF, given
 /// the pages SyncTeX's boxes are on. None when the word can't be told from its
 /// twins; the host then shows SyncTeX's own box.
-pub fn match_forward(
+pub(crate) fn match_forward(
     root: &Path,
     file: &str,
     line: u32,
@@ -354,7 +354,7 @@ fn unique<K: Ord>(ranked: impl Iterator<Item = (K, usize)>) -> Option<usize> {
 /// `pages`. A candidate ranks by how much of the line's text surrounds it, then
 /// by its word edges, then by nearness to the boxes: the whole line's text
 /// settles it wherever it stands; a partial match only close to a box.
-pub fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Option<PdfHit> {
+pub(crate) fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Option<PdfHit> {
     let mut source = Letters::default();
     source.push(line, 0, true);
     let word = source.run(source.at(column)?);
@@ -394,7 +394,12 @@ pub fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Option<PdfHi
 /// word's own, so the word is looked for a few lines either side too, ranked
 /// by the text round it, then its word edges, then nearness to the recorded
 /// line, earlier first. Words the PDF runs together are found as one.
-pub fn find_in_source(source: &str, line: u32, page_text: &str, at: usize) -> Option<(u32, u32)> {
+pub(crate) fn find_in_source(
+    source: &str,
+    line: u32,
+    page_text: &str,
+    at: usize,
+) -> Option<(u32, u32)> {
     if at >= page_text.encode_utf16().count() {
         return None;
     }

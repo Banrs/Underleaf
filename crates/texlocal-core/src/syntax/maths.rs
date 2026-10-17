@@ -1,5 +1,5 @@
-//! Maths: whether a position is in maths (`math_mode_at`), and the maths at
-//! the caret to preview (`math_at`).
+//! Maths: whether a position is in maths (`Scanner::in_math`), and the maths
+//! at the caret to preview (`math_at`).
 
 use std::{borrow::Cow, sync::LazyLock};
 
@@ -29,18 +29,6 @@ fn environment_name(src: &[u16], from: usize) -> Option<(&[u16], usize)> {
     }
     let close = rest[1..].iter().position(|&u| is(u, '{') || is(u, '}'))? + 1;
     is(rest[close], '}').then_some((&rest[1..close], from + leading + close + 1))
-}
-
-/// Whether the end of `src` is in maths, read as TeX would: $…$, $$…$$,
-/// \(…\), \[…\] and the maths environments (starred too) open maths; \text{…}
-/// and its kin go back to text inside it; escapes (\$, \%, \\) aren't
-/// delimiters; comments and verbatim are skipped; and a blank line ends an
-/// unclosed $ or \[, as the paragraph it can't span. So `$|$` (an empty
-/// pair, the caret between) is maths.
-pub fn math_mode_at(src: &[u16]) -> bool {
-    let mut scanner = Scanner::default();
-    scanner.run(src, src.len(), &[], &mut ());
-    scanner.in_math()
 }
 
 /// A group open at a point: whether it's maths, what closes it, where it
@@ -106,6 +94,12 @@ pub(crate) struct Scanner {
 }
 
 impl Scanner {
+    /// Whether the end of what was read is in maths, read as TeX would: $…$,
+    /// $$…$$, \(…\), \[…\] and the maths environments (starred too) open
+    /// maths; \text{…} and its kin go back to text inside it; escapes (\$, \%,
+    /// \\) aren't delimiters; comments and verbatim are skipped; and a blank
+    /// line ends an unclosed $ or \[, as the paragraph it can't span. So `$|$`
+    /// (an empty pair, the caret between) is maths.
     pub fn in_math(&self) -> bool {
         self.stack.top().is_some_and(|g| g.math)
     }
@@ -505,16 +499,6 @@ mod tests {
         // whole text from the start, twice.
         let source: String = (0..20_000).map(|n| format!("{{ line {n} word\n")).collect();
         questions_near_the_end_read_near_them(&source);
-    }
-
-    #[test]
-    fn an_unclosed_verb_ends_with_its_line() {
-        // The maths it was in goes on; a line feed straight after \verb ends
-        // it; closed, it's skipped, delimiters and all.
-        for text in ["$ \\verb|x\ny", "\\verb\n$y", "\\verb*+x+ $a"] {
-            let units: Vec<u16> = text.encode_utf16().collect();
-            assert!(super::math_mode_at(&units), "{text}");
-        }
     }
 
     #[test]

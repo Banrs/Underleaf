@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 pub use call::call;
 pub use complete::{Completion, CompletionKind, Completions, SnippetField};
 pub use highlight::{Highlight, HighlightKind};
-pub use maths::{MathPreview, math_mode_at};
+pub use maths::MathPreview;
 pub use style::TextStyles;
 pub use typing::{Change, Completing, Keystroke, Style, Tab, map_selections};
 
@@ -63,7 +63,7 @@ fn edit(start: u32, length: u32, text: impl Into<String>) -> TextEdit {
 /// Writing Tools.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Checker {
+pub(crate) enum Checker {
     Spelling,
     WritingTools,
 }
@@ -292,7 +292,7 @@ impl SourceDocument {
     /// and what isn't prose (`not_prose`). Spelling takes only the kinds that
     /// are never words, since the highlighter colours a word in \text{…} as
     /// maths, which is prose to `not_prose`.
-    pub fn code_ranges(&mut self, selection: TextRange, checker: Checker) -> Vec<TextRange> {
+    pub(crate) fn code_ranges(&mut self, selection: TextRange, checker: Checker) -> Vec<TextRange> {
         use HighlightKind::*;
         let TextRange { start, length } = selection;
         let all = checker == Checker::WritingTools;
@@ -308,7 +308,7 @@ impl SourceDocument {
     /// time it does, in units from the line's start: not as the start of a
     /// longer name, not after a backslash that is itself a command's (`\\foo`
     /// is a line break and a word), and not in a comment.
-    pub fn command_ranges(&mut self, line: u32, command: &str) -> Vec<TextRange> {
+    pub(crate) fn command_ranges(&mut self, line: u32, command: &str) -> Vec<TextRange> {
         let index = line.max(1) as usize - 1;
         let name: Vec<u16> = command.encode_utf16().collect();
         if index >= self.text.line_count() || name.is_empty() {
@@ -428,22 +428,6 @@ fn clamp(selection: TextRange, len: u32) -> TextRange {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn lines_follow_edits_in_utf16() {
-        let mut doc = SourceDocument::new("a\nb\nc");
-        doc.edit(1, 2, "x\ny\nz"); // "a" + "x\ny\nz" + "\nc"
-        assert_eq!(doc.text(), "ax\ny\nz\nc");
-        let starts: Vec<u32> = (1..=5).map(|l| doc.line_start(l)).collect();
-        assert_eq!(starts, [0, 3, 5, 7, 7]);
-        doc.edit(0, 7, "é😀\nx");
-        // é is one unit, the emoji two, then the line feed.
-        assert_eq!(doc.text(), "é😀\nxc");
-        assert_eq!((doc.line_count(), doc.line_start(2)), (2, 4));
-        // Past the end: cut to the text, never a panic.
-        doc.edit(10, 5, "!");
-        assert_eq!((doc.text().as_str(), doc.line_at(7)), ("é😀\nxc!", 2));
-    }
 
     /// The labels and citations are the document's, set when they change
     /// rather than sent with each completions call: offered until set again,

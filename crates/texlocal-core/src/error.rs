@@ -17,14 +17,14 @@ impl CoreError {
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::new(400, message)
     }
-    pub fn not_found(message: impl Into<String>) -> Self {
+    pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self::new(404, message)
     }
     pub fn conflict(message: impl Into<String>) -> Self {
         Self::new(409, message)
     }
     /// What was sent doesn't fit what is held; sending it whole puts it right.
-    pub fn unfit(message: impl Into<String>) -> Self {
+    pub(crate) fn unfit(message: impl Into<String>) -> Self {
         Self::new(412, message)
     }
     pub fn internal(message: impl Into<String>) -> Self {

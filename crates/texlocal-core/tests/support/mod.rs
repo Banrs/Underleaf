@@ -1,8 +1,23 @@
-//! Stand-in programs, for the suites that run TeX's tools.
+//! What the suites share: a library, and stand-in programs for the suites
+//! that run TeX's tools.
 #![allow(dead_code)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use texlocal_core::service::Service;
+
+/// A library in a folder of its own, holding the blank projects `ids`, and a
+/// service on it.
+pub fn library(ids: &[&str]) -> (tempfile::TempDir, Service) {
+    let mut dir = tempfile::Builder::new();
+    let dir = dir.prefix("texlocal-library-").tempdir().unwrap();
+    for id in ids {
+        texlocal_core::projects::create_project(dir.path(), id, "blank").unwrap();
+    }
+    let service = Service::new(dir.path().to_path_buf());
+    (dir, service)
+}
 
 /// A stand-in program `name` in `dir` that runs the shell `script`, which
 /// may be given again to change it. Its path.

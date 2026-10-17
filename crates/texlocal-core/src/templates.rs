@@ -3,7 +3,7 @@
 const BIB: &str = include_str!("../templates/references.bib");
 
 /// The files for a template; an unknown name falls back to `article`.
-pub fn files(template: &str) -> &'static [(&'static str, &'static str)] {
+pub(crate) fn files(template: &str) -> &'static [(&'static str, &'static str)] {
     match template {
         "blank" => &[("main.tex", include_str!("../templates/blank.tex"))],
         "report" => &[

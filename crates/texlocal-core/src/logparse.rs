@@ -152,7 +152,7 @@ fn append(message: &mut String, prev: &str, next: &str) {
     message.push_str(next.trim());
 }
 
-pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
+pub(crate) fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     let lines: Vec<&str> = log.lines().collect();
     let blank_from = |from: usize| {
         (from..lines.len())
@@ -272,7 +272,7 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
 /// Errors from bibtex's or biber's own log (.blg). A bibtex error names the
 /// .bib line, after its message or on the line below it; biber's name none a
 /// user can open.
-pub fn parse_blg(blg: &str) -> Vec<LogItem> {
+pub(crate) fn parse_blg(blg: &str) -> Vec<LogItem> {
     let mut previous = "";
     blg.lines()
         .filter_map(|line| {
@@ -297,7 +297,7 @@ pub fn parse_blg(blg: &str) -> Vec<LogItem> {
 
 /// The steps latexmk's closing "Collected error summary" lists as failed,
 /// one line each; more deeply indented lines add detail.
-pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
+pub(crate) fn latexmk_errors(output: &str) -> Vec<LogItem> {
     output
         .lines()
         .skip_while(|line| !line.starts_with("Collected error summary"))

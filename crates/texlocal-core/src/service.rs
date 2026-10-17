@@ -353,38 +353,22 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn service() -> (tempfile::TempDir, Service) {
-        let data = tempfile::tempdir().unwrap();
-        for name in ["P", "Q"] {
-            projects::create_project(data.path(), name, "blank").unwrap();
-        }
-        let service = Service::new(data.path().to_path_buf());
-        (data, service)
-    }
-
-    #[test]
-    fn the_latexmk_version_is_the_number_its_version_line_names() {
-        let line = "Latexmk, John Collins, 1 Jan 2025. Version 4.86a";
-        assert_eq!(latexmk_version(line).as_deref(), Some("4.86a"));
-        assert_eq!(latexmk_version("Latexmk, stub 1.0"), None);
-    }
-
     #[tokio::test]
     async fn a_panic_during_an_edit_does_not_stop_later_edits() {
-        let (data, service) = service();
+        let (_dir, service) = crate::testing::library(&["P", "Q"]);
         let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             service.with_project("P", |_| -> Result<(), CoreError> { panic!("a bug") })
         }));
         assert!(panicked.is_err());
         let args = json!({ "id": "P", "path": "main.tex", "text": "saved" });
         service.call("write_file", &args).await.unwrap();
-        let saved = fs::read_to_string(data.path().join("P/main.tex")).unwrap();
+        let saved = fs::read_to_string(service.data_dir.join("P/main.tex")).unwrap();
         assert_eq!(saved, "saved");
     }
 
     #[test]
     fn an_edit_waits_for_its_own_project_only() {
-        let (data, service) = service();
+        let (_dir, service) = crate::testing::library(&["P", "Q"]);
         let write = |id, file: &'static str| {
             service.with_project(id, |root| projects::write_creating(&root.join(file), b"x"))
         };
@@ -394,12 +378,12 @@ mod tests {
                 write("Q", "q.tex").unwrap();
                 let edit = scope.spawn(|| write("./P", "p.tex"));
                 std::thread::sleep(Duration::from_millis(100));
-                assert!(!data.path().join("P/p.tex").exists());
+                assert!(!service.data_dir.join("P/p.tex").exists());
                 edit
             });
             edit.join().unwrap().unwrap();
         });
-        assert!(data.path().join("P/p.tex").is_file());
+        assert!(service.data_dir.join("P/p.tex").is_file());
     }
 
     /// Two commands at once, each on a thread of its own, let go together.
@@ -426,8 +410,8 @@ mod tests {
     #[test]
     fn two_claims_on_one_name_lose_no_project_s_files() {
         for round in 0..160 {
-            let (data, service) = service();
-            fs::write(data.path().join("P/main.tex"), "the user's").unwrap();
+            let (_dir, service) = crate::testing::library(&["P", "Q"]);
+            fs::write(service.data_dir.join("P/main.tex"), "the user's").unwrap();
             let renaming = round % 2 == 0;
             let other = if renaming {
                 ("rename_project", json!({ "id": "Q", "name": "R" }))
@@ -450,9 +434,9 @@ mod tests {
                 Ok(200)
             };
             assert_eq!(other.map(|_| 200), expected, "round {round}");
-            let text = fs::read_to_string(data.path().join(kept).join("main.tex")).unwrap();
+            let text = fs::read_to_string(service.data_dir.join(kept).join("main.tex")).unwrap();
             assert_eq!(text, "the user's", "round {round}");
-            let projects = fs::read_dir(data.path()).unwrap().count();
+            let projects = fs::read_dir(&service.data_dir).unwrap().count();
             assert_eq!(projects, if renaming { 2 } else { 3 }, "round {round}");
         }
     }

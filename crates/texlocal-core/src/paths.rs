@@ -124,13 +124,13 @@ fn join_within(root: &Path, rel: &str, write: bool) -> Result<(PathBuf, PathBuf)
 }
 
 /// Absolute path for a user-supplied relative path inside a project.
-pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
+pub(crate) fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     Ok(join_within(root, rel, false)?.0)
 }
 
 /// `safe_path` for a path about to be created or written, which may not be
 /// in the top-level `build` folder, nor lead into it through a link.
-pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
+pub(crate) fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     Ok(join_within(root, rel, true)?.0)
 }
 
@@ -181,7 +181,7 @@ pub(crate) fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
 /// comparing it with a stored one such as the main file. It checks nothing on
 /// disk: pair it with `safe_path`, and use `safe_rel_file` for anything that
 /// reaches a command line.
-pub fn rel_key(rel: &str) -> Result<String, CoreError> {
+pub(crate) fn rel_key(rel: &str) -> Result<String, CoreError> {
     Ok(user_segments(rel, false)?.join("/"))
 }
 
@@ -202,7 +202,7 @@ pub fn safe_rel_file(root: &Path, rel: &str) -> Result<String, CoreError> {
 /// A name for a new folder in the library: one name, without the characters
 /// the volume refuses in it (on Windows, also `<>:"|?*` and controls, and
 /// the dots and spaces at the end it drops).
-pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
+pub(crate) fn sanitize_name(name: &str) -> Result<String, CoreError> {
     let refused = |c: char| {
         std::path::is_separator(c) || (cfg!(windows) && (c.is_control() || "<>:\"|?*".contains(c)))
     };
@@ -262,24 +262,10 @@ mod tests {
 
     #[test]
     fn a_folder_name_is_one_clean_name() {
-        assert_eq!(sanitize_name("  My paper ").unwrap(), "My paper");
         assert_eq!(sanitize_name("a/b").unwrap(), "ab");
         assert_eq!(sanitize_name(&"x".repeat(100)).unwrap().len(), 80);
-        for bad in ["", "  ", ".hidden", "/"] {
+        for bad in ["", "/"] {
             assert_eq!(sanitize_name(bad).unwrap_err().status, 400, "{bad}");
         }
-    }
-
-    #[test]
-    fn reserved_names_are_refused_in_any_case_and_build_only_for_writes() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        assert_eq!(
-            rel_key("./a/../.TeXLocal.JSON").unwrap_err().message,
-            "Reserved file"
-        );
-        assert!(safe_path(root, "Build/main.pdf").is_ok());
-        assert!(safe_write_path(root, "BUILD/main.pdf").is_err());
-        assert!(safe_write_path(root, "sub/build/main.tex").is_ok());
     }
 }

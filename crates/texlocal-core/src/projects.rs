@@ -51,7 +51,7 @@ pub struct TreeNode {
 /// Where an absolute path lies in the library: its project, and its path in it
 /// ("" for the project's folder).
 #[derive(Debug, PartialEq, Eq, Serialize)]
-pub struct Located {
+pub(crate) struct Located {
     pub id: String,
     pub path: String,
 }
@@ -65,7 +65,7 @@ pub struct RenameResult {
 }
 
 #[derive(Debug, Serialize)]
-pub struct SearchHit {
+pub(crate) struct SearchHit {
     pub file: String,
     pub line: u32,
     /// Where the match starts in its line and how long it is, in UTF-16 units
@@ -80,7 +80,7 @@ pub struct SearchHit {
 
 /// A file's search hits, in the order found.
 #[derive(Debug, Serialize)]
-pub struct SearchGroup {
+pub(crate) struct SearchGroup {
     pub file: String,
     pub hits: Vec<SearchHit>,
 }
@@ -214,7 +214,7 @@ pub(crate) fn project_info(name: String, root: &Path, meta: &fs::Metadata) -> Pr
     }
 }
 
-pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
+pub(crate) fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
     let mut projects = Vec::new();
     for entry in fs::read_dir(data_dir)? {
         let entry = entry?;
@@ -248,7 +248,7 @@ pub fn create_project(
 /// `base`, if given): one no entry of the library has, however it is spelled
 /// where the volume ignores case. It creates nothing, so a host can offer it
 /// as the name to edit; `create_project` numbers past anything taken since.
-pub fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, CoreError> {
+pub(crate) fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, CoreError> {
     let clean = sanitize_name(base.unwrap_or("Untitled"))?;
     let taken: HashSet<String> = match fs::read_dir(data_dir) {
         Ok(entries) => entries
@@ -375,7 +375,7 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 /// What a host does with a file, by its extension in any case: "tex", "bib",
 /// "image", "pdf", "text" (any other the editor edits) or "other", which it
 /// previews.
-pub fn file_kind(name: &str) -> &'static str {
+pub(crate) fn file_kind(name: &str) -> &'static str {
     let ext = Path::new(name).extension().unwrap_or_default();
     match ext.to_string_lossy().to_lowercase().as_str() {
         "tex" => "tex",
@@ -403,7 +403,7 @@ pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
 
 /// `create_file`, numbered past the names taken as Finder numbers copies
 /// ("untitled.tex", "untitled 2.tex"); the path made.
-pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {
+pub(crate) fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {
     for path in copy_paths(rel) {
         match create_file(root, &path, dir) {
             Err(err) if err.status == 409 => {}
@@ -427,7 +427,7 @@ pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> + use<> {
 /// outside every project. A project's id is its folder's name. The path's
 /// links are resolved as far as it exists, so one not yet made or just
 /// trashed still compares with the library.
-pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError> {
+pub(crate) fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError> {
     let library = fs::canonicalize(data_dir)?;
     let real = path.ancestors().find_map(|head| {
         Some(
@@ -536,7 +536,7 @@ pub(crate) fn discard_replaced(root: &Path, rel: &str) -> Result<(), CoreError> 
 // ---------- search ----------
 
 /// `search_project`'s hits, which come in path order, by file.
-pub fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {
+pub(crate) fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {
     let mut groups: Vec<SearchGroup> = Vec::new();
     for hit in hits {
         match groups.last_mut() {
@@ -565,7 +565,11 @@ fn fold_into(text: &str, out: &mut String) {
 /// The first `limit` lines that hold `query`, in any case, of the project's
 /// text files in path order. Each file is read and lowercased once, and the
 /// search jumps from match to match, never visiting a line without one.
-pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
+pub(crate) fn search_project(
+    root: &Path,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<SearchHit>, CoreError> {
     let mut needle = String::new();
     fold_into(query, &mut needle);
     let mut hits = Vec::new();
@@ -724,11 +728,10 @@ mod tests {
     use super::*;
     use crate::settings::{UiPatch, read_ui, write_ui};
 
+    /// A library's blank project and its folder.
     fn project() -> (tempfile::TempDir, PathBuf) {
-        let data = tempfile::tempdir().unwrap();
-        create_project(data.path(), "P", "blank").unwrap();
-        let root = project_root(data.path(), "P").unwrap();
-        (data, root)
+        let (dir, service) = crate::testing::library(&["P"]);
+        (dir, service.project_root("P").unwrap())
     }
 
     #[test]
@@ -850,7 +853,7 @@ mod tests {
     }
 
     #[test]
-    fn files_have_a_kind_in_any_case_and_folders_none() {
+    fn files_have_a_kind_in_any_case() {
         let names = [
             "a.TEX", "r.bib", "p.JPG", "f.pdf", "s.sty", "d.csv", "z.zip", "x",
         ];
@@ -858,20 +861,24 @@ mod tests {
             "tex", "bib", "image", "pdf", "text", "text", "other", "other",
         ];
         assert_eq!(names.map(file_kind), kinds);
-        let (_data, root) = project();
-        create_file(&root, "figs/a.png", false).unwrap();
-        let tree = serde_json::to_value(file_tree(&root).unwrap()).unwrap();
-        let folder = &tree[0];
-        assert_eq!(folder["children"][0]["kind"], "image");
-        assert_eq!(folder["children"][0]["path"], "figs/a.png");
-        assert!(folder["name"] == "figs" && folder.get("kind").is_none());
+    }
+
+    /// As root (CI's containers) no permission locks a file, so the scans'
+    /// tests reach this only by a race.
+    #[test]
+    fn a_vanished_or_locked_entry_is_skipped_and_nothing_else() {
+        for kind in [NotFound, PermissionDenied] {
+            assert!(skip_unreadable::<()>(Err(kind.into())).unwrap().is_none());
+        }
+        assert!(skip_unreadable::<()>(Err(std::io::ErrorKind::Other.into())).is_err());
     }
 
     #[test]
     fn a_path_in_the_library_is_found_in_its_project() {
-        let (data, root) = project();
+        let (_dir, root) = project();
+        let library = root.parent().unwrap();
         create_file(&root, "a/b.tex", false).unwrap();
-        let at = |path: &Path| locate(data.path(), path).unwrap().map(|l| l.path);
+        let at = |path: &Path| locate(library, path).unwrap().map(|l| l.path);
         assert_eq!(at(&root.join("a/b.tex")).as_deref(), Some("a/b.tex"));
         assert_eq!(at(&root).as_deref(), Some(""));
         // One not made yet, or just trashed, is where it was.
@@ -881,7 +888,6 @@ mod tests {
         );
         // Not in a project: the library, a hidden folder, a missing one, a path
         // that leaves, a relative one.
-        let library = data.path();
         for outside in [
             library,
             &library.join(".hidden/x"),

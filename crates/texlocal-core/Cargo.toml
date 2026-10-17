@@ -48,7 +48,7 @@ same-file = "1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full", "test-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "test-util"] }
 
 [lints]
 workspace = true

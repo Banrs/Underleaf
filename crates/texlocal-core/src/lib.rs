@@ -5,28 +5,28 @@
 // Path convention: every project-relative path this crate RETURNS or STORES
 // uses forward slashes — the hosts and SyncTeX both expect '/'.
 
-pub mod analyze;
+mod analyze;
 mod atomic;
 pub mod compile;
 pub mod error;
 pub mod events;
-pub mod import;
+mod import;
 pub mod logparse;
 pub mod paths;
 pub mod projects;
 pub mod service;
 pub mod session;
 pub mod settings;
-pub mod synctex;
+mod synctex;
 pub mod syntax;
-pub mod templates;
+mod templates;
 pub mod texpresso;
-pub mod zipexport;
+mod zipexport;
 
 pub use error::CoreError;
 
-pub const BUILD_DIR: &str = "build";
-pub const SETTINGS_FILE: &str = ".texlocal.json";
+pub(crate) const BUILD_DIR: &str = "build";
+pub(crate) const SETTINGS_FILE: &str = ".texlocal.json";
 
 /// The crate's mutexes guard bookkeeping that no panic leaves half-written,
 /// or nothing at all, so a poisoned one is still good: it must not fail
@@ -47,4 +47,33 @@ pub(crate) fn tail(text: &str, max: usize) -> &str {
 pub(crate) fn lossy_string(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes)
         .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
+}
+
+/// What the unit tests share.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::{fs, path::Path};
+
+    use crate::service::Service;
+
+    /// A library in a folder of its own, which leaves room beside it for what
+    /// a test brings in, holding the blank projects `ids`.
+    pub(crate) fn library(ids: &[&str]) -> (tempfile::TempDir, Service) {
+        let dir = tempfile::tempdir().unwrap();
+        let service = Service::new(dir.path().join("data"));
+        fs::create_dir_all(&service.data_dir).unwrap();
+        for id in ids {
+            crate::projects::create_project(&service.data_dir, id, "blank").unwrap();
+        }
+        (dir, service)
+    }
+
+    /// Writes `files`, each a path and its text, under `dir`.
+    pub(crate) fn write_files(dir: &Path, files: &[(&str, &str)]) {
+        for (path, text) in files {
+            let path = dir.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+    }
 }

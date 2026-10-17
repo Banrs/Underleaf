@@ -12,7 +12,7 @@ use serde_json::Value;
 
 pub type Listener = Box<dyn Fn(&Value) + Send + Sync>;
 
-pub struct Hub {
+pub(crate) struct Hub {
     queue: Option<mpsc::Sender<Value>>,
     listener: Arc<RwLock<Option<Listener>>>,
 }
@@ -45,7 +45,7 @@ impl Hub {
     /// Replaces the listener. Returns once no call to the old one is running,
     /// so a host may free what it captured: the thread holds the read lock
     /// through each call.
-    pub fn set_listener(&self, listener: Option<Listener>) {
+    pub(crate) fn set_listener(&self, listener: Option<Listener>) {
         *self
             .listener
             .write()

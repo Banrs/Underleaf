@@ -78,7 +78,8 @@ TEXLOCAL_TEXPRESSO=/absolute/path/to/texpresso \
 ```
 
 It needs TeX Live on the `PATH`. The session's behaviour is covered by stub-engine tests
-in `crates/texlocal-core/src/session/tests.rs`, which run with `cargo test --workspace`.
+in `crates/texlocal-core/src/session/tests.rs`, and the TeXpresso client's by a stand-in
+TeXpresso in `crates/texlocal-core/tests/texpresso.rs`; both run with `cargo test --workspace`.
 
 ## Boundaries
 

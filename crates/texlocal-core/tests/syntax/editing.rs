@@ -2,8 +2,8 @@
 //! maths at a place, the maths to preview, completions, headings and blocks.
 
 use serde::Deserialize;
-use serde_json::Value;
-use texlocal_core::syntax::{Insertion, SourceDocument, TextRange, math_mode_at};
+use serde_json::{Value, json};
+use texlocal_core::syntax::{Insertion, SourceDocument, TextRange};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +41,16 @@ fn range(start: u32, length: u32) -> TextRange {
     TextRange { start, length }
 }
 
+/// Whether the end of `before` is in maths, as a symbol put there finds it.
+fn in_maths(before: &str) -> bool {
+    let at = range(units(before), 0);
+    SourceDocument::new(before)
+        .insert_symbol("\\x", at)
+        .edit
+        .text
+        == "\\x"
+}
+
 /// The document without the "|" that marks a position, and that position.
 fn marked(source: &str) -> (SourceDocument, u32) {
     let at = units(&source[..source.find('|').unwrap()]);
@@ -62,13 +72,19 @@ fn math_mode_is_known_at_a_place() {
         }
     }
     for (source, expected, note) in cases {
-        let before: Vec<u16> = source[..source.find('|').unwrap()].encode_utf16().collect();
-        assert_eq!(math_mode_at(&before), expected, "{source} {note}");
+        let before = &source[..source.find('|').unwrap()];
+        assert_eq!(in_maths(before), expected, "{source} {note}");
     }
-    // \verb's delimiter is the fixture's marker, so these are here.
-    let verb: Vec<u16> = "\\verb|$| x".encode_utf16().collect();
-    assert!(!math_mode_at(&verb));
-    assert!(!math_mode_at(&verb[..7]), "inside \\verb");
+    // \verb's delimiter is the fixture's marker, so these are here. An unclosed
+    // \verb ends with its line, and the maths it was in goes on; a line feed
+    // straight after \verb ends it; closed, it's skipped, delimiters and all.
+    assert!(
+        !in_maths("\\verb|$| x") && !in_maths("\\verb|$"),
+        "inside \\verb"
+    );
+    for text in ["$ \\verb|x\ny", "\\verb\n$y", "\\verb*+x+ $a"] {
+        assert!(in_maths(text), "{text}");
+    }
 }
 
 #[test]
@@ -82,21 +98,18 @@ fn the_maths_to_preview_is_found_around_a_place() {
 
 #[test]
 fn completions_are_offered_for_what_is_typed() {
-    let (labels, citations) = (["sec:intro".to_string()], ["knuth84".to_string()]);
     for Offer(before, explicit, start, offered, kind) in fixture().completions {
         let mut doc = SourceDocument::new(&before);
-        let found = doc.completions(units(&before), explicit, &labels, &citations);
+        doc.set_symbols(vec!["sec:intro".into()], vec!["knuth84".into()]);
+        let args = json!({ "caret": units(&before), "explicit": explicit });
+        let found = doc.call("completions", &args.to_string()).unwrap();
+        let found: Value = serde_json::from_str(&found).unwrap();
         // Where it starts, and what its items are, all of them.
-        let place = found
-            .as_ref()
-            .map(|c| (c.start, serde_json::to_value(c.kind).unwrap()));
-        assert_eq!(place, start.zip(kind), "{before}");
-        let labels: Vec<_> = found
-            .iter()
-            .flat_map(|c| &c.items)
-            .map(|i| &i.label)
-            .collect();
-        assert!(offered.is_none_or(|o| labels.contains(&&o)), "{before}");
+        let place = (!found.is_null()).then(|| (found["start"].clone(), found["kind"].clone()));
+        assert_eq!(place, start.map(Value::from).zip(kind), "{before}");
+        let items = found["items"].as_array().cloned().unwrap_or_default();
+        let labels: Vec<_> = items.iter().map(|i| i["label"].as_str().unwrap()).collect();
+        assert!(offered.is_none_or(|o| labels.contains(&&*o)), "{before}");
     }
 }
 

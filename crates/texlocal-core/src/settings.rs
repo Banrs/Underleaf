@@ -129,7 +129,7 @@ pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError>
 /// under `ui`, which only this module writes.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct UiState {
+pub(crate) struct UiState {
     /// Folders open in the file tree, by project path.
     pub expanded_folders: Vec<String>,
     /// Outline headings folded, by `OutlineNode::fold_key`.
@@ -139,7 +139,7 @@ pub struct UiState {
 /// Each list sent replaces the saved one.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UiPatch {
+pub(crate) struct UiPatch {
     pub expanded_folders: Option<Vec<String>>,
     pub folded_headings: Option<Vec<String>>,
 }
@@ -147,7 +147,7 @@ pub struct UiPatch {
 /// More than any project has, so a runaway host can't fill the settings file.
 const UI_LIMIT: usize = 10_000;
 
-pub fn read_ui(root: &Path) -> UiState {
+pub(crate) fn read_ui(root: &Path) -> UiState {
     read_object(&root.join(SETTINGS_FILE))
         .remove("ui")
         .and_then(|ui| serde_json::from_value(ui).ok())
@@ -168,7 +168,7 @@ fn store_ui(root: &Path, mut state: UiState) -> Result<UiState, CoreError> {
     Ok(state)
 }
 
-pub fn write_ui(root: &Path, patch: UiPatch) -> Result<UiState, CoreError> {
+pub(crate) fn write_ui(root: &Path, patch: UiPatch) -> Result<UiState, CoreError> {
     let mut state = read_ui(root);
     state.expanded_folders = patch.expanded_folders.unwrap_or(state.expanded_folders);
     state.folded_headings = patch.folded_headings.unwrap_or(state.folded_headings);
@@ -199,21 +199,21 @@ pub(crate) fn move_ui(root: &Path, moved: impl Fn(&str) -> Option<String>) {
 }
 
 /// The compiled PDF path for a project, with its settings as on disk.
-pub fn compiled_pdf_path(root: &Path) -> Result<PathBuf, CoreError> {
+pub(crate) fn compiled_pdf_path(root: &Path) -> Result<PathBuf, CoreError> {
     read_settings(root).pdf_path(root)
 }
 
 impl Settings {
     /// The compiled PDF path — the ONE place this is derived.
     /// mainFile "paper.tex" → "<root>/build/paper.pdf".
-    pub fn pdf_path(&self, root: &Path) -> Result<PathBuf, CoreError> {
+    pub(crate) fn pdf_path(&self, root: &Path) -> Result<PathBuf, CoreError> {
         let base = main_base_name(&safe_rel_file(root, &self.main_file)?);
         Ok(root.join(BUILD_DIR).join(format!("{base}.pdf")))
     }
 }
 
 /// The main file's name without its extension ("chapters/paper.tex" → "paper").
-pub fn main_base_name(rel_slash: &str) -> String {
+pub(crate) fn main_base_name(rel_slash: &str) -> String {
     Path::new(rel_slash).file_stem().map_or_else(
         || rel_slash.to_string(),
         |s| s.to_string_lossy().into_owned(),

@@ -39,7 +39,7 @@ static TITLE_BRACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([{}&%$#_]
 /// project's analysis, its file. A heading whose title is empty is
 /// `untitled`, and titled by its level: "Untitled Section".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Heading {
+pub(crate) struct Heading {
     pub depth: usize,
     /// Without its backslash: "section".
     pub command: &'static str,
@@ -71,7 +71,7 @@ impl Heading {
 /// project's saved UI state: file, depth, title and which of that name it is.
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OutlineNode {
+pub(crate) struct OutlineNode {
     /// Its place in the outline, read in order.
     pub index: usize,
     #[serde(flatten)]
@@ -107,7 +107,7 @@ impl ProjectAnalysis {
 /// The outline nested by depth. A heading deeper than the one before it goes
 /// under it, so a subsection before any section sits flush, not under a
 /// missing parent.
-pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
+pub(crate) fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
     fn nest(
         outline: &[Heading],
         next: &mut usize,
@@ -148,14 +148,14 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
 /// The heading a line of a file is under, as its place in `outline`: the
 /// file's last at or above the line. None above the file's first, since where
 /// the file is read in isn't known.
-pub fn current_heading(outline: &[Heading], file: &str, line: usize) -> Option<usize> {
+pub(crate) fn current_heading(outline: &[Heading], file: &str, line: usize) -> Option<usize> {
     outline
         .iter()
         .rposition(|h| h.file.as_deref() == Some(file) && h.line <= line)
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Serialize)]
-pub struct Analysis {
+pub(crate) struct Analysis {
     pub outline: Vec<Heading>,
     pub words: usize,
 }
@@ -165,7 +165,7 @@ pub struct Analysis {
 /// reading order, each with its file, and the words of them all. `open` is the
 /// editor's file: when the main file doesn't reach it, the document is that
 /// file alone.
-pub fn analyze_project(root: &Path, main: &str, open: &str) -> Analysis {
+pub(crate) fn analyze_project(root: &Path, main: &str, open: &str) -> Analysis {
     let Ok(open) = paths::rel_key(open) else {
         return Analysis::default();
     };
@@ -327,20 +327,11 @@ mod tests {
         Heading::new(depth, title, line, Some(file.into()))
     }
 
-    /// A project folder of `files`, each a path and its text.
-    fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        for (rel, text) in files {
-            let path = dir.path().join(rel);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, text).unwrap();
-        }
-        dir
-    }
-
-    /// Each heading as "title depth:line", and the words.
+    /// Each heading of a project folder of `files` as "title depth:line", and
+    /// the words.
     fn analyse(files: &[(&str, &str)], open: &str) -> (Vec<String>, usize) {
-        let dir = project(files);
+        let dir = tempfile::tempdir().unwrap();
+        crate::testing::write_files(dir.path(), files);
         let found = analyze_project(dir.path(), "main.tex", open);
         let show = |h: &Heading| {
             let file = h.file.as_deref().filter(|f| *f != "main.tex");

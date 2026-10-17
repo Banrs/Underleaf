@@ -23,7 +23,7 @@ use crate::{BUILD_DIR, CoreError, atomic, templates};
 /// What to do with incoming files that land on existing entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Conflict {
+pub(crate) enum Conflict {
     /// Move the existing entries to the Trash.
     Replace,
     /// Give the incoming files free names beside them.
@@ -31,7 +31,7 @@ pub enum Conflict {
 }
 
 #[derive(Debug, Serialize)]
-pub struct Imported {
+pub(crate) struct Imported {
     pub saved: Vec<String>,
     pub existing: Vec<Clash>,
 }
@@ -40,7 +40,7 @@ pub struct Imported {
 /// target folder. `keep_both` names a free sibling.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Clash {
+pub(crate) struct Clash {
     pub path: String,
     pub keep_both: String,
 }
@@ -173,7 +173,7 @@ fn collect(
 /// path or oversize file fails the drop before anything lands. Without
 /// `conflict`, a drop that would land on existing entries writes nothing and
 /// reports them, for the host to ask about.
-pub fn import_files(
+pub(crate) fn import_files(
     service: &Service,
     id: &str,
     dir: &str,
@@ -362,7 +362,7 @@ fn zip_files(
 /// can take: then the .tex comes alone. Only visible files come, and a top-level `build`
 /// stays behind. The main file is the chosen .tex, else the likeliest top-level one, else
 /// the blank template's main.tex.
-pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
+pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
     import_project_within(service, src, IMPORT)
 }
 
@@ -476,17 +476,11 @@ fn sweep_staging(data_dir: &Path) {
 mod tests {
     use super::*;
 
-    fn library() -> (tempfile::TempDir, Service) {
-        let dir = tempfile::tempdir().unwrap();
-        let service = Service::new(dir.path().join("data"));
-        fs::create_dir_all(&service.data_dir).unwrap();
-        (dir, service)
-    }
+    use crate::testing::{library, write_files};
 
     /// A library with one blank project, "P", and its folder.
     fn with_project() -> (tempfile::TempDir, Service, PathBuf) {
-        let (dir, service) = library();
-        projects::create_project(&service.data_dir, "P", "blank").unwrap();
+        let (dir, service) = library(&["P"]);
         let root = service.project_root("P").unwrap();
         (dir, service, root)
     }
@@ -502,14 +496,6 @@ mod tests {
             zip.write_all(text.as_bytes()).unwrap();
         }
         zip.finish().unwrap();
-    }
-
-    /// Writes `files` under `dir`.
-    fn folder(dir: &Path, files: &[(&str, &str)]) {
-        for (path, text) in files {
-            fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
-            fs::write(dir.join(path), text).unwrap();
-        }
     }
 
     fn projects(service: &Service) -> usize {
@@ -571,7 +557,7 @@ mod tests {
             ("figs/a 2.png", "older"),
             ("notes", "file"),
         ];
-        folder(&root, &old);
+        write_files(&root, &old);
         let batch = [
             "main.tex",
             "figs/a.png",
@@ -645,7 +631,7 @@ mod tests {
             ("figs/.DS_Store", "x"),
             ("main.tex", "new"),
         ];
-        folder(&drop, &files);
+        write_files(&drop, &files);
         let paths = [drop.join("figs"), drop.join("main.tex")];
         // Hidden files inside a dropped folder stay behind.
         let out = import_files(&service, "P", "in", &paths, None).unwrap();
@@ -677,7 +663,7 @@ mod tests {
         #[cfg(unix)]
         {
             let files = [("elsewhere/plot.png", "p"), ("linked/pics/real.png", "r")];
-            folder(dir.path(), &files);
+            write_files(dir.path(), &files);
             let (plot, drop) = (dir.path().join(files[0].0), dir.path().join("linked"));
             std::os::unix::fs::symlink(&plot, drop.join("plot-link.png")).unwrap();
             std::os::unix::fs::symlink(&plot, drop.join("pics/inner.png")).unwrap();
@@ -690,10 +676,10 @@ mod tests {
 
     #[test]
     fn an_import_sweeps_away_only_a_staging_folder_a_day_old() {
-        let (dir, service) = library();
+        let (dir, service) = library(&[]);
         let staged = |name: &str, age: u64| {
             let path = service.data_dir.join(name);
-            folder(&path, &[("sub/main.tex", "x")]);
+            write_files(&path, &[("sub/main.tex", "x")]);
             let when = std::time::SystemTime::now() - Duration::from_secs(age);
             // Windows opens a folder only for its backup semantics, and to
             // date it, for its attributes.
@@ -724,7 +710,7 @@ mod tests {
 
     #[test]
     fn an_import_past_its_allowance_or_that_fails_makes_no_project() {
-        let (dir, service) = library();
+        let (dir, service) = library(&[]);
         let small = Allowance {
             files: 3,
             entries: 8,
@@ -774,7 +760,7 @@ mod tests {
 
         // A folder's files count, and so do its entries, even empty folders.
         let src = dir.path().join("Many");
-        folder(
+        write_files(
             &src,
             &[("a.tex", ""), ("b.tex", ""), ("c.tex", ""), ("d.tex", "")],
         );
@@ -814,7 +800,7 @@ mod tests {
 
     #[test]
     fn a_zip_brings_its_visible_files_named_as_paths_that_stay_in_the_project() {
-        let (dir, service) = library();
+        let (dir, service) = library(&[]);
         let src = dir.path().join("names.zip");
         let names = [
             "./main.tex",
@@ -861,7 +847,7 @@ mod tests {
 
     #[test]
     fn a_folder_brings_its_visible_files_and_its_name() {
-        let (dir, service) = library();
+        let (dir, service) = library(&[]);
         let src = dir.path().join("Thesis");
         let files = [
             ("main.tex", "\\documentclass{book}"),
@@ -870,7 +856,7 @@ mod tests {
             (".git/HEAD", "ref"),
             ("build/main.pdf", "old output"),
         ];
-        folder(&src, &files);
+        write_files(&src, &files);
         let info = import_project(&service, &src).unwrap();
         assert_eq!([info.id, info.main_file], ["Thesis", "main.tex"]);
         let root = service.data_dir.join("Thesis");
@@ -882,7 +868,7 @@ mod tests {
 
     #[test]
     fn a_tex_brings_its_folder_no_larger_than_a_project_and_is_its_main_file() {
-        let (dir, service) = library();
+        let (dir, service) = library(&[]);
         let src = dir.path().join("Paper");
         let files = [
             ("main.tex", "\\documentclass{article}"),
@@ -891,7 +877,7 @@ mod tests {
             ("refs.bib", "@book{k,}"),
             ("Build/main.pdf", ""),
         ];
-        folder(&src, &files);
+        write_files(&src, &files);
         // Output, past a project's bytes but sparse, neither comes nor counts.
         let big = |path: PathBuf| File::create(path).unwrap().set_len(UPLOAD_MAX_BYTES + 1);
         big(src.join("Build/main.pdf")).unwrap();

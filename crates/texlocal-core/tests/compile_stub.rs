@@ -23,16 +23,11 @@ use tokio::task::JoinHandle;
 /// A library of the projects `ids`, and a service whose builds find a
 /// latexmk in the library's `bin` that runs `script` in the project's folder.
 fn library(script: &str, ids: &[&str]) -> (TempDir, Arc<Service>) {
-    let tmp = TempDir::new().unwrap();
+    let (tmp, mut service) = support::library(ids);
     let bin = tmp.path().join("bin");
-    fs::create_dir(&bin).unwrap();
     support::program(&bin, "latexmk", script);
-    let mut service = Service::new(tmp.path().to_path_buf());
     let path = std::env::var("PATH").unwrap_or_default();
     service.compile.path_env = Some(format!("{}:{path}", bin.display()));
-    for id in ids {
-        create_project(tmp.path(), id, "blank").unwrap();
-    }
     (tmp, Arc::new(service))
 }
 

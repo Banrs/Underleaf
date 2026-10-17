@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use super::{SourceDocument, Text, catalog::CATALOG, is, utf16};
+use super::{Text, catalog::CATALOG, is, utf16};
 
 /// A place to type in a completion's text. Fields with the same `index`
 /// are one field in several places: what's typed in one goes in all.
@@ -56,22 +56,10 @@ static ENTRY_TYPE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@[0-9A-Za-z_]
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[0-9A-Za-z_]*$").unwrap());
 static FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#\{([^}]*)\}").unwrap());
 
-impl SourceDocument {
-    /// What to offer at the caret, if anything: commands after a backslash
-    /// (only once a letter follows unless `explicit`, asked for by the user),
-    /// the labels, citations or environments an argument takes, or a
-    /// bibliography entry's type after "@".
-    pub fn completions(
-        &mut self,
-        caret: u32,
-        explicit: bool,
-        labels: &[String],
-        citations: &[String],
-    ) -> Option<Completions> {
-        completions(&mut self.text, (caret, explicit), (labels, citations))
-    }
-}
-
+/// What to offer at the caret, if anything: commands after a backslash (only
+/// once a letter follows unless `explicit`, asked for by the user), the labels,
+/// citations or environments an argument takes, or a bibliography entry's type
+/// after "@".
 pub(crate) fn completions(
     text: &mut Text,
     (caret, explicit): (u32, bool),
@@ -181,7 +169,7 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
 
 #[cfg(test)]
 mod tests {
-    use crate::syntax::{SourceDocument, Text};
+    use crate::syntax::Text;
 
     #[test]
     fn snippets_expand_with_their_fields() {
@@ -198,7 +186,7 @@ mod tests {
     fn matches_with_the_typed_case_come_first() {
         let offered = |before: &str, keys: &[String]| -> Vec<String> {
             let caret = before.encode_utf16().count() as u32;
-            let offer = SourceDocument::new(before).completions(caret, false, &[], keys);
+            let offer = super::completions(&mut Text::new(before), (caret, false), (&[], keys));
             offer.map_or(vec![], |o| o.items.into_iter().map(|i| i.label).collect())
         };
         let names = offered("\\s", &[]);

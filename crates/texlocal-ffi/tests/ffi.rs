@@ -239,8 +239,6 @@ fn a_session_takes_its_async_commands_in_the_order_they_were_sent() {
     let seven = br#"{"id": "P", "session": 7}"#;
     call_async(h, "session_open", seven, Some(&sink));
     assert_eq!(until(&answers, |_| true)["ok"]["session"], 7);
-    // The host numbers its sessions: a number open already is refused.
-    assert_eq!(status(call_raw(h, b"session_open", Some(seven))), 409);
 
     let (probe, probed) = channel();
     for round in 0..40 {
@@ -524,8 +522,6 @@ fn source_and_syntax_commands_answer_json_or_null() {
         let colors = syntax_call("theme_colors", light).unwrap();
         assert_eq!(colors.as_array().map(Vec::len), Some(9));
         assert_eq!(syntax_call("no such command", "{}"), None);
-        let unknown = r#"{"theme": "solarized"}"#;
-        assert_eq!(syntax_call("theme_colors", unknown), None);
         assert!(tl_syntax_call(null(), args.as_ptr()).is_null());
         assert!(tl_syntax_call(c("themes").as_ptr(), null()).is_null());
     }

@@ -6,7 +6,7 @@
 
 use std::fmt::Debug;
 
-use texlocal_core::syntax::{SourceDocument, TextRange, math_mode_at};
+use texlocal_core::syntax::{SourceDocument, TextRange};
 
 /// How many of a random test's documents or rounds: fewer in a debug build, where
 /// each takes about ten times as long, and still every kind of each.
@@ -174,8 +174,9 @@ fn every_answer_after_every_edit_is_a_fresh_reading_s() {
                 answers(&mut fresh, selection),
                 "{at}"
             );
-            let symbol = doc.insert_symbol("\\alpha", selection).edit.text;
-            assert_eq!(symbol == "\\alpha", math_mode_at(&units[..start]), "{at}");
+            // As a document's first question, read from the start alone.
+            let first = SourceDocument::new(&text).insert_symbol("\\alpha", selection);
+            assert_eq!(doc.insert_symbol("\\alpha", selection), first, "{at}");
             // And the styles of a few units just inside a brace group, which
             // the document's are nested in.
             let from = seed.next(len + 1);

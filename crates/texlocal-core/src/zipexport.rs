@@ -15,7 +15,7 @@ use crate::atomic::{create_temp, persist};
 use crate::error::CoreError;
 use crate::{BUILD_DIR, SETTINGS_FILE};
 
-pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
+pub(crate) fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let root = dunce::canonicalize(root)?;
     let (temp, file) = create_temp(dest, None)?;
     // Resolved as the walk resolves the project, so a destination spelled
@@ -121,7 +121,6 @@ fn dated(options: SimpleFileOptions, modified: io::Result<SystemTime>) -> Simple
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
 
     #[test]
     fn a_file_that_could_deflate_past_4_gib_is_written_as_zip64() {
@@ -133,33 +132,5 @@ mod tests {
         assert!(len + len.div_ceil(65_535) * 5 > u32::MAX as u64);
         assert!(needs_zip64(len));
         assert!(needs_zip64(1 << 32));
-    }
-
-    #[test]
-    fn the_archive_holds_the_project_but_not_itself_nor_build_nor_settings() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        fs::create_dir_all(root.join("ch")).unwrap();
-        fs::create_dir(root.join(BUILD_DIR)).unwrap();
-        fs::write(root.join("main.tex"), "main").unwrap();
-        fs::write(root.join("ch/a.tex"), "a").unwrap();
-        fs::write(root.join(BUILD_DIR).join("main.pdf"), "pdf").unwrap();
-        fs::write(root.join(SETTINGS_FILE), "{}").unwrap();
-        fs::write(root.join(".DS_Store"), "").unwrap();
-        // The destination is inside the project and exists already.
-        let dest = root.join("out.zip");
-        fs::write(&dest, "old").unwrap();
-        export_zip(root, &dest).unwrap();
-
-        let mut zip = zip::ZipArchive::new(File::open(&dest).unwrap()).unwrap();
-        let mut names: Vec<_> = zip.file_names().map(String::from).collect();
-        names.sort();
-        assert_eq!(names, ["ch/", "ch/a.tex", "main.tex"]);
-        let mut text = String::new();
-        zip.by_name("ch/a.tex")
-            .unwrap()
-            .read_to_string(&mut text)
-            .unwrap();
-        assert_eq!(text, "a");
     }
 }

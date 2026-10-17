@@ -23,7 +23,7 @@ use crate::settings::{main_base_name, read_settings};
 use crate::{BUILD_DIR, lock, lossy_string, tail};
 
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
-pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// The most of a tool's stdout, and of its stderr, kept.
 const PIPE_KEPT: u64 = 1_000_000;
 /// How long a finished child's pipes are read before giving up on them.
@@ -54,7 +54,7 @@ fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
 /// user's PATH, then where TeX's installers put it. Built per use — a couple
 /// of read_dirs — so a TeX install performed while the app runs is found
 /// without a restart.
-pub fn tex_path(chosen: Option<&Path>) -> String {
+pub(crate) fn tex_path(chosen: Option<&Path>) -> String {
     let user = std::env::var_os("PATH").unwrap_or_default();
     let chosen = chosen.map(Path::to_path_buf).into_iter();
     join_path(chosen.chain(absolute_dirs(&user)).chain(usual_tex_dirs()))
@@ -510,7 +510,7 @@ fn user_latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
 }
 
 impl CompileManager {
-    pub fn kill_all(&self) {
+    pub(crate) fn kill_all(&self) {
         lock(&self.running).values_mut().for_each(|entry| {
             entry.stop();
         });
@@ -519,13 +519,13 @@ impl CompileManager {
     /// Stops a project's build, and says whether one was asked for or running.
     /// The run and a successor waiting on it settle as usual, the run saying it
     /// was stopped; one that hasn't started latexmk yet doesn't start it.
-    pub fn stop(&self, root: &Path) -> bool {
+    pub(crate) fn stop(&self, root: &Path) -> bool {
         lock(&self.running).get_mut(root).is_some_and(Entry::stop)
     }
 
     /// Removes the project's build folder, with a running build stopped and
     /// settled first. A folder that isn't there is already clean.
-    pub async fn clean(&self, root: &Path) -> Result<(), CoreError> {
+    pub(crate) async fn clean(&self, root: &Path) -> Result<(), CoreError> {
         self.stop(root);
         let gate = Arc::clone(&lock(&self.running).entry(root.into()).or_default().gate);
         let _idle = gate.lock().await;
