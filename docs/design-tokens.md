@@ -37,12 +37,6 @@ line's fill (7:1 under Increase Contrast), given the host's backgrounds.
 
 ## Editor surfaces
 
-- **Ground**: the text background without the wallpaper's tint, shared by the status bar,
-  the build panel and the PDF pane's bars.
-- **Selection** is the system's; the **current line** is `secondarySystemFill`.
-- **Gutter**: no fill, no rule, dim numbers; the current line's number brightens.
-- **Font**: the platform's monospace (SF Mono on macOS, Cascadia Mono on Windows) unless
-  chosen in Settings. The Mac editor follows Xcode 27's measures: lines 1.1 times the
-  font's, to whole points (18 at 13 pt), numbers a point smaller on the text's first
-  baseline, the current line a rounded rectangle 14 pt in from the left and 8 pt from the
-  right.
+Each host uses its platform's own backgrounds, selection, current-line fill and monospace
+font (SF Mono on macOS, Cascadia Mono on Windows) unless one is chosen in Settings; no
+tuned measures.

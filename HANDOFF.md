@@ -26,60 +26,35 @@ the hosts' contract with the core.
 
 ## The Mac app
 
-- **Window, toolbar and splits are AppKit**: only `NSToolbar`'s tracking separators follow
-  the source|PDF divider, and a three-column `NavigationSplitView` can't hide its detail
-  column. Panes, bars, sheets, popovers, Settings and Home are SwiftUI, hosting AppKit's
-  text and PDF views where SwiftUI has none.
-- **Narrow windows**: the window stops at 542 pt, the toolbar's least (`ColumnMetrics`).
-  Source and PDF keep minimums of 260 and 188 pt; the sidebar's is 222 and it opens at 270.
-  Tools without room go to `NSToolbar`'s own overflow menu by `visibilityPriority`, and
-  nowhere else. Sidebar and inspector fold for a narrow window and are not saved as hidden
-  for it. The window's title is AppKit's, which keeps 160 pt for it (27.2); the system's
-  title and overflow were chosen over a custom one.
-- **Toolbar**: Compile is the window's one prominent item, as a word, changing to its symbol
-  only where the word has no room (as AppKit's search item changes form); while building it
-  is Stop, with its spinner. Aa opens Notes' popover of text styles (`FormatPopover`); Math
-  and Insert are menus beside it.
-- **Source**: one TextKit 2 `NSTextView` (`SourceTextView`) shared across files, in an
-  `NSScrollView` of its own (`EditorView`), at Xcode's metrics for font, gutter and current
-  line. The completion list (`CompletionList`) is Liquid Glass in a system menu's measures,
-  a view of the editor's scroll view and not a window, since glass in a borderless
-  non-key panel draws flat.
-- **Issues** are on their lines as in Xcode: a gutter of numbers only, a band over the whole
-  paragraph (`tertiarySystemFill`), and at the end of its first line a SwiftUI box
-  (`IssueBox`, hosted above the text's views by `IssueMessageView`) holding the symbol and
-  the core's one-line message (its `compact` form where the line is short of room), or the
-  symbol alone. A help tag and a click open
-  the build panel on it. Its measures follow the text's size. Underline styles set as
-  rendering attributes aren't drawn (27.2), so an undefined command's underline is drawn
-  under the text.
-- **Status bar**: across the source and PDF columns at Xcode's spacing (`BarMetrics`), with
-  Xcode's scroll-through: the editor's colour at rest (80%, all of it under Reduce
-  Transparency) over a 6.5 pt Gaussian blur of what passes beneath (`blurBackdrop`), and a point
-  line above it. AppKit's edge can't draw that over an NSTextView or a PDFView (it rests
-  lighter than the editor in Dark, and each pane's takes that pane's colour, so the bar was
-  two-tone). Each pane has an empty bottom accessory of the bar's height, for its safe area
-  and scrollers, at the soft edge, which draws nothing there; the blur and the bar are plain
-  views over both at the columns' foot (`buildStatusBar`). After a failed
-  save, or a Cancel in an alert about the file on disk, it says Not Saved and that button saves.
-- **Build panel**: below the columns, so the status bar rides up as it opens. A bar at its
-  foot, as Xcode's console bar: a pop-up for Issues, Build Log and Live Preview Log, then
-  Warnings or Copy Log, then a filter. The bar is a SwiftUI safe-area bar, where the filter
-  draws as a toolbar's capsule; the filter is a regular 24 pt control among small ones.
-- **Splits**: AppKit's thin dividers. The source|PDF divider stops above the status bar
-  (`ColumnsSplitView`) and a double-click restores the even split; a drag stops at the
-  sidebar's opening width and the even split, with the alignment haptic
-  (`DetentSplitViewController.detent`). A display link lays the splits out during pane
-  animations, which otherwise don't always reach the screen (27.2).
-- **File Outline** sits at the sidebar's foot. On a file that isn't LaTeX it stays, folded
-  and dim; it hides only for search results.
-- **PDF**: a rebuilt document's pages replace those showing in the same `PDFDocument`, since
-  a new document flashes the pane's background. PDFKit keeps every replaced page's objects
-  for the document's life, so once the app has grown by 512 MB since a document was last
-  shown whole, the next one is shown whole (`PDFController.memoryAtWhole`). Print prints the
-  document showing; during Live Preview it reads the last build's file (`buildBehindLive`).
-  The PDF view sits directly in its pane: SwiftUI's scroll edge needs a SwiftUI scroll view,
-  and one around PDFKit's view takes its rubber-banding and insets (27.2).
+**Direction (2026-10-17):** native default behaviour first. The app is to be built as Apple
+recommends for a new app: SwiftUI scenes and views, with AppKit only behind representables
+where SwiftUI has nothing (the TextKit 2 editor and PDFKit's `PDFView`). No measured or tuned
+numbers, no custom colours, no platform workaround without a capture of the bug it fixes;
+what Apple's own apps do (Preview, TextEdit, Xcode, Notes) settles a question before taste
+does. The few custom pieces kept on purpose: the File Outline at the sidebar's foot, opening
+upward; Home's template cards; Compile as a word; one status bar across source and PDF; the
+completion list as a SwiftUI glass list.
+
+**Where main is now:** the window, toolbar and splits are still AppKit
+(`WorkspaceController`, `WorkspaceToolbar`, `SplitViews`); a SwiftUI shell (three-column
+`NavigationSplitView`, whose toolbar sections follow the source|PDF divider, plus
+`.inspector`) is on trial on its own branch. Panes, bars, sheets, popovers, Settings and Home
+are SwiftUI.
+
+- **Toolbar**: Compile is the window's one prominent item, a word; while building it is Stop,
+  with progress. Aa (text styles), Math and Insert sit over the source; Zoom (minus,
+  percentage, plus), Compile and the PDF and Inspector toggles over the PDF. Tools without
+  room go to the system's overflow by `visibilityPriority`.
+- **Source**: one TextKit 2 `NSTextView` (`SourceTextView`) shared across files, never
+  touching `layoutManager`. Issues sit on their lines as in Xcode (numbers-only gutter, a box
+  at the line's end); the measures come from the system font's metrics.
+- **Status bar and build panel**: one bar across source and PDF, the system's spacing and
+  scroll edge; Not Saved after a failed save. The build panel opens below the columns with
+  a console-style bar (Issues, Build Log, Live Preview Log, Warnings, a filter).
+- **PDF**: PDFKit as Preview has it. A rebuilt document's pages replace those showing in the
+  same `PDFDocument` (a new document flashes the background); PDFKit keeps replaced pages'
+  objects, so once the app has grown 512 MB since a document was last shown whole, the next
+  one is shown whole (`PDFController.memoryAtWhole`).
 - **Sessions**: the open project is a core session, numbered by the app before it opens
   (`Core.observe`), so none of its events can come before the app listens. Commands go
   through `tl_call_async` and are awaited, so no thread waits on the core; a session takes
@@ -116,14 +91,18 @@ the hosts' contract with the core.
 - **Dim, not hidden**, where hiding would make things jump: the File Outline, the panel's
   Warnings toggle with no warnings, Live Preview Log before Live Preview has run, and
   Format items in files the toolbar's are dim in.
-- **Settings** has five panes: General, Editor, Compiling, PDF (white, dark or automatic
-  paper), Live Preview.
+- **Settings** is a multi-pane window per the HIG. The PDF's dark paper is being dropped
+  (Preview has none).
 - **Words**: the feature is Live Preview; TeXpresso is named only where the program is the
   subject. The verb is Compile, and a run and its result are a build. Interface spelling is
   British (Colours) except LaTeX's own terms (Math).
-- **Home** offers new projects as template cards.
+- **Home** is the start screen, as Word's gallery and Overleaf's project list: template
+  cards and recent projects. The Mac and Windows apps should look and work alike.
+- **Builds** follow Overleaf and IDEs: they run past errors with every issue listed, a
+  project can Stop on First Error, and a pause in typing saves and compiles.
 
-Platform quirks met on the way (27.2) are in the code's comments where they're handled.
+Platform quirks met on the way (27.2) are in the code's comments where they're handled; one
+without a capture of its bug on the current OS is a candidate for removal.
 
 ## Testing
 
