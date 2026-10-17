@@ -171,7 +171,7 @@ private struct LivePreviewSettings: View {
                             Text("Installed")
                         } else {
                             Text("Not Installed")
-                            TeXpressoGuideButton()
+                            LinkButton(title: "Install Guide", url: Links.texpressoGuide)
                         }
                     }
                 }
@@ -237,7 +237,7 @@ private struct ProgramFolder: View {
             let chosen = program.chosen(in: tex)
             LabeledContent {
                 HStack {
-                    if program == .tex, !tex.available { GetMacTeXButton() }
+                    if program == .tex, !tex.available { LinkButton(title: "Get MacTeX", url: Links.mactex) }
                     if app.settingTeX { ProgressView().controlSize(.small).accessibilityLabel("Checking \(program.title)") }
                     Picker(program.title, selection: Binding<Choice>(get: { chosen == nil ? .automatic : .chosen }, set: {
                         switch $0 {
