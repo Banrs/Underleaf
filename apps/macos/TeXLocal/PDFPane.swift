@@ -32,7 +32,12 @@ struct PDFPane: View {
                 GetMacTeXButton().buttonStyle(.borderedProminent)
             }
         } else if project.compiling {
-            ContentUnavailableView("Compiling…", systemImage: "richtext.page")
+            // The toolbar's Stop can be in its overflow menu: the pane says itself that the build is under way (HIG, Progress indicators).
+            ContentUnavailableView {
+                Label("Compiling…", systemImage: "richtext.page")
+            } actions: {
+                ProgressView()
+            }
         } else if project.result?.failed == true {
             ContentUnavailableView {
                 Label("Build Failed", systemImage: "xmark.octagon")
@@ -115,23 +120,27 @@ struct PDFFindBar: View {
     }
 }
 
+/// The zoom menu's choices, ticked as a menu's picker ticks its selection.
 struct ScaleMenuItems: View {
     let pdf: PDFController
 
     var body: some View {
-        Toggle("Fit Width", isOn: choice(pdf.fit == .width) { pdf.fitWidth() })
-        Toggle("Fit Page", isOn: choice(pdf.fit == .page) { pdf.fitPage() })
-        Divider()
-        ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
-            Toggle((Double(percent) / 100).formatted(.percent),
-                   isOn: choice(pdf.fit == nil && Int((pdf.scale * 100).rounded()) == percent) {
-                pdf.setScale(CGFloat(percent) / 100)
-            })
+        Picker("Zoom", selection: Binding(get: { shown }, set: pdf.apply)) {
+            Text("Fit Width").tag(PDFController.Zoom.fitWidth)
+            Text("Fit Page").tag(PDFController.Zoom.fitPage)
+            Divider()
+            ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
+                Text((Double(percent) / 100).formatted(.percent)).tag(PDFController.Zoom.scale(Double(percent) / 100))
+            }
         }
+        .pickerStyle(.inline)
+        .labelsHidden()
     }
 
-    private func choice(_ inUse: Bool, apply: @escaping () -> Void) -> Binding<Bool> {
-        Binding(get: { inUse }, set: { _ in apply() })
+    /// A scale to the nearest percent, so a pinch that ends at 99.6% ticks 100%.
+    private var shown: PDFController.Zoom {
+        guard case .scale(let scale) = pdf.zoom else { return pdf.zoom }
+        return .scale((scale * 100).rounded() / 100)
     }
 }
 

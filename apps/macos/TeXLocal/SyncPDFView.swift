@@ -69,7 +69,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     /// so its page can take the layer's place unseen. Only the part in view is drawn: the whole grows with the square of
     /// the zoom, to half a gigabyte for A4 at 800% on a 2x display.
     func showLive(_ page: PDFPage, over shown: PDFPage, at index: Int) -> Bool {
-        guard let documentView, let window, let overlay = overlays.object(forKey: shown), overlay.window != nil else { return false }
+        guard let documentView, let window, let overlay = shownOverlay(of: shown) else { return false }
         let visible = overlay.visibleRect
         guard !visible.isEmpty else { return false }
         if liveCanvas.superview !== documentView {
@@ -173,6 +173,11 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         mark?.fading.cancel()
         mark?.view.removeFromSuperview()
         mark = nil
+    }
+
+    /// The page's overlay while PDFKit shows the page in a window: a live page is drawn only over one.
+    func shownOverlay(of page: PDFPage) -> NSView? {
+        overlays.object(forKey: page).flatMap { $0.window == nil ? nil : $0 }
     }
 
     func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
