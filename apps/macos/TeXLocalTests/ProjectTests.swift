@@ -75,9 +75,9 @@ final class ProjectFlowTests {
         for open in opens { await open.value }
 
         #expect(app.project?.id == second.id)
-        let document = app.project?.editor.document
-        #expect(document?.path == second.mainFile)
-        #expect(document?.text == "second")
+        let editor = app.project?.editor
+        #expect(editor?.path == second.mainFile)
+        #expect(editor?.textView.document.text == "second")
         await app.close()
     }
 
@@ -94,8 +94,8 @@ final class ProjectFlowTests {
             await rename.value
             #expect(await save.value)
 
-            #expect(project.openPath == to && project.editor.document?.path == to)
-            #expect(project.editor.document?.text == expected)
+            #expect(project.openPath == to && project.editor.path == to)
+            #expect(project.editor.textView.document.text == expected)
             #expect(try String(contentsOf: folder.appending(path: to), encoding: .utf8) == expected)
             #expect(!exists(folder.appending(path: from)))
             #expect(project.diskConflict == nil && project.missingFile == nil)
@@ -450,7 +450,7 @@ final class ProjectFlowTests {
             await Task { await project.open(last) }.value
             await opening.value
             let state = try await Core.shared.call("session_state", ["session": session], as: OpenDocuments.self)
-            #expect(project.openPath == last && project.editor.document?.path == last)
+            #expect(project.openPath == last && project.editor.path == last)
             #expect(state.documents.map(\.path) == [last], "after \(turns) turns")
         }
         #expect(app.alert == nil)
@@ -537,7 +537,7 @@ final class ProjectFlowTests {
         let (project, folder) = try await opened()
         try "x".write(to: folder.appending(path: "untitled.tex"), atomically: false, encoding: .utf8)
         #expect(await project.createEntry(in: "", directory: false) == "untitled 2.tex")
-        #expect(project.openPath == "untitled 2.tex" && project.editor.document?.text == "")
+        #expect(project.openPath == "untitled 2.tex" && project.editor.textView.document.text == "")
         #expect(await project.createEntry(in: "", directory: true) == "untitled folder")
         #expect(await project.createEntry(in: "", directory: true) == "untitled folder 2")
         #expect(await project.createEntry(in: "untitled folder", directory: false) == "untitled folder/untitled.tex")

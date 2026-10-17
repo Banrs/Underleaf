@@ -50,18 +50,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     func load(_ text: String, source: SourceDocument? = nil) {
         // First: the storage's text is read against it, as for colours and line numbers.
         document = source ?? SourceDocument(text: text)
-        takeText(text)
-        loaded()
+        show(text)
     }
 
     /// The disk's text, from the session's `document_reload`: shown without an edit, then the session told it is shown.
     func reload(_ text: String) {
         document.reload(text)
-        takeText(text)
-        loaded()
+        show(text)
     }
 
-    private func takeText(_ text: String) {
+    /// The storage takes the document's text, as no edit, and what belonged to the text before goes.
+    private func show(_ text: String) {
         loading = true
         // Else typing coalesced into the last file's undo would go on in this one's.
         breakUndoCoalescing()
@@ -71,9 +70,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         unmarkText()
         textStorage?.setAttributedString(NSAttributedString(string: text, attributes: typingAttributes))
         loading = false
-    }
-
-    private func loaded() {
         lastMath = nil
         dismissedMath = nil
         _ = document.endSnippet()
@@ -199,11 +195,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     private(set) lazy var issues = IssueOverlay(in: self)
-    var issueLines: [Int: LineIssue] {
-        get { issues.lines }
-        set { issues.lines = newValue }
-    }
-    var issueRows: [IssueRow] { issues.rows }
     var issueClicked: (Int) -> Void = { _ in }
 
     var syntaxTheme = SyntaxTheme.overleaf {
@@ -502,7 +493,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// A cursor rect of the list's own lost to the text view's per-move cursor, so the pointer is set on every move.
     private func setsCursor(with event: NSEvent) -> Bool {
         if updateDividerCursor(with: event) { return true }
-        guard inGutter(event) || issueMessage(at: event) != nil || completions.contains(event.locationInWindow) else { return false }
+        guard inGutter(event) || issue(at: event) != nil || completions.contains(event.locationInWindow) else { return false }
         NSCursor.arrow.set()
         return true
     }
@@ -512,7 +503,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return visibleRect.contains(point) && point.x < textContainerOrigin.x
     }
 
-    private func issueMessage(at event: NSEvent) -> IssueRow? {
+    private func issue(at event: NSEvent) -> IssueOverlay.Row? {
         issues.message(at: convert(event.locationInWindow, from: nil))
     }
 
@@ -530,13 +521,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func mouseDown(with event: NSEvent) {
         if event.type == .leftMouseDown, inGutter(event) { return selectLines(with: event) }
-        if event.type == .leftMouseDown, let issue = issueMessage(at: event), clicked(issue, with: event) { return }
+        if event.type == .leftMouseDown, let row = issue(at: event), clicked(row, with: event) { return }
         super.mouseDown(with: event)
         if event.type == .leftMouseDown, event.clickCount == 2 { forwardSync(true)?() }
     }
 
     /// False for a drag, Shift-click and double-click, which are the text view's.
-    private func clicked(_ issue: IssueRow, with down: NSEvent) -> Bool {
+    private func clicked(_ issue: IssueOverlay.Row, with down: NSEvent) -> Bool {
         guard down.clickCount == 1, down.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]) else { return false }
         while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
             if next.type == .leftMouseUp {
@@ -567,7 +558,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             current = next
         } while current.type != .leftMouseUp
         let number = document.line(at: first.location)
-        if selectedRange() == first, issueLines[number] != nil { issueClicked(number) }
+        if selectedRange() == first, issues.lines[number] != nil { issueClicked(number) }
     }
 
     // MARK: file drops open, or insert a figure
@@ -623,8 +614,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     func rotor(_ rotor: NSAccessibilityCustomRotor,
                resultFor search: NSAccessibilityCustomRotor.SearchParameters) -> NSAccessibilityCustomRotor.ItemResult? {
-        var items = rotor.type == .heading ? headings() : issueLines.sorted { $0.key < $1.key }.map { line, issue in
-            let place = issue.isError ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)")
+        var items = rotor.type == .heading ? headings() : issues.lines.sorted { $0.key < $1.key }.map { line, issue in
+            let place = issue.error ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)")
             return (line, String(localized: "\(place): \(issue.message)"))
         }
         if !search.filterString.isEmpty { items = items.filter { $0.title.localizedCaseInsensitiveContains(search.filterString) } }
