@@ -294,6 +294,7 @@ impl Actor {
             live.retry_at,
             live.restart_at,
             live.disk_at,
+            live.log_at,
         ]
         .into_iter()
         .flatten()
@@ -334,6 +335,9 @@ impl Actor {
         if due(self.live.disk_at) {
             self.live.disk_at = None;
             self.refresh_live_disk();
+        }
+        if due(self.live.log_at) {
+            self.log_due();
         }
     }
 
@@ -423,10 +427,8 @@ impl Actor {
                 }
             }
             "live_start" => {
-                self.live.intent += 1;
-                self.live.window = arg::<Option<bool>>(args, "window")?.unwrap_or(false);
-                self.live_start(false);
-                return Ok(self.live_state());
+                let window = arg::<Option<bool>>(args, "window")?.unwrap_or(false);
+                return Ok(self.live_start_asked(window));
             }
             "live_stop" => {
                 self.live_cancel_work();

@@ -2,16 +2,19 @@
 
 Underleaf can run an optional [TeXpresso](https://github.com/let-def/texpresso) process per
 open project. It sends each edit to a persistent XeTeX as it is made; errors while typing
-appear in the Live Preview log, and correcting the source updates the same preview.
+appear in the Live Preview log, which follows TeX's at most five times a second, and
+correcting the source updates the same preview.
 
 Built with Underleaf's patch (below), TeXpresso opens no window: it writes each page the
 editor shows as that page changes, and the Mac app draws it in the PDF pane at once. The
 whole document follows when typing pauses. The pane shows the live document until live
-preview stops, when the last build's PDF returns. Compile still uses latexmk and the
-project's engine, and automatic builds pause during a live session without changing the
-saved setting. Settings › Live Preview › Show Live Preview In offers TeXpresso's own window
-(MuPDF) as a fallback: the session then sets no `TEXPRESSO_PDF_OUTPUT`, tells TeXpresso no
-view or caret, and the PDF pane keeps the last build's PDF.
+preview stops, when the last build's PDF returns. A restart the session makes itself (after
+a rename, a new main file, a file gone, or TeXpresso ending after 10 s) stays `starting`, so
+the live document stays until the new run's first replaces it. Compile still uses latexmk
+and the project's engine, and automatic builds pause during a live session without changing
+the saved setting. Settings › Live Preview › Show Live Preview In offers TeXpresso's own
+window (MuPDF) as a fallback: the session then sets no `TEXPRESSO_PDF_OUTPUT`, tells
+TeXpresso no view or caret, and the PDF pane keeps the last build's PDF.
 
 The core's session owns the TeXpresso client (`crates/texlocal-core/src/session/live.rs`
 over `src/texpresso.rs`); hosts use `session_live_*` commands and `live*` events
