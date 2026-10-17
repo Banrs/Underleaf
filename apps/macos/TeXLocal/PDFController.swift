@@ -242,7 +242,8 @@ final class PDFController: NSObject {
         view.minScaleFactor = Self.minScale
         view.maxScaleFactor = Self.maxScale
         view.pageScrollView?.setAccessibilityLabel("PDF")
-        view.matchScroller()
+        // The knob is over white paper, whatever the window's appearance.
+        view.pageScrollView?.scrollerKnobStyle = .dark
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         restoreZoomIfReady()
         if let place {
