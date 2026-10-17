@@ -99,6 +99,8 @@ final class AppModel {
     @ObservationIgnored var performPDF: ((PDFAction) -> Void)?
     /// Where the settings below are kept: the user's defaults, or a test's own.
     @ObservationIgnored let defaults: UserDefaults
+    /// AppKit keeps the window's split positions and toolbar in the standard defaults itself: only with the user's settings.
+    var savesLayout: Bool { defaults === UserDefaults.standard }
 
     // Stored here rather than as @AppStorage so the menus and models observe them.
     var sidebarVisible: Bool {
@@ -192,6 +194,22 @@ final class AppModel {
     func requestPDF(_ action: PDFAction) {
         showPDF = true
         performPDF?(action)
+    }
+
+    nonisolated enum SideColumn { case sidebar, inspector }
+
+    /// A side column the split opened or shut. Shut by the window, for want of room, it stays the user's shown column,
+    /// unsaved, and the split brings it back as the window widens. Shut by the user, with its toggle or on its divider,
+    /// it is hidden, and saved so.
+    func sideColumn(_ column: SideColumn, shown: Bool, byWindow: Bool) {
+        let (visible, folded): (ReferenceWritableKeyPath<AppModel, Bool>, ReferenceWritableKeyPath<AppModel, Bool>) =
+            column == .sidebar ? (\.sidebarVisible, \.sidebarFolded) : (\.inspectorVisible, \.inspectorFolded)
+        if shown || !byWindow {
+            if self[keyPath: folded] { self[keyPath: folded] = false }
+            if self[keyPath: visible] != shown { self[keyPath: visible] = shown }
+        } else if self[keyPath: visible], !self[keyPath: folded] {
+            self[keyPath: folded] = true
+        }
     }
 
     /// The project the window's workspace shows: the open one once it has loaded, and until then the one it showed, so a

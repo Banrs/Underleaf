@@ -307,7 +307,7 @@ private func disclosure(_ set: ReferenceWritableKeyPath<ProjectModel, Set<String
         }
     }
     .listStyle(.sidebar)
-    .frame(width: ColumnMetrics.sidebarIdeal, height: 240)
+    .frame(width: 270, height: 240)
 }
 
 extension View {
