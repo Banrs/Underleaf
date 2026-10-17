@@ -364,7 +364,7 @@ private struct SetMainFileItem: View {
     var body: some View {
         let project = app.commandProject
         Button("Set as Main File") {
-            if let project, let path = project.openPath { Task { await project.setMainFile(path) } }
+            if let project, let path = project.openPath { Task { await project.patchSettings(.mainFile(path)) } }
         }
         .disabled(project?.isLaTeX != true || project?.openPath == project?.settings?.mainFile)
     }

@@ -51,13 +51,11 @@ fn status(running: bool) -> Status {
 fn built(pdf: bool, errors: Vec<LogItem>) -> CompileResult {
     CompileResult {
         ok: errors.is_empty(),
-        stopped: false,
         duration_ms: 1,
         pdf: pdf.then(|| "build/main.pdf".into()),
         pdf_changed: pdf,
         errors,
-        warnings: Vec::new(),
-        log: String::new(),
+        ..CompileResult::default()
     }
 }
 
@@ -76,11 +74,8 @@ fn news(running: bool) -> Events {
     Events {
         seq: 1,
         running,
-        error: None,
         revision: 1,
-        pdf: None,
-        pages: Vec::new(),
-        done: None,
+        ..Events::default()
     }
 }
 

@@ -113,7 +113,7 @@ pub struct RunEnd {
 }
 
 /// What is new for a client since the `seq` it last had (`Manager::wait`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Events {
     pub seq: u64,
     pub running: bool,

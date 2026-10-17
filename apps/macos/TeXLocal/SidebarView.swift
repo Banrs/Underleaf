@@ -73,7 +73,7 @@ struct FilesList: View {
                         Button(MenuCommand.fileNewFolder.title) { create(NewEntry(directory: true, folder: node.path)) }
                         Divider()
                     } else if node.kind == .tex {
-                        Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
+                        Button("Set as Main File") { Task { await project.patchSettings(.mainFile(node.path)) } }
                             .disabled(node.path == project.settings?.mainFile)
                         Divider()
                     }

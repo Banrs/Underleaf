@@ -927,14 +927,8 @@ impl Actor {
 
     fn build_done(&mut self, result: Result<CompileResult, CoreError>) {
         let result = result.unwrap_or_else(|err| CompileResult {
-            ok: false,
-            stopped: false,
-            duration_ms: 0,
-            pdf: None,
-            pdf_changed: false,
             errors: vec![LogItem::error(err.message)],
-            warnings: Vec::new(),
-            log: String::new(),
+            ..CompileResult::default()
         });
         if !self.closed {
             if result.pdf.is_some() {

@@ -557,8 +557,8 @@ final class ProjectModel {
 
     // MARK: - Settings
 
-    /// Shown at once; put back if the session refuses it.
-    func patchSettings(_ change: SettingsChange) async -> Bool {
+    /// Shown at once; put back if the session refuses it. A build follows when automatic: the session's.
+    @discardableResult func patchSettings(_ change: SettingsChange) async -> Bool {
         guard let session, !closed else { return false }
         let before = settings
         settings?.apply(change)
@@ -575,15 +575,6 @@ final class ProjectModel {
             }
             return false
         }
-    }
-
-    /// A build follows when automatic: the session's.
-    func setBuildOption(_ change: SettingsChange) async {
-        _ = await patchSettings(change)
-    }
-
-    func setMainFile(_ path: String) async {
-        _ = await patchSettings(.mainFile(path))
     }
 
     /// The session stops the build, restarts Live Preview and builds the new one; the PDF is the new main file's.

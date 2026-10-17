@@ -443,10 +443,7 @@ mod tests {
             let tex = TexStatus {
                 available: line.is_some(),
                 version: line.map(str::to_owned),
-                tex_dir: None,
-                found: None,
-                texpresso: None,
-                texpresso_dir: None,
+                ..TexStatus::default()
             };
             Status::from(tex).latexmk_version
         };

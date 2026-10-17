@@ -11,7 +11,7 @@ struct InspectorView: View {
                 // The current value is always a choice, before the settings come (nil) or the main file is in the file list: a selection with no tag is a SwiftUI fault.
                 let main = project.settings?.mainFile
                 Picker("Main File", selection: Binding(get: { main }, set: { new in
-                    if let new { Task.immediate { await project.setMainFile(new) } }
+                    if let new { Task.immediate { await project.patchSettings(.mainFile(new)) } }
                 })) {
                     ForEach(texFiles, id: \.self) { Text($0).tag(Optional($0)) }
                     if !texFiles.contains(where: { $0 == main }) { Text(main ?? "").tag(main) }
@@ -45,7 +45,7 @@ struct InspectorView: View {
     }
 
     private func toggle(_ title: String, _ detail: String, _ change: @escaping (Bool) -> SettingsChange, _ isOn: Bool) -> some View {
-        Toggle(isOn: Binding(get: { isOn }, set: { on in Task.immediate { await project.setBuildOption(change(on)) } })) {
+        Toggle(isOn: Binding(get: { isOn }, set: { on in Task.immediate { await project.patchSettings(change(on)) } })) {
             Text(title)
             Text(detail)
         }
@@ -58,7 +58,7 @@ struct EnginePicker: View {
     var body: some View {
         let engine = project?.settings?.engine
         Picker("Engine", selection: Binding(get: { engine }, set: { new in
-            if let project, let new { Task.immediate { await project.setBuildOption(.engine(new)) } }
+            if let project, let new { Task.immediate { await project.patchSettings(.engine(new)) } }
         })) {
             ForEach(TeXEngine.allCases) { Text($0.title).tag(Optional($0.id)) }
             if engine.flatMap(TeXEngine.init) == nil { Text(engine ?? "").tag(engine) }
