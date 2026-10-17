@@ -818,6 +818,45 @@ async fn the_main_file_cant_go_to_the_trash_and_nothing_puts_a_trashed_file_back
     assert!(rig.sessions.document(rig.session, "old.tex").is_none());
 }
 
+/// `command`'s answer, with `typed` put at the start of `doc` while the save before
+/// it waits for the project's lock, as a long write would, with the text it took.
+async fn typed_during_a_save(rig: &Rig, doc: &Document, typed: &str, command: &str) -> Value {
+    let (held_tx, held) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let service = Arc::clone(&rig.sessions.service);
+    let holder = std::thread::spawn(move || {
+        service.with_project("P", |_| {
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+            Ok(())
+        })
+    });
+    held.recv().unwrap();
+    let args = json!({ "session": rig.session, "path": "old.tex" });
+    let answer = rig.sessions.send(&format!("session_{command}"), &args);
+    std::thread::sleep(Duration::from_millis(100));
+    doc.edit(0, 0, typed);
+    release.send(()).unwrap();
+    holder.join().unwrap().unwrap();
+    answer.await.unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn text_typed_during_a_save_is_saved_before_a_build_or_a_trash_goes_on() {
+    let rig = Rig::new(false).await;
+    fs::write(rig.root.join("old.tex"), "old").unwrap();
+    let doc = rig.open("old.tex").await;
+    doc.edit(0, 0, "a");
+    typed_during_a_save(&rig, &doc, "b", "compile").await;
+    assert_eq!(rig.fake.called("compile"), 1);
+    assert_eq!(rig.disk("old.tex"), "baold");
+    rig.fake.finish_build(built(true, Vec::new()));
+    doc.edit(0, 0, "c");
+    let ready = typed_during_a_save(&rig, &doc, "d", "prepare_delete").await;
+    assert_eq!(ready["ready"], true);
+    assert_eq!(rig.disk("old.tex"), "dcbaold");
+}
+
 // MARK: - Live preview
 
 async fn live(rig: &Rig) -> Value {

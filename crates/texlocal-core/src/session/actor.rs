@@ -702,24 +702,34 @@ impl Actor {
         result
     }
 
-    /// Writes every document with unsaved edits. Typing during a write is the
-    /// next autosave's: its edit, queued behind this, sets the autosave again.
+    /// Writes every document with unsaved edits; typing during a write is
+    /// written too, so a build or a trash that follows has it.
     fn flush_all(&mut self, reporting: bool) -> Result<bool, CoreError> {
         self.autosave_at = None;
-        let (mut all, mut failure) = (true, None);
-        for path in self.dirty_paths() {
-            match self.save_doc(&path, reporting, false) {
-                Ok(saved) => all &= saved,
-                Err(err) => {
-                    all = false;
-                    failure.get_or_insert(err);
+        let mut failure = None;
+        for _ in 0..3 {
+            let dirty = self.dirty_paths();
+            if dirty.is_empty() {
+                break;
+            }
+            let mut all = true;
+            for path in dirty {
+                match self.save_doc(&path, reporting, false) {
+                    Ok(saved) => all &= saved,
+                    Err(err) => {
+                        all = false;
+                        failure.get_or_insert(err);
+                    }
                 }
             }
+            if !all {
+                return match failure {
+                    Some(err) if reporting => Err(err),
+                    _ => Ok(false),
+                };
+            }
         }
-        match failure {
-            Some(err) if reporting => Err(err),
-            _ => Ok(all),
-        }
+        Ok(true)
     }
 
     /// A save someone asked for: a build follows when it wrote anything.
