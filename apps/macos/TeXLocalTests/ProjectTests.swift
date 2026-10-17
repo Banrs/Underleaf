@@ -367,6 +367,7 @@ final class ProjectFlowTests {
         let project = try #require(app.project)
         #expect(project.initialLoadComplete)
         #expect(project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
+        #expect(project.words == 6)
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
         #expect(project.headingCommand == "section")
@@ -515,6 +516,7 @@ final class ProjectFlowTests {
         project.search.query = "needle"
         await project.search.run()
         #expect(project.search.hitCount == 3 && project.search.failure == nil)
+        #expect(project.search.groups?.map(\.file) == ["appendix.tex", "main.tex"] && project.search.groups?.map(\.hits.count) == [1, 2])
         project.search.query = "needles"
         #expect(project.search.searched == "needle")
         await project.search.run()

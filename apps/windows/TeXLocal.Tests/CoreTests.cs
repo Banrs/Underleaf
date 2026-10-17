@@ -84,9 +84,11 @@ public sealed class CoreTests : IDisposable
         Assert.Equal(new[] { "chapter", "section" }, analysis.Outline.Select(h => h.Command));
         var untitled = analysis.Outline.Last();
         Assert.True(untitled.Untitled);
+        Assert.Equal("Untitled Section", untitled.Title);
         Assert.Equal("", analysis.HeadingStyles[0].Command);
         Assert.Contains(analysis.HeadingStyles, s => s.Command == "chapter");
         Assert.Equal<int?>(untitled.Index, await core.CallAsync<int?>("session_outline_current", new { session, path = "main.tex", line = 5 }));
+        Assert.Null(await core.CallAsync<int?>("session_outline_current", new { session, path = "main.tex", line = 1 }));
         await core.CallAsync("session_close", new { session });
     }
 
