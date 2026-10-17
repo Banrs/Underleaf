@@ -16,7 +16,7 @@ use crate::settings::compiled_pdf_path;
 /// Only `page` is required. The rest are omitted when synctex didn't report
 /// them, because the PDF viewer falls back with `??` — which fires on an
 /// absent field but not on a zero, and a zero-size highlight is invisible.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ForwardLoc {
     pub page: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -73,6 +73,15 @@ fn pdf_for(root: &Path, live: Option<&Path>) -> Result<std::path::PathBuf, CoreE
     Ok(pdf)
 }
 
+/// What synctex prints for `args` ("view …" or "edit …"), run in the project.
+async fn synctex(root: &Path, args: &[&str], path_env: &str) -> Result<String, CoreError> {
+    let (code, stdout) = run("synctex", args, Some(root), PROBE_TIMEOUT, path_env).await;
+    if code != 0 {
+        return Err(CoreError::internal(format!("synctex {} failed", args[0])));
+    }
+    Ok(stdout)
+}
+
 /// The optional column is zero-based, as in an inverse result. Some TeX
 /// engines only record lines, so retain every box even when given a column.
 pub async fn synctex_forward_at(
@@ -92,19 +101,8 @@ pub async fn synctex_forward_at(
     }
     let column = column.unwrap_or(0).saturating_add(1);
     let input = format!("{line}:{column}:./{rel}");
-    let pdf_str = pdf.to_string_lossy();
-    let (code, stdout) = run(
-        "synctex",
-        &["view", "-i", &input, "-o", &pdf_str],
-        Some(root),
-        PROBE_TIMEOUT,
-        path_env,
-    )
-    .await;
-    if code != 0 {
-        return Err(CoreError::internal("synctex view failed"));
-    }
-    parse_forward(&stdout)
+    let args: [&str; 5] = ["view", "-i", &input, "-o", &pdf.to_string_lossy()];
+    parse_forward(&synctex(root, &args, path_env).await?)
 }
 
 fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
@@ -113,8 +111,7 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
     const KEYS: [&str; 5] = ["Page", "h", "v", "W", "H"];
     let mut matches = Vec::new();
     let mut values = [None; 5];
-    let finish = |values: [Option<f64>; 5], matches: &mut Vec<ForwardLoc>| {
-        let [page, h, v, width, height] = values;
+    let mut finish = |[page, h, v, width, height]: [Option<f64>; 5]| {
         if let Some(page) = page.filter(|page| *page >= 1.0) {
             matches.push(ForwardLoc {
                 page,
@@ -132,7 +129,7 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
         };
         if let Some(i) = KEYS.iter().position(|k| *k == key) {
             if i == 0 {
-                finish(std::mem::take(&mut values), &mut matches);
+                finish(std::mem::take(&mut values));
             }
             values[i] = value
                 .trim()
@@ -141,7 +138,7 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
                 .filter(|value| value.is_finite());
         }
     }
-    finish(values, &mut matches);
+    finish(values);
     let mut first = matches
         .first()
         .cloned()
@@ -152,9 +149,8 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
             .then_with(|| a.v.unwrap_or(0.0).total_cmp(&b.v.unwrap_or(0.0)))
             .then_with(|| a.h.unwrap_or(0.0).total_cmp(&b.h.unwrap_or(0.0)))
     });
-    matches.dedup_by(|a, b| {
-        a.page == b.page && a.h == b.h && a.v == b.v && a.width == b.width && a.height == b.height
-    });
+    // Each match's own matches are empty: the boxes alone compare.
+    matches.dedup();
     first.matches = matches;
     Ok(first)
 }
@@ -176,26 +172,10 @@ pub async fn synctex_inverse(
     }
     let pdf = pdf_for(root, live)?;
     let target = format!("{page}:{x}:{y}:{}", pdf.to_string_lossy());
-    let (code, stdout) = run(
-        "synctex",
-        &["edit", "-o", &target],
-        Some(root),
-        PROBE_TIMEOUT,
-        path_env,
-    )
-    .await;
-    if code != 0 {
-        return Err(CoreError::internal("synctex edit failed"));
-    }
-    let file = stdout
-        .split('\n')
-        .find_map(|ln| ln.strip_prefix("Input:"))
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    let line = stdout
-        .split('\n')
-        .find_map(|ln| ln.strip_prefix("Line:"))
-        .and_then(|s| s.trim().parse::<u32>().ok());
+    let stdout = synctex(root, &["edit", "-o", &target], path_env).await?;
+    let field = |key: &str| stdout.split('\n').find_map(|ln| ln.strip_prefix(key));
+    let file = field("Input:").map(str::trim).filter(|s| !s.is_empty());
+    let line = field("Line:").and_then(|s| s.trim().parse::<u32>().ok());
     let (Some(file), Some(line)) = (file, line) else {
         return Err(CoreError::not_found(
             "Nothing in the source matches this spot.",
@@ -392,19 +372,17 @@ fn occurrences<'a>(text: &'a [char], word: &'a [char]) -> impl Iterator<Item = u
 /// How many letters either side of `word` in `from` repeat in `to` round the
 /// occurrence at `k`, and the occurrence's word edges (`Letters::edges`).
 fn evidence(from: &Letters, word: &Range<usize>, to: &Letters, k: usize) -> (usize, usize, usize) {
-    let common = |a: &[char], b: &[char], rev: bool| {
-        if rev {
-            a.iter()
-                .rev()
-                .zip(b.iter().rev())
-                .take_while(|(a, b)| a == b)
-                .count()
-        } else {
-            a.iter().zip(b).take_while(|(a, b)| a == b).count()
-        }
-    };
-    let before = common(&from.chars[..word.start], &to.chars[..k], true);
-    let after = common(&from.chars[word.end..], &to.chars[k + word.len()..], false);
+    let before = from.chars[..word.start]
+        .iter()
+        .rev()
+        .zip(to.chars[..k].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let after = from.chars[word.end..]
+        .iter()
+        .zip(&to.chars[k + word.len()..])
+        .take_while(|(a, b)| a == b)
+        .count();
     (before, after, to.edges(k, word.len()))
 }
 
@@ -683,14 +661,7 @@ mod tests {
         let line = "Some \\textbf{echo} in the middle.";
         // The word is found on the second page, whole-line evidence needing no box.
         let hit = find_in_pdf(line, 14, &[page(4, first, &[]), page(5, second, &[])]).unwrap();
-        assert_eq!(
-            hit,
-            PdfHit {
-                page: 5,
-                start: 8,
-                end: 12
-            }
-        );
+        assert_eq!((hit.page, hit.start, hit.end), (5, 8, 12));
         // A caret in a command's name, or on no word, finds none; after a word, that word.
         assert_eq!(find_in_pdf("\\emph", 2, &[page(1, "emph", &[])]), None);
         let hit = find_in_pdf("say echo", 8, &[page(1, "say echo", &[])]).unwrap();

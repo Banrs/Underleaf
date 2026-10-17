@@ -21,8 +21,9 @@ use texlocal_core::settings::write_settings;
 use texlocal_core::synctex::{InverseLoc, synctex_inverse};
 use tokio::task::JoinHandle;
 
+/// A shell script at `path` that runs `script`.
 fn executable(path: &Path, script: &str) {
-    fs::write(path, script).unwrap();
+    fs::write(path, format!("#!/bin/sh\n{script}")).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
@@ -54,6 +55,12 @@ fn setup(script: &str) -> (TempDir, PathBuf, CompileManager) {
 
 async fn compile(mgr: &CompileManager, root: &Path) -> CompileResult {
     mgr.compile(root, None).await.unwrap()
+}
+
+/// A project's build by a stub latexmk running `script`.
+async fn built(script: &str) -> CompileResult {
+    let (_tmp, root, mgr) = setup(script);
+    compile(&mgr, &root).await
 }
 
 /// A compile left running while the test goes on.
@@ -101,26 +108,36 @@ async fn appears(path: &Path, what: &str) {
     .unwrap_or_else(|_| panic!("{what}"));
 }
 
-#[tokio::test]
-async fn compile_happy_path_parses_the_log_it_wrote() {
-    let (_tmp, root, mgr) = setup(
-        "#!/bin/sh\nmkdir -p build\nprintf './main.tex:3: Undefined control sequence.\\nl.3 x\\n' > build/main.log\nprintf 'fake' > build/main.pdf\nexit 0\n",
-    );
-    let result = compile(&mgr, &root).await;
+/// Ten seconds is long past any kill, and well short of a stub's sleep.
+fn promptly(started: Instant) {
+    let took = started.elapsed();
+    assert!(took < Duration::from_secs(10), "took {took:?}");
+}
 
-    assert!(result.ok);
-    let pdf = root.join("build/main.pdf");
-    assert_eq!(result.pdf.as_deref(), pdf.to_str(), "absolute");
-    assert!(result.pdf_changed);
-    assert_eq!(result.errors.len(), 1);
-    assert_eq!(result.errors[0].file.as_deref(), Some("main.tex"));
-    assert_eq!(result.errors[0].line, Some(3));
+/// A build shows the PDF it wrote and its log's errors, as a failed build
+/// compiling past errors does too.
+#[tokio::test]
+async fn a_build_parses_the_log_it_wrote_and_shows_its_pdf_whether_or_not_it_failed() {
+    for exit in [0, 12] {
+        let (_tmp, root, mgr) = setup(&format!(
+            "mkdir -p build\nprintf './main.tex:3: Undefined control sequence.\\nl.3 x\\n' > build/main.log\nprintf 'fake' > build/main.pdf\nexit {exit}\n"
+        ));
+        let result = compile(&mgr, &root).await;
+
+        assert_eq!(result.ok, exit == 0);
+        let pdf = root.join("build/main.pdf");
+        assert_eq!(result.pdf.as_deref(), pdf.to_str(), "absolute");
+        assert!(result.pdf_changed);
+        assert_eq!(result.errors.len(), 1);
+        let place = (result.errors[0].file.as_deref(), result.errors[0].line);
+        assert_eq!(place, (Some("main.tex"), Some(3)));
+    }
 }
 
 #[tokio::test]
 async fn an_incremental_no_op_keeps_the_existing_warnings() {
     let (_tmp, root, mgr) = setup(
-        "#!/bin/sh\nmkdir -p build\nif [ ! -f build/main.pdf ]; then\n  printf 'LaTeX Warning: Reference missing on input line 3.\\n' > build/main.log\n  printf 'fake' > build/main.pdf\nfi\nexit 0\n",
+        "mkdir -p build\nif [ ! -f build/main.pdf ]; then\n  printf 'LaTeX Warning: Reference missing on input line 3.\\n' > build/main.log\n  printf 'fake' > build/main.pdf\nfi\nexit 0\n",
     );
     let first = compile(&mgr, &root).await;
     let second = compile(&mgr, &root).await;
@@ -137,26 +154,19 @@ async fn an_incremental_no_op_keeps_the_existing_warnings() {
 /// failed, cancelled or stopped one, so the next run starts afresh.
 #[tokio::test]
 async fn latexmks_record_is_kept_by_a_good_run_and_forgotten_by_any_other_end() {
-    let (_tmp, root, mgr) = setup(
-        "#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nprintf 'fake' > build/main.pdf\nexit 0\n",
-    );
+    // A stub that writes the record, then ends as `end` says.
+    let recording =
+        |end: &str| format!("mkdir -p build\nprintf 'record' > build/main.fdb_latexmk\n{end}");
+    let (_tmp, root, mgr) = setup(&recording("printf 'fake' > build/main.pdf\nexit 0\n"));
     assert!(compile(&mgr, &root).await.ok);
     assert!(root.join("build/main.fdb_latexmk").exists());
 
-    let (_tmp, root, mgr) =
-        setup("#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nexit 12\n");
-    let result = compile(&mgr, &root).await;
-    assert!(!result.ok);
+    let (_tmp, root, mgr) = setup(&recording("exit 12\n"));
+    assert!(!compile(&mgr, &root).await.ok);
     assert!(!root.join("build/main.fdb_latexmk").exists());
 
     // Cancelled, before the next can start.
-    let (_tmp, root, mgr) = setup(
-        "#!/bin/sh
-mkdir -p build
-printf 'record' > build/main.fdb_latexmk
-sleep 20
-",
-    );
+    let (_tmp, root, mgr) = setup(&recording("sleep 20\n"));
     let record = root.join("build/main.fdb_latexmk");
     let task = in_flight(&Arc::new(mgr), &root);
     appears(&record, "latexmk did not write its record").await;
@@ -165,10 +175,7 @@ sleep 20
     assert!(!record.exists());
 
     // Stopped by a rename.
-    let (tmp, service) = stub_service(
-        "#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nsleep 20\n",
-        &["one"],
-    );
+    let (tmp, service) = stub_service(&recording("sleep 20\n"), &["one"]);
     let build = build(&service, "one");
     let record = tmp.path().join("one/build/main.fdb_latexmk");
     appears(&record, "latexmk did not write its record").await;
@@ -184,8 +191,7 @@ sleep 20
 
 #[tokio::test]
 async fn a_stale_log_is_not_reported() {
-    let (_tmp, root, mgr) =
-        setup("#!/bin/sh\nmkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n");
+    let (_tmp, root, mgr) = setup("mkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n");
     fs::create_dir_all(root.join("build")).unwrap();
     let log = root.join("build/main.log");
     fs::write(&log, "./main.tex:9: Stale error.\n").unwrap();
@@ -200,17 +206,13 @@ async fn a_stale_log_is_not_reported() {
     let result = compile(&mgr, &root).await;
 
     assert!(result.ok);
-    assert!(
-        result.errors.is_empty(),
-        "stale log leaked: {:?}",
-        result.errors
-    );
+    assert!(result.errors.is_empty(), "stale log leaked: {result:?}");
 }
 
 #[tokio::test]
 async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
     let (_tmp, root, mgr) = setup(
-        "#!/bin/sh\nmkdir -p build\nprintf './main.tex:4: Current failure.\\n' > build/main.log\nexit 1\n",
+        "mkdir -p build\nprintf './main.tex:4: Current failure.\\n' > build/main.log\nexit 1\n",
     );
     fs::create_dir_all(root.join("build")).unwrap();
     fs::write(root.join("build/main.pdf"), "old successful output").unwrap();
@@ -222,13 +224,14 @@ async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
     assert!(!result.pdf_changed);
     assert!(
         root.join("build/main.pdf").exists(),
-        "old preview may remain on disk"
+        "old preview may remain"
     );
 }
 
 #[tokio::test]
-async fn a_timed_out_compile_keeps_the_output_it_wrote() {
-    let (_tmp, root, mgr) = setup("#!/bin/sh\necho 'Running pdflatex'\ntouch printed\nsleep 20\n");
+async fn a_timed_out_compile_is_killed_and_reported_failed_with_the_output_it_wrote() {
+    let (_tmp, root, mgr) = setup("echo 'Running pdflatex'\ntouch printed\nsleep 20\n");
+    let started = Instant::now();
     // Once the stub has printed, tokio's clock goes straight to the build's
     // time limit, however long the stub took to print.
     let (result, ()) = tokio::join!(compile(&mgr, &root), async {
@@ -237,29 +240,15 @@ async fn a_timed_out_compile_keeps_the_output_it_wrote() {
     });
 
     assert!(!result.ok);
-    assert!(result.log.contains("Running pdflatex"), "{:?}", result.log);
-}
-
-#[tokio::test]
-async fn a_timed_out_compile_is_killed_and_reported_failed() {
-    let (_tmp, root, mut mgr) = setup("#!/bin/sh\nsleep 20\n");
-    mgr.timeout = Some(Duration::from_millis(300));
-    let started = Instant::now();
-    let result = compile(&mgr, &root).await;
-
-    assert!(!result.ok);
     assert!(!result.stopped, "a timeout is a failure, not a Stop");
     assert_eq!(result.pdf, None);
+    assert!(result.log.contains("Running pdflatex"), "{:?}", result.log);
     assert_eq!(result.errors.len(), 1);
     assert!(
         result.errors[0].message.contains("stopped after"),
-        "{:?}",
-        result.errors
+        "{result:?}"
     );
-    assert!(
-        started.elapsed() < Duration::from_secs(10),
-        "kill did not take effect"
-    );
+    promptly(started);
 }
 
 #[tokio::test]
@@ -267,25 +256,23 @@ async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
     // latexmk has exited, but something it started in the background (a
     // shell-escape `&`, a latexmkrc previewer) still holds stdout open. The
     // compile answers after a short drain grace, not at its timeout.
-    let (_tmp, root, mgr) =
-        setup("#!/bin/sh\nsleep 30 &\nmkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n");
     let started = Instant::now();
-    let result = compile(&mgr, &root).await;
-
-    assert!(result.ok);
     assert!(
-        started.elapsed() < Duration::from_secs(10),
-        "compile waited {:?} on a leftover process",
-        started.elapsed()
+        built("sleep 30 &\nmkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n")
+            .await
+            .ok
     );
+    promptly(started);
 }
+
+/// A build that starts and runs on, until the project has a file named fast:
+/// from then it builds at once.
+const SLOW_UNTIL_FAST: &str = "if [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else touch started; sleep 20; fi\n";
 
 #[tokio::test]
 async fn a_new_compile_supersedes_the_in_flight_one_and_a_third_the_replacement_before_it_spawns() {
     {
-        let (_tmp, root, mgr) = setup(
-            "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else touch started; sleep 20; fi\n",
-        );
+        let (_tmp, root, mgr) = setup(SLOW_UNTIL_FAST);
         let mgr = Arc::new(mgr);
 
         let first = in_flight(&mgr, &root);
@@ -298,15 +285,12 @@ async fn a_new_compile_supersedes_the_in_flight_one_and_a_third_the_replacement_
         assert!(second.ok, "superseding compile should succeed");
         assert!(!first.ok, "superseded compile should be killed");
         assert_eq!(first.pdf, None);
-        assert_eq!(
-            fs::read_to_string(root.join("build/main.pdf")).unwrap(),
-            "new"
-        );
+        let pdf = fs::read_to_string(root.join("build/main.pdf")).unwrap();
+        assert_eq!(pdf, "new");
     }
     {
         let (_tmp, root, mgr) = setup(
-            r#"#!/bin/sh
-case "$*" in
+            r#"case "$*" in
   *-lualatex*) mkdir -p build; printf 'third' > build/main.pdf; exit 0 ;;
   *-xelatex*) touch replacement_started; sleep 20 ;;
   *) touch started; sleep 20 ;;
@@ -335,17 +319,15 @@ esac
         assert!(!second.ok);
         assert!(!first.ok);
         assert!(!root.join("replacement_started").exists());
-        assert_eq!(
-            fs::read_to_string(root.join("build/main.pdf")).unwrap(),
-            "third"
-        );
+        let pdf = fs::read_to_string(root.join("build/main.pdf")).unwrap();
+        assert_eq!(pdf, "third");
     }
 }
 
 #[tokio::test]
 async fn a_cancelled_waiting_replacement_does_not_let_the_next_build_overtake_its_predecessor() {
     let (_tmp, root, mgr) = setup(
-        "#!/bin/sh\nif [ -f fast ]; then\n  if kill -0 \"$(cat first.pid)\" 2>/dev/null; then touch overlap; fi\n  mkdir -p build; printf 'new' > build/main.pdf\nelse\n  echo $$ > first.pid\n  sleep 20\nfi\n",
+        "if [ -f fast ]; then\n  if kill -0 \"$(cat first.pid)\" 2>/dev/null; then touch overlap; fi\n  mkdir -p build; printf 'new' > build/main.pdf\nelse\n  echo $$ > first.pid\n  sleep 20\nfi\n",
     );
     let mgr = Arc::new(mgr);
     let first = in_flight(&mgr, &root);
@@ -362,17 +344,14 @@ async fn a_cancelled_waiting_replacement_does_not_let_the_next_build_overtake_it
     let first = first.await.unwrap();
     assert!(third.ok);
     assert!(first.stopped);
-    assert!(
-        !root.join("overlap").exists(),
-        "third build overtook the first"
-    );
+    assert!(!root.join("overlap").exists(), "third overtook the first");
 }
 
 #[tokio::test]
 async fn a_cancelled_compile_takes_its_whole_tree_down() {
     // Dropping the compile future kills latexmk (kill_on_drop), but the
     // engine it started must not keep writing into the build directory.
-    let (_tmp, root, mgr) = setup("#!/bin/sh\n(touch started; sleep 1; touch late) &\nsleep 20\n");
+    let (_tmp, root, mgr) = setup("(touch started; sleep 1; touch late) &\nsleep 20\n");
     let task = in_flight(&Arc::new(mgr), &root);
     appears(&root.join("started"), "latexmk descendant did not start").await;
     task.abort();
@@ -385,63 +364,47 @@ async fn a_cancelled_compile_takes_its_whole_tree_down() {
     );
 }
 
-/// The arguments the stub latexmk was given.
-const RECORD_ARGS: &str =
-    "#!/bin/sh\nmkdir -p build\necho \"$@\" > build/args\nprintf 'fake' > build/main.pdf\nexit 0\n";
-
-fn args(root: &Path) -> Vec<String> {
-    let args = fs::read_to_string(root.join("build/args")).unwrap();
-    args.split_whitespace().map(str::to_string).collect()
-}
-
 /// An unchanged compile leaves latexmk free to skip the engine (no -g); a build
 /// compiles past errors unless the project stops on the first; and -norc turns
 /// off every rc file latexmk would read by itself, the project's included,
 /// which only a trusted project (shell escape) keeps.
 #[tokio::test]
 async fn latexmk_is_given_the_arguments_the_settings_call_for() {
-    let (_tmp, root, mgr) = setup(RECORD_ARGS);
-    compile(&mgr, &root).await;
-    let passed = args(&root);
-    assert!(!passed.contains(&"-g".into()), "{passed:?}");
-    assert!(passed.contains(&"-f".into()), "{passed:?}");
-    assert!(!passed.contains(&"-halt-on-error".into()), "{passed:?}");
-    assert!(passed.contains(&"-norc".into()), "{passed:?}");
-
-    write_settings(&root, &json!({ "stopOnFirstError": true })).unwrap();
-    compile(&mgr, &root).await;
-    let passed = args(&root);
-    assert!(passed.contains(&"-halt-on-error".into()), "{passed:?}");
-    assert!(!passed.contains(&"-f".into()), "{passed:?}");
-
-    write_settings(&root, &json!({ "shellEscape": true })).unwrap();
-    compile(&mgr, &root).await;
-    let passed = args(&root);
-    assert!(!passed.contains(&"-norc".into()), "{passed:?}");
-    assert!(passed.contains(&"-shell-escape".into()), "{passed:?}");
-}
-
-#[tokio::test]
-async fn a_failed_run_shows_the_pdf_it_wrote_with_its_errors() {
-    let (_tmp, root, mgr) = setup(
-        "#!/bin/sh\nmkdir -p build\nprintf './main.tex:4: Undefined control sequence.\\nl.4 x\\n' > build/main.log\nprintf 'fake' > build/main.pdf\nexit 12\n",
-    );
-    let result = compile(&mgr, &root).await;
-
-    assert!(!result.ok);
-    let pdf = root.join("build/main.pdf");
-    assert_eq!(result.pdf.as_deref(), pdf.to_str(), "absolute");
-    assert!(result.pdf_changed);
-    assert_eq!(result.errors.len(), 1);
-    assert_eq!(result.errors[0].line, Some(4));
+    // The stub keeps the arguments it was given.
+    let (_tmp, root, mgr) =
+        setup("mkdir -p build\necho \"$@\" > build/args\nprintf 'fake' > build/main.pdf\nexit 0\n");
+    let cases: [(_, &[&str], &[&str]); 3] = [
+        (json!({}), &["-f", "-norc"], &["-g", "-halt-on-error"]),
+        (
+            json!({ "stopOnFirstError": true }),
+            &["-halt-on-error"],
+            &["-f"],
+        ),
+        (
+            json!({ "shellEscape": true }),
+            &["-shell-escape"],
+            &["-norc"],
+        ),
+    ];
+    for (settings, given, not_given) in cases {
+        write_settings(&root, &settings).unwrap();
+        compile(&mgr, &root).await;
+        let args = fs::read_to_string(root.join("build/args")).unwrap();
+        let passed: Vec<_> = args.split_whitespace().collect();
+        assert!(given.iter().all(|arg| passed.contains(arg)), "{passed:?}");
+        assert!(
+            !not_given.iter().any(|arg| passed.contains(arg)),
+            "{passed:?}"
+        );
+    }
 }
 
 #[tokio::test]
 async fn a_bibtex_error_is_reported_from_its_own_log() {
-    let (_tmp, root, mgr) = setup(
-        "#!/bin/sh\nmkdir -p build\nprintf 'No errors here.\\n' > build/main.log\nprintf \"I was expecting a \\`,' or a \\`}'---line 1 of file refs.bib\\n\" > build/main.blg\nexit 12\n",
-    );
-    let result = compile(&mgr, &root).await;
+    let result = built(
+        "mkdir -p build\nprintf 'No errors here.\\n' > build/main.log\nprintf \"I was expecting a \\`,' or a \\`}'---line 1 of file refs.bib\\n\" > build/main.blg\nexit 12\n",
+    )
+    .await;
 
     assert!(!result.ok);
     assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
@@ -451,10 +414,10 @@ async fn a_bibtex_error_is_reported_from_its_own_log() {
 
 #[tokio::test]
 async fn a_failure_the_log_doesnt_explain_names_latexmks_summary() {
-    let (_tmp, root, mgr) = setup(
-        "#!/bin/sh\nmkdir -p build\nprintf 'No errors here.\\n' > build/main.log\nprintf 'Collected error summary (may duplicate other messages):\\n  biber build/main: Could not find build/main.bcf\\n'\nexit 12\n",
-    );
-    let result = compile(&mgr, &root).await;
+    let result = built(
+        "mkdir -p build\nprintf 'No errors here.\\n' > build/main.log\nprintf 'Collected error summary (may duplicate other messages):\\n  biber build/main: Could not find build/main.bcf\\n'\nexit 12\n",
+    )
+    .await;
 
     assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
     assert_eq!(
@@ -462,42 +425,24 @@ async fn a_failure_the_log_doesnt_explain_names_latexmks_summary() {
         "biber build/main: Could not find build/main.bcf"
     );
     // The Build Log keeps latexmk's own output after the engine's log.
-    assert!(
-        result.log.starts_with("No errors here."),
-        "{:?}",
-        result.log
-    );
-    assert!(
-        result.log.contains("Collected error summary"),
-        "{:?}",
-        result.log
-    );
+    let log = &result.log;
+    assert!(log.starts_with("No errors here."), "{log:?}");
+    assert!(log.contains("Collected error summary"), "{log:?}");
 
     // With no summary either, the exit code.
-    let (_tmp, root, mgr) = setup("#!/bin/sh\nexit 12\n");
-    let result = compile(&mgr, &root).await;
+    let result = built("exit 12\n").await;
     assert_eq!(result.errors.len(), 1);
     assert!(result.errors[0].message.contains("exit code 12"));
 }
 
 #[tokio::test]
 async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
-    let (tmp, service) = stub_service(
-        "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else touch started; sleep 20; fi\n",
-        &["one", "two", "three"],
-    );
     let ids = ["one", "two", "three"];
-    let (one, two, three) = (
-        build(&service, "one"),
-        build(&service, "two"),
-        build(&service, "three"),
-    );
+    let (tmp, service) = stub_service(SLOW_UNTIL_FAST, &ids);
+    let [one, two, three] = ids.map(|id| build(&service, id));
     for id in ids {
-        appears(
-            &tmp.path().join(id).join("started"),
-            "latexmk did not start",
-        )
-        .await;
+        let started = tmp.path().join(id).join("started");
+        appears(&started, "latexmk did not start").await;
     }
 
     let started = Instant::now();
@@ -509,7 +454,7 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     assert_eq!(stop("one").await.unwrap(), true);
     let one = one.await.unwrap();
     assert!(one.stopped && !one.ok);
-    assert!(started.elapsed() < Duration::from_secs(10));
+    promptly(started);
     assert!(
         !two.is_finished() && !three.is_finished(),
         "another project's build was stopped too"
@@ -524,41 +469,24 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
 
     // A rename refused leaves the build running; one that goes ahead stops it.
     create_project(tmp.path(), "taken", "blank").unwrap();
-    let refused = service
-        .call("rename_project", &json!({ "id": "two", "name": "taken" }))
-        .await;
-    assert_eq!(refused.unwrap_err().status, 409);
+    let rename = |name: &str| {
+        let service = Arc::clone(&service);
+        let args = json!({ "id": "two", "name": name });
+        async move { service.call("rename_project", &args).await }
+    };
+    assert_eq!(rename("taken").await.unwrap_err().status, 409);
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!two.is_finished());
 
     let started = Instant::now();
-    service
-        .call("rename_project", &json!({ "id": "two", "name": "uno" }))
-        .await
-        .unwrap();
+    rename("uno").await.unwrap();
     assert!(two.await.unwrap().stopped);
-    assert!(started.elapsed() < Duration::from_secs(10));
+    promptly(started);
     assert!(!three.is_finished());
 
     // Quitting stops the rest, and they say so too.
     service.compile.kill_all();
     assert!(three.await.unwrap().stopped);
-}
-
-#[tokio::test]
-async fn tex_available_reports_the_stub_version() {
-    let tmp = TempDir::new().unwrap();
-    let path = stub_env(
-        &tmp.path().join("bin"),
-        "#!/bin/sh\nprintf 'Latexmk, John Collins, 1 January 2024. Version 4.83\\n'\nexit 0\n",
-    );
-    let status = tex_available(&path).await;
-    assert!(status.available);
-    assert!(status.version.unwrap().starts_with("Latexmk"));
-
-    let none = tex_available("/nonexistent-dir-for-test").await;
-    assert!(!none.available);
-    assert_eq!(none.version, None);
 }
 
 /// An inverse sync from a spot the stub synctex answers for, with the clicked
@@ -586,41 +514,31 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
     fs::write(root.join("build/main.pdf"), "fake").unwrap();
 
     let bin = tmp.path().join("bin");
-    let path = stub_env(&bin, "#!/bin/sh\nexit 0\n");
+    let path = stub_env(&bin, "exit 0\n");
     let synctex = bin.join("synctex");
     executable(
         &synctex,
-        "#!/bin/sh\nprintf 'SyncTeX result begin\\nInput:%s/./chapter.tex\\nLine:7\\n' \"$(pwd -P)\"\n",
+        "printf 'SyncTeX result begin\\nInput:%s/./chapter.tex\\nLine:7\\n' \"$(pwd -P)\"\n",
     );
 
     let loc = inverse(&root, None, &path).await.unwrap();
     assert_eq!(loc.file, "chapter.tex");
     assert_eq!((loc.line, loc.column), (7, None));
 
-    // The clicked word, on the line TeX recorded or a nearby one: whole, not a
-    // command's name, run together with its neighbours as PDF text may be,
-    // with its ligatures spelt out; its clicked letter's column in UTF-16 units.
+    // The clicked letter is looked for in the source file, on the line TeX
+    // recorded or a nearby one (synctex.rs tests the matching itself).
     let text = "\n\n\n\nÜnï words \\word, the\nword next\nfinal\n";
     fs::write(root.join("chapter.tex"), text).unwrap();
-    for (word, offset, line, column) in [
-        ("“word,”", 0, 6, Some(0)),
-        ("theword", 0, 5, Some(17)),
-        ("theword", 4, 6, Some(1)),
-        ("wordnext", 5, 6, Some(6)),
-        ("Ünï", 2, 5, Some(2)),
-        ("ﬁnal", 1, 7, Some(2)),
-        ("absent", 0, 7, None),
-    ] {
+    for (word, offset, line, column) in [("theword", 4, 6, Some(1)), ("absent", 0, 7, None)] {
         let loc = inverse(&root, Some((word, offset)), &path).await.unwrap();
         assert_eq!((loc.line, loc.column), (line, column), "{word}");
     }
 
     // A build made before the project was renamed or moved names its old folder.
-    fs::write(
+    executable(
         &synctex,
-        "#!/bin/sh\nprintf 'Input:/old/Paper/./chapter.tex\\nLine:7\\n'\n",
-    )
-    .unwrap();
+        "printf 'Input:/old/Paper/./chapter.tex\\nLine:7\\n'\n",
+    );
     let loc = inverse(&root, None, &path).await.unwrap();
     assert_eq!((loc.file.as_str(), loc.line), ("chapter.tex", 7));
 }
@@ -639,9 +557,7 @@ async fn inverse_sync_rejects_unsafe_sources_before_reading_words() {
     std::os::unix::fs::symlink(&outside, root.join("linked.tex")).unwrap();
     std::os::unix::fs::symlink(root.join("build"), root.join("generated")).unwrap();
     let bin = tmp.path().join("bin");
-    let path = stub_env(&bin, "#!/bin/sh\nexit 0\n");
-    let synctex = bin.join("synctex");
-    executable(&synctex, "");
+    let path = stub_env(&bin, "exit 0\n");
     let mut accepted = Vec::new();
     for input in [
         "linked.tex",
@@ -654,11 +570,8 @@ async fn inverse_sync_rejects_unsafe_sources_before_reading_words() {
         "/old/Paper/./generated/generated.tex",
         "/old/Paper/./Build/generated.tex",
     ] {
-        fs::write(
-            &synctex,
-            format!("#!/bin/sh\nprintf 'Input:{input}\\nLine:1\\n'\n"),
-        )
-        .unwrap();
+        let answer = format!("printf 'Input:{input}\\nLine:1\\n'\n");
+        executable(&bin.join("synctex"), &answer);
         if let Ok(loc) = inverse(&root, Some(("secret", 2)), &path).await {
             accepted.push((input, loc.file, loc.column));
         }
@@ -672,29 +585,26 @@ extern "C" fn forked() {
     FORKS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
 
+/// latexmk's version is found by running it, and a missing one is reported
+/// without starting anything. A forked child of a multithreaded process (the
+/// Mac app) can crash before its exec; std forks for a bare name when PATH is set.
 #[tokio::test]
-async fn tools_start_by_posix_spawn_never_a_fork() {
-    // A forked child of a multithreaded process (the Mac app) can crash
-    // before its exec; std forks for a bare name when PATH is set.
+async fn tools_report_their_version_and_start_by_posix_spawn_never_a_fork() {
     assert_eq!(unsafe { libc::pthread_atfork(None, Some(forked), None) }, 0);
     let before = FORKS.load(std::sync::atomic::Ordering::SeqCst);
-    let (_tmp, root, mgr) =
-        setup("#!/bin/sh\necho 'Latexmk, John Collins, Version 4.85'\nexit 0\n");
-    assert!(
-        tex_available(mgr.path_env.as_deref().unwrap())
-            .await
-            .available
-    );
+    let (_tmp, root, mgr) = setup("echo 'Latexmk, John Collins, Version 4.85'\nexit 0\n");
+    let status = tex_available(mgr.path_env.as_deref().unwrap()).await;
+    assert!(status.available);
+    assert!(status.version.unwrap().starts_with("Latexmk"));
     compile(&mgr, &root).await;
-    // Missing, it is reported without starting anything.
-    assert!(!tex_available("/nonexistent-dir-for-test").await.available);
+
+    let none = tex_available("/nonexistent-dir-for-test").await;
+    assert!(!none.available);
+    assert_eq!(none.version, None);
     let mut missing = CompileManager::default();
     missing.path_env = Some("/nonexistent-dir-for-test".into());
     let result = compile(&missing, &root).await;
-    assert!(
-        result.errors[0]
-            .message
-            .starts_with("Couldn't start latexmk")
-    );
+    let message = &result.errors[0].message;
+    assert!(message.starts_with("Couldn't start latexmk"), "{message}");
     assert_eq!(FORKS.load(std::sync::atomic::Ordering::SeqCst), before);
 }

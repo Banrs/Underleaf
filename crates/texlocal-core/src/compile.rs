@@ -139,22 +139,12 @@ pub(crate) fn program_at(path: &Path) -> Option<PathBuf> {
     path.is_absolute().then(|| which::which(path).ok())?
 }
 
-fn has_latexmk(dir: &Path) -> bool {
-    program_at(&dir.join("latexmk")).is_some()
-}
-
-fn latexmk_dir(path_env: &str) -> Option<PathBuf> {
-    find_tool("latexmk", path_env)?
-        .parent()
-        .map(Path::to_path_buf)
-}
-
 /// The TeX programs folder `dir` names: `dir` itself, or the bin folder of a
 /// TeX Live root picked in its place.
 pub(crate) fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
     std::iter::once(dir.to_path_buf())
         .chain(children(dir.join("bin")))
-        .find(|c| has_latexmk(c))
+        .find(|c| program_at(&c.join("latexmk")).is_some())
 }
 
 // ---------- process plumbing ----------
@@ -368,7 +358,7 @@ async fn drive(
 
 // ---------- availability ----------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TexStatus {
     pub available: bool,
@@ -388,13 +378,11 @@ pub async fn tex_available(path_env: &str) -> TexStatus {
     TexStatus {
         available,
         version: available.then(|| version_line(&stdout)),
-        tex_dir: None,
         found: available
-            .then(|| latexmk_dir(path_env))
+            .then(|| find_tool("latexmk", path_env))
             .flatten()
-            .map(|dir| dir.to_string_lossy().into_owned()),
-        texpresso: None,
-        texpresso_dir: None,
+            .and_then(|latexmk| Some(latexmk.parent()?.to_string_lossy().into_owned())),
+        ..TexStatus::default()
     }
 }
 
@@ -414,7 +402,7 @@ fn version_line(stdout: &str) -> String {
 /// `pdf`: the successful build's PDF, or one a failed build wrote while
 /// compiling past errors, as an absolute path. `stopped`: Stop, a newer build
 /// of the same project, or quitting ended it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompileResult {
     pub ok: bool,
@@ -439,6 +427,14 @@ struct RunningEntry {
     stopped: bool,
 }
 
+impl RunningEntry {
+    fn latest_is(&self, request: &Arc<()>) -> bool {
+        self.latest
+            .as_ref()
+            .is_some_and(|r| Arc::ptr_eq(r, request))
+    }
+}
+
 type Registry = HashMap<PathBuf, RunningEntry>;
 type ProjectGate = tokio::sync::Mutex<()>;
 
@@ -447,7 +443,6 @@ type ProjectGate = tokio::sync::Mutex<()>;
 pub struct CompileManager {
     running: Mutex<Registry>,
     pub path_env: Option<String>,
-    pub timeout: Option<Duration>,
 }
 
 /// Keeps the project's gate alive through waiting, running, and cancellation.
@@ -472,11 +467,7 @@ impl Registration<'_> {
     /// Stop marked it, a newer request replaced it, or kill_all cleared it.
     fn stopped(&self, running: &Registry) -> bool {
         let entry = &running[self.root];
-        entry.stopped
-            || !entry
-                .latest
-                .as_ref()
-                .is_some_and(|r| Arc::ptr_eq(r, &self.request))
+        entry.stopped || !entry.latest_is(&self.request)
     }
 }
 
@@ -484,11 +475,7 @@ impl Drop for Registration<'_> {
     fn drop(&mut self) {
         let mut running = lock(&self.manager.running);
         let entry = running.get_mut(self.root).expect("registered project");
-        if entry
-            .latest
-            .as_ref()
-            .is_some_and(|r| Arc::ptr_eq(r, &self.request))
-        {
+        if entry.latest_is(&self.request) {
             entry.latest = None;
         }
         // Not once it is reaped, when its group's number may be another's.
@@ -647,14 +634,10 @@ impl CompileManager {
 
     fn stopped_early(start: Instant) -> CompileResult {
         CompileResult {
-            ok: false,
             stopped: true,
             duration_ms: start.elapsed().as_millis() as u64,
-            pdf: None,
-            pdf_changed: false,
-            errors: Vec::new(),
-            warnings: Vec::new(),
             log: "The build was stopped before it started.".to_string(),
+            ..CompileResult::default()
         }
     }
 
@@ -749,21 +732,14 @@ impl CompileManager {
             // never an unkillable gap between the two.
             let mut running = lock(&self.running);
             if registration.stopped(&running) {
-                None
-            } else {
-                running.get_mut(root).unwrap().record = Some(run.output("fdb_latexmk"));
-                Some(
-                    base_command("latexmk", Some(root), &path_env)
-                        .and_then(|mut cmd| Tree::spawn(cmd.args(&args)))
-                        .inspect(|(_, tree)| {
-                            running.get_mut(root).unwrap().tree = Some(tree.clone());
-                        }),
-                )
+                return Ok(Self::stopped_early(request_started));
             }
-        };
-
-        let Some(spawned) = spawned else {
-            return Ok(Self::stopped_early(request_started));
+            running.get_mut(root).unwrap().record = Some(run.output("fdb_latexmk"));
+            base_command("latexmk", Some(root), &path_env)
+                .and_then(|mut cmd| Tree::spawn(cmd.args(&args)))
+                .inspect(|(_, tree)| {
+                    running.get_mut(root).unwrap().tree = Some(tree.clone());
+                })
         };
         // Kept only if the run ends ok: a cancelled one drops it with the gate.
         registration.record = Some(run.output("fdb_latexmk"));
@@ -771,8 +747,8 @@ impl CompileManager {
             Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
             Ok(spawned) => {
                 let (child, tree) = registration.child.insert(spawned);
-                let timeout = self.timeout.unwrap_or(COMPILE_TIMEOUT);
-                let (code, mut output, stderr, timed_out) = drive(child, tree, timeout).await;
+                let (code, mut output, stderr, timed_out) =
+                    drive(child, tree, COMPILE_TIMEOUT).await;
                 registration.child = None;
                 output.push_str(&stderr);
                 let mut running = lock(&self.running);
@@ -911,7 +887,7 @@ mod tests {
     }
 
     #[test]
-    fn a_long_log_is_read_from_its_last_whole_line() {
+    fn a_long_log_is_read_from_its_last_whole_line_and_character() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("main.log");
         std::fs::write(&path, "first line\nsecond line\n./main.tex:3: Boom.\n").unwrap();
@@ -923,10 +899,7 @@ mod tests {
             read_tail(&path, 1000).unwrap(),
             std::fs::read(&path).unwrap()
         );
-    }
-
-    #[test]
-    fn a_long_log_keeps_its_last_whole_characters() {
+        // The log shown keeps its last whole characters.
         assert_eq!(tail("short", 10), "short");
         assert_eq!(tail("aébc", 3), "bc");
         assert_eq!(tail("aébc", 4), "ébc");

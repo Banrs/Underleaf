@@ -225,23 +225,17 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
             }
             code = &code[token.end()..];
             if let Some(heading) = m.name("heading") {
-                if !heading_on_line {
-                    heading_on_line = true;
-                    if let Some(title) = brace_group(code) {
-                        let depth = CATALOG
-                            .heading_levels
-                            .iter()
-                            .position(|level| level.command == heading.as_str())
-                            .expect("a heading level of the catalog");
-                        let title = plain_title(title);
-                        into.outline.push(Heading::new(
-                            depth,
-                            title,
-                            index + 1,
-                            Some(file.clone()),
-                        ));
-                    }
+                if !heading_on_line && let Some(title) = brace_group(code) {
+                    let depth = CATALOG
+                        .heading_levels
+                        .iter()
+                        .position(|level| level.command == heading.as_str())
+                        .expect("a heading level of the catalog");
+                    let (title, line) = (plain_title(title), index + 1);
+                    into.outline
+                        .push(Heading::new(depth, title, line, Some(file.clone())));
                 }
+                heading_on_line = true;
             } else if let Some(name) = m.name("braced").or_else(|| m.name("bare")) {
                 let name = name.as_str().trim();
                 let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
@@ -323,6 +317,11 @@ mod tests {
     /// A heading's depth, title ("" for none) and line.
     type Outline<'a> = &'a [(usize, &'a str, usize)];
 
+    fn heading(depth: usize, title: &str, file: &str, line: usize) -> Heading {
+        let title = (!title.is_empty()).then(|| title.into());
+        Heading::new(depth, title, line, Some(file.into()))
+    }
+
     /// Headings and words, of one file's text.
     #[test]
     fn a_file_reads_as_its_outline_and_words() {
@@ -393,10 +392,7 @@ mod tests {
             let expected = Analysis {
                 outline: outline
                     .iter()
-                    .map(|&(depth, title, line)| {
-                        let title = (!title.is_empty()).then(|| title.into());
-                        Heading::new(depth, title, line, Some("main.tex".into()))
-                    })
+                    .map(|&(depth, title, line)| heading(depth, title, "main.tex", line))
                     .collect(),
                 words,
             };
@@ -407,10 +403,6 @@ mod tests {
 
     #[test]
     fn the_outline_nests_by_depth_with_a_fold_key_for_each_heading() {
-        let heading = |depth, title: &str, file: &str, line| {
-            let title = (!title.is_empty()).then(|| title.into());
-            Heading::new(depth, title, line, Some(file.into()))
-        };
         // A subsection before any section sits flush; same-named headings are numbered.
         let outline = [
             heading(3, "Early", "a.tex", 1),
@@ -454,13 +446,8 @@ mod tests {
                 "untitled": false, "line": 1, "file": "a.tex", "foldKey": "a.tex\t3:Early#1" })
         );
         let untitled = serde_json::to_value(&tree[4]).unwrap();
-        assert_eq!(
-            (&untitled["title"], &untitled["untitled"]),
-            (
-                &serde_json::json!("Untitled Chapter"),
-                &serde_json::json!(true)
-            )
-        );
+        assert_eq!(untitled["title"], "Untitled Chapter");
+        assert_eq!(untitled["untitled"], true);
         // The heading a line is under: its file's last at or above it.
         assert_eq!(current_heading(&outline, "a.tex", 9), Some(3));
         assert_eq!(current_heading(&outline, "a.tex", 100), Some(4));
@@ -468,43 +455,94 @@ mod tests {
         assert_eq!(current_heading(&outline, "c.tex", 5), None);
     }
 
+    /// A project folder of `files`, each a path and its text.
+    fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (rel, text) in files {
+            let path = dir.path().join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        dir
+    }
+
     /// The main file's inputs read in place, each file once, commented ones not;
     /// a file the main file doesn't reach is its own document.
     #[test]
     fn a_project_reads_its_inputs_in_place() {
-        let dir = tempfile::tempdir().unwrap();
-        let write = |rel: &str, text: &str| {
-            let path = dir.path().join(rel);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, text).unwrap();
-        };
-        write(
-            "main.tex",
-            "\\section{Intro}\nHello world\n\\input{chapters/a}\n% \\input{loose}\n\\include{b}\\input{main}\n\\section{End}",
-        );
-        write("chapters/a.tex", "\\section{A}\none two\n\\input{b.tex}");
-        write("b.tex", "\\subsection{B}");
-        write("loose.tex", "\\section{Loose}\nthree");
-        let headings = |a: &Analysis| -> Vec<(String, String, usize)> {
-            a.outline
-                .iter()
-                .map(|h| (h.title.clone(), h.file.clone().unwrap(), h.line))
+        let dir = project(&[
+            (
+                "main.tex",
+                "\\section{Intro}\nHello world\n\\input{chapters/a}\n% \\input{loose}\n\\include{b}\\input{main}\n\\section{End}",
+            ),
+            ("chapters/a.tex", "\\section{A}\none two\n\\input{b.tex}"),
+            ("b.tex", "\\subsection{B}"),
+            ("loose.tex", "\\section{Loose}\nthree"),
+        ]);
+        fn headings(a: &Analysis) -> Vec<(&str, Option<&str>, usize)> {
+            let outline = a.outline.iter();
+            outline
+                .map(|h| (h.title.as_str(), h.file.as_deref(), h.line))
                 .collect()
-        };
-        let project = analyze_project(dir.path(), "main.tex", "chapters/a.tex");
-        let at = |t: &str, f: &str, l| (t.to_owned(), f.to_owned(), l);
+        }
+        let whole = analyze_project(dir.path(), "main.tex", "chapters/a.tex");
         assert_eq!(
-            headings(&project),
+            headings(&whole),
             [
-                at("Intro", "main.tex", 1),
-                at("A", "chapters/a.tex", 1),
-                at("B", "b.tex", 1),
-                at("End", "main.tex", 6)
+                ("Intro", Some("main.tex"), 1),
+                ("A", Some("chapters/a.tex"), 1),
+                ("B", Some("b.tex"), 1),
+                ("End", Some("main.tex"), 6)
             ]
         );
-        assert_eq!(project.words, 12);
+        assert_eq!(whole.words, 12);
         let loose = analyze_project(dir.path(), "main.tex", "loose.tex");
-        assert_eq!(headings(&loose), [at("Loose", "loose.tex", 1)]);
+        assert_eq!(headings(&loose), [("Loose", Some("loose.tex"), 1)]);
         assert_eq!(loose.words, 2);
+    }
+
+    /// Inputs are followed as TeX finds them: by an unbraced name, and by a
+    /// name with its .tex, not given a second; not in a literal or comment
+    /// environment. The open file named another way is still the one read.
+    #[test]
+    fn inputs_are_followed_as_tex_finds_them() {
+        let one = [
+            ("main.tex", "\\section{Main}\n\\input{chapters/one}"),
+            ("chapters/one.tex", "\\section{One}"),
+        ];
+        let unbraced = [
+            (
+                "main.tex",
+                "\\section{Main}\n\\input chapter\n\\section{End}",
+            ),
+            ("chapter.tex", "\\section{Chapter}\nbody"),
+        ];
+        let named_tex = [
+            ("main.tex", "\\input{part.tex}"),
+            ("part.tex", "\\section{Part}"),
+            ("part.tex.tex", "\\section{Wrong}"),
+        ];
+        let literal = [
+            (
+                "main.tex",
+                "\\section{Main}\n\\begin{verbatim}\n\\input{example}\n\\end{verbatim}\n\\begin{comment}\n\\input{example}\n\\end{comment}\n\\verb|\\input{example}|\n\\input{real}",
+            ),
+            ("example.tex", "\\section{Example}"),
+            ("real.tex", "\\section{Real}"),
+        ];
+        let cases: [(&[_], &str, &[&str]); 6] = [
+            (&one, "chapters/one.tex", &["Main", "One"]),
+            (&one, "./chapters/one.tex", &["Main", "One"]),
+            (&one, "chapters/../chapters/one.tex", &["Main", "One"]),
+            (&unbraced, "main.tex", &["Main", "Chapter", "End"]),
+            (&named_tex, "main.tex", &["Part"]),
+            (&literal, "main.tex", &["Main", "Real"]),
+        ];
+        for (files, open, titles) in cases {
+            let dir = project(files);
+            let found = analyze_project(dir.path(), "main.tex", open).outline;
+            let found: Vec<_> = found.iter().map(|h| h.title.as_str()).collect();
+            assert_eq!(found, titles, "{files:?} with {open} open");
+        }
     }
 }

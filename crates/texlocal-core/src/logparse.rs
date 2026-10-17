@@ -181,24 +181,21 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
             let error = named.is_some() || line.starts_with("! ");
             let mut message = m["message"].to_string();
             // Find the source echo without borrowing the next error's.
-            let echo = if error {
+            let echo = error.then(|| {
                 lines[i + 1..(i + 12).min(lines.len())]
                     .iter()
                     .take_while(|next| !next.starts_with('!') && !ERROR.is_match(next))
                     .position(|next| L_NO.is_match(next))
                     .map(|k| i + 1 + k)
-            } else {
-                None
-            };
+            });
+            let echo = echo.flatten();
             if error {
                 quiet_until = echo.map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
             }
-            let continuation = if named.is_some() {
-                3
-            } else if error {
-                0
-            } else {
-                2
+            let continuation = match (named, error) {
+                (Some(_), _) => 3,
+                (None, true) => 0,
+                (None, false) => 2,
             };
             let mut prev = line;
             for next in &lines[i + 1..(i + 1 + continuation).min(lines.len())] {
@@ -221,17 +218,11 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
                 continue;
             }
             // TeX's context or source echo names the undefined command.
-            if let Some(m) = echo
-                .filter(|_| {
-                    message
-                        .trim_start()
-                        .starts_with("Undefined control sequence.")
-                })
-                .and_then(|j| {
-                    lines[i + 1..=j]
-                        .iter()
-                        .find_map(|line| LAST_CS.captures(line))
-                })
+            if message
+                .trim_start()
+                .starts_with("Undefined control sequence.")
+                && let Some(j) = echo
+                && let Some(m) = lines[i + 1..=j].iter().find_map(|l| LAST_CS.captures(l))
             {
                 message = format!("Undefined control sequence: {}", &m[1]);
             }
@@ -261,10 +252,8 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     }
 
     // Reruns duplicate messages; keep the first in order.
-    let keep: Vec<bool> = {
-        let mut seen = HashSet::with_capacity(items.len());
-        items.iter().map(|item| seen.insert(item)).collect()
-    };
+    let mut seen = HashSet::with_capacity(items.len());
+    let keep: Vec<bool> = items.iter().map(|item| seen.insert(item)).collect();
     let mut keep = keep.into_iter();
     items.retain(|_| keep.next().unwrap());
     items
@@ -311,37 +300,39 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
 
 #[cfg(test)]
 mod tests {
-    use super::{latexmk_errors, parse_blg, parse_log, project_path, undefined_command};
+    use super::{LogItem, latexmk_errors, parse_blg, parse_log, project_path, undefined_command};
+
+    /// Each item's file and line.
+    fn places(items: &[LogItem]) -> Vec<(Option<&str>, Option<u32>)> {
+        items
+            .iter()
+            .map(|it| (it.file.as_deref(), it.line))
+            .collect()
+    }
 
     #[test]
     fn an_error_without_its_own_line_names_no_place() {
-        // A "!" error doesn't take the next error's "l.<n>".
-        let log = "! Emergency stop.\n\
-                   ./main.tex:12: Undefined control sequence.\n\
-                   l.12 \\foo\n";
-        let items = parse_log(log, "main.tex");
-        assert_eq!((items[0].file.as_deref(), items[0].line), (None, None));
-        assert_eq!(items[1].line, Some(12));
-        // TeX's closing summary names the stopping error's line, not its own.
-        let log = "./main.tex:12: Undefined control sequence.\n\
-                   l.12 \\foo\n\
-                   \n\
-                   ./main.tex:12:  ==> Fatal error occurred, no output PDF file produced!\n";
-        let items = parse_log(log, "main.tex");
-        assert_eq!(items.len(), 1, "the summary folds into the error before it");
-        assert_eq!(items[0].line, Some(12));
-        // Alone, it is the failure's one record, with no place.
-        let items = parse_log(
-            "./main.tex:12:  ==> Fatal error occurred, no output PDF file produced!\n",
-            "main.tex",
-        );
-        assert_eq!(items.len(), 1);
-        assert_eq!((items[0].file.as_deref(), items[0].line), (None, None));
-        let items = parse_log(
-            "! Emergency stop.\n! ==> Fatal error occurred, no output PDF file produced!\n",
-            "main.tex",
-        );
-        assert_eq!(items.len(), 1);
+        let error = "./main.tex:12: Undefined control sequence.\nl.12 \\foo\n";
+        let fatal = "==> Fatal error occurred, no output PDF file produced!";
+        let cases: [(String, &[_]); 4] = [
+            // A "!" error doesn't take the next error's "l.<n>".
+            (
+                format!("! Emergency stop.\n{error}"),
+                &[(None, None), (Some("main.tex"), Some(12))],
+            ),
+            // TeX's closing summary names the stopping error's line, not its
+            // own, and folds into the error before it.
+            (
+                format!("{error}\n./main.tex:12:  {fatal}\n"),
+                &[(Some("main.tex"), Some(12))],
+            ),
+            // Alone, it is the failure's one record, with no place.
+            (format!("./main.tex:12:  {fatal}\n"), &[(None, None)]),
+            (format!("! Emergency stop.\n! {fatal}\n"), &[(None, None)]),
+        ];
+        for (log, expected) in cases {
+            assert_eq!(places(&parse_log(&log, "main.tex")), expected, "{log}");
+        }
     }
 
     #[test]
@@ -417,14 +408,12 @@ mod tests {
         let commands: Vec<_> = items[1..].iter().map(|it| it.command.as_deref()).collect();
         assert_eq!(commands, [Some("\\foo@x"), Some("\\&")]);
         // The name of a file TeX loaded comes first in its message: not this file's command.
-        assert_eq!(
-            undefined_command("x.sty: Undefined control sequence: \\a"),
-            None
-        );
-        assert_eq!(
-            undefined_command("Undefined control sequence: \\ab-c"),
-            None
-        );
+        for message in [
+            "x.sty: Undefined control sequence: \\a",
+            "Undefined control sequence: \\ab-c",
+        ] {
+            assert_eq!(undefined_command(message), None, "{message}");
+        }
     }
 
     #[test]
@@ -460,9 +449,7 @@ mod tests {
                    \n\
                    build/main.bbl:5:  ==> Fatal error occurred, no output PDF file produced!\n";
         let items = parse_log(log, "main.tex");
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].file.as_deref(), Some("build/main.bbl"));
-        assert_eq!(items[0].line, Some(5));
+        assert_eq!(places(&items), [(Some("build/main.bbl"), Some(5))]);
         assert_eq!(items[0].message, "Misplaced alignment tab character &.");
     }
 
@@ -493,16 +480,12 @@ mod tests {
                    LaTeX Warning: Reference `x' on page 1 undefined on input line 9.\n\
                    \n\
                    \x20)\n";
-        let places: Vec<_> = parse_log(log, "other.tex")
-            .into_iter()
-            .map(|it| (it.file, it.line))
-            .collect();
         assert_eq!(
-            places,
+            places(&parse_log(log, "other.tex")),
             [
-                (Some("main.tex".to_string()), Some(4)),
-                (Some("chapters/intro.tex".to_string()), Some(3)),
-                (Some("main.tex".to_string()), Some(9)),
+                (Some("main.tex"), Some(4)),
+                (Some("chapters/intro.tex"), Some(3)),
+                (Some("main.tex"), Some(9)),
             ]
         );
     }
@@ -515,10 +498,7 @@ mod tests {
                    d control sequence.\n\
                    l.27 \\foo\n";
         let items = parse_log(log, "main.tex");
-        assert_eq!(
-            (items[0].file.as_deref(), items[0].line),
-            (Some("main.tex"), None)
-        );
+        assert_eq!(places(&items), [(Some("main.tex"), None)]);
         assert_eq!(
             items[0].message,
             "graphicx.sty: Undefined control sequence: \\foo"
@@ -602,15 +582,8 @@ mod tests {
                    Warning--empty title in a\n\
                    [812] Utils.pm:465> ERROR - BibTeX subsystem: syntax error\n";
         let items = parse_blg(blg);
-        assert_eq!(items.len(), 2);
-        assert_eq!(
-            (
-                items[0].file.as_deref(),
-                items[0].line,
-                items[0].message.as_str()
-            ),
-            (Some("refs.bib"), Some(1), "I was expecting a `,' or a `}'")
-        );
+        assert_eq!(places(&items), [(Some("refs.bib"), Some(1)), (None, None)]);
+        assert_eq!(items[0].message, "I was expecting a `,' or a `}'");
         assert_eq!(items[1].message, "BibTeX subsystem: syntax error");
         // A BibTeX error takes its message from the line above its place.
         let items = parse_blg("I couldn't open database file .bib\n---line 5 of file main.aux\n");
@@ -629,20 +602,20 @@ mod tests {
 
     #[test]
     fn tex_distribution_paths_are_not_the_projects() {
-        assert_eq!(project_path("./main.tex"), Some("main.tex".into()));
-        assert_eq!(
-            project_path("chapters/a.tex"),
-            Some("chapters/a.tex".into())
-        );
-        assert_eq!(project_path("/usr/local/texlive/a.sty"), None);
-        for windows in [
-            "C:/texlive/2026/texmf-dist/tex/latex/base/article.cls",
-            r"c:\Program Files\MiKTeX\tex/latex/base\article.cls",
-            r"\\server\texmf\a.sty",
+        for (path, project) in [
+            ("./main.tex", Some("main.tex")),
+            ("chapters/a.tex", Some("chapters/a.tex")),
+            ("/usr/local/texlive/a.sty", None),
+            (
+                "C:/texlive/2026/texmf-dist/tex/latex/base/article.cls",
+                None,
+            ),
+            (r"c:\Program Files\MiKTeX\tex/latex/base\article.cls", None),
+            (r"\\server\texmf\a.sty", None),
+            // A file named like a drive is still the project's.
+            ("c:a.tex", Some("c:a.tex")),
         ] {
-            assert_eq!(project_path(windows), None, "{windows}");
+            assert_eq!(project_path(path).as_deref(), project, "{path}");
         }
-        // A file named like a drive is still the project's.
-        assert_eq!(project_path("c:a.tex"), Some("c:a.tex".into()));
     }
 }
