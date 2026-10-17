@@ -43,11 +43,12 @@ extension SourceTextView {
 
     /// The find indicator bounces: with Reduce Motion the partner is filled where it is, under the text, until the
     /// selection next changes. A fill of the view's own, as the current line's: TextKit drops a rendering attribute's
-    /// once the fragment is laid out again, as the edit that typed the bracket does.
+    /// once the fragment is laid out again, as the edit that typed the bracket does. Only a partner in sight: the indicator
+    /// would scroll to one out of it. Asked of TextKit, not of `fragments`, which an edit empties until the next layout.
     func showPartner(of at: Int) {
-        guard at >= 0, at < text.length, let i = document.partner(of: at), let first = fragments.first, let last = fragments.last,
-              first.offset <= i, i < offset(last.fragment.rangeInElement.endLocation) else { return }
+        guard at >= 0, at < text.length, let i = document.partner(of: at) else { return }
         let range = NSRange(location: i, length: 1)
+        guard let rect = segments(range), visibleRect.intersects(rect) else { return }
         guard reducesMotion() else { return showFindIndicator(for: range) }
         markPartner(range)
     }
@@ -59,9 +60,10 @@ extension SourceTextView {
         if let rect = partnerRect { setNeedsDisplay(rect) }
     }
 
-    private var partnerRect: NSRect? {
-        guard let partnerMark, NSMaxRange(partnerMark) <= text.length, let manager = textLayoutManager,
-              let range = textRange(partnerMark) else { return nil }
+    private var partnerRect: NSRect? { partnerMark.flatMap(segments) }
+
+    private func segments(_ marked: NSRange) -> NSRect? {
+        guard NSMaxRange(marked) <= text.length, let manager = textLayoutManager, let range = textRange(marked) else { return nil }
         var rect = NSRect.null
         manager.enumerateTextSegments(in: range, type: .standard, options: .rangeNotRequired) { _, frame, _, _ in
             rect = rect.union(frame)
