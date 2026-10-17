@@ -1,6 +1,6 @@
 name: CI
 
-# One workflow: the Rust core on Linux and Windows, the Mac app and the
+# One workflow: the Rust core on macOS and Windows, the Mac app and the
 # Windows app, each only when a path it builds from changed. `ci-ok` is the one check to require.
 on:
   pull_request:
@@ -50,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -61,7 +61,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - if: runner.os == 'Linux'
+      - if: runner.os == 'macOS'
         run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace

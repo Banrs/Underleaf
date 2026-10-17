@@ -11,7 +11,10 @@ One Rust core, thin native hosts:
 
 - **macOS app** — AppKit and SwiftUI for macOS 27, in `apps/macos`. The editor is
   native (TextKit), and the PDF is PDFKit's.
-- **Windows app** — a native WinUI 3 / Fluent app on the same core, in progress.
+- **Windows app** — a native WinUI 3 / Fluent app on the same core, in `apps/windows`, in
+  progress.
+
+macOS and Windows only: there is no Linux build.
 
 [HANDOFF.md](HANDOFF.md) has the current status and architecture.
 
@@ -104,7 +107,7 @@ tools/texpresso/         Builds and installs TeXpresso with Underleaf's patch.
 ## Development
 
 ```sh
-cargo test --workspace        # the core builds and tests on Windows, macOS and Linux
+cargo test --workspace        # the core builds and tests on macOS and Windows
 
 # macOS app (Xcode 27): the build runs cargo itself
 open apps/macos/TeXLocal.xcodeproj
@@ -116,7 +119,7 @@ These are full regression commands. For an individual change, select the affecte
 test files or Xcode methods; keep cursor, menu tracking and visual-material checks
 in native UI verification. `HANDOFF.md` records the current evidence and limits.
 
-CI (`.github/workflows/ci.yml`) runs Rust (fmt, clippy, tests) on Ubuntu and Windows and the
+CI (`.github/workflows/ci.yml`) runs Rust (fmt, clippy, tests) on macOS and Windows and the
 Mac app's `xcodebuild test` on the `xcode-27` runner, each only when a path it builds from
 changed. `ci-ok` is the one check to require.
 
