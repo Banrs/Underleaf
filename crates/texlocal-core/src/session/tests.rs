@@ -4,7 +4,6 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -245,7 +244,7 @@ impl Rig {
         fs::write(root.join("main.tex"), "Hello").unwrap();
         let service = Arc::new(Service::new(data.path().to_path_buf()));
         // As if `status` had found TeX, which automatic builds wait for.
-        service.tex_found.store(true, Ordering::Relaxed);
+        service.tex_found.send_replace(true);
         let fake = Arc::new(Fake::default());
         let timings = Timings {
             watch,
@@ -778,6 +777,11 @@ async fn the_main_file_cant_go_to_the_trash_and_nothing_puts_a_trashed_file_back
         .call("prepare_delete", json!({ "path": "main.tex" }))
         .await;
     assert_eq!(refused.unwrap_err().status, 409);
+    if cfg!(any(target_os = "macos", windows)) {
+        // Spelt as a volume that ignores case finds it.
+        let other_case = rig.call("prepare_delete", json!({ "path": "MAIN.tex" }));
+        assert_eq!(other_case.await.unwrap_err().status, 409);
+    }
     fs::write(rig.root.join("old.tex"), "old").unwrap();
     let doc = rig.open("old.tex").await;
     doc.edit(0, 0, "x");
@@ -1102,17 +1106,155 @@ async fn a_host_numbers_its_sessions_and_a_number_open_already_is_refused() {
     assert!(rig.ok("state", json!({})).await["build"]["compiling"] == true);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn automatic_builds_wait_for_tex_to_be_found() {
-    let mut rig = Rig::new(false).await;
+    let rig = Rig::new(false).await;
     let service = &rig.sessions.service;
-    service.tex_found.store(false, Ordering::Relaxed);
+    service.tex_found.send_replace(false);
     rig.ok("set_options", json!({ "autoCompile": true })).await;
     rig.ok("compile", json!({ "auto": true })).await;
     assert_eq!(rig.fake.called("compile"), 0, "no TeX: no automatic build");
     rig.ok("compile", json!({})).await;
     assert_eq!(rig.fake.called("compile"), 1, "one asked for still runs");
-    let _ = rig.events().await;
+    rig.fake.finish_build(built(false, Vec::new()));
+    // Found, as Settings' look for it finds it: the build waiting runs.
+    service.tex_found.send_replace(true);
+    wait(1).await;
+    rig.state().await;
+    assert_eq!(rig.fake.called("compile"), 2);
+}
+
+// MARK: - The edges
+
+/// Another app's write that the watcher hasn't told of yet (its changes settle for
+/// 250 ms) is asked about, not written over by the autosave.
+#[tokio::test(start_paused = true)]
+async fn a_write_elsewhere_just_before_the_autosave_is_asked_about_not_written_over() {
+    let mut rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    doc.edit(5, 0, " mine");
+    wait(550).await;
+    rig.write_elsewhere("main.tex", "theirs");
+    wait(200).await;
+    assert_eq!(rig.disk("main.tex"), "theirs");
+    let conflicts = rig.of_type("conflict").await;
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0]["kind"], "changed");
+    // The watcher's news, when it comes, asks nothing more.
+    wait(300).await;
+    assert!(rig.of_type("conflict").await.is_empty());
+    assert_eq!(rig.disk("main.tex"), "theirs");
+}
+
+#[tokio::test(start_paused = true)]
+async fn cleans_asked_for_together_are_all_answered() {
+    let rig = Rig::new(false).await;
+    rig.ok("compile", json!({})).await;
+    let clean = || {
+        let args = json!({ "session": rig.session });
+        rig.sessions.send("session_clean", &args)
+    };
+    let (first, second) = (clean(), clean());
+    first.await.unwrap();
+    second.await.unwrap();
+    assert_eq!(rig.fake.called("clean"), 1);
+}
+
+/// Waits for the session's citations to have `key`, as a scan beside it finds them.
+async fn until_cited(doc: &Document, key: &str) -> bool {
+    for _ in 0..500 {
+        if doc.symbols().citations.iter().any(|cited| cited == key) {
+            return true;
+        }
+        wait(10).await;
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    false
+}
+
+#[tokio::test(start_paused = true)]
+async fn citations_another_app_writes_reach_completion() {
+    let rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    fs::write(rig.root.join("refs.bib"), "@book{first,").unwrap();
+    rig.changed("refs.bib", true);
+    assert!(until_cited(&doc, "first").await, "a new file's");
+    rig.write_elsewhere("refs.bib", "@book{second,");
+    assert!(until_cited(&doc, "second").await, "a listed file's");
+}
+
+/// Two files on their way to the Trash at once: the first's end leaves the second held.
+#[tokio::test(start_paused = true)]
+async fn two_trashes_under_way_each_keep_their_file_from_being_saved_again() {
+    let rig = Rig::new(false).await;
+    for name in ["a.tex", "b.tex"] {
+        fs::write(rig.root.join(name), name).unwrap();
+    }
+    let b = rig.open("b.tex").await;
+    rig.ok("prepare_delete", json!({ "path": "a.tex" })).await;
+    rig.ok("prepare_delete", json!({ "path": "b.tex" })).await;
+    fs::remove_file(rig.root.join("a.tex")).unwrap();
+    rig.ok("deleted", json!({ "path": "a.tex" })).await;
+    b.edit(0, 0, "x");
+    wait(800).await;
+    assert_eq!(rig.disk("b.tex"), "b.tex");
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_automatic_build_whose_saves_are_held_shows_nothing() {
+    let mut rig = Rig::new(false).await;
+    in_conflict(&rig).await;
+    rig.resolve("cancel").await;
+    rig.events().await;
+    rig.ok("compile", json!({ "auto": true })).await;
+    assert_eq!(rig.of_type("build").await, Vec::<Value>::new());
+    assert_eq!(rig.fake.called("compile"), 0);
+}
+
+/// Compile's word and spinner stay as they are from one build to the next.
+#[tokio::test(start_paused = true)]
+async fn a_build_queued_behind_another_follows_with_no_pause_shown() {
+    let mut rig = Rig::new(false).await;
+    rig.ok("compile", json!({ "auto": true })).await;
+    rig.ok("compile", json!({})).await;
+    rig.fake.finish_build(built(true, Vec::new()));
+    rig.state().await;
+    assert_eq!(rig.fake.called("compile"), 2);
+    let builds = rig.of_type("build").await;
+    assert!(builds.iter().all(|b| b["compiling"] == true), "{builds:?}");
+    assert_eq!(builds.last().unwrap()["auto"], false);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_reload_from_disk_puts_the_preview_out_of_date() {
+    let rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    rig.ok("compile", json!({})).await;
+    rig.fake.finish_build(built(true, Vec::new()));
+    rig.write_elsewhere("main.tex", "From elsewhere");
+    wait(300).await;
+    doc.reload("From elsewhere");
+    assert_eq!(rig.state().await["build"]["outdated"], true);
+}
+
+/// A bug that panics ends the session, but loudly: the edits it held are written, each
+/// document says nothing more is saved, and commands waiting are told the session stopped.
+#[tokio::test(start_paused = true)]
+async fn a_panic_ends_the_session_with_its_edits_written_and_the_host_told() {
+    let rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    doc.edit(5, 0, " mine");
+    let args = json!({ "session": rig.session });
+    let panicked = rig.sessions.send("session_panic", &args);
+    let behind = rig.sessions.send("session_state", &args);
+    assert_eq!(panicked.await.unwrap_err().status, 500);
+    assert_eq!(behind.await.unwrap_err().status, 500);
+    assert_eq!(rig.disk("main.tex"), "Hello mine");
+    let told = until_event(&rig.seen, |e| {
+        e["type"] == "document" && e["error"].as_str().is_some_and(|e| e.contains("saved"))
+    });
+    assert!(told.is_some());
+    assert_eq!(rig.call("state", json!({})).await.unwrap_err().status, 404);
 }
 
 #[tokio::test]

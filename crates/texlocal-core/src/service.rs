@@ -4,7 +4,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use regex::Regex;
@@ -66,8 +65,8 @@ pub struct Service {
     /// every client spells a project as its folder is stored.
     edits: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// Whether the last look for TeX (`status`) found it: sessions build by themselves only
-    /// then. None found before the first look.
-    pub(crate) tex_found: AtomicBool,
+    /// then, and one waiting builds once it is. None found before the first look.
+    pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
 }
 
 impl Service {
@@ -77,7 +76,7 @@ impl Service {
             compile: CompileManager::default(),
             texpresso: crate::texpresso::Manager::default(),
             edits: Mutex::default(),
-            tex_found: AtomicBool::new(false),
+            tex_found: tokio::sync::watch::Sender::new(false),
         }
     }
 
@@ -141,13 +140,13 @@ impl Service {
         found.texpresso = shown(crate::texpresso::discover(&texpresso_path));
         found.tex_dir = shown(tex_dir);
         found.texpresso_dir = shown(texpresso_dir);
-        self.tex_found.store(found.available, Ordering::Relaxed);
+        self.tex_found.send_replace(found.available);
         found.into()
     }
 
     /// Whether the last `status` found TeX.
     pub(crate) fn tex_found(&self) -> bool {
-        self.tex_found.load(Ordering::Relaxed)
+        *self.tex_found.borrow()
     }
 
     // ---------- TeX folder ----------
