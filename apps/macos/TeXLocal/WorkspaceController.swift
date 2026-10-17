@@ -17,7 +17,6 @@ final class WorkspaceController: DetentSplitViewController {
     /// first row's room when open, the status bar's when folded.
     private var outlineBar: NSSplitViewItemAccessoryViewController!
     private var outlineBarHeight: NSLayoutConstraint!
-    private let outlineRest = LineRest()
     private var mounts: [ObjectIdentifier: Mount] = [:]
     private let searchField = FieldHandle()
 
@@ -257,7 +256,7 @@ final class WorkspaceController: DetentSplitViewController {
         area.addSplitViewItem(panelItem)
         area.loaded = { [unowned self] in if !project.panel.shown { panelItem.isCollapsed = true } }
         // The panel resizes from the status bar's top line, as Xcode's debug area does from its bar's: a split view is flipped.
-        area.grip = { _, rect in rect.offsetBy(dx: 0, dy: -(BarMetrics.height + BarMetrics.line)) }
+        area.grip = { _, rect in rect.offsetBy(dx: 0, dy: -BarMetrics.height) }
 
         areaItem = NSSplitViewItem(viewController: area)
         addSplitViewItem(areaItem)
@@ -272,10 +271,7 @@ final class WorkspaceController: DetentSplitViewController {
     private func buildStatusBar() {
         for item in [sourceItem!, pdfItem!] {
             let space = NSSplitViewItemAccessoryViewController()
-            // The PDF's white pages would show through AppKit's edge (and PDFKit's scroll view takes no hard style, 27.2), in
-            // Dark a grey slab beside the source's dark: the text's ground there keeps the bar one tone, as Xcode's bars.
-            space.view = item === pdfItem ? Ground() : NSView()
-            // AppKit's edge draws a device pixel of its own tone just over it, which the bar's line covers.
+            space.view = NSView()
             space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
             // 27.2: AppKit's insets would pad it, and the pane's safe area with it.
             space.automaticallyAppliesContentInsets = false
@@ -286,20 +282,21 @@ final class WorkspaceController: DetentSplitViewController {
         // Not the toolbar's inset the columns take for its last section (`buildArea`).
         bar.safeAreaRegions = []
         bar.translatesAutoresizingMaskIntoConstraints = false
+        // As Xcode's editor bar, its own ground and line across both panes to the window's edge: AppKit's edges under it
+        // differ by pane (PDFKit's takes no style, 27.2), and the accessories stop short of a hidden inspector's divider.
+        let ground = BarGround()
+        ground.translatesAutoresizingMaskIntoConstraints = false
+        columns.view.addSubview(ground)
         columns.view.addSubview(bar)
-        // Opaque, so AppKit's pixel under it doesn't show as a second edge of another tone (27.2, Dark).
-        let line = Line(opaque: true)
-        line.translatesAutoresizingMaskIntoConstraints = false
-        columns.view.addSubview(line)
         NSLayoutConstraint.activate([
             bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
             bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
             bar.heightAnchor.constraint(equalToConstant: BarMetrics.height),
-            line.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-            line.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
-            line.bottomAnchor.constraint(equalTo: bar.topAnchor),
-            line.heightAnchor.constraint(equalToConstant: BarMetrics.line),
+            ground.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            ground.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            ground.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+            ground.height,
         ])
     }
 
@@ -346,20 +343,10 @@ final class WorkspaceController: DetentSplitViewController {
         header.sizingOptions = [.intrinsicContentSize]
         header.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(header)
-        // The files' hard edge draws a device pixel over the header; the rest of the status bar's point line lies under it.
-        outlineRest.translatesAutoresizingMaskIntoConstraints = false
-        bar.addSubview(outlineRest)
         outlineBarHeight = bar.heightAnchor.constraint(equalToConstant: outlineBarHeight(folded: app.outlineState(of: project) != .open))
-        outlineRest.changed = { [unowned self] _ in
-            outlineBarHeight.constant = outlineBarHeight(folded: outlineItem?.isCollapsed ?? true)
-        }
         NSLayoutConstraint.activate([
             outlineBarHeight,
-            outlineRest.topAnchor.constraint(equalTo: bar.topAnchor),
-            outlineRest.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-            outlineRest.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
-            outlineRest.height,
-            header.topAnchor.constraint(equalTo: outlineRest.bottomAnchor),
+            header.topAnchor.constraint(equalTo: bar.topAnchor),
             header.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
         ])
@@ -371,7 +358,7 @@ final class WorkspaceController: DetentSplitViewController {
     }
 
     private func outlineBarHeight(folded: Bool) -> CGFloat {
-        (folded ? BarMetrics.height : OutlineHeader.openHeight) + outlineRest.height.constant
+        folded ? BarMetrics.height : OutlineHeader.openHeight
     }
 
     private func accessory(_ content: some View, hidden: Bool = false) -> NSSplitViewItemAccessoryViewController {

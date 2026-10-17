@@ -132,7 +132,7 @@ final class ColumnsSplitView: DraggedSplitView {
     override func drawDivider(in rect: NSRect) {
         var shown = rect
         // Short of the bar, at its foot: a split view is flipped.
-        shown.size.height -= BarMetrics.height + BarMetrics.line
+        shown.size.height -= BarMetrics.height
         super.drawDivider(in: shown)
     }
 
@@ -151,56 +151,27 @@ final class ColumnsSplitView: DraggedSplitView {
     }
 }
 
-/// An opaque ground in the text's background, as the editor's and the PDF view's.
-final class Ground: NSView {
+/// The status bar's ground, as Xcode's editor bar: the text's background, with a separator's device pixel along its top, a
+/// row over the bar, where AppKit's edge would draw its line and the File Outline header's is.
+final class BarGround: NSView {
+    private(set) lazy var height = heightAnchor.constraint(equalToConstant: Self.height(NSScreen.main?.backingScaleFactor))
+
+    private static func height(_ scale: CGFloat?) -> CGFloat { BarMetrics.height + 1 / (scale ?? 2) }
+
+    override var isFlipped: Bool { true }
+
     override func draw(_ dirtyRect: NSRect) {
         NSColor.untintedTextBackground.setFill()
-        dirtyRect.fill()
-    }
-}
-
-/// A separator line filling its view, as Xcode's over its bars; opaque, on the text's ground.
-final class Line: NSView {
-    private let filled: Bool
-
-    init(opaque: Bool) {
-        self.filled = opaque
-        super.init(frame: .zero)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func draw(_ dirtyRect: NSRect) {
-        if filled {
-            NSColor.untintedTextBackground.setFill()
-            bounds.fill()
-        }
+        bounds.fill()
         NSColor.separatorColor.setFill()
-        bounds.fill(using: .sourceOver)
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
-
-/// The rest of a point line under the device pixel AppKit's scroll edge draws over a bar, so the line is Xcode's point:
-/// nothing at 1x. It sets its own height, and says when the screen's scale changes it.
-final class LineRest: NSView {
-    var changed: (CGFloat) -> Void = { _ in }
-    private(set) lazy var height = heightAnchor.constraint(equalToConstant: Self.rest(NSScreen.main?.backingScaleFactor))
-
-    static func rest(_ scale: CGFloat?) -> CGFloat { BarMetrics.line - 1 / (scale ?? 2) }
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.separatorColor.setFill()
-        bounds.fill(using: .sourceOver)
+        NSRect(x: 0, y: 0, width: bounds.width, height: 1 / (window?.backingScaleFactor ?? 2)).fill(using: .sourceOver)
     }
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         guard let window else { return }
-        height.constant = Self.rest(window.backingScaleFactor)
+        height.constant = Self.height(window.backingScaleFactor)
         needsDisplay = true
-        changed(height.constant)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }

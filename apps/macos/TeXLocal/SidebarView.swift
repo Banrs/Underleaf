@@ -474,7 +474,7 @@ struct HeaderEdge: ViewModifier {
             .safeAreaBar(edge: .bottom, spacing: 0) { Rectangle().fill(.white.opacity(0.001)).frame(height: height) }
             .scrollEdgeEffectStyle(.hard, for: .bottom)
             .scrollEdgeEffectHidden(height == 0, for: .bottom)
-            // The hard edge's line is a device pixel in the separator's colour (27.2); the header draws the rest of a point under it.
+            // Its line is the system's, level with the status bar's.
             .ignoresSafeArea(.container, edges: .bottom)
     }
 }

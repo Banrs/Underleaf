@@ -2,8 +2,6 @@ import SwiftUI
 
 enum BarMetrics {
     static let height: CGFloat = 36
-    /// The line over the bar, as Xcode's: a point, where the splits' vertical dividers are a device pixel.
-    static let line: CGFloat = 1
     static let leading: CGFloat = 14
     static let trailing: CGFloat = 16.5
     static let spacing: CGFloat = 9
@@ -27,8 +25,8 @@ struct StatusBar: View {
             content(.short).labelStyle(.iconOnly)
         }
         .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
-        // No ground or line of its own: AppKit's scroll edge lies under it, with the text's ground under the PDF, and one
-        // `Line` over it (`WorkspaceController.buildStatusBar`), level with the File Outline header's.
+        // Its ground and line are a `BarGround` under it (`WorkspaceController.buildStatusBar`), the line level with the File
+        // Outline header's.
         // Clicks between its controls stay with the bar, not the text or pages scrolled beneath it.
         .contentShape(.rect)
         .monospacedDigit()

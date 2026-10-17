@@ -53,20 +53,18 @@ the hosts' contract with the core.
   the build panel on it. Its measures follow the text's size. Underline styles set as
   rendering attributes aren't drawn (27.2), so an undefined command's underline is drawn
   under the text.
-- **Status bar**: across the source and PDF columns as Xcode's editor bar, measured on screen:
-  a point line over a 36 pt bar (`BarMetrics`), over AppKit's own scroll edge, its automatic
-  style. Each pane has an empty bottom accessory for its own edge, safe area and scrollers, and
-  the bar lies over both (`buildStatusBar`): one accessory across the columns gave its edge to
-  only one pane, about half the launches (27.2). Under the PDF the accessory is the text's opaque ground
-  (`Ground`): the white pages showed through the edge as a grey slab in Dark. The bar's line is
-  one opaque `Line` over AppKit's own pixel, which took another tone in Dark. A fitted page meets
-  the pane's sides: PDFKit's 4 pt side margin drew a second edge inside the window's. The File Outline's header does the same under the files'
-  hard edge, so folded the lines meet and the titles are level. The splits keep AppKit's weights,
-  as Mail's and Xcode's: a point for the thin dividers between the columns and over the build
-  panel, a device pixel for the window's sidebar. The build panel resizes from the bar's
-  line, as Xcode's debug area does (`area.grip`). In Dark each pane's edge takes that pane's
-  tone, AppKit's look. After a failed save, or a Cancel in an alert about the file on disk, it
-  says Not Saved and that button saves.
+- **Status bar**: across the source and PDF columns as Xcode's editor bar: a 36 pt bar
+  (`BarMetrics`) on the text's ground with a separator's device pixel along its top, level with
+  the File Outline header's (AppKit's edge line), drawn by one view to the window's edge
+  (`BarGround`). Each pane has an empty bottom accessory of the bar's height for its safe area
+  and scrollers. AppKit's own edges couldn't be the ground: PDFKit's scroll view takes no style
+  and blurred the white page grey in Dark, and an accessory stops half a point short of a hidden
+  inspector's divider, where the page showed beside the window's border (27.2). A fitted page
+  meets the pane's sides. The splits keep AppKit's weights, as Mail's and Xcode's: a point
+  between the columns and over the build panel, half a point for the sidebar and inspector. The
+  build panel resizes from the bar's line, as Xcode's debug area does (`area.grip`). After a
+  failed save, or a Cancel in an alert about the file on disk, it says Not Saved and that
+  button saves.
 - **Build panel**: below the columns, so the status bar rides up as it opens. A bar at its
   foot, as Xcode's console bar: a pop-up for Issues, Build Log and Live Preview Log, then
   Warnings or Copy Log, then a filter. The bar is a SwiftUI safe-area bar, where the filter
