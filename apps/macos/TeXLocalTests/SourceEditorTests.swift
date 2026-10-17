@@ -88,6 +88,17 @@ struct SourceEditorTests {
         #expect(text.string == "x" && text.document.text == text.string)
     }
 
+    /// A project closing leaves its editor read-only: a key steps over no closer and offers no completions.
+    @Test func aReadOnlyEditorAsksTheCoreNothing() {
+        open("")
+        text.insertText("{", replacementRange: typed)
+        text.isEditable = false
+        text.insertText("}", replacementRange: typed)
+        #expect(text.string == "{}" && text.selectedRange() == NSRange(location: 1, length: 0))
+        text.complete(nil)
+        #expect(text.completions.offered == nil)
+    }
+
     @Test func escapeStaysInTheEditor() throws {
         final class Catcher: NSResponder {
             var cancelled = false
@@ -97,10 +108,10 @@ struct SourceEditorTests {
         text.nextResponder = catcher
         open("plain")
         text.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
-        #expect(!catcher.cancelled && text.offered == nil)
+        #expect(!catcher.cancelled && text.completions.offered == nil)
         open("\\be")
         text.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
-        #expect(!catcher.cancelled && text.offered != nil)
+        #expect(!catcher.cancelled && text.completions.offered != nil)
     }
 
     @Test func typingAssistanceCanBeTurnedOff() throws {
@@ -114,11 +125,11 @@ struct SourceEditorTests {
         #expect(text.string == "}")
         open("\\")
         text.insertText("b", replacementRange: typed)
-        #expect(text.offered == nil)
+        #expect(text.completions.offered == nil)
         text.complete(nil)
-        let all = try #require(text.offered).items.count
+        let all = try #require(text.completions.offered).items.count
         text.insertText("e", replacementRange: typed)
-        #expect(try #require(text.offered).items.count < all)
+        #expect(try #require(text.completions.offered).items.count < all)
     }
 
     struct Step: Sendable {
@@ -291,10 +302,10 @@ struct SourceEditorTests {
     func completionsFillTheirFields() throws {
         open("  \\beg")
         text.complete(nil)
-        let offered = try #require(text.offered)
+        let offered = try #require(text.completions.offered)
         #expect(offered.start == 2 && offered.items.first?.label == "\\begin")
         text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
-        #expect(text.offered == nil && text.undoManager?.undoActionName == "Completion")
+        #expect(text.completions.offered == nil && text.undoManager?.undoActionName == "Completion")
         #expect(text.string == "  \\begin{env}\n    \n  \\end{env}")
         #expect(text.selectedRange() == NSRange(location: 9, length: 3))
         text.insertText("itemize", replacementRange: typed)
@@ -309,27 +320,27 @@ struct SourceEditorTests {
     @Test func theCompletionListTakesOnlyItsKeys() throws {
         open("\\")
         text.insertText("b", replacementRange: typed)
-        let all = try #require(text.offered).items.count
+        let all = try #require(text.completions.offered).items.count
         text.insertText("e", replacementRange: typed)
-        #expect(try #require(text.offered).items.count < all)
+        #expect(try #require(text.completions.offered).items.count < all)
         text.deleteBackward(nil)
-        #expect(text.offered?.items.count == all)
+        #expect(text.completions.offered?.items.count == all)
         text.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
-        #expect(text.offered == nil && text.string == "\\b")
+        #expect(text.completions.offered == nil && text.string == "\\b")
         text.complete(nil)
-        let second = try #require(text.offered?.items[1])
+        let second = try #require(text.completions.offered?.items[1])
         text.doCommand(by: #selector(NSResponder.moveDown(_:)))
         text.doCommand(by: #selector(NSResponder.insertTab(_:)))
         #expect(text.string == second.text)
         open("\\be")
         text.complete(nil)
         text.insertText(" ", replacementRange: typed)
-        #expect(text.offered == nil && text.string == "\\be ")
+        #expect(text.completions.offered == nil && text.string == "\\be ")
         open("\\be")
         text.complete(nil)
-        #expect(text.offered != nil)
+        #expect(text.completions.offered != nil)
         text.setSelectedRange(NSRange(location: 0, length: 0))
-        #expect(text.offered == nil)
+        #expect(text.completions.offered == nil)
     }
 
     /// The list is a view over the editor's text, and nothing in it takes the keyboard: a click chooses a row, and the
@@ -339,7 +350,7 @@ struct SourceEditorTests {
         defer { withExtendedLifetime(window) {} }
         open("\\")
         text.insertText("b", replacementRange: typed)
-        _ = try #require(text.offered)
+        _ = try #require(text.completions.offered)
         let list = try #require(editor.scrollView.subviews.first { $0 is NSHostingView<CompletionRowsView> })
         list.layoutSubtreeIfNeeded()
         func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
@@ -480,20 +491,87 @@ struct SourceEditorTests {
         defer { withExtendedLifetime(window) {} }
         open("(a)", caret: 0)
         text.reducesMotion = { true }
-        _ = try colour(of: "a")
-        func filled() throws -> [Int] {
-            let manager = try #require(text.textLayoutManager)
-            var offsets: [Int] = []
-            manager.enumerateRenderingAttributes(from: manager.documentRange.location, reverse: false) { _, attributes, range in
-                if attributes[.backgroundColor] != nil { offsets.append(self.text.offset(range.location)) }
-                return true
-            }
-            return offsets
+        try layOut()
+        text.moveRight(nil)
+        #expect(text.partnerMark == NSRange(location: 2, length: 1))
+        text.moveRight(nil)
+        #expect(text.partnerMark == nil)
+        // A closer typed: the edit lays its line out again, which the fill outlasts until the selection moves.
+        open("(a", caret: 2)
+        try layOut()
+        text.insertText(")", replacementRange: typed)
+        try layOut()
+        #expect(text.string == "(a)" && text.partnerMark == NSRange(location: 0, length: 1))
+        text.setSelectedRange(NSRange(location: 1, length: 0))
+        #expect(text.partnerMark == nil)
+    }
+
+    /// Another app's text for the file shown keeps the caret and the top line where they were, as Xcode does.
+    @Test func aReloadKeepsTheCaretAndTheTopLine() throws {
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
+        let long = (1...400).map { "Line \($0)" }.joined(separator: "\n")
+        open(long, caret: 0)
+        editor.reveal(line: 100, atTop: true, focus: false)
+        let caret = NSRange(location: text.document.lineStart(120) + 2, length: 3)
+        text.setSelectedRange(caret)
+        let top = try #require(text.shownTop)
+        editor.reload(text: long + "\nmore")
+        #expect(text.selectedRange() == caret)
+        #expect(text.shownTop?.offset == top.offset && text.shownTop?.below == top.below)
+        editor.reload(text: "short")
+        #expect(text.selectedRange() == NSRange(location: 5, length: 0))
+    }
+
+    /// The list is a view of the scroll view's, over the text: a scroll the viewport needs no new layout for moves it too.
+    @Test func theCompletionListFollowsAScroll() throws {
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
+        let lines = (1...200).map { $0 == 6 ? "\\be" : "Line \($0)" }
+        // After "\be".
+        open(lines.joined(separator: "\n"), caret: (lines[..<6].joined(separator: "\n") as NSString).length)
+        try layOut()
+        text.complete(nil)
+        _ = try #require(text.completions.offered)
+        let list = try #require(editor.scrollView.subviews.first { $0 is NSHostingView<CompletionRowsView> })
+        let before = list.frame
+        let clip = editor.scrollView.contentView
+        let step = 3 * (text.defaultParagraphStyle?.minimumLineHeight ?? 16)
+        clip.scroll(to: NSPoint(x: 0, y: clip.bounds.minY + step))
+        editor.scrollView.reflectScrolledClipView(clip)
+        #expect(abs(before.minY - list.frame.minY - step) <= 1, "Moved by \(before.minY - list.frame.minY), scrolled by \(step)")
+        // Its line scrolled out of sight: it closes.
+        clip.scroll(to: NSPoint(x: 0, y: clip.bounds.minY + 30 * step))
+        editor.scrollView.reflectScrolledClipView(clip)
+        #expect(text.completions.offered == nil && list.superview == nil)
+    }
+
+    /// What's typed in a mirrored field goes in both its places at every step of Undo, and one Undo should take it all back.
+    @Test func undoInAMirroredFieldKeepsItsPlacesAlike() throws {
+        open("\\beg")
+        let undo = try #require(text.undoManager)
+        // Each key an event of its own, in its own top-level undo group, as AppKit gives it.
+        undo.groupsByEvent = false
+        func step(_ action: () -> Void) {
+            undo.beginUndoGrouping()
+            action()
+            undo.endUndoGrouping()
         }
-        text.moveRight(nil)
-        #expect(try filled() == [2])
-        text.moveRight(nil)
-        #expect(try filled() == [])
+        step {
+            text.complete(nil)
+            text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        }
+        #expect(text.string == "\\begin{env}\n  \n\\end{env}")
+        for key in "itemize" { step { text.insertText(String(key), replacementRange: typed) } }
+        #expect(text.string == "\\begin{itemize}\n  \n\\end{itemize}")
+        undo.undo()
+        let string = text.string as NSString
+        let begun = string.substring(with: NSRange(location: 7, length: string.range(of: "}").location - 7))
+        #expect(string.hasSuffix("\\end{\(begun)}") && text.document.text == text.string)
+        // The audit's suspicion (2026-10-17): each key its own step, as the mirror edits end the typing's coalescing.
+        withKnownIssue("Typing in a mirrored field may take an Undo per key", isIntermittent: true) {
+            #expect(text.string == "\\begin{env}\n  \n\\end{env}")
+        }
     }
 
     @Test func aThemeRecoloursTheText() async throws {

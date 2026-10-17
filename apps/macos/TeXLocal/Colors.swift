@@ -58,7 +58,8 @@ extension NSColor {
     }
 
     /// PDFKit tints a system colour it's given with the wallpaper, which would set it a shade apart from the editor's.
-    static let untintedTextBackground = NSColor(name: nil) { NSColor.textBackgroundColor.resolved(in: $0) }
+    /// `@Sendable`, as `adapting`'s: PDFKit and AppKit may resolve it off the main thread.
+    static let untintedTextBackground = NSColor(name: nil) { @Sendable in NSColor.textBackgroundColor.resolved(in: $0) }
 }
 
 /// A theme of the core's (texlocal-syntax's theme.rs) by its id, each kind's colour raised to the HIG's 4.5:1 on the

@@ -17,7 +17,7 @@ final class IssueMessageView: NSHostingView<IssueBox> {
 /// An issue at its line's end, as Xcode sets it: a box in the text's background edged in the separators' colour, the
 /// symbol in a segment of its own, a divider and the message on the source line's baseline, or the symbol alone where
 /// the line has no room for words. VoiceOver has the issues from the text view's rotor.
-struct IssueBox: View {
+struct IssueBox: View, Equatable {
     /// Every measure of the box. Fractions of the text's size are rounded to whole points, so its edges are the band's pixels.
     nonisolated enum Metrics {
         /// The symbol's segment, as a fraction of the text's size.
