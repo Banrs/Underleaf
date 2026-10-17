@@ -48,7 +48,7 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     }
 }
 
-/// Bold, Italic and Underline, centred, lit when the selection is in their command; then the
+/// Bold, Italic and Underline, centred at Notes' pitch, lit when the selection is in their command; then the
 /// levels the document's class has (the core's `heading_styles`), each at its weight and shape
 /// there and its size scaled into Notes', at an even pitch, after its number as the class prints
 /// it. A style toggles and the popover stays, as Notes' does; a level is chosen and it closes, as
@@ -82,18 +82,24 @@ struct FormatPanel: View {
         // Read once: it searches the outline.
         let current = project.headingCommand
         VStack(spacing: 0) {
-            // The three share the width, edge to edge with the levels' highlights below.
-            HStack(spacing: Self.highlightInset) {
+            // Centred, at Notes' B I U S pitch: spread over the width, B and U came to the popover's edges.
+            HStack(spacing: 0) {
                 toggle(.editBold, symbol: "bold", on: styles.bold != nil, help: "Make text bold")
                 toggle(.editItalic, symbol: "italic", on: styles.italic != nil, help: "Make text italic")
                 toggle(.editUnderline, symbol: "underline", on: styles.underline != nil, help: "Underline text")
             }
-            .padding(.horizontal, Self.highlightInset)
+            .frame(maxWidth: .infinity)
             .padding(.vertical, Self.menuTop)
             Divider()
                 .padding(.horizontal, Self.contentInset)
             VStack(spacing: 0) {
                 ForEach(headings, id: \.command) { style in
+                    // The run-in levels set apart from the displayed ones, as Notes sets Block Quote apart from its styles.
+                    if style.command == "paragraph", style.command != headings.first?.command {
+                        Divider()
+                            .padding(.horizontal, Self.contentInset - Self.highlightInset)
+                            .padding(.vertical, Self.menuTop)
+                    }
                     row(style, layout: layout, checked: style.command == current)
                 }
             }
@@ -136,10 +142,10 @@ struct FormatPanel: View {
         .help(help)
     }
 
-    /// Notes' style toggles: the symbol alone, on a tile of the accent's glass while on, as wide as its share of the row.
-    private struct GlassTile: ToggleStyle {
-        /// Notes' tile's height.
-        private static let side: CGFloat = 24
+    /// Notes' style toggles: the symbol alone, on a tile of the accent's glass while on.
+    fileprivate struct GlassTile: ToggleStyle {
+        /// Notes' tile's height, and its pitch along the row (measured, 27.2).
+        static let side: CGFloat = 24, width: CGFloat = 29
 
         func makeBody(configuration: Configuration) -> some View {
             Button { configuration.isOn.toggle() } label: {
@@ -147,7 +153,7 @@ struct FormatPanel: View {
                     .labelStyle(.iconOnly)
                     .imageScale(.large)
                     .foregroundStyle(configuration.isOn ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                    .frame(maxWidth: .infinity, minHeight: Self.side, maxHeight: Self.side)
+                    .frame(width: Self.width, height: Self.side)
                     .glassEffect(configuration.isOn ? .regular.tint(.accentColor).interactive() : .identity,
                                  in: .rect(cornerRadius: FormatPanel.highlightRadius))
                     .contentShape(.rect)
