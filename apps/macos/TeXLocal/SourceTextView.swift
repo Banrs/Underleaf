@@ -50,18 +50,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     func load(_ text: String, source: SourceDocument? = nil) {
         // First: the storage's text is read against it, as for colours and line numbers.
         document = source ?? SourceDocument(text: text)
-        takeText(text)
-        loaded()
+        show(text)
     }
 
     /// The disk's text, from the session's `document_reload`: shown without an edit, then the session told it is shown.
     func reload(_ text: String) {
         document.reload(text)
-        takeText(text)
-        loaded()
+        show(text)
     }
 
-    private func takeText(_ text: String) {
+    /// The storage takes the document's text, as no edit, and what belonged to the text before goes.
+    private func show(_ text: String) {
         loading = true
         // Else typing coalesced into the last file's undo would go on in this one's.
         breakUndoCoalescing()
@@ -71,9 +70,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         unmarkText()
         textStorage?.setAttributedString(NSAttributedString(string: text, attributes: typingAttributes))
         loading = false
-    }
-
-    private func loaded() {
         lastMath = nil
         dismissedMath = nil
         _ = document.endSnippet()
