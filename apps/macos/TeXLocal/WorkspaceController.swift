@@ -17,6 +17,7 @@ final class WorkspaceController: DetentSplitViewController {
     /// first row's room when open, the status bar's when folded.
     private var outlineBar: NSSplitViewItemAccessoryViewController!
     private var outlineBarHeight: NSLayoutConstraint!
+    private let outlineRest = LineRest()
     private var mounts: [ObjectIdentifier: Mount] = [:]
     private let searchField = FieldHandle()
 
@@ -256,7 +257,7 @@ final class WorkspaceController: DetentSplitViewController {
         area.addSplitViewItem(panelItem)
         area.loaded = { [unowned self] in if !project.panel.shown { panelItem.isCollapsed = true } }
         // The panel resizes from the status bar's top line, as Xcode's debug area does from its bar's: a split view is flipped.
-        area.grip = { _, rect in rect.offsetBy(dx: 0, dy: -BarMetrics.height) }
+        area.grip = { _, rect in rect.offsetBy(dx: 0, dy: -(BarMetrics.height + BarMetrics.line)) }
 
         areaItem = NSSplitViewItem(viewController: area)
         addSplitViewItem(areaItem)
@@ -269,10 +270,14 @@ final class WorkspaceController: DetentSplitViewController {
     /// sharp under the bar (about half the launches). Each pane has an empty accessory of the bar's height instead, for its own
     /// edge, safe area and scrollers, and the bar lies over both.
     private func buildStatusBar() {
+        // AppKit's edge draws a device pixel over each pane's accessory; the rest of the bar's point line lies under it.
+        let rest = LineRest()
+        var spaces: [NSLayoutConstraint] = []
         for item in [sourceItem!, pdfItem!] {
             let space = NSSplitViewItemAccessoryViewController()
             space.view = NSView()
-            space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
+            spaces.append(space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height + rest.height.constant))
+            spaces.last!.isActive = true
             // 27.2: AppKit's insets would pad it, and the pane's safe area with it.
             space.automaticallyAppliesContentInsets = false
             item.addBottomAlignedAccessoryViewController(space)
@@ -289,6 +294,15 @@ final class WorkspaceController: DetentSplitViewController {
             bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
             bar.heightAnchor.constraint(equalToConstant: BarMetrics.height),
         ])
+        rest.translatesAutoresizingMaskIntoConstraints = false
+        columns.view.addSubview(rest)
+        NSLayoutConstraint.activate([
+            rest.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            rest.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            rest.bottomAnchor.constraint(equalTo: bar.topAnchor),
+            rest.height,
+        ])
+        rest.changed = { height in for space in spaces { space.constant = BarMetrics.height + height } }
     }
 
     private func buildInspector() {
@@ -334,10 +348,20 @@ final class WorkspaceController: DetentSplitViewController {
         header.sizingOptions = [.intrinsicContentSize]
         header.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(header)
+        // The files' hard edge draws a device pixel over the header; the rest of the status bar's point line lies under it.
+        outlineRest.translatesAutoresizingMaskIntoConstraints = false
+        bar.addSubview(outlineRest)
         outlineBarHeight = bar.heightAnchor.constraint(equalToConstant: outlineBarHeight(folded: app.outlineState(of: project) != .open))
+        outlineRest.changed = { [unowned self] _ in
+            outlineBarHeight.constant = outlineBarHeight(folded: outlineItem?.isCollapsed ?? true)
+        }
         NSLayoutConstraint.activate([
             outlineBarHeight,
-            header.topAnchor.constraint(equalTo: bar.topAnchor),
+            outlineRest.topAnchor.constraint(equalTo: bar.topAnchor),
+            outlineRest.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            outlineRest.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            outlineRest.height,
+            header.topAnchor.constraint(equalTo: outlineRest.bottomAnchor),
             header.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
         ])
@@ -349,7 +373,7 @@ final class WorkspaceController: DetentSplitViewController {
     }
 
     private func outlineBarHeight(folded: Bool) -> CGFloat {
-        folded ? BarMetrics.height : OutlineHeader.openHeight
+        (folded ? BarMetrics.height : OutlineHeader.openHeight) + outlineRest.height.constant
     }
 
     private func accessory(_ content: some View, hidden: Bool = false) -> NSSplitViewItemAccessoryViewController {

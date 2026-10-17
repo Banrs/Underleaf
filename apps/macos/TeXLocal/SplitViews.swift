@@ -47,15 +47,6 @@ extension NSCursor {
 class DraggedSplitView: NSSplitView {
     var dragging: (Bool) -> Void = { _ in }
 
-    /// A device pixel, as the window's sidebar divider and the hard scroll edge's line: the thin style is a point. The divider
-    /// still takes drags 2 pt either side.
-    override var dividerThickness: CGFloat { 1 / (window?.backingScaleFactor ?? 2) }
-
-    override func viewDidChangeBackingProperties() {
-        super.viewDidChangeBackingProperties()
-        adjustSubviews()
-    }
-
     override func mouseDown(with event: NSEvent) {
         dragging(true)
         defer { dragging(false) }
@@ -104,10 +95,9 @@ class DetentSplitViewController: NSSplitViewController {
 
     override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
                             forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
-        guard !fixed(dividerIndex) else { return .zero }
-        // 2 pt either side of the device pixel the divider draws (`DraggedSplitView`).
-        let rect = super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect, ofDividerAt: dividerIndex)
-        return grip(dividerIndex, splitView.isVertical ? rect.insetBy(dx: -2, dy: 0) : rect.insetBy(dx: 0, dy: -2))
+        fixed(dividerIndex) ? .zero
+            : grip(dividerIndex, super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect,
+                                                 ofDividerAt: dividerIndex))
     }
 }
 
@@ -142,7 +132,7 @@ final class ColumnsSplitView: DraggedSplitView {
     override func drawDivider(in rect: NSRect) {
         var shown = rect
         // Short of the bar, at its foot: a split view is flipped.
-        shown.size.height -= BarMetrics.height
+        shown.size.height -= BarMetrics.height + BarMetrics.line
         super.drawDivider(in: shown)
     }
 
@@ -159,6 +149,30 @@ final class ColumnsSplitView: DraggedSplitView {
     var openingPosition: CGFloat {
         ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded()
     }
+}
+
+/// The rest of a point line under the device pixel AppKit's scroll edge draws over a bar, so the line is Xcode's point:
+/// nothing at 1x. It sets its own height, and says when the screen's scale changes it.
+final class LineRest: NSView {
+    var changed: (CGFloat) -> Void = { _ in }
+    private(set) lazy var height = heightAnchor.constraint(equalToConstant: Self.rest(NSScreen.main?.backingScaleFactor))
+
+    static func rest(_ scale: CGFloat?) -> CGFloat { BarMetrics.line - 1 / (scale ?? 2) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.separatorColor.setFill()
+        bounds.fill(using: .sourceOver)
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        guard let window else { return }
+        height.constant = Self.rest(window.backingScaleFactor)
+        needsDisplay = true
+        changed(height.constant)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 extension NSView {
