@@ -461,8 +461,6 @@ final class ProjectModel {
         let top = topLine
         findingHeadings?.cancel()
         findingHeadings = Task {
-            // The session answers from the outline it analysed last: the one on its way, once it is shown.
-            await analysis?.value
             let atTop = await heading(at: top)
             guard !Task.isCancelled else { return }
             if atTop != topHeading {
