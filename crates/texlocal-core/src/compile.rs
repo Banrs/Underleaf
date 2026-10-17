@@ -1,24 +1,26 @@
-//! LaTeX compilation via latexmk: augmented PATH discovery, process-group
-//! kill, per-project supersede and stop, timeout and output caps, and the
-//! stale-output guard.
+//! LaTeX builds by latexmk: finding TeX, killing a tool with all it starts, one build per
+//! project that a newer one or a Stop ends, time and output limits, and telling this build's
+//! outputs from an earlier one's.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::Serialize;
 use tokio::io::AsyncReadExt;
+use tokio::process::{Child, Command};
 use tokio::sync::OwnedMutexGuard;
 
 use crate::error::CoreError;
 use crate::logparse::{LogItem, latexmk_errors, parse_blg, parse_log};
 use crate::paths::safe_rel_file;
 use crate::settings::{main_base_name, read_settings};
-use crate::{BUILD_DIR, lock};
+use crate::{BUILD_DIR, lock, lossy_string, tail};
 
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -39,74 +41,49 @@ pub(crate) fn engine_flags(engine: &str) -> Option<&'static [&'static str]> {
     }
 }
 
-// ---------- TeX PATH discovery ----------
-
 /// What `dir` holds; nothing if it can't be read.
 fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
-    std::fs::read_dir(dir)
+    fs::read_dir(dir)
         .into_iter()
         .flatten()
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-}
-
-fn texlive_root() -> PathBuf {
-    if cfg!(windows) {
-        let mut root = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
-        root.push(r"\texlive");
-        root.into()
-    } else {
-        PathBuf::from("/usr/local/texlive")
-    }
-}
-
-/// Year/architecture-specific TeX Live bin dirs, newest year first.
-fn texlive_bins() -> impl Iterator<Item = PathBuf> {
-    let mut years: Vec<_> = children(texlive_root())
-        .filter(|year| {
-            year.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.len() == 4 && name.bytes().all(|b| b.is_ascii_digit()))
-        })
-        .map(|year| year.join("bin"))
-        .collect();
-    years.sort_unstable_by(|a, b| b.cmp(a));
-    years.into_iter().flat_map(children)
+        .filter_map(|entry| Some(entry.ok()?.path()))
 }
 
 /// PATH for spawned TeX tools: the folder the user chose first, then the
-/// user's PATH, then the discovered TeX dirs. Built per use — a couple of
-/// read_dirs — so a TeX install performed while the app runs is found without
-/// a restart.
+/// user's PATH, then where TeX's installers put it. Built per use — a couple
+/// of read_dirs — so a TeX install performed while the app runs is found
+/// without a restart.
 pub fn tex_path(chosen: Option<&Path>) -> String {
     let user = std::env::var_os("PATH").unwrap_or_default();
-    join_path(
-        chosen
-            .map(Path::to_path_buf)
-            .into_iter()
-            .chain(absolute_dirs(&user))
-            .chain(usual_tex_dirs())
-            .chain(texlive_bins()),
-    )
+    let chosen = chosen.map(Path::to_path_buf).into_iter();
+    join_path(chosen.chain(absolute_dirs(&user)).chain(usual_tex_dirs()))
 }
 
-/// Where TeX's installers put its programs, besides TeX Live's years: MacTeX's
-/// link and Homebrew's folders, or MiKTeX's for one user and for all.
+/// MiKTeX's folders for one user and for all, or MacTeX's link and Homebrew's;
+/// then TeX Live's bin folders, newest year first.
 fn usual_tex_dirs() -> Vec<PathBuf> {
-    if cfg!(windows) {
+    let (mut dirs, texlive): (Vec<_>, PathBuf) = if cfg!(windows) {
         let under = |var, dir| Some(PathBuf::from(std::env::var_os(var)?).join(dir));
-        [
+        let mut texlive = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
+        texlive.push(r"\texlive");
+        let miktex = [
             under("LOCALAPPDATA", r"Programs\MiKTeX\miktex\bin\x64"),
             under("ProgramFiles", r"MiKTeX\miktex\bin\x64"),
-        ]
-        .into_iter()
-        .flatten()
-        .collect()
+        ];
+        (miktex.into_iter().flatten().collect(), texlive.into())
     } else {
-        ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"]
-            .map(PathBuf::from)
-            .into()
-    }
+        let usual = ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"];
+        (usual.map(PathBuf::from).into(), "/usr/local/texlive".into())
+    };
+    let mut years: Vec<_> = children(texlive)
+        .filter(|year| {
+            let name = year.file_name().and_then(OsStr::to_str);
+            name.is_some_and(|name| name.len() == 4 && name.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .collect();
+    years.sort_unstable_by(|a, b| b.cmp(a));
+    dirs.extend(years.iter().flat_map(|year| children(year.join("bin"))));
+    dirs
 }
 
 /// Folders as a PATH, in the platform's form. A folder whose name holds the
@@ -122,7 +99,7 @@ pub(crate) fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
 
 /// A PATH's absolute folders: an empty or relative entry would be looked up
 /// from the project, where a latexmk of its own could stand.
-fn absolute_dirs(path: &std::ffi::OsStr) -> impl Iterator<Item = PathBuf> + '_ {
+fn absolute_dirs(path: &OsStr) -> impl Iterator<Item = PathBuf> + '_ {
     std::env::split_paths(path).filter(|dir| dir.is_absolute())
 }
 
@@ -147,8 +124,6 @@ pub(crate) fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
         .find(|c| program_at(&c.join("latexmk")).is_some())
 }
 
-// ---------- process plumbing ----------
-
 /// A tool and every process it starts, the engines latexmk or TeXpresso runs
 /// among them, which stopping the tool alone would leak: a process group of
 /// its own on Unix, a Job Object on Windows. Kept apart from the child, so a
@@ -157,14 +132,15 @@ pub(crate) fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
 pub(crate) struct Tree {
     #[cfg(unix)]
     group: i32,
+    /// A job that ends every process in it when it is killed, or when its
+    /// last handle closes: as the last owner of its tree here lets go, or the
+    /// app quits or crashes.
     #[cfg(windows)]
-    job: Arc<job::Job>,
+    job: Arc<std::os::windows::io::OwnedHandle>,
 }
 
 impl Tree {
-    pub(crate) fn spawn(
-        command: &mut tokio::process::Command,
-    ) -> std::io::Result<(tokio::process::Child, Self)> {
+    pub(crate) fn spawn(command: &mut Command) -> std::io::Result<(Child, Self)> {
         #[cfg(unix)]
         {
             let child = command.process_group(0).spawn()?;
@@ -183,7 +159,7 @@ impl Tree {
                 .expect("a child just spawned has its handle");
             // Joined as it starts, long before it has loaded, let alone run a
             // program of its own.
-            match job::Job::of(handle) {
+            match job_of(handle) {
                 Ok(job) => Ok((child, Self { job: Arc::new(job) })),
                 Err(err) => {
                     let _ = child.start_kill();
@@ -199,69 +175,56 @@ impl Tree {
         unsafe {
             libc::killpg(self.group, libc::SIGKILL);
         }
+        // SAFETY: the handle is open while self is.
         #[cfg(windows)]
-        self.job.kill();
+        unsafe {
+            use std::os::windows::io::AsRawHandle;
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.job.as_raw_handle(), 1);
+        }
     }
 }
 
-/// A Job Object that ends every process in it when it is killed, or when its
-/// last handle closes: as the last owner of its tree here lets go, or the app
-/// quits or crashes.
+/// A new job holding `process`, which takes every process it starts.
 #[cfg(windows)]
-mod job {
-    use std::io;
-    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
-
+fn job_of(
+    process: std::os::windows::io::RawHandle,
+) -> std::io::Result<std::os::windows::io::OwnedHandle> {
+    use std::io::Error;
+    use std::os::windows::io::FromRawHandle;
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, TerminateJobObject,
+        SetInformationJobObject,
     };
-
-    pub(crate) struct Job(OwnedHandle);
-
-    impl Job {
-        /// A new job holding `process`, which takes every process it starts.
-        pub(crate) fn of(process: RawHandle) -> io::Result<Self> {
-            // SAFETY: no name and no attributes make an unnamed job with the
-            // default security; the handle is owned from here.
-            let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-            if handle.is_null() {
-                return Err(io::Error::last_os_error());
-            }
-            let job = Self(unsafe { OwnedHandle::from_raw_handle(handle) });
-            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            // SAFETY: the limits are of the class named, at their own size,
-            // and both handles are open.
-            let joined = unsafe {
-                SetInformationJobObject(
-                    handle,
-                    JobObjectExtendedLimitInformation,
-                    (&raw const limits).cast(),
-                    size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                ) != 0
-                    && AssignProcessToJobObject(handle, process) != 0
-            };
-            if joined {
-                Ok(job)
-            } else {
-                Err(io::Error::last_os_error())
-            }
-        }
-
-        pub(crate) fn kill(&self) {
-            // SAFETY: the handle is open while self is.
-            unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) };
-        }
+    // SAFETY: no name and no attributes make an unnamed job with the default
+    // security; the handle is owned from here.
+    let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if handle.is_null() {
+        return Err(Error::last_os_error());
+    }
+    let job = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle) };
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    // SAFETY: the limits are of the class named, at their own size, and both
+    // handles are open.
+    let joined = unsafe {
+        SetInformationJobObject(
+            handle,
+            JobObjectExtendedLimitInformation,
+            (&raw const limits).cast(),
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) != 0
+            && AssignProcessToJobObject(handle, process) != 0
+    };
+    // The error is read before closing the job could change it.
+    if joined {
+        Ok(job)
+    } else {
+        Err(Error::last_os_error())
     }
 }
 
-fn base_command(
-    program: &str,
-    cwd: Option<&Path>,
-    path_env: &str,
-) -> std::io::Result<tokio::process::Command> {
+fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> std::io::Result<Command> {
     // A full path avoids std's fork fallback, which can crash a child of the
     // multithreaded Mac app before exec.
     let program = find_tool(program, path_env).ok_or_else(|| {
@@ -270,7 +233,7 @@ fn base_command(
             format!("{program} is not on the PATH"),
         )
     })?;
-    let mut cmd = tokio::process::Command::new(program);
+    let mut cmd = Command::new(program);
     // TeX Live's engines read texmf.cnf's variables from the environment
     // first. Unwrapped, the log keeps each message and path on one line;
     // wrapped at the default 79 columns, words and paths split mid-way.
@@ -286,17 +249,21 @@ fn base_command(
     Ok(cmd)
 }
 
-/// Keep bounded output while draining to EOF, so a full pipe cannot block the
-/// child. The caller keeps what was read if it ends the drain early.
-async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R, kept: &mut Vec<u8>) {
-    let mut capped = (&mut reader).take(MAX_OUTPUT as u64);
-    if capped.read_to_end(kept).await.is_ok() {
+/// Keeps bounded output while reading to EOF, so a full pipe cannot block the
+/// child. The caller keeps what was read if it ends the read early.
+async fn read_capped(mut reader: impl tokio::io::AsyncRead + Unpin, kept: &mut Vec<u8>) {
+    if (&mut reader)
+        .take(MAX_OUTPUT as u64)
+        .read_to_end(kept)
+        .await
+        .is_ok()
+    {
         let _ = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await;
     }
 }
 
-/// Spawn, collect capped output, and kill the whole tree on timeout: the
-/// exit code (-1 for none) and stdout.
+/// Runs a tool to its end, or kills its whole tree at `timeout`: the exit code
+/// (-1 for none) and its stdout.
 pub(crate) async fn run(
     program: &str,
     args: &[&str],
@@ -304,28 +271,24 @@ pub(crate) async fn run(
     timeout: Duration,
     path_env: &str,
 ) -> (i32, String) {
-    let Ok((mut child, tree)) =
-        base_command(program, cwd, path_env).and_then(|mut cmd| Tree::spawn(cmd.args(args)))
-    else {
-        return (-1, String::new());
-    };
-    let (code, stdout, ..) = drive(&mut child, &tree, timeout).await;
-    (code, stdout)
+    match base_command(program, cwd, path_env).and_then(|mut cmd| Tree::spawn(cmd.args(args))) {
+        Ok((mut child, tree)) => {
+            let (code, stdout, ..) = drive(&mut child, &tree, timeout).await;
+            (code, stdout)
+        }
+        Err(_) => (-1, String::new()),
+    }
 }
 
-/// Collect capped output while the child runs. On timeout, kill its process
-/// tree before reaping; the final value reports whether it timed out.
-async fn drive(
-    child: &mut tokio::process::Child,
-    tree: &Tree,
-    timeout: Duration,
-) -> (i32, String, String, bool) {
+/// Collects capped output while the child runs, its tree killed before it is
+/// reaped on timeout: the exit code, stdout, stderr and whether it timed out.
+async fn drive(child: &mut Child, tree: &Tree, timeout: Duration) -> (i32, String, String, bool) {
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let (status, timed_out) = {
         let readers = async {
-            tokio::join!(read_capped(stdout, &mut out), read_capped(stderr, &mut err),);
+            tokio::join!(read_capped(stdout, &mut out), read_capped(stderr, &mut err));
         };
         let wait = async {
             match tokio::time::timeout(timeout, child.wait()).await {
@@ -339,24 +302,18 @@ async fn drive(
         };
         tokio::pin!(readers, wait);
         tokio::select! {
-            status = &mut wait => {
-                // A descendant or unrelated inherited pipe can outlive the child.
-                // Drain its buffered output briefly, then drop both read futures.
+            // A descendant or an unrelated process can hold the pipes past the
+            // child: their buffered output is read briefly, then let go.
+            ended = &mut wait => {
                 let _ = tokio::time::timeout(DRAIN_GRACE, readers).await;
-                status
+                ended
             }
             () = &mut readers => wait.await,
         }
     };
-    (
-        status.and_then(|s| s.code()).unwrap_or(-1),
-        crate::lossy_string(out),
-        crate::lossy_string(err),
-        timed_out,
-    )
+    let code = status.and_then(|s| s.code()).unwrap_or(-1);
+    (code, lossy_string(out), lossy_string(err), timed_out)
 }
-
-// ---------- availability ----------
 
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -374,14 +331,14 @@ pub struct TexStatus {
 
 pub async fn tex_available(path_env: &str) -> TexStatus {
     let (code, stdout) = run("latexmk", &["-version"], None, PROBE_TIMEOUT, path_env).await;
-    let available = code == 0;
+    if code != 0 {
+        return TexStatus::default();
+    }
+    let latexmk = find_tool("latexmk", path_env);
     TexStatus {
-        available,
-        version: available.then(|| version_line(&stdout)),
-        found: available
-            .then(|| find_tool("latexmk", path_env))
-            .flatten()
-            .and_then(|latexmk| Some(latexmk.parent()?.to_string_lossy().into_owned())),
+        available: true,
+        version: Some(version_line(&stdout)),
+        found: latexmk.and_then(|path| Some(path.parent()?.to_string_lossy().into_owned())),
         ..TexStatus::default()
     }
 }
@@ -390,13 +347,9 @@ pub async fn tex_available(path_env: &str) -> TexStatus {
 fn version_line(stdout: &str) -> String {
     let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
     let first = lines.clone().next().unwrap_or("");
-    lines
-        .find(|l| l.starts_with("Latexmk"))
-        .unwrap_or(first)
-        .to_string()
+    let line = lines.find(|l| l.starts_with("Latexmk")).unwrap_or(first);
+    line.to_string()
 }
-
-// ---------- compile ----------
 
 /// A build's outcome. `ok`: latexmk finished cleanly and the PDF exists.
 /// `pdf`: the successful build's PDF, or one a failed build wrote while
@@ -416,58 +369,61 @@ pub struct CompileResult {
     pub log: String,
 }
 
+type Gate = tokio::sync::Mutex<()>;
+
+/// A project's builds: the gate they pass one at a time, and what its holder runs.
 #[derive(Default)]
-struct RunningEntry {
-    gate: Arc<ProjectGate>,
-    latest: Option<Arc<()>>,
+struct Entry {
+    gate: Arc<Gate>,
+    /// The latest request, until it ends or is stopped.
+    latest: Option<u64>,
     tree: Option<Tree>,
-    /// The active run's latexmk record, for a Stop to remove where it is: a
-    /// rename moves the folder before the run can remove it itself.
+    /// latexmk's record of a run that has started and not ended well. After
+    /// a fatal TeX error it holds the truncated .aux's state, so bibtex fails
+    /// on it ("no \citation") and every later run stops at "gave an error in
+    /// previous invocation", even with -g and the source fixed. Removed, the
+    /// next run starts afresh. A Stop removes it where it is: a rename moves
+    /// the folder before the run could.
     record: Option<PathBuf>,
-    stopped: bool,
 }
 
-impl RunningEntry {
-    fn latest_is(&self, request: &Arc<()>) -> bool {
-        self.latest
-            .as_ref()
-            .is_some_and(|r| Arc::ptr_eq(r, request))
+impl Entry {
+    /// Ends the latest request, and the run, if there is either; whether there was.
+    fn stop(&mut self) -> bool {
+        if let Some(tree) = &self.tree {
+            tree.kill();
+        }
+        if let Some(record) = self.record.take() {
+            let _ = fs::remove_file(record);
+        }
+        self.latest.take().is_some() || self.tree.is_some()
     }
 }
 
-type Registry = HashMap<PathBuf, RunningEntry>;
-type ProjectGate = tokio::sync::Mutex<()>;
-
-/// One compile per project, supersede-kill semantics, and kill-all on quit.
+/// One build per project, a newer one or Stop ending the one before, and
+/// kill-all on quit.
 #[derive(Default)]
 pub struct CompileManager {
-    running: Mutex<Registry>,
+    running: Mutex<HashMap<PathBuf, Entry>>,
     pub path_env: Option<String>,
 }
 
-/// Keeps the project's gate alive through waiting, running, and cancellation.
-/// Dropping a live child kills its whole tree, and a run that did not end ok
-/// loses latexmk's record, before the gate is released.
+/// A request's hold on its project, through waiting, running and cancellation.
+/// Dropped, it kills a live child's whole tree and removes the record of a run
+/// that didn't end well, before the gate lets the next build in.
 struct Registration<'a> {
     manager: &'a CompileManager,
     root: &'a Path,
-    gate: Arc<ProjectGate>,
-    request: Arc<()>,
-    gate_guard: Option<OwnedMutexGuard<()>>,
-    child: Option<(tokio::process::Child, Tree)>,
-    /// latexmk's record of a run that has started and not yet ended ok. After
-    /// a fatal TeX error it holds the truncated .aux's state, so bibtex fails
-    /// on it ("no \citation") and every later run stops at "gave an error in
-    /// previous invocation", even with -g and the source fixed. Without it the
-    /// next run starts afresh.
-    record: Option<PathBuf>,
+    id: u64,
+    gate: Arc<Gate>,
+    guard: Option<OwnedMutexGuard<()>>,
+    child: Option<Child>,
 }
 
 impl Registration<'_> {
-    /// Stop marked it, a newer request replaced it, or kill_all cleared it.
-    fn stopped(&self, running: &Registry) -> bool {
-        let entry = &running[self.root];
-        entry.stopped || !entry.latest_is(&self.request)
+    /// A Stop, a newer request or quitting ended it.
+    fn stopped(&self, running: &HashMap<PathBuf, Entry>) -> bool {
+        running[self.root].latest != Some(self.id)
     }
 }
 
@@ -475,25 +431,24 @@ impl Drop for Registration<'_> {
     fn drop(&mut self) {
         let mut running = lock(&self.manager.running);
         let entry = running.get_mut(self.root).expect("registered project");
-        if entry.latest_is(&self.request) {
+        if entry.latest == Some(self.id) {
             entry.latest = None;
         }
-        // Not once it is reaped, when its group's number may be another's.
-        if let Some((child, tree)) = &self.child
-            && child.id().is_some()
-        {
-            tree.kill();
+        if self.guard.is_some() {
+            let child = self.child.take();
+            // Not once it is reaped, when its group's number may be another's.
+            if let Some(tree) = entry.tree.take()
+                && child.as_ref().is_some_and(|child| child.id().is_some())
+            {
+                tree.kill();
+            }
+            // On cancellation, Tokio reaps the killed child after the gate opens.
+            drop(child);
+            if let Some(record) = entry.record.take() {
+                let _ = fs::remove_file(record);
+            }
+            self.guard = None;
         }
-        if self.gate_guard.is_some() {
-            entry.tree = None;
-            entry.record = None;
-        }
-        self.child = None;
-        if let Some(record) = self.record.take() {
-            let _ = std::fs::remove_file(record);
-        }
-        // On cancellation, Tokio reaps the killed child after this guard releases.
-        self.gate_guard = None;
         // Only the registry and this registration still own the idle gate.
         if Arc::strong_count(&self.gate) == 2 {
             running.remove(self.root);
@@ -520,9 +475,7 @@ struct CompileRun {
 }
 
 fn modified(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path)
-        .and_then(|meta| meta.modified())
-        .ok()
+    fs::metadata(path).and_then(|meta| meta.modified()).ok()
 }
 
 impl CompileRun {
@@ -539,10 +492,10 @@ impl CompileRun {
 
     /// A fresh output, or an existing one for a successful no-op build.
     fn read(&self, ext: &str, allow_existing: bool) -> Option<String> {
-        (allow_existing || self.wrote(ext))
-            .then(|| read_tail(&self.output(ext), LOG_READ_MAX).ok())
-            .flatten()
-            .map(crate::lossy_string)
+        let fresh = allow_existing || self.wrote(ext);
+        fresh
+            .then(|| read_tail(&self.output(ext), LOG_READ_MAX).ok())?
+            .map(lossy_string)
     }
 }
 
@@ -565,79 +518,46 @@ fn user_latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
 
 impl CompileManager {
     pub fn kill_all(&self) {
-        let mut running = lock(&self.running);
-        for entry in running.values_mut() {
-            entry.latest = None;
-            if let Some(tree) = &entry.tree {
-                tree.kill();
-            }
-        }
+        lock(&self.running).values_mut().for_each(|entry| {
+            entry.stop();
+        });
     }
 
-    /// Stop a project's build, and say whether one was running. Its entry
-    /// stays, so the run and a successor waiting on it settle as usual, and
-    /// the run reports itself stopped; one that hasn't started latexmk yet
-    /// doesn't start it.
+    /// Stops a project's build, and says whether one was asked for or running.
+    /// The run and a successor waiting on it settle as usual, the run saying it
+    /// was stopped; one that hasn't started latexmk yet doesn't start it.
     pub fn stop(&self, root: &Path) -> bool {
-        let mut running = lock(&self.running);
-        let Some(entry) = running.get_mut(root).filter(|entry| entry.latest.is_some()) else {
-            return false;
-        };
-        entry.stopped = true;
-        if let Some(tree) = &entry.tree {
-            tree.kill();
-        }
-        if let Some(record) = entry.record.take() {
-            let _ = std::fs::remove_file(record);
-        }
-        true
+        lock(&self.running).get_mut(root).is_some_and(Entry::stop)
     }
 
-    /// Removes the project's build folder, with a running build stopped and settled first. A
-    /// folder that isn't there is already clean.
+    /// Removes the project's build folder, with a running build stopped and
+    /// settled first. A folder that isn't there is already clean.
     pub async fn clean(&self, root: &Path) -> Result<(), CoreError> {
         self.stop(root);
-        let gate = Arc::clone(
-            &lock(&self.running)
-                .entry(root.to_path_buf())
-                .or_default()
-                .gate,
-        );
+        let gate = Arc::clone(&lock(&self.running).entry(root.into()).or_default().gate);
         let _idle = gate.lock().await;
-        match std::fs::remove_dir_all(root.join(BUILD_DIR)) {
+        match fs::remove_dir_all(root.join(BUILD_DIR)) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
             _ => Ok(()),
         }
     }
 
     fn register<'a>(&'a self, root: &'a Path) -> Registration<'a> {
+        static REQUESTS: AtomicU64 = AtomicU64::new(0);
+        let id = REQUESTS.fetch_add(1, Ordering::Relaxed);
         let mut running = lock(&self.running);
-        let entry = running.entry(root.to_path_buf()).or_default();
-        let request = Arc::new(());
-        entry.latest = Some(Arc::clone(&request));
-        entry.stopped = false;
-        // The tree belongs to the gate's active owner, even when the latest
-        // request is still waiting or an intervening request was cancelled.
-        if let Some(tree) = &entry.tree {
-            tree.kill();
-        }
+        let entry = running.entry(root.into()).or_default();
+        // The tree is the gate holder's, even while the latest request waits
+        // or one between them was cancelled.
+        entry.stop();
+        entry.latest = Some(id);
         Registration {
             manager: self,
             root,
+            id,
             gate: Arc::clone(&entry.gate),
-            request,
-            gate_guard: None,
+            guard: None,
             child: None,
-            record: None,
-        }
-    }
-
-    fn stopped_early(start: Instant) -> CompileResult {
-        CompileResult {
-            stopped: true,
-            duration_ms: start.elapsed().as_millis() as u64,
-            log: "The build was stopped before it started.".to_string(),
-            ..CompileResult::default()
         }
     }
 
@@ -649,23 +569,26 @@ impl CompileManager {
     ) -> Result<CompileResult, CoreError> {
         let request_started = Instant::now();
         let settings = read_settings(root);
-        let (engine, shell_escape) = (settings.engine.as_str(), settings.shell_escape);
-
+        let engine = &settings.engine;
         let flags = engine_flags(engine)
             .ok_or_else(|| CoreError::bad_request(format!("Unknown engine: {engine}")))?;
         let main_rel = safe_rel_file(root, &settings.main_file)?;
         if !root.join(&main_rel).exists() {
-            return Err(CoreError::bad_request(format!(
-                "Main file not found: {main_rel}"
-            )));
+            let missing = format!("Main file not found: {main_rel}");
+            return Err(CoreError::bad_request(missing));
         }
-        let main_arg = format!("./{main_rel}");
-
         let outdir = root.join(BUILD_DIR);
-        std::fs::create_dir_all(&outdir)?;
+        fs::create_dir_all(&outdir)?;
 
-        let outdir_arg = format!("-outdir={BUILD_DIR}");
-        let mut args: Vec<&str> = flags.to_vec();
+        // A latexmkrc is Perl that runs on every build, so a project's own is
+        // honoured only in a project trusted with shell escape. -norc turns
+        // off every automatic rc file, and the user's own is named again.
+        let shell_escape = settings.shell_escape;
+        let user_rc = (!shell_escape)
+            .then(|| user_latexmkrc(|key| std::env::var_os(key)))
+            .flatten();
+        let (outdir_arg, main_arg) = (format!("-outdir={BUILD_DIR}"), format!("./{main_rel}"));
+        let mut args = flags.to_vec();
         args.extend([
             "-interaction=batchmode",
             "-file-line-error",
@@ -685,30 +608,18 @@ impl CompileManager {
                 "-norc"
             },
         ]);
-        // A latexmkrc is Perl that runs on every build, so a project's own is
-        // honoured only in a project trusted with shell escape. -norc turns
-        // off every automatic rc file, and the user's own is named again.
-        let user_rc = (!shell_escape)
-            .then(|| user_latexmkrc(|key| std::env::var_os(key)))
-            .flatten();
         if let Some(rc) = &user_rc {
             args.extend(["-r", rc]);
         }
         args.push(&main_arg);
 
         let mut registration = self.register(root);
+        // The gate keeps a successor off the build folder until its
+        // predecessor settles, even if a request between them is cancelled.
+        registration.guard = Some(Arc::clone(&registration.gate).lock_owned().await);
 
-        // The gate keeps a successor off the build directory until its
-        // predecessor settles, even if an intermediate request is cancelled.
-        // Cancelling the active future can only signal the tree, not await reap.
-        registration.gate_guard = Some(Arc::clone(&registration.gate).lock_owned().await);
-
-        if registration.stopped(&lock(&self.running)) {
-            return Ok(Self::stopped_early(request_started));
-        }
-
-        // Capture output times after the predecessor has stopped, otherwise
-        // its final writes can be mistaken for output from this generation.
+        // Times taken once the predecessor has stopped: its last writes
+        // aren't this build's output.
         let mut run = CompileRun {
             base: main_base_name(&main_rel),
             main_rel,
@@ -721,40 +632,41 @@ impl CompileManager {
             .into_iter()
             .filter_map(|ext| Some((ext, modified(&run.output(ext))?)))
             .collect();
-
-        let path_env = self
-            .path_env
-            .as_deref()
-            .map_or_else(|| Cow::Owned(tex_path(tex_dir)), Cow::Borrowed);
+        let path_env = match &self.path_env {
+            Some(path_env) => path_env.clone(),
+            None => tex_path(tex_dir),
+        };
         let spawned = {
-            // Hold the registry lock across synchronous spawn + tree publication.
-            // A successor or Stop therefore sees either no child or its tree,
-            // never an unkillable gap between the two.
+            // Spawned and its tree published under the registry's lock: a
+            // successor or Stop sees no child or its tree, never an
+            // unkillable gap between the two.
             let mut running = lock(&self.running);
             if registration.stopped(&running) {
-                return Ok(Self::stopped_early(request_started));
+                return Ok(CompileResult {
+                    stopped: true,
+                    duration_ms: request_started.elapsed().as_millis() as u64,
+                    log: "The build was stopped before it started.".to_string(),
+                    ..CompileResult::default()
+                });
             }
-            running.get_mut(root).unwrap().record = Some(run.output("fdb_latexmk"));
-            base_command("latexmk", Some(root), &path_env)
-                .and_then(|mut cmd| Tree::spawn(cmd.args(&args)))
-                .inspect(|(_, tree)| {
-                    running.get_mut(root).unwrap().tree = Some(tree.clone());
-                })
+            let entry = running.get_mut(root).expect("registered project");
+            entry.record = Some(run.output("fdb_latexmk"));
+            let spawned = base_command("latexmk", Some(root), &path_env)
+                .and_then(|mut cmd| Tree::spawn(cmd.args(&args)));
+            if let Ok((_, tree)) = &spawned {
+                entry.tree = Some(tree.clone());
+            }
+            spawned
         };
-        // Kept only if the run ends ok: a cancelled one drops it with the gate.
-        registration.record = Some(run.output("fdb_latexmk"));
         let (end, output) = match spawned {
             Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
-            Ok(spawned) => {
-                let (child, tree) = registration.child.insert(spawned);
+            Ok((child, tree)) => {
+                let child = registration.child.insert(child);
                 let (code, mut output, stderr, timed_out) =
-                    drive(child, tree, COMPILE_TIMEOUT).await;
+                    drive(child, &tree, COMPILE_TIMEOUT).await;
                 registration.child = None;
                 output.push_str(&stderr);
                 let mut running = lock(&self.running);
-                // Reaped: a Stop from here on must not signal its group, whose
-                // number may already be another process's.
-                running.get_mut(root).expect("registered project").tree = None;
                 let end = if registration.stopped(&running) {
                     End::Stopped
                 } else if timed_out {
@@ -762,9 +674,13 @@ impl CompileManager {
                 } else {
                     End::Exited(code)
                 };
-                if end == End::Exited(0) {
-                    // A good run's record is kept, whatever stops it from here.
-                    running.get_mut(root).expect("registered project").record = None;
+                let entry = running.get_mut(root).expect("registered project");
+                // Reaped: a Stop from here on must not signal its group, whose
+                // number may already be another process's.
+                entry.tree = None;
+                // A good run's record is kept, whatever stops it from here.
+                if end == End::Exited(0) && run.output("pdf").exists() {
+                    entry.record = None;
                 }
                 (end, output)
             }
@@ -772,13 +688,9 @@ impl CompileManager {
         // Reading and parsing the logs blocks, so not on a runtime worker. It
         // only reads: a build cancelled meanwhile, its gate released, leaves
         // it nothing to change under the next build.
-        let result = tokio::task::spawn_blocking(move || finish(&run, &end, output))
+        tokio::task::spawn_blocking(move || finish(&run, &end, output))
             .await
-            .map_err(|err| CoreError::internal(err.to_string()))?;
-        if result.ok {
-            registration.record = None;
-        }
-        Ok(result)
+            .map_err(|err| CoreError::internal(err.to_string()))
     }
 }
 
@@ -790,9 +702,11 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
     let unchanged = ok && !run.wrote("pdf") && !run.wrote("log");
     let engine_log = run.read("log", unchanged);
     let mut items = parse_log(engine_log.as_deref().unwrap_or(&output), &run.main_rel);
-    if let Some(blg) = run.read("blg", unchanged) {
-        items.extend(parse_blg(&blg));
-    }
+    items.extend(
+        run.read("blg", unchanged)
+            .iter()
+            .flat_map(|blg| parse_blg(blg)),
+    );
     let (mut errors, warnings): (Vec<_>, Vec<_>) =
         items.into_iter().partition(|item| item.kind == "error");
 
@@ -819,7 +733,6 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
         }
         _ => {}
     }
-    let log = joined_log(engine_log.as_deref(), output);
     CompileResult {
         ok,
         stopped: *end == End::Stopped,
@@ -829,29 +742,35 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
         pdf_changed: wrote_pdf,
         errors,
         warnings,
-        log,
+        log: joined_log(engine_log.as_deref(), &output),
     }
 }
 
-/// The end of the engine's log, then latexmk's account of the passes it ran,
-/// that the result shows: the log is cut to its part before it is copied.
-fn joined_log(engine_log: Option<&str>, output: String) -> String {
-    let log = match engine_log {
-        Some(engine_log) => format!("{}\n\n{output}", crate::tail(engine_log, LOG_TAIL)),
-        None => output,
+/// The last `LOG_TAIL` bytes of the engine's log and latexmk's account of the
+/// passes it ran, joined: only what is shown is copied, once.
+fn joined_log(engine_log: Option<&str>, output: &str) -> String {
+    let parts = match engine_log {
+        Some(log) => [log, "\n\n", output],
+        None => ["", "", output],
     };
-    if log.len() > LOG_TAIL {
-        crate::tail(&log, LOG_TAIL).to_owned()
-    } else {
-        log
+    let mut room = LOG_TAIL;
+    let mut kept = Vec::new();
+    for part in parts.into_iter().rev() {
+        let end = tail(part, room);
+        room -= end.len();
+        kept.push(end);
+        if end.len() < part.len() {
+            break;
+        }
     }
+    kept.into_iter().rev().collect()
 }
 
 /// A file's last `max` bytes, starting at a line when it had to cut: errors
 /// sit at the end of a log, and a cut line would parse as garbage.
 fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
-    let mut file = std::fs::File::open(path)?;
+    let mut file = fs::File::open(path)?;
     let len = file.metadata()?.len();
     let cut = len > max;
     if cut {
@@ -860,7 +779,7 @@ fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(len.min(max) as usize);
     file.take(max).read_to_end(&mut bytes)?;
     if cut {
-        let start = bytes.iter().position(|&b| b == b'\n').map_or(0, |i| i + 1);
+        let start = memchr::memchr(b'\n', &bytes).map_or(0, |i| i + 1);
         bytes.drain(..start);
     }
     Ok(bytes)
@@ -868,41 +787,26 @@ fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LOG_TAIL, absolute_dirs, joined_log, read_tail, user_latexmkrc, version_line};
-    use crate::tail;
-    use std::ffi::OsString;
-    use std::path::Path;
+    use super::*;
 
     #[tokio::test]
     async fn cleaning_removes_the_build_folder_and_a_missing_one_is_clean() {
         let dir = tempfile::tempdir().unwrap();
-        let manager = super::CompileManager::default();
+        let manager = CompileManager::default();
         manager.clean(dir.path()).await.unwrap();
-        std::fs::create_dir_all(dir.path().join("build/sub")).unwrap();
-        std::fs::write(dir.path().join("build/main.aux"), "x").unwrap();
-        std::fs::write(dir.path().join("main.tex"), "x").unwrap();
+        fs::create_dir_all(dir.path().join("build/sub")).unwrap();
+        fs::write(dir.path().join("main.tex"), "x").unwrap();
         manager.clean(dir.path()).await.unwrap();
-        assert!(!dir.path().join("build").exists());
-        assert!(dir.path().join("main.tex").exists());
+        assert!(!dir.path().join("build").exists() && dir.path().join("main.tex").exists());
     }
 
     #[test]
-    fn a_long_log_is_read_from_its_last_whole_line_and_character() {
+    fn a_long_log_is_read_from_its_last_whole_line() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("main.log");
-        std::fs::write(&path, "first line\nsecond line\n./main.tex:3: Boom.\n").unwrap();
-        assert_eq!(
-            read_tail(&path, 30).unwrap(),
-            b"./main.tex:3: Boom.\n".to_vec()
-        );
-        assert_eq!(
-            read_tail(&path, 1000).unwrap(),
-            std::fs::read(&path).unwrap()
-        );
-        // The log shown keeps its last whole characters.
-        assert_eq!(tail("short", 10), "short");
-        assert_eq!(tail("aébc", 3), "bc");
-        assert_eq!(tail("aébc", 4), "ébc");
+        fs::write(&path, "first line\nsecond line\n./main.tex:3: Boom.\n").unwrap();
+        assert_eq!(read_tail(&path, 30).unwrap(), b"./main.tex:3: Boom.\n");
+        assert_eq!(read_tail(&path, 1000).unwrap(), fs::read(&path).unwrap());
     }
 
     #[test]
@@ -910,16 +814,18 @@ mod tests {
         let long = "é".repeat(LOG_TAIL);
         for (engine, output) in [
             (None, "latexmk".to_string()),
+            (None, long.clone() + "x"),
             (Some("short"), "latexmk".to_string()),
             (Some(long.as_str()), "latexmk".to_string()),
             (Some(long.as_str()), "x".repeat(LOG_TAIL - 1)),
+            (Some(long.as_str()), "x".repeat(LOG_TAIL - 3)),
             (Some("engine"), long.clone()),
         ] {
             let whole = match engine {
                 Some(engine) => format!("{engine}\n\n{output}"),
                 None => output.clone(),
             };
-            assert_eq!(joined_log(engine, output), tail(&whole, LOG_TAIL));
+            assert_eq!(joined_log(engine, &output), tail(&whole, LOG_TAIL));
         }
     }
 
@@ -928,30 +834,27 @@ mod tests {
         let base = std::env::temp_dir();
         let (first, last) = (base.join("bin"), base.join("tex").join("bin"));
         let path = std::env::join_paths([&first, Path::new(""), Path::new("."), &last]).unwrap();
-        let dirs: Vec<_> = absolute_dirs(&path).collect();
-        assert_eq!(dirs, [first, last]);
+        assert_eq!(absolute_dirs(&path).collect::<Vec<_>>(), [first, last]);
     }
 
     #[tokio::test]
     async fn killing_a_tree_ends_the_tool() {
-        let mut command = tokio::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+        let mut command = Command::new(if cfg!(windows) { "cmd" } else { "sh" });
         if cfg!(windows) {
             command.args(["/C", "ping -n 30 127.0.0.1 > NUL"]);
         } else {
             command.args(["-c", "sleep 30; true"]);
         }
-        let (mut child, tree) = super::Tree::spawn(&mut command).unwrap();
+        let (mut child, tree) = Tree::spawn(&mut command).unwrap();
         tree.kill();
-        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait());
+        let ended = tokio::time::timeout(Duration::from_secs(5), child.wait());
         assert!(!ended.await.unwrap().unwrap().success());
     }
 
     #[test]
     fn the_version_names_latexmk() {
-        assert_eq!(
-            version_line("Latexmk, John Collins, 1 Jan 2025. Version 4.86\n"),
-            "Latexmk, John Collins, 1 Jan 2025. Version 4.86"
-        );
+        let line = "Latexmk, John Collins, 1 Jan 2025. Version 4.86";
+        assert_eq!(version_line(&format!("\nbanner\n{line}\n")), line);
         assert_eq!(version_line("something else\n"), "something else");
     }
 
@@ -959,24 +862,25 @@ mod tests {
     fn the_users_own_latexmkrc_is_found_where_latexmk_looks() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
-        let env = |home: &Path| {
+        let env = |key: &'static str, home: &Path| {
             let home = OsString::from(home);
-            move |key: &str| (key == "HOME").then(|| home.clone())
+            move |var: &str| (var == key).then(|| home.clone())
         };
-        assert_eq!(user_latexmkrc(env(home)), None);
-        std::fs::write(home.join(".latexmkrc"), "").unwrap();
-        let rc = |path: &Path| Some(path.to_string_lossy().into_owned());
-        assert_eq!(user_latexmkrc(env(home)), rc(&home.join(".latexmkrc")));
+        let rc = |path: PathBuf| Some(path.to_string_lossy().into_owned());
+        assert_eq!(user_latexmkrc(env("HOME", home)), None);
+        fs::write(home.join(".latexmkrc"), "").unwrap();
+        assert_eq!(
+            user_latexmkrc(env("HOME", home)),
+            rc(home.join(".latexmkrc"))
+        );
         let config = home.join(".config").join("latexmk").join("latexmkrc");
-        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
-        std::fs::write(&config, "").unwrap();
-        assert_eq!(user_latexmkrc(env(home)), rc(&config));
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(&config, "").unwrap();
+        assert_eq!(user_latexmkrc(env("HOME", home)), rc(config.clone()));
         // A relative home would be the project's own folder.
-        assert_eq!(user_latexmkrc(env(Path::new("."))), None);
+        assert_eq!(user_latexmkrc(env("HOME", Path::new("."))), None);
         // Without HOME, Windows' latexmk looks in the user's profile.
-        let profile = OsString::from(home);
-        let windows = move |key: &str| (key == "USERPROFILE").then(|| profile.clone());
-        let found = user_latexmkrc(windows);
-        assert_eq!(found, rc(&config).filter(|_| cfg!(windows)));
+        let found = user_latexmkrc(env("USERPROFILE", home));
+        assert_eq!(found, rc(config).filter(|_| cfg!(windows)));
     }
 }
