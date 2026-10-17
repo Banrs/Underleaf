@@ -698,38 +698,36 @@ async fn cancel_leaves_the_edits_unsaved_until_a_save_is_asked_for() {
     assert_eq!(rig.of_type("conflict").await.len(), 1);
 }
 
+/// Files deleted elsewhere: one without edits closes; one with unsaved edits is asked about,
+/// and nothing puts it back until Save does.
 #[tokio::test(start_paused = true)]
-async fn a_deleted_file_with_unsaved_edits_is_asked_about_and_not_put_back() {
+async fn a_deleted_file_closes_and_one_with_unsaved_edits_is_asked_about_not_put_back() {
     let mut rig = Rig::new(false).await;
+    fs::write(rig.root.join("ch.tex"), "chapter").unwrap();
+    rig.open("ch.tex").await;
     let doc = rig.open("main.tex").await;
     doc.edit(5, 0, " mine");
-    fs::remove_file(rig.root.join("main.tex")).unwrap();
-    rig.changed("main.tex", true);
+    for path in ["ch.tex", "main.tex"] {
+        fs::remove_file(rig.root.join(path)).unwrap();
+        rig.changed(path, true);
+    }
     wait(300).await;
-    let conflicts = rig.of_type("conflict").await;
-    assert_eq!(conflicts[0]["kind"], "gone");
+    let events = rig.events().await;
+    let of = |kind: &'static str| events.iter().filter(move |e| e["type"] == kind);
+    let closed: Vec<&Value> = of("document_closed").collect();
+    assert_eq!(
+        (closed[0]["path"].as_str(), closed.len()),
+        (Some("ch.tex"), 1)
+    );
+    assert_eq!(closed[0]["reason"], "gone");
+    assert!(rig.sessions.document(rig.session, "ch.tex").is_none());
+    // The listing changed too.
+    assert_eq!(of("tree").count(), 1);
+    assert_eq!(of("conflict").next().unwrap()["kind"], "gone");
     wait(800).await;
     assert!(!rig.root.join("main.tex").exists());
     rig.resolve("save").await;
     assert_eq!(rig.disk("main.tex"), "Hello mine");
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_deleted_file_without_edits_closes() {
-    let mut rig = Rig::new(false).await;
-    rig.open("main.tex").await;
-    fs::remove_file(rig.root.join("main.tex")).unwrap();
-    rig.changed("main.tex", true);
-    wait(300).await;
-    let events = rig.events().await;
-    let closed = events
-        .iter()
-        .find(|e| e["type"] == "document_closed")
-        .unwrap();
-    assert_eq!(closed["reason"], "gone");
-    // The listing changed too.
-    assert!(events.iter().any(|e| e["type"] == "tree"));
-    assert!(rig.sessions.document(rig.session, "main.tex").is_none());
 }
 
 #[tokio::test(start_paused = true)]
@@ -1000,53 +998,32 @@ async fn the_live_event_carries_the_log_while_the_host_shows_it() {
     assert!(logs(others).iter().all(Value::is_null));
 }
 
-/// Live preview running, and ch.tex renamed: the preview stops, to start again.
-async fn renamed_while_live(rig: &mut Rig) {
+/// A rename stops the preview, which starts again once the change settles. It shows only as
+/// `starting` meanwhile, as a host told it stopped would show the build's PDF; a Start then
+/// leaves the restart to finish, and a Stop then a Start start once.
+#[tokio::test(start_paused = true)]
+async fn a_rename_restarts_the_preview_once_it_settles_showing_it_as_starting_meanwhile() {
+    let mut rig = Rig::new(false).await;
     fs::write(rig.root.join("ch.tex"), "chapter").unwrap();
-    live(rig).await;
+    live(&rig).await;
     rig.events().await;
     rig.ok("rename", json!({ "from": "ch.tex", "to": "one.tex" }))
         .await;
-}
-
-/// It stays `starting` from the stop to the restart: a host told it stopped would show
-/// the build's PDF meanwhile.
-#[tokio::test(start_paused = true)]
-async fn a_rename_restarts_the_preview_once_it_settles_and_it_shows_only_as_starting() {
-    let mut rig = Rig::new(false).await;
-    renamed_while_live(&mut rig).await;
     wait(100).await;
-    assert_eq!(rig.fake.starts.lock().unwrap().len(), 1);
-    wait(100).await;
-    let starts = rig.fake.starts.lock().unwrap().clone();
-    assert_eq!(starts.len(), 2);
-    assert!(starts[1].1, "a restart of its own");
-    assert_eq!(phases(&rig.events().await), ["starting", "running"]);
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_start_during_a_restart_leaves_it_to_finish() {
-    let mut rig = Rig::new(false).await;
-    renamed_while_live(&mut rig).await;
     let started = rig.ok("live_start", json!({})).await;
     assert_eq!(started["phase"], "starting");
-    wait(200).await;
-    assert_eq!(rig.state().await["live"]["phase"], "running");
-    assert_eq!(rig.fake.starts.lock().unwrap().len(), 2);
-}
-
-/// The user's Start after their Stop is the one start: the restart that was due would stop it.
-#[tokio::test(start_paused = true)]
-async fn a_stop_then_a_start_during_a_restart_start_once() {
-    let mut rig = Rig::new(false).await;
-    renamed_while_live(&mut rig).await;
+    assert_eq!(rig.fake.starts.lock().unwrap().len(), 1);
+    wait(100).await;
+    assert_eq!(phases(&rig.events().await), ["starting", "running"]);
+    // The user's Start after their Stop is the one start: the restart due would stop it.
+    rig.ok("rename", json!({ "from": "one.tex", "to": "ch.tex" }))
+        .await;
     rig.ok("live_stop", json!({})).await;
     live(&rig).await;
     wait(200).await;
     let starts = rig.fake.starts.lock().unwrap().clone();
-    assert_eq!(starts.len(), 2);
-    assert!(!starts[1].1, "the user's own");
-    assert_eq!(phases(&rig.events().await).last(), Some(&"running"));
+    let restarts: Vec<bool> = starts.into_iter().map(|(_, restart)| restart).collect();
+    assert_eq!(restarts, [false, true, false]);
 }
 
 /// While the host shows the log it follows TeX's, at most every 200 ms.

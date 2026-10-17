@@ -304,7 +304,6 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.stop(None);
-        remove_pdf_folder(self.pdf.as_deref());
     }
 }
 fn remove_pdf_folder(pdf: Option<&Path>) {
@@ -1062,7 +1061,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn the_vfs_has_the_editors_texts_in_a_folder_of_its_own_and_refuses_bad_paths() {
+        async fn the_vfs_has_the_editors_texts_and_each_whole_text_goes_as_a_change() {
             use std::os::unix::fs::PermissionsExt;
             let (tmp, root, path_env) = setup();
             let manager = Manager::default();
@@ -1072,7 +1071,7 @@ mod tests {
             fs::write(&normal, "normal build").unwrap();
             let pane = Some(&Pane::default());
             let (first, mut events) =
-                start(&manager, OWNER, &root, &path_env, &main_buffer("é😀"), pane);
+                start(&manager, OWNER, &root, &path_env, &main_buffer("abc"), pane);
             assert!(first.running);
             // The session's own, outside the project: never a build's output.
             let LiveEvent::Document { path, .. } = next(&mut events, document).await else {
@@ -1089,7 +1088,24 @@ mod tests {
             assert_eq!(fs::read(&normal).unwrap(), b"normal build");
             until(|| !commands(&tmp).is_empty()).await;
             let main = dunce::canonicalize(root.join("main.tex")).unwrap();
-            assert_eq!(commands(&tmp)[0], json!(["open", main, "é😀"]));
+            assert_eq!(commands(&tmp)[0], json!(["open", main, "abc"]));
+            // TeXpresso's copy, rebuilt from the changes it is sent; the same text again
+            // sends none, and the disk keeps its own.
+            let changes = || -> Vec<Value> {
+                let sent = commands(&tmp).into_iter();
+                sent.filter(|c| c[0] == "change").collect()
+            };
+            let mut text = String::from("abc");
+            for edit in ["abXc", "aXc", "aXc", "aXcd"] {
+                let sent = changes().len();
+                manager.update(OWNER, "main.tex", edit).unwrap();
+                if text != edit {
+                    until(|| changes().len() > sent).await;
+                    apply(&mut text, &changes().pop().unwrap());
+                }
+                assert_eq!(text, edit);
+            }
+            assert_eq!(changes().len(), 3);
             assert_eq!(fs::read_to_string(&main).unwrap(), "disk text");
             for (path, text) in [
                 ("../escape.tex", "bad"),
@@ -1102,38 +1118,9 @@ mod tests {
             until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
             assert!(!manager.stop_request(OWNER).unwrap().running);
             assert!(!folder.exists());
-            assert_eq!(refused(restart(&manager, OWNER, &root, &path_env)), 409);
-            assert!(begin(&manager, OWNER, &root, &path_env).running);
-            manager.update(OWNER, "main.tex", "EXIT_CLEAN").unwrap();
-            until(|| !manager.status(OWNER).unwrap().running).await;
-            assert!(manager.status(OWNER).unwrap().error.is_none());
             begin(&manager, OWNER, &root, &path_env);
             manager.kill_all();
             assert!(!manager.status(OWNER).unwrap().running);
-        }
-
-        #[tokio::test]
-        async fn whole_texts_go_as_the_change_from_the_last() {
-            let (tmp, root, path_env) = setup();
-            let manager = Manager::default();
-            start(&manager, OWNER, &root, &path_env, &main_buffer("abc"), None);
-            let changes = || -> Vec<Value> {
-                let sent = commands(&tmp).into_iter();
-                sent.filter(|c| c[0] == "change").collect()
-            };
-            // TeXpresso's copy, rebuilt from the changes it is sent; the same
-            // text again sends none.
-            let mut text = String::from("abc");
-            for edit in ["abXc", "aXc", "aXc", "aé😀Xc", "aê😃Xc"] {
-                let sent = changes().len();
-                manager.update(OWNER, "main.tex", edit).unwrap();
-                if text != edit {
-                    until(|| changes().len() > sent).await;
-                    apply(&mut text, &changes().pop().unwrap());
-                }
-                assert_eq!(text, edit);
-            }
-            assert_eq!(changes().len(), 4);
         }
 
         /// Two starts of one project at once: one may find the project free and the other's

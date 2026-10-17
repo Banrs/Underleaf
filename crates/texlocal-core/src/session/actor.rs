@@ -291,12 +291,13 @@ impl Actor {
             self.live_stop();
         }));
         for doc in self.docs.values() {
-            let error = if doc.dirty() {
+            let mut state = doc.state();
+            state["error"] = (if doc.dirty() {
                 STOPPED_UNSAVED
             } else {
                 STOPPED_SAVED
-            };
-            let state = json!({ "path": doc.path, "error": error, "held": doc.held });
+            })
+            .into();
             self.emit("document", state);
         }
         rx.close();
@@ -1016,7 +1017,6 @@ impl Actor {
             Ok((updated, main_changed))
         })?;
         if main_changed {
-            self.live_follow();
             self.main_file_changed();
         } else if self.auto_compile {
             self.later.push_back(Later::Compile(true));
@@ -1024,7 +1024,9 @@ impl Actor {
         out(updated)
     }
 
+    /// The build and the preview follow a new main file.
     fn main_file_changed(&mut self) {
+        self.live_follow();
         let building = self.builds.compiling;
         self.stop_compile();
         if self.auto_compile || building {

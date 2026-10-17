@@ -13,7 +13,7 @@ use super::Msg;
 use super::actor::{Actor, Later, Timer};
 use crate::CoreError;
 use crate::projects::file_kind;
-use crate::texpresso::{FileBuffer, LiveEvent, Pane, Status};
+use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 
 const DIDNT_START: &str =
     "TeXpresso didn’t start. Check its location in Settings and the log below.";
@@ -47,7 +47,8 @@ pub(crate) struct Live {
     rejected: BTreeMap<String, String>,
     failure: Option<String>,
     reported: BTreeSet<String>,
-    status: Option<Status>,
+    /// The preview's own error, as its start or Stop left it.
+    error: Option<String>,
     /// The host shows the Live Preview Log: the `live` event carries it.
     log_shown: bool,
     halted: bool,
@@ -104,7 +105,7 @@ impl Actor {
             "halted": live.halted,
             "log": live.log_shown.then(|| self.live_log(failure.as_deref())),
             "failure": failure,
-            "error": live.status.as_ref().and_then(|s| s.error.clone()),
+            "error": live.error,
         })
     }
 
@@ -146,7 +147,7 @@ impl Actor {
 
     fn report(&mut self) {
         let mut errors: BTreeSet<String> = self.live.errors().into_iter().collect();
-        errors.extend(self.live.status.as_ref().and_then(|s| s.error.clone()));
+        errors.extend(self.live.error.clone());
         let alert = !errors.is_subset(&self.live.reported);
         self.live.reported = errors;
         self.publish_live(alert);
@@ -277,7 +278,7 @@ impl Actor {
                 } else if status.error.is_none() {
                     self.live.failure = Some(DIDNT_START.into());
                 }
-                self.live.status = Some(status);
+                self.live.error = status.error;
                 self.report();
                 if running {
                     self.flush_pending();
@@ -320,7 +321,7 @@ impl Actor {
             match self.preview.stop_request(self.id) {
                 Ok(status) => {
                     self.live.owns = false;
-                    self.live.status = Some(status);
+                    self.live.error = status.error;
                 }
                 Err(error) if !self.closed => self.fail(error),
                 Err(_) => {}
