@@ -13,6 +13,7 @@ pub mod events;
 pub mod import;
 pub mod logparse;
 pub mod paths;
+mod process;
 pub mod projects;
 pub mod service;
 pub mod session;
@@ -20,6 +21,7 @@ pub mod settings;
 pub mod synctex;
 pub mod syntax;
 pub mod templates;
+mod tex;
 pub mod texpresso;
 pub mod zipexport;
 

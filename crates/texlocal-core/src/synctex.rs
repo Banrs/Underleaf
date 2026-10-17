@@ -8,9 +8,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::BUILD_DIR;
-use crate::compile::{PROBE_TIMEOUT, run};
 use crate::error::CoreError;
 use crate::paths::{rel_to_root, safe_path, safe_rel_file};
+use crate::process::{PROBE_TIMEOUT, run};
 use crate::settings::compiled_pdf_path;
 
 /// Only `page` is required. The rest are omitted when synctex didn't report
@@ -75,11 +75,17 @@ fn pdf_for(root: &Path, live: Option<&Path>) -> Result<std::path::PathBuf, CoreE
 
 /// What synctex prints for `args` ("view …" or "edit …"), run in the project.
 async fn synctex(root: &Path, args: &[&str], path_env: &str) -> Result<String, CoreError> {
-    let (code, stdout) = run("synctex", args, Some(root), PROBE_TIMEOUT, path_env).await;
-    if code != 0 {
-        return Err(CoreError::internal(format!("synctex {} failed", args[0])));
+    match run("synctex", args, Some(root), PROBE_TIMEOUT, path_env).await {
+        Ok((0, stdout)) => Ok(stdout),
+        Ok(_) => Err(CoreError::internal(format!("synctex {} failed", args[0]))),
+        // TeX's own program, which a TeX install brings: not a fault to report as one.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(CoreError::not_found(
+            "SyncTeX is not available: TeX's synctex program was not found.",
+        )),
+        Err(err) => Err(CoreError::internal(format!(
+            "Couldn't start synctex: {err}"
+        ))),
     }
-    Ok(stdout)
 }
 
 /// The optional column is zero-based, as in an inverse result. Some TeX
