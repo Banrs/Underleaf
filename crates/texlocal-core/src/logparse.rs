@@ -374,40 +374,52 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        LogItem, Severity, latexmk_errors, parse_blg, parse_log, project_path, undefined_command,
-    };
+    use super::{LogItem, Severity, latexmk_errors, parse_blg, parse_log, project_path};
 
-    /// Each item's file and line.
-    fn places(items: &[LogItem]) -> Vec<(Option<&str>, Option<u32>)> {
+    /// Each item as "kind file:line message", with "-" for a place it lacks.
+    fn described(items: &[LogItem]) -> Vec<String> {
+        let place = |part: Option<String>| part.unwrap_or_else(|| "-".into());
         items
             .iter()
-            .map(|it| (it.file.as_deref(), it.line))
+            .map(|it| {
+                let kind = serde_json::to_value(it.kind).unwrap();
+                let (file, line) = (
+                    place(it.file.clone()),
+                    place(it.line.map(|l| l.to_string())),
+                );
+                format!("{} {file}:{line} {}", kind.as_str().unwrap(), it.message)
+            })
             .collect()
+    }
+
+    fn parsed(log: &str) -> Vec<String> {
+        described(&parse_log(log, "main.tex"))
     }
 
     #[test]
     fn an_error_without_its_own_line_names_no_place() {
         let error = "./main.tex:12: Undefined control sequence.\nl.12 \\foo\n";
         let fatal = "==> Fatal error occurred, no output PDF file produced!";
-        let cases: [(String, &[_]); 4] = [
+        let undefined = "error main.tex:12 Undefined control sequence: \\foo";
+        let alone = format!("error -:- {fatal}");
+        let cases: [(String, &[&str]); 4] = [
             // A "!" error doesn't take the next error's "l.<n>".
             (
                 format!("! Emergency stop.\n{error}"),
-                &[(None, None), (Some("main.tex"), Some(12))],
+                &["error -:- Emergency stop.", undefined],
             ),
             // TeX's closing summary names the stopping error's line, not its
             // own, and folds into the error before it.
-            (
-                format!("{error}\n./main.tex:12:  {fatal}\n"),
-                &[(Some("main.tex"), Some(12))],
-            ),
+            (format!("{error}\n./main.tex:12:  {fatal}\n"), &[undefined]),
             // Alone, it is the failure's one record, with no place.
-            (format!("./main.tex:12:  {fatal}\n"), &[(None, None)]),
-            (format!("! Emergency stop.\n! {fatal}\n"), &[(None, None)]),
+            (format!("./main.tex:12:  {fatal}\n"), &[&alone]),
+            (
+                format!("! Emergency stop.\n! {fatal}\n"),
+                &["error -:- Emergency stop."],
+            ),
         ];
         for (log, expected) in cases {
-            assert_eq!(places(&parse_log(&log, "main.tex")), expected, "{log}");
+            assert_eq!(parsed(&log), expected, "{log}");
         }
     }
 
@@ -421,19 +433,18 @@ mod tests {
                   l.9 \\end\n\
                   Package hyperref Warning: Token not allowed\n\
                   (hyperref) removing `math shift' on input line 44.\n";
-        let crlf = lf.replace('\n', "\r\n");
-        let items = parse_log(&crlf, "main.tex");
-        assert_eq!(items, parse_log(lf, "main.tex"));
-        // The log's ./main.tex, without its ./
-        assert_eq!(items[0].file.as_deref(), Some("main.tex"));
-        assert_eq!(items[0].message, "Undefined control sequence: \\foo");
-        assert_eq!(items[1].message, "Emergency stop.");
-        assert_eq!(items[1].line, Some(9));
-        assert_eq!(items[2].line, Some(44));
+        assert_eq!(
+            parsed(&lf.replace('\n', "\r\n")),
+            [
+                "error main.tex:3 Undefined control sequence: \\foo",
+                "error main.tex:9 Emergency stop.",
+                "warning main.tex:44 Token not allowed removing `math shift' on input line 44.",
+            ]
+        );
     }
 
     #[test]
-    fn messages_name_the_undefined_control_sequence_without_tex_context() {
+    fn messages_lose_texs_context_and_name_the_command_they_cannot_find() {
         let log = "./main.tex:19: Undefined control sequence.\n\
                    l.19 ...ndefined control sequence: \\undefinedmacro\n\
                    \x20                                                 .\n\
@@ -444,61 +455,48 @@ mod tests {
                    l.21 x^\n\
                    \n\
                    ./main.tex:24: Undefined control sequence.\n\
-                   \\x ->\\foo\n\
+                   \\x ->\\foo@x\n\
                    \x20        \n\
                    l.24 \\x\n\
                    \n\
-                   ./main.tex:5: Emergency stop.\n\
-                   <read *> \n\
-                   \x20        \n\
-                   l.5 \\input{chapters/intro}\n";
-        let messages: Vec<_> = parse_log(log, "main.tex")
-            .into_iter()
-            .map(|it| it.message)
-            .collect();
-        assert_eq!(
-            messages,
-            [
-                "Undefined control sequence: \\undefinedmacro",
-                "Missing $ inserted.",
-                "Undefined control sequence: \\foo",
-                "Emergency stop.",
-            ]
-        );
-    }
-
-    #[test]
-    fn an_item_has_a_one_line_message_and_the_command_it_cannot_find() {
-        let log = "./main.tex:3: LaTeX Error: Command \\a already defined.\n\
+                   ./main.tex:5: Undefined control sequence.\n\
+                   l.5 \\&\n\
+                   \n\
+                   ./main.tex:3: LaTeX Error: Command \\a already defined.\n\
                    \x20              Or name \\end... illegal, see p.192 of the manual.\n\
                    \n\
                    See the LaTeX manual or LaTeX Companion for explanation.\n\
-                   l.3 \\newcommand\\a{y}\n\
-                   \n\
-                   ./main.tex:4: Undefined control sequence.\n\
-                   l.4 \\foo@x\n\
-                   \n\
-                   ./main.tex:5: Undefined control sequence.\n\
-                   l.5 \\&\n";
+                   l.3 \\newcommand\\a{y}\n";
         let items = parse_log(log, "main.tex");
-        assert_eq!(
-            items[0].short,
-            "Command \\a already defined. Or name \\end... illegal, see p.192 of the manual."
-        );
-        assert_eq!(items[0].command, None);
-        let commands: Vec<_> = items[1..].iter().map(|it| it.command.as_deref()).collect();
-        assert_eq!(commands, [Some("\\foo@x"), Some("\\&")]);
+        let found: Vec<_> = items
+            .iter()
+            .map(|it| (it.short.as_str(), it.command.as_deref()))
+            .collect();
+        let undefined = |name| (format!("Undefined control sequence: {name}"), Some(name));
+        let expected = [
+            undefined("\\undefinedmacro"),
+            ("Missing $ inserted.".into(), None),
+            undefined("\\foo@x"),
+            undefined("\\&"),
+            (
+                "Command \\a already defined. Or name \\end... illegal, see p.192 of the manual."
+                    .into(),
+                None,
+            ),
+        ];
+        let expected: Vec<_> = expected.iter().map(|(s, c)| (s.as_str(), *c)).collect();
+        assert_eq!(found, expected);
         // The name of a file TeX loaded comes first in its message: not this file's command.
         for message in [
             "x.sty: Undefined control sequence: \\a",
             "Undefined control sequence: \\ab-c",
         ] {
-            assert_eq!(undefined_command(message), None, "{message}");
+            assert_eq!(super::undefined_command(message), None, "{message}");
         }
     }
 
     #[test]
-    fn duplicates_collapse_to_the_first_and_order_is_kept() {
+    fn duplicates_collapse_to_the_first_in_order_and_kinds_are_named_on_the_wire() {
         let log = "LaTeX Warning: A on input line 1.\n\
                    \n\
                    ./a.tex:2: Boom.\n\
@@ -508,41 +506,14 @@ mod tests {
                    LaTeX Warning: A on input line 2.\n\
                    \n\
                    ./a.tex:2: Boom.\n";
-        let summary: Vec<_> = parse_log(log, "main.tex")
-            .into_iter()
-            .map(|it| (it.kind, it.line, it.message))
-            .collect();
         assert_eq!(
-            summary,
+            parsed(log),
             [
-                (Severity::Warning, Some(1), "A on input line 1.".to_string()),
-                (Severity::Error, Some(2), "Boom.".to_string()),
-                (Severity::Warning, Some(2), "A on input line 2.".to_string()),
+                "warning main.tex:1 A on input line 1.",
+                "error a.tex:2 Boom.",
+                "warning main.tex:2 A on input line 2.",
             ]
         );
-    }
-
-    #[test]
-    fn severity_is_error_or_warning_on_the_wire() {
-        let item = LogItem::error("Boom.");
-        assert_eq!(serde_json::to_value(&item).unwrap()["type"], "error");
-        let warning = parse_log("LaTeX Warning: A on input line 1.\n", "main.tex");
-        assert_eq!(
-            serde_json::to_value(&warning[0]).unwrap()["type"],
-            "warning"
-        );
-    }
-
-    #[test]
-    fn errors_in_generated_files_are_reported() {
-        let log = "(build/main.bbl\n\
-                   build/main.bbl:5: Misplaced alignment tab character &.\n\
-                   l.5 \\newblock Cats &\n\
-                   \n\
-                   build/main.bbl:5:  ==> Fatal error occurred, no output PDF file produced!\n";
-        let items = parse_log(log, "main.tex");
-        assert_eq!(places(&items), [(Some("build/main.bbl"), Some(5))]);
-        assert_eq!(items[0].message, "Misplaced alignment tab character &.");
     }
 
     #[test]
@@ -551,7 +522,7 @@ mod tests {
                    ./refs/my.cbx:12: Package biblatex Error: Bad style.\n\
                    l.12 \\x\n\
                    \n\
-                   ./data.dat:2: Undefined control sequence.\n\
+                   ./data.dat:2: Missing number.\n\
                    l.2 \\nope\n\
                    \n\
                    ./My Chapter.tex:3: Missing $ inserted.\n\
@@ -563,26 +534,31 @@ mod tests {
                    Document Class: article 2025/01/22 v1.4n Standard LaTeX document class\n\
                    File: size10.clo 2025/01/22 v1.4n Standard LaTeX file (size option)\n\
                    Package: x 3.1: 2025/01/22:\n\
-                   build at 10:30: no file here\n";
-        let items = parse_log(log, "main.tex");
+                   build at 10:30: no file here\n\
+                   )(build/main.bbl\n\
+                   build/main.bbl:5: Misplaced alignment tab character &.\n\
+                   l.5 \\newblock Cats &\n\
+                   \n\
+                   build/main.bbl:5:  ==> Fatal error occurred, no output PDF file produced!\n";
         assert_eq!(
-            places(&items),
+            parsed(log),
             [
-                (Some("refs/my.cbx"), Some(12)),
-                (Some("data.dat"), Some(2)),
-                (Some("My Chapter.tex"), Some(3)),
+                "error refs/my.cbx:12 Package biblatex Error: Bad style.",
+                "error data.dat:2 Missing number.",
+                "error My Chapter.tex:3 Missing $ inserted.",
                 // A distribution path: the project file that has it open, and no line.
-                (Some("refs/my.cbx"), None),
+                "error refs/my.cbx:- a.lbx: Boom.",
+                // One TeX wrote itself, in the build folder.
+                "error build/main.bbl:5 Misplaced alignment tab character &.",
             ]
         );
-        assert_eq!(items[0].message, "Package biblatex Error: Bad style.");
-        assert_eq!(items[3].message, "a.lbx: Boom.");
     }
 
     #[test]
     fn a_message_takes_the_file_tex_has_open() {
         // Parentheses in the echoed source and in an overfull box's contents
-        // don't pair up, and mustn't close a file.
+        // don't pair up, and mustn't close a file; nor does a command in
+        // parentheses open one, as a Windows path in full does.
         let log = "(./main.tex\n\
                    (/usr/local/texlive/2026/texmf-dist/tex/latex/base/article.cls\n\
                    Document Class: article 2025/01/22 v1.4n Standard LaTeX document class\n\
@@ -605,61 +581,43 @@ mod tests {
                    \n\
                    LaTeX Warning: Reference `x' on page 1 undefined on input line 9.\n\
                    \n\
-                   \x20)\n";
-        assert_eq!(
-            places(&parse_log(log, "other.tex")),
-            [
-                (Some("main.tex"), Some(4)),
-                (Some("chapters/intro.tex"), Some(3)),
-                (Some("main.tex"), Some(9)),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_windows_path_opens_a_file_and_a_command_in_parentheses_does_not() {
-        let log = "(C:\\Users\\Alex\\AppData\\MiKTeX\\tex/latex/base\\article.cls\n\
+                   (C:\\Users\\Alex\\AppData\\MiKTeX\\tex/latex/base\\article.cls\n\
                    (\\end occurred inside a group at level 1)\n\
                    (\\\\server\\share\\x.sty\n\
                    )\n\
                    )\n\
                    (./chapters/a.tex\n\
                    \n\
-                   LaTeX Warning: Reference `x' on page 1 undefined on input line 3.\n";
-        let items = parse_log(log, "main.tex");
-        assert_eq!(places(&items), [(Some("chapters/a.tex"), Some(3))]);
-    }
-
-    #[test]
-    fn a_place_in_a_tex_distribution_file_goes_to_the_file_that_loaded_it() {
-        let log = "(./main.tex\n\
-                   (/usr/local/texlive/2026/texmf-dist/tex/latex/graphics/graphicx.sty\n\
-                   /usr/local/texlive/2026/texmf-dist/tex/latex/graphics/graphicx.sty:27: Undefine\n\
-                   d control sequence.\n\
-                   l.27 \\foo\n";
-        let items = parse_log(log, "main.tex");
-        assert_eq!(places(&items), [(Some("main.tex"), None)]);
+                   LaTeX Warning: Reference `y' on page 1 undefined on input line 3.\n\
+                   \n\
+                   \x20)\n";
+        let places: Vec<_> = parse_log(log, "other.tex")
+            .into_iter()
+            .map(|it| (it.file, it.line))
+            .collect();
+        let at = |file: &str, line| (Some(file.to_string()), Some(line));
         assert_eq!(
-            items[0].message,
-            "graphicx.sty: Undefined control sequence: \\foo"
+            places,
+            [
+                at("main.tex", 4),
+                at("chapters/intro.tex", 3),
+                at("main.tex", 9),
+                at("chapters/a.tex", 3),
+            ]
         );
     }
 
     #[test]
     fn warnings_run_on_over_wrapped_and_continued_lines_and_stop_at_the_next_message() {
-        // The log, the line of its first item, and each item's kind and message.
-        type Case<'a> = (&'a str, Option<u32>, &'a [(Severity, &'a str)]);
-        use Severity::{Error, Warning};
-        let cases: [Case; 8] = [
+        let cases: [(&str, &[&str]); 6] = [
             (
                 "LaTeX Warning: First\n\
                  Package x Warning: Second\n\
                  ! Undefined control sequence.\n",
-                None,
                 &[
-                    (Warning, "First"),
-                    (Warning, "Second"),
-                    (Error, "Undefined control sequence."),
+                    "warning -:- First",
+                    "warning -:- Second",
+                    "error -:- Undefined control sequence.",
                 ],
             ),
             // A line wrapped at 79 columns runs on without a space.
@@ -669,45 +627,22 @@ mod tests {
                  \n\
                  ./main.tex:9: Missing number, treated as zero.\n\
                  l.9 x\n",
-                Some(3),
                 &[
-                    (
-                        Warning,
-                        "Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on input line 3.",
-                    ),
-                    (Error, "Missing number, treated as zero."),
+                    "warning main.tex:3 Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on input line 3.",
+                    "error main.tex:9 Missing number, treated as zero.",
                 ],
             ),
             // A line that wasn't wrapped still gets a space.
             (
                 "Package x Warning: First\n(x)                second on input line 2.\n",
-                Some(2),
-                &[(Warning, "First second on input line 2.")],
+                &["warning main.tex:2 First second on input line 2."],
             ),
             (
                 "LaTeX Font Warning: Font shape `OT1/nonexistentfam/m/n' undefined\n\
                  (Font)              using `OT1/cmr/m/n' instead on input line 3.\n",
-                Some(3),
-                &[(
-                    Warning,
-                    "Font shape `OT1/nonexistentfam/m/n' undefined using `OT1/cmr/m/n' instead on input line 3.",
-                )],
-            ),
-            (
-                "Package biblatex Warning: Please (re)run Biber on the file:\n\
-                 (biblatex)                main\n\
-                 (biblatex)                and rerun LaTeX afterwards.\n",
-                None,
-                &[(
-                    Warning,
-                    "Please (re)run Biber on the file: main and rerun LaTeX afterwards.",
-                )],
-            ),
-            // However many lines the package breaks it into, down to its place.
-            (
-                "Package x Warning: One\n(x) two\n(x) three\n(x) four\n(x) five\n(x) six on input line 8.\n",
-                Some(8),
-                &[(Warning, "One two three four five six on input line 8.")],
+                &[
+                    "warning main.tex:3 Font shape `OT1/nonexistentfam/m/n' undefined using `OT1/cmr/m/n' instead on input line 3.",
+                ],
             ),
             // LaTeX's own continuation is indented, and a line that is neither
             // that nor the warning's own is not part of it.
@@ -716,66 +651,25 @@ mod tests {
                  \x20              but the package provides `b'.\n\
                  Some other output on input line 5.\n\
                  (y) not this warning's.\n",
-                None,
-                &[(
-                    Warning,
-                    "You have requested package `a', but the package provides `b'.",
-                )],
+                &["warning -:- You have requested package `a', but the package provides `b'."],
             ),
             // A line of exactly 79 columns is a line, not a wrap, when the
             // next is the package's own "(name)" line.
             (
                 "Package microtype Warning: Unknown slot number of character 12 in font encoding\n\
                  (microtype)                removing it on input line 44.\n",
-                Some(44),
-                &[(
-                    Warning,
-                    "Unknown slot number of character 12 in font encoding removing it on input line 44.",
-                )],
+                &[
+                    "warning main.tex:44 Unknown slot number of character 12 in font encoding removing it on input line 44.",
+                ],
             ),
         ];
-        for (log, line, expected) in cases {
-            let items = parse_log(log, "main.tex");
-            let got: Vec<_> = items
-                .iter()
-                .map(|it| (it.kind, it.message.as_str()))
-                .collect();
-            assert_eq!(got, expected, "{log}");
-            assert_eq!(items[0].line, line, "{log}");
+        for (log, expected) in cases {
+            assert_eq!(parsed(log), expected, "{log}");
         }
         // The 79-column line above really is 79 columns.
-        assert_eq!(
-            "Package microtype Warning: Unknown slot number of character 12 in font encoding"
-                .chars()
-                .count(),
-            79
-        );
-    }
-
-    #[test]
-    fn bibliography_and_latexmk_failures_are_errors() {
-        let blg = "Database file #1: refs.bib\n\
-                   I was expecting a `,' or a `}'---line 1 of file refs.bib\n\
-                   \x20: @article{a \n\
-                   Warning--empty title in a\n\
-                   [812] Utils.pm:465> ERROR - BibTeX subsystem: syntax error\n";
-        let items = parse_blg(blg);
-        assert_eq!(places(&items), [(Some("refs.bib"), Some(1)), (None, None)]);
-        assert_eq!(items[0].message, "I was expecting a `,' or a `}'");
-        assert_eq!(items[1].message, "BibTeX subsystem: syntax error");
-        // A BibTeX error takes its message from the line above its place.
-        let items = parse_blg("I couldn't open database file .bib\n---line 5 of file main.aux\n");
-        assert_eq!(items[0].message, "I couldn't open database file .bib");
-        assert_eq!(items[0].line, Some(5));
-
-        let output = "Latexmk: Errors, so I did not complete making targets\n\
-                      Collected error summary (may duplicate other messages):\n\
-                      \x20 biber main: Could not find main.bcf\n\
-                      \x20     Refer to 'build/main.log' for details\n\
-                      Latexmk: done\n";
-        let items = latexmk_errors(output);
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].message, "biber main: Could not find main.bcf");
+        let line =
+            "Package microtype Warning: Unknown slot number of character 12 in font encoding";
+        assert_eq!(line.chars().count(), 79);
     }
 
     #[test]
@@ -809,66 +703,21 @@ mod tests {
     const BIBER_FAILED: &str = include_str!("../tests/logs/latexmk-biber-failed.txt");
     const MIKTEX: &str = include_str!("../tests/logs/miktex-handwritten.txt");
 
-    /// Each item's kind, place and message, the shape the assertions below read.
-    fn summary(items: &[LogItem]) -> Vec<(Severity, Option<&str>, Option<u32>, &str)> {
-        items
-            .iter()
-            .map(|it| (it.kind, it.file.as_deref(), it.line, it.message.as_str()))
-            .collect()
-    }
-
     #[test]
     fn a_pdftex_log_with_nested_files_gives_each_item_its_file_and_line() {
-        use Severity::{Error, Warning};
         let hyperref = "Token not allowed in a PDF string (Unicode): removing";
-        let items = parse_log(NESTED, "main.tex");
         assert_eq!(
-            summary(&items),
+            parsed(NESTED),
             [
-                (
-                    Warning,
-                    Some("main.tex"),
-                    Some(5),
-                    &*format!("{hyperref} `math shift' on input line 5.")
-                ),
-                (
-                    Warning,
-                    Some("main.tex"),
-                    Some(5),
-                    &*format!("{hyperref} `superscript' on input line 5.")
-                ),
-                (
-                    Warning,
-                    Some("chapters/intro.tex"),
-                    Some(2),
-                    "Reference `fig:nope' on page 1 undefined on input line 2."
-                ),
-                (
-                    Warning,
-                    Some("chapters/intro.tex"),
-                    Some(2),
-                    "Citation `missing' on page 1 undefined on input line 2."
-                ),
-                (
-                    Error,
-                    Some("chapters/deep.tex"),
-                    Some(2),
-                    "Undefined control sequence: \\undefinedmacroindeep"
-                ),
+                format!("warning main.tex:5 {hyperref} `math shift' on input line 5."),
+                format!("warning main.tex:5 {hyperref} `superscript' on input line 5."),
+                "warning chapters/intro.tex:2 Reference `fig:nope' on page 1 undefined on input line 2.".into(),
+                "warning chapters/intro.tex:2 Citation `missing' on page 1 undefined on input line 2.".into(),
+                "error chapters/deep.tex:2 Undefined control sequence: \\undefinedmacroindeep".into(),
                 // Four lines in the log, to its place at the end.
-                (
-                    Warning,
-                    Some("main.tex"),
-                    Some(7),
-                    "First line of the warning second line of the warning third line of the warning and a fourth, which ends it on input line 7."
-                ),
-                (
-                    Error,
-                    Some("data.dat"),
-                    Some(2),
-                    "Undefined control sequence: \\nosuchdatacommand"
-                ),
-                (Warning, None, None, "There were undefined references."),
+                "warning main.tex:7 First line of the warning second line of the warning third line of the warning and a fourth, which ends it on input line 7.".into(),
+                "error data.dat:2 Undefined control sequence: \\nosuchdatacommand".into(),
+                "warning -:- There were undefined references.".into(),
             ]
         );
     }
@@ -892,117 +741,63 @@ mod tests {
             (error.file.as_deref(), error.line),
             (Some("main.tex"), Some(4))
         );
-        assert!(
-            error.short.starts_with(
-                "Package fontspec Error: The font \"NoSuchFontAnywhere\" cannot be found;"
-            ),
-            "{}",
-            error.short
+        let (start, end) = (
+            "Package fontspec Error: The font \"NoSuchFontAnywhere\" cannot be found;",
+            "bug in the underlying font loading engine (XeTeX/luaotfload).",
         );
-        assert!(
-            error
-                .short
-                .ends_with("bug in the underlying font loading engine (XeTeX/luaotfload)."),
-            "{}",
-            error.short
-        );
+        assert!(error.short.starts_with(start) && error.short.ends_with(end));
         // The "Info" lines and the source echo are not part of it.
-        assert!(
-            !error.message.contains("Could not resolve"),
-            "{}",
-            error.message
-        );
-        assert!(!error.message.contains("l.4"), "{}", error.message);
+        assert!(!error.message.contains("Could not resolve") && !error.message.contains("l.4"));
     }
 
     #[test]
     fn a_luatex_log_keeps_its_long_warning_and_the_error_after_it() {
-        use Severity::{Error, Warning};
-        let items = parse_log(LUALATEX, "main.tex");
         assert_eq!(
-            summary(&items),
+            parsed(LUALATEX),
             [
-                (
-                    Warning,
-                    None,
-                    None,
-                    "Unknown language 'latin'. Hyphenation patterns for 'english' will be used instead. With LuaTeX, lipsum requires babel to get proper hyphenation (you can use \\usepackage[base]{babel})."
-                ),
-                (
-                    Warning,
-                    Some("main.tex"),
-                    Some(7),
-                    "Reference `sec:nowhere' on page 1 undefined on input line 7."
-                ),
-                (
-                    Error,
-                    Some("main.tex"),
-                    Some(8),
-                    "Undefined control sequence: \\undefinedinlua"
-                ),
-                (Warning, None, None, "There were undefined references."),
+                "warning -:- Unknown language 'latin'. Hyphenation patterns for 'english' will be used instead. With LuaTeX, lipsum requires babel to get proper hyphenation (you can use \\usepackage[base]{babel}).",
+                "warning main.tex:7 Reference `sec:nowhere' on page 1 undefined on input line 7.",
+                "error main.tex:8 Undefined control sequence: \\undefinedinlua",
+                "warning -:- There were undefined references.",
             ]
         );
     }
 
     #[test]
-    fn bibtex_and_latexmk_failures_are_read_from_their_own_output() {
-        let items = parse_blg(BIBTEX);
+    fn bibliography_and_latexmk_failures_are_read_from_their_own_output() {
         assert_eq!(
-            summary(&items),
-            [(
-                Severity::Error,
-                Some("refs.bib"),
-                Some(7),
-                "I was expecting a `,' or a `}'"
-            )]
+            described(&parse_blg(BIBTEX)),
+            ["error refs.bib:7 I was expecting a `,' or a `}'"]
         );
-        // The biber on the machine could not start; latexmk's summary says so.
-        let items = latexmk_errors(BIBER_FAILED);
+        // A bibtex error with its message on the line above its place, and biber's.
+        let blg = "I couldn't open database file .bib\n---line 5 of file main.aux\n\
+                   [812] Utils.pm:465> ERROR - BibTeX subsystem: syntax error\n";
         assert_eq!(
-            summary(&items),
-            [(
-                Severity::Error,
-                None,
-                None,
-                "biber build/main: Could not open biber log file 'build/main.blg'"
-            )]
+            described(&parse_blg(blg)),
+            [
+                "error main.aux:5 I couldn't open database file .bib",
+                "error -:- BibTeX subsystem: syntax error",
+            ]
+        );
+        // The biber on the machine could not start; latexmk's summary says so,
+        // without the lines of detail under it.
+        assert_eq!(
+            described(&latexmk_errors(BIBER_FAILED)),
+            ["error -:- biber build/main: Could not open biber log file 'build/main.blg'"]
         );
     }
 
     #[test]
     fn a_miktex_log_with_backslash_paths_and_wrapped_lines_parses_as_a_tex_live_one() {
-        use Severity::{Error, Warning};
-        let items = parse_log(MIKTEX, "main.tex");
         assert_eq!(
-            summary(&items),
+            parsed(MIKTEX),
             [
-                (
-                    Warning,
-                    Some("chapters/intro.tex"),
-                    Some(3),
-                    "Reference `fig:nope' on page 1 undefined on input line 3."
-                ),
+                "warning chapters/intro.tex:3 Reference `fig:nope' on page 1 undefined on input line 3.",
                 // In a distribution file: the project file that loaded it, no line.
-                (
-                    Error,
-                    Some("chapters/intro.tex"),
-                    None,
-                    "graphicx.sty: Undefined control sequence: \\foo"
-                ),
-                (
-                    Error,
-                    Some("main.tex"),
-                    Some(9),
-                    "Undefined control sequence: \\bar"
-                ),
+                "error chapters/intro.tex:- graphicx.sty: Undefined control sequence: \\foo",
+                "error main.tex:9 Undefined control sequence: \\bar",
                 // While a distribution package was loading, with its wrapped line joined.
-                (
-                    Warning,
-                    Some("main.tex"),
-                    None,
-                    "ulem.sty: A warning from an engine that wraps its log at column 79 and breaks a word in two on input line 12."
-                ),
+                "warning main.tex:- ulem.sty: A warning from an engine that wraps its log at column 79 and breaks a word in two on input line 12.",
             ]
         );
     }

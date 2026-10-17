@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tempfile::TempDir;
@@ -193,43 +193,25 @@ async fn latexmks_record_is_kept_by_a_good_run_and_forgotten_by_any_other_end() 
     assert!(!tmp.path().join("uno/build/main.fdb_latexmk").exists());
 }
 
+/// What a run didn't write is the last build's: a good run shows no old log's
+/// errors, and a failed one doesn't advertise an old PDF, which stays.
 #[tokio::test]
-async fn a_stale_log_is_not_reported() {
+async fn outputs_a_run_did_not_write_are_not_reported_as_its_own() {
     let (_tmp, root, mgr) = setup("mkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n");
     fs::create_dir_all(root.join("build")).unwrap();
-    let log = root.join("build/main.log");
-    fs::write(&log, "./main.tex:9: Stale error.\n").unwrap();
-    let two_minutes_ago = SystemTime::now() - Duration::from_secs(120);
-    fs::File::options()
-        .append(true)
-        .open(&log)
-        .unwrap()
-        .set_times(fs::FileTimes::new().set_modified(two_minutes_ago))
-        .unwrap();
-
+    fs::write(root.join("build/main.log"), "./main.tex:9: Stale error.\n").unwrap();
     let result = compile(&mgr, &root).await;
+    assert!(result.ok && result.errors.is_empty(), "{result:?}");
 
-    assert!(result.ok);
-    assert!(result.errors.is_empty(), "stale log leaked: {result:?}");
-}
-
-#[tokio::test]
-async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
     let (_tmp, root, mgr) = setup(
         "mkdir -p build\nprintf './main.tex:4: Current failure.\\n' > build/main.log\nexit 1\n",
     );
     fs::create_dir_all(root.join("build")).unwrap();
     fs::write(root.join("build/main.pdf"), "old successful output").unwrap();
-
     let result = compile(&mgr, &root).await;
-
-    assert!(!result.ok);
-    assert_eq!(result.pdf, None, "old PDF must not be labelled as this run");
-    assert!(!result.pdf_changed);
-    assert!(
-        root.join("build/main.pdf").exists(),
-        "old preview may remain"
-    );
+    assert!(!result.ok && !result.pdf_changed);
+    assert_eq!(result.pdf, None);
+    assert!(root.join("build/main.pdf").exists());
 }
 
 #[tokio::test]
@@ -403,26 +385,21 @@ async fn latexmk_is_given_the_arguments_the_settings_call_for() {
     }
 }
 
+/// A failure the engine's log doesn't explain names its cause: bibtex's own
+/// log, else latexmk's summary of the step that failed, else the exit code.
 #[tokio::test]
-async fn a_bibtex_error_is_reported_from_its_own_log() {
-    let result = built(
-        "mkdir -p build\nprintf 'No errors here.\\n' > build/main.log\nprintf \"I was expecting a \\`,' or a \\`}'---line 1 of file refs.bib\\n\" > build/main.blg\nexit 12\n",
-    )
-    .await;
-
+async fn a_failure_the_engines_log_doesnt_explain_names_its_cause() {
+    let quiet = "mkdir -p build\nprintf 'No errors here.\\n' > build/main.log\n";
+    let bibtex = "printf \"I was expecting a \\`,' or a \\`}'---line 1 of file refs.bib\\n\" > build/main.blg\nexit 12\n";
+    let result = built(&[quiet, bibtex].concat()).await;
     assert!(!result.ok);
-    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
-    assert_eq!(result.errors[0].file.as_deref(), Some("refs.bib"));
-    assert_eq!(result.errors[0].line, Some(1));
-}
+    let places: Vec<_> = (result.errors.iter())
+        .map(|error| (error.file.as_deref(), error.line))
+        .collect();
+    assert_eq!(places, [(Some("refs.bib"), Some(1))]);
 
-#[tokio::test]
-async fn a_failure_the_log_doesnt_explain_names_latexmks_summary() {
-    let result = built(
-        "mkdir -p build\nprintf 'No errors here.\\n' > build/main.log\nprintf 'Collected error summary (may duplicate other messages):\\n  biber build/main: Could not find build/main.bcf\\n'\nexit 12\n",
-    )
-    .await;
-
+    let summary = "printf 'Collected error summary (may duplicate other messages):\\n  biber build/main: Could not find build/main.bcf\\n'\nexit 12\n";
+    let result = built(&[quiet, summary].concat()).await;
     assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
     assert_eq!(
         result.errors[0].message,

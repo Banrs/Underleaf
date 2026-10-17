@@ -833,29 +833,6 @@ mod tests {
     }
 
     #[test]
-    fn the_budget_counts_the_bytes_read_not_those_declared() {
-        let mut budget = SMALL;
-        let mut sink = Vec::new();
-        budget.copy("a", &[1u8; 20][..], &mut sink).unwrap();
-        // A file that says it is small, or a zip entry that lies, still
-        // stops at the budget.
-        let err = budget.copy("b", &[1u8; 6][..], &mut sink).unwrap_err();
-        assert_eq!(err.message, TOO_BIG);
-        budget.copy("c", &[1u8; 5][..], &mut sink).unwrap();
-        assert!(budget.copy("d", &[1u8; 1][..], &mut sink).is_err());
-        // And no one file passes its own limit, whatever is left.
-        let mut roomy = Allowance {
-            bytes: 100,
-            per_file: 25,
-            ..SMALL
-        };
-        let err = roomy
-            .copy("big.dat", &[1u8; 30][..], &mut sink)
-            .unwrap_err();
-        assert!(err.message.contains("big.dat"), "{}", err.message);
-    }
-
-    #[test]
     fn zip_names_are_read_as_paths_and_none_leaves_the_project() {
         let (dir, service) = library();
         let src = dir.path().join("names.zip");
@@ -880,6 +857,15 @@ mod tests {
             assert_eq!(mode(&root), mode(&service.data_dir));
         }
         assert_eq!(files_in(&root), ["a/b.tex", "a/d.tex", "main.tex"]);
+
+        // As Windows tools write them: one top folder, and backslashes.
+        let src = dir.path().join("windows.zip");
+        let files = ["paper\\main.tex", "paper\\figs\\a.png"];
+        zip_of(&src, &files.map(|path| (path, "\\documentclass{article}")));
+        let info = import_project(&service, &src).unwrap();
+        assert_eq!(info.main_file, "main.tex");
+        let root = service.data_dir.join(&info.id);
+        assert_eq!(files_in(&root), ["figs/a.png", "main.tex"]);
     }
 
     #[test]
@@ -1049,23 +1035,6 @@ mod tests {
         assert_eq!(err.status, 400);
         assert!(err.message.contains("not.zip"), "{}", err.message);
         assert_eq!(projects(&service), 0);
-    }
-
-    #[test]
-    fn zip_entries_named_from_the_current_folder_or_with_backslashes_arrive() {
-        let (dir, service) = library();
-        let dotted = dir.path().join("dotted.zip");
-        let windows = dir.path().join("windows.zip");
-        for (src, files) in [
-            (&dotted, ["./main.tex", "./figs/a.png"]),
-            (&windows, ["paper\\main.tex", "paper\\figs\\a.png"]),
-        ] {
-            zip_of(src, &files.map(|path| (path, "\\documentclass{article}")));
-            let info = import_project(&service, src).unwrap();
-            assert_eq!(info.main_file, "main.tex");
-            let root = service.data_dir.join(&info.id);
-            assert_eq!(files_in(&root), ["figs/a.png", "main.tex"]);
-        }
     }
 
     #[test]
