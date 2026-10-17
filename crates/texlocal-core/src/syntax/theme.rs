@@ -258,23 +258,21 @@ pub fn theme_colors(theme: &Theme, appearance: &Appearance) -> Vec<Rgba> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use HighlightKind::Command;
 
     /// The Mac's text background and its current line's fill, resolved in
     /// Light and Dark (27.2): white and 30, the fill giving 235 and 48.
     fn appearance(dark: bool, increase_contrast: bool) -> Appearance {
+        let (ground, ink) = if dark {
+            (30.0 / 255.0, 1.0)
+        } else {
+            (1.0, 0.0)
+        };
         Appearance {
             dark,
             increase_contrast,
-            background: if dark {
-                [30.0 / 255.0, 30.0 / 255.0, 30.0 / 255.0, 1.0]
-            } else {
-                [1.0; 4]
-            },
-            fill: if dark {
-                [1.0, 1.0, 1.0, 0.08]
-            } else {
-                [0.0, 0.0, 0.0, 0.08]
-            },
+            background: [ground, ground, ground, 1.0],
+            fill: [ink, ink, ink, 0.08],
             system: Default::default(),
         }
     }
@@ -298,10 +296,7 @@ mod tests {
         }
         // Overleaf's Light commands, at 8.6:1, are its own blue.
         let colors = theme_colors(theme("overleaf").unwrap(), &appearance(false, false));
-        assert_eq!(
-            colors[HighlightKind::Command as usize],
-            [0.0, 0.0, 1.0, 1.0]
-        );
+        assert_eq!(colors[Command as usize], [0.0, 0.0, 1.0, 1.0]);
     }
 
     #[test]
@@ -326,19 +321,13 @@ mod tests {
         let mut a = appearance(false, false);
         a.system.insert("systemPink".into(), [0.0, 0.0, 0.0, 1.0]);
         let colors = theme_colors(theme("system").unwrap(), &a);
-        assert_eq!(
-            colors[HighlightKind::Command as usize],
-            [0.0, 0.0, 0.0, 1.0]
-        );
+        assert_eq!(colors[Command as usize], [0.0, 0.0, 0.0, 1.0]);
         let json = serde_json::to_string(&THEMES[2].command).unwrap();
         assert!(
             json.starts_with(r#"{"system":"systemPink","light":[1.0,"#),
             "{json}"
         );
-        assert!(
-            !serde_json::to_string(&THEMES[0].command)
-                .unwrap()
-                .contains("system")
-        );
+        let json = serde_json::to_string(&THEMES[0].command).unwrap();
+        assert!(!json.contains("system"), "{json}");
     }
 }

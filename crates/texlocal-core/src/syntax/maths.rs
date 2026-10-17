@@ -192,11 +192,8 @@ impl Scanner {
                         }
                         _ if math(&stack) => {} // a stray $ in an environment's maths
                         _ => {
-                            stack.push(group(
-                                true,
-                                if double { "$$" } else { "$" }.into(),
-                                token_start,
-                            ));
+                            let end = if double { "$$" } else { "$" };
+                            stack.push(group(true, end.into(), token_start));
                             i += double as usize;
                         }
                     }
@@ -216,14 +213,11 @@ impl Scanner {
                     let in_math = math(&stack);
                     text_argument = false;
                     if !letter(src[i]) {
-                        let d = char::from_u32(src[i] as u32).unwrap_or_default();
-                        match d {
-                            '(' | '[' if !in_math => stack.push(group(
-                                true,
-                                if d == '(' { "\\)" } else { "\\]" }.into(),
-                                token_start,
-                            )),
-                            ')' | ']' => close(&mut stack, if d == ')' { "\\)" } else { "\\]" }),
+                        match char::from_u32(src[i] as u32).unwrap_or_default() {
+                            '(' if !in_math => stack.push(group(true, "\\)".into(), token_start)),
+                            '[' if !in_math => stack.push(group(true, "\\]".into(), token_start)),
+                            ')' => close(&mut stack, "\\)"),
+                            ']' => close(&mut stack, "\\]"),
                             _ => {}
                         }
                         i += 1;
@@ -254,13 +248,8 @@ impl Scanner {
                                         None
                                     } else if listed(&catalog.verbatim_environments, environment) {
                                         code = true;
-                                        Some((
-                                            format!("\\end{{{environment}}}")
-                                                .encode_utf16()
-                                                .collect::<Vec<_>>()
-                                                .into(),
-                                            i,
-                                        ))
+                                        let end = format!("\\end{{{environment}}}");
+                                        Some((end.encode_utf16().collect(), i))
                                     } else {
                                         let bare =
                                             environment.strip_suffix('*').unwrap_or(environment);
@@ -537,18 +526,10 @@ mod tests {
         let before = READ.get();
         for k in 0..QUESTIONS {
             let at = (len - 1_000 - k * 37) as u32;
+            let range = |length| TextRange { start: at, length };
             doc.not_prose(at, 40);
-            doc.text_styles(TextRange {
-                start: at,
-                length: 3,
-            });
-            doc.insert_symbol(
-                "\\alpha",
-                TextRange {
-                    start: at,
-                    length: 0,
-                },
-            );
+            doc.text_styles(range(3));
+            doc.insert_symbol("\\alpha", range(0));
             if k % 20 == 0 {
                 doc.edit(at + 500, 0, "x");
             }
@@ -590,20 +571,6 @@ mod tests {
         // Closed, it's skipped as before, delimiters and all.
         assert!(!in_math("\\verb|$| a"));
         assert!(in_math("\\verb*+x+ $a"));
-
-        // A spelling checker skips the code on its line, and no more.
-        let text = "\\verb|Speling\nprose \\cite{key}";
-        let mut doc = SourceDocument::new(text);
-        let ranges = doc.not_prose(0, text.len() as u32);
-        let covered = |needle: &str| {
-            let at = text.find(needle).unwrap() as u32;
-            ranges
-                .iter()
-                .any(|r| r.start <= at && at < r.start + r.length)
-        };
-        assert!(covered("Speling"));
-        assert!(!covered("prose"));
-        assert!(covered("key"));
     }
 
     #[test]

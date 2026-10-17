@@ -70,20 +70,14 @@ pub(crate) fn text_styles(text: &Text, scans: &mut Scans, selection: TextRange) 
     };
     let mut scanner = scans.resume(text, start, src.len()).scanner;
     scanner.run(src, src.len(), &[start, end], &mut found);
-    let Found {
-        open,
-        closes,
-        whole,
-        ..
-    } = found;
-    let [at_start, at_end] = [&open[0], &open[1]];
+    let [at_start, at_end] = [&found.open[0], &found.open[1]];
     let mut groups: Vec<&Group> = at_start
         .iter()
         .zip(at_end)
         .take_while(|(a, b)| a.open == b.open)
         .map(|(a, _)| a)
         .collect();
-    groups.extend(whole.as_ref());
+    groups.extend(found.whole.as_ref());
     // Only text styles: maths has its own (\mathbf).
     let text_from = groups.iter().rposition(|g| g.math).map_or(0, |k| k + 1);
     let (mut bold, mut shape, mut underline) = (None, Shape::Upright, None);
@@ -115,7 +109,7 @@ pub(crate) fn text_styles(text: &Text, scans: &mut Scans, selection: TextRange) 
     let unwrap = |k: Option<usize>| {
         let group = groups[k?];
         let (backslash, _) = group.command?;
-        let close = closes.iter().find(|c| c.0 == group.open)?.1;
+        let close = found.closes.iter().find(|c| c.0 == group.open)?.1;
         Some(vec![
             edit(backslash as u32, (group.open + 1 - backslash) as u32, ""),
             edit(close as u32, 1, ""),
@@ -131,10 +125,12 @@ pub(crate) fn text_styles(text: &Text, scans: &mut Scans, selection: TextRange) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::syntax::utf16;
 
-    /// The styles at the selection marked by "«" and "»" (or the caret, "‸"),
-    /// as each command's name, or "?" for one the edits don't unwrap.
-    fn styles(marked: &str) -> [Option<String>; 3] {
+    /// The styles at the selection marked by "«" and "»" (or the caret, "‸"):
+    /// bold, italic and underline, each as its command's name, "?" for one
+    /// the edits don't unwrap, or "" for a style it hasn't.
+    fn styles(marked: &str) -> [String; 3] {
         let (start, end) = match marked.find('‸') {
             Some(at) => (at, at),
             None => (
@@ -143,72 +139,51 @@ mod tests {
             ),
         };
         let source: String = marked.chars().filter(|c| !"‸«»".contains(*c)).collect();
-        let text = Text::new(&source);
         let units: Vec<u16> = source.encode_utf16().collect();
-        let start16 = source[..start].encode_utf16().count() as u32;
-        let end16 = source[..end].encode_utf16().count() as u32;
-        let found = text_styles(
-            &text,
-            &mut Scans::default(),
-            TextRange {
-                start: start16,
-                length: end16 - start16,
-            },
-        );
+        let (start, end) = (utf16(&source[..start]) as u32, utf16(&source[..end]) as u32);
+        let selection = TextRange {
+            start,
+            length: end - start,
+        };
+        let found = text_styles(&Text::new(&source), &mut Scans::default(), selection);
         [found.bold, found.italic, found.underline].map(|edits| {
-            edits.map(|edits| {
-                let (head, tail) = (&edits[0], &edits[1]);
-                let opening = String::from_utf16_lossy(
-                    &units[head.start as usize..(head.start + head.length) as usize],
-                );
-                let closing = units[tail.start as usize] == b'}' as u16;
-                if opening.ends_with('{') && closing {
-                    opening[1..]
-                        .chars()
-                        .take_while(char::is_ascii_alphabetic)
-                        .collect()
-                } else {
-                    "?".to_string()
-                }
-            })
+            let Some(edits) = edits else {
+                return String::new();
+            };
+            let (head, tail) = (&edits[0], &edits[1]);
+            let opening = String::from_utf16_lossy(
+                &units[head.start as usize..(head.start + head.length) as usize],
+            );
+            let closing = units[tail.start as usize] == b'}' as u16;
+            if opening.ends_with('{') && closing {
+                opening[1..]
+                    .chars()
+                    .take_while(char::is_ascii_alphabetic)
+                    .collect()
+            } else {
+                "?".to_string()
+            }
         })
     }
 
-    fn just(
-        bold: Option<&str>,
-        italic: Option<&str>,
-        underline: Option<&str>,
-    ) -> [Option<String>; 3] {
-        [bold, italic, underline].map(|s| s.map(str::to_string))
-    }
+    const NONE: [&str; 3] = ["", "", ""];
+    const BOLD: [&str; 3] = ["textbf", "", ""];
 
     #[test]
     fn the_caret_takes_the_commands_it_is_in() {
-        assert_eq!(
-            styles(r"a \textbf{b‸c} d"),
-            just(Some("textbf"), None, None)
-        );
-        assert_eq!(
-            styles(r"a \textbf{‸bc} d"),
-            just(Some("textbf"), None, None)
-        );
-        assert_eq!(
-            styles(r"a \textbf{bc‸} d"),
-            just(Some("textbf"), None, None)
-        );
-        assert_eq!(styles(r"a ‸\textbf{bc} d"), just(None, None, None));
-        assert_eq!(styles(r"a \textbf{bc}‸ d"), just(None, None, None));
+        assert_eq!(styles(r"a \textbf{b‸c} d"), BOLD);
+        assert_eq!(styles(r"a \textbf{‸bc} d"), BOLD);
+        assert_eq!(styles(r"a \textbf{bc‸} d"), BOLD);
+        assert_eq!(styles(r"a ‸\textbf{bc} d"), NONE);
+        assert_eq!(styles(r"a \textbf{bc}‸ d"), NONE);
         assert_eq!(
             styles(r"\textit{a \underline{b \textbf{c‸}}}"),
-            just(Some("textbf"), Some("textit"), Some("underline"))
+            ["textbf", "textit", "underline"]
         );
-        assert_eq!(styles(r"\textbf {a‸}"), just(Some("textbf"), None, None));
-        assert_eq!(
-            styles("\\textbf % bold\n{a‸}"),
-            just(Some("textbf"), None, None)
-        );
-        assert_eq!(styles("\\textbf\n\n{a‸}"), just(None, None, None));
-        assert_eq!(styles(r"\textbf x{a‸}"), just(None, None, None));
+        assert_eq!(styles(r"\textbf {a‸}"), BOLD);
+        assert_eq!(styles("\\textbf % bold\n{a‸}"), BOLD);
+        assert_eq!(styles("\\textbf\n\n{a‸}"), NONE);
+        assert_eq!(styles(r"\textbf x{a‸}"), NONE);
     }
 
     #[test]
@@ -223,86 +198,53 @@ mod tests {
             },
         );
         assert_eq!(found.bold.unwrap()[0].start, 10);
-        assert_eq!(styles(nested), just(Some("textbf"), None, None));
+        assert_eq!(styles(nested), BOLD);
     }
 
     #[test]
     fn emph_is_italic_in_upright_text_and_upright_in_italic() {
-        assert_eq!(styles(r"\emph{a‸}"), just(None, Some("emph"), None));
-        assert_eq!(styles(r"\textit{\emph{a‸}}"), just(None, None, None));
-        assert_eq!(styles(r"\emph{\emph{a‸}}"), just(None, None, None));
-        assert_eq!(
-            styles(r"\emph{\emph{\emph{a‸}}}"),
-            just(None, Some("emph"), None)
-        );
-        assert_eq!(styles(r"\textsl{\emph{a‸}}"), just(None, None, None));
-        assert_eq!(styles(r"\textit{\textup{a‸}}"), just(None, None, None));
-        assert_eq!(
-            styles(r"\textbf{\textit{\textnormal{a‸}}}"),
-            just(None, None, None)
-        );
-        assert_eq!(styles(r"\textbf{\textmd{a‸}}"), just(None, None, None));
+        assert_eq!(styles(r"\emph{a‸}"), ["", "emph", ""]);
+        assert_eq!(styles(r"\textit{\emph{a‸}}"), NONE);
+        assert_eq!(styles(r"\emph{\emph{a‸}}"), NONE);
+        assert_eq!(styles(r"\emph{\emph{\emph{a‸}}}"), ["", "emph", ""]);
+        assert_eq!(styles(r"\textsl{\emph{a‸}}"), NONE);
+        assert_eq!(styles(r"\textit{\textup{a‸}}"), NONE);
+        assert_eq!(styles(r"\textbf{\textit{\textnormal{a‸}}}"), NONE);
+        assert_eq!(styles(r"\textbf{\textmd{a‸}}"), NONE);
     }
 
     #[test]
     fn a_selection_takes_what_all_of_it_is_in() {
-        assert_eq!(styles(r"\textbf{«ab»} c"), just(Some("textbf"), None, None));
-        assert_eq!(styles(r"\textbf{a«b} c»"), just(None, None, None));
-        assert_eq!(styles(r"\textbf{a«b} \textbf{c»}"), just(None, None, None));
-        assert_eq!(
-            styles(r"\textit{\textbf{«a} b»}"),
-            just(None, Some("textit"), None)
-        );
+        assert_eq!(styles(r"\textbf{«ab»} c"), BOLD);
+        assert_eq!(styles(r"\textbf{a«b} c»"), NONE);
+        assert_eq!(styles(r"\textbf{a«b} \textbf{c»}"), NONE);
+        assert_eq!(styles(r"\textit{\textbf{«a} b»}"), ["", "textit", ""]);
         // The whole command, as a double-click and a drag select it.
-        assert_eq!(
-            styles(r"x «\textbf{ab}» c"),
-            just(Some("textbf"), None, None)
-        );
-        assert_eq!(
-            styles(r"\textit{«\textbf{ab}»}"),
-            just(Some("textbf"), Some("textit"), None)
-        );
+        assert_eq!(styles(r"x «\textbf{ab}» c"), BOLD);
+        assert_eq!(styles(r"\textit{«\textbf{ab}»}"), ["textbf", "textit", ""]);
     }
 
     #[test]
     fn braces_are_the_text_s_own() {
-        assert_eq!(
-            styles(r"\textbf{a \} b‸}"),
-            just(Some("textbf"), None, None)
-        );
-        assert_eq!(
-            styles(r"\textbf{a \{ b‸}"),
-            just(Some("textbf"), None, None)
-        );
-        assert_eq!(
-            styles("\\textbf{a % }\nb‸}"),
-            just(Some("textbf"), None, None)
-        );
-        assert_eq!(
-            styles(r"\textbf{a \verb|}| b‸}"),
-            just(Some("textbf"), None, None)
-        );
+        assert_eq!(styles(r"\textbf{a \} b‸}"), BOLD);
+        assert_eq!(styles(r"\textbf{a \{ b‸}"), BOLD);
+        assert_eq!(styles("\\textbf{a % }\nb‸}"), BOLD);
+        assert_eq!(styles(r"\textbf{a \verb|}| b‸}"), BOLD);
         assert_eq!(
             styles("\\textbf{a\n\\begin{verbatim}\n}\n\\end{verbatim}\nb‸}"),
-            just(Some("textbf"), None, None)
+            BOLD
         );
         // Unclosed, there's nothing to unwrap.
-        assert_eq!(styles(r"\textbf{a‸"), just(None, None, None));
+        assert_eq!(styles(r"\textbf{a‸"), NONE);
     }
 
     #[test]
     fn maths_has_its_own_styles() {
-        assert_eq!(styles(r"\textbf{$x‸$}"), just(None, None, None));
-        assert_eq!(styles(r"\textbf{$\text{x‸}$}"), just(None, None, None));
-        assert_eq!(styles(r"$\textbf{x‸}$"), just(Some("textbf"), None, None));
-        assert_eq!(
-            styles(r"$\text{\textit{x‸}}$"),
-            just(None, Some("textit"), None)
-        );
-        assert_eq!(styles(r"$\mathbf{x‸}$"), just(None, None, None));
-        assert_eq!(
-            styles(r"\textbf{a \[ x \] b‸}"),
-            just(Some("textbf"), None, None)
-        );
+        assert_eq!(styles(r"\textbf{$x‸$}"), NONE);
+        assert_eq!(styles(r"\textbf{$\text{x‸}$}"), NONE);
+        assert_eq!(styles(r"$\textbf{x‸}$"), BOLD);
+        assert_eq!(styles(r"$\text{\textit{x‸}}$"), ["", "textit", ""]);
+        assert_eq!(styles(r"$\mathbf{x‸}$"), NONE);
+        assert_eq!(styles(r"\textbf{a \[ x \] b‸}"), BOLD);
     }
 }

@@ -117,11 +117,13 @@ struct Open {
     styled_below: Option<Command>,
 }
 
-fn open(commands: &mut Stack<Open>, command: Command) {
-    let styled_below = styled(commands);
+fn open(commands: &mut Stack<Open>, styles: &'static [Option<HighlightKind>]) {
     commands.push(Open {
-        command,
-        styled_below,
+        command: Command {
+            styles,
+            brackets: 0,
+        },
+        styled_below: styled(commands),
     });
 }
 
@@ -172,13 +174,7 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
             s.pos += 1;
             let name = s.pos;
             s.eat_while(command_letter);
-            open(
-                &mut state.commands,
-                Command {
-                    styles: styles(&s.text[name..s.pos]),
-                    brackets: 0,
-                },
-            );
+            open(&mut state.commands, styles(&s.text[name..s.pos]));
             state.mode = Mode::Arguments;
             return Some(Command);
         }
@@ -210,13 +206,7 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
         state.mode = Mode::Arguments;
         None
     } else if one_of(c, "{[") {
-        open(
-            &mut state.commands,
-            Command {
-                styles: &[],
-                brackets: 0,
-            },
-        );
+        open(&mut state.commands, &[]);
         None
     } else if is_digit(c) {
         s.eat_while(|u| word(u) || one_of(u, ".%"));
@@ -424,16 +414,20 @@ mod tests {
         assert_eq!(doc.highlights(5, 1).len(), 0);
     }
 
+    /// Below `n`, from a seeded linear congruential generator.
+    fn seeded(mut seed: u32) -> impl FnMut(usize) -> usize {
+        move |n| {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (seed >> 16) as usize % n
+        }
+    }
+
     #[test]
     fn edits_leave_the_runs_a_fresh_read_gives() {
         const PIECES: [&str; 12] = [
             "\\begin{", "}", "$", "$$", "\n", "\n\n", "% c", "\\[", "\\]", "x", "{", "\\cite",
         ];
-        let mut seed = 7u32;
-        let mut next = |n: usize| {
-            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
-            (seed >> 16) as usize % n
-        };
+        let mut next = seeded(7);
         let mut doc = SourceDocument::new("");
         let mut text: Vec<u16> = Vec::new();
         for _ in 0..400 {
@@ -461,10 +455,12 @@ mod tests {
         assert_eq!((runs[0].start, runs[0].length), (3, 2));
     }
 
-    /// The runs of 300 seeded documents of braces, commands, maths and
-    /// line breaks, each read whole and again after an edit part way, as one
-    /// FNV-1a hash.
-    fn seeded_runs_fingerprint() -> u64 {
+    #[test]
+    fn runs_are_as_the_plain_command_stack_gave_them() {
+        // The runs of 300 seeded documents of braces, commands, maths and
+        // line breaks, each read whole and again after an edit part way, as
+        // one FNV-1a hash, as when the open commands were a vector, cloned
+        // for each line and searched for each word.
         const PIECES: [&str; 26] = [
             "{",
             "{",
@@ -493,11 +489,7 @@ mod tests {
             " ",
             "é",
         ];
-        let mut seed = 11u32;
-        let mut next = |n: usize| {
-            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
-            (seed >> 16) as usize % n
-        };
+        let mut next = seeded(11);
         let mut hash = 0xcbf2_9ce4_8422_2325u64;
         let mut add = |runs: Vec<Highlight>| {
             for run in runs {
@@ -515,14 +507,7 @@ mod tests {
             doc.edit(at, 0, "{\\label{");
             add(doc.highlights(0, utf16(&doc.text()) as u32));
         }
-        hash
-    }
-
-    #[test]
-    fn runs_are_as_the_plain_command_stack_gave_them() {
-        // The fingerprint of the runs when the open commands were a vector,
-        // cloned for each line and searched for each word.
-        assert_eq!(seeded_runs_fingerprint(), 572_227_848_898_975_436);
+        assert_eq!(hash, 572_227_848_898_975_436);
     }
 
     #[test]

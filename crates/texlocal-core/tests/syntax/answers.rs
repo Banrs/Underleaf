@@ -4,6 +4,8 @@
 //! of them, as on a document read fresh. How far a question reads is
 //! checked beside the scanner (maths.rs).
 
+use std::fmt::Debug;
+
 use texlocal_core::syntax::{SourceDocument, TextRange, math_mode_at};
 
 /// How many of a random test's documents or rounds: fewer in a debug build, where
@@ -68,53 +70,19 @@ fn range(start: u32, length: u32) -> TextRange {
     TextRange { start, length }
 }
 
-#[test]
-fn answers_after_edits_are_a_fresh_reading_s() {
-    let mut seed = Seeded(5);
-    for document in 0..runs(12, 6) {
-        // Several kept points' worth; every third with no blank line at all.
-        let source: String = (0..3_000)
-            .map(|_| {
-                loop {
-                    let piece = PIECES[seed.next(PIECES.len())];
-                    if document % 3 != 0 || !piece.contains("\n\n") {
-                        break piece;
-                    }
-                }
-            })
-            .collect();
-        let mut doc = SourceDocument::new(&source);
-        let mut len = source.encode_utf16().count();
-        for round in 0..40 {
-            if round % 3 == 0 {
-                let at = seed.next(len + 1);
-                let cut = seed.next(8).min(len - at);
+/// A document of a few kept points' length from the pieces above, without
+/// `blank_lines` none at all.
+fn pieces(seed: &mut Seeded, blank_lines: bool) -> String {
+    (0..3_000)
+        .map(|_| {
+            loop {
                 let piece = PIECES[seed.next(PIECES.len())];
-                doc.edit(at as u32, cut as u32, piece);
-                len = len - cut + piece.encode_utf16().count();
+                if blank_lines || !piece.contains("\n\n") {
+                    break piece;
+                }
             }
-            let start = seed.next(len + 1);
-            let length = [0, 1, seed.next(400)][seed.next(3)].min(len - start);
-            let selection = range(start as u32, length as u32);
-            let text = doc.text();
-            let mut fresh = SourceDocument::new(&text);
-            let at = format!("document {document}, round {round}, {start}+{length}");
-            assert_eq!(
-                doc.not_prose(selection.start, selection.length),
-                fresh.not_prose(selection.start, selection.length),
-                "{at}"
-            );
-            assert_eq!(
-                doc.text_styles(selection),
-                fresh.text_styles(selection),
-                "{at}"
-            );
-            // And against one reading from the start, kept points aside.
-            let units: Vec<u16> = text.encode_utf16().collect();
-            let symbol = doc.insert_symbol("\\alpha", selection).edit.text;
-            assert_eq!(symbol == "\\alpha", math_mode_at(&units[..start]), "{at}");
-        }
-    }
+        })
+        .collect()
 }
 
 /// What the pieces above lack: CRLF line ends, characters of two units, and
@@ -177,11 +145,23 @@ fn article(seed: &mut Seeded, paragraphs: bool) -> String {
     )
 }
 
+/// What a document answers about a selection: what isn't prose, its text
+/// styles, a symbol inserted there, and its highlighting.
+fn answers(doc: &mut SourceDocument, selection: TextRange) -> impl PartialEq + Debug {
+    let TextRange { start, length } = selection;
+    (
+        doc.not_prose(start, length),
+        doc.text_styles(selection),
+        doc.insert_symbol("\\alpha", selection),
+        doc.highlights(start, length),
+    )
+}
+
 #[test]
 fn every_answer_after_every_edit_is_a_fresh_reading_s() {
     // The selections found in a text style, which the test is to ask about.
     let mut styled = 0;
-    let (documents, rounds) = (runs(4, 2), runs(200, 120));
+    let (documents, rounds) = (runs(6, 3), runs(220, 160));
     for document in 1..=documents {
         let mut seed = Seeded(document as u32);
         let mut doc = SourceDocument::new("");
@@ -190,8 +170,15 @@ fn every_answer_after_every_edit_is_a_fresh_reading_s() {
             let len = units.len();
             let (at, cut, piece) = if round % 20 == 0 {
                 // Random edits leave less and less of a document to ask
-                // about, so every so often a new one is pasted over it.
-                (0, len, article(&mut seed, round % 40 == 0))
+                // about, so every so often a new one is pasted over it: an
+                // article or pieces, every other one of each with no blank line.
+                let (paste, seed) = (round / 20, &mut seed);
+                let blank_lines = paste % 4 < 2;
+                let new = match paste % 2 {
+                    0 => article(seed, blank_lines),
+                    _ => pieces(seed, blank_lines),
+                };
+                (0, len, new)
             } else {
                 // Anywhere, a surrogate pair's middle too, or just past a
                 // kept point, where what runs over it ends.
@@ -222,28 +209,15 @@ fn every_answer_after_every_edit_is_a_fresh_reading_s() {
             // Every answer about a place anywhere, or by the edit.
             let start = [seed.next(len + 1), (at + seed.next(64)).min(len)][round % 2];
             let length = [0, 1, seed.next(400)][seed.next(3)].min(len - start);
-            let (from, length) = (start as u32, length as u32);
-            let selection = range(from, length);
+            let selection = range(start as u32, length as u32);
             let at = format!("document {document}, round {round}, {start}+{length}");
             assert_eq!(
-                doc.not_prose(from, length),
-                fresh.not_prose(from, length),
+                answers(&mut doc, selection),
+                answers(&mut fresh, selection),
                 "{at}"
             );
-            assert_eq!(
-                doc.text_styles(selection),
-                fresh.text_styles(selection),
-                "{at}"
-            );
-            let symbol = doc.insert_symbol("\\alpha", selection);
-            assert_eq!(symbol, fresh.insert_symbol("\\alpha", selection), "{at}");
-            let in_maths = math_mode_at(&units[..start]);
-            assert_eq!(symbol.edit.text == "\\alpha", in_maths, "{at}");
-            assert_eq!(
-                doc.highlights(from, length),
-                fresh.highlights(from, length),
-                "{at}"
-            );
+            let symbol = doc.insert_symbol("\\alpha", selection).edit.text;
+            assert_eq!(symbol == "\\alpha", math_mode_at(&units[..start]), "{at}");
             // And the styles of a few units just inside a brace group, which
             // the document's are nested in.
             let from = seed.next(len + 1);

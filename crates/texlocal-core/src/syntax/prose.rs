@@ -24,10 +24,8 @@ pub fn not_prose(text: &Text, scans: &mut Scans, start: u32, end: u32) -> Vec<Te
     };
     found.reading.resume(text, end_index, &mut found.names);
     scanner.run(&text.units[..end_index], end_index, &[], &mut found);
-    let Found {
-        mut ranges, names, ..
-    } = found;
-    ranges.extend(names);
+    let mut ranges = found.ranges;
+    ranges.extend(found.names);
     ranges.retain(|r| {
         let range_end = r.start.saturating_add(r.length);
         if start == end {
@@ -184,18 +182,44 @@ fn argument_ranges(text: &Text, mut i: usize, end: usize, ranges: &mut Vec<TextR
 
 #[cfg(test)]
 mod tests {
-    use crate::syntax::SourceDocument;
+    use crate::syntax::{SourceDocument, TextRange, utf16};
+
+    /// What isn't prose in the whole of `text`.
+    fn whole(text: &str) -> Vec<TextRange> {
+        SourceDocument::new(text).not_prose(0, utf16(text) as u32)
+    }
 
     /// The name arguments `not_prose` finds in the whole source.
     fn names(source: &str) -> Vec<String> {
         let units: Vec<u16> = source.encode_utf16().collect();
-        SourceDocument::new(source)
-            .not_prose(0, units.len() as u32)
+        whole(source)
             .iter()
             .map(|r| {
                 String::from_utf16_lossy(&units[r.start as usize..(r.start + r.length) as usize])
             })
             .collect()
+    }
+
+    /// Where `needle` is, the first in `text`, in UTF-16 units.
+    fn find(text: &str, needle: &str) -> std::ops::Range<u32> {
+        let start = utf16(&text[..text.find(needle).unwrap()]) as u32;
+        start..start + utf16(needle) as u32
+    }
+
+    /// Whether a range holds all of `needle`.
+    fn covered(ranges: &[TextRange], text: &str, needle: &str) -> bool {
+        let found = find(text, needle);
+        ranges
+            .iter()
+            .any(|r| r.start <= found.start && found.end <= r.start + r.length)
+    }
+
+    /// Whether no range holds any of `needle`.
+    fn prose(ranges: &[TextRange], text: &str, needle: &str) -> bool {
+        let found = find(text, needle);
+        ranges
+            .iter()
+            .all(|r| r.start + r.length <= found.start || found.end <= r.start)
     }
 
     #[test]
@@ -247,94 +271,65 @@ mod tests {
     #[test]
     fn comments_inside_arguments_stay_prose_and_do_not_close_the_argument() {
         let text = "\\usepackage{amsmath,% Speling }\n amssymb}";
-        let ranges = SourceDocument::new(text).not_prose(0, text.len() as u32);
-        let covered = |at: usize| {
-            ranges
-                .iter()
-                .any(|r| r.start as usize <= at && at < (r.start + r.length) as usize)
-        };
-        assert!(!covered(text.find("Speling").unwrap()));
-        assert!(covered(text.find("amssymb").unwrap()));
+        let ranges = whole(text);
+        assert!(prose(&ranges, text, "Speling"));
+        assert!(covered(&ranges, text, "amssymb"));
     }
 
     #[test]
     fn math_and_code_are_not_prose_but_math_text_commands_are() {
         let text = "Before $x + \\text{Speling stays} + y$ after\n\\begin{align}\na&=b\\label{eq:one}\\\n\\end{align}\n\\verb|Speling|";
-        let ranges = SourceDocument::new(text).not_prose(0, text.encode_utf16().count() as u32);
-        let covered = |needle: &str| {
-            let at = text.find(needle).unwrap();
-            let start = text[..at].encode_utf16().count() as u32;
-            let length = needle.encode_utf16().count() as u32;
-            ranges
-                .iter()
-                .any(|r| r.start <= start && r.start.saturating_add(r.length) >= start + length)
-        };
-        assert!(covered("$x + "));
-        assert!(!covered("Speling stays"));
-        assert!(covered("y$"));
-        assert!(covered("a&=b"));
-        assert!(covered("\\verb|Speling|"));
+        let ranges = whole(text);
+        assert!(covered(&ranges, text, "$x + "));
+        assert!(prose(&ranges, text, "Speling stays"));
+        assert!(covered(&ranges, text, "y$"));
+        assert!(covered(&ranges, text, "a&=b"));
+        assert!(covered(&ranges, text, "\\verb|Speling|"));
     }
 
     #[test]
     fn ranges_started_before_the_checked_slice_remain_absolute() {
         let text = "first\n\\begin{equation}\n𐐀 + x";
-        let mut doc = SourceDocument::new(text);
-        let word = text.find("𐐀").unwrap();
-        let start = text[..word].encode_utf16().count() as u32;
-        let found = doc.not_prose(start, 1);
-        let math_start = text.find("\\begin").unwrap();
-        let math_start = text[..math_start].encode_utf16().count() as u32;
-        assert!(found.iter().any(|r| r.start == math_start));
-        assert!(found.iter().any(|r| {
-            r.start <= start && r.start + r.length == start + 1 && r.start + r.length > start
-        }));
+        let start = find(text, "𐐀").start;
+        let found = SourceDocument::new(text).not_prose(start, 1);
+        assert!(found.iter().any(|r| r.start == find(text, "\\begin").start));
+        let to_it = |r: &TextRange| r.start <= start && r.start + r.length == start + 1;
+        assert!(found.iter().any(to_it));
     }
 
     #[test]
     fn comments_and_unclosed_literal_code_keep_their_boundaries() {
         let text = "$x % Speling stays prose\n y$ \\begin{verbatim}\nSpeling code\n\\end{verbatim}\n\\begin{lstlisting}\nopen code";
-        let ranges = SourceDocument::new(text).not_prose(0, text.encode_utf16().count() as u32);
-        let covered_at = |needle: &str| {
-            let at = text.find(needle).unwrap();
-            let offset = text[..at].encode_utf16().count() as u32;
-            ranges
-                .iter()
-                .any(|r| r.start <= offset && offset < r.start + r.length)
-        };
-        assert!(covered_at("x"));
-        assert!(!covered_at("Speling stays"));
-        assert!(covered_at("y$"));
-        assert!(covered_at("Speling code"));
-        assert!(covered_at("open code"));
+        let ranges = whole(text);
+        assert!(covered(&ranges, text, "x"));
+        assert!(prose(&ranges, text, "Speling stays"));
+        assert!(covered(&ranges, text, "y$"));
+        assert!(covered(&ranges, text, "Speling code"));
+        assert!(covered(&ranges, text, "open code"));
 
-        let code = text.find("Speling code").unwrap();
-        let code_start = text[..code].encode_utf16().count() as u32;
+        let code_start = find(text, "Speling code").start;
         let inside_code = SourceDocument::new(text).not_prose(code_start, 1);
-        let verbatim_start = text.find("\\begin{verbatim}").unwrap();
-        let verbatim_start = text[..verbatim_start].encode_utf16().count() as u32;
+        let verbatim_start = find(text, "\\begin{verbatim}").start;
         assert!(
             inside_code
                 .iter()
                 .any(|r| r.start == verbatim_start && r.start + r.length == code_start + 1)
         );
+
+        // An unclosed \verb is code to its line's end, and no more.
+        let text = "\\verb|Speling\nprose \\cite{key}";
+        let ranges = whole(text);
+        assert!(covered(&ranges, text, "Speling"));
+        assert!(prose(&ranges, text, "prose"));
+        assert!(covered(&ranges, text, "key"));
     }
 
     #[test]
     fn commands_inside_literal_code_do_not_suppress_following_prose() {
         let text = "\\begin{verbatim}\n\\input{raw\n\\end{verbatim}\nSpeling prose";
-        let units = text.encode_utf16().count() as u32;
         let mut doc = SourceDocument::new(text);
-        let ranges = doc.not_prose(0, units);
-        let prose = text.find("Speling").unwrap();
-        let prose = text[..prose].encode_utf16().count() as u32;
-        assert!(
-            !ranges
-                .iter()
-                .any(|r| r.start <= prose && r.start + r.length > prose)
-        );
-
-        let checked = doc.not_prose(prose, 1);
-        assert!(checked.is_empty());
+        let ranges = doc.not_prose(0, utf16(text) as u32);
+        assert!(prose(&ranges, text, "Speling"));
+        assert!(doc.not_prose(find(text, "Speling").start, 1).is_empty());
     }
 }

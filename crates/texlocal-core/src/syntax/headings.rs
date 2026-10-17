@@ -281,139 +281,77 @@ mod tests {
         heading_styles(class.as_ref(), chapters)
     }
 
-    fn titles(levels: &[Level]) -> Vec<&str> {
-        levels.iter().map(|l| l.title.as_str()).collect()
+    fn titles(levels: &[Level]) -> String {
+        let titles: Vec<&str> = levels.iter().map(|l| l.title.as_str()).collect();
+        titles.join(", ")
     }
 
-    fn markers(levels: &[Level]) -> Vec<Option<&str>> {
-        levels.iter().map(|l| l.marker.as_deref()).collect()
+    /// The levels' markers, "-" for none.
+    fn markers(levels: &[Level]) -> String {
+        let markers: Vec<&str> = levels
+            .iter()
+            .map(|l| l.marker.as_deref().unwrap_or("-"))
+            .collect();
+        markers.join(" ")
     }
 
     #[test]
     fn the_class_has_its_levels_and_numbers_them() {
         let article = styles(Some("article"), 10, false);
-        assert_eq!(
-            titles(&article),
-            [
-                "Normal Text",
-                "Part",
-                "Section",
-                "Subsection",
-                "Subsubsection",
-                "Paragraph"
-            ]
-        );
-        let numbers = [None, Some("I"), Some("1"), Some("1.1"), Some("1.1.1"), None];
-        assert_eq!(markers(&article), numbers);
-        let report = [
-            None,
-            Some("I"),
-            Some("1"),
-            Some("1.1"),
-            Some("1.1.1"),
-            None,
-            None,
-        ];
+        let titled = "Normal Text, Part, Section, Subsection, Subsubsection, Paragraph";
+        assert_eq!(titles(&article), titled);
+        assert_eq!(markers(&article), "- I 1 1.1 1.1.1 -");
+        let report = "- I 1 1.1 1.1.1 - -";
         assert_eq!(markers(&styles(Some("report"), 10, false)), report);
         let ieee = styles(Some("IEEEtran"), 10, false);
-        assert_eq!(
-            markers(&ieee),
-            [None, Some("I"), Some("A"), Some("1"), Some("a")]
-        );
-        assert_eq!(
-            titles(&ieee),
-            [
-                "Normal Text",
-                "Section",
-                "Subsection",
-                "Subsubsection",
-                "Paragraph"
-            ]
-        );
-        assert_eq!(titles(&styles(Some("letter"), 10, false)), ["Normal Text"]);
+        assert_eq!(markers(&ieee), "- I A 1 a");
+        let titled = "Normal Text, Section, Subsection, Subsubsection, Paragraph";
+        assert_eq!(titles(&ieee), titled);
+        assert_eq!(titles(&styles(Some("letter"), 10, false)), "Normal Text");
         let beamer = styles(Some("beamer"), 10, false);
-        assert_eq!(
-            titles(&beamer),
-            [
-                "Normal Text",
-                "Part",
-                "Section",
-                "Subsection",
-                "Subsubsection"
-            ]
-        );
-        assert_eq!(markers(&beamer), [None, Some("I"), None, None, None]);
+        let titled = "Normal Text, Part, Section, Subsection, Subsubsection";
+        assert_eq!(titles(&beamer), titled);
+        assert_eq!(markers(&beamer), "- I - - -");
         // A class it doesn't know has every level, numbered as a book's once there are chapters.
         assert_eq!(markers(&styles(Some("thesis"), 10, true)), report);
-        let none = [
-            None,
-            Some("I"),
-            None,
-            Some("1"),
-            Some("1.1"),
-            Some("1.1.1"),
-            None,
-        ];
+        let none = "- I - 1 1.1 1.1.1 -";
         assert_eq!(markers(&styles(None, 10, false)), none);
     }
 
     #[test]
     fn the_class_sets_the_levels_sizes() {
         let font = |levels: &[Level], command: &str| {
-            levels.iter().find(|l| l.command == command).unwrap().font
+            let font = levels.iter().find(|l| l.command == command).unwrap().font;
+            (font.scale, font.bold, font.shape)
         };
         let book = styles(Some("book"), 10, false);
-        assert_eq!(
-            font(&book, "part"),
-            Font {
-                scale: 2.488,
-                bold: true,
-                shape: Shape::Upright
-            }
-        );
-        assert!((font(&styles(Some("article"), 10, false), "part").scale - 2.074).abs() < 0.001);
-        assert!((font(&styles(Some("article"), 12, false), "section").scale - 1.44).abs() < 0.001);
-        assert_eq!(
-            font(&book, ""),
-            Font {
-                scale: 1.0,
-                bold: false,
-                shape: Shape::Upright
-            }
-        );
-        assert_eq!(
-            font(&styles(Some("amsart"), 10, false), "section"),
-            Font {
-                scale: 1.0,
-                bold: false,
-                shape: Shape::SmallCaps
-            }
-        );
+        assert_eq!(font(&book, "part"), (2.488, true, Shape::Upright));
+        assert!((font(&styles(Some("article"), 10, false), "part").0 - 2.074).abs() < 0.001);
+        assert!((font(&styles(Some("article"), 12, false), "section").0 - 1.44).abs() < 0.001);
+        assert_eq!(font(&book, ""), (1.0, false, Shape::Upright));
+        let amsart = styles(Some("amsart"), 10, false);
+        assert_eq!(font(&amsart, "section"), (1.0, false, Shape::SmallCaps));
     }
 
     #[test]
     fn the_class_is_the_one_named_outside_comments() {
-        let class = |text: &str| document_class(text).map(|c| (c.name, c.point_size));
+        let class = |text: &str| {
+            document_class(text).map_or(String::new(), |c| format!("{} {}pt", c.name, c.point_size))
+        };
         assert_eq!(
             class("% \\documentclass{book}\n\\documentclass[a4paper, 12pt]{ article }"),
-            Some(("article".into(), 12))
+            "article 12pt"
         );
         assert_eq!(
             class("\\documentclass[fontsize=11pt]{scrartcl}"),
-            Some(("scrartcl".into(), 11))
+            "scrartcl 11pt"
         );
-        assert_eq!(
-            class("50\\% \\documentclass{memoir}"),
-            Some(("memoir".into(), 10))
-        );
-        assert_eq!(class("no class"), None);
+        assert_eq!(class("50\\% \\documentclass{memoir}"), "memoir 10pt");
+        assert_eq!(class("no class"), "");
         // The preamble's first: a class named in the body doesn't count.
         let body = "\\documentclass{report}\n\\begin{document}\n\\documentclass{book}";
-        assert_eq!(class(body), Some(("report".into(), 10)));
+        assert_eq!(class(body), "report 10pt");
         // A comment ends at any line break.
-        assert_eq!(
-            class("% x\r\\documentclass{book}"),
-            Some(("book".into(), 10))
-        );
+        assert_eq!(class("% x\r\\documentclass{book}"), "book 10pt");
     }
 }

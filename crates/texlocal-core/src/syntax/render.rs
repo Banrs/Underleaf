@@ -80,13 +80,10 @@ fn clamp_item(item: &mut DisplayItem) {
             x,
             y,
             width,
-            thickness,
+            thickness: height,
             ..
-        } => {
-            (*x, *y) = (coordinate(*x), coordinate(*y));
-            (*width, *thickness) = (length(*width), length(*thickness));
         }
-        DisplayItem::Rect {
+        | DisplayItem::Rect {
             x,
             y,
             width,
@@ -160,6 +157,16 @@ pub fn math_svg(tex: &str, display: bool, size: f64, color: Rgba) -> Result<Math
     })
 }
 
+/// A KaTeX glyph's outline bounds, and its font's units per em.
+fn glyph_bounds(font: &str, char_code: u32) -> Option<(ttf_parser::Rect, f64)> {
+    let id = FontId::parse(font)?;
+    let bytes = ratex_katex_fonts::ttf_bytes(&format!("KaTeX_{}.ttf", id.as_str()))?;
+    let face = ttf_parser::Face::parse(&bytes, 0).ok()?;
+    let c = ratex_font::katex_ttf_glyph_char(id, char_code);
+    let rect = face.glyph_bounding_box(face.glyph_index(c)?)?;
+    Some((rect, face.units_per_em() as f64))
+}
+
 /// The ink a display list covers, in ems: (left, top, right, bottom).
 fn ink(list: &DisplayList) -> Option<(f64, f64, f64, f64)> {
     let mut bounds: Option<(f64, f64, f64, f64)> = None;
@@ -177,29 +184,15 @@ fn ink(list: &DisplayList) -> Option<(f64, f64, f64, f64)> {
                 char_code,
                 ..
             } => {
-                let Some(id) = FontId::parse(font) else {
-                    continue;
-                };
-                let Some(bytes) =
-                    ratex_katex_fonts::ttf_bytes(&format!("KaTeX_{}.ttf", id.as_str()))
-                else {
-                    continue;
-                };
-                let Ok(face) = ttf_parser::Face::parse(&bytes, 0) else {
-                    continue;
-                };
-                let c = ratex_font::katex_ttf_glyph_char(id, *char_code);
-                let Some(rect) = face.glyph_index(c).and_then(|g| face.glyph_bounding_box(g))
-                else {
-                    continue;
-                };
-                let s = scale / face.units_per_em() as f64;
-                add(
-                    x + rect.x_min as f64 * s,
-                    y - rect.y_max as f64 * s,
-                    x + rect.x_max as f64 * s,
-                    y - rect.y_min as f64 * s,
-                );
+                if let Some((rect, units_per_em)) = glyph_bounds(font, *char_code) {
+                    let s = scale / units_per_em;
+                    add(
+                        x + rect.x_min as f64 * s,
+                        y - rect.y_max as f64 * s,
+                        x + rect.x_max as f64 * s,
+                        y - rect.y_min as f64 * s,
+                    );
+                }
             }
             DisplayItem::Line {
                 x,
@@ -300,12 +293,12 @@ mod tests {
         let double = math_svg(r"\sum_{i=1}^n i", false, 20.0, BLACK).unwrap();
         assert!((double.width - 2.0 * inline.width).abs() < 1e-9);
         // Colour and its alpha.
-        let red = math_svg("x", false, 10.0, [1.0, 0.0, 0.0, 0.5]).unwrap();
+        let red = math_svg("x", false, 10.0, [1.0, 0.0, 0.0, 0.5])
+            .unwrap()
+            .svg;
         assert!(
-            red.svg
-                .contains(r#"fill="rgb(255,0,0)" fill-opacity="0.5""#),
-            "{}",
-            red.svg
+            red.contains(r#"fill="rgb(255,0,0)" fill-opacity="0.5""#),
+            "{red}"
         );
     }
 
