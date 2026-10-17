@@ -26,9 +26,10 @@ struct StatusBar: View {
             content(.short).labelStyle(.iconOnly)
         }
         .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
-        // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`): the accessory's
-        // hard scroll edge draws the line, and what scrolls beneath it (`WorkspaceController.statusBar`).
+        // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`). No ground of its own:
+        // AppKit's scroll edge lies under the bar (`WorkspaceController.buildStatusBar`), and draws no line, so the bar has its own.
         .padding(.top, BarMetrics.line)
+        .overlay(alignment: .top) { Divider() }
         // Clicks between its controls stay with the bar, not the text or pages scrolled beneath it.
         .contentShape(.rect)
         .monospacedDigit()

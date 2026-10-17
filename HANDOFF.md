@@ -53,11 +53,12 @@ the hosts' contract with the core.
   the build panel on it. Its measures follow the text's size. Underline styles set as
   rendering attributes aren't drawn (27.2), so an undefined command's underline is drawn
   under the text.
-- **Status bar**: across the source and PDF columns at Xcode's spacing (`BarMetrics`). It is
-  the columns' bottom split-item accessory (`statusBar`), as Xcode's editor bar is, so its
-  scroll-through is AppKit's own: the hard scroll edge effect over both panes, one band with
-  no seam, insetting both panes' safe areas and scrollers. In Dark the system's edge rests a
-  little lighter than the editor; that is AppKit's look, kept on purpose. After a failed
+- **Status bar**: across the source and PDF columns at Xcode's spacing (`BarMetrics`), over
+  AppKit's own scroll edge, its automatic style, as Xcode's editor bar has; the bar draws no
+  ground, only its point line. Each pane has an empty bottom accessory of the bar's height for
+  its own edge, safe area and scrollers, and the bar lies over both (`buildStatusBar`): one
+  accessory across the columns gave its edge to only one pane, about half the launches (27.2).
+  In Dark each pane's edge takes that pane's tone, AppKit's look, kept on purpose. After a failed
   save, or a Cancel in an alert about the file on disk, it says Not Saved and that button saves.
 - **Build panel**: below the columns, so the status bar rides up as it opens. A bar at its
   foot, as Xcode's console bar: a pop-up for Issues, Build Log and Live Preview Log, then
