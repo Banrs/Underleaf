@@ -113,28 +113,17 @@ impl Allowance {
         Ok(())
     }
 
-    /// Take `n` bytes from what is left.
-    fn spend(&mut self, n: u64) -> Result<(), CoreError> {
-        self.bytes = self
-            .bytes
-            .checked_sub(n)
-            .ok_or_else(|| CoreError::bad_request(TOO_BIG))?;
-        Ok(())
-    }
-
-    /// A file of `size`, as declared, that is to come.
+    /// Take `size` bytes, as declared or as read, of the file `name`.
     fn file(&mut self, name: &str, size: u64) -> Result<(), CoreError> {
         if size > self.per_file {
-            return Err(self.too_large(name));
+            let megabytes = self.per_file / 1024 / 1024;
+            return Err(CoreError::bad_request(format!(
+                "“{name}” is larger than the {megabytes} MB one file may be."
+            )));
         }
-        self.spend(size)
-    }
-
-    fn too_large(&self, name: &str) -> CoreError {
-        let megabytes = self.per_file / 1024 / 1024;
-        CoreError::bad_request(format!(
-            "“{name}” is larger than the {megabytes} MB one file may be."
-        ))
+        self.bytes =
+            (self.bytes.checked_sub(size)).ok_or_else(|| CoreError::bad_request(TOO_BIG))?;
+        Ok(())
     }
 
     /// Copy `source`, the file `name`, to `sink`, taking the bytes actually
@@ -147,10 +136,7 @@ impl Allowance {
     ) -> Result<(), CoreError> {
         let cap = self.bytes.min(self.per_file);
         let copied = io::copy(&mut source.take(cap + 1), sink)?;
-        if copied > self.per_file {
-            return Err(self.too_large(name));
-        }
-        self.spend(copied)
+        self.file(name, copied)
     }
 }
 

@@ -53,8 +53,8 @@ pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
         .chain(usual_tex_dirs())
         .chain(texlive_bins())
         .collect();
-    let texpresso = app.texpresso_dir.iter().chain(&tex).cloned();
-    (join_path(tex.clone()), join_path(texpresso))
+    let texpresso = join_path(app.texpresso_dir.iter().chain(&tex).cloned());
+    (join_path(tex), texpresso)
 }
 
 /// Where TeX's installers put its programs, besides TeX Live's years: MacTeX's
