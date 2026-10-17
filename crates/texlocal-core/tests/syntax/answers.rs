@@ -158,7 +158,7 @@ fn answers(doc: &mut SourceDocument, selection: TextRange) -> impl PartialEq + D
 }
 
 #[test]
-fn every_answer_after_every_edit_is_a_fresh_reading_s() {
+fn every_answer_after_every_edit_is_a_fresh_reading() {
     // The selections found in a text style, which the test is to ask about.
     let mut styled = 0;
     let (documents, rounds) = (runs(6, 3), runs(220, 160));
@@ -237,7 +237,7 @@ fn every_answer_after_every_edit_is_a_fresh_reading_s() {
 }
 
 #[test]
-fn a_kept_point_s_names_follow_an_edit_past_it() {
+fn a_kept_points_names_follow_an_edit_past_it() {
     // A \cite argument runs over the point kept at 4096 and closes at 5000.
     let source = format!(
         "\\cite{{{}}} word \\ref{{x}} {} end",
