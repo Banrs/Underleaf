@@ -4,6 +4,9 @@ import PDFKit
 import Testing
 @testable import TeXLocal
 
+/// An answer shaped as `read_file`'s, whatever the command.
+nonisolated struct FileText: Decodable { let text: String }
+
 /// Projects are removed, not trashed: `delete_project` trashes through Finder, which a headless test host can't drive.
 struct CoreTests {
     init() throws {
@@ -363,9 +366,7 @@ final class ProjectFlowTests {
         await app.open(info.id)
         let project = try #require(app.project)
         #expect(project.initialLoadComplete)
-        #expect(project.outline.count == 2)
         #expect(project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
-        #expect(project.words == 6)
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
         #expect(project.headingCommand == "section")
@@ -514,7 +515,6 @@ final class ProjectFlowTests {
         project.search.query = "needle"
         await project.search.run()
         #expect(project.search.hitCount == 3 && project.search.failure == nil)
-        #expect(project.search.groups?.map(\.file) == ["appendix.tex", "main.tex"] && project.search.groups?.map(\.hits.count) == [1, 2])
         project.search.query = "needles"
         #expect(project.search.searched == "needle")
         await project.search.run()

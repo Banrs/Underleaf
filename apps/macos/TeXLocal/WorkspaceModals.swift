@@ -58,7 +58,7 @@ struct WorkspaceModals: ViewModifier {
             .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "",
                    item: $project.missingFile) { path in
                 // Return saves: the button that discards the edits is never the default.
-                Button("Save Again") { project.saveMissingFile(path) }
+                Button("Save Again") { project.keepEdits(path) }
                 Button("Discard Changes", role: .destructive) { project.closeMissingFile(path) }
                 Button("Cancel", role: .cancel) {
                     project.leaveUnsaved(path, String(localized: "Another app moved or deleted “\(path.fileName)”."))

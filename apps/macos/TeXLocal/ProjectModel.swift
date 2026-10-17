@@ -483,18 +483,13 @@ final class ProjectModel {
     // MARK: - Changes on disk
 
     func keepEdits(_ path: String) {
-        diskConflict = nil
+        (diskConflict, missingFile) = (nil, nil)
         resolve(path, "save")
     }
 
     func revertToDisk(_ path: String) {
         diskConflict = nil
         resolve(path, "revert")
-    }
-
-    func saveMissingFile(_ path: String) {
-        missingFile = nil
-        resolve(path, "save")
     }
 
     func closeMissingFile(_ path: String) {
