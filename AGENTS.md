@@ -35,26 +35,29 @@ does. The few custom pieces kept on purpose: the File Outline at the sidebar's f
 upward; Home's template cards; Compile as a word; one status bar across source and PDF; the
 completion list as a SwiftUI glass list.
 
-**Where main is now:** the window, toolbar and splits are still AppKit
-(`WorkspaceController`, `WorkspaceToolbar`, `SplitViews`); a SwiftUI shell (three-column
-`NavigationSplitView`, whose toolbar sections follow the source|PDF divider, plus
-`.inspector`) is on trial on its own branch. Panes, bars, sheets, popovers, Settings and Home
-are SwiftUI.
+**Where main is now:** the window, toolbar and splits are AppKit (`WorkspaceController`,
+`WorkspaceToolbar`, `SplitViews`), because SwiftUI's split can't give the AppKit editor and
+`PDFView` the system's scroll edge under one bar (a probe on 27.2); they take the system's widths
+and minimums, with no detents and none of the old 27.2 split workarounds. Panes, bars, sheets,
+popovers, Settings and Home are SwiftUI.
 
-- **Toolbar**: Compile is the window's one prominent item, a word that becomes a symbol only
-  in a narrow window; while building it is Stop, with progress. Aa (text styles), Math and Insert sit over the source; Zoom (minus,
-  percentage, plus), Compile and the PDF and Inspector toggles over the PDF. Tools without
-  room go to the system's overflow by `visibilityPriority`.
+- **Toolbar**: Compile is the window's one prominent item, its word, or its symbol's circle
+  where the toolbar has no room for the word (`CompileHost`); while building it is Stop, with
+  progress. Aa (text styles), Math and Insert sit over the source; Zoom (minus, percentage, plus),
+  Compile and the PDF and Inspector toggles over the PDF. Tools without room go to the system's
+  overflow by `visibilityPriority`.
 - **Source**: one TextKit 2 `NSTextView` (`SourceTextView`) shared across files, never
   touching `layoutManager`. Issues sit on their lines as in Xcode (numbers-only gutter, a box
   at the line's end); the measures come from the system font's metrics.
-- **Status bar and build panel**: one bar across source and PDF, the system's spacing and
-  scroll edge; Not Saved after a failed save. The build panel opens below the columns with
-  a console-style bar (Issues, Build Log, Live Preview Log, Warnings, a filter).
-- **PDF**: PDFKit as Preview has it. A rebuilt document's pages replace those showing in the
-  same `PDFDocument` (a new document flashes the background); PDFKit keeps replaced pages'
-  objects, so once the app has grown 512 MB since a document was last shown whole, the next
-  one is shown whole (`PDFController.memoryAtWhole`).
+- **Status bar and build panel**: one bar across source and PDF at the system's spacing, over
+  each pane's own scroll edge (empty bottom split-item accessories); Not Saved after a failed
+  save. The build panel opens below the columns with a console-style bar (Issues, Build Log,
+  Live Preview Log, Warnings, a filter).
+- **PDF**: PDFKit as Preview has it, on PDFKit's own canvas colour and always white paper. A
+  rebuilt document's pages replace those showing in the same `PDFDocument` (a new document
+  flashes the background); PDFKit keeps replaced pages' objects, so once the app has grown 512
+  MB since a document was last shown whole, the next one is shown whole
+  (`PDFController.memoryAtWhole`).
 - **Sessions**: the open project is a core session, numbered by the app before it opens
   (`Core.observe`), so none of its events can come before the app listens. Commands go
   through `tl_call_async` and are awaited, so no thread waits on the core; a session takes
@@ -92,7 +95,7 @@ are SwiftUI.
   Warnings toggle with no warnings, Live Preview Log before Live Preview has run, and
   Format items in files the toolbar's are dim in.
 - **Settings** is a multi-pane window per the HIG: General, Editor, Compiling and Live
-  Preview. The PDF pane goes with its only setting, dark paper (Preview has none).
+  Preview.
 - **Words**: the feature is Live Preview; TeXpresso is named only where the program is the
   subject. The verb is Compile, and a run and its result are a build. Interface spelling is
   British (Colours) except LaTeX's own terms (Math).

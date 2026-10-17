@@ -1,43 +1,28 @@
 import AppKit
 import SwiftUI
 
-extension SourceTextView {
-    struct LineIssue: Equatable {
-        var isError: Bool
-        var message: String
-        /// The core's line-end form of it.
-        var short: String
-        /// An undefined command's, in fewer words that keep its name.
-        var compact: String?
-        /// Where the line has the undefined command, from the line's start: underlined.
-        var tokens: [NSRange] = []
-        var others: [String] = []
-    }
-
+/// The build's issues on the lines laid out: a band over each paragraph with one, a box at the end of its first line
+/// (`IssueBox`), help tags for words the box doesn't show, and the undefined command underlined. Placed again on each
+/// layout, keeping each line's box.
+final class IssueOverlay {
     /// A line's issue as placed: its band, the box at the line's end where it has room, and the underlines.
-    struct IssueRow {
+    struct Row {
         let line: Int
         let isError: Bool
         let band: NSRect
-        let shape: NSBezierPath
         var message: (view: IssueMessageView, rect: NSRect, cut: Bool)?
         var tip: String?
         /// The undefined command's underlines, where the line has it.
         var tokens: [NSRect] = []
     }
-}
 
-/// The build's issues on the lines laid out: a band over each paragraph with one, a box at the end of its first line
-/// (`IssueBox`), help tags for words the box doesn't show, and the undefined command underlined. Placed again on each
-/// layout, keeping each line's box.
-final class IssueOverlay {
     private unowned let view: SourceTextView
 
     init(in view: SourceTextView) {
         self.view = view
     }
 
-    var lines: [Int: SourceTextView.LineIssue] = [:] {
+    var lines: [Int: IssuesEvent.Line] = [:] {
         didSet {
             guard lines != oldValue else { return }
             labels.removeAll()
@@ -46,7 +31,7 @@ final class IssueOverlay {
         }
     }
 
-    private(set) var rows: [SourceTextView.IssueRow] = []
+    private(set) var rows: [Row] = []
     /// The messages as measured, by line: for these issues and this font.
     private var labels: [Int: IssueLabel] = [:]
     private var font = NSFont.systemFont(ofSize: NSFont.systemFontSize - 1)
@@ -63,21 +48,20 @@ final class IssueOverlay {
 
     func place() {
         guard !lines.isEmpty || !rows.isEmpty else { return }
-        var former = Dictionary(rows.map { ($0.line, $0) }) { $1 }
+        // Each line keeps its box's view; every band in sight, a handful at most, is drawn again.
+        var views = Dictionary(rows.compactMap { row in row.message.map { (row.line, $0.view) } }) { $1 }
+        rows.forEach { view.setNeedsDisplay($0.band) }
         rows.removeAll()
         func place(_ number: Int, on fragment: NSTextLayoutFragment, extra: Bool = false) {
             guard let reported = lines[number] else { return }
-            let before = former.removeValue(forKey: number)
+            let former = views.removeValue(forKey: number)
             // The document's last empty line is the last of the lines of the paragraph before it.
             var lines = fragment.textLineFragments[...]
             if extra { lines = lines.suffix(1) } else if view.extraLine(of: fragment) != nil { lines = lines.dropLast() }
-            let placed = row(number, reported, on: lines, of: fragment, in: before?.message?.view)
-            if let before {
-                if before.band != placed?.band { view.setNeedsDisplay(before.band) }
-                if before.message?.view !== placed?.message?.view { before.message?.view.removeFromSuperview() }
-            }
+            let placed = row(number, reported, on: lines, of: fragment, in: former)
+            if placed?.message?.view !== former { former?.removeFromSuperview() }
             guard let placed else { return }
-            if before?.band != placed.band || before?.tokens != placed.tokens { view.setNeedsDisplay(placed.band) }
+            view.setNeedsDisplay(placed.band)
             rows.append(placed)
         }
         for (offset, fragment) in view.fragments {
@@ -85,19 +69,15 @@ final class IssueOverlay {
             place(number, on: fragment)
             if lines[number + 1] != nil, view.extraLine(of: fragment) != nil { place(number + 1, on: fragment, extra: true) }
         }
-        for gone in former.values {
-            view.setNeedsDisplay(gone.band)
-            gone.message?.view.removeFromSuperview()
-        }
+        views.values.forEach { $0.removeFromSuperview() }
         updateTips()
     }
 
-    private func row(_ number: Int, _ reported: SourceTextView.LineIssue, on lines: ArraySlice<NSTextLineFragment>,
-                     of fragment: NSTextLayoutFragment, in former: IssueMessageView?) -> SourceTextView.IssueRow? {
+    private func row(_ number: Int, _ reported: IssuesEvent.Line, on lines: ArraySlice<NSTextLineFragment>,
+                     of fragment: NSTextLayoutFragment, in former: IssueMessageView?) -> Row? {
         guard let first = lines.first else { return nil }
         let band = view.band(lines, of: fragment)
-        var issue = SourceTextView.IssueRow(line: number, isError: reported.isError, band: band,
-                                            shape: NSBezierPath(roundedRect: band, xRadius: 4, yRadius: 4))
+        var issue = Row(line: number, isError: reported.error, band: band)
         // The fragment's lines in the view: its frame has the line fragment's padding in it.
         let left = view.textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = view.textContainerOrigin.y + fragment.layoutFragmentFrame.minY
@@ -114,7 +94,7 @@ final class IssueOverlay {
         if width <= room {
             let foot = view.onPixels(top + first.typographicBounds.maxY + view.rowShift)
             let rect = NSRect(x: end - width, y: band.minY, width: width, height: foot - band.minY)
-            let box = IssueBox(isError: reported.isError, issues: issues, text: fitted?.text, cutAtTail: fitted != nil && fitted?.width == nil,
+            let box = IssueBox(isError: reported.error, issues: issues, text: fitted?.text, cutAtTail: fitted != nil && fitted?.width == nil,
                                font: font, fill: Color(nsColor: view.backgroundColor),
                                baseline: top + first.typographicBounds.minY + first.glyphOrigin.y - rect.minY)
             let message = former ?? IssueMessageView(box)
@@ -131,10 +111,10 @@ final class IssueOverlay {
             let scale = view.window?.backingScaleFactor ?? 1
             func whole(_ length: CGFloat) -> CGFloat { (length * scale).rounded() / scale }
             let thickness = max(1, whole(textFont.underlineThickness))
-            for range in reported.tokens {
+            for token in reported.tokens {
                 // A command a line is too narrow for is on two.
                 for line in lines {
-                    let part = NSIntersectionRange(range, line.characterRange)
+                    let part = NSIntersectionRange(token.range, line.characterRange)
                     guard part.length > 0 else { continue }
                     let lineLeft = left + line.typographicBounds.minX
                     let start = whole(lineLeft + line.locationForCharacter(at: part.location).x)
@@ -159,7 +139,7 @@ final class IssueOverlay {
     }
 
     /// The row whose box is under `point`, in the view's coordinates.
-    func message(at point: NSPoint) -> SourceTextView.IssueRow? {
+    func message(at point: NSPoint) -> Row? {
         guard !rows.isEmpty, view.visibleRect.contains(point) else { return nil }
         return rows.first { $0.message?.rect.contains(point) == true }
     }
@@ -169,7 +149,7 @@ final class IssueOverlay {
         for issue in rows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
             if issue.line != currentLine {
                 NSColor.tertiarySystemFill.setFill()
-                issue.shape.fill()
+                NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
             }
             NSColor.systemRed.setFill()
             issue.tokens.forEach { $0.fill() }

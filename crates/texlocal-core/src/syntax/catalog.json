@@ -13,7 +13,7 @@
   "bibEntryTypes": ["article","book","inbook","incollection","inproceedings","conference","manual","mastersthesis","phdthesis","misc","techreport","unpublished","online"],
   "citeCommands": ["cite","citep","citet","citeauthor","citeyear","textcite","parencite","autocite"],
   "refCommands": ["ref","eqref","pageref","autoref","cref","Cref","vref"],
-  "nameCommands": ["documentclass","usepackage","RequirePackage","begin","end","label","input","include","includeonly","includegraphics","bibliography","bibliographystyle","addbibresource"],
+  "nameCommands": ["documentclass","usepackage","RequirePackage","begin","end","label","input","include","includeonly","includegraphics","bibliography","bibliographystyle","addbibresource","bibitem"],
   "mathEnvironments": ["equation","align","gather","multline","eqnarray","alignat","flalign","xalignat","xxalignat","math","displaymath","dmath","dgroup","darray"],
   "verbatimEnvironments": ["verbatim","verbatim*","Verbatim","Verbatim*","lstlisting","minted","comment"],
   "textCommands": ["text","textrm","textit","textbf","textsf","texttt","textup","textsl","textsc","textmd","textnormal","mbox","hbox","fbox","intertext","shortintertext"],

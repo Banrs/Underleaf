@@ -257,33 +257,28 @@ impl SourceDocument {
         self.highlighter.highlights(&self.text, start.min(end), end)
     }
 
-    /// What a spelling checker passes over where a range is: maths, literal
-    /// code, and the names commands take (packages, citations, labels,
-    /// files), each from its start, however far before the range.
+    /// What isn't prose where a range is: maths, literal code, and the names
+    /// commands take (packages, citations, labels, files), each from its
+    /// start, however far before the range.
     pub fn not_prose(&mut self, start: u32, length: u32) -> Vec<TextRange> {
-        let end = start.saturating_add(length).min(self.text.len());
-        prose::not_prose(&self.text, &mut self.scans, start.min(end), end)
+        self.skipped(range(start, length), None)
     }
 
-    /// What a checker leaves alone where a range is: the code it highlights
-    /// and what isn't prose (`not_prose`). Spelling takes only the kinds that
-    /// are never words, since the highlighter colours a word in \text{…} as
-    /// maths, which is prose to `not_prose`.
+    /// What a checker leaves alone where a range is: what isn't prose and
+    /// command names, and for Writing Tools comments, which spelling checks.
     pub fn code_ranges(&mut self, selection: TextRange, checker: Checker) -> Vec<TextRange> {
-        use HighlightKind::*;
-        let code = |kind| {
-            checker == Checker::WritingTools
-                || matches!(kind, Command | Argument | StringLiteral | Builtin)
-        };
-        let highlighted = self
-            .highlights(selection.start, selection.length)
-            .into_iter();
-        let mut ranges: Vec<TextRange> = highlighted
-            .filter(|h| code(h.kind))
-            .map(|h| range(h.start, h.length))
-            .collect();
-        ranges.extend(self.not_prose(selection.start, selection.length));
-        ranges
+        self.skipped(selection, Some(checker))
+    }
+
+    fn skipped(&mut self, selection: TextRange, checker: Option<Checker>) -> Vec<TextRange> {
+        let (start, end) = clamp(selection, self.text.len()).bounds();
+        prose::skipped(
+            &self.text,
+            &mut self.scans,
+            start as u32,
+            end as u32,
+            checker,
+        )
     }
 
     /// Where line `line` (from 1) has `command` (with its backslash), each
@@ -369,14 +364,11 @@ fn letter(u: u16) -> bool {
     u < 128 && (u as u8).is_ascii_alphabetic()
 }
 
-/// Whether a unit is whitespace; half of a surrogate pair is not.
-fn space(u: u16) -> bool {
-    char::from_u32(u.into()).is_some_and(char::is_whitespace)
-}
-
-/// A line of nothing but spaces, or of nothing.
-fn blank(line: &[u16]) -> bool {
-    line.iter().all(|&u| space(u))
+/// How many spaces and tabs a line starts with: its indentation.
+fn indentation(line: &[u16]) -> usize {
+    line.iter()
+        .take_while(|&&u| is(u, ' ') || is(u, '\t'))
+        .count()
 }
 
 fn utf16(s: &str) -> usize {
@@ -463,29 +455,22 @@ mod tests {
         assert!(doc.command_ranges(1, "").is_empty());
     }
 
-    /// Spelling passes over the code that is never words; Writing Tools over
-    /// all the code there is.
+    /// Both checkers pass over command names, an escape's too, and what
+    /// isn't prose; only spelling checks a comment.
     #[test]
     fn checkers_leave_code_alone() {
-        let text = "Prose \\emph{word} $x$ % note";
+        let text = "Prose \\emph{word} $x$ 50\\% % note";
         let mut doc = SourceDocument::new(text);
         let all = range(0, utf16(text) as u32);
-        let ranges = |doc: &mut SourceDocument, checker| -> Vec<(u32, u32)> {
-            let mut found: Vec<_> = doc
-                .code_ranges(all, checker)
-                .iter()
-                .map(|r| (r.start, r.length))
-                .collect();
-            found.sort_unstable();
-            found
+        let mut ranges = |checker| -> Vec<(u32, u32)> {
+            let found = doc.code_ranges(all, checker);
+            found.iter().map(|r| (r.start, r.length)).collect()
         };
-        // The command, then the maths not_prose finds; the comment is prose to spelling.
-        assert_eq!(ranges(&mut doc, Checker::Spelling), [(6, 5), (18, 3)]);
-        let writing = ranges(&mut doc, Checker::WritingTools);
-        assert!(writing.contains(&(22, 6)), "the comment: {writing:?}");
-        assert!(
-            writing.contains(&(18, 1)) && writing.contains(&(18, 3)),
-            "the maths: {writing:?}"
+        let code = [(6, 5), (18, 3), (24, 2)];
+        assert_eq!(ranges(Checker::Spelling), code);
+        assert_eq!(
+            ranges(Checker::WritingTools),
+            [&code[..], &[(27, 6)]].concat()
         );
     }
 

@@ -9,14 +9,14 @@ hosts map to their own colour type.
 ## Syntax themes
 
 The editor's colours are a setting (Settings › Editor › Theme): Overleaf (the default),
-TeXstudio and System, each in Light and Dark. Every theme colours five kinds. Text, braces
-and brackets are plain, and none draws bold or italic.
+TeXstudio and System, each in Light and Dark. Every theme has five colours, which the nine highlight kinds share (`theme_colors` answers one
+per kind). Text, braces and brackets, and what `\verb` and the verbatim environments hold, are plain, and none draws bold or italic.
 
 | Kind | Overleaf | TeXstudio | System |
 | --- | --- | --- | --- |
 | command (`\x`, `\begin`, `\end`, escapes, `\\`, maths' `^ _ &`) | `#0000FF` / `#8BE9FD` | `#800000` / `#60CDF2` | pink |
-| argument (environment, package, label, reference, citation, `\importmodule`'s second argument; numbers in text) | `#318495` / `#FFB86C` | `#008000` / `#60F260` | teal |
-| maths (delimiters, letters and numbers in maths, verbatim, `\importmodule`'s first argument) | `#036A07` / `#F1FA8C` | `#509600` / `#85F218` | purple |
+| argument (environment, package, label, reference, citation, `\importmodule`'s second argument) | `#318495` / `#FFB86C` | `#008000` / `#60F260` | teal |
+| maths (delimiters, letters and numbers in maths, numbers in text, `\importmodule`'s first argument) | `#036A07` / `#F1FA8C` | `#509600` / `#85F218` | purple |
 | comment | `#4C886B` / `#6272A4` | `#808080` / `#667299` | secondary label |
 | invalid (stray brace, what maths can't hold; foreground only) | `#FF0000` / `#FF79C6` | `#C00000` / `#F2F218` | red |
 

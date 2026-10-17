@@ -52,13 +52,6 @@ struct SourceEditorTests {
         #expect(document.text == "a\u{0}\nb\u{0}\nc")
     }
 
-    @Test func aTextViewOnItsOwnMirrorsItsEdits() {
-        let view = SourceTextView.plainDocument()
-        view.load("one")
-        view.insertText("x", replacementRange: NSRange(location: 0, length: 0))
-        #expect(view.string == "xone" && view.document.text == "xone")
-    }
-
     /// Each key goes through the core, which closes brackets and steps over them, keeps the indentation and indents by Tab.
     @Test func typingIsTheCores() {
         open("")
@@ -151,13 +144,13 @@ struct SourceEditorTests {
         let command: EditorCommand = step.command == .comment ? .comment : .bold
         #expect(editor.perform(command))
         #expect(text.string == step.result && text.selectedRange() == step.selected)
-        #expect(editor.document?.text == text.string)
+        #expect(text.document.text == text.string)
         text.undoManager?.undo()
         #expect(text.string == step.text)
-        #expect(editor.document?.text == text.string)
+        #expect(text.document.text == text.string)
         text.undoManager?.redo()
         #expect(text.string == step.result)
-        #expect(editor.document?.text == text.string)
+        #expect(text.document.text == text.string)
     }
 
     @Test func blocksTabThroughTheirFields() {
@@ -379,12 +372,12 @@ struct SourceEditorTests {
 
         open("second", path: "b.tex")
         #expect(!text.hasMarkedText())
-        #expect(editor.document?.text == "second" && text.document.text == "second")
+        #expect(text.string == "second" && text.document.text == "second")
         #expect(text.undoManager?.canUndo == false)
         // The old undo referred to provisional text that wasn't saved to a.tex.
         open("first", path: "a.tex")
         text.undoManager?.undo()
-        #expect(text.string == "first" && editor.document?.text == "first")
+        #expect(text.string == "first" && text.document.text == "first")
     }
 
     @Test func spellingIsTheProses() {
@@ -617,7 +610,7 @@ struct SourceEditorTests {
         let window = inWindow()
         open("one\ntwo\nthree", caret: 0)
         text.layoutSubtreeIfNeeded()
-        text.issueLines = [2: .init(isError: true, message: "Missing $ inserted", short: "Missing $ inserted")]
+        show(issue(2, "Missing $ inserted"))
         var asked: [Int] = []
         text.issueClicked = { asked.append($0) }
         func click(line: Int, shift: Bool = false) throws {
@@ -656,6 +649,17 @@ struct SourceEditorTests {
         #expect(shortCut?.text == "Undefined: \\undefinedmacro" && shortCut?.width == nil)
     }
 
+    /// An issue as the session's `issues` event has it, its one-line form the message itself.
+    private func issue(_ line: Int, _ message: String, error: Bool = true, compact: String? = nil, tokens: [NSRange] = [],
+                       others: [String] = []) -> IssuesEvent.Line {
+        IssuesEvent.Line(line: line, error: error, message: message, short: message, compact: compact,
+                         tokens: tokens.map { SourceRange(start: $0.location, length: $0.length) }, others: others)
+    }
+
+    private func show(_ issues: IssuesEvent.Line...) {
+        text.issues.lines = Dictionary(uniqueKeysWithValues: issues.map { ($0.line, $0) })
+    }
+
     private func layOut(width: CGFloat? = nil) throws {
         if let width { editor.scrollView.frame.size.width = width }
         editor.scrollView.layoutSubtreeIfNeeded()
@@ -669,16 +673,14 @@ struct SourceEditorTests {
         let window = inWindow()
         defer { withExtendedLifetime(window) {} }
         // The core's: where the line has the command (crates/texlocal-core's `command_ranges`).
-        let undefined = SourceTextView.LineIssue(isError: true, message: "Undefined control sequence: \\foo",
-                                                 short: "Undefined control sequence: \\foo", compact: "Undefined: \\foo",
-                                                 tokens: [NSRange(location: 4, length: 4), NSRange(location: 19, length: 4)])
+        let undefined = issue(2, "Undefined control sequence: \\foo", compact: "Undefined: \\foo",
+                              tokens: [NSRange(location: 4, length: 4), NSRange(location: 19, length: 4)])
         open("one\nUse \\foo here, and \\foo there.\n\n", caret: 0)
-        text.issueLines = [1: .init(isError: false, message: "Marked", short: "Marked"), 2: undefined,
-                           4: .init(isError: true, message: "Emergency stop", short: "Emergency stop", others: ["Missing \\begin{document}"])]
+        show(issue(1, "Marked", error: false), undefined, issue(4, "Emergency stop", others: ["Missing \\begin{document}"]))
         try layOut()
         let padding = try #require(text.textContainer).lineFragmentPadding
         let digit = ("0" as NSString).size(withAttributes: [.font: try #require(text.font)]).width
-        var rows = text.issueRows
+        var rows = text.issues.rows
         // The last line is the document's empty one, laid out with the paragraph before it.
         #expect(rows.map(\.line) == [1, 2, 4] && rows.map(\.isError) == [false, true, true])
         for row in rows {
@@ -706,7 +708,7 @@ struct SourceEditorTests {
         // text, on whole points, as Xcode's, in the view it had.
         try layOut(width: 520)
         let views = rows.map { $0.message?.view }
-        rows = text.issueRows
+        rows = text.issues.rows
         let cut = try #require(rows[1].message)
         #expect(cut.cut && cut.rect.maxX == rows[1].band.maxX - 1 && cut.rect.width == cut.rect.width.rounded())
         #expect(cut.rect.minX >= start + 31 * digit && cut.rect.minX < start + 31 * digit + 1 && cut.view === views[1])
@@ -714,15 +716,15 @@ struct SourceEditorTests {
         #expect(rows[1].tip == "Undefined control sequence: \\foo" && rows[0].message?.cut == false)
         // Room for the symbol and not for words: the symbol alone, and the help tag's words.
         open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
-        text.issueLines = [2: undefined]
+        show(undefined)
         try layOut(width: 480)
-        let alone = try #require(text.issueRows.first?.message)
-        #expect(alone.cut && alone.rect.width == IssueBox.Metrics.width(ofText: nil, font: font, issues: 1) && text.issueRows.first?.tip != nil)
+        let alone = try #require(text.issues.rows.first?.message)
+        #expect(alone.cut && alone.rect.width == IssueBox.Metrics.width(ofText: nil, font: font, issues: 1) && text.issues.rows.first?.tip != nil)
         // No room: the band is left, and the help tag's words.
         open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
-        text.issueLines = [2: undefined]
+        show(undefined)
         try layOut(width: 420)
-        rows = text.issueRows
+        rows = text.issues.rows
         #expect(rows.count == 1 && rows[0].message == nil && rows[0].tip == "Undefined control sequence: \\foo" && rows[0].tokens.count == 2)
         #expect(!text.subviews.contains { $0 is IssueMessageView })
     }
@@ -730,11 +732,11 @@ struct SourceEditorTests {
     @Test func aClickOnAnIssuesMessageShowsTheIssue() throws {
         let window = inWindow()
         open("one\ntwo\nthree", caret: 5)
-        text.issueLines = [2: .init(isError: true, message: "Missing $ inserted", short: "Missing $ inserted")]
+        show(issue(2, "Missing $ inserted"))
         try layOut()
         var asked: [Int] = []
         text.issueClicked = { asked.append($0) }
-        let message = try #require(text.issueRows.first?.message).rect
+        let message = try #require(text.issues.rows.first?.message).rect
         // In the window's coordinates.
         func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint { text.convert(NSPoint(x: x, y: y), to: nil) }
         let inside = point(message.midX, message.midY)
@@ -754,8 +756,7 @@ struct SourceEditorTests {
     @Test func theRotorsStepThroughHeadingsAndIssues() throws {
         open("a\n\\section{One}\nb\n\\section{Two}\nc", caret: 0)
         text.headings = { [(2, "One"), (4, "Two")] }
-        text.issueLines = [3: .init(isError: true, message: "Undefined control sequence", short: "Undefined control sequence"),
-                           5: .init(isError: false, message: "Marked", short: "Marked")]
+        show(issue(3, "Undefined control sequence"), issue(5, "Marked", error: false))
         let rotors = text.accessibilityCustomRotors()
         let headings = try #require(rotors.first { $0.type == .heading }), issues = try #require(rotors.first { $0.type == .custom })
         #expect(issues.label == "Issues")

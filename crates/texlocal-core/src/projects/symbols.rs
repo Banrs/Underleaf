@@ -9,8 +9,9 @@ use regex::Regex;
 
 use super::skip_unreadable;
 use super::tree::{file_kind, visit_files};
-use crate::atomic::Stamp;
 use crate::error::CoreError;
+use crate::stamp::Stamp;
+use crate::syntax::scan::strip_comment;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Symbols {
@@ -29,20 +30,6 @@ static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\label\{([^}]*[^}
 static BIBITEM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\bibitem\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}").unwrap());
 
-/// A line of TeX without its comment, which starts at the first % that no
-/// backslash escapes.
-fn uncommented(line: &str) -> &str {
-    let mut escaped = false;
-    for (i, c) in line.char_indices() {
-        match c {
-            '%' if !escaped => return &line[..i],
-            '\\' => escaped = !escaped,
-            _ => escaped = false,
-        }
-    }
-    line
-}
-
 fn parse_symbols(bytes: &[u8], kind: &str) -> Symbols {
     let mut citations = Vec::new();
     let mut labels = Vec::new();
@@ -53,7 +40,7 @@ fn parse_symbols(bytes: &[u8], kind: &str) -> Symbols {
     if kind == "bib" {
         found(&BIB_KEY, &text, &mut citations);
     } else {
-        for line in text.lines().map(uncommented) {
+        for line in text.lines().map(strip_comment) {
             found(&LABEL, line, &mut labels);
             found(&BIBITEM, line, &mut citations);
         }

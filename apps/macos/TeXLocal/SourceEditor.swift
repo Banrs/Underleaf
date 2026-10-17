@@ -53,7 +53,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.allowedWritingToolsResultOptions = .plainText
         text.setAccessibilityLabel(String(localized: "Source"))
         text.delegate = self
-        text.backgroundColor = .untintedTextBackground
         text.isHidden = true
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
@@ -102,10 +101,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         reportCursor()
     }
 
-    var document: (path: String, text: String)? {
-        path.map { ($0, textView.string) }
-    }
-
     func forget(path: String) {
         kept = kept.filter { $0.key != path && !$0.key.hasPrefix(path + "/") }
     }
@@ -139,7 +134,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             textView.selectionRange(forProposedRange: NSRange(location: min(start + $0, end), length: 0), granularity: .selectByWord)
         }
         textView.setSelectedRange(word ?? NSRange(location: start, length: 0))
-        textView.scroll(to: start, atTop: atTop)
+        atTop ? textView.scroll(toTop: start) : textView.centerSelectionInVisibleArea(nil)
         if focus { self.focus() }
         let shown = word ?? NSRange(location: start, length: end - start)
         if shown.length > 0, !textView.reducesMotion() {

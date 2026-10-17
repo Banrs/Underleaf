@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use super::{SourceDocument, Text, catalog, is, utf16};
+use super::{SourceDocument, Text, catalog, indentation, utf16};
 
 /// A place to type in a completion's text. Fields with the same `index`
 /// are one field in several places: what's typed in one goes in all.
@@ -84,12 +84,11 @@ impl SourceDocument {
                 items,
             })
         };
-        let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
 
         if let Some(c) = ARGUMENT.captures(&before) {
             let (names, kind) = match &c[1] {
-                c if listed(&catalog.cite_commands, c) => (citations, CompletionKind::Citation),
-                c if listed(&catalog.ref_commands, c) => (labels, CompletionKind::Label),
+                c if catalog.cite_commands.contains(c) => (citations, CompletionKind::Citation),
+                c if catalog.ref_commands.contains(c) => (labels, CompletionKind::Label),
                 "begin" | "end" => (&catalog.environments[..], CompletionKind::Environment),
                 _ => return None,
             };
@@ -168,11 +167,7 @@ fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) ->
 /// more level (two spaces, the editor's indent unit).
 pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<SnippetField>) {
     let line = source.line(source.line_index(at));
-    let indent = line
-        .iter()
-        .take_while(|&&u| is(u, ' ') || is(u, '\t'))
-        .count();
-    let indentation = String::from_utf16_lossy(&line[..indent]);
+    let indentation = String::from_utf16_lossy(&line[..indentation(line)]);
     // Catalog tabs are indentation; preserve any tabs in the source's indent.
     let snippet = snippet
         .replace('\t', "  ")

@@ -11,7 +11,9 @@ use serde::Serialize;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::snippet::Snippet;
-use super::{SourceDocument, TextEdit, TextRange, clamp, escaped, is, space, span, splice, utf16};
+use super::{
+    SourceDocument, TextEdit, TextRange, clamp, escaped, indentation, is, span, splice, utf16,
+};
 
 /// What a key does instead of what the editor would: an edit, typed as a
 /// key types (so it undoes with the typing around it), and where the
@@ -248,28 +250,25 @@ impl SourceDocument {
         let (mut start, end) = clamp(selection, self.text.len()).bounds();
         let mut length = end - start;
         let line = self.text.around(start);
-        let indent = &units[line.start..line.end];
-        let indent = &indent[..indent
-            .iter()
-            .take_while(|&&u| is(u, ' ') || is(u, '\t'))
-            .count()];
-        let indentation = String::from_utf16_lossy(indent);
-        let mut insert = format!("\n{indentation}");
+        let indent = indentation(&units[line.start..line.end]);
+        let indented = String::from_utf16_lossy(&units[line.start..line.start + indent]);
+        let mut insert = format!("\n{indented}");
         if length == 0 && closer_after(units, start).is_some() {
             insert.push('\n');
-            insert.push_str(&indentation);
+            insert.push_str(&indented);
         } else {
             while start + length < line.end && is(units[start + length], ' ') {
                 length += 1;
             }
-            if start > line.start && units[line.start..start].iter().all(|&u| space(u)) {
+            let before = &units[line.start..start];
+            if !before.is_empty() && indentation(before) == before.len() {
                 length += start - line.start;
                 start = line.start;
             }
         }
         Keystroke {
             edit: Some(splice(start, length, insert)),
-            selection: Some(span(start + 1 + indent.len(), 0)),
+            selection: Some(span(start + 1 + indent, 0)),
             completions: Completing::Close,
             ..Keystroke::default()
         }

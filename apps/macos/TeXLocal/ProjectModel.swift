@@ -37,7 +37,7 @@ final class ProjectModel {
     private var documents: [String: DocumentState] = [:]
     /// Why a document held after Cancel in an alert isn't saved, for the status bar.
     private var heldReasons: [String: String] = [:]
-    @ObservationIgnored private var lineIssues: [String: [Int: SourceTextView.LineIssue]] = [:]
+    @ObservationIgnored private var lineIssues: [String: [Int: IssuesEvent.Line]] = [:]
     @ObservationIgnored private var composingPath: String?
     /// A `tree` event came before the answer to the session's open, whose tree is older.
     @ObservationIgnored private var treeChanged = false
@@ -126,10 +126,7 @@ final class ProjectModel {
     var editsText: Bool { openKind?.isText == true }
 
     private func openKindChanged() {
-        guard let openPath else {
-            openKind = nil
-            return
-        }
+        guard let openPath else { return openKind = nil }
         if let kind = tree.node(at: openPath)?.kind, kind != openKind { openKind = kind }
     }
 
@@ -180,11 +177,7 @@ final class ProjectModel {
             // With automatic builds and no PDF, the session starts one.
             let opened = try await core.call("session_open", ["id": id, "session": session, "autoCompile": app?.autoCompile ?? false],
                                              as: SessionOpened.self)
-            guard !closed else {
-                core.forget(session)
-                core.send("session_close", ["session": session])
-                return
-            }
+            guard !closed else { throw CancellationError() }
             self.session = session
             root = URL(filePath: opened.root, directoryHint: .isDirectory)
             settings = opened.settings
@@ -195,7 +188,7 @@ final class ProjectModel {
             await analysis?.value
         } catch {
             core.forget(session)
-            // The core may have opened it and failed only in its answer; one it never opened is a 404, logged.
+            // Left meanwhile, or the core may have opened it and failed only in its answer; one it never opened is a 404, logged.
             core.send("session_close", ["session": session])
             // Home stays, with the alert over it: a workspace would have no files to show.
             guard !closed else { return }
@@ -291,13 +284,12 @@ final class ProjectModel {
         if state.error != nil, before?.error == nil { notices.announce(String(localized: "“\(state.path.fileName)” Wasn’t Saved")) }
     }
 
-    /// Another app's text, or the disk's after Revert: shown without an edit, as the session waits for to save the file again.
+    /// Another app's text, or the disk's after Revert: shown without an edit, which the session waits for before it saves
+    /// the file again.
     private func reload(_ event: ReloadEvent) {
         if editor.path == event.path {
-            let top = topLine
             editor.reload(text: event.text)
             analyze()
-            editor.reveal(line: top, atTop: true, focus: false)
         } else if let session, let source = SourceDocument(session: session, path: event.path) {
             source.reload(event.text)
         }
@@ -326,12 +318,9 @@ final class ProjectModel {
     }
 
     private func markIssues(_ event: IssuesEvent) {
-        let lines = Dictionary(event.lines.map { line in
-            (line.line, SourceTextView.LineIssue(isError: line.error, message: line.message, short: line.short, compact: line.compact,
-                                                 tokens: line.tokens.map(\.range), others: line.others))
-        }) { $1 }
+        let lines = Dictionary(event.lines.map { ($0.line, $0) }) { $1 }
         lineIssues[event.path] = lines.isEmpty ? nil : lines
-        if editor.path == event.path { editor.textView.issueLines = lines }
+        if editor.path == event.path { editor.textView.issues.lines = lines }
     }
 
     private func showTree(_ event: TreeEvent) {
@@ -397,7 +386,7 @@ final class ProjectModel {
             return
         }
         editor.open(path: path, text: source.text, source: source, focus: focus)
-        editor.textView.issueLines = lineIssues[path] ?? [:]
+        editor.textView.issues.lines = lineIssues[path] ?? [:]
     }
 
     /// Saved first; false, staying open, if that failed or asks about the disk.
@@ -492,14 +481,9 @@ final class ProjectModel {
 
     // MARK: - Changes on disk
 
-    func keepEdits(_ path: String) { answer(path, "save") }
-    func revertToDisk(_ path: String) { answer(path, "revert") }
-    func saveMissingFile(_ path: String) { answer(path, "save") }
-    func closeMissingFile(_ path: String) { answer(path, "close") }
-    /// Cancel: the edits stay unsaved, and the autosave quiet, until a save is asked for, which asks again.
-    func leaveUnsaved(_ path: String, _ reason: String) { answer(path, "cancel", holding: reason) }
-
-    /// The question about `path` is answered; one about another file still waits for its alert.
+    /// The question about `path` is answered (`save`, `revert`, `close`, or `cancel` with the reason it is held: the edits
+    /// stay unsaved, and the autosave quiet, until a save is asked for, which asks again); one about another file still
+    /// waits for its alert.
     func answer(_ path: String, _ answer: String, holding reason: String? = nil) {
         if diskConflict == path { diskConflict = nil }
         if missingFile == path { missingFile = nil }

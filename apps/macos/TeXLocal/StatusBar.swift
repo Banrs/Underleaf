@@ -1,28 +1,19 @@
 import SwiftUI
 
+/// The status bar's height and line, which the File Outline's folded header beside it shares, and the build panel's
+/// console bar's insets.
 enum BarMetrics {
     static let height: CGFloat = 36
     static let line: CGFloat = 1
-    static let leading: CGFloat = 14
-    static let trailing: CGFloat = 16.5
-    static let spacing: CGFloat = 9
-    static let groupSpacing: CGFloat = 16
     static let consoleLeading: CGFloat = 12
     static let consoleTrailing: CGFloat = 17
-    static let target: CGFloat = 20
-    static let dividerHeight: CGFloat = 12
 }
 
 /// Page uses PDFKit numbering, which can differ from LaTeX.
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let project: ProjectModel
-
-    /// Xcode's bar, measured over solid lines of text: the editor's colour at rest over a blur of what scrolls beneath
-    /// (`blurBackdrop`), passing about an eighth of a line's contrast, the same at every depth in the bar.
-    private var wash: Double { reduceTransparency ? 1 : 0.8 }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -30,10 +21,10 @@ struct StatusBar: View {
             content(.symbols).labelStyle(.iconOnly)
             content(.short).labelStyle(.iconOnly)
         }
-        .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
-        // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`).
+        .barRow()
+        // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`). Under it, each
+        // pane's own scroll edge (`WorkspaceController.buildStatusBar`).
         .padding(.top, BarMetrics.line)
-        .background(.textSurface.opacity(wash))
         .overlay(alignment: .top) { Divider() }
         // Clicks between its controls stay with the bar, not the text or pages scrolled beneath it.
         .contentShape(.rect)
@@ -47,20 +38,19 @@ struct StatusBar: View {
     private nonisolated enum Detail { case full, symbols, short }
 
     private func content(_ detail: Detail) -> some View {
-        HStack(spacing: BarMetrics.spacing) {
+        HStack {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.panel.shown && project.panel.tab == .issues
             Button {
                 if showingIssues { project.panel.shown = false } else { project.panel.show(.issues) }
             } label: {
-                buildStatus.fixedSize(horizontal: detail != .short, vertical: true).hitTarget()
+                buildStatus.fixedSize(horizontal: detail != .short, vertical: true)
             }
             .help(showingIssues ? "Hide issues" : "Show issues")
             if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
                 Button { project.panel.show(.texpresso) } label: {
                     Label(project.texpresso.title,
                           systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
-                        .hitTarget()
                 }
                 .help("Show the Live Preview log")
             }
@@ -68,7 +58,6 @@ struct StatusBar: View {
                 Button { Task { await project.save() } } label: {
                     Label("Not Saved", systemImage: "exclamationmark.triangle.fill")
                         .symbolRenderingMode(.multicolor)
-                        .hitTarget()
                 }
                 .help("\(reason.hasSuffix(".") ? String(reason.dropLast()) : reason); save again")
             }
@@ -78,7 +67,7 @@ struct StatusBar: View {
             Spacer(minLength: 0)
             let words = detail == .full && project.editsText && app.showWordCount ? project.words : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
-            HStack(spacing: BarMetrics.groupSpacing) {
+            HStack {
                 if project.editsText {
                     Button { app.perform(.editGotoLine, on: project) } label: {
                         place(detail, "Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)",
@@ -104,14 +93,13 @@ struct StatusBar: View {
             }
             .fixedSize()
             if project.editsText || pages {
-                Divider().frame(height: BarMetrics.dividerHeight)
+                Divider().padding(.vertical)
             }
             Toggle(isOn: Bindable(project.panel).shown) {
                 // Its state is the accent colour alone: with Differentiate Without Colour the off state is the plain square, without the panel's filled third.
                 Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
                       ? "square" : "inset.filled.bottomthird.square")
                     .font(.body)
-                    .frame(minHeight: BarMetrics.target)
             }
             .labelStyle(.iconOnly)
             .toggleStyle(.button)
@@ -124,7 +112,6 @@ struct StatusBar: View {
         Group {
             if detail == .short { Text(verbatim: short).accessibilityLabel(spoken) } else { Text(full) }
         }
-        .hitTarget()
     }
 
     @ViewBuilder
@@ -132,13 +119,11 @@ struct StatusBar: View {
         if project.showsLastSuccessfulBuild {
             Button { project.panel.show(.issues) } label: {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill")
-                    .hitTarget()
             }
             .help("The latest build failed, so this is the last PDF that built")
         } else if project.outdated, !project.livePDF {
             Button { app.perform(.compileRun, on: project) } label: {
                 Label("PDF Out of Date", systemImage: "arrow.clockwise")
-                    .hitTarget()
             }
             .help(project.texpresso.active
                 ? "Live Preview updates its own window; compile to refresh this PDF"
@@ -171,8 +156,8 @@ struct StatusBar: View {
                 badge("\(project.warningCount)", "exclamationmark.triangle.fill", spoken: "^[\(project.warningCount) warning](inflect: true)")
             }
         }
-        // A build starting or ending crossfades its status, also under Reduce Motion, where the HIG has a crossfade stand for motion.
-        .animation(.easeInOut(duration: 0.2), value: project.compiling)
+        // A build starting or ending crossfades its status, the system's way.
+        .animation(.default, value: project.compiling)
     }
 
     /// `spoken` is what the short `title` stands for, so VoiceOver and Voice Control name the badge "3 errors", not "3".
@@ -191,23 +176,9 @@ struct StatusBar: View {
 }
 
 extension View {
-    func barRow(leading: CGFloat, trailing: CGFloat) -> some View {
+    /// The status bar's row, at the system's padding, and the build panel's console bar's.
+    func barRow(leading: CGFloat? = nil, trailing: CGFloat? = nil) -> some View {
         font(.subheadline).controlSize(.small).lineLimit(1)
             .padding(.leading, leading).padding(.trailing, trailing).frame(height: BarMetrics.height)
-    }
-
-    fileprivate func hitTarget() -> some View {
-        frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect)
-    }
-}
-
-extension NSView {
-    /// A blur of what the window draws behind the view, with no colour of its own: every material and Liquid Glass tints what
-    /// it blurs. 27.2: the filter draws nothing on an accessory's view or a hosting view.
-    func blurBackdrop(radius: Double = 6.5) {
-        wantsLayer = true
-        layerUsesCoreImageFilters = true
-        layer?.masksToBounds = true
-        layer?.backgroundFilters = CIFilter(name: "CIGaussianBlur", parameters: [kCIInputRadiusKey: radius]).map { [$0] }
     }
 }

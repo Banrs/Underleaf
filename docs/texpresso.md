@@ -17,7 +17,8 @@ window (MuPDF) as a fallback: the session then sets no `TEXPRESSO_PDF_OUTPUT`, t
 TeXpresso no view or caret, and the PDF pane keeps the last build's PDF.
 
 The core's session owns the TeXpresso client (`crates/texlocal-core/src/session/live.rs`
-over `src/texpresso.rs`); hosts use `session_live_*` commands and `live*` events
+over `src/texpresso.rs`, whose manager pushes each page, document, change to the log and end
+to the session as TeXpresso says it); hosts use `session_live_*` commands and `live*` events
 (`docs/core-api.md`).
 
 ## Install

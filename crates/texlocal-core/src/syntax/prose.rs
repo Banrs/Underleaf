@@ -1,33 +1,38 @@
-//! Ranges a spelling checker should skip: TeX names, maths and literal code;
-//! and the words of what's left, which the status bar counts. Name arguments
-//! include cases that the highlighter leaves uncoloured when options come
-//! first, as in `\usepackage[utf8]{inputenc}`.
+//! What isn't prose: maths, literal code, and the names commands take
+//! (packages, citations, labels, files), including the options before them,
+//! as in `\usepackage[utf8]{inputenc}`; for a checker, command names and
+//! comments too. What's left is the text's words, which the status bar counts.
 
-use super::scan::{Scanner, Visit};
+use super::scan::{Scanner, Visit, paragraph_end};
 use super::scans::{Point, Scans};
-use super::{Text, TextRange, blank, catalog::CATALOG};
+use super::{Checker, Text, TextRange, catalog::CATALOG, span};
 
-/// Absolute UTF-16 ranges to skip in `start..end`: math and literal code from
-/// the shared math scan, plus name arguments. The scan resumes from a kept
-/// point before `start`, which carries how far names have been read.
-pub fn not_prose(text: &Text, scans: &mut Scans, start: u32, end: u32) -> Vec<TextRange> {
+/// What isn't prose in `start..end`, each range from its start however far
+/// before: maths and literal code, read on from a kept point before `start`
+/// (which carries how far names have been read), and name arguments. Given
+/// a checker, command names too, and for Writing Tools comments, which are
+/// prose to spelling.
+pub(crate) fn skipped(
+    text: &Text,
+    scans: &mut Scans,
+    start: u32,
+    end: u32,
+    checker: Option<Checker>,
+) -> Vec<TextRange> {
     let end_index = end as usize;
     let Point {
         mut scanner,
         run,
         names,
     } = scans.resume(text, start as usize, end_index);
-    let mut found = Found {
-        text,
-        end: end_index,
-        ranges: run.map(|(from, to)| range(from, to)).into_iter().collect(),
-        names: Vec::new(),
-        reading: names,
-    };
-    found.reading.resume(text, end_index, &mut found.names);
-    scanner.run(&text.units[..end_index], end_index, &[], &mut found);
-    let mut ranges = found.ranges;
-    ranges.extend(found.names);
+    let mut reading = Reading::new(text, end_index, names, checker, |_: &Text, _: &str, _| {});
+    reading
+        .ranges
+        .extend(run.map(|(from, to)| span(from, to - from)));
+    reading.names.resume(text, end_index, &mut reading.others);
+    scanner.run(&text.units[..end_index], end_index, &[], &mut reading);
+    let mut ranges = reading.ranges;
+    ranges.extend(reading.others);
     ranges.retain(|r| {
         let range_end = r.start.saturating_add(r.length);
         if start == end {
@@ -36,6 +41,11 @@ pub fn not_prose(text: &Text, scans: &mut Scans, start: u32, end: u32) -> Vec<Te
             r.start < end && range_end > start
         }
     });
+    merged(ranges)
+}
+
+/// Ranges in order, overlapping and adjacent ones joined.
+fn merged(mut ranges: Vec<TextRange>) -> Vec<TextRange> {
     ranges.sort_unstable_by_key(|r| (r.start, r.start.saturating_add(r.length)));
     ranges.into_iter().fold(Vec::new(), |mut merged, range| {
         merge_range(&mut merged, range);
@@ -52,13 +62,6 @@ fn merge_range(ranges: &mut Vec<TextRange>, range: TextRange) {
         last.length = last.length.max(range.start + range.length - last.start);
     } else {
         ranges.push(range);
-    }
-}
-
-fn range(from: usize, to: usize) -> TextRange {
-    TextRange {
-        start: from as u32,
-        length: (to - from) as u32,
     }
 }
 
@@ -87,7 +90,7 @@ impl Names {
             &catalog.cite_commands,
             &catalog.ref_commands,
         ];
-        if command_start >= self.parsed_until && lists.iter().any(|l| l.iter().any(|n| n == name)) {
+        if command_start >= self.parsed_until && lists.iter().any(|l| l.contains(name)) {
             self.from = Some(name_end);
             self.parsed_until = argument_ranges(text, name_end, end, ranges);
         }
@@ -100,50 +103,77 @@ impl Names {
     }
 }
 
-/// What the scan finds: maths and code, and name arguments.
-struct Found<'a> {
+/// A reading of the text for what isn't prose: maths and code as one run
+/// while they touch, then name arguments, command names and comments, as
+/// asked. Each command outside maths and code goes to `command` too, by name
+/// and where its name ends.
+struct Reading<'a, F> {
     text: &'a Text,
     end: usize,
     ranges: Vec<TextRange>,
-    names: Vec<TextRange>,
-    reading: Names,
+    others: Vec<TextRange>,
+    names: Names,
+    commands: bool,
+    comments: bool,
+    command: F,
 }
 
-impl Visit for Found<'_> {
+impl<'a, F: FnMut(&Text, &str, usize)> Reading<'a, F> {
+    fn new(text: &'a Text, end: usize, names: Names, checker: Option<Checker>, command: F) -> Self {
+        Self {
+            text,
+            end,
+            ranges: Vec::new(),
+            others: Vec::new(),
+            names,
+            commands: checker.is_some(),
+            comments: checker == Some(Checker::WritingTools),
+            command,
+        }
+    }
+}
+
+impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
     fn range(&mut self, from: usize, to: usize) {
-        merge_range(&mut self.ranges, range(from, to));
+        merge_range(&mut self.ranges, span(from, to - from));
+    }
+
+    fn comment(&mut self, from: usize, to: usize) {
+        if self.comments {
+            self.others.push(span(from, to - from));
+        }
     }
 
     fn command(&mut self, name: &str, command_start: usize, name_end: usize) {
+        if self.commands {
+            self.others
+                .push(span(command_start, name_end - command_start));
+        }
         let command = (name, command_start, name_end);
-        self.reading
-            .command(self.text, command, self.end, &mut self.names);
+        self.names
+            .command(self.text, command, self.end, &mut self.others);
+        (self.command)(self.text, name, name_end);
     }
 }
 
 /// A file's words: the runs of its prose between spaces and TeX's special
-/// characters that hold a letter, prose being what isn't maths, literal
-/// code, a comment, a command's name or the names commands take (packages,
-/// labels, citations, files). Each command outside maths, code and comments
-/// goes to `command` as the scan meets it, by name and where its name ends,
-/// so the outline finds its headings and inputs in the same reading.
+/// characters that hold a letter, prose being what Writing Tools is given:
+/// not maths, literal code, a comment, a command's name or the names
+/// commands take. Each command outside maths and code goes to `command` as
+/// the scan meets it, so the outline finds its headings and inputs in the
+/// same reading.
 pub(crate) fn words(source: &str, command: impl FnMut(&Text, &str, usize)) -> usize {
     let text = Text::new(source);
-    let mut reading = Reading {
-        text: &text,
-        skip: Vec::new(),
-        names: Names::default(),
-        command,
-    };
     let len = text.units.len();
+    let writing = Some(Checker::WritingTools);
+    let mut reading = Reading::new(&text, len, Names::default(), writing, command);
     Scanner::default().run(&text.units, len, &[], &mut reading);
-    let mut skip = reading.skip;
-    skip.sort_unstable_by_key(|r| r.start);
+    let mut skipped = reading.ranges;
+    skipped.extend(reading.others);
     let (mut words, mut at) = (0, 0);
-    for r in skip.iter().chain([&range(len, len)]) {
-        let start = r.start as usize;
-        words += count(&text.units[at..start.max(at)]);
-        at = at.max(start + r.length as usize);
+    for r in merged(skipped).iter().chain([&span(len, 0)]) {
+        words += count(&text.units[at..r.start as usize]);
+        at = (r.start + r.length) as usize;
     }
     words
 }
@@ -164,41 +194,15 @@ fn count(prose: &[u16]) -> usize {
     words + lettered as usize
 }
 
-/// What a file's reading for its words passes over.
-struct Reading<'a, F> {
-    text: &'a Text,
-    skip: Vec<TextRange>,
-    names: Names,
-    command: F,
-}
-
-impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
-    fn range(&mut self, from: usize, to: usize) {
-        self.skip.push(range(from, to));
-    }
-
-    fn comment(&mut self, from: usize, to: usize) {
-        self.skip.push(range(from, to));
-    }
-
-    fn command(&mut self, name: &str, command_start: usize, name_end: usize) {
-        self.skip.push(range(command_start, name_end));
-        let (command, end) = ((name, command_start, name_end), self.text.units.len());
-        self.names.command(self.text, command, end, &mut self.skip);
-        (self.command)(self.text, name, name_end);
-    }
-}
-
 /// Options and the first braced argument, stopping at a blank line or EOF.
 fn argument_ranges(text: &Text, mut i: usize, end: usize, ranges: &mut Vec<TextRange>) -> usize {
-    let at = |i| char::from_u32(text.units[i] as u32).unwrap_or_default();
-    let paragraph_end =
-        |i| at(i) == '\n' && i + 1 < end && blank(text.line(text.line_index(i as u32 + 1)));
-    let mut push = |from: usize, to: usize| ranges.push(range(from, to));
+    let units = &text.units[..end];
+    let at = |i| char::from_u32(units[i] as u32).unwrap_or_default();
+    let mut push = |from: usize, to: usize| ranges.push(span(from, to - from));
     let mut close = None;
     let (mut from, mut depth) = (0, 0);
     i += (i < end && at(i) == '*') as usize;
-    while i < end && !paragraph_end(i) {
+    while i < end && !(at(i) == '\n' && paragraph_end(units, i)) {
         let c = at(i);
         if c == '%' {
             if close.is_some() {
@@ -295,6 +299,10 @@ mod tests {
     #[test]
     fn names_but_not_prose() {
         assert_eq!(names("\\usepackage[utf8]{inputenc}"), ["utf8", "inputenc"]);
+        assert_eq!(
+            names("\\bibitem[Knuth]{knuth84} The book"),
+            ["Knuth", "knuth84"]
+        );
         assert_eq!(
             names("see \\cite[p.~3]{knuth, lamport} and \\cref*{fig:a}."),
             ["p.~3", "knuth, lamport", "fig:a"]

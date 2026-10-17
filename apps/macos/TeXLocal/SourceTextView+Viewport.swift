@@ -90,12 +90,10 @@ extension SourceTextView {
         scroll(location) { $0.minY - top.below }
     }
 
-    /// The paragraph at `offset` at the shown text's top, or its middle at the shown text's middle.
-    func scroll(to offset: Int, atTop: Bool) {
-        guard let clip = enclosingScrollView?.contentView, let target = textRange(NSRange(location: offset, length: 0)) else { return }
-        // Under the clip view's top: the shown text's top and middle.
-        let shown = shownRect, clipTop = clip.bounds.minY
-        scroll(target.location) { atTop ? $0.minY - (shown.minY - clipTop) : $0.midY - (shown.midY - clipTop) }
+    /// The paragraph at `offset` at the shown text's top, which is the scroll view's top inset under the clip view's.
+    func scroll(toTop offset: Int) {
+        guard let clip = enclosingScrollView?.contentView else { return }
+        scroll(toShownTop: (offset, shownRect.minY - clip.bounds.minY))
     }
 
     /// 27.2: lays out only that paragraph, in two passes, and only in a window.

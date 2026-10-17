@@ -22,7 +22,7 @@ mod stamp;
 pub mod synctex;
 pub mod syntax;
 pub mod templates;
-mod tex;
+pub mod tex;
 pub mod texpresso;
 mod wordmatch;
 pub mod zipexport;

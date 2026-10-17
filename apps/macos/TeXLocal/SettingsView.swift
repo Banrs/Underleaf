@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum SettingsPane: String {
-    case general, editor, compiling, pdf, livePreview
+    case general, editor, compiling, livePreview
 }
 
 /// In a Settings scene a TabView is the window's toolbar of panes, titles the window after the pane shown and sizes it to that pane (HIG, Settings).
@@ -14,7 +14,6 @@ struct SettingsView: View {
             Tab("General", systemImage: "gearshape", value: .general) { GeneralSettings() }
             Tab("Editor", systemImage: "character.cursor.ibeam", value: .editor) { EditorSettings() }
             Tab("Compiling", systemImage: "hammer", value: .compiling) { CompilingSettings() }
-            Tab("PDF", systemImage: "richtext.page", value: .pdf) { PDFSettings() }
             Tab("Live Preview", systemImage: "bolt", value: .livePreview) { LivePreviewSettings() }
         }
         .frame(width: 500)
@@ -136,22 +135,6 @@ private struct CompilingSettings: View {
             } footer: {
                 HelpLink(destination: Links.requirements)
                     .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-        }
-        .settingsPane()
-    }
-}
-
-private struct PDFSettings: View {
-    @AppStorage(DefaultsKey.pdfPaper) private var paper = PDFPaper.white
-
-    var body: some View {
-        Form {
-            Picker(selection: $paper) {
-                ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
-            } label: {
-                Text("Page Colour")
-                Text("Dark inverts the PDF’s pages for reading at night, keeping their colours’ hues. Printing and saving are unaffected.")
             }
         }
         .settingsPane()

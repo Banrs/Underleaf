@@ -10,6 +10,7 @@ use crate::atomic;
 use crate::error::CoreError;
 use crate::paths::{after_entry, rel_key, safe_path, safe_write_path, same_entry};
 use crate::settings::{move_ui, read_settings, write_settings};
+use crate::stamp::Stamp;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,7 +54,7 @@ pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreErro
     unreachable!("a free name")
 }
 
-pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<atomic::Stamp, CoreError> {
+pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<Stamp, CoreError> {
     if let Some(parent) = abs.parent() {
         fs::create_dir_all(parent)?;
     }

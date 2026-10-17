@@ -75,9 +75,9 @@ final class ProjectFlowTests {
         for open in opens { await open.value }
 
         #expect(app.project?.id == second.id)
-        let document = app.project?.editor.document
-        #expect(document?.path == second.mainFile)
-        #expect(document?.text == "second")
+        let editor = app.project?.editor
+        #expect(editor?.path == second.mainFile)
+        #expect(editor?.textView.document.text == "second")
         await app.close()
     }
 
@@ -94,8 +94,8 @@ final class ProjectFlowTests {
             await rename.value
             #expect(await save.value)
 
-            #expect(project.openPath == to && project.editor.document?.path == to)
-            #expect(project.editor.document?.text == expected)
+            #expect(project.openPath == to && project.editor.path == to)
+            #expect(project.editor.textView.document.text == expected)
             #expect(try String(contentsOf: folder.appending(path: to), encoding: .utf8) == expected)
             #expect(!exists(folder.appending(path: from)))
             #expect(project.diskConflict == nil && project.missingFile == nil)
@@ -340,9 +340,18 @@ final class ProjectFlowTests {
         try "theirs again".write(to: main, atomically: false, encoding: .utf8)
         #expect(project.editor.perform(.italic))
         try await waitUntil(timeout: .seconds(5)) { project.diskConflict == "main.tex" }
-        project.revertToDisk("main.tex")
+        project.answer("main.tex", "revert")
         try await waitUntil(timeout: .seconds(5)) { text.string == "theirs again" }
         #expect(project.diskConflict == nil && onDisk() == "theirs again" && app.alert == nil)
+        await app.close()
+    }
+
+    /// An answer clears only its own file's alert: another file's question still waits.
+    @Test func anAnswerLeavesAnotherFilesQuestion() async throws {
+        let project = try await opened().project
+        (project.diskConflict, project.missingFile) = ("main.tex", "gone.tex")
+        project.answer("main.tex", "cancel", holding: "Held")
+        #expect(project.diskConflict == nil && project.missingFile == "gone.tex")
         await app.close()
     }
 
@@ -441,7 +450,7 @@ final class ProjectFlowTests {
             await Task { await project.open(last) }.value
             await opening.value
             let state = try await Core.shared.call("session_state", ["session": session], as: OpenDocuments.self)
-            #expect(project.openPath == last && project.editor.document?.path == last)
+            #expect(project.openPath == last && project.editor.path == last)
             #expect(state.documents.map(\.path) == [last], "after \(turns) turns")
         }
         #expect(app.alert == nil)
@@ -528,7 +537,7 @@ final class ProjectFlowTests {
         let (project, folder) = try await opened()
         try "x".write(to: folder.appending(path: "untitled.tex"), atomically: false, encoding: .utf8)
         #expect(await project.createEntry(in: "", directory: false) == "untitled 2.tex")
-        #expect(project.openPath == "untitled 2.tex" && project.editor.document?.text == "")
+        #expect(project.openPath == "untitled 2.tex" && project.editor.textView.document.text == "")
         #expect(await project.createEntry(in: "", directory: true) == "untitled folder")
         #expect(await project.createEntry(in: "", directory: true) == "untitled folder 2")
         #expect(await project.createEntry(in: "untitled folder", directory: false) == "untitled folder/untitled.tex")

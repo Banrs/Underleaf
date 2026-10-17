@@ -31,7 +31,8 @@ const AHEAD: usize = 20_000;
 
 /// Displayed maths: $$…$$, \[…\], or an environment the preview renders.
 fn display(group: &Group) -> bool {
-    matches!(group.end.as_ref(), "$$" | "\\]") || environment(group).is_some_and(previewed)
+    matches!(group.end.as_ref(), "$$" | "\\]")
+        || environment(group).is_some_and(|name| CATALOG.preview_environments.contains(name))
 }
 
 fn inline(group: &Group) -> bool {
@@ -42,10 +43,6 @@ fn inline(group: &Group) -> bool {
 fn environment(group: &Group) -> Option<&str> {
     let name = group.end.strip_prefix("env:")?;
     Some(name.strip_suffix('*').unwrap_or(name))
-}
-
-fn previewed(name: &str) -> bool {
-    CATALOG.preview_environments.iter().any(|n| n == name)
 }
 
 /// The close a scan meets of the maths opened at `open`, or without one, of

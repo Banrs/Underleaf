@@ -304,29 +304,35 @@ pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
     Ok(clean)
 }
 
-/// Lexically normalize an absolute path (resolve `.` and `..` without touching
-/// the filesystem), for mapping tool output back into a project.
-fn normalize_abs(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for c in path.components() {
-        match c {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other.as_os_str()),
+/// The project file a tool names `input`, as TeX recorded it: relative to the
+/// project, or absolute under its folder as spelt or as resolved (TeX records
+/// the physical working directory, even if the root is a link), or under a
+/// folder it was built in before a move ("<old>/./<file>"). None for anything
+/// that is not one of the author's sources: outside the project, the settings
+/// file, generated output in the build folder however it is reached, a name a
+/// tool would read as an option, or no file.
+pub fn source_rel(root: &Path, input: &str) -> Option<String> {
+    let canonical = dunce::canonicalize(root).ok()?;
+    let input_path = Path::new(input);
+    let rel = if input_path.is_absolute() {
+        let inside = [root, &canonical]
+            .into_iter()
+            .find_map(|base| input_path.strip_prefix(base).ok());
+        match inside {
+            Some(rel) => rel.to_str()?,
+            None => input.split_once("/./")?.1,
         }
-    }
-    out
-}
-
-/// The forward-slash relative path of `abs` inside `root`, or None if it lies
-/// outside or is the root itself. Both are normalized lexically first.
-pub fn rel_to_root(root: &Path, abs: &Path) -> Option<String> {
-    let abs = normalize_abs(abs);
-    let rel = abs.strip_prefix(normalize_abs(root)).ok()?;
-    let parts: Vec<_> = rel.iter().map(|part| part.to_string_lossy()).collect();
-    (!parts.is_empty()).then(|| parts.join("/"))
+    } else {
+        input
+    };
+    let segments = safe_segments(rel).ok()?;
+    let (abs, physical) = join_within(root, &segments, false).ok()?;
+    let physical = physical_segments(&physical);
+    let unsafe_name = |segments: &[&str]| {
+        is_in_build_dir(segments) || segments.iter().any(|s| s.starts_with('-'))
+    };
+    (abs.is_file() && !unsafe_name(&segments) && !unsafe_name(&physical))
+        .then(|| segments.join("/"))
 }
 
 #[cfg(test)]

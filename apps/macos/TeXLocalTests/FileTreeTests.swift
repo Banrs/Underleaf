@@ -7,7 +7,7 @@ extension ProjectFlowTests {
         let info = try await project().info, tree = FileTree(id: info.id)
         var changes = 0
         tree.onChange = { changes += 1 }
-        try await tree.read()
+        await tree.reload()
         #expect(changes == 1 && tree.node(at: info.mainFile)?.isDirectory == false)
         await tree.reload()
         #expect(changes == 1)

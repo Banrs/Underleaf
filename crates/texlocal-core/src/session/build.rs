@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use super::actor::Actor;
+use super::actor::{Actor, Later, Timer};
 use super::{Msg, Reply};
 use crate::CoreError;
 use crate::compile::CompileResult;
@@ -40,10 +40,6 @@ pub(crate) struct Builds {
 impl Actor {
     pub fn has_pdf(&self) -> bool {
         self.builds.pdf || self.live.document_seen
-    }
-
-    pub fn live_previewing(&self) -> bool {
-        self.live.active() || self.live.restart_at.is_some()
     }
 
     /// A request during a build queues one more. An automatic build waits
@@ -173,7 +169,11 @@ impl Actor {
         let Some((live, intent)) = self.builds.cleaning.take() else {
             return;
         };
-        self.keep_live(live, intent, result.is_ok());
+        // The preview reads the build folder: one live as the clean began starts again,
+        // unless stopped or started meanwhile.
+        if result.is_ok() && live && intent == self.live.intent && !self.closed {
+            self.after(Timer::Restart, self.t.live_follow);
+        }
         if result.is_ok() && !self.closed {
             let builds = &mut self.builds;
             (builds.pdf, builds.outdated) = (false, false);
@@ -182,7 +182,7 @@ impl Actor {
             self.publish_build();
             self.emit("build_cleaned", json!({}));
             if self.auto_compile {
-                self.later.push_back(super::actor::Later::Compile(true));
+                self.later.push_back(Later::Compile(true));
             }
         }
         for reply in std::mem::take(&mut self.builds.cleaners) {

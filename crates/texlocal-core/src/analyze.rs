@@ -72,29 +72,6 @@ pub struct OutlineNode {
     pub children: Vec<Self>,
 }
 
-/// A session's `analyze` answer: the outline as a tree, the words, and the
-/// levels the main file's class has, as it sets and numbers them.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ProjectAnalysis {
-    pub tree: Vec<OutlineNode>,
-    pub words: usize,
-    pub heading_styles: Vec<headings::Level>,
-}
-
-impl ProjectAnalysis {
-    /// `class`, the main file's; a class it doesn't know numbers its headings
-    /// as a book's once the document has chapters.
-    pub(crate) fn new(analysis: &Analysis, class: Option<&headings::DocumentClass>) -> Self {
-        let chapters = analysis.outline.iter().any(|h| h.command == "chapter");
-        Self {
-            tree: outline_tree(&analysis.outline),
-            words: analysis.words,
-            heading_styles: headings::heading_styles(class, chapters),
-        }
-    }
-}
-
 /// The outline nested by depth. A heading deeper than the one before it goes
 /// under it, so a subsection before any section sits flush, not under a
 /// missing parent.
@@ -151,29 +128,43 @@ pub fn current_heading(outline: &[Heading], file: &str, line: usize) -> Option<u
     })
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Serialize)]
+/// A session's `analyze` answer: the outline as a tree, the words, and the
+/// levels the main file's class has, as it sets and numbers them. The
+/// outline itself is kept for `outline_current`.
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Analysis {
+    #[serde(skip)]
     pub outline: Vec<Heading>,
+    pub tree: Vec<OutlineNode>,
     pub words: usize,
+    pub heading_styles: Vec<headings::Level>,
 }
 
 /// The document LaTeX reads from the main file, into the files its \input,
 /// \include and \subfile name (each once, so a loop ends): the headings in
 /// reading order, each with its file, and the words of them all. `open` is the
 /// editor's file: when the main file doesn't reach it, the document is that
-/// file alone.
-pub fn analyze_project(root: &Path, main: &str, open: &str) -> Analysis {
-    let Ok(open) = paths::rel_key(open) else {
-        return Analysis::default();
-    };
-    let key = paths::fold_case(&open);
+/// file alone. `class` is the main file's; a class it doesn't know numbers
+/// its headings as a book's once the document has chapters.
+pub fn analyze_project(
+    root: &Path,
+    main: &str,
+    open: &str,
+    class: Option<&headings::DocumentClass>,
+) -> Analysis {
     let mut analysis = Analysis::default();
-    let mut seen = HashSet::new();
-    read(root, main, &mut seen, &mut analysis);
-    if !seen.contains(&key) {
-        analysis = Analysis::default();
-        read(root, &open, &mut HashSet::new(), &mut analysis);
+    if let Ok(open) = paths::rel_key(open) {
+        let mut seen = HashSet::new();
+        read(root, main, &mut seen, &mut analysis);
+        if !seen.contains(&paths::fold_case(&open)) {
+            analysis = Analysis::default();
+            read(root, &open, &mut HashSet::new(), &mut analysis);
+        }
     }
+    let chapters = analysis.outline.iter().any(|h| h.command == "chapter");
+    analysis.tree = outline_tree(&analysis.outline);
+    analysis.heading_styles = headings::heading_styles(class, chapters);
     analysis
 }
 
@@ -191,53 +182,36 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
         return;
     };
     let text = crate::lossy_string(text);
-    // The file's headings and inputs in reading order, one heading a line,
-    // found as its words are counted: by the scanner, so none is in a
-    // comment, maths or literal code.
-    let (mut found, mut heading_line) = (Vec::new(), None);
-    into.words += prose::words(&text, |text, name, name_end| {
+    // The file's headings in reading order, one a line, and the files it
+    // reads in, read where it does: found as its words are counted, by the
+    // scanner, so none is in a comment, maths or literal code.
+    let mut heading_line = None;
+    let words = prose::words(&text, |text, name, name_end| {
         let line = text.line_index(name_end as u32) + 1;
         let units = &text.units;
-        if let Some(depth) = CATALOG
-            .heading_levels
-            .iter()
-            .position(|l| l.command == name)
-        {
+        let mut levels = CATALOG.heading_levels.iter();
+        if let Some(depth) = levels.position(|l| l.command == name) {
             if heading_line != Some(line)
                 && let Some(title) = title(units, name_end)
             {
                 let heading = Heading::new(depth, plain_title(&title), line, Some(file.clone()));
-                found.push(Found::Heading(heading));
+                into.outline.push(heading);
             }
             heading_line = Some(line);
         } else if matches!(name, "input" | "include" | "subfile")
             && let Some(name) = input_name(units, name_end, name == "input")
         {
-            found.push(Found::Input(name));
-        }
-    });
-    for found in found {
-        match found {
-            Found::Heading(heading) => into.outline.push(heading),
-            Found::Input(name) => {
-                let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(&name));
-                // TeX tries name.tex before the name as written.
-                if let Some(input) = [tex, name]
-                    .into_iter()
-                    .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
-                {
-                    read(root, &input, seen, into);
-                }
+            let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(&name));
+            // TeX tries name.tex before the name as written.
+            if let Some(input) = [tex, name]
+                .into_iter()
+                .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
+            {
+                read(root, &input, seen, into);
             }
         }
-    }
-}
-
-/// What a file has for the outline.
-enum Found {
-    Heading(Heading),
-    /// A file it reads in, as named.
-    Input(String),
+    });
+    into.words += words;
 }
 
 /// A heading's title, from where its command's name ends: past its star and
@@ -319,23 +293,6 @@ fn input_name(units: &[u16], name_end: usize, bare: bool) -> Option<String> {
     (!name.is_empty() && !name.contains(['{', '%'])).then(|| name.to_owned())
 }
 
-/// The brace group opened just before `rest`, up to its matching `}`, so a
-/// title keeps its nested groups; None when it doesn't close.
-fn brace_group(rest: &str) -> Option<&str> {
-    let (mut depth, mut escaped) = (0, false);
-    for (i, b) in rest.bytes().enumerate() {
-        match b {
-            _ if escaped => escaped = false,
-            b'\\' => escaped = true,
-            b'{' => depth += 1,
-            b'}' if depth == 0 => return Some(&rest[..i]),
-            b'}' => depth -= 1,
-            _ => {}
-        }
-    }
-    None
-}
-
 /// A title as the outline shows it: styles, labels and grouping braces gone,
 /// spaces collapsed; none when nothing is left.
 fn plain_title(title: &str) -> Option<String> {
@@ -344,8 +301,8 @@ fn plain_title(title: &str) -> Option<String> {
     while let Some(m) = TITLE_DROP.find(rest) {
         title.push_str(&rest[..m.start()]);
         rest = &rest[m.end()..];
-        if let Some(group) = brace_group(rest) {
-            rest = &rest[group.len() + 1..];
+        if let Some(close) = scan::closing_brace(rest) {
+            rest = &rest[close + 1..];
         } else {
             title.push_str(m.as_str());
         }
@@ -458,15 +415,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         for &(text, outline, words) in cases {
             fs::write(dir.path().join("main.tex"), text).unwrap();
-            let expected = Analysis {
-                outline: outline
-                    .iter()
-                    .map(|&(depth, title, line)| heading(depth, title, "main.tex", line))
-                    .collect(),
-                words,
-            };
-            let found = analyze_project(dir.path(), "main.tex", "main.tex");
-            assert_eq!(found, expected, "{text}");
+            let expected: Vec<_> = outline
+                .iter()
+                .map(|&(depth, title, line)| heading(depth, title, "main.tex", line))
+                .collect();
+            let found = analyze_project(dir.path(), "main.tex", "main.tex", None);
+            assert_eq!((found.outline, found.words), (expected, words), "{text}");
         }
     }
 
@@ -557,7 +511,7 @@ mod tests {
                 .map(|h| (h.title.as_str(), h.file.as_deref(), h.line))
                 .collect()
         }
-        let whole = analyze_project(dir.path(), "main.tex", "chapters/a.tex");
+        let whole = analyze_project(dir.path(), "main.tex", "chapters/a.tex", None);
         assert_eq!(
             headings(&whole),
             [
@@ -569,7 +523,7 @@ mod tests {
         );
         // Its files' names aren't words.
         assert_eq!(whole.words, 8);
-        let loose = analyze_project(dir.path(), "main.tex", "loose.tex");
+        let loose = analyze_project(dir.path(), "main.tex", "loose.tex", None);
         assert_eq!(headings(&loose), [("Loose", Some("loose.tex"), 1)]);
         assert_eq!(loose.words, 2);
     }
@@ -613,7 +567,7 @@ mod tests {
         ];
         for (files, open, titles) in cases {
             let dir = project(files);
-            let found = analyze_project(dir.path(), "main.tex", open).outline;
+            let found = analyze_project(dir.path(), "main.tex", open, None).outline;
             let found: Vec<_> = found.iter().map(|h| h.title.as_str()).collect();
             assert_eq!(found, titles, "{files:?} with {open} open");
         }
