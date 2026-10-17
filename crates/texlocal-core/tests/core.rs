@@ -6,11 +6,13 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 use tempfile::TempDir;
 use texlocal_core::CoreError;
+use texlocal_core::import::import_project;
 use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file};
 use texlocal_core::projects::{
-    SymbolScan, Symbols, create_file, create_project, file_tree, list_projects, rename_entry,
-    rename_project, search_project,
+    SymbolScan, Symbols, create_file, create_project, create_project_with_engine, file_tree,
+    list_projects, rename_entry, rename_project, search_project,
 };
+use texlocal_core::service::Service;
 use texlocal_core::settings::{
     UiPatch, compiled_pdf_path, read_settings, write_settings, write_ui,
 };
@@ -155,8 +157,7 @@ fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rul
     assert_eq!(err.status, 400, "{}", err.message);
     assert_eq!(names_in(&root.join("moved")), ["x.tex"]);
     // create_entry and uploads accept a leading "-"; only the main file, which
-    // reaches latexmk's command line, may not start with one. Deleting one is
-    // covered in projects.rs, against a stand-in for the platform trash.
+    // reaches latexmk's command line, may not start with one.
     create_file(&root, "-draft.tex", false).unwrap();
     let result = rename_entry(&root, "-draft.tex", "-notes/-draft.tex").unwrap();
     assert_eq!(result.to, "-notes/-draft.tex");
@@ -690,4 +691,56 @@ fn the_tree_scans_and_zip_follow_only_links_to_files_inside_the_project_however_
     // comparison would archive the ZIP's own half-written temporary file.
     export_zip(&root, &alias.join("again.zip")).unwrap();
     assert_eq!(zip_names(&root.join("again.zip")), zip_names(&dest));
+}
+
+#[test]
+fn a_project_exported_and_opened_again_keeps_every_file_the_author_made() {
+    let (data, root) = project("round-trip");
+    create_file(&root, "chapters/intro.tex", false).unwrap();
+    for (path, text) in [
+        (".latexmkrc", "pdf_mode = 1;"),
+        (".gitignore", "build/"),
+        (".git/HEAD", "ref"),
+        (".DS_Store", "x"),
+        ("build/main.pdf", "output"),
+    ] {
+        let file = root.join(path);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, text).unwrap();
+    }
+    write_settings(&root, &json!({ "engine": "lualatex" })).unwrap();
+    let zip = data.path().join("out.zip");
+    export_zip(&root, &zip).unwrap();
+
+    let service = Service::new(data.path().join("again"));
+    let info = import_project(&service, &zip).unwrap();
+    let copy = service.data_dir.join(&info.id);
+    let expected = [
+        ".gitignore",
+        ".latexmkrc",
+        ".texlocal.json",
+        "chapters",
+        "main.tex",
+    ];
+    assert_eq!(names_in(&copy), expected);
+    assert_eq!(
+        fs::read_to_string(copy.join(".latexmkrc")).unwrap(),
+        "pdf_mode = 1;"
+    );
+    // The settings are the project's own and are not carried in the archive.
+    assert_eq!(read_settings(&copy).engine, "pdflatex");
+}
+
+#[test]
+fn a_project_is_made_whole_with_its_engine_or_not_at_all() {
+    let data = data_dir();
+    let made = create_project_with_engine(data.path(), "Thesis", "report", Some("xelatex"));
+    let made = made.unwrap();
+    assert_eq!(read_settings(&data.path().join(&made.id)).engine, "xelatex");
+    fails_with(
+        create_project_with_engine(data.path(), "Other", "blank", Some("word")),
+        "Unknown engine",
+    );
+    // No folder, and no hidden one it was built in, is left by the refusal.
+    assert_eq!(names_in(data.path()), ["Thesis"]);
 }

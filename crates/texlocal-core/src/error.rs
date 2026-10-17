@@ -1,5 +1,6 @@
 use std::fmt;
 use std::io::{self, ErrorKind};
+use std::path::Path;
 
 /// An error with an HTTP status code, which the FFI reports as `status`.
 #[derive(Debug, Clone)]
@@ -30,6 +31,15 @@ impl CoreError {
     }
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(500, message)
+    }
+
+    /// `err` as an error that names `path`, for the files a person chose: the
+    /// OS's own words ("No such file or directory") leave an alert without one.
+    pub(crate) fn at(path: &Path) -> impl FnOnce(io::Error) -> Self + '_ {
+        move |err| {
+            let Self { status, message } = Self::from(err);
+            Self::new(status, format!("“{}”: {message}", path.display()))
+        }
     }
 }
 
@@ -87,5 +97,12 @@ mod tests {
         ] {
             assert_eq!(CoreError::from(io::Error::from(kind)).status, status);
         }
+        let named = CoreError::at(Path::new("/a/b.tex"))(io::Error::from(ErrorKind::NotFound));
+        assert_eq!(named.status, 404);
+        assert!(
+            named.message.starts_with("“/a/b.tex”: "),
+            "{}",
+            named.message
+        );
     }
 }
