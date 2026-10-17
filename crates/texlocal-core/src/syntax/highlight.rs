@@ -1,9 +1,14 @@
 //! Highlighting by the rules of CodeMirror's stex mode
-//! (@codemirror/legacy-modes), token for token, whose token names the kinds
-//! keep. Line by line, each line starting from the state the one
-//! before left; those states are kept, so an edit re-reads only from its
+//! (@codemirror/legacy-modes), whose token names the kinds keep, token for
+//! token but where stex reads TeX otherwise than TeX does: what \verb and
+//! the verbatim environments hold is plain, a line of spaces (or a carriage
+//! return) is blank, a `%` after a number starts a comment, and any letter
+//! in maths is a letter. Line by line, each line starting from the state the
+//! one before left; those states are kept, so an edit re-reads only from its
 //! line, and only as far as asked.
 
+use super::catalog::CATALOG;
+use super::scan::blank_line;
 use super::stack::Stack;
 use super::{NAME, Text, ascii, letter, space};
 
@@ -29,6 +34,21 @@ pub enum HighlightKind {
     StringLiteral,
     /// Its second (builtin).
     Builtin,
+}
+
+impl HighlightKind {
+    /// Every kind, in the C ABI's order.
+    pub const ALL: [Self; 9] = [
+        Self::Command,
+        Self::Argument,
+        Self::MathDelimiter,
+        Self::MathIdentifier,
+        Self::Number,
+        Self::Comment,
+        Self::Invalid,
+        Self::StringLiteral,
+        Self::Builtin,
+    ];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +118,12 @@ enum Mode {
     Math(&'static str),
     /// After a command, where its arguments may start.
     Arguments,
+    /// After `\begin`, the `{name}` of this verbatim environment.
+    Opening(&'static str),
+    /// In this verbatim environment, until its `\end`.
+    Verbatim(&'static str),
+    /// At \verb's delimiter, this.
+    Verb(u16),
 }
 
 #[derive(Clone, Copy)]
@@ -148,10 +174,13 @@ fn styles(name: &[u16]) -> &'static [Option<HighlightKind>] {
 }
 
 /// A line's runs, given the state it starts in, which it leaves as the next
-/// line's. An empty line ends everything open (stex's blankLine).
+/// line's. A blank line ends everything open (stex's blankLine) but a
+/// verbatim environment, which may hold one.
 fn tokenize(line: &[u16], state: &mut State, mut run: impl FnMut(usize, usize, HighlightKind)) {
-    if line.is_empty() {
-        *state = State::default();
+    if blank_line(line) {
+        if !matches!(state.mode, Mode::Verbatim(_)) {
+            *state = State::default();
+        }
         return;
     }
     let mut s = Stream { text: line, pos: 0 };
@@ -161,6 +190,9 @@ fn tokenize(line: &[u16], state: &mut State, mut run: impl FnMut(usize, usize, H
             Mode::Normal => normal(&mut s, state),
             Mode::Math(end) => math(&mut s, state, end),
             Mode::Arguments => arguments(&mut s, state),
+            Mode::Opening(name) => opening(&mut s, state, name),
+            Mode::Verbatim(name) => verbatim(&mut s, state, name),
+            Mode::Verb(delimiter) => verb(&mut s, state, delimiter),
         };
         if let Some(kind) = kind {
             run(from, s.pos, kind);
@@ -174,8 +206,22 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
             s.pos += 1;
             let name = s.pos;
             s.eat_while(command_letter);
-            open(&mut state.commands, styles(&s.text[name..s.pos]));
-            state.mode = Mode::Arguments;
+            let name = &s.text[name..s.pos];
+            match ascii(name, &mut [0; NAME]) {
+                "verb" => {
+                    s.eat("*");
+                    if let Some(delimiter) = s.peek() {
+                        state.mode = Mode::Verb(delimiter);
+                    }
+                }
+                "begin" if let Some(name) = verbatim_environment(&s.text[s.pos..]) => {
+                    state.mode = Mode::Opening(name);
+                }
+                _ => {
+                    open(&mut state.commands, styles(name));
+                    state.mode = Mode::Arguments;
+                }
+            }
             return Some(Command);
         }
         if s.at(1).is_some_and(|u| one_of(u, "$&%#{}_,;!/\\")) {
@@ -209,7 +255,8 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
         open(&mut state.commands, &[]);
         None
     } else if is_digit(c) {
-        s.eat_while(|u| word(u) || one_of(u, ".%"));
+        // Not stex's `%` too, which TeX reads as a comment's start.
+        s.eat_while(|u| word(u) || u == b'.' as u16);
         Some(Argument)
     } else {
         s.eat_while(|u| word(u) || u == b'-' as u16);
@@ -237,8 +284,8 @@ fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<Highligh
         s.eat_while(|u| letter(u) || u == b'@' as u16);
         return Some(Command);
     }
-    if letter(c) {
-        s.eat_while(letter);
+    if math_letter(c) {
+        s.eat_while(math_letter);
         return Some(MathIdentifier);
     }
     if c == b'\\' as u16 && next.is_some_and(|u| one_of(u, "$&%#{}_,;!/")) {
@@ -290,6 +337,56 @@ fn arguments(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
     state.mode = Mode::Normal;
     state.commands.pop();
     normal(s, state)
+}
+
+/// The verbatim environment a `\begin` opens, from what follows it.
+fn verbatim_environment(rest: &[u16]) -> Option<&'static str> {
+    if rest.first() != Some(&(b'{' as u16)) {
+        return None;
+    }
+    let close = rest.iter().take(NAME).position(|&u| u == b'}' as u16)?;
+    let mut buf = [0; NAME];
+    let name = ascii(&rest[1..close], &mut buf);
+    let names = CATALOG.verbatim_environments.iter();
+    names.map(String::as_str).find(|&n| n == name)
+}
+
+/// The `{name}` after a verbatim environment's `\begin`, as stex has it,
+/// then its body.
+fn opening(s: &mut Stream, state: &mut State, name: &'static str) -> Option<HighlightKind> {
+    match char::from_u32(s.next() as u32) {
+        Some('{') => None,
+        Some('}') => {
+            state.mode = Mode::Verbatim(name);
+            None
+        }
+        _ => {
+            s.pos += name.len() - 1;
+            Some(Argument)
+        }
+    }
+}
+
+/// A verbatim environment's body, plain to its `\end`, which reads as ever.
+fn verbatim(s: &mut Stream, state: &mut State, name: &'static str) -> Option<HighlightKind> {
+    let end: Vec<u16> = format!("\\end{{{name}}}").encode_utf16().collect();
+    match s.text[s.pos..].windows(end.len()).position(|w| w == end) {
+        Some(at) => {
+            s.pos += at;
+            state.mode = Mode::Normal;
+        }
+        None => s.pos = s.text.len(),
+    }
+    None
+}
+
+/// \verb's code, plain from its delimiter to the next, or to its line's end.
+fn verb(s: &mut Stream, state: &mut State, delimiter: u16) -> Option<HighlightKind> {
+    s.pos += 1;
+    s.eat_while(|u| u != delimiter);
+    s.pos = (s.pos + 1).min(s.text.len());
+    state.mode = Mode::Normal;
+    None
 }
 
 struct Stream<'a> {
@@ -348,12 +445,17 @@ fn word(u: u16) -> bool {
 
 /// A command name's letters: [a-zA-Z@\xc0-\u1fff\u2060-\uffff].
 fn command_letter(u: u16) -> bool {
-    letter(u) || u == b'@' as u16 || (0xc0..=0x1fff).contains(&u) || u >= 0x2060
+    u == b'@' as u16 || math_letter(u)
+}
+
+/// A letter in maths: ASCII's, and the units of a command name's beyond it,
+/// as in `\text{größe}` or a Greek letter typed as itself.
+fn math_letter(u: u16) -> bool {
+    letter(u) || (0xc0..=0x1fff).contains(&u) || u >= 0x2060
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Highlight;
     use super::HighlightKind::*;
     use crate::syntax::{SourceDocument, utf16};
 
@@ -412,6 +514,52 @@ mod tests {
         // An edit re-reads from its line: closing the maths makes the rest text.
         doc.edit(0, 0, "$$"); // "$$$$\nx…": opened and closed on line 1
         assert_eq!(doc.highlights(5, 1).len(), 0);
+        // A blank line may hold spaces, or a Windows line ending's return.
+        for blank in ["\r", "  \t"] {
+            let source = format!("$$ x\n{blank}\ny");
+            assert_eq!(runs(&source), ["$$ MathDelimiter", "x MathIdentifier"]);
+        }
+    }
+
+    #[test]
+    fn where_stex_reads_tex_otherwise() {
+        // A % after a number is a comment, as TeX has it.
+        assert_eq!(runs("0.5% see $x"), ["0.5 Argument", "% see $x Comment"]);
+        // Any letter in maths is a letter, not an error.
+        assert_eq!(
+            runs("$\\text{größe} + α$"),
+            [
+                "$ MathDelimiter",
+                "\\text Command",
+                "größe MathIdentifier",
+                "α MathIdentifier",
+                "$ MathDelimiter"
+            ]
+        );
+        // What a listing and \verb hold is plain, blank lines and all.
+        let listing = "\\begin{lstlisting}\n$ make all # shell\n\nx = 5 % 3\n\\end{lstlisting} $y$";
+        let after = ["$ MathDelimiter", "y MathIdentifier", "$ MathDelimiter"];
+        let around = ["\\begin Command", "lstlisting Argument", "\\end Command"];
+        assert_eq!(
+            runs(listing),
+            [&around[..], &["lstlisting Argument"], &after].concat()
+        );
+        assert_eq!(
+            runs("\\verb|$x%| $y$"),
+            [&["\\verb Command"][..], &after].concat()
+        );
+        // Unclosed, \verb ends with its line.
+        assert_eq!(
+            runs("\\verb*|$x\n$y$"),
+            [&["\\verb* Command"][..], &after].concat()
+        );
+    }
+
+    #[test]
+    fn every_kind_in_the_c_abi_s_order() {
+        for (i, kind) in super::HighlightKind::ALL.into_iter().enumerate() {
+            assert_eq!(kind as usize, i);
+        }
     }
 
     /// Below `n`, from a seeded linear congruential generator.
@@ -424,8 +572,24 @@ mod tests {
 
     #[test]
     fn edits_leave_the_runs_a_fresh_read_gives() {
-        const PIECES: [&str; 12] = [
-            "\\begin{", "}", "$", "$$", "\n", "\n\n", "% c", "\\[", "\\]", "x", "{", "\\cite",
+        const PIECES: [&str; 17] = [
+            "\\begin{",
+            "}",
+            "$",
+            "$$",
+            "\n",
+            "\n\n",
+            "% c",
+            "\\[",
+            "\\]",
+            "x",
+            "{",
+            "\\cite",
+            "\\begin{verbatim}",
+            "\\end{verbatim}",
+            "\\verb|",
+            "\r\n",
+            "é",
         ];
         let mut next = seeded(7);
         let mut doc = SourceDocument::new("");
@@ -453,61 +617,6 @@ mod tests {
         let runs = doc.highlights(3, 1);
         assert_eq!(runs.len(), 1);
         assert_eq!((runs[0].start, runs[0].length), (3, 2));
-    }
-
-    #[test]
-    fn runs_are_as_the_plain_command_stack_gave_them() {
-        // The runs of 300 seeded documents of braces, commands, maths and
-        // line breaks, each read whole and again after an edit part way, as
-        // one FNV-1a hash, as when the open commands were a vector, cloned
-        // for each line and searched for each word.
-        const PIECES: [&str; 26] = [
-            "{",
-            "{",
-            "[",
-            "}",
-            "]",
-            "\\cite",
-            "\\begin",
-            "\\documentclass",
-            "\\importmodule",
-            "\\emph",
-            "\\usepackage",
-            " word",
-            "x-y",
-            "42",
-            "\n",
-            "\n",
-            "\n\n",
-            "$",
-            "$$",
-            "% c\n",
-            "\\[",
-            "\\]",
-            "\\%",
-            "\\\\",
-            " ",
-            "é",
-        ];
-        let mut next = seeded(11);
-        let mut hash = 0xcbf2_9ce4_8422_2325u64;
-        let mut add = |runs: Vec<Highlight>| {
-            for run in runs {
-                for value in [run.start, run.length, run.kind as u32] {
-                    hash = (hash ^ u64::from(value)).wrapping_mul(0x100_0000_01b3);
-                }
-            }
-        };
-        for _ in 0..300 {
-            let pieces = 1 + next(120);
-            let source: String = (0..pieces).map(|_| PIECES[next(PIECES.len())]).collect();
-            let mut doc = SourceDocument::new(&source);
-            add(doc.highlights(0, utf16(&source) as u32));
-            let at = next(utf16(&source) + 1) as u32;
-            doc.edit(at, 0, "{\\label{");
-            add(doc.highlights(0, utf16(&doc.text()) as u32));
-        }
-        assert_eq!(hash, 572_227_848_898_975_436);
     }
 
     #[test]

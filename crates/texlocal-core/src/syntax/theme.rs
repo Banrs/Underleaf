@@ -222,37 +222,20 @@ pub struct Appearance {
 /// A theme's legible colours in an appearance, by highlight kind, in
 /// `HighlightKind`'s order.
 pub fn theme_colors(theme: &Theme, appearance: &Appearance) -> Vec<Rgba> {
-    use HighlightKind::*;
-    [
-        Command,
-        Argument,
-        MathDelimiter,
-        MathIdentifier,
-        Number,
-        Comment,
-        Invalid,
-        StringLiteral,
-        Builtin,
-    ]
-    .into_iter()
-    .map(|kind| {
-        let color = theme.color(kind);
-        let resolved = color
-            .system
-            .and_then(|name| appearance.system.get(name).copied())
-            .unwrap_or(if appearance.dark {
+    let ratio = text_contrast(appearance.increase_contrast);
+    let colors = HighlightKind::ALL.into_iter().map(|kind| theme.color(kind));
+    colors
+        .map(|color| {
+            let published = if appearance.dark {
                 color.dark
             } else {
                 color.light
-            });
-        legible(
-            resolved,
-            appearance.background,
-            appearance.fill,
-            text_contrast(appearance.increase_contrast),
-        )
-    })
-    .collect()
+            };
+            let system = color.system.and_then(|name| appearance.system.get(name));
+            let resolved = system.copied().unwrap_or(published);
+            legible(resolved, appearance.background, appearance.fill, ratio)
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -42,6 +42,11 @@ fn tex_space(u: u16) -> bool {
     matches!(u, 0x09 | 0x0d | 0x20)
 }
 
+/// A line of nothing but TeX's spaces, or of nothing: the end of a paragraph.
+pub(crate) fn blank_line(line: &[u16]) -> bool {
+    line.iter().all(|&u| tex_space(u))
+}
+
 /// Where the spaces from `from` end.
 fn spaces_end(src: &[u16], from: usize) -> usize {
     from + src[from..].iter().take_while(|&&u| tex_space(u)).count()
