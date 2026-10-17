@@ -14,7 +14,7 @@ use super::Msg;
 use super::actor::{Actor, Later};
 use crate::CoreError;
 use crate::projects::file_kind;
-use crate::texpresso::{Caret, Events, FileBuffer, Pane, Status};
+use crate::texpresso::{Events, FileBuffer, Pane, Status};
 
 const DIDNT_START: &str =
     "TeXpresso didn’t start. Check its location in Settings and the log below.";
@@ -164,7 +164,8 @@ impl Actor {
         live.synced.clear();
         live.sent.clear();
         (live.halted, live.started, live.sent_view, live.caret) = (false, None, None, None);
-        live.version = 0;
+        // Each start's revisions begin again.
+        (live.version, live.revision) = (0, 0);
     }
 
     pub fn live_cancel_work(&mut self) {
@@ -251,7 +252,7 @@ impl Actor {
         let caret = self.live.wanted.clone().filter(|_| !self.live.window);
         let pane = (!self.live.window).then(|| Pane {
             view: self.live.view,
-            caret: caret.clone().map(|(path, offset)| Caret { path, offset }),
+            caret: caret.clone(),
         });
         let start = self
             .engine

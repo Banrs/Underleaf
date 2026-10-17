@@ -94,5 +94,5 @@ in `crates/texlocal-core/src/session/tests.rs`, which run with `cargo test --wor
 - Sessions are temporary: closing the project stops them. A preview is its project session's;
   starting live in another session of the project replaces the previous preview, whose late
   requests cannot affect the new one.
-- Host validation failures, such as a file over 8 MB, stay visible until that file is
-  accepted and do not block other files.
+- A file TeXpresso can't be sent (a path outside the project, a folder, text with a NUL)
+  is reported until that file is accepted, and does not block other files.
