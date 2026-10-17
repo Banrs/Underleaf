@@ -10,23 +10,9 @@ use regex::Regex;
 use serde::Serialize;
 
 use crate::paths;
-use crate::syntax::catalog::{CATALOG, alternation};
-use crate::syntax::headings;
+use crate::syntax::catalog::CATALOG;
+use crate::syntax::{headings, prose, scan};
 
-static COMMENT_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*%").unwrap());
-static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(^|[^\\])%.*$").unwrap());
-// Headings, inputs and their literal boundaries in reading order. Consume other
-// control sequences too, so an escaped slash cannot start a command.
-static TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    let headings = alternation(CATALOG.heading_levels.iter().map(|level| &level.command));
-    let literals = alternation(&CATALOG.verbatim_environments);
-    Regex::new(&format!(
-        r"%|\\(?:(?P<heading>{headings})\*?\s*(?:\[[^\]]*\])?\s*\{{|(?:input|include|subfile)\s*\{{(?P<braced>[^{{}}%]+)\}}|input\s+(?P<bare>[^{{}}\\%\s]+)|begin\s*\{{(?P<literal>{literals})\}}|verb\*?(?P<delimiter>[^A-Za-z])|[A-Za-z]+|.)"
-    ))
-    .unwrap()
-});
-static COMMAND: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])?").unwrap());
 // What a title drops whole: \texorpdfstring's TeX argument (its PDF string is
 // the group after), labels and notes.
 static TITLE_DROP: LazyLock<Regex> =
@@ -38,8 +24,6 @@ static TITLE_STYLE: LazyLock<Regex> = LazyLock::new(|| {
 // Grouping braces go; an escaped special shows as itself.
 static TITLE_BRACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([{}&%$#_])|[{}]").unwrap());
 static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
-// What separates words: spaces and TeX's special characters.
-static WORD_BREAK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\s{}$&_^~\\%]").unwrap());
 
 /// A sectioning command: its depth (0 for \part to 5 for \paragraph),
 /// command and level, its title as plain text, its 1-based line and, in a
@@ -154,11 +138,17 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
 
 /// The heading a line of a file is under, as its place in `outline`: the
 /// file's last at or above the line. None above the file's first, since where
-/// the file is read in isn't known.
+/// the file is read in isn't known. Its name is matched as the analysis
+/// matches files, so `\input{chapters/one}` is `Chapters/One.tex` where
+/// names fold case, as on the Mac's and Windows' disks.
 pub fn current_heading(outline: &[Heading], file: &str, line: usize) -> Option<usize> {
-    outline
-        .iter()
-        .rposition(|h| h.file.as_deref() == Some(file) && h.line <= line)
+    let file = paths::fold_case(file);
+    outline.iter().rposition(|h| {
+        h.line <= line
+            && h.file
+                .as_deref()
+                .is_some_and(|f| paths::fold_case(f) == file)
+    })
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Serialize)]
@@ -201,65 +191,136 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
         return;
     };
     let text = crate::lossy_string(text);
-    let mut literal: Option<String> = None;
-    for (index, line) in text.lines().enumerate() {
-        if !COMMENT_LINE.is_match(line) {
-            into.words += words(line);
+    // The file's headings and inputs in reading order, one heading a line,
+    // found as its words are counted: by the scanner, so none is in a
+    // comment, maths or literal code.
+    let (mut found, mut heading_line) = (Vec::new(), None);
+    into.words += prose::words(&text, |text, name, name_end| {
+        let line = text.line_index(name_end as u32) + 1;
+        let units = &text.units;
+        if let Some(depth) = CATALOG
+            .heading_levels
+            .iter()
+            .position(|l| l.command == name)
+        {
+            if heading_line != Some(line)
+                && let Some(title) = title(units, name_end)
+            {
+                let heading = Heading::new(depth, plain_title(&title), line, Some(file.clone()));
+                found.push(Found::Heading(heading));
+            }
+            heading_line = Some(line);
+        } else if matches!(name, "input" | "include" | "subfile")
+            && let Some(name) = input_name(units, name_end, name == "input")
+        {
+            found.push(Found::Input(name));
         }
-        let mut code = line;
-        let mut heading_on_line = false;
-        loop {
-            if let Some(end) = literal.as_ref() {
-                let Some((_, rest)) = code.split_once(end.as_str()) else {
-                    break;
-                };
-                code = rest;
-                literal = None;
-            }
-            let Some(m) = TOKEN.captures(code) else {
-                break;
-            };
-            let token = m.get(0).unwrap();
-            if token.as_str() == "%" {
-                break;
-            }
-            code = &code[token.end()..];
-            if let Some(heading) = m.name("heading") {
-                if !heading_on_line && let Some(title) = brace_group(code) {
-                    let depth = CATALOG
-                        .heading_levels
-                        .iter()
-                        .position(|level| level.command == heading.as_str())
-                        .expect("a heading level of the catalog");
-                    let (title, line) = (plain_title(title), index + 1);
-                    into.outline
-                        .push(Heading::new(depth, title, line, Some(file.clone())));
-                }
-                heading_on_line = true;
-            } else if let Some(name) = m.name("braced").or_else(|| m.name("bare")) {
-                let name = name.as_str().trim();
-                let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
+    });
+    for found in found {
+        match found {
+            Found::Heading(heading) => into.outline.push(heading),
+            Found::Input(name) => {
+                let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(&name));
                 // TeX tries name.tex before the name as written.
-                if let Some(input) = [tex, name.to_owned()]
+                if let Some(input) = [tex, name]
                     .into_iter()
                     .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
                 {
                     read(root, &input, seen, into);
                 }
-            } else if let Some(environment) = m.name("literal") {
-                literal = Some(format!("\\end{{{}}}", environment.as_str()));
-            } else if let Some(delimiter) = m.name("delimiter") {
-                let Some((_, rest)) = code.split_once(delimiter.as_str()) else {
-                    break;
-                };
-                code = rest;
             }
         }
     }
 }
 
+/// What a file has for the outline.
+enum Found {
+    Heading(Heading),
+    /// A file it reads in, as named.
+    Input(String),
+}
+
+/// A heading's title, from where its command's name ends: past its star and
+/// short title, its braced argument, which may run on over line breaks, as
+/// a hard-wrapped title does, but not past a blank line; without comments.
+fn title(units: &[u16], name_end: usize) -> Option<String> {
+    let at = |i: usize, c: char| units.get(i) == Some(&(c as u16));
+    let mut i = spaces(units, name_end)?;
+    if at(i, '*') {
+        i = spaces(units, i + 1)?;
+    }
+    if at(i, '[') {
+        i = spaces(units, argument(units, i)?.1)?;
+    }
+    let (title, _) = at(i, '{').then(|| argument(units, i))??;
+    Some(String::from_utf16_lossy(&title))
+}
+
+/// Past the spaces from `i`, line breaks among them, but not a blank line.
+fn spaces(units: &[u16], mut i: usize) -> Option<usize> {
+    while let Some(&u) = units.get(i) {
+        if u == '\n' as u16 && scan::paragraph_end(units, i) {
+            return None;
+        }
+        if !char::from_u32(u as u32).is_some_and(char::is_whitespace) {
+            break;
+        }
+        i += 1;
+    }
+    Some(i)
+}
+
+/// The argument whose `{` or `[` is at `open`, without its comments, and
+/// where it ends: at its close, braces nesting and escaped ones not
+/// counting; none when a blank line comes first.
+fn argument(units: &[u16], open: usize) -> Option<(Vec<u16>, usize)> {
+    let close = if units[open] == '[' as u16 { ']' } else { '}' };
+    let (mut text, mut depth, mut i) = (Vec::new(), 0usize, open + 1);
+    while let Some(&u) = units.get(i) {
+        match char::from_u32(u as u32).unwrap_or_default() {
+            // An escape, but not of a line feed: that may end the paragraph.
+            '\\' if units.get(i + 1).is_some_and(|&next| next != '\n' as u16) => {
+                text.extend_from_slice(&units[i..i + 2]);
+                i += 2;
+                continue;
+            }
+            '%' => {
+                i += units[i..].iter().take_while(|&&u| u != '\n' as u16).count();
+                continue;
+            }
+            '\n' if scan::paragraph_end(units, i) => return None,
+            c if c == close && depth == 0 => return Some((text, i + 1)),
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        text.push(u);
+        i += 1;
+    }
+    None
+}
+
+/// The file an \input, \include or \subfile names on its line: in braces,
+/// or for \input (`bare`) also as TeX reads a name without them, to a space.
+fn input_name(units: &[u16], name_end: usize, bare: bool) -> Option<String> {
+    let rest = &units[name_end..];
+    let line = rest.iter().position(|&u| u == '\n' as u16);
+    let line = String::from_utf16_lossy(&rest[..line.unwrap_or(rest.len())]);
+    let after = line.trim_start();
+    let name = match after.strip_prefix('{') {
+        Some(braced) => braced.split_once('}')?.0,
+        None if bare && after.len() < line.len() => {
+            let end = after.find(|c: char| c.is_whitespace() || "{}\\%".contains(c));
+            &after[..end.unwrap_or(after.len())]
+        }
+        None => return None,
+    };
+    let name = name.trim();
+    (!name.is_empty() && !name.contains(['{', '%'])).then(|| name.to_owned())
+}
+
 /// The brace group opened just before `rest`, up to its matching `}`, so a
-/// title keeps its nested groups; None when it doesn't close on the line.
+/// title keeps its nested groups; None when it doesn't close.
 fn brace_group(rest: &str) -> Option<&str> {
     let (mut depth, mut escaped) = (0, false);
     for (i, b) in rest.bytes().enumerate() {
@@ -296,18 +357,6 @@ fn plain_title(title: &str) -> Option<String> {
         "" => None,
         title => Some(title.into()),
     }
-}
-
-/// Rough word count of a line's code: drop commands and TeX's special
-/// characters, and count the runs left that contain a letter.
-fn words(line: &str) -> usize {
-    let code = COMMENT
-        .captures(line)
-        .map_or(line, |m| &line[..m.get(1).unwrap().end()]);
-    WORD_BREAK
-        .split(&COMMAND.replace_all(code, " "))
-        .filter(|w| w.chars().any(char::is_alphabetic))
-        .count()
 }
 
 #[cfg(test)]
@@ -350,9 +399,21 @@ mod tests {
                 &[
                     (2, "Starred", 1),
                     (2, "Long title", 2),
+                    (3, "Spaced", 3),
                     (2, "After a no-break space", 4),
                 ],
-                9,
+                10,
+            ),
+            // Titles that wrap, and one on the line after its command; not
+            // across a blank line, nor its comment.
+            (
+                "\\section{A title the editor\n  wraps at eighty}\n\\section\n{Next line}\n\\section{Not\n\nclosed}\n\\section{Commented % out\n here}",
+                &[
+                    (2, "A title the editor wraps at eighty", 1),
+                    (2, "Next line", 3),
+                    (2, "Commented here", 8),
+                ],
+                13,
             ),
             ("\\section{}\n\\chapter*{}", &[(2, "", 1), (1, "", 2)], 0),
             ("Text \\section{A} and \\subsection{B}", &[(2, "A", 1)], 4),
@@ -369,21 +430,29 @@ mod tests {
                     (2, "Notes", 3),
                     (2, "R&D at 50% {set}", 4),
                 ],
-                17,
+                14,
             ),
+            // Words are prose: not a citation's key, a comment, maths, a
+            // command's name, or the names a preamble or an environment has.
             (
                 "Hello \\textbf{bold} world \\cite[p.~3]{key} text \\\\ done",
                 &[],
-                6,
+                5,
             ),
             ("one two % three four\n50\\% off % really", &[], 3),
-            ("x^2 + y_1 = $a$ and~b & c{d}e", &[], 8),
+            ("a line break \\\\% then a comment", &[], 3),
+            ("x^2 + y_1 = $a$ and~b & c{d}e", &[], 7),
+            (
+                "\\documentclass[a4paper]{article}\n\\usepackage{amsmath}\n\\begin{document}\nTwo words\n\\begin{itemize}\\item one\\end{itemize}\n\\[ x + y \\]\n\\begin{lstlisting}\nx = 5 % 3\n\\end{lstlisting}\n\\end{document}",
+                &[],
+                3,
+            ),
             ("123 456 7.5 foo123", &[], 1),
             ("Café naïve Ελληνικά Русский 中文 123", &[], 5),
             (
                 "\\begin{verbatim}\n\\section{Hidden}\n\\end{verbatim}\\section{Visible}\n\\verb|\\section{Hidden}| \\section{After}\n\\\\section{Escaped}",
                 &[(2, "Visible", 3), (2, "After", 4)],
-                7,
+                4,
             ),
         ];
         let dir = tempfile::tempdir().unwrap();
@@ -453,6 +522,9 @@ mod tests {
         assert_eq!(current_heading(&outline, "a.tex", 100), Some(4));
         assert_eq!(current_heading(&outline, "b.tex", 1), None);
         assert_eq!(current_heading(&outline, "c.tex", 5), None);
+        // The file named in another case is the same one where names fold it.
+        let folded = cfg!(any(target_os = "macos", windows)).then_some(3);
+        assert_eq!(current_heading(&outline, "A.TEX", 9), folded);
     }
 
     /// A project folder of `files`, each a path and its text.
@@ -495,7 +567,8 @@ mod tests {
                 ("End", Some("main.tex"), 6)
             ]
         );
-        assert_eq!(whole.words, 12);
+        // Its files' names aren't words.
+        assert_eq!(whole.words, 8);
         let loose = analyze_project(dir.path(), "main.tex", "loose.tex");
         assert_eq!(headings(&loose), [("Loose", Some("loose.tex"), 1)]);
         assert_eq!(loose.words, 2);

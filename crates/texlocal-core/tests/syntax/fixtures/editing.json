@@ -124,7 +124,9 @@
     ["\\begin{cases} a |\\end{cases}",{"start":0,"tex":"\\begin{cases}a\\end{cases}","display":true}],
     ["\\begin{itemize} |x \\end{itemize}",null],
     ["\\begin{equation} a |",null],
-    ["$a\n|b$",null]
+    ["$a\n|b$",{"start":0,"tex":"a\nb","display":false}],
+    ["% costs $5 and $|6",null],
+    ["It costs \\$5 and \\$|6",null]
   ],
   "completions": [
     ["\\footnote{see \\cite{kn",false,20,"knuth84","citation"],

@@ -14,9 +14,11 @@ mod complete;
 mod edit;
 pub(crate) mod headings;
 mod highlight;
-mod maths;
-mod prose;
+mod preview;
+pub(crate) mod prose;
 pub(crate) mod render;
+pub(crate) mod scan;
+mod scans;
 mod snippet;
 mod stack;
 mod style;
@@ -29,7 +31,8 @@ pub use call::call;
 pub use complete::{Completion, CompletionKind, Completions, SnippetField};
 pub use edit::{Change, Style, map_selections};
 pub use highlight::{Highlight, HighlightKind};
-pub use maths::{MathPreview, math_mode_at};
+pub use preview::MathPreview;
+pub use scan::math_mode_at;
 pub use snippet::Tab;
 pub use style::TextStyles;
 pub use typing::{Completing, Keystroke};
@@ -191,7 +194,7 @@ pub struct SourceDocument {
     text: Text,
     highlighter: highlight::Cache,
     /// Kept for the questions that read the text from its start.
-    scans: maths::Scans,
+    scans: scans::Scans,
     /// The project's, which "completions" offers in `\ref{` and `\cite{`.
     labels: Vec<String>,
     citations: Vec<String>,
@@ -204,7 +207,7 @@ impl SourceDocument {
         Self {
             text: Text::new(text),
             highlighter: highlight::Cache::default(),
-            scans: maths::Scans::default(),
+            scans: scans::Scans::default(),
             labels: Vec::new(),
             citations: Vec::new(),
             typing: typing::Typing::default(),
@@ -326,8 +329,8 @@ impl SourceDocument {
     }
 
     /// The maths to preview at the caret, if it's in some.
-    pub fn math_at(&self, caret: u32) -> Option<MathPreview> {
-        maths::math_at(&self.text, caret.min(self.text.len()))
+    pub fn math_at(&mut self, caret: u32) -> Option<MathPreview> {
+        preview::math_at(&self.text, &mut self.scans, caret.min(self.text.len()))
     }
 }
 
