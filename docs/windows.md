@@ -107,35 +107,28 @@ apps/windows/
 | Dialogs | `ContentDialog` through `App.Show` (XamlRoot, theme, style) | Each dialog setting its own root, theme and style |
 | Subtle buttons | WinUI's own `SubtleButtonStyle`: the title bar's Settings, Home's More, the status bar (`StatusButtonStyle` is based on it) | No restyled `Button` |
 | Recycle Bin | `Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile`/`DeleteDirectory` with `SendToRecycleBin` (the shell's file operation) | `StorageFile`/`StorageFolder.DeleteAsync(Default)` deletes outright in an unpackaged app |
-| Source editor | `RichEditBox`; passed the M2 gate (below), so WinUIEdit is not used | Monaco needs WebView2; AvalonEdit is WPF |
+| Source editor | `RichEditBox`; passed the editor gate (below), so WinUIEdit is not used | Monaco needs WebView2; AvalonEdit is WPF |
 | Maths, palette | `SvgImageSource` for RaTeX's SVG (`math_svg`, `glyph_svg`), rasterised at the display's scale; the palette a grouped `GridView` in a `Flyout`, as the emoji panel | A font's glyphs miss TeX's spacing and the palette's constructions |
 | Completion | A `ListView` in a `Popup` on the flyout surface (in-app acrylic, flyout stroke, overlay corners, `ThemeShadow`), never focused | A `Flyout` takes the keyboard from the text |
 | Find | Notepad's bar over the text's top right; `RichEditTextRange.FindText`; incremental | No `TextBox` find in `RichEditBox` |
 | Issues | `ListView` opened by `ItemClick` (click or Enter); line ends: `InfoBadge` plus Caption (Visual Studio's inline diagnostics); one `InfoBar` for a failed build | A list of InfoBars is too heavy |
 | Pickers | `Microsoft.Windows.Storage.Pickers` with `AppWindow.Id` | No HWND interop |
 | Packages | `Microsoft.WindowsAppSDK.WinUI` 2.3.9, `.Foundation` 2.3.12, `.InteractiveExperiences` 2.1.9 (= 2.5.1 Stable) | The metapackage adds ~60 MB of AI/ML/Widgets |
-| PDF | `Windows.Data.Pdf` renders pages into `Image`s in a `StackPanel` in a `ScrollViewer` with `ZoomMode` Enabled (wheel, touchpad and pinch zoom at the pointer); pages keep their DIP size and are drawn again at the settled zoom (at most 4096 px wide); a grey canvas with pages in Light resources; M4: PDFium in the core for text | Windows.Data.Pdf has no text API. `ScrollView` keeps a stale extent after its content resizes and `ItemsRepeater` estimates unrealized page heights, so scroll positions (SyncTeX, keeping the place) came out wrong with both |
+| PDF | `Windows.Data.Pdf` renders pages into `Image`s in a `StackPanel` in a `ScrollViewer` with `ZoomMode` Enabled (wheel, touchpad and pinch zoom at the pointer); pages keep their DIP size and are drawn again at the settled zoom (at most 4096 px wide); a grey canvas with pages in Light resources; PDFium in the core for text is to come | Windows.Data.Pdf has no text API. `ScrollView` keeps a stale extent after its content resizes and `ItemsRepeater` estimates unrealized page heights, so scroll positions (SyncTeX, keeping the place) came out wrong with both |
 
-**Editor gate (M2)**, on a generated 5,000-line, 269 KB `.tex` (sections, maths, comments), Debug
-build, 200% display:
+**The editor gate** (a generated 5,000-line, 269 KB `.tex`, Debug build, 200% display) passed, so
+`RichEditBox` is the editor:
 
-- (a) Coloured visible lines: first frame 12–53 ms after the text is set (the core's highlights go
-  in as RTF with a colour table, the first 200 lines first); the rest is in by 0.4–0.6 s, during
-  which input waits. Plain `SetText` plus range colouring took 3.6 s for the whole document.
-- (b) Keystroke to recoloured line: median 6.1–6.8 ms, p95 10.2–10.8 ms, max 11.4 ms (95 typed
-  keys; `Stopwatch` around the `TextChanged` handler: `GetText`, the diff, `tl_source_edit`,
-  colouring the edited lines, the gutter).
-- (c) 20 edits at 20 places, undone and redone: text exact on disk both ways, colours right, redo
-  stack intact. WinUI's document has no Text Object Model access (`ITextDocument` and
-  `ITextDocument2` are not reachable by `QueryInterface`), so undo can't be suspended. Instead the
-  whole text is coloured when it is set (no undo history), each edit's recolouring goes into that
-  edit's `BeginUndoGroup`/`EndUndoGroup`, and Ctrl+Z / Ctrl+Y run through the editor, which skips
+- The core's highlights go in as RTF with a colour table, the first 200 lines first: the first
+  frame is up in 12–53 ms and the rest by 0.6 s (plain `SetText` plus range colouring took 3.6 s).
+  A keystroke to its recoloured line takes 6–7 ms (p95 11 ms).
+- WinUI's document has no Text Object Model access, so undo can't be suspended. The whole text is
+  coloured when it is set (no undo history), each edit's recolouring goes into that edit's
+  `BeginUndoGroup`/`EndUndoGroup`, and Ctrl+Z / Ctrl+Y run through the editor, which skips
   colouring while RichEdit restores text and colours together. A group spans a typed word and ends
-  at a non-letter, a deletion or a caret move. Reloading the text (disk change, theme change)
-  clears the undo history.
-- (d) IME: Microsoft Pinyin (no Japanese IME is installed on the test machine; changing system
-  languages was out of bounds): composition kept the autosave waiting (`session_composing`), and
-  the committed text was edited and saved.
+  at a non-letter, a deletion or a caret move. Reloading the text clears the undo history.
+- Microsoft Pinyin composed with the autosave waiting (`session_composing`); no Japanese IME was
+  tried.
 
 ## Look and feel
 
@@ -375,7 +368,7 @@ secondary text at margin 16,12 is enough.
 | Status bar accessory | Mica status row |
 | Build panel pop-up | `SelectorBar` tabs |
 | `NSAlert` / SwiftUI alert | `ContentDialog` |
-| Settings window, five panes | Settings page from the title bar's gear (Notepad), grouped cards |
+| Settings window, four panes | Settings page from the title bar's gear (Notepad), grouped cards |
 | PDFKit | `Windows.Data.Pdf` in a zooming `ScrollViewer` → PDFium in the core |
 | NSTextFinder | Find bar over the editor (Notepad), `RichEditTextRange.FindText` |
 | Outline docked under the files | Outline as a tab of the navigation pane (Word) |
@@ -387,23 +380,15 @@ secondary text at margin 16,12 is enough.
 
 ## Core gaps
 
-Logic the Windows app needs that belongs in a crate, not C#. Already on `main`: sessions and
-events, autosave, watcher, `session_analyze` (the outline tree with fold keys, the words and the
-main file's heading styles), `session_outline_current`, file kinds, `create_entry {free}`,
-`locate`, `get_ui_state`/`set_ui_state`, `synctex_match`; and in the core's syntax module
-(`tl_source_*`, `tl_syntax_call`): the typing transforms and snippet mirrors, `themes` /
-`theme_colors` / `legible`, `menus` (symbol groups, insert, maths, list and reference templates),
-`heading_styles`, and `math_svg` / `glyph_svg` through RaTeX; `search_project` answers its hits by
-file, each with its column and length in UTF-16 units.
+Logic the Windows app needs that belongs in a crate, not C#. What the core already has
+(sessions, the outline, typing, themes, menus, heading styles, maths as SVG, absolute PDF paths) is
+`core-api.md`'s. The numbers are the ones the app's comments cite, so the landed gaps (1, 3, 4, 5, 15, 18, 19, 21) leave
+holes.
 
-1. (Landed: typing transforms.)
 2. **Catalogue command**: the project templates (Blank, Article, Report, Presentation) and the
    engines, with their labels, for New project and the Build menu; `create_project` takes a
    `template` id but nothing lists them. Until then New project uses the core's default.
-3. (Landed: themes; the editor colours from `theme_colors` through `tl_syntax_call`. The host maps
    only a high-contrast theme to the window text colour. Settings › Editor picks the theme.)
-4. (Landed: document class and heading styles.)
-5. (Landed: maths as SVG; a PNG through resvg only if `SvgImageSource` falls short.)
 6. **PDF in the core**: PDFium (`pdfium-render` 0.9.4, `pdfium-win-x64` chromium/7881) giving page
    text with UTF-16 character boxes (search, selection, `synctex_match`, word-precise inverse),
    then rendered tiles as BGRA.
@@ -422,20 +407,16 @@ file, each with its column and length in UTF-16 units.
     reports no edit range; until then the editor diffs common prefix and suffix. It deletes the
     editor's diff, `before` and the text mirror.
 12. **Live preview on Windows**: below.
-13. The M2 gate passed without an undo stack in the core. Still wanted: fold ranges, if folding is
+13. The editor gate passed without an undo stack in the core. Still wanted: fold ranges, if folding is
     wanted in RichEdit.
 14. **Issue indices on lines**: the `issues` event's lines don't say which issue (index into
     `errors` + `warnings`) they show, so a click on a line-end box looks up the first issue with
     that file and line before `session_choose_issue`.
-15. (Landed: `session_open`'s `pdf` and `build_finished`'s `result.pdf` are absolute.)
 16. **TeX status for display**: `status` gives the latexmk version ("4.88") and the distribution
     ("TeX Live 2026"), not the raw `-v` banner; Settings shows `version` as given meanwhile.
 17. **Casing**: `menus` and `heading_styles` take a casing argument ("sentence" for Windows), and
     the host's `Sentence()` goes.
-18. (Landed: an empty heading is its level's, "Untitled Section", with `untitled`.)
-19. (Landed: `session_analyze` answers the main file's `headingStyles`.)
 20. **The caret's heading**: `text_styles` also returns the caret line's heading command.
-21. (Landed: `session_outline_current {session, path, line}`.)
 22. **Main file in the tree**: `TreeNode.main`, and a `tree` event when the main file changes
     (settings, renames above it); the host's `mainFile` mirror goes.
 23. **Editable files**: `TreeNode.editable`, and `session_open_document` returns the kind; the
@@ -475,20 +456,10 @@ events report.
 - Not shipped: `RtlCloneUserProcess` (undocumented, EDR-flagged), Cygwin fork (copies the whole
   heap per snapshot), WSL2 (admin, reboot, second TeX) except as a developer switch.
 
-## Milestones
+## Still to come
 
-- **M1 foundation**: merge `main` into `claude/windows`; the solution, the cargo target and DLL
-  copy, the bridge and its tests; Mica window and TitleBar; Home (list, create, open, rename,
-  import, export, delete) through core commands; the workspace shell with the file tree
-  (`session_open`, `tree` events); Settings skeleton; the `windows` CI job.
-- **M2 workspace**: `RichEditBox` editor through the gate, with session sources and
-  texlocal-syntax highlighting; save; compile with the Compile button, progress, status bar and
-  `build` events; issues panel and line-end boxes; the PDF pane; box-level SyncTeX both ways.
-- **M3 editing**: completion and typing transforms; outline and words; find and project search;
-  insert menu, glyph palette and maths preview; themes and editor settings; Home as Fluent cards
-  within its maximum width.
-- **M4+**: PDFium text, PDF find, word-precise SyncTeX; live preview; multiple windows; the zip
-  and winget release.
+PDFium text, PDF find and word-precise SyncTeX (gap 6); live preview; multiple windows; the zip
+and winget release.
 
 ## Building and testing
 
