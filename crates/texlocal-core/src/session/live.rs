@@ -1,21 +1,19 @@
-//! The session's side of live preview.
-//! Starts, stops and whole texts go one at a time; a key's edit goes on as
-//! the editor makes it; a task of the session's own waits for the pages and
-//! hands them on as events.
+//! The session's side of live preview. Starts, stops and whole texts go one at a time; a
+//! key's edit goes on as the editor makes it; what the preview tells comes back as messages
+//! of the session's own (`Msg::Live`) and goes on to the host as events.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
 use super::Msg;
-use super::actor::{Actor, Later};
+use super::actor::{Actor, Later, Timer};
 use crate::CoreError;
 use crate::projects::file_kind;
-use crate::texpresso::{Events, FileBuffer, Pane, Status};
+use crate::texpresso::{FileBuffer, LiveEvent, Pane, Status};
 
 const DIDNT_START: &str =
     "TeXpresso didn’t start. Check its location in Settings and the log below.";
@@ -35,12 +33,12 @@ pub(crate) enum Phase {
 
 #[derive(Default)]
 pub(crate) struct Live {
-    pub phase: Phase,
+    phase: Phase,
     /// Whether the project's TeXpresso preview is this session's: kept after it ends, for a
     /// restart; gone with the user's Stop or another session's Start.
-    pub owns: bool,
+    owns: bool,
     /// Paths to send whole: None for the document's own text when sent, else a file's text from disk.
-    pub pending: BTreeMap<String, Option<String>>,
+    pending: BTreeMap<String, Option<String>>,
     /// Paths TeXpresso has a text of. It keeps them through a rescan: only a new start drops
     /// one whose file went.
     synced: HashSet<String>,
@@ -49,34 +47,29 @@ pub(crate) struct Live {
     rejected: BTreeMap<String, String>,
     failure: Option<String>,
     reported: BTreeSet<String>,
-    pub status: Option<Status>,
-    /// TeXpresso's as last seen: when it rises, the log may have changed.
-    revision: u64,
+    status: Option<Status>,
     /// The host shows the Live Preview Log: the `live` event carries it.
     log_shown: bool,
-    /// When the log is next sent, since TeX's changed.
-    pub log_at: Option<Instant>,
-    pub halted: bool,
-    pub halting_at: Option<Instant>,
+    halted: bool,
     started: Option<Instant>,
     view: Option<(u32, u32)>,
     sent_view: Option<(u32, u32)>,
-    /// Where the editor's caret is, for a start; and where TeXpresso was last told it is.
+    /// Where the editor's caret is, for a start; where TeXpresso was last told it is; and
+    /// where it has moved to, told once it settles (`Timer::Caret`).
     wanted: Option<(String, usize)>,
     caret: Option<(String, usize)>,
-    pub settle: Option<(Instant, (String, usize))>,
-    pub retry_at: Option<Instant>,
-    pub restart_at: Option<Instant>,
+    settling: Option<(String, usize)>,
     pub disk_paths: BTreeSet<String>,
-    pub disk_at: Option<Instant>,
     /// Rises with each Start the user asks for and each Stop: a restart for an older one is dropped.
     pub intent: u64,
     /// TeXpresso's own window shows the document, as the user's Start asked: the host's pane
-    /// gets none, and TeXpresso is told no view or caret.
+    /// gets none.
     window: bool,
-    listen_seq: u64,
-    listener: Option<AbortHandle>,
+    /// Rises with each start and each end: what an earlier start's preview tells is dropped.
+    generation: u64,
+    /// The documents this start's preview has written, and its documents and pages.
     version: u64,
+    serial: u64,
     pub document_seen: bool,
     shown: Value,
 }
@@ -118,7 +111,7 @@ impl Actor {
     /// The Live Preview Log as the host shows it: what went wrong, then the preview's own
     /// error, its log and its output.
     fn live_log(&self, failure: Option<&str>) -> String {
-        let status = self.live.owns.then(|| self.engine.live_status(self.id));
+        let status = self.live.owns.then(|| self.preview.status(self.id));
         let mut parts: Vec<&str> = failure.into_iter().collect();
         if let Some(Ok(status)) = &status {
             let error = status.error.as_deref();
@@ -160,24 +153,29 @@ impl Actor {
     }
 
     pub fn live_reset(&mut self) {
-        let live = &mut self.live;
-        live.listen_seq += 1;
-        if let Some(listener) = live.listener.take() {
-            listener.abort();
+        for timer in [Timer::Halting, Timer::Caret, Timer::Retry] {
+            self.timers.remove(&timer);
         }
-        (live.retry_at, live.halting_at, live.settle) = (None, None, None);
+        let live = &mut self.live;
+        live.generation += 1;
         live.pending.clear();
         live.synced.clear();
         live.sent.clear();
-        (live.halted, live.started, live.sent_view, live.caret) = (false, None, None, None);
-        // Each start's revisions begin again.
-        (live.version, live.revision) = (0, 0);
+        (live.halted, live.started, live.sent_view) = (false, None, None);
+        (live.caret, live.settling) = (None, None);
+        (live.version, live.serial) = (0, 0);
     }
 
     pub fn live_cancel_work(&mut self) {
         self.live.intent += 1;
-        (self.live.restart_at, self.live.disk_at) = (None, None);
+        self.timers.remove(&Timer::Restart);
+        self.timers.remove(&Timer::Disk);
         self.live.disk_paths.clear();
+    }
+
+    /// Whether the preview runs, or is about to start again: automatic builds wait for it.
+    pub fn live_previewing(&self) -> bool {
+        self.live.active() || self.timers.contains_key(&Timer::Restart)
     }
 
     fn fail(&mut self, error: CoreError) {
@@ -189,14 +187,6 @@ impl Actor {
             self.ended();
         }
         self.report();
-    }
-
-    /// A failure that ends the preview, if `fail` hasn't already.
-    fn give_up(&mut self, error: CoreError) {
-        self.fail(error);
-        if self.live.phase != Phase::Stopped {
-            self.ended();
-        }
     }
 
     fn ended(&mut self) {
@@ -211,8 +201,8 @@ impl Actor {
     }
 
     /// A preview that ended for the session to start again, at once (`now`) or when its
-    /// `restart_at` comes. It stays `starting` meanwhile: a host that saw it stop would show
-    /// the build's PDF in place of the live document until the new run's first one came.
+    /// `Timer::Restart` comes. It stays `starting` meanwhile: a host that saw it stop would
+    /// show the build's PDF in place of the live document until the new run's first one came.
     fn restarting(&mut self, now: bool) {
         if self.closed {
             return self.ended();
@@ -221,23 +211,7 @@ impl Actor {
         self.live_reset();
         self.publish_live(false);
         if now {
-            self.later.push_back(Later::Restart { ended: true });
-        }
-    }
-
-    fn receive(&mut self, status: Status) {
-        self.live.revision = self.live.revision.max(status.revision);
-        let running = status.running;
-        let failed = status.error.is_none() && self.live.phase == Phase::Starting;
-        self.live.status = Some(status);
-        if running {
-            self.live.phase = Phase::Running;
-        } else if failed {
-            self.live.failure = Some(DIDNT_START.into());
-        }
-        self.report();
-        if !running {
-            self.ended();
+            self.later.push_back(Later::Restart(true));
         }
     }
 
@@ -281,23 +255,42 @@ impl Actor {
             view: self.live.view,
             caret: caret.clone(),
         });
+        let (tx, generation) = (self.tx.clone(), self.live.generation);
+        let sink = Box::new(move |event| {
+            let _ = tx.send(Msg::Live(generation, event));
+        });
+        let path_env = self.service.tool_paths().1;
+        let (root, pane) = (&self.root, pane.as_ref());
         let start = self
-            .engine
-            .live_start(self.id, &self.root, &files, replacing, pane.as_ref());
+            .preview
+            .start(self.id, root, &files, replacing, &path_env, pane, sink);
         match start {
             Ok(status) => {
                 self.live.owns = true;
                 self.live.synced = versions.keys().cloned().collect();
                 self.live.sent = versions;
                 (self.live.sent_view, self.live.caret) = (self.live.view, caret);
-                self.receive(status);
-                if self.live.active() {
+                let running = status.running;
+                if running {
+                    self.live.phase = Phase::Running;
                     self.live.started = Some(Instant::now());
-                    self.listen();
+                } else if status.error.is_none() {
+                    self.live.failure = Some(DIDNT_START.into());
+                }
+                self.live.status = Some(status);
+                self.report();
+                if running {
                     self.flush_pending();
+                } else {
+                    self.ended();
                 }
             }
-            Err(error) => self.give_up(error),
+            Err(error) => {
+                self.fail(error);
+                if self.live.phase != Phase::Stopped {
+                    self.ended();
+                }
+            }
         }
         true
     }
@@ -313,7 +306,9 @@ impl Actor {
         }
     }
 
+    /// A Stop: the user's, or the session's as it closes. Pending live work goes with it.
     pub fn live_stop(&mut self) {
+        self.live_cancel_work();
         if self.live.phase == Phase::Stopped {
             self.live.owns = false;
             return;
@@ -322,7 +317,7 @@ impl Actor {
         self.live_reset();
         self.publish_live(false);
         if self.live.owns {
-            match self.engine.live_stop(self.id) {
+            match self.preview.stop_request(self.id) {
                 Ok(status) => {
                     self.live.owns = false;
                     self.live.status = Some(status);
@@ -333,6 +328,14 @@ impl Actor {
         }
         if self.live.phase != Phase::Stopped {
             self.ended();
+        }
+    }
+
+    /// A rename or a new main file changed what the preview shows, and stopped it: it starts
+    /// again once the change has settled.
+    pub fn live_follow(&mut self) {
+        if self.live.active() && !self.closed {
+            self.after(Timer::Restart, self.t.live_follow);
         }
     }
 
@@ -352,8 +355,8 @@ impl Actor {
         }
         if live.fits(path) {
             let sent = self
-                .engine
-                .live_edit(self.id, path, start as usize, length as usize, text);
+                .preview
+                .edit(self.id, path, start as usize, length as usize, text);
             match sent {
                 Ok(()) => return,
                 Err(error) if error.status == 409 => return self.fail(error),
@@ -377,7 +380,7 @@ impl Actor {
         if self.live.phase != Phase::Running || self.closed || self.live.pending.is_empty() {
             return;
         }
-        self.live.retry_at = None;
+        self.timers.remove(&Timer::Retry);
         while self.live.phase == Phase::Running && !self.closed {
             let Some((path, text)) = self.live.pending.pop_first() else {
                 break;
@@ -392,7 +395,7 @@ impl Actor {
                     None => continue,
                 },
             };
-            match self.engine.live_update(self.id, &path, &text) {
+            match self.preview.update(self.id, &path, &text) {
                 Ok(()) => {
                     self.live.rejected.remove(&path);
                     if self.live.pending.is_empty() {
@@ -414,7 +417,7 @@ impl Actor {
                     self.fail(error);
                     if self.live.phase == Phase::Running {
                         self.live.pending.entry(path).or_insert(Some(text));
-                        self.live.retry_at = Some(Instant::now() + self.t.retry);
+                        self.after(Timer::Retry, self.t.retry);
                     }
                     return;
                 }
@@ -423,12 +426,11 @@ impl Actor {
     }
 
     pub fn live_rescan(&mut self) {
-        if self.live.phase != Phase::Running || self.closed {
-            return;
-        }
-        match self.engine.live_rescan(self.id) {
-            Ok(status) => self.receive(status),
-            Err(error) => self.fail(error),
+        if self.live.phase == Phase::Running
+            && !self.closed
+            && let Err(error) = self.preview.rescan(self.id)
+        {
+            self.fail(error);
         }
     }
 
@@ -437,11 +439,8 @@ impl Actor {
     pub fn live_view(&mut self, first: u32, last: u32) {
         let pages = (first, last.max(first));
         self.live.view = Some(pages);
-        if self.live.phase == Phase::Running
-            && !self.live.window
-            && self.live.sent_view != Some(pages)
-        {
-            self.engine.live_view(self.id, pages.0, pages.1);
+        if self.live.phase == Phase::Running && self.live.sent_view != Some(pages) {
+            let _ = self.preview.view(self.id, pages.0, pages.1);
             self.live.sent_view = Some(pages);
         }
     }
@@ -449,22 +448,20 @@ impl Actor {
     pub fn live_caret(&mut self, path: String, offset: usize) {
         let moved = (path, offset);
         self.live.wanted = Some(moved.clone());
-        if self.live.phase == Phase::Running
-            && !self.live.window
-            && self.live.caret.as_ref() != Some(&moved)
-        {
-            self.live.settle = Some((Instant::now() + self.t.caret, moved));
+        if self.live.phase == Phase::Running && self.live.caret.as_ref() != Some(&moved) {
+            self.live.settling = Some(moved);
+            self.after(Timer::Caret, self.t.caret);
         }
     }
 
     pub fn caret_settled(&mut self) {
-        let Some((_, (path, offset))) = self.live.settle.take() else {
+        let Some((path, offset)) = self.live.settling.take() else {
             return;
         };
         let moved = Some((path.clone(), offset));
         if self.live.fits(&path) && self.live.caret != moved {
             self.live.caret = moved;
-            self.engine.live_caret(self.id, &path, offset);
+            let _ = self.preview.caret(self.id, &path, offset);
         }
     }
 
@@ -481,7 +478,7 @@ impl Actor {
         if files.all(|path| self.tree.contains(path)) {
             self.later.push_back(Later::Rescan);
         } else {
-            self.live.restart_at = Some(Instant::now() + self.t.live_follow);
+            self.live_follow();
         }
     }
 
@@ -510,118 +507,97 @@ impl Actor {
         }
     }
 
-    // MARK: - What the preview sends back
+    // MARK: - What the preview tells
 
-    fn listen(&mut self) {
-        self.live.listen_seq += 1;
-        let (seq, owner, engine, tx) = (
-            self.live.listen_seq,
-            self.id,
-            std::sync::Arc::clone(&self.engine),
-            self.tx.clone(),
-        );
-        let task = tokio::spawn(async move {
-            let mut after = 0;
-            loop {
-                let news = engine.live_wait(owner, after).await;
-                let running = news.as_ref().is_ok_and(|events| events.running);
-                if let Ok(events) = &news {
-                    after = events.seq;
-                }
-                if tx.send(Msg::LiveNews(seq, news)).is_err() || !running {
-                    break;
-                }
-            }
-        });
-        self.live.listener = Some(task.abort_handle());
-    }
-
-    pub fn live_news(&mut self, seq: u64, news: Result<Events, CoreError>) {
-        if seq != self.live.listen_seq {
+    /// What the preview of the start numbered `generation` told; an earlier start's is
+    /// past news.
+    pub fn live_event(&mut self, generation: u64, event: LiveEvent) {
+        if generation != self.live.generation {
             return;
         }
-        let events = match news {
-            Ok(events) => events,
-            // Another window's preview now, or a core that can't be asked.
-            Err(error) => return self.give_up(error),
-        };
-        if events.revision > self.live.revision {
-            self.live.revision = events.revision;
-            if self.live.log_shown {
-                let at = Instant::now() + LOG_EVERY;
-                self.live.log_at.get_or_insert(at);
+        let live = &mut self.live;
+        match event {
+            LiveEvent::Page { page, path } => {
+                live.serial += 1;
+                let page = json!({ "page": page, "path": path, "serial": live.serial });
+                self.emit("live_page", page);
             }
-        }
-        let run = events.done.as_ref().map(|done| done.run.as_str());
-        let run = run.or(events.pdf.as_ref().and_then(|pdf| pdf.run.as_deref()));
-        if let Some(pdf) = &events.pdf {
-            // The core keeps the latest document only: one replaced unread took its changed pages with it.
-            let skipped = pdf.version != self.live.version + 1;
-            self.live.version = pdf.version;
-            if pdf.pages > 0 {
-                self.live.document_seen = true;
-                let complete = !matches!(pdf.run.as_deref(), Some("stopped" | "partial"));
-                self.emit(
-                    "live_document",
-                    json!({
-                        "path": pdf.path,
-                        "version": pdf.version,
-                        "serial": pdf.serial,
-                        "pages": pdf.pages,
-                        "changed": if skipped { None } else { pdf.changed.clone() },
+            LiveEvent::Document {
+                path,
+                pages,
+                run,
+                changed,
+            } => {
+                (live.version, live.serial) = (live.version + 1, live.serial + 1);
+                if pages > 0 {
+                    live.document_seen = true;
+                    let complete = !matches!(run.as_deref(), Some("stopped" | "partial"));
+                    let document = json!({
+                        "path": path,
+                        "version": live.version,
+                        "serial": live.serial,
+                        "pages": pages,
+                        "changed": changed,
                         "complete": complete,
-                    }),
-                );
+                    });
+                    self.emit("live_document", document);
+                }
+                if let Some(run) = run {
+                    self.run_ended(&run);
+                }
+            }
+            LiveEvent::Done(run) => self.run_ended(&run),
+            // Sent with the next `live` event, while the host shows the log.
+            LiveEvent::Log if live.log_shown => {
+                let at = Instant::now() + LOG_EVERY;
+                self.timers.entry(Timer::Log).or_insert(at);
+            }
+            LiveEvent::Log => {}
+            LiveEvent::Ended(error) => {
+                let restartable = error.is_some()
+                    && live.owns
+                    && live
+                        .started
+                        .is_some_and(|at| at.elapsed() > self.t.restartable_after);
+                // A rename, a new main file or a file gone stopped it, to start again after.
+                let planned = self.timers.contains_key(&Timer::Restart);
+                if restartable || planned {
+                    return self.restarting(restartable);
+                }
+                if let Some(error) = error {
+                    live.failure = Some(error);
+                    self.report();
+                }
+                self.ended();
             }
         }
-        for page in &events.pages {
-            self.emit(
-                "live_page",
-                json!({ "page": page.page, "path": page.path, "serial": page.serial }),
-            );
-        }
-        match run {
-            Some("partial") | None => {}
-            Some(run) => self.run_ended(run == "stopped"),
-        }
-        if !events.running {
-            let restartable = events.error.is_some()
-                && self.live.owns
-                && self
-                    .live
-                    .started
-                    .is_some_and(|at| at.elapsed() > self.t.restartable_after);
-            // A rename, a new main file or a file gone stopped it, to start again after.
-            let planned = self.live.restart_at.is_some();
-            if restartable || planned {
-                return self.restarting(restartable);
-            }
-            if let Some(error) = &events.error {
-                self.live.failure = Some(error.clone());
-                self.report();
-            }
-            self.ended();
-        }
-    }
-
-    /// TeX's log changed while the host shows it: it goes with the next `live` event.
-    pub fn log_due(&mut self) {
-        self.live.log_at = None;
-        self.publish_live(false);
     }
 
     /// A brace or a dollar half typed stops TeX for a moment at every other key,
-    /// so a stopped run is said so only once it has lasted a while.
-    fn run_ended(&mut self, stopped: bool) {
-        if !stopped {
-            self.live.halting_at = None;
-            if self.live.halted {
-                self.live.halted = false;
-                self.publish_live(false);
+    /// so a stopped run is said so only once it has lasted a while (`live_halted`).
+    fn run_ended(&mut self, run: &str) {
+        match run {
+            "partial" => {}
+            "stopped" => {
+                if !self.live.halted {
+                    let at = Instant::now() + self.t.halts_after;
+                    self.timers.entry(Timer::Halting).or_insert(at);
+                }
             }
-        } else if !self.live.halted && self.live.halting_at.is_none() {
-            self.live.halting_at = Some(Instant::now() + self.t.halts_after);
+            _ => {
+                self.timers.remove(&Timer::Halting);
+                if self.live.halted {
+                    self.live.halted = false;
+                    self.publish_live(false);
+                }
+            }
         }
+    }
+
+    /// A stopped run has lasted: it shows as halted.
+    pub fn live_halted(&mut self) {
+        self.live.halted = true;
+        self.publish_live(false);
     }
 }
 

@@ -135,28 +135,34 @@ pub(crate) fn command(
     cwd: Option<&Path>,
     path_env: &str,
 ) -> std::io::Result<tokio::process::Command> {
-    // A full path avoids std's fork fallback, which can crash a child of the
-    // multithreaded Mac app before exec.
     let program = find_tool(program, path_env).ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("{program} is not on the PATH"),
         )
     })?;
-    let mut cmd = tokio::process::Command::new(program);
+    let mut cmd = tool(&program, path_env);
     // TeX Live's engines read texmf.cnf's variables from the environment
     // first. Unwrapped, the log keeps each message and path on one line;
     // wrapped at the default 79 columns, words and paths split mid-way.
-    cmd.env("PATH", path_env)
-        .env("max_print_line", "10000")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    cmd.env("max_print_line", "10000").stdin(Stdio::null());
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
     Ok(cmd)
+}
+
+/// The program at the full path `program`, latexmk or TeXpresso, to run with
+/// `path_env` as its PATH, its output piped, and killed if dropped. A full
+/// path avoids std's fork fallback, which can crash a child of the
+/// multithreaded Mac app before exec.
+pub(crate) fn tool(program: &Path, path_env: &str) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.env("PATH", path_env)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    cmd
 }
 
 /// Keep bounded output while draining to EOF, so a full pipe cannot block the

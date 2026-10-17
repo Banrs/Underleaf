@@ -11,12 +11,12 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::atomic::Stamp;
 use crate::compile::{self, CompileManager, TexStatus, engine_flags};
 use crate::paths::fold_case;
 use crate::projects;
 use crate::settings;
 use crate::synctex;
+use crate::texpresso::{self, Preview};
 use crate::{CoreError, atomic, import, lock, paths, zipexport};
 
 const SEARCH_LIMIT: usize = 100;
@@ -57,7 +57,7 @@ impl From<TexStatus> for Status {
 pub struct Service {
     pub data_dir: PathBuf,
     pub compile: CompileManager,
-    pub texpresso: crate::texpresso::Manager,
+    pub texpresso: Arc<texpresso::Manager>,
     /// One lock per project name, case-folded where the volume ignores case:
     /// a project's edits, settings read/modify/write, renames and deletes run
     /// one at a time, while other projects' go on. Unicode normalisation is
@@ -74,7 +74,7 @@ impl Service {
         Self {
             data_dir,
             compile: CompileManager::default(),
-            texpresso: crate::texpresso::Manager::default(),
+            texpresso: Arc::default(),
             edits: Mutex::default(),
             tex_found: tokio::sync::watch::Sender::new(false),
         }
@@ -137,7 +137,7 @@ impl Service {
             (self.tool_paths(), self.app_folders());
         let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
         let mut found = compile::tex_available(&tex_path).await;
-        found.texpresso = shown(crate::texpresso::discover(&texpresso_path));
+        found.texpresso = shown(texpresso::discover(&texpresso_path));
         found.tex_dir = shown(tex_dir);
         found.texpresso_dir = shown(texpresso_dir);
         self.tex_found.send_replace(found.available);
@@ -224,16 +224,6 @@ impl Service {
         Ok(self.status().await)
     }
 
-    // ---------- project sessions (session/) ----------
-
-    /// Writes a project file's text under the project's lock; the file's
-    /// stamp as written, for the session to know its own write's change.
-    pub(crate) fn write_text(&self, id: &str, rel: &str, text: &str) -> Result<Stamp, CoreError> {
-        self.with_project(id, |root| {
-            projects::write_creating(&paths::safe_write_path(root, rel)?, text.as_bytes())
-        })
-    }
-
     // ---------- dispatch ----------
 
     /// The JSON command table the hosts call through the FFI, but for the
@@ -316,7 +306,9 @@ impl Service {
             // documents itself; the Mac app's tests write their files with it.
             "write_file" => {
                 let (path, text) = (s("path")?, s("text")?);
-                out(self.write_text(s("id")?, path, text)?)
+                out(self.with_project(s("id")?, |root| {
+                    projects::write_creating(&paths::safe_write_path(root, path)?, text.as_bytes())
+                })?)
             }
             // With `free`, a taken name is numbered past ("untitled 2.tex") rather than refused.
             "create_entry" => {
