@@ -914,9 +914,11 @@ mod tests {
         // In a folder larger than a project, by its bytes or by more than 2000
         // files, a .tex comes alone.
         big(src.join("big.dmg")).unwrap();
+        // Named for the file: "paper", or "paper 2" where the volume takes it for "Paper".
         let info = import_project(&service, &src.join("paper.tex")).unwrap();
-        assert_eq!([&info.id, &info.main_file], ["paper", "paper.tex"]);
-        assert_eq!(files_in(&service.data_dir.join("paper")), ["paper.tex"]);
+        assert!(info.id.starts_with("paper"), "{}", info.id);
+        assert_eq!(info.main_file, "paper.tex");
+        assert_eq!(files_in(&service.data_dir.join(&info.id)), ["paper.tex"]);
         fs::remove_file(src.join("big.dmg")).unwrap();
         for i in 0..2000 {
             fs::write(src.join(format!("{i}.txt")), "").unwrap();
