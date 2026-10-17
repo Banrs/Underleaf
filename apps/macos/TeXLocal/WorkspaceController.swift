@@ -270,14 +270,13 @@ final class WorkspaceController: DetentSplitViewController {
     /// sharp under the bar (about half the launches). Each pane has an empty accessory of the bar's height instead, for its own
     /// edge, safe area and scrollers, and the bar lies over both.
     private func buildStatusBar() {
-        // AppKit's edge draws a device pixel over each pane's accessory; the rest of the bar's point line lies under it.
-        let rest = LineRest()
-        var spaces: [NSLayoutConstraint] = []
         for item in [sourceItem!, pdfItem!] {
             let space = NSSplitViewItemAccessoryViewController()
-            space.view = NSView()
-            spaces.append(space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height + rest.height.constant))
-            spaces.last!.isActive = true
+            // The PDF's white pages would show through AppKit's edge (and PDFKit's scroll view takes no hard style, 27.2), in
+            // Dark a grey slab beside the source's dark: the text's ground there keeps the bar one tone, as Xcode's bars.
+            space.view = item === pdfItem ? Ground() : NSView()
+            // AppKit's edge draws a device pixel of its own tone just over it, which the bar's line covers.
+            space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
             // 27.2: AppKit's insets would pad it, and the pane's safe area with it.
             space.automaticallyAppliesContentInsets = false
             item.addBottomAlignedAccessoryViewController(space)
@@ -288,21 +287,20 @@ final class WorkspaceController: DetentSplitViewController {
         bar.safeAreaRegions = []
         bar.translatesAutoresizingMaskIntoConstraints = false
         columns.view.addSubview(bar)
+        // Opaque, so AppKit's pixel under it doesn't show as a second edge of another tone (27.2, Dark).
+        let line = Line(opaque: true)
+        line.translatesAutoresizingMaskIntoConstraints = false
+        columns.view.addSubview(line)
         NSLayoutConstraint.activate([
             bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
             bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
             bar.heightAnchor.constraint(equalToConstant: BarMetrics.height),
+            line.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            line.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            line.bottomAnchor.constraint(equalTo: bar.topAnchor),
+            line.heightAnchor.constraint(equalToConstant: BarMetrics.line),
         ])
-        rest.translatesAutoresizingMaskIntoConstraints = false
-        columns.view.addSubview(rest)
-        NSLayoutConstraint.activate([
-            rest.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-            rest.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
-            rest.bottomAnchor.constraint(equalTo: bar.topAnchor),
-            rest.height,
-        ])
-        rest.changed = { height in for space in spaces { space.constant = BarMetrics.height + height } }
     }
 
     private func buildInspector() {

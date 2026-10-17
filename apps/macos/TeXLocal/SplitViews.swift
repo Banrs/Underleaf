@@ -151,6 +151,37 @@ final class ColumnsSplitView: DraggedSplitView {
     }
 }
 
+/// An opaque ground in the text's background, as the editor's and the PDF view's.
+final class Ground: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.untintedTextBackground.setFill()
+        dirtyRect.fill()
+    }
+}
+
+/// A separator line filling its view, as Xcode's over its bars; opaque, on the text's ground.
+final class Line: NSView {
+    private let filled: Bool
+
+    init(opaque: Bool) {
+        self.filled = opaque
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if filled {
+            NSColor.untintedTextBackground.setFill()
+            bounds.fill()
+        }
+        NSColor.separatorColor.setFill()
+        bounds.fill(using: .sourceOver)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 /// The rest of a point line under the device pixel AppKit's scroll edge draws over a bar, so the line is Xcode's point:
 /// nothing at 1x. It sets its own height, and says when the screen's scale changes it.
 final class LineRest: NSView {

@@ -27,8 +27,8 @@ struct StatusBar: View {
             content(.short).labelStyle(.iconOnly)
         }
         .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
-        // No ground of its own: AppKit's scroll edge lies under the bar and draws a device pixel of its line over it, and a
-        // `LineRest` the rest of the point (`WorkspaceController.buildStatusBar`), level with the File Outline header's.
+        // No ground or line of its own: AppKit's scroll edge lies under it, with the text's ground under the PDF, and one
+        // `Line` over it (`WorkspaceController.buildStatusBar`), level with the File Outline header's.
         // Clicks between its controls stay with the bar, not the text or pages scrolled beneath it.
         .contentShape(.rect)
         .monospacedDigit()

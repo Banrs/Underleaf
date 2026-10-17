@@ -57,8 +57,10 @@ the hosts' contract with the core.
   a point line over a 36 pt bar (`BarMetrics`), over AppKit's own scroll edge, its automatic
   style. Each pane has an empty bottom accessory for its own edge, safe area and scrollers, and
   the bar lies over both (`buildStatusBar`): one accessory across the columns gave its edge to
-  only one pane, about half the launches (27.2). The edge draws a device pixel of the line and
-  `LineRest` the rest of the point. The File Outline's header does the same under the files'
+  only one pane, about half the launches (27.2). Under the PDF the accessory is the text's opaque ground
+  (`Ground`): the white pages showed through the edge as a grey slab in Dark. The bar's line is
+  one opaque `Line` over AppKit's own pixel, which took another tone in Dark. A fitted page meets
+  the pane's sides: PDFKit's 4 pt side margin drew a second edge inside the window's. The File Outline's header does the same under the files'
   hard edge, so folded the lines meet and the titles are level. The splits keep AppKit's weights,
   as Mail's and Xcode's: a point for the thin dividers between the columns and over the build
   panel, a device pixel for the window's sidebar. The build panel resizes from the bar's
