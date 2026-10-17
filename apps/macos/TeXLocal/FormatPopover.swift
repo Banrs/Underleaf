@@ -48,7 +48,7 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     }
 }
 
-/// Bold, Italic and Underline, centred at Notes' pitch, lit when the selection is in their command; then the
+/// Bold, Italic and Underline, evenly spaced, lit when the selection is in their command; then the
 /// levels the document's class has (the core's `heading_styles`), each at its weight and shape
 /// there and its size scaled into Notes', at an even pitch, after its number as the class prints
 /// it. A style toggles and the popover stays, as Notes' does; a level is chosen and it closes, as
@@ -82,11 +82,15 @@ struct FormatPanel: View {
         // Read once: it searches the outline.
         let current = project.headingCommand
         VStack(spacing: 0) {
-            // Centred, at Notes' B I U S pitch: spread over the width, B and U came to the popover's edges.
+            // Evenly spaced: the gap between them is the gap to the popover's edges.
             HStack(spacing: 0) {
+                Spacer(minLength: 0)
                 toggle(.editBold, symbol: "bold", on: styles.bold != nil, help: "Make text bold")
+                Spacer(minLength: 0)
                 toggle(.editItalic, symbol: "italic", on: styles.italic != nil, help: "Make text italic")
+                Spacer(minLength: 0)
                 toggle(.editUnderline, symbol: "underline", on: styles.underline != nil, help: "Underline text")
+                Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, Self.menuTop)
