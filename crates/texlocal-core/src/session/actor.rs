@@ -1243,7 +1243,7 @@ fn issue_lines(
             let command = item.command.as_deref();
             json!({
                 "line": line,
-                "error": item.kind == "error",
+                "error": item.kind == crate::logparse::Severity::Error,
                 "message": item.message,
                 "short": item.short,
                 "compact": command.map(|command| format!("Undefined: {command}")),
