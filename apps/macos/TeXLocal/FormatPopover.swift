@@ -151,19 +151,26 @@ struct FormatPanel: View {
                     .font(.body.bold())
                     .opacity(checked ? 1 : 0)
                     .accessibilityHidden(true)
-                HStack(alignment: .firstTextBaseline, spacing: Self.markerGap) {
-                    if layout.markers > 0 {
-                        Text(verbatim: style.marker ?? "")
-                            .foregroundStyle(.secondary)
-                            .frame(width: layout.markers, alignment: .trailing)
+                if !style.isRunIn {
+                    HStack(alignment: .firstTextBaseline, spacing: Self.markerGap) {
+                        if layout.markers > 0 {
+                            Text(verbatim: style.marker ?? "")
+                                .foregroundStyle(.secondary)
+                                .frame(width: layout.markers, alignment: .trailing)
+                        }
+                        Text(style.title)
                     }
-                    Text(style.title)
+                    .font(layout.font(style))
                 }
-                .font(layout.font(style))
-                Spacer(minLength: 12)
+                // As wide as the widest level and the menu's margins: a menu's items, not a field.
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, Self.contentInset - Self.highlightInset)
             .frame(height: layout.height(style))
+            // Alone in its section, Paragraph is centred in it.
+            .overlay {
+                if style.isRunIn { Text(style.title).font(layout.font(style)) }
+            }
             // A menu's highlight, the system's tint, which follows the pointer and the arrow keys;
             // on it the text's styles turn as a selected row's do.
             .foregroundStyle(.primary)
