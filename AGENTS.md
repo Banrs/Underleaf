@@ -1,7 +1,7 @@
-# Underleaf handoff
+# Underleaf
 
-Status and decisions for the next agent. `README.md` is the overview and `docs/core-api.md`
-the hosts' contract with the core.
+Status and decisions for agents working here (`CLAUDE.md` imports this file). `README.md` is
+the overview and `docs/core-api.md` the hosts' contract with the core.
 
 ## Shape
 
