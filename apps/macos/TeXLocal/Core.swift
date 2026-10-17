@@ -49,8 +49,12 @@ final class Core {
 
     // MARK: - Commands
 
-    private nonisolated static func json(_ args: [String: any Sendable]) throws -> String {
-        String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
+    /// The handle and the arguments' JSON for `command`. A value JSON hasn't (a NaN) is a fault: JSONSerialization would
+    /// raise an exception that `try` can't catch.
+    private func prepared(_ command: String, _ args: [String: any Sendable]) throws -> (OpaquePointer, String) {
+        guard let handle else { throw Self.unavailable }
+        guard JSONSerialization.isValidJSONObject(args) else { throw Self.fault(command, "Arguments that aren't JSON") }
+        return (handle, String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self))
     }
 
     /// What a call's `done` gets back: the answer's envelope, read on the core's thread.
@@ -112,8 +116,7 @@ final class Core {
     /// The command's answer. It is sent before this first suspends, so a session takes it in the order called, beside
     /// `send`'s; the answer is decoded on the core's thread.
     func call<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable] = [:], as: T.Type) async throws -> T {
-        guard let handle else { throw Self.unavailable }
-        let json = try Self.json(args)
+        let (handle, json) = try prepared(command, args)
         return try await withCheckedThrowingContinuation { done in
             Self.start(handle, command, json) { envelope in
                 done.resume(with: Result { try Self.decoded(command, envelope) })
@@ -128,36 +131,30 @@ final class Core {
 
     /// Not waited for: a failure is only logged.
     func send(_ command: String, _ args: [String: any Sendable]) {
-        guard let handle else { return }
-        do {
-            Self.start(handle, command, try Self.json(args)) { envelope in
-                do {
-                    let _: Ignored? = try Self.decoded(command, envelope)
-                } catch {
-                    Self.log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                }
-            }
-        } catch {
+        let logged = { @Sendable (error: any Error) in
             Self.log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
-    }
-
-    private nonisolated static func run(_ handle: OpaquePointer, _ command: String, _ json: String) -> Data {
-        let out = command.withCString { c in json.withCString { j in tl_call(handle, c, j) } }
-        defer { tl_free(out) }
-        return Data(bytes: out, count: strlen(out))
+        do {
+            let (handle, json) = try prepared(command, args)
+            Self.start(handle, command, json) { envelope in
+                do { let _: Ignored? = try Self.decoded(command, envelope) } catch { logged(error) }
+            }
+        } catch {
+            logged(error)
+        }
     }
 
     /// Blocking, for an answer the interface needs at once (a drag over the window asks where a file is); only for quick commands.
     func now<T: Decodable>(_ command: String, _ args: [String: any Sendable], as: T.Type) throws -> T {
-        guard let handle else { throw Self.unavailable }
-        return try Self.decoded(command, Self.run(handle, command, try Self.json(args)))
+        let (handle, json) = try prepared(command, args)
+        let out = command.withCString { c in json.withCString { j in tl_call(handle, c, j) } }
+        defer { tl_free(out) }
+        return try Self.decoded(command, Data(bytes: out, count: strlen(out)))
     }
 
     /// Synchronous: it runs as the app quits.
     func killAll() {
-        guard let handle else { return }
-        _ = Core.run(handle, "kill_all", "{}")
+        _ = try? now("kill_all", [:], as: Ignored?.self)
     }
 
     /// The session's open document at `path`, for the editor: its edits are the session's. Nil if it isn't open.

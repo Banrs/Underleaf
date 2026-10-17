@@ -25,32 +25,28 @@ final class FileTree {
         return nil
     }
 
-    /// A read that started before the last one taken is dropped: a folder change's read ending after a new file's would take away the row its name is being typed in.
-    func read() async throws {
+    /// A read that started before the last one taken is dropped: a folder change's read ending after a new file's would
+    /// take away the row its name is being typed in. A failed read keeps the tree as it was, and the folder's next change
+    /// reads again.
+    func reload() async {
         reads += 1
         let read = reads
-        let files = try await core.call("file_tree", ["id": id], as: [TreeNode].self)
-        guard read > taken else { return }
+        guard let files = try? await core.call("file_tree", ["id": id], as: [TreeNode].self), read > taken else { return }
         taken = read
-        // A change in a folder can leave its files as they were.
-        if files != nodes, !closed, !Task.isCancelled {
-            nodes = files
-            onChange()
-        }
-    }
-
-    /// A failed read keeps the tree as it was, and the folder's next change reads again.
-    func reload() async {
-        try? await read()
+        if !Task.isCancelled { take(files) }
     }
 
     /// The tree as the session's watcher read it: a read started before is older.
     func show(_ files: [TreeNode]) {
         taken = reads
-        if files != nodes, !closed {
-            nodes = files
-            onChange()
-        }
+        take(files)
+    }
+
+    /// A change in a folder can leave its files as they were.
+    private func take(_ files: [TreeNode]) {
+        guard files != nodes, !closed else { return }
+        nodes = files
+        onChange()
     }
 
     func close() {

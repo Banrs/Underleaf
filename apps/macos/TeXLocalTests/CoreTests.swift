@@ -45,3 +45,5 @@ struct CoreTests {
         try await core.call("session_close", ["session": session])
     }
 }
+
+private nonisolated struct FileText: Decodable { let text: String }

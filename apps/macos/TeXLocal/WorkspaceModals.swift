@@ -58,10 +58,10 @@ struct WorkspaceModals: ViewModifier {
             .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "",
                    item: $project.missingFile) { path in
                 // Return saves: the button that discards the edits is never the default.
-                Button("Save Again") { project.saveMissingFile(path) }
-                Button("Discard Changes", role: .destructive) { project.closeMissingFile(path) }
+                Button("Save Again") { project.answer(path, "save") }
+                Button("Discard Changes", role: .destructive) { project.answer(path, "close") }
                 Button("Cancel", role: .cancel) {
-                    project.leaveUnsaved(path, String(localized: "Another app moved or deleted “\(path.fileName)”."))
+                    project.answer(path, "cancel", holding: String(localized: "Another app moved or deleted “\(path.fileName)”."))
                 }
             } message: { path in
                 Text("Another app moved or deleted “\(path)”, which has unsaved changes here.")
@@ -80,9 +80,9 @@ struct WorkspaceModals: ViewModifier {
         alert.addButton(withTitle: String(localized: "Cancel"))
         let answered = { [project] (response: NSApplication.ModalResponse) in
             switch response {
-            case .alertFirstButtonReturn: project.keepEdits(path)
-            case .alertSecondButtonReturn: project.revertToDisk(path)
-            default: project.leaveUnsaved(path, String(localized: "Another app changed “\(path.fileName)”."))
+            case .alertFirstButtonReturn: project.answer(path, "save")
+            case .alertSecondButtonReturn: project.answer(path, "revert")
+            default: project.answer(path, "cancel", holding: String(localized: "Another app changed “\(path.fileName)”."))
             }
         }
         if let window = project.editor.textView.window {

@@ -340,9 +340,18 @@ final class ProjectFlowTests {
         try "theirs again".write(to: main, atomically: false, encoding: .utf8)
         #expect(project.editor.perform(.italic))
         try await waitUntil(timeout: .seconds(5)) { project.diskConflict == "main.tex" }
-        project.revertToDisk("main.tex")
+        project.answer("main.tex", "revert")
         try await waitUntil(timeout: .seconds(5)) { text.string == "theirs again" }
         #expect(project.diskConflict == nil && onDisk() == "theirs again" && app.alert == nil)
+        await app.close()
+    }
+
+    /// An answer clears only its own file's alert: another file's question still waits.
+    @Test func anAnswerLeavesAnotherFilesQuestion() async throws {
+        let project = try await opened().project
+        (project.diskConflict, project.missingFile) = ("main.tex", "gone.tex")
+        project.answer("main.tex", "cancel", holding: "Held")
+        #expect(project.diskConflict == nil && project.missingFile == "gone.tex")
         await app.close()
     }
 

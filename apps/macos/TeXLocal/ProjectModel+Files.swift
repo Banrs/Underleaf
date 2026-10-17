@@ -77,8 +77,8 @@ extension ProjectModel {
             changed: { [weak self] in await self?.tree.reload() },
             failed: { [weak self] title, error in self?.report(error, title) })
         trashed.append(item)
+        // The session's `tree` event follows the move.
         await item.moveToTrash()
-        if !closed { await tree.reload() }
     }
 
     /// The session saves and holds its saves under `path`, so no autosave makes the file again, and refuses the main file;
