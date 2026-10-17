@@ -21,19 +21,27 @@ struct Text {
 struct Cell {
     id: u64,
     text: Mutex<Text>,
-    tx: mpsc::UnboundedSender<Msg>,
+    /// The session's, which is told of each edit and reload; none for a detached document.
+    tx: Option<mpsc::UnboundedSender<Msg>>,
     symbols: Arc<Mutex<Arc<Symbols>>>,
 }
 
-/// A handle on a session's document, cheap to clone; any thread may use it.
+/// A handle on a session's document, or on a text of the host's own, cheap to clone;
+/// any thread may use it.
 #[derive(Clone)]
 pub struct Document(Arc<Cell>);
 
 impl Document {
+    /// A text of the host's own: no session saves or previews it, and it completes no
+    /// labels or citations.
+    pub fn detached(text: &str) -> Self {
+        Self::new(0, text, None, Arc::default())
+    }
+
     pub(crate) fn new(
         id: u64,
         text: &str,
-        tx: mpsc::UnboundedSender<Msg>,
+        tx: Option<mpsc::UnboundedSender<Msg>>,
         symbols: Arc<Mutex<Arc<Symbols>>>,
     ) -> Self {
         Self(Arc::new(Cell {
@@ -54,13 +62,15 @@ impl Document {
         held.source.edit(start, length, text);
         held.version += 1;
         // Sent under the lock, so the session has edits in the order made.
-        let _ = self.0.tx.send(Msg::Edited {
-            doc: self.0.id,
-            version: held.version,
-            start,
-            length,
-            text: text.to_owned(),
-        });
+        if let Some(tx) = &self.0.tx {
+            let _ = tx.send(Msg::Edited {
+                doc: self.0.id,
+                version: held.version,
+                start,
+                length,
+                text: text.to_owned(),
+            });
+        }
     }
 
     /// The editor now shows `text`, which a `document_reload` event gave it.
@@ -69,10 +79,13 @@ impl Document {
         held.source = SourceDocument::new(text);
         held.symbols = None;
         held.version += 1;
-        let _ = self.0.tx.send(Msg::Reloaded {
-            doc: self.0.id,
-            version: held.version,
-        });
+        if let Some(tx) = &self.0.tx {
+            let version = held.version;
+            let _ = tx.send(Msg::Reloaded {
+                doc: self.0.id,
+                version,
+            });
+        }
     }
 
     /// Forgets the closers and snippet typing kept: the editor is about to

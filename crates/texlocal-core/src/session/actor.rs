@@ -38,6 +38,21 @@ const SETTLE: Duration = Duration::from_millis(250);
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 
+/// What the last event of a kind told the host, so an unchanged state isn't sent again.
+#[derive(Default)]
+pub(super) struct Shown<T>(Option<T>);
+
+impl<T: PartialEq + Clone> Shown<T> {
+    /// Whether `now` differs from what was last shown; from here on, it is what was.
+    pub fn changed(&mut self, now: &T) -> bool {
+        let changed = self.0.as_ref() != Some(now);
+        if changed {
+            self.0 = Some(now.clone());
+        }
+        changed
+    }
+}
+
 /// The session's waits; several due at once go in this order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Timer {
@@ -79,7 +94,7 @@ pub(crate) struct Doc {
     composing: bool,
     issues: Vec<Value>,
     /// The last `document` event's `error` and `held`.
-    shown: Option<(Option<String>, bool)>,
+    shown: Shown<(Option<String>, bool)>,
 }
 
 impl Doc {
@@ -105,7 +120,7 @@ pub(super) struct Build {
     pub outdated: bool,
     errors: usize,
     /// The last `build` event's fields.
-    shown: Option<(bool, bool, bool)>,
+    shown: Shown<(bool, bool, bool)>,
 }
 
 type Cleaned = (Reply, bool, u64, Result<(), CoreError>);
@@ -320,7 +335,14 @@ impl Actor {
                 }
             }
             "open_document" => self.open_document(&path()?)?,
-            "close_document" => return self.close_document(&path()?),
+            "close_document" => {
+                let path = path()?;
+                let closed = self.flush(Some(&path), true)?;
+                if closed {
+                    self.close_doc(&path, "closed");
+                }
+                return Ok(json!({ "closed": closed }));
+            }
             "composing" => {
                 let (path, composing) = (path()?, arg::<bool>(args, "composing")?);
                 if let Some(doc) = self.doc_mut(&path) {
@@ -419,7 +441,7 @@ impl Actor {
         let (text, stamp) = read_disk(&paths::safe_path(&self.root, path)?)?;
         self.next_doc += 1;
         let symbols = Arc::clone(&self.symbols);
-        let doc = Document::new(self.next_doc, &text, self.tx.clone(), symbols);
+        let doc = Document::new(self.next_doc, &text, Some(self.tx.clone()), symbols);
         lock(&self.shared.docs).insert(path.to_owned(), doc.clone());
         self.docs.push(Doc {
             doc,
@@ -435,20 +457,12 @@ impl Actor {
             reload: None,
             composing: false,
             issues: Vec::new(),
-            shown: None,
+            shown: Shown::default(),
         });
         self.publish_doc(path);
         self.mark_issues();
         self.live_whole(path);
         Ok(())
-    }
-
-    fn close_document(&mut self, path: &str) -> Result<Value, CoreError> {
-        let closed = self.flush(Some(path), true)?;
-        if closed {
-            self.close_doc(path, "closed");
-        }
-        Ok(json!({ "closed": closed }))
     }
 
     fn close_doc(&mut self, path: &str, reason: &str) {
@@ -477,7 +491,8 @@ impl Actor {
         let Some(path) = self.touched(id) else {
             return;
         };
-        if self.has_pdf() && !self.build.outdated {
+        let has_pdf = self.build.pdf || self.live.document_seen;
+        if has_pdf && !self.build.outdated {
             self.build.outdated = true;
             self.publish_build();
         }
@@ -509,10 +524,8 @@ impl Actor {
         let Some(doc) = self.doc_mut(path) else {
             return;
         };
-        let state = (doc.error.clone(), doc.held);
-        if doc.shown.as_ref() != Some(&state) {
-            let event = json!({ "path": path, "error": state.0, "held": state.1 });
-            doc.shown = Some(state);
+        if doc.shown.changed(&(doc.error.clone(), doc.held)) {
+            let event = json!({ "path": path, "error": doc.error, "held": doc.held });
             self.emit("document", event);
         }
     }
@@ -766,19 +779,12 @@ impl Actor {
 
     // MARK: - Builds
 
-    fn has_pdf(&self) -> bool {
-        self.build.pdf || self.live.document_seen
-    }
-
-    pub fn live_previewing(&self) -> bool {
-        self.live.active() || self.timers.contains_key(&Timer::Restart)
-    }
-
     /// A request during a build queues one more. An automatic build waits
     /// while live preview runs, and needs TeX found (`status`). Err: a save
     /// someone asked for failed.
     pub fn compile(&mut self, auto: bool) -> Result<(), CoreError> {
-        if auto && (self.live_previewing() || !self.service.tex_found()) {
+        let previewing = self.live.active() || self.timers.contains_key(&Timer::Restart);
+        if auto && (previewing || !self.service.tex_found()) {
             return Ok(());
         }
         let build = &mut self.build;
@@ -859,14 +865,14 @@ impl Actor {
     }
 
     pub fn publish_build(&mut self) {
-        let build = &mut self.build;
-        let state = (
-            build.compiling,
-            build.compiling && build.auto,
-            build.outdated,
-        );
-        if build.shown.replace(state) != Some(state) {
-            let (compiling, auto, outdated) = state;
+        let Build {
+            compiling,
+            auto,
+            outdated,
+            ..
+        } = self.build;
+        let auto = compiling && auto;
+        if self.build.shown.changed(&(compiling, auto, outdated)) {
             let event = json!({ "compiling": compiling, "auto": auto, "outdated": outdated });
             self.emit("build", event);
         }
@@ -1021,7 +1027,7 @@ impl Actor {
         for old in self.docs_within(from) {
             let new = format!("{to}{}", &old[from.len()..]);
             let doc = self.doc_mut(&old).expect("the document is open");
-            (doc.path, doc.shown) = (new.clone(), None);
+            (doc.path, doc.shown) = (new.clone(), Shown::default());
             let doc = doc.doc.clone();
             let mut shared = lock(&self.shared.docs);
             shared.remove(&old);

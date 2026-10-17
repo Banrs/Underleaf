@@ -270,16 +270,13 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
     });
 }
 
-/// A file's text as the editor has it: the host's own, or a session's
+/// A file's text as the editor has it: the host's own (detached), or a session's
 /// document, whose edits the session saves and previews.
-pub enum TlSource {
-    Own(Box<SourceDocument>),
-    Session(Document),
-}
+pub type TlSource = Document;
 
 /// What `body` answers for a source: `none` for a null source or a panic.
-unsafe fn on_source<T>(source: Source, none: T, body: impl FnOnce(&mut TlSource) -> T) -> T {
-    let source = unsafe { source.as_mut() };
+unsafe fn on_source<T>(source: Source, none: T, body: impl FnOnce(&Document) -> T) -> T {
+    let source = unsafe { source.as_ref() };
     source
         .and_then(|source| caught(|| body(source)))
         .unwrap_or(none)
@@ -287,15 +284,6 @@ unsafe fn on_source<T>(source: Source, none: T, body: impl FnOnce(&mut TlSource)
 
 unsafe fn on_doc<T>(source: Source, none: T, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
     unsafe { on_source(source, none, |source| source.with(body)) }
-}
-
-impl TlSource {
-    fn with<T>(&mut self, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
-        match self {
-            Self::Own(doc) => body(doc),
-            Self::Session(document) => document.with(body),
-        }
-    }
 }
 
 /// # Safety
@@ -313,7 +301,7 @@ pub unsafe extern "C" fn tl_session_source(
         let document = handle.host.sessions.document(session, path)?;
         // A visit's closers and snippet are over with it.
         document.reset_typing();
-        Some(Box::new(TlSource::Session(document)))
+        Some(Box::new(document))
     });
     source.flatten().map_or(null_mut(), Box::into_raw)
 }
@@ -325,8 +313,8 @@ pub unsafe extern "C" fn tl_session_source(
 /// See the crate's.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_new(text: Bytes, len: usize) -> Source {
-    let doc = SourceDocument::new(&unsafe { text_arg(text, len) });
-    Box::into_raw(Box::new(TlSource::Own(Box::new(doc))))
+    let doc = Document::detached(&unsafe { text_arg(text, len) });
+    Box::into_raw(Box::new(doc))
 }
 
 /// # Safety
@@ -343,11 +331,8 @@ pub unsafe extern "C" fn tl_source_edit(
 ) -> *mut c_char {
     let text = unsafe { text_arg(text, len) };
     let changing = unsafe { changing.as_ref() }.copied();
-    let mirror = |source: &mut TlSource| {
-        match source {
-            TlSource::Own(doc) => doc.edit(start, length, &text),
-            TlSource::Session(document) => document.edit(start, length, &text),
-        }
+    let mirror = |source: &Document| {
+        source.edit(start, length, &text);
         let delta = text.encode_utf16().count() as i64 - i64::from(length);
         source.with(|doc| {
             doc.follow(TextRange { start, length }, delta, changing, mirroring);
@@ -394,11 +379,7 @@ pub unsafe extern "C" fn tl_source_free_text(text: *mut u8, len: usize) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_reload(source: Source, text: Bytes, len: usize) {
     let text = unsafe { text_arg(text, len) };
-    let reload = |source: &mut TlSource| match source {
-        TlSource::Own(doc) => **doc = SourceDocument::new(&text),
-        TlSource::Session(document) => document.reload(&text),
-    };
-    unsafe { on_source(source, (), reload) }
+    unsafe { on_source(source, (), |source| source.reload(&text)) }
 }
 
 /// # Safety

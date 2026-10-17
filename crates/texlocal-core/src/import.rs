@@ -89,26 +89,27 @@ const TEX_FOLDER: Allowance = Allowance {
     bytes: UPLOAD_MAX_BYTES,
 };
 
-/// Take `n` from what is `left`, failing with `too_much` past it.
-fn spend(left: &mut u64, n: u64, too_much: &str) -> Result<(), CoreError> {
-    *left = left
-        .checked_sub(n)
-        .ok_or_else(|| CoreError::bad_request(too_much))?;
-    Ok(())
-}
-
-fn too_large() -> CoreError {
-    let mb = UPLOAD_MAX_BYTES >> 20;
-    CoreError::bad_request(format!("File exceeds the {mb} MB upload limit"))
-}
-
 impl Allowance {
-    fn file(&mut self, size: u64) -> Result<(), CoreError> {
-        if size > UPLOAD_MAX_BYTES {
-            return Err(too_large());
+    /// Takes `files` files and `bytes` bytes, these one file's: no more than an upload's.
+    fn take(&mut self, files: u64, bytes: u64) -> Result<(), CoreError> {
+        if bytes > UPLOAD_MAX_BYTES {
+            let mb = UPLOAD_MAX_BYTES >> 20;
+            return Err(CoreError::bad_request(format!(
+                "File exceeds the {mb} MB upload limit"
+            )));
         }
-        spend(&mut self.files, 1, TOO_MANY)?;
-        spend(&mut self.bytes, size, TOO_BIG)
+        let files = self.files.checked_sub(files);
+        self.files = files.ok_or_else(|| CoreError::bad_request(TOO_MANY))?;
+        let bytes = self.bytes.checked_sub(bytes);
+        self.bytes = bytes.ok_or_else(|| CoreError::bad_request(TOO_BIG))?;
+        Ok(())
+    }
+
+    /// Takes `entries` entries looked at.
+    fn look(&mut self, entries: u64) -> Result<(), CoreError> {
+        let left = self.entries.checked_sub(entries);
+        self.entries = left.ok_or_else(|| CoreError::bad_request(TOO_MANY))?;
+        Ok(())
     }
 
     /// Copy `from` to `sink`, taking the bytes actually read, and never more
@@ -124,10 +125,7 @@ impl Allowance {
             Source::Zip(i) => Box::new(zip.expect("a zip source").by_index(*i)?),
         };
         let copied = io::copy(&mut source.take(self.bytes.min(UPLOAD_MAX_BYTES) + 1), sink)?;
-        if copied > UPLOAD_MAX_BYTES {
-            return Err(too_large());
-        }
-        spend(&mut self.bytes, copied, TOO_BIG)
+        self.take(0, copied)
     }
 }
 
@@ -150,7 +148,7 @@ fn collect(
     allowance: &mut Allowance,
 ) -> Result<Vec<Incoming>, CoreError> {
     if meta.is_file() {
-        allowance.file(meta.len())?;
+        allowance.take(1, meta.len())?;
         let from = Source::File(abs.to_path_buf());
         return Ok(vec![Incoming { path: rel, from }]);
     }
@@ -159,7 +157,7 @@ fn collect(
         return Ok(files);
     }
     for entry in fs::read_dir(abs)? {
-        spend(&mut allowance.entries, 1, TOO_MANY)?;
+        allowance.look(1)?;
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if !hidden(&name) && !(rel.is_empty() && name.eq_ignore_ascii_case(BUILD_DIR)) {
@@ -327,7 +325,7 @@ fn zip_files(
     zip: &mut ZipArchive<File>,
     mut allowance: Allowance,
 ) -> Result<Vec<Incoming>, CoreError> {
-    spend(&mut allowance.entries, zip.len() as u64, TOO_MANY)?;
+    allowance.look(zip.len() as u64)?;
     let mut files = Vec::new();
     for i in 0..zip.len() {
         // Its name and size only: nothing is decompressed yet.
@@ -341,7 +339,7 @@ fn zip_files(
             _ => continue,
         };
         if !segments.iter().any(|s| hidden(s)) {
-            allowance.file(entry.size())?;
+            allowance.take(1, entry.size())?;
             let (path, from) = (segments.join("/"), Source::Zip(i));
             files.push(Incoming { path, from });
         }

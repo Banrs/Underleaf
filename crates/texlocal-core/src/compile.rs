@@ -24,7 +24,8 @@ use crate::{BUILD_DIR, lock, lossy_string, tail};
 
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_OUTPUT: usize = 1_000_000;
+/// The most of a tool's stdout, and of its stderr, kept.
+const PIPE_KEPT: u64 = 1_000_000;
 /// How long a finished child's pipes are read before giving up on them.
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 const LOG_TAIL: usize = 200_000;
@@ -248,7 +249,7 @@ fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> std::io::R
 /// Keeps bounded output while reading to EOF, so a full pipe cannot block the
 /// child. The caller keeps what was read if it ends the read early.
 async fn read_capped(mut reader: impl tokio::io::AsyncRead + Unpin, kept: &mut Vec<u8>) {
-    let mut capped = (&mut reader).take(MAX_OUTPUT as u64);
+    let mut capped = (&mut reader).take(PIPE_KEPT);
     if capped.read_to_end(kept).await.is_ok() {
         let _ = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await;
     }

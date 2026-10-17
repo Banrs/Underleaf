@@ -28,7 +28,9 @@ use crate::{BUILD_DIR, CoreError, SETTINGS_FILE, lock, paths, settings, tail};
 const MAX_FILE: usize = 8 * 1024 * 1024;
 const MAX_FILES: usize = 256;
 const MAX_TOTAL: usize = 64 * 1024 * 1024;
-const MAX_OUTPUT: usize = 128 * 1024;
+/// The end kept of each stream TeXpresso writes (TeX's output and log, its stderr), and
+/// of the log a status gives.
+const STREAM_TAIL: usize = 128 * 1024;
 const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 /// How long TeXpresso may leave what it was sent unread before the session is given up:
 /// it reads nothing while it makes its TeX formats, five seconds and more the first time.
@@ -111,13 +113,6 @@ pub struct Document {
     pub changed: Option<Vec<[u32; 2]>>,
 }
 
-/// A run of TeX that is over.
-#[derive(Debug, Clone)]
-pub struct RunEnd {
-    /// `complete` or `stopped`, as `Document::run`.
-    pub run: String,
-}
-
 /// What is new for a client since the `seq` it last had (`Manager::wait`).
 #[derive(Debug, Clone, Default)]
 pub struct Events {
@@ -130,7 +125,8 @@ pub struct Events {
     pub pdf: Option<Document>,
     /// The latest of each page written since `pdf`, lowest page first.
     pub pages: Vec<PageUpdate>,
-    pub done: Option<RunEnd>,
+    /// How a run of TeX that is over ended: `complete` or `stopped`, as `Document::run`.
+    pub done: Option<String>,
 }
 
 /// A bounded tail of a stream TeXpresso writes at absolute byte offsets, which it
@@ -161,7 +157,7 @@ impl Output {
             self.bytes.clear();
         }
         self.bytes.extend_from_slice(text);
-        let excess = self.bytes.len().saturating_sub(MAX_OUTPUT);
+        let excess = self.bytes.len().saturating_sub(STREAM_TAIL);
         self.bytes.drain(..excess);
         self.base += excess as u64;
     }
@@ -286,7 +282,7 @@ struct Inner {
     pdf_version: u64,
     document: Option<Document>,
     pages: BTreeMap<u32, PageUpdate>,
-    done: Option<(u64, RunEnd)>,
+    done: Option<(u64, String)>,
 }
 
 /// `message` as a line of JSON for TeXpresso.
@@ -376,7 +372,7 @@ impl Session {
         if !inner.protocol_seen || inner.error.is_some() {
             log.push_str(tail(&inner.stderr.text(), 16 * 1024));
         }
-        log.drain(..log.len() - tail(&log, MAX_OUTPUT).len());
+        log.drain(..log.len() - tail(&log, STREAM_TAIL).len());
         Status {
             running: inner.tree.is_some(),
             output: inner.output.text(),
@@ -933,10 +929,7 @@ fn apply_message(session: &Session, message: &Value) {
         // [done, pages, run]
         "done" => {
             if let Some(run) = message[2].as_str() {
-                let end = RunEnd {
-                    run: run.to_owned(),
-                };
-                inner.done = Some((session.event(inner), end));
+                inner.done = Some((session.event(inner), run.to_owned()));
             }
         }
         // Upstream sends [truncate, buffer, end] and [append, buffer, byte-offset, text].
@@ -1054,7 +1047,7 @@ mod tests {
     #[test]
     fn bounded_output_keeps_offsets_after_backtracking() {
         let mut output = Output::default();
-        output.append(0, &vec![b'x'; MAX_OUTPUT + 10]);
+        output.append(0, &vec![b'x'; STREAM_TAIL + 10]);
         assert_eq!(output.base, 10);
         output.append(12, b"ok");
         assert_eq!(output.text(), "xxok");
@@ -1483,7 +1476,7 @@ done
             assert_eq!(document.run.as_deref(), Some("complete"));
             assert_eq!(document.changed, Some(vec![[1, 1], [3, 3]]));
             assert!(events.pages.is_empty());
-            assert_eq!(events.done.unwrap().run, "complete");
+            assert_eq!(events.done.unwrap(), "complete");
 
             // A page file from outside the session's folder is nobody's page.
             apply_message(&session, &json!(["page", 0, "/etc/passwd", 0]));

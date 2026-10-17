@@ -18,7 +18,7 @@ use super::{Document, Engine, Msg, Sessions};
 use crate::compile::CompileResult;
 use crate::logparse::LogItem;
 use crate::service::Service;
-use crate::texpresso::{Document as LiveDocument, Events, RunEnd, Status};
+use crate::texpresso::{Document as LiveDocument, Events, Status};
 use crate::{CoreError, lock};
 
 // MARK: - A fake engine
@@ -907,7 +907,7 @@ async fn a_stopped_run_is_halted_only_once_it_has_lasted_a_second() {
     let mut rig = Rig::new(false).await;
     rig.live().await;
     let ended = |run: &str| Events {
-        done: Some(RunEnd { run: run.into() }),
+        done: Some(run.into()),
         ..news(true)
     };
     rig.fake.send_news(ended("stopped"));

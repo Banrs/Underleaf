@@ -11,7 +11,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 use super::Msg;
-use crate::paths::within;
+use crate::paths::{rel_to_root, within};
 use crate::projects::TreeNode;
 
 /// A path the system said changed. Structural: made, removed or renamed.
@@ -97,18 +97,15 @@ pub(crate) fn classify(
 ) -> Meaning {
     let mut meaning = Meaning::default();
     for change in changes {
-        let Some(rel) = relative(root, &change.path) else {
-            continue;
-        };
-        if rel.is_empty() {
+        let Some(rel) = rel_to_root(root, &change.path) else {
             // The folder itself moved, or the system lost count of it: any
             // file in it may have changed unseen.
-            if change.structural {
+            if change.structural && change.path == root {
                 meaning.tree = true;
                 meaning.docs.extend(docs.iter().map(ToString::to_string));
             }
             continue;
-        }
+        };
         let touched = docs
             .iter()
             .filter(|doc| **doc == rel || change.structural && within(doc, &rel));
@@ -123,13 +120,6 @@ pub(crate) fn classify(
         }
     }
     meaning
-}
-
-/// `root`'s path for `path`, with forward slashes; "" for the root itself.
-fn relative(root: &Path, path: &Path) -> Option<String> {
-    let rest = path.strip_prefix(root).ok()?;
-    let parts: Option<Vec<&str>> = rest.components().map(|c| c.as_os_str().to_str()).collect();
-    Some(parts?.join("/"))
 }
 
 /// A save, the session's or another app's, renames a new file over a listed
@@ -153,21 +143,18 @@ fn listed_as_before(root: &Path, rel: &str, index: &TreeIndex) -> bool {
 mod tests {
     use super::*;
 
+    fn set<S: FromIterator<String>>(paths: &[&str]) -> S {
+        paths.iter().map(ToString::to_string).collect()
+    }
+
     fn index(files: &[&str], folders: &[&str]) -> TreeIndex {
-        let set = |paths: &[&str]| paths.iter().map(ToString::to_string).collect();
-        TreeIndex {
-            files: set(files),
-            folders: set(folders),
-        }
+        let (files, folders) = (set(files), set(folders));
+        TreeIndex { files, folders }
     }
 
     fn change(root: &Path, rel: &str, structural: bool) -> Change {
         let path = root.join(rel);
         Change { path, structural }
-    }
-
-    fn set(paths: &[&str]) -> BTreeSet<String> {
-        paths.iter().map(ToString::to_string).collect()
     }
 
     #[test]

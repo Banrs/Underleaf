@@ -10,7 +10,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::time::Instant;
 
-use super::actor::{Actor, Timer};
+use super::actor::{Actor, Shown, Timer};
 use super::engine::{Call, Fut};
 use crate::CoreError;
 use crate::projects::file_kind;
@@ -80,7 +80,7 @@ pub(crate) struct Live {
     /// The last document's version: the core keeps only the latest.
     version: u64,
     pub document_seen: bool,
-    shown: Value,
+    shown: Shown<Value>,
 }
 
 impl Live {
@@ -142,8 +142,7 @@ impl Actor {
     /// `alert`: an error the host hasn't been shown yet.
     pub fn publish_live(&mut self, alert: bool) {
         let mut state = self.live_state();
-        if state != self.live.shown || alert {
-            self.live.shown = state.clone();
+        if self.live.shown.changed(&state) || alert {
             state["alert"] = alert.into();
             // The host opens the log on an alert: it comes along.
             if alert && !self.live.log_shown {
@@ -500,7 +499,7 @@ impl Actor {
             self.live.revision = events.revision;
             self.publish_live(false);
         }
-        let run = events.done.as_ref().map(|done| done.run.as_str());
+        let run = events.done.as_deref();
         let run = run.or(events.pdf.as_ref().and_then(|pdf| pdf.run.as_deref()));
         if let Some(pdf) = &events.pdf {
             // The core keeps the latest document only: one replaced unread took its changed pages with it.
