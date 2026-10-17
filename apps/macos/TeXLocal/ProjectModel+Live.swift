@@ -34,7 +34,8 @@ extension ProjectModel {
         core.send("session_live_caret", ["session": session, "path": path, "offset": editor.textView.selectedRange().location])
     }
 
-    /// The build's PDF, or none, in place of the live one once Live Preview has stopped.
+    /// The build's PDF, or none, in place of the live one once Live Preview has stopped. Asked at Stop and again as the
+    /// session says it ended: the second's load takes over the first's, which then leaves the pane to it.
     func endLivePDF() async {
         guard livePDF, !texpresso.active, !(await showBuildPDF(buildPDF?.path(percentEncoded: false), replacingLive: true)), livePDF,
               !texpresso.active, !closed else { return }

@@ -49,6 +49,9 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     /// PDFKit searches off the main thread; the first query extracts page text.
     @ObservationIgnored private var running: (document: PDFDocument, query: String, keepingPlace: Bool, found: [PDFSelection])?
     @ObservationIgnored private var startFrom: (anchor: Position, step: Int)?
+    @ObservationIgnored private var rerunning: Task<Void, Never>?
+    /// Past Live Preview's gap between keys, so the search runs again as the typing pauses.
+    static let rerunDelay: Duration = .milliseconds(350)
 
     init(view: SyncPDFView) {
         self.view = view
@@ -88,6 +91,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
 
     /// Cancelling posts its end at once, unheard as `running` is cleared first.
     func cancel() {
+        rerunning?.cancel()
         let document = running?.document
         running = nil
         document?.cancelFindString()
@@ -129,7 +133,8 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         if !keepingPlace || view.currentSelection == nil { select(scrolling: start.map { $0.step != 0 } ?? !keepingPlace) }
     }
 
-    /// Pages that live preview or a rebuild replaced: their matches go at once, and the search runs again over what is there.
+    /// Pages that live preview or a rebuild replaced: their matches go at once, and the search runs again over what is there
+    /// once the pages stop coming, so a burst of keys in Live Preview costs one search of the whole document.
     func pagesReplaced(_ gone: Set<PDFPage>) {
         let kept = matches.filter { !$0.pages.contains(where: gone.contains) }
         if kept.count != matches.count {
@@ -140,7 +145,10 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         }
         guard isOpen else { return }
         cancel()
-        search(text, keepingPlace: true)
+        restart(&rerunning, after: Self.rerunDelay) { [weak self] in
+            guard let self else { return }
+            search(text, keepingPlace: true)
+        }
     }
 
     // MARK: - Where the next match is

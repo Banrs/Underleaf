@@ -1,6 +1,8 @@
 import PDFKit
 import SwiftUI
 
+/// The PDF pane's view and what it shows: the document, its zoom and page, and printing. Live Preview's pages are
+/// PDFController+Live.swift's, and SyncTeX's reveal PDFController+Sync.swift's.
 @Observable
 final class PDFController: NSObject {
     /// Read whole: the next build rewrites the file in place.
@@ -17,8 +19,6 @@ final class PDFController: NSObject {
     @ObservationIgnored private var scrolling: NotificationCenter.ObservationToken?
     private(set) var page = 0
     @ObservationIgnored var restorePage: Int?
-    @ObservationIgnored private var pendingReveal: (loc: ForwardLoc, source: SyncSource?)?
-    @ObservationIgnored private var revealing: Task<Void, Never>?
     private(set) var pageCount = 0
     private(set) var scale: CGFloat = 1
     var zoomLabel: String { Self.label(scale) }
@@ -34,7 +34,7 @@ final class PDFController: NSObject {
     enum Fit { case width, page }
     private(set) var fit: Fit? = .width
 
-    nonisolated enum Zoom: Codable, Equatable { case fitWidth, fitPage, scale(Double) }
+    nonisolated enum Zoom: Codable, Hashable { case fitWidth, fitPage, scale(Double) }
 
     var zoom: Zoom {
         switch fit {
@@ -45,6 +45,22 @@ final class PDFController: NSObject {
     }
 
     @ObservationIgnored var restoreZoom: Zoom?
+
+    // Live Preview's (PDFController+Live.swift): pages drawn over PDFKit's that its document takes once the typing
+    // pauses, and a whole document's pages still to take.
+    @ObservationIgnored var liveWaiting: [Int: PDFPage] = [:]
+    @ObservationIgnored var liveSettling: Task<Void, Never>?
+    @ObservationIgnored var liveClearing: Task<Void, Never>?
+    @ObservationIgnored var liveTaking: Task<Void, Never>?
+    @ObservationIgnored var liveBacklog: (document: PDFDocument, pages: IndexSet, complete: Bool)?
+    @ObservationIgnored var liveMissed = false
+    /// Whether the run's first document shows: a page before it goes, as it would be drawn over the build's PDF or the
+    /// last run's.
+    @ObservationIgnored var liveShown = false
+
+    // SyncTeX's (PDFController+Sync.swift): a reveal waits for the pane to have room, and for the core's match.
+    @ObservationIgnored var pendingReveal: (loc: ForwardLoc, source: SyncSource?)?
+    @ObservationIgnored var revealing: Task<Void, Never>?
 
     override init() {
         find = PDFFind(view: view)
@@ -76,7 +92,7 @@ final class PDFController: NSObject {
         scrolling = NotificationCenter.default.addObserver(of: clip, for: .boundsDidChange) { [weak self] _ in self?.scrolled() }
     }
 
-    @objc private func pageChanged() {
+    @objc func pageChanged() {
         guard let document = view.document, let page = view.currentPage else { return }
         if let number = document.number(of: page) { self.page = number }
         pageCount = document.pageCount
@@ -116,6 +132,15 @@ final class PDFController: NSObject {
         let pageHeight = page.rotation.isMultiple(of: 180) ? box.height : box.width
         let height = view.shownHeight / (pageHeight + margins.top + margins.bottom)
         return min(height, view.scaleFactorForSizeToFit)
+    }
+
+    /// The zoom menu's choice, or the one a project last had.
+    func apply(_ zoom: Zoom) {
+        switch zoom {
+        case .fitWidth: fitWidth()
+        case .fitPage: fitPage()
+        case .scale(let scale): setScale(min(max(CGFloat(scale), Self.minScale), Self.maxScale))
+        }
     }
 
     func setScale(_ scale: CGFloat) {
@@ -173,7 +198,7 @@ final class PDFController: NSObject {
     /// PDFKit keeps the objects of every page a document takes from another for that document's life (27.2), and only a
     /// new document frees them; so the meter is the app's own memory growth.
     @ObservationIgnored private var memoryAtWhole = UInt64.max
-    private var hasGrown: Bool {
+    var hasGrown: Bool {
         let now = memory()
         return now > memoryAtWhole && now - memoryAtWhole > 512 << 20
     }
@@ -192,8 +217,8 @@ final class PDFController: NSObject {
     /// until its pages draw, a few frames later (27.2). Once in a while a whole one frees the memory the replaced pages hold.
     func show(_ document: PDFDocument) {
         shownVersion += 1
-        liveWaiting.removeAll()
-        (liveBacklog, liveMissed, liveShown) = (nil, false, false)
+        revealing?.cancel()
+        resetLive()
         clearLiveLater()
         // Read before the swap: a page keeps its document only weakly.
         let place = restorePage == nil ? view.shownPlace : nil
@@ -244,10 +269,11 @@ final class PDFController: NSObject {
 
     func clear() {
         shownVersion += 1
+        pendingReveal = nil
+        revealing?.cancel()
         liveSettling?.cancel()
         liveClearing?.cancel()
-        liveWaiting.removeAll()
-        (liveBacklog, liveMissed, liveShown) = (nil, false, false)
+        resetLive()
         view.removeLive()
         view.removeMark()
         find.reset()
@@ -255,170 +281,11 @@ final class PDFController: NSObject {
         (page, pageCount) = (0, 0)
     }
 
-    // MARK: - Live preview
-
-    @ObservationIgnored private var liveWaiting: [Int: PDFPage] = [:]
-    @ObservationIgnored private var liveSettling: Task<Void, Never>?
-    @ObservationIgnored private var liveClearing: Task<Void, Never>?
-    @ObservationIgnored private var liveTaking: Task<Void, Never>?
-    @ObservationIgnored private var liveBacklog: (document: PDFDocument, pages: IndexSet, complete: Bool)?
-    @ObservationIgnored private var liveMissed = false
-    /// Whether the run's first document shows: a page before it goes, as it would be drawn over the build's PDF or the
-    /// last run's.
-    @ObservationIgnored private var liveShown = false
-
-    /// How long a page drawn over PDFKit's waits for its whole document, which comes 300 ms after the last key and brings
-    /// it first, before PDFKit's document takes it alone.
-    private static let liveSettleDelay: Duration = .seconds(1)
-    /// PDFKit fades a page it is given in over about 240 ms (27.2); the layers over its pages go after that.
-    private static let liveClearDelay: Duration = .milliseconds(400)
-
-    /// A live PDF as `Core` read it where the event arrived, in the order the session sent them.
-    func showLive(_ read: LiveRead) {
-        switch read {
-        case .document(let live?):
-            var changed = live.changed
-            // After a document that wasn't read, any page may differ from what shows.
-            if liveMissed, changed != nil { changed = IndexSet(integersIn: 0..<live.document.pageCount) }
-            liveMissed = false
-            showLive(live.document, changed: changed, complete: live.complete)
-            liveShown = true
-        case .document(nil):
-            liveMissed = true
-        case .page(let live?) where liveShown:
-            showLive(live.page, at: live.index)
-        case .page:
-            break
-        }
-    }
-
-    /// A run of Live Preview ended, or another began: nothing of the last run's counts in the next.
-    func endLiveRun() {
-        (liveMissed, liveShown) = (false, false)
-    }
-
-    /// Drawn over PDFKit's page; PDFKit's document takes it once the typing pauses, so a key costs one drawing. A page
-    /// past the document showing goes: the next document has it.
-    func showLive(_ page: PDFPage, at index: Int) {
-        guard let shown = view.document?.page(ifAt: index) else { return }
-        liveWaiting[index] = page
-        liveBacklog?.pages.remove(index)
-        guard view.showLive(page, over: shown, at: index) else { return settleLive() }
-        liveClearing?.cancel()
-        // Only if the whole document doesn't bring this page first: it would go into PDFKit's document twice.
-        restart(&liveSettling, after: Self.liveSettleDelay) { [weak self] in self?.settleLive() }
-    }
-
-    private func settleLive() {
-        guard let document = view.document, !liveWaiting.isEmpty else { return }
-        var gone: Set<PDFPage> = []
-        // Not a page a whole document is still bringing (`takeLive`), which would go in twice.
-        for (index, page) in liveWaiting where liveBacklog?.pages.contains(index) != true {
-            liveWaiting[index] = nil
-            guard let old = document.page(ifAt: index) else { continue }
-            document.insert(page, at: index)
-            document.removePage(at: index + 1)
-            gone.insert(old)
-        }
-        replaced(gone)
-    }
-
-    /// A live page is drawn only where its page showed, so PDFKit takes the waiting ones for what comes into view.
-    private func scrolled() {
-        guard !liveWaiting.isEmpty else { return }
-        Task { [weak self] in self?.settleLive() }
-    }
-
-    /// Only the pages in `changed` differ (nil: any may); PDFKit's document takes those a few milliseconds' worth at a time so a long document doesn't stop the typing.
-    func showLive(_ document: PDFDocument, changed: IndexSet?, complete: Bool) {
-        // Whole too once the pages taken hold too much (`memoryAtWhole`), if it is all there.
-        guard let shown = view.document, var pages = changed, !(complete && hasGrown) else { return show(document) }
-        if let liveBacklog { pages.formUnion(liveBacklog.pages) }
-        if shown.pageCount < document.pageCount { pages.insert(integersIn: shown.pageCount..<document.pageCount) }
-        pages.formIntersection(IndexSet(integersIn: 0..<document.pageCount))
-        liveBacklog = (document, pages, complete)
-        takeLive()
-    }
-
-    /// The first share at once, in the event's own turn; the rest a share a turn, so the typing goes on between them. A
-    /// document that comes meanwhile has its first share at once too, and the turns go on with what it leaves.
-    private func takeLive() {
-        guard takeLiveShare(), liveTaking == nil else { return }
-        liveTaking = Task { [weak self] in
-            repeat { await Task.yield() } while self?.takeLiveShare() == true
-            self?.liveTaking = nil
-        }
-    }
-
-    /// Whether pages are left for the next turn.
-    private func takeLiveShare() -> Bool {
-        guard let shown = view.document, var backlog = liveBacklog else { return false }
-        liveBacklog = nil
-        let start = ContinuousClock.now
-        var gone: Set<PDFPage> = [], came = false
-        while let index = backlog.pages.first, index <= shown.pageCount, ContinuousClock.now - start < .milliseconds(4) {
-            backlog.pages.remove(index)
-            guard let page = backlog.document.page(at: index)?.copy() as? PDFPage else { continue }
-            let old = shown.page(ifAt: index)
-            // A page in view goes in beneath a layer that shows it already, as PDFKit fades a new one in.
-            if let old, liveWaiting.removeValue(forKey: index) == nil, !view.hasLive(at: index) {
-                _ = view.showLive(page, over: old, at: index)
-            }
-            shown.insert(page, at: index)
-            if let old {
-                shown.removePage(at: index + 1)
-                gone.insert(old)
-            }
-            came = true
-        }
-        if backlog.pages.first.map({ $0 <= shown.pageCount }) == true {
-            liveBacklog = backlog
-        } else if backlog.complete {
-            while shown.pageCount > backlog.document.pageCount, let last = shown.page(at: shown.pageCount - 1) {
-                liveWaiting[shown.pageCount - 1] = nil
-                view.removeLive(at: shown.pageCount - 1)
-                shown.removePage(at: shown.pageCount - 1)
-                gone.insert(last)
-            }
-        }
-        // Pages that came or went at the end leave the others where they were: the document view counts from its top.
-        if gone.isEmpty, came { pageChanged() }
-        replaced(gone)
-        return liveBacklog != nil
-    }
-
-    private func replaced(_ gone: Set<PDFPage>) {
-        guard !gone.isEmpty else { return }
-        clearLiveLater()
-        if view.currentSelection?.pages.contains(where: gone.contains) == true { view.clearSelection() }
-        if let mark = view.mark, gone.contains(mark.page) { view.removeMark() }
-        pageChanged()
-        find.pagesReplaced(gone)
-    }
-
-    /// The layers go once PDFKit has drawn its own pages' tiles and faded them in beneath (27.2).
-    private func clearLiveLater() {
-        restart(&liveClearing, after: Self.liveClearDelay) { [weak self] in
-            if let self, liveWaiting.isEmpty { view.removeLive() }
-        }
-    }
-
-    private func dropLive() {
-        liveSettling?.cancel()
-        settleLive()
-        liveClearing?.cancel()
-        view.removeLive()
-    }
-
     /// Before the page: where a page lands depends on the scale.
     private func restoreZoomIfReady() {
         guard let zoom = restoreZoom, view.document != nil, view.hasShownArea else { return }
         restoreZoom = nil
-        switch zoom {
-        case .fitWidth: fitWidth()
-        case .fitPage: fitPage()
-        case .scale(let scale): setScale(min(max(CGFloat(scale), Self.minScale), Self.maxScale))
-        }
+        apply(zoom)
     }
 
     private func restorePageIfReady() {
@@ -426,102 +293,9 @@ final class PDFController: NSObject {
         restorePage = nil
         go(toPage: number)
     }
-
-    /// The source's word is looked for in the text of the pages round SyncTeX's boxes (`synctex_match`) and selected; where
-    /// it isn't found once, SyncTeX's box flashes.
-    func reveal(_ loc: ForwardLoc, from source: SyncSource? = nil) {
-        guard view.hasShownArea else {
-            pendingReveal = (loc, source)
-            return
-        }
-        pendingReveal = nil
-        revealing?.cancel()
-        guard let document = view.document, let located = document.page(ifAt: Int(loc.page) - 1) else { return }
-        guard let source else { return showFound(loc, on: located, hit: nil) }
-        let pages = syncPages(loc.matches ?? [loc], in: document)
-        revealing = Task {
-            let hit = try? await Core.shared.call("synctex_match", ["id": source.id, "file": source.file, "line": source.line,
-                                                                    "column": source.column, "pages": pages], as: PageHit?.self)
-            guard !Task.isCancelled, view.document === document else { return }
-            showFound(loc, on: located, hit: hit)
-        }
-    }
-
-    private func showFound(_ loc: ForwardLoc, on located: PDFPage, hit: PageHit?) {
-        var found: (page: PDFPage, selection: PDFSelection)?
-        if let hit, hit.end > hit.start, let page = view.document?.page(ifAt: hit.page - 1),
-           let selection = page.selection(for: NSRange(location: hit.start, length: hit.end - hit.start)) {
-            found = (page, selection)
-        }
-        let page = found?.page ?? located
-        let rect = found.map { $0.selection.bounds(for: $0.page) }
-            ?? SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
-        view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
-        if let selection = found?.selection, !find.isOpen {
-            view.removeMark()
-            selection.color = .findHighlightColor
-            view.setCurrentSelection(selection, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-        } else {
-            view.flash(rect, on: page)
-        }
-    }
-
-    /// The pages from the one before SyncTeX's first box to the one after its last: each one's text, and the UTF-16 ranges
-    /// of it the boxes cover. The source's line can wrap past the first box, and TeX can be a page on.
-    private func syncPages(_ boxes: [ForwardLoc], in document: PDFDocument) -> [[String: any Sendable]] {
-        let numbers = boxes.map { Int($0.page) }
-        guard let lowest = numbers.min(), let highest = numbers.max() else { return [] }
-        let first = max(1, lowest - 1), last = min(document.pageCount, highest + 1)
-        guard first <= last else { return [] }
-        return (first...last).compactMap { number -> [String: any Sendable]? in
-            guard let page = document.page(ifAt: number - 1), let text = page.string else { return nil }
-            let bounds = page.bounds(for: view.displayBox)
-            var near: [[Int]] = []
-            for box in boxes where Int(box.page) == number {
-                guard let covered = page.selection(for: SyncTeXGeometry.highlightRect(box, pageBounds: bounds)) else { continue }
-                for index in 0..<covered.numberOfTextRanges(on: page) {
-                    let range = covered.range(at: index, on: page)
-                    if range.location != NSNotFound, range.length > 0 { near.append([range.location, NSMaxRange(range)]) }
-                }
-            }
-            return ["page": number, "text": text, "near": near]
-        }
-    }
-
-    /// SyncTeX resolves only points on a glyph box, and the page centre is usually whitespace.
-    func sourcePoint() -> (page: Int, point: CGPoint)? {
-        guard let document = view.document else { return nil }
-        let probe = CGPoint(x: view.bounds.midX, y: view.bounds.maxY - view.safeAreaInsets.top - view.shownHeight * 0.2)
-        guard let page = view.page(for: probe, nearest: true), let number = document.number(of: page) else { return nil }
-        let bounds = page.bounds(for: view.displayBox)
-        var point = view.convert(probe, to: page)
-        while point.y > bounds.minY {
-            if let line = page.selectionForLine(at: point), let text = line.string,
-               !text.trimmingCharacters(in: .whitespaces).isEmpty {
-                let box = line.bounds(for: page)
-                point = CGPoint(x: box.midX, y: box.minY)
-                break
-            }
-            point.y -= 6
-        }
-        return (number, SyncTeXGeometry.synctexPoint(point, pageBounds: bounds))
-    }
 }
 
 extension PDFPage {
-    /// The page's text and the clicked letter's index in it, for the core to find in the source. PDFKit's characterIndex is
-    /// inaccurate for pdfTeX's T1 fonts on 27.2; each letter's selection is measured instead.
-    func click(at point: CGPoint) -> PageClick? {
-        // PDFKit's word lookup crashes on a page whose document has gone (it holds it weakly).
-        guard document != nil, let word = selectionForWord(at: point), let text = string else { return nil }
-        let range = word.range(at: 0, on: self)
-        guard range.location != NSNotFound else { return nil }
-        let offset = (0..<range.length).first { i in
-            selection(for: NSRange(location: range.location + i, length: 1)).map { $0.bounds(for: self).maxX > point.x } ?? false
-        }
-        return PageClick(text: text, at: range.location + (offset ?? 0))
-    }
-
     nonisolated func hideLinkBorders() {
         for annotation in annotations where annotation.type == "Link" {
             let border = PDFBorder()

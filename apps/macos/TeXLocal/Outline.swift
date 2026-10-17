@@ -1,6 +1,6 @@
 /// A heading with what nests under it, as `session_analyze`'s `tree` has it; `foldKey` names its fold in the project's
-/// saved state.
-nonisolated struct OutlineNode: Identifiable, Decodable, Sendable {
+/// saved state. Equatable, so an analysis that finds the same headings changes nothing the outline shows.
+nonisolated struct OutlineNode: Identifiable, Equatable, Decodable, Sendable {
     let item: OutlineItem
     let children: [OutlineNode]?
     let foldKey: String
@@ -9,23 +9,22 @@ nonisolated struct OutlineNode: Identifiable, Decodable, Sendable {
     var descendants: [OutlineNode] { (children ?? []).flatMap { [$0] + $0.descendants } }
 
     private enum CodingKeys: String, CodingKey {
-        case index, foldKey, children
+        case foldKey, children
     }
 
+    /// The heading's own fields are beside its node's in the same object.
     init(from decoder: any Decoder) throws {
+        item = try OutlineItem(from: decoder)
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        var item = try OutlineItem(from: decoder)
-        item.id = try container.decode(Int.self, forKey: .index)
-        self.item = item
         foldKey = try container.decode(String.self, forKey: .foldKey)
         children = try container.decodeIfPresent([OutlineNode].self, forKey: .children)
     }
 }
 
-/// A heading, by its place in the outline read in order: its sectioning command without the backslash, its level's name
-/// ("Section"), and its title, its level's for one that has none (`untitled`): "Untitled Section".
+/// A heading, by its place in the outline read in order (`index`): its sectioning command without the backslash, its
+/// level's name ("Section"), and its title, its level's for one that has none (`untitled`): "Untitled Section".
 nonisolated struct OutlineItem: Identifiable, Hashable, Decodable, Sendable {
-    var id = 0
+    let id: Int
     let command: String
     let level: String
     let title: String
@@ -34,7 +33,7 @@ nonisolated struct OutlineItem: Identifiable, Hashable, Decodable, Sendable {
     let file: String
 
     private enum CodingKeys: String, CodingKey {
-        case command, level, title, untitled, line, file
+        case id = "index", command, level, title, untitled, line, file
     }
 }
 
