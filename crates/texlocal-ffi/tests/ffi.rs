@@ -1,50 +1,101 @@
-// Round trips through the C ABI exactly as a native host drives it.
+// The C ABI's contract (include/texlocal.h), driven as a native host drives it.
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::Path;
-use std::ptr;
-use std::sync::mpsc;
+use std::ptr::{null, null_mut};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use texlocal_core::syntax::TextRange;
-use texlocal_ffi::{
-    TlHandle, TlSource, tl_call, tl_call_async, tl_close, tl_free, tl_open, tl_session_source,
-    tl_set_listener, tl_source_call, tl_source_edit, tl_source_free, tl_source_free_runs,
-    tl_source_free_text, tl_source_highlights, tl_source_line_at, tl_source_line_count,
-    tl_source_line_start, tl_source_new, tl_source_reload, tl_source_select, tl_source_text,
-    tl_syntax_call,
-};
+use texlocal_ffi::*;
 
-fn c(s: &str) -> CString {
+type Handle = *mut TlHandle;
+type Source = *mut TlSource;
+type Callback = extern "C" fn(*mut c_void, *const c_char);
+
+fn c(s: impl Into<Vec<u8>>) -> CString {
     CString::new(s).unwrap()
 }
 
-/// The JSON a call answered, read and handed back to the library to free; None
-/// for no answer.
-unsafe fn take_json(out: *mut c_char) -> Option<Value> {
+/// The JSON a call answered, freed; None for null.
+unsafe fn take(out: *mut c_char) -> Option<Value> {
     if out.is_null() {
         return None;
     }
-    let value = serde_json::from_str(unsafe { CStr::from_ptr(out) }.to_str().unwrap()).unwrap();
+    let value = serde_json::from_slice(unsafe { CStr::from_ptr(out) }.to_bytes()).unwrap();
     unsafe { tl_free(out) };
     Some(value)
 }
 
-/// An edit the editor made, as it says it would make it: the mirror edits the
-/// source answers, if any.
-unsafe fn edit(source: *mut TlSource, start: u32, length: u32, text: &[u8]) -> Option<Value> {
-    let changing = TextRange { start, length };
-    let (bytes, len, changing) = (text.as_ptr(), text.len(), &raw const changing);
+fn call_raw(h: Handle, command: &[u8], args: Option<&[u8]>) -> Value {
+    let args = args.map(c);
+    let args = args.as_ref().map_or(null(), |a| a.as_ptr());
+    unsafe { take(tl_call(h, c(command).as_ptr(), args)) }.expect("tl_call answers")
+}
+
+fn call(h: Handle, command: &str, args: Value) -> Value {
+    let args = args.to_string();
+    call_raw(h, command.as_bytes(), Some(args.as_bytes()))
+}
+
+/// An error envelope's status.
+fn status(answer: Value) -> Value {
+    assert!(answer["error"].is_string(), "{answer}");
+    answer["status"].clone()
+}
+
+/// A handle over `data` with one blank project, `P`.
+fn open(data: &Path) -> Handle {
+    let h = unsafe { tl_open(c(data.to_str().unwrap()).as_ptr()) };
+    let project = json!({ "name": "P", "template": "blank" });
+    assert_eq!(call(h, "create_project", project)["ok"]["id"], "P");
+    h
+}
+
+/// Session `session` on `P`, with main.tex, holding `text`, open in it.
+fn open_main(h: Handle, session: u64, text: &str) -> Source {
+    let file = json!({ "id": "P", "path": "main.tex", "text": text });
+    call(h, "write_file", file);
+    let args = json!({ "id": "P", "session": session });
+    assert_eq!(call(h, "session_open", args)["ok"]["session"], session);
+    let args = json!({ "session": session, "path": "main.tex" });
+    assert_eq!(
+        call(h, "session_open_document", args),
+        json!({ "ok": null })
+    );
+    unsafe { session_source(h, session, "main.tex") }
+}
+
+fn save(h: Handle, session: u64) -> Value {
+    call(h, "session_save", json!({ "session": session }))
+}
+
+fn disk(data: &Path) -> String {
+    std::fs::read_to_string(data.join("P/main.tex")).unwrap()
+}
+
+unsafe fn session_source(h: Handle, session: u64, path: &str) -> Source {
+    unsafe { tl_session_source(h, session, c(path).as_ptr()) }
+}
+
+unsafe fn new_source(text: &str) -> Source {
+    unsafe { tl_source_new(text.as_ptr(), text.len()) }
+}
+
+/// An edit as the editor makes it, having said it would: the mirror edits answered.
+unsafe fn edit(source: Source, start: u32, length: u32, text: &[u8]) -> Option<Value> {
+    let range = TextRange { start, length };
+    let (bytes, len, range) = (text.as_ptr(), text.len(), &raw const range);
     unsafe {
-        take_json(tl_source_edit(
-            source, start, length, bytes, len, changing, false,
+        take(tl_source_edit(
+            source, start, length, bytes, len, range, false,
         ))
     }
 }
 
-/// The source's whole text.
-unsafe fn text_of(source: *mut TlSource) -> String {
+unsafe fn text_of(source: Source) -> String {
     let mut len = 0;
     let bytes = unsafe { tl_source_text(source, &raw mut len) };
     let text = String::from_utf8(unsafe { std::slice::from_raw_parts(bytes, len) }.to_vec());
@@ -52,271 +103,44 @@ unsafe fn text_of(source: *mut TlSource) -> String {
     text.unwrap()
 }
 
-/// A command to a source mirror, as the editor sends one.
-unsafe fn source_call(source: *mut TlSource, command: &str, args: Value) -> Option<Value> {
-    let args = c(&args.to_string());
-    unsafe { take_json(tl_source_call(source, c(command).as_ptr(), args.as_ptr())) }
+unsafe fn runs_of(source: Source, start: u32, length: u32) -> Vec<u32> {
+    let mut count = usize::MAX;
+    let runs = unsafe { tl_source_highlights(source, start, length, &raw mut count) };
+    let copied = unsafe { std::slice::from_raw_parts(runs, count) }.to_vec();
+    unsafe { tl_source_free_runs(runs, count) };
+    copied
 }
 
-/// `command` through `tl_call`, its arguments null for none.
-fn call_raw(handle: *const TlHandle, command: &str, args: Option<&str>) -> Value {
-    let args = args.map(c);
-    let args = args.as_ref().map_or(ptr::null(), |a| a.as_ptr());
-    unsafe { take_json(tl_call(handle, c(command).as_ptr(), args)).unwrap() }
+unsafe fn source_call(source: Source, command: &str, args: Value) -> Option<Value> {
+    let (command, args) = (c(command), c(args.to_string()));
+    unsafe { take(tl_source_call(source, command.as_ptr(), args.as_ptr())) }
 }
 
-fn call(handle: *const TlHandle, command: &str, args: Value) -> Value {
-    call_raw(handle, command, Some(&args.to_string()))
+unsafe fn syntax_call(command: &str, args: &str) -> Option<Value> {
+    unsafe { take(tl_syntax_call(c(command).as_ptr(), c(args).as_ptr())) }
 }
 
-fn open(data: &Path) -> *mut TlHandle {
-    let handle = unsafe { tl_open(c(data.to_str().unwrap()).as_ptr()) };
-    assert!(!handle.is_null());
-    handle
-}
-
-/// A handle over `data` holding one blank project, `P`.
-fn open_with_project(data: &Path) -> *mut TlHandle {
-    let handle = open(data);
-    let created = call(
-        handle,
-        "create_project",
-        json!({ "name": "P", "template": "blank" }),
-    );
-    assert_eq!(created["ok"]["id"], "P");
-    handle
-}
-
-/// A session on `P` with main.tex open in it: the session's number.
-fn open_main(handle: *const TlHandle) -> u64 {
-    let opened = call(handle, "session_open", json!({ "id": "P", "session": 1 }));
-    let session = opened["ok"]["session"].as_u64().unwrap();
-    let args = json!({ "session": session, "path": "main.tex" });
-    let opened = call(handle, "session_open_document", args);
-    assert_eq!(opened, json!({ "ok": null }));
-    session
-}
-
-/// The source of a document `session` has open.
-unsafe fn session_source(handle: *const TlHandle, session: u64, path: &str) -> *mut TlSource {
-    unsafe { tl_session_source(handle, session, c(path).as_ptr()) }
-}
-
-#[test]
-fn commands_round_trip_through_the_c_abi() {
-    let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(dir.path());
-    assert_eq!(call_raw(handle, "list_projects", None)["ok"][0]["id"], "P");
-
-    call(
-        handle,
-        "write_file",
-        json!({ "id": "P", "path": "a.tex", "text": "x" }),
-    );
-    let read = call(handle, "read_file", json!({ "id": "P", "path": "a.tex" }));
-    assert_eq!(read["ok"]["text"], "x");
-
-    let found = call(handle, "search_project", json!({ "id": "P", "query": "x" }));
-    assert_eq!(
-        found["ok"],
-        json!([{ "file": "a.tex", "hits": [{ "file": "a.tex", "line": 1, "column": 0, "length": 1, "before": "", "match": "x", "after": "" }] }])
-    );
-
-    // Errors come back as an envelope with the core's status, never a crash.
-    let bad = call(handle, "read_file", json!({ "id": "P", "path": "../x" }));
-    assert_eq!(bad["status"], 400);
-    assert_eq!(call_raw(handle, "nope", None)["status"], 404);
-
-    unsafe { tl_close(handle) };
-}
-
-#[test]
-fn native_only_commands_resolve_absolute_paths() {
-    let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(dir.path());
-
-    let escape = call(handle, "project_root", json!({ "id": "../x" }));
-    assert_eq!(escape["status"], 400);
-    let root = call(handle, "project_root", json!({ "id": "P" }));
-    assert!(root["ok"].as_str().unwrap().ends_with("P"));
-
-    let dest = dir.path().join("out.zip");
-    let args = json!({ "id": "P", "dest": dest.to_str().unwrap() });
-    assert_eq!(call(handle, "export_zip", args), json!({ "ok": null }));
-    assert!(dest.is_file());
-
-    unsafe { tl_close(handle) };
-}
-
-#[test]
-fn null_and_malformed_inputs_are_rejected_safely() {
-    let out = call_raw(ptr::null(), "list_projects", None);
-    assert_eq!(out["status"], 400);
-    // The host names its library folder: there is no default.
-    assert!(unsafe { tl_open(ptr::null()) }.is_null());
-
-    let dir = tempfile::tempdir().unwrap();
-    let handle = open(dir.path());
-    let bad = call_raw(handle, "list_projects", Some("{not json"));
-    assert_eq!(bad["status"], 400);
-    // Import arguments of the wrong type are the caller's mistake, not an I/O error.
-    for args in [
-        json!({ "id": "P", "paths": [42] }),
-        json!({ "id": "P", "conflict": "merge" }),
-    ] {
-        assert_eq!(call(handle, "import_files", args)["status"], 400);
-    }
-    unsafe {
-        tl_free(ptr::null_mut());
-        tl_close(handle);
-        tl_close(ptr::null_mut());
-    }
-}
-
-#[test]
-fn the_source_mirror_round_trips_through_the_c_abi() {
-    unsafe {
-        let text = "é \\emph{x}";
-        let source = tl_source_new(text.as_ptr(), text.len());
-        // Offsets count UTF-16 units: "é " is two.
-        assert_eq!(edit(source, 2, 0, b"\n"), None);
-        assert_eq!(tl_source_line_at(source, 3), 2);
-        let mut count = 0;
-        let runs = tl_source_highlights(source, 0, 20, &raw mut count);
-        assert_eq!(std::slice::from_raw_parts(runs, count), [3, 5, 0]);
-        tl_source_free_runs(runs, count);
-        assert_eq!(text_of(source), "é \n\\emph{x}");
-        let symbol = json!({ "command": "\\alpha", "selection": { "start": 0, "length": 1 } });
-        assert_eq!(
-            source_call(source, "insert_symbol", symbol),
-            Some(
-                json!({ "edit": { "start": 0, "length": 1, "text": "$\\alpha$" }, "caret": 8, "fields": [] })
-            )
-        );
-        let maths = source_call(source, "math_at", json!({ "caret": 1 }));
-        assert_eq!(maths, Some(Value::Null), "é isn't maths");
-        assert_eq!(source_call(source, "unknown", json!({})), None);
-        tl_source_free(source);
-
-        // A U+0000 is text like any other: it doesn't end the mirror's copy.
-        let text = "a\0\nb";
-        let source = tl_source_new(text.as_ptr(), text.len());
-        assert_eq!(tl_source_line_count(source), 2);
-        edit(source, 4, 0, b"\0c");
-        assert_eq!(text_of(source), "a\u{0}\nb\u{0}c");
-        tl_source_free(source);
-
-        // What's typed in a snippet's field goes in its other places: the edit
-        // answers those edits, which go in as mirroring and answer none.
-        let text = "\\begin{}\n\\end{}";
-        let source = tl_source_new(text.as_ptr(), text.len());
-        let fields = json!([{ "start": 7, "length": 0, "index": 0 }, { "start": 14, "length": 0, "index": 0 }]);
-        let snippet = json!({ "fields": fields, "at": 0 });
-        source_call(source, "start_snippet", snippet);
-        let mirror = edit(source, 7, 0, b"x");
-        assert_eq!(
-            mirror,
-            Some(json!([{ "start": 15, "length": 0, "text": "x" }]))
-        );
-        let mirrored = tl_source_edit(source, 15, 0, b"x".as_ptr(), 1, ptr::null(), true);
-        assert!(mirrored.is_null());
-        tl_source_select(source, 8, 0, false);
-        assert_eq!(text_of(source), "\\begin{x}\n\\end{x}");
-        // The snippet lasts while the selection is in its fields.
-        let mirror = edit(source, 8, 0, b"y");
-        assert_eq!(
-            mirror,
-            Some(json!([{ "start": 16, "length": 1, "text": "xy" }]))
-        );
-        tl_source_select(source, 0, 0, false);
-        assert_eq!(edit(source, 0, 0, b"%"), None);
-        tl_source_free(source);
-    }
-}
-
-/// The commands that need no source, on any thread: Windows asks for its
-/// theme's colours this way.
-#[test]
-fn syntax_commands_round_trip_through_the_c_abi() {
-    let light = json!({ "theme": "overleaf", "dark": false, "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0.08] });
-    unsafe {
-        let args = c(&light.to_string());
-        let colors = take_json(tl_syntax_call(c("theme_colors").as_ptr(), args.as_ptr()));
-        assert_eq!(colors.unwrap().as_array().map(Vec::len), Some(9));
-        // An unknown command or theme, or a null string, is no answer.
-        assert!(tl_syntax_call(c("no such command").as_ptr(), c("{}").as_ptr()).is_null());
-        let unknown = c(r#"{"theme": "solarized"}"#);
-        assert!(tl_syntax_call(c("theme_colors").as_ptr(), unknown.as_ptr()).is_null());
-        assert!(tl_syntax_call(ptr::null(), c("{}").as_ptr()).is_null());
-        assert!(tl_syntax_call(c("themes").as_ptr(), ptr::null()).is_null());
-    }
-}
-
-#[test]
-fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
-    unsafe {
-        let none: *mut TlSource = ptr::null_mut();
-        assert_eq!(edit(none, 0, 0, b"x"), None);
-        tl_source_select(none, 0, 0, false);
-        assert_eq!(text_of(none), "");
-        assert_eq!(tl_source_line_at(none, 0), 0);
-        assert_eq!(tl_source_line_start(none, 1), 0);
-        assert_eq!(tl_source_line_count(none), 0);
-        let mut count = 7;
-        let runs = tl_source_highlights(none, 0, 1, &raw mut count);
-        assert_eq!(count, 0, "no runs");
-        tl_source_free_runs(runs, count);
-        assert!(tl_source_call(none, c("partner").as_ptr(), c("{}").as_ptr()).is_null());
-        tl_source_free(none);
-
-        let source = tl_source_new(ptr::null(), 0);
-        assert!(!source.is_null());
-        let partner = c("partner");
-        assert!(tl_source_call(source, partner.as_ptr(), c("{not json").as_ptr()).is_null());
-        assert!(tl_source_call(source, ptr::null(), c("{}").as_ptr()).is_null());
-        assert!(tl_source_call(source, partner.as_ptr(), ptr::null()).is_null());
-        // The text can't be freed without its length, so a null length gets none.
-        assert!(tl_source_text(source, ptr::null_mut()).is_null());
-        tl_source_free_text(ptr::null_mut(), 0);
-        // Out-of-range offsets are cut to the text.
-        edit(source, 99, 99, b"ab");
-        assert_eq!(tl_source_line_start(source, 99), 0);
-        let runs = tl_source_highlights(source, 99, 99, &raw mut count);
-        assert_eq!(count, 0);
-        tl_source_free_runs(runs, count);
-        // Runs can't be freed without their count, so a null count gets none.
-        assert!(tl_source_highlights(source, 0, 9, ptr::null_mut()).is_null());
-        tl_source_free_runs(ptr::null_mut(), 0);
-
-        // Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes them: the
-        // edit still lands, keeping the mirror in step with the editor.
-        edit(source, 1, 0, b"\xff\n");
-        assert_eq!(text_of(source), "a\u{fffd}\nb");
-        assert_eq!(tl_source_line_count(source), 2);
-        tl_source_free(source);
-    }
-}
-
-/// What a C host's callback collects: each JSON text it was handed, sent on
-/// to the test.
 extern "C" fn collect(ctx: *mut c_void, json: *const c_char) {
-    let sink = unsafe { &*(ctx as *const mpsc::Sender<Value>) };
-    let json = unsafe { CStr::from_ptr(json) }.to_str().unwrap();
-    let _ = sink.send(serde_json::from_str(json).unwrap());
+    let sink = unsafe { &*ctx.cast::<Sender<Value>>() };
+    let json = unsafe { CStr::from_ptr(json) }.to_bytes();
+    let _ = sink.send(serde_json::from_slice(json).unwrap());
 }
 
-/// A sink for `collect`, its `ctx`, and what comes out of it.
-fn collector() -> (Box<mpsc::Sender<Value>>, mpsc::Receiver<Value>) {
-    let (sink, seen) = mpsc::channel();
-    (Box::new(sink), seen)
+fn ctx<T>(value: &T) -> *mut c_void {
+    (value as *const T).cast_mut().cast()
 }
 
-fn context(sink: &mpsc::Sender<Value>) -> *mut c_void {
-    (sink as *const mpsc::Sender<Value>).cast_mut().cast()
+/// `command` through `tl_call_async`, its answer going to `sink`, if any.
+fn call_async(h: Handle, command: &str, args: &[u8], sink: Option<&Sender<Value>>) {
+    let (command, args) = (c(command), c(args));
+    let done = sink.map_or((None, null_mut()), |sink| {
+        (Some(collect as Callback), ctx(sink))
+    });
+    unsafe { tl_call_async(h, command.as_ptr(), args.as_ptr(), done.0, done.1) };
 }
 
 /// The first value collected that is `found`, within 10 s.
-fn until(seen: &mpsc::Receiver<Value>, found: impl Fn(&Value) -> bool) -> Value {
+fn until(seen: &Receiver<Value>, found: impl Fn(&Value) -> bool) -> Value {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
@@ -327,115 +151,407 @@ fn until(seen: &mpsc::Receiver<Value>, found: impl Fn(&Value) -> bool) -> Value 
     }
 }
 
-/// `command` with `args` through `tl_call_async`, its answer going to `sink`.
-fn call_async(handle: *const TlHandle, command: &str, args: Value, sink: &mpsc::Sender<Value>) {
-    let (command, args) = (c(command), c(&args.to_string()));
-    unsafe {
-        tl_call_async(
-            handle,
-            command.as_ptr(),
-            args.as_ptr(),
-            Some(collect),
-            context(sink),
-        );
+fn wait_for(what: &str, done: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !done() {
+        assert!(Instant::now() < deadline, "{what}");
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
 #[test]
-fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
+fn tl_call_answers_an_envelope_for_every_input() {
     let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(dir.path());
-    let empty = json!({ "id": "P", "path": "main.tex", "text": "" });
-    call(handle, "write_file", empty);
-    let session = open_main(handle);
-    unsafe {
-        let source = session_source(handle, session, "main.tex");
-        // The editor closed a bracket for the user at the start of the file.
-        let typed = json!({ "selection": { "start": 0, "length": 0 }, "text": "{" });
-        let key = source_call(source, "type", typed).unwrap();
-        assert_eq!(key["edit"]["text"], "{}");
-        edit(source, 0, 0, b"{}");
-        // Typing its closer steps over it.
-        let closing = json!({ "selection": { "start": 1, "length": 0 }, "text": "}" });
-        let key = source_call(source, "type", closing).unwrap();
-        assert_eq!(key["selection"]["start"], 2);
-        tl_source_free(source);
+    let h = open(dir.path());
+    // Null arguments are `{}`.
+    assert_eq!(call_raw(h, b"list_projects", None)["ok"][0]["id"], "P");
+    let file = json!({ "id": "P", "path": "a.tex", "text": "x\0y" });
+    call(h, "write_file", file);
+    let read = call(h, "read_file", json!({ "id": "P", "path": "a.tex" }));
+    assert_eq!(read["ok"]["text"], "x\0y");
+    let root = call(h, "project_root", json!({ "id": "P" }));
+    assert!(root["ok"].as_str().unwrap().ends_with('P'));
+    let dest = dir.path().join("out.zip");
+    let args = json!({ "id": "P", "dest": dest.to_str().unwrap() });
+    assert_eq!(call(h, "export_zip", args), json!({ "ok": null }));
+    assert!(dest.is_file());
 
-        // A bracket closed in one visit is only text in the next.
-        let source = session_source(handle, session, "main.tex");
-        let typed = json!({ "selection": { "start": 2, "length": 0 }, "text": "(" });
-        source_call(source, "type", typed);
-        edit(source, 2, 0, b"()");
-        tl_source_free(source);
-        let source = session_source(handle, session, "main.tex");
-        let closing = json!({ "selection": { "start": 3, "length": 0 }, "text": ")" });
-        let key = source_call(source, "type", closing).unwrap();
-        assert_eq!(key["selection"], Value::Null, "the closer was forgotten");
-        tl_source_free(source);
-        tl_close(handle);
+    // Each mistake is an error with the core's status, never null or a crash.
+    let mistakes = [
+        ("read_file", Some(r#"{"id": "P", "path": "../x"}"#), 400),
+        ("project_root", Some(r#"{"id": "../x"}"#), 400),
+        ("import_files", Some(r#"{"id": "P", "paths": [42]}"#), 400),
+        (
+            "import_files",
+            Some(r#"{"id": "P", "conflict": "merge"}"#),
+            400,
+        ),
+        ("session_save", Some(r#"{"session": 9}"#), 404),
+        ("list_projects", Some("{not json"), 400),
+        ("nope", None, 404),
+    ];
+    for (command, args, code) in mistakes {
+        let answer = call_raw(h, command.as_bytes(), args.map(str::as_bytes));
+        assert_eq!(status(answer), code, "{command} {args:?}");
+    }
+    assert_eq!(status(call_raw(h, b"list_projects", Some(b"\xff"))), 400);
+    assert_eq!(status(call_raw(h, b"\xff", None)), 400);
+    assert_eq!(status(call_raw(null_mut(), b"list_projects", None)), 400);
+    let no_command = unsafe { take(tl_call(h, null(), null())) };
+    assert_eq!(status(no_command.unwrap()), 400);
+
+    // The host names its library folder: there is no default.
+    assert!(unsafe { tl_open(null()) }.is_null());
+    unsafe {
+        tl_free(null_mut());
+        tl_close(h);
+        tl_close(null_mut());
     }
 }
 
 #[test]
-fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() {
+fn tl_call_async_answers_through_done_as_tl_call_would() {
     let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(dir.path());
-    let (sink, events) = collector();
-    unsafe { tl_set_listener(handle, Some(collect), context(&sink)) };
-    let session = open_main(handle);
-    let source = unsafe { session_source(handle, session, "main.tex") };
-    assert!(!source.is_null());
-    let text = unsafe { text_of(source) };
-    assert!(unsafe { session_source(handle, session, "other.tex") }.is_null());
-    let added = "% note\n";
-    unsafe { edit(source, 0, 0, added.as_bytes()) };
-    // The highlighting reads the session's text.
-    let mut count = 0;
-    let runs = unsafe { tl_source_highlights(source, 0, 6, &raw mut count) };
-    assert_eq!(count, 3);
-    unsafe { tl_source_free_runs(runs, count) };
-    let saved = call(handle, "session_save", json!({ "session": session }));
-    assert_eq!(saved["ok"]["saved"], true);
-    let disk = std::fs::read_to_string(dir.path().join("P/main.tex")).unwrap();
-    assert_eq!(disk, format!("{added}{text}"));
-    until(&events, |e| e["type"] == "saved" && e["session"] == session);
-    // A reload is the disk's text, not an edit to save.
-    unsafe { tl_source_reload(source, b"x".as_ptr(), 1) };
-    let state = call(handle, "session_state", json!({ "session": session }));
-    assert_eq!(state["ok"]["documents"][0]["dirty"], false);
-    unsafe { tl_source_free(source) };
-    // Without blocking: the answer comes to the callback.
-    let (answered, answers) = collector();
-    call_async(
-        handle,
-        "session_state",
-        json!({ "session": session }),
-        &answered,
-    );
-    let answer = until(&answers, |_| true);
-    assert!(answer["ok"]["documents"].is_array());
-    unsafe { tl_close(handle) };
+    let h = open(dir.path());
+    let (sink, answers) = channel();
+    let answer = |h, command, args: &str| {
+        call_async(h, command, args.as_bytes(), Some(&sink));
+        until(&answers, |_| true)
+    };
+    assert_eq!(answer(h, "list_projects", "{}")["ok"][0]["id"], "P");
+    assert_eq!(status(answer(h, "nope", "{}")), 404);
+    assert_eq!(status(answer(h, "session_save", r#"{"session": 9}"#)), 404);
+    assert_eq!(status(answer(null_mut(), "list_projects", "{}")), 400);
+    assert_eq!(status(answer(h, "list_projects", "{")), 400);
+
+    // A null `done` runs the command for its effect alone.
+    let file = json!({ "id": "P", "path": "b.tex", "text": "b" }).to_string();
+    call_async(h, "write_file", file.as_bytes(), None);
+    wait_for("the write ran", || dir.path().join("P/b.tex").is_file());
+    unsafe { tl_close(h) };
 }
 
 #[test]
-fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
+fn a_session_takes_its_async_commands_in_the_order_they_were_sent() {
     let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(dir.path());
-    let (sink, answers) = collector();
-    let seven = json!({ "id": "P", "session": 7 });
-    call_async(handle, "session_open", seven.clone(), &sink);
+    let h = open(dir.path());
+    let (sink, answers) = channel();
+    let seven = br#"{"id": "P", "session": 7}"#;
+    call_async(h, "session_open", seven, Some(&sink));
     assert_eq!(until(&answers, |_| true)["ok"]["session"], 7);
     // The host numbers its sessions: a number open already is refused.
-    assert_eq!(call(handle, "session_open", seven)["status"], 409);
-    for round in 0..50 {
+    assert_eq!(status(call_raw(h, b"session_open", Some(seven))), 409);
+
+    let (probe, probed) = channel();
+    for round in 0..40 {
         let last = round % 2 == 0;
-        for auto in [!last, last, !last, last] {
-            let args = json!({ "session": 7, "autoCompile": auto });
-            call_async(handle, "session_set_options", args, &sink);
+        for stop in [!last, last, !last, last] {
+            let patch = json!({ "session": 7, "patch": { "stopOnFirstError": stop } });
+            call_async(
+                h,
+                "session_set_settings",
+                patch.to_string().as_bytes(),
+                Some(&sink),
+            );
         }
-        call_async(handle, "session_state", json!({ "session": 7 }), &sink);
-        let state = until(&answers, |answer| answer["ok"]["autoCompile"].is_boolean());
-        assert_eq!(state["ok"]["autoCompile"], last, "round {round}");
+        let read = br#"{"session": 7, "patch": {}}"#;
+        call_async(h, "session_set_settings", read, Some(&probe));
+        let settings = until(&probed, |_| true);
+        assert_eq!(settings["ok"]["stopOnFirstError"], last, "round {round}");
     }
-    unsafe { tl_close(handle) };
+    unsafe { tl_close(h) };
+}
+
+/// How often a listener was called, and whether a call to it is running.
+#[derive(Default)]
+struct Watch {
+    calls: AtomicUsize,
+    busy: AtomicBool,
+}
+
+extern "C" fn slow(ctx: *mut c_void, _json: *const c_char) {
+    let watch = unsafe { &*ctx.cast::<Watch>() };
+    watch.busy.store(true, SeqCst);
+    std::thread::sleep(Duration::from_millis(100));
+    watch.calls.fetch_add(1, SeqCst);
+    watch.busy.store(false, SeqCst);
+}
+
+#[test]
+fn the_listener_hears_a_sessions_events_until_it_is_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = open(dir.path());
+    let old = Box::new(Watch::default());
+    unsafe { tl_set_listener(h, Some(slow), ctx(&*old)) };
+    let source = open_main(h, 3, "x");
+    unsafe { edit(source, 0, 0, b"a") };
+    assert_eq!(save(h, 3)["ok"]["saved"], true);
+    wait_for("the listener was called", || old.busy.load(SeqCst));
+    // Replacing it waits out the call running, so the host may free its context.
+    let (sink, events) = channel();
+    unsafe { tl_set_listener(h, Some(collect), ctx(&sink)) };
+    assert!(!old.busy.load(SeqCst));
+    assert!(old.calls.load(SeqCst) > 0);
+    drop(old);
+
+    unsafe { edit(source, 0, 0, b"b") };
+    save(h, 3);
+    let saved = until(&events, |e| e["type"] == "saved");
+    let expected = json!({ "type": "saved", "session": 3, "path": "main.tex" });
+    assert_eq!(saved, expected);
+    assert_eq!(disk(dir.path()), "bax");
+
+    // Null removes it; no call follows tl_close.
+    unsafe {
+        tl_set_listener(h, None, null_mut());
+        tl_set_listener(null(), Some(collect), ctx(&sink));
+        tl_set_listener(h, Some(collect), ctx(&sink));
+        tl_source_free(source);
+        tl_close(h);
+    }
+    while events.try_recv().is_ok() {}
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(events.try_recv().is_err(), "a call after tl_close");
+}
+
+#[test]
+fn a_session_source_is_the_sessions_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = open(dir.path());
+    let source = open_main(h, 1, "\\x\n");
+    unsafe {
+        assert!(session_source(h, 1, "other.tex").is_null());
+        assert!(session_source(h, 2, "main.tex").is_null());
+        assert!(session_source(null_mut(), 1, "main.tex").is_null());
+        assert!(tl_session_source(h, 1, null()).is_null());
+
+        assert_eq!(text_of(source), "\\x\n");
+        edit(source, 0, 0, b"% n\n");
+        assert_eq!(
+            runs_of(source, 0, 3),
+            [0, 3, 5],
+            "highlighted from its text"
+        );
+        let again = session_source(h, 1, "main.tex");
+        assert_eq!(text_of(again), "% n\n\\x\n", "a second source shares it");
+        tl_source_free(again);
+        assert_eq!(save(h, 1)["ok"]["saved"], true);
+        assert_eq!(disk(dir.path()), "% n\n\\x\n");
+
+        // A reload is the disk's text, not an edit to save.
+        tl_source_reload(source, b"r".as_ptr(), 1);
+        assert_eq!(text_of(source), "r");
+        save(h, 1);
+        assert_eq!(disk(dir.path()), "% n\n\\x\n");
+        tl_source_free(source);
+        tl_close(h);
+    }
+}
+
+#[test]
+fn a_session_source_starts_with_no_typing_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = open(dir.path());
+    let key = |source, at: u32, text: &str| unsafe {
+        let typed = json!({ "selection": { "start": at, "length": 0 }, "text": text });
+        source_call(source, "type", typed).unwrap()
+    };
+    unsafe {
+        let source = open_main(h, 1, "");
+        assert_eq!(key(source, 0, "{")["edit"]["text"], "{}");
+        edit(source, 0, 0, b"{}");
+        let closed = key(source, 1, "}");
+        assert_eq!(closed["selection"]["start"], 2, "steps over its closer");
+        tl_source_free(source);
+        // A bracket closed in one visit is only text in the next.
+        let source = session_source(h, 1, "main.tex");
+        assert_eq!(key(source, 1, "}")["selection"], Value::Null);
+        tl_source_free(source);
+        tl_close(h);
+    }
+}
+
+#[test]
+fn a_source_counts_utf16_units_and_keeps_every_byte() {
+    unsafe {
+        let source = new_source("é😀 \\emph{x}");
+        // "é" is one unit, "😀" two.
+        assert_eq!(runs_of(source, 0, 20), [4, 5, 0]);
+        assert_eq!(edit(source, 3, 0, b"\n"), None);
+        assert_eq!(text_of(source), "é😀\n \\emph{x}");
+        let lines = [3, 4].map(|offset| tl_source_line_at(source, offset));
+        assert_eq!(lines, [1, 2]);
+        assert_eq!(
+            [2, 99].map(|line| tl_source_line_start(source, line)),
+            [4, 4]
+        );
+
+        // U+0000 is text like any other, going in and coming out.
+        tl_source_reload(source, b"a\0\nb".as_ptr(), 4);
+        assert_eq!(tl_source_line_count(source), 2);
+        edit(source, 4, 0, b"\0c");
+        assert_eq!(text_of(source), "a\0\nb\0c");
+        // Bytes that aren't UTF-8 read as U+FFFD, one unit each, as Swift decodes them.
+        edit(source, 1, 1, b"\xff\xfe");
+        assert_eq!(text_of(source), "a\u{fffd}\u{fffd}\nb\0c");
+        assert_eq!(tl_source_line_start(source, 2), 4);
+        // An edit past the end is cut to the text.
+        edit(source, 99, 99, b"!");
+        assert_eq!(text_of(source), "a\u{fffd}\u{fffd}\nb\0c!");
+        // A null text is empty, whatever its length.
+        tl_source_edit(source, 0, 1, null(), 5, null(), false);
+        assert_eq!(text_of(source), "\u{fffd}\u{fffd}\nb\0c!");
+        tl_source_reload(source, null(), 3);
+        assert_eq!(text_of(source), "");
+        assert_eq!(tl_source_line_count(source), 1);
+        tl_source_free(source);
+        let empty = tl_source_new(null(), 7);
+        assert_eq!(text_of(empty), "");
+        tl_source_free(empty);
+    }
+}
+
+/// A seeded run of edits, checked after each `burst` of them against the
+/// text they should make and against a source made from that text afresh,
+/// so a text, line table or highlighting an edit left stale shows.
+fn edits_match_a_fresh_source(source: Source, steps: usize, burst: usize, mut seed: u64) {
+    let pieces = ["a", "é", "😀", "\n", "\0", "\\x", "{", "}", "%", " ", "$"];
+    let mut next = |below: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (seed >> 33) as usize % below
+    };
+    let units = |text: &str| text.encode_utf16().count() as u32;
+    let mut model = unsafe { text_of(source) };
+    for step in 1..=steps {
+        // Char boundaries, as UTF-16 offsets and byte offsets.
+        let bounds = model.char_indices().map(|(i, _)| (units(&model[..i]), i));
+        let bounds: Vec<_> = bounds.chain([(units(&model), model.len())]).collect();
+        let from = next(bounds.len());
+        let to = from + [0, 0, 1, 2, 3][next(5)].min(bounds.len() - 1 - from);
+        let inserted: String = (0..next(3)).map(|_| pieces[next(pieces.len())]).collect();
+        let (start, end) = (bounds[from], bounds[to]);
+        unsafe { edit(source, start.0, end.0 - start.0, inserted.as_bytes()) };
+        model.replace_range(start.1..end.1, &inserted);
+        if step % burst != 0 {
+            continue;
+        }
+        unsafe {
+            assert_eq!(text_of(source), model);
+            let lines = model.split('\n').count() as u32;
+            assert_eq!(tl_source_line_count(source), lines);
+            let mut start = 0;
+            for (line, text) in (1..).zip(model.split('\n')) {
+                assert_eq!(tl_source_line_start(source, line), start);
+                let end = start + units(text);
+                assert_eq!(tl_source_line_at(source, end), line);
+                start = end + 1;
+            }
+            let fresh = new_source(&model);
+            let (from, len) = (next(start as usize) as u32, next(12) as u32);
+            assert_eq!(runs_of(source, from, len), runs_of(fresh, from, len));
+            if step % (8 * burst) == 0 {
+                assert_eq!(runs_of(source, 0, start), runs_of(fresh, 0, start));
+            }
+            tl_source_free(fresh);
+        }
+    }
+}
+
+#[test]
+fn a_source_stays_in_step_through_many_edits() {
+    let initial = "\\section{A}\nprose é $x$\n% c\n\n\\x{😀}";
+    // Queries after each edit, as the editor makes them, and runs of edits
+    // with none between.
+    let source = unsafe { new_source(initial) };
+    edits_match_a_fresh_source(source, 400, 1, 1);
+    edits_match_a_fresh_source(source, 400, 9, 2);
+    unsafe { tl_source_free(source) };
+
+    let dir = tempfile::tempdir().unwrap();
+    let h = open(dir.path());
+    let source = open_main(h, 1, initial);
+    edits_match_a_fresh_source(source, 150, 1, 3);
+    edits_match_a_fresh_source(source, 150, 5, 4);
+    save(h, 1);
+    assert_eq!(disk(dir.path()), unsafe { text_of(source) });
+    unsafe {
+        tl_source_free(source);
+        tl_close(h);
+    }
+}
+
+#[test]
+fn a_snippets_fields_mirror_what_is_typed_in_one() {
+    unsafe {
+        let source = new_source("\\begin{}\n\\end{}");
+        let field = |start| json!({ "start": start, "length": 0, "index": 0 });
+        let snippet = json!({ "fields": [field(7), field(14)], "at": 0 });
+        source_call(source, "start_snippet", snippet);
+        let mirror = json!([{ "start": 15, "length": 0, "text": "x" }]);
+        assert_eq!(edit(source, 7, 0, b"x"), Some(mirror));
+        // The mirror edits go in as mirroring, and answer none.
+        assert!(tl_source_edit(source, 15, 0, b"x".as_ptr(), 1, null(), true).is_null());
+        tl_source_select(source, 8, 0, false);
+        assert_eq!(text_of(source), "\\begin{x}\n\\end{x}");
+        // The snippet lasts while the selection is in its fields.
+        let mirror = json!([{ "start": 16, "length": 1, "text": "xy" }]);
+        assert_eq!(edit(source, 8, 0, b"y"), Some(mirror));
+        tl_source_select(source, 0, 0, false);
+        assert_eq!(edit(source, 0, 0, b"%"), None);
+        tl_source_free(source);
+    }
+}
+
+#[test]
+fn source_and_syntax_commands_answer_json_or_null() {
+    unsafe {
+        let source = new_source("é x");
+        let symbol = json!({ "command": "\\alpha", "selection": { "start": 0, "length": 1 } });
+        let edit = json!({ "start": 0, "length": 1, "text": "$\\alpha$" });
+        let answer = json!({ "edit": edit, "caret": 8, "fields": [] });
+        assert_eq!(source_call(source, "insert_symbol", symbol), Some(answer));
+        let maths = source_call(source, "math_at", json!({ "caret": 1 }));
+        assert_eq!(maths, Some(Value::Null));
+        assert_eq!(source_call(source, "unknown", json!({})), None);
+        let (partner, args) = (c("partner"), c("{}"));
+        assert!(tl_source_call(source, partner.as_ptr(), c("{").as_ptr()).is_null());
+        assert!(tl_source_call(source, null(), args.as_ptr()).is_null());
+        assert!(tl_source_call(source, partner.as_ptr(), null()).is_null());
+        tl_source_free(source);
+
+        // The commands that need no source: Windows asks its theme's colours so.
+        let light = r#"{"theme": "overleaf", "dark": false, "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0.08]}"#;
+        let colors = syntax_call("theme_colors", light).unwrap();
+        assert_eq!(colors.as_array().map(Vec::len), Some(9));
+        assert_eq!(syntax_call("no such command", "{}"), None);
+        let unknown = r#"{"theme": "solarized"}"#;
+        assert_eq!(syntax_call("theme_colors", unknown), None);
+        assert!(tl_syntax_call(null(), args.as_ptr()).is_null());
+        assert!(tl_syntax_call(c("themes").as_ptr(), null()).is_null());
+    }
+}
+
+#[test]
+fn a_null_source_or_out_pointer_answers_nothing() {
+    unsafe {
+        let none: Source = null_mut();
+        assert_eq!(edit(none, 0, 0, b"x"), None);
+        tl_source_select(none, 0, 0, false);
+        tl_source_reload(none, b"x".as_ptr(), 1);
+        assert_eq!(text_of(none), "");
+        assert_eq!(tl_source_line_at(none, 0), 0);
+        assert_eq!(tl_source_line_start(none, 1), 0);
+        assert_eq!(tl_source_line_count(none), 0);
+        assert_eq!(runs_of(none, 0, 1), [] as [u32; 0]);
+        assert_eq!(source_call(none, "partner", json!({})), None);
+        tl_source_free(none);
+
+        // What can't be freed without its length or count isn't handed out.
+        let source = new_source("\\x");
+        assert!(tl_source_text(source, null_mut()).is_null());
+        assert!(tl_source_highlights(source, 0, 9, null_mut()).is_null());
+        tl_source_free_text(null_mut(), 0);
+        tl_source_free_runs(null_mut(), 0);
+        tl_source_free(source);
+    }
 }
