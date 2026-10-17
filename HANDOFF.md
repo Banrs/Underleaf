@@ -5,11 +5,11 @@ the hosts' contract with the core.
 
 ## Shape
 
-- **Rust core** (`crates/texlocal-core`) builds and tests on Windows, macOS and Linux. It owns
-  everything but UI and OS integration: projects, path safety, latexmk and SyncTeX, log
-  parsing, ZIP export, the JSON command service, and **project sessions** (`session/`):
-  each open document's text, autosave, notify-based folder watching, builds, issues, the
-  outline's analysis and the TeXpresso client. Hosts send commands and receive events
+- **Rust core** (`crates/texlocal-core`) builds and tests on macOS and Windows; Linux isn't
+  supported. It owns everything but UI and OS integration: projects, path safety, latexmk
+  and SyncTeX, log parsing, ZIP export, the JSON command service, and **project sessions**
+  (`session/`): each open document's text, autosave, notify-based folder watching, builds,
+  issues, the outline's analysis and the TeXpresso client. Hosts send commands and receive events
   (`tl_set_listener`). Logic both hosts need lives here, never in a host.
 - **The core's `syntax` module** is I/O-free and owns editor logic: typing transforms,
   snippets, completion, highlighting, themes, the symbol and template catalogue, heading
@@ -18,10 +18,11 @@ the hosts' contract with the core.
 - **`crates/texlocal-ffi`** is the C ABI, built as a static library (and an rlib for its
   tests); the Windows app builds its DLL with `cargo rustc --crate-type cdylib`.
 - **macOS app** (`apps/macos`) is UI only, on the core.
-- **Windows app**: a native WinUI 3 / Fluent app is in progress on branch `claude/windows`.
-- **CI** is `.github/workflows/ci.yml`: a path-filtered `changes` job, Rust on Ubuntu and
-  Windows, the Mac app's `xcodebuild test` on the `xcode-27` runner, and `ci-ok`, the one
-  required check.
+- **Windows app** (`apps/windows`) is a native WinUI 3 / Fluent app, UI only, on the core;
+  `docs/windows.md` has its design and the core gaps it waits on.
+- **CI** is `.github/workflows/ci.yml`: a path-filtered `changes` job, Rust on macOS and
+  Windows, the Windows app's build, tests and smoke run, the Mac app's `xcodebuild test` on
+  the `xcode-27` runner, and `ci-ok`, the one required check.
 
 ## The Mac app
 
@@ -123,7 +124,7 @@ Platform quirks met on the way (27.2) are in the code's comments where they're h
 
 ## Testing
 
-- `cargo test --workspace`; CI also runs `cargo fmt --all --check` (Linux) and
+- `cargo test --workspace`; CI also runs `cargo fmt --all --check` (macOS) and
   `cargo clippy --workspace --all-targets -- -D warnings`.
 - The Mac app: `xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal test`
   (Swift Testing). The tests run a host app that shares the app's defaults unless built
@@ -156,5 +157,5 @@ its signature, and compare the installed and built binaries.
   where Homebrew has all of TeXpresso's dependencies and `pkg-config`.
 - Not watched on screen since the live preview's rewrite: a restart after TeXpresso exits,
   and a quick Stop and Start.
-- The Windows app (branch `claude/windows`) is not finished; it follows `docs/core-api.md`,
-  whose "Changes for hosts (October 2026)" lists what it must catch up with.
+- The Windows app is not finished (no live preview yet); it follows `docs/core-api.md` and is
+  ported to its "Changes for hosts (October 2026)".

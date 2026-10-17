@@ -1,5 +1,5 @@
 //! Real spawn/kill/timeout coverage using a stub `latexmk` on PATH. Unix-only:
-//! the stubs are shell scripts, and CI runs this on Linux and macOS.
+//! the stubs are shell scripts, and CI runs this on macOS.
 #![cfg(unix)]
 
 use std::fs;

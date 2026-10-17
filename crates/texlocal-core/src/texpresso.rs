@@ -1294,13 +1294,7 @@ mod tests {
             let events = manager.wait(OWNER, 0).await.unwrap();
             assert!(!events.running);
             assert!(status.error.unwrap().contains("exited"));
-            // Killed descendants can remain zombies briefly while init reaps them.
-            until(|| {
-                (unsafe { libc::kill(child_pid, 0) == -1 })
-                    || fs::read_to_string(format!("/proc/{child_pid}/stat"))
-                        .is_ok_and(|stat| stat.contains(") Z "))
-            })
-            .await;
+            until(|| unsafe { libc::kill(child_pid, 0) == -1 }).await;
         }
         /// Without a pane TeXpresso shows the document in its own window: the session makes no
         /// folder for one, offers none, and tells TeXpresso no view or caret.

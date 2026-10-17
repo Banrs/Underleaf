@@ -1,6 +1,6 @@
-//! The project folder's watcher (FSEvents, ReadDirectoryChangesW or inotify,
-//! through `notify`), and what its changes mean to a session: the listed tree
-//! changed, or a file changed in place.
+//! The project folder's watcher (FSEvents or ReadDirectoryChangesW, through
+//! `notify`), and what its changes mean to a session: the listed tree changed,
+//! or a file changed in place.
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
