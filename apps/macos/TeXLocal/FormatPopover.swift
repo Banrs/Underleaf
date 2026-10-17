@@ -69,6 +69,8 @@ struct FormatPanel: View {
     /// The selection's, read again as the text or the selection changes.
     @State private var styles = TextStyles()
 
+    /// LaTeX's run-in headings in every standard class.
+    private static let runIn: Set<String> = ["paragraph", "subparagraph"]
     /// Notes' list markers sit a word space from their text.
     private static let markerGap: CGFloat = 4
     /// The UI kit's menu (macOS 27, Menus, Regular): an item's highlight 5 pt in from the edge with
@@ -82,21 +84,23 @@ struct FormatPanel: View {
         // Read once: it searches the outline.
         let current = project.headingCommand
         VStack(spacing: 0) {
-            // The three share the width, edge to edge with the levels' highlights below.
-            // One container for the three glass tiles; with no merging distance, two lit neighbours keep their own shapes.
-            GlassEffectContainer(spacing: 0) {
-                HStack(spacing: Self.highlightInset) {
-                    toggle(.editBold, symbol: "bold", on: styles.bold != nil, help: "Make text bold")
-                    toggle(.editItalic, symbol: "italic", on: styles.italic != nil, help: "Make text italic")
-                    toggle(.editUnderline, symbol: "underline", on: styles.underline != nil, help: "Underline text")
-                }
+            HStack {
+                toggle(.editBold, symbol: "bold", on: styles.bold != nil, help: "Make text bold")
+                toggle(.editItalic, symbol: "italic", on: styles.italic != nil, help: "Make text italic")
+                toggle(.editUnderline, symbol: "underline", on: styles.underline != nil, help: "Underline text")
             }
-            .padding(.horizontal, Self.highlightInset)
-            .padding(.vertical, Self.menuTop)
+            .padding(.vertical, 8)
             Divider()
                 .padding(.horizontal, Self.contentInset)
             VStack(spacing: 0) {
                 ForEach(headings, id: \.command) { style in
+                    // The run-in levels, which start their paragraph's text, sit apart from the levels set on their own
+                    // line, as Notes sets its lists apart from its styles.
+                    if style.command == headings.first(where: { Self.runIn.contains($0.command) })?.command {
+                        Divider()
+                            .padding(.horizontal, Self.contentInset - Self.highlightInset)
+                            .padding(.vertical, Self.menuTop)
+                    }
                     row(style, layout: layout, checked: style.command == current)
                 }
             }
@@ -134,30 +138,13 @@ struct FormatPanel: View {
         Toggle(command.title, systemImage: symbol, isOn: Binding(get: { on }, set: { _ in
             app.perform(command, on: project)
         }))
-        .toggleStyle(GlassTile())
+        .toggleStyle(.button)
+        .buttonStyle(.accessoryBar)
+        .labelStyle(.iconOnly)
+        .controlSize(.large)
+        .imageScale(.large)
         // What it does, as the toolbar's own buttons for these say (HIG, Offering help).
         .help(help)
-    }
-
-    /// Notes' style toggles: the symbol alone, on a tile of the accent's glass while on, as wide as its share of the row.
-    private struct GlassTile: ToggleStyle {
-        /// Notes' tile's height.
-        private static let side: CGFloat = 24
-
-        func makeBody(configuration: Configuration) -> some View {
-            Button { configuration.isOn.toggle() } label: {
-                configuration.label
-                    .labelStyle(.iconOnly)
-                    .imageScale(.large)
-                    .foregroundStyle(configuration.isOn ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                    .frame(maxWidth: .infinity, minHeight: Self.side, maxHeight: Self.side)
-                    .glassEffect(configuration.isOn ? .regular.tint(.accentColor).interactive() : .identity,
-                                 in: .rect(cornerRadius: FormatPanel.highlightRadius))
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(configuration.isOn ? [.isToggle, .isSelected] : .isToggle)
-        }
     }
 
     private func row(_ style: HeadingStyle, layout: Layout, checked: Bool) -> some View {
