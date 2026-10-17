@@ -169,6 +169,9 @@ final class ProjectModel {
         }
         // Its events come to `handle` from here on: the app numbers the session, so none comes before its observer.
         let session = core.observe { [weak self] event in self?.handle(event) }
+        // The last build's PDF loads beside the session's open, the file's reading and its analysis, and is shown before the
+        // workspace appears, so the pane doesn't open on its empty state.
+        async let pdfShown = showBuildPDF(try? await core.call("pdf_path", ["id": id], as: String.self))
         do {
             // With automatic builds and no PDF, the session starts one.
             let opened = try await core.call("session_open", ["id": id, "session": session, "autoCompile": app?.autoCompile ?? false],
@@ -183,12 +186,9 @@ final class ProjectModel {
             settings = opened.settings
             showUIState(opened.ui)
             if !treeChanged { tree.show(opened.tree) }
-            // The PDF loads while the file is read and analysed, and is shown before the workspace appears, so the pane doesn't open on its empty state.
-            async let pdfShown = showBuildPDF(opened.pdf)
             let restored = saved?.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
             await analysis?.value
-            _ = await pdfShown
         } catch {
             core.forget(session)
             // Home stays, with the alert over it: a workspace would have no files to show.
@@ -197,6 +197,7 @@ final class ProjectModel {
             if app?.project === self { await app?.close() }
             return
         }
+        _ = await pdfShown
         guard !closed else { return }
         initialLoadComplete = true
     }
