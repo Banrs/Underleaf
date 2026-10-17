@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::ops::Range;
 
 use super::stack::Stack;
-use super::{NAME, NEWLINE, ascii, catalog::CATALOG, is, letter, space};
+use super::{NAME, NEWLINE, ascii, catalog::CATALOG, is, letter};
 
 /// Whether the end of `src` is in maths, read as TeX would: $…$, $$…$$,
 /// \(…\), \[…\] and the maths environments (starred too) open maths; \text{…}
@@ -37,8 +37,26 @@ pub(crate) fn strip_comment(line: &str) -> &str {
     line
 }
 
-/// TeX's spaces, which a blank line may hold besides its line feed.
-fn tex_space(u: u16) -> bool {
+/// Where the brace that closes a group is, in the text after its opening
+/// brace: braces nest, and an escaped one (`\}`) is text.
+pub(crate) fn closing_brace(body: &str) -> Option<usize> {
+    let (mut depth, mut slashes) = (1, 0);
+    body.find(|c| {
+        if slashes % 2 == 0 {
+            depth += match c {
+                '{' => 1,
+                '}' => -1,
+                _ => 0,
+            };
+        }
+        slashes = if c == '\\' { slashes + 1 } else { 0 };
+        depth == 0
+    })
+}
+
+/// TeX's spaces, which a blank line may hold besides its line feed. Any
+/// other character, a no-break space among them, is text.
+pub(crate) fn tex_space(u: u16) -> bool {
     matches!(u, 0x09 | 0x0d | 0x20)
 }
 
@@ -69,7 +87,10 @@ const NAME_WINDOW: usize = 64;
 /// where its closing brace ends.
 pub(crate) fn environment_name(src: &[u16], from: usize) -> Option<(&[u16], usize)> {
     let window = &src[from..(from + NAME_WINDOW).min(src.len())];
-    let leading = window.iter().take_while(|&&u| space(u)).count();
+    let leading = window
+        .iter()
+        .take_while(|&&u| tex_space(u) || u == NEWLINE)
+        .count();
     let rest = &window[leading..];
     if !rest.first().is_some_and(|&u| is(u, '{')) {
         return None;
@@ -201,7 +222,7 @@ impl Scanner {
                 '}' => self.close(start..self.i, "}", visit),
                 '\\' if self.i < src.len() => (code, read) = self.control(src, start, visit),
                 _ => {
-                    let space = space(src[start]);
+                    let space = tex_space(src[start]);
                     self.text_argument &= space;
                     if space {
                         self.last_command = pending;
@@ -299,6 +320,8 @@ impl Scanner {
                 '[' if !in_math => self.stack.push(Group::new(true, "\\]", start)),
                 ')' => self.close(token, "\\)", visit),
                 ']' => self.close(token, "\\]", visit),
+                // An escape (`\%`, `\\`) is a command without a name.
+                _ if !in_math => visit.command("", start, start + 2),
                 _ => {}
             }
             self.i += 1;
@@ -315,7 +338,7 @@ impl Scanner {
             "verb" => (true, self.verb(src)),
             "begin" | "end" => self.environment(src, start, name == "end", in_math, visit),
             _ => {
-                self.text_argument = in_math && CATALOG.text_commands.iter().any(|n| n == name);
+                self.text_argument = in_math && CATALOG.text_commands.contains(name);
                 self.last_command = Some((start, name_end));
                 (false, self.i + 1)
             }
@@ -359,13 +382,13 @@ impl Scanner {
         self.i = after;
         if end {
             self.close(start..after, &format!("env:{name}"), visit);
-        } else if CATALOG.verbatim_environments.iter().any(|n| n == name) {
+        } else if CATALOG.verbatim_environments.contains(name) {
             let end: Vec<u16> = format!("\\end{{{name}}}").encode_utf16().collect();
             self.skip_literal(src, after, &end, None);
             return (true, read);
         } else {
             let bare = name.strip_suffix('*').unwrap_or(name);
-            let math = in_math || CATALOG.math_environments.iter().any(|n| n == bare);
+            let math = in_math || CATALOG.math_environments.contains(bare);
             self.stack
                 .push(Group::new(math, format!("env:{name}"), start));
         }

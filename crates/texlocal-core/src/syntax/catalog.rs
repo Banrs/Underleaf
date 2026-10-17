@@ -1,6 +1,6 @@
 //! The LaTeX the editors insert, complete and recognise (catalog.json).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
@@ -12,18 +12,18 @@ pub struct Catalog {
     pub blocks: BTreeMap<String, String>,
     pub environments: Vec<String>,
     pub bib_entry_types: Vec<String>,
-    pub cite_commands: Vec<String>,
-    pub ref_commands: Vec<String>,
+    pub cite_commands: HashSet<String>,
+    pub ref_commands: HashSet<String>,
     /// Commands whose options and first argument are names, not prose:
-    /// classes, packages, environments, labels and files.
-    pub name_commands: Vec<String>,
+    /// classes, packages, environments, labels, bibliography keys and files.
+    pub name_commands: HashSet<String>,
     /// Environments whose body is maths, starred or not.
-    pub math_environments: Vec<String>,
-    pub verbatim_environments: Vec<String>,
+    pub math_environments: HashSet<String>,
+    pub verbatim_environments: HashSet<String>,
     /// Commands whose braced argument is text, even in maths.
-    pub text_commands: Vec<String>,
+    pub text_commands: HashSet<String>,
     /// The maths environments the preview renders.
-    pub preview_environments: Vec<String>,
+    pub preview_environments: HashSet<String>,
     /// (name, snippet); "#{…}" marks a snippet field.
     pub commands: Vec<(String, String)>,
     pub templates: Templates,
@@ -81,12 +81,3 @@ pub struct Symbol {
 pub static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
     serde_json::from_str(include_str!("catalog.json")).expect("catalog.json is valid")
 });
-
-/// A list as a regex alternation: `a|b|c`.
-pub fn alternation<S: AsRef<str>>(names: impl IntoIterator<Item = S>) -> String {
-    names
-        .into_iter()
-        .map(|n| regex::escape(n.as_ref()))
-        .collect::<Vec<_>>()
-        .join("|")
-}

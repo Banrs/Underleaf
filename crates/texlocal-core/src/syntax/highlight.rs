@@ -10,7 +10,7 @@
 use super::catalog::CATALOG;
 use super::scan::blank_line;
 use super::stack::Stack;
-use super::{NAME, Text, ascii, letter, space};
+use super::{NAME, Text, ascii, letter};
 
 /// What a run of text is, by the stex mode's token names. Plain text and
 /// brackets have none. The C ABI numbers them in this order, from 0.
@@ -270,7 +270,9 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
 }
 
 fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<HighlightKind> {
-    if s.eat_while(space) {
+    // Any space, as stex has it: TeX reads one it doesn't skip (a no-break
+    // space is `~`) as no error either.
+    if s.eat_while(|u| char::from_u32(u.into()).is_some_and(char::is_whitespace)) {
         return None;
     }
     if s.eat(end) {
@@ -347,8 +349,7 @@ fn verbatim_environment(rest: &[u16]) -> Option<&'static str> {
     let close = rest.iter().take(NAME).position(|&u| u == b'}' as u16)?;
     let mut buf = [0; NAME];
     let name = ascii(&rest[1..close], &mut buf);
-    let names = CATALOG.verbatim_environments.iter();
-    names.map(String::as_str).find(|&n| n == name)
+    CATALOG.verbatim_environments.get(name).map(String::as_str)
 }
 
 /// The `{name}` after a verbatim environment's `\begin`, as stex has it,

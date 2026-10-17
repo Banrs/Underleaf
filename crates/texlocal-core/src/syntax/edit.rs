@@ -9,9 +9,10 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use super::scan::{blank_line, closing_brace, strip_comment};
 use super::{
-    Insertion, SourceDocument, Text, TextEdit, TextRange, blank, catalog, clamp, complete, edit,
-    is, space, span, splice, utf16,
+    Insertion, SourceDocument, Text, TextEdit, TextRange, catalog, clamp, complete, edit,
+    indentation, is, span, splice, utf16,
 };
 
 /// Edits, applied from the last as one undo step, and the selections after.
@@ -52,40 +53,12 @@ fn touched_lines(text: &Text, selections: &[TextRange]) -> BTreeSet<usize> {
 static HEADING: LazyLock<Regex> = LazyLock::new(|| {
     // The levels the menus offer, then the one they don't.
     let levels = catalog::CATALOG.heading_levels.iter();
-    let names = levels.map(|level| level.command.as_str());
-    let names = catalog::alternation(names.chain(["subparagraph"]));
+    let names = levels
+        .map(|level| level.command.as_str())
+        .chain(["subparagraph"]);
+    let names = names.map(regex::escape).collect::<Vec<_>>().join("|");
     Regex::new(&format!(r"\\({names})(\*?)\s*(\[[^\]]*\])?\s*\{{")).unwrap()
 });
-
-/// Where a line's comment starts: its first "%" that no backslash escapes.
-fn comment_start(line: &str) -> usize {
-    let mut slashes = 0;
-    for (i, c) in line.char_indices() {
-        match c {
-            '%' if slashes % 2 == 0 => return i,
-            '\\' => slashes += 1,
-            _ => slashes = 0,
-        }
-    }
-    line.len()
-}
-
-/// Where the brace that closes a command's argument is, in the text after
-/// its opening brace; none if that's on another line.
-fn closing_brace(body: &str) -> Option<usize> {
-    let (mut depth, mut slashes) = (1, 0);
-    body.find(|c| {
-        if slashes % 2 == 0 {
-            depth += match c {
-                '{' => 1,
-                '}' => -1,
-                _ => 0,
-            };
-        }
-        slashes = if c == '\\' { slashes + 1 } else { 0 };
-        depth == 0
-    })
-}
 
 impl SourceDocument {
     /// "%" comments on or off for the lines the selections touch: off when
@@ -94,19 +67,18 @@ impl SourceDocument {
     pub fn toggle_comment(&self, selections: &[TextRange]) -> Vec<TextEdit> {
         let text = &self.text;
         let lines = touched_lines(text, selections);
-        let indent = |line: &[u16]| line.iter().take_while(|&&u| space(u)).count();
-        let commented = |line: &[u16]| line.get(indent(line)).is_some_and(|&u| is(u, '%'));
+        let commented = |line: &[u16]| line.get(indentation(line)).is_some_and(|&u| is(u, '%'));
         let uncomment = lines
             .iter()
-            .all(|&l| commented(text.line(l)) || blank(text.line(l)));
+            .all(|&l| commented(text.line(l)) || blank_line(text.line(l)));
         lines
             .into_iter()
             .filter_map(|l| {
                 let (line, start) = (text.line(l), text.lines[l]);
                 if !uncomment {
-                    return (!blank(line)).then(|| edit(start, 0, "% "));
+                    return (!blank_line(line)).then(|| edit(start, 0, "% "));
                 }
-                let at = indent(line);
+                let at = indentation(line);
                 let space_after = line.get(at + 1).is_some_and(|&u| is(u, ' '));
                 commented(line).then(|| edit(start + at as u32, 1 + space_after as u32, ""))
             })
@@ -125,7 +97,7 @@ impl SourceDocument {
                     return Some(edit(start, 0, "  "));
                 }
                 let line = text.line(l);
-                let indent = &line[..line.iter().take_while(|&&u| space(u)).count()];
+                let indent = &line[..indentation(line)];
                 if indent.is_empty() {
                     return None;
                 }
@@ -166,7 +138,7 @@ impl SourceDocument {
         let (line, start) = (text.line(index), text.lines[index]);
         let length = line.len() as u32;
         let line = String::from_utf16_lossy(line);
-        let (code, comment) = line.split_at(comment_start(&line));
+        let (code, comment) = line.split_at(strip_comment(&line).len());
         let (before, title, rest, marks, closed) = match HEADING.captures(code) {
             Some(c) => {
                 let open = c.get_match();
@@ -227,7 +199,7 @@ impl SourceDocument {
         let before = &text.units[text.lines[line] as usize..selection.start as usize];
         // On a line of its own: after text, a line feed first. The template ends
         // with its own.
-        let newline = if blank(before) { "" } else { "\n" };
+        let newline = if blank_line(before) { "" } else { "\n" };
         let (block, fields) =
             complete::expand(text, selection.start, &format!("{newline}{template}"));
         Some(Insertion {
