@@ -1,7 +1,7 @@
 //! An open file's text, the session's: the editor edits it once per change,
 //! the syntax answers read it, and saves and the live preview take it.
 
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 
@@ -22,7 +22,7 @@ struct Cell {
     id: u64,
     text: Mutex<Text>,
     tx: mpsc::UnboundedSender<Msg>,
-    symbols: Arc<RwLock<Arc<Symbols>>>,
+    symbols: Arc<Mutex<Arc<Symbols>>>,
 }
 
 /// A handle on a session's document, cheap to clone; any thread may use it.
@@ -34,7 +34,7 @@ impl Document {
         id: u64,
         text: &str,
         tx: mpsc::UnboundedSender<Msg>,
-        symbols: Arc<RwLock<Arc<Symbols>>>,
+        symbols: Arc<Mutex<Arc<Symbols>>>,
     ) -> Self {
         Self(Arc::new(Cell {
             id,
@@ -99,8 +99,7 @@ impl Document {
 
     /// The project's labels and citations, which completions offer.
     pub fn symbols(&self) -> Arc<Symbols> {
-        let symbols = &self.0.symbols;
-        Arc::clone(&symbols.read().unwrap_or_else(PoisonError::into_inner))
+        Arc::clone(&lock(&self.0.symbols))
     }
 
     pub(crate) fn id(&self) -> u64 {

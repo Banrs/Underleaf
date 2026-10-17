@@ -72,7 +72,6 @@ All take `session` (except `session_open`). Results are the `ok` value.
 |---|---|---|---|
 | `session_open` | `id`, `session`, `autoCompile?` | `{session, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` the project's ui state (`{expandedFolders, foldedHeadings}`, as `set_ui_state` answers it): all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
-| `session_state` | | `{documents: [document state], build, live, autoCompile}` | A snapshot, for a host coming up; a document's state also has `dirty` and `conflict` (`changed`/`gone`/null), the build's `queued`. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
 | `session_open_document` | `path` | null | Text files only. The editor reads the text from the document's source (`tl_source_text`) once it shows it, so it has whatever reloads came meanwhile. |
 | `session_close_document` | `path` | `{closed}` | Saves first, asking about conflicts; `closed: false` if that failed. |
@@ -263,6 +262,7 @@ Every change a host follows since commit d6bee12, in the order made.
   `set_texpresso_dir` answer `latexmkVersion`.
 - `session_rename` also answers `ui`, the ui state with the entry's paths moved, so a host
   needs no other read of it (it sends any `set_ui_state` before the rename).
+- `session_state` is gone: no host used it, and the events carry what it gave.
 
 ## From the Mac app's Swift
 

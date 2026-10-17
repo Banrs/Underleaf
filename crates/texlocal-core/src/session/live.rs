@@ -1,20 +1,32 @@
-//! The session's side of live preview.
-//! Starts, stops and whole texts go one at a time; a key's edit goes on as
-//! the editor makes it; a task of the session's own waits for the pages and
-//! hands them on as events.
+//! The session's side of live preview. Starts, stops and whole texts go one at
+//! a time; a key's edit goes on as the editor makes it; the session waits for
+//! TeXpresso's news beside its messages and hands the pages on as events.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
-use super::Msg;
-use super::actor::{Actor, Later};
+use super::actor::{Actor, Timer};
+use super::engine::{Call, Fut};
 use crate::CoreError;
 use crate::projects::file_kind;
 use crate::texpresso::{Caret, Events, FileBuffer, Pane, Status};
+
+/// A brace or a dollar half typed stops TeX for a moment at every other key,
+/// so a stopped run is said so only once it has lasted this long.
+const HALTS_AFTER: Duration = Duration::from_secs(1);
+/// From a caret's move to telling TeXpresso where it settled.
+const CARET: Duration = Duration::from_millis(150);
+/// From a rename, a new main file or a changed file to the preview catching up.
+pub(super) const FOLLOW: Duration = Duration::from_millis(180);
+/// From a whole text TeXpresso couldn't be asked to take to sending it again.
+const RETRY: Duration = Duration::from_millis(750);
+/// A preview that ends by itself with an error after this long is started again.
+const RESTARTABLE_AFTER: Duration = Duration::from_secs(10);
 
 const DIDNT_START: &str =
     "TeXpresso didn’t start. Check its location in Settings and the log below.";
@@ -34,41 +46,38 @@ pub(crate) struct Live {
     pub phase: Phase,
     /// Whether the project's TeXpresso preview is this session's: kept after it ends, for a
     /// restart; gone with the user's Stop or another session's Start.
-    pub owns: bool,
-    /// Paths to send whole: None for the document's own text when sent, else a file's text from disk.
-    pub pending: BTreeMap<String, Option<String>>,
+    owns: bool,
+    /// Paths to send whole: an open document's text, else the file's on disk.
+    pending: BTreeSet<String>,
     /// Paths TeXpresso has as the session has them, so a key's edit fits its copy.
-    pub synced: HashSet<String>,
+    synced: HashSet<String>,
     /// The version of each document last sent whole: edits up to it are in that text.
     sent: HashMap<String, u64>,
     rejected: BTreeMap<String, String>,
     failure: Option<String>,
     reported: BTreeSet<String>,
-    pub status: Option<Status>,
+    /// TeXpresso's own error, as it last said.
+    error: Option<String>,
     /// TeXpresso's as last seen: when it rises, the log may have changed.
     revision: u64,
     /// The host shows the Live Preview Log: the `live` event carries it.
     log_shown: bool,
     pub halted: bool,
-    pub halting_at: Option<Instant>,
     started: Option<Instant>,
     view: Option<(u32, u32)>,
     sent_view: Option<(u32, u32)>,
-    /// Where the editor's caret is, for a start; and where TeXpresso was last told it is.
+    /// Where the editor's caret is; and where TeXpresso was last told it is.
     wanted: Option<(String, usize)>,
     caret: Option<(String, usize)>,
-    pub settle: Option<(Instant, (String, usize))>,
-    pub retry_at: Option<Instant>,
-    pub restart_at: Option<Instant>,
     pub disk_paths: BTreeSet<String>,
-    pub disk_at: Option<Instant>,
     /// Rises with each Start the user asks for and each Stop: a restart for an older one is dropped.
     pub intent: u64,
     /// TeXpresso's own window shows the document, as the user's Start asked: the host's pane
     /// gets none, and TeXpresso is told no view or caret.
     pub window: bool,
-    listen_seq: u64,
-    listener: Option<AbortHandle>,
+    /// TeXpresso's next news, while the preview runs.
+    pub waiting: Option<Fut<Result<Events, CoreError>>>,
+    /// The last document's version: the core keeps only the latest.
     version: u64,
     pub document_seen: bool,
     shown: Value,
@@ -79,44 +88,51 @@ impl Live {
         matches!(self.phase, Phase::Starting | Phase::Running)
     }
 
-    /// Whether a key's edit or a caret at `path` fits the copy TeXpresso has.
+    /// Whether a key's edit or a caret at `path` fits the copy TeXpresso has; a path
+    /// pending is never synced.
     fn fits(&self, path: &str) -> bool {
-        self.phase == Phase::Running
-            && self.synced.contains(path)
-            && !self.pending.contains_key(path)
+        self.phase == Phase::Running && self.synced.contains(path)
     }
 
-    fn errors(&self) -> Vec<String> {
+    fn errors(&self) -> impl Iterator<Item = String> {
         let rejected = self
             .rejected
             .iter()
             .map(|(path, error)| format!("{path}: {error}"));
-        self.failure.iter().cloned().chain(rejected).collect()
+        self.failure.iter().cloned().chain(rejected)
     }
 }
 
 impl Actor {
+    fn live_call(&self, call: Call) -> Result<Status, CoreError> {
+        self.engine.live(self.id, call)
+    }
+
     pub fn live_state(&self) -> Value {
         let live = &self.live;
-        let errors = live.errors();
+        let errors: Vec<String> = live.errors().collect();
         let failure = (!errors.is_empty()).then(|| errors.join("\n\n"));
         json!({
             "phase": live.phase,
             "halted": live.halted,
             "log": live.log_shown.then(|| self.live_log(failure.as_deref())),
             "failure": failure,
-            "error": live.status.as_ref().and_then(|s| s.error.clone()),
+            "error": live.error,
         })
     }
 
     /// The Live Preview Log as the host shows it: what went wrong, then the preview's own
     /// error, its log and its output.
     fn live_log(&self, failure: Option<&str>) -> String {
-        let status = self.live.owns.then(|| self.engine.live_status(self.id));
+        let status = self.live.owns.then(|| self.live_call(Call::Status));
         let mut parts: Vec<&str> = failure.into_iter().collect();
         if let Some(Ok(status)) = &status {
-            let error = status.error.as_deref();
-            parts.extend(error.filter(|&error| Some(error) != failure));
+            parts.extend(
+                status
+                    .error
+                    .as_deref()
+                    .filter(|&error| Some(error) != failure),
+            );
             let texts = [status.log.as_str(), status.output.as_str()];
             parts.extend(texts.into_iter().filter(|text| !text.is_empty()));
         }
@@ -146,30 +162,30 @@ impl Actor {
     }
 
     fn report(&mut self) {
-        let mut errors: BTreeSet<String> = self.live.errors().into_iter().collect();
-        errors.extend(self.live.status.as_ref().and_then(|s| s.error.clone()));
+        let mut errors: BTreeSet<String> = self.live.errors().collect();
+        errors.extend(self.live.error.clone());
         let alert = !errors.is_subset(&self.live.reported);
         self.live.reported = errors;
         self.publish_live(alert);
     }
 
-    pub fn live_reset(&mut self) {
+    fn live_reset(&mut self) {
         let live = &mut self.live;
-        live.listen_seq += 1;
-        if let Some(listener) = live.listener.take() {
-            listener.abort();
-        }
-        (live.retry_at, live.halting_at, live.settle) = (None, None, None);
+        live.waiting = None;
         live.pending.clear();
         live.synced.clear();
         live.sent.clear();
-        (live.halted, live.started, live.sent_view, live.caret) = (false, None, None, None);
-        live.version = 0;
+        (live.halted, live.started, live.sent_view) = (false, None, None);
+        (live.caret, live.version) = (None, 0);
+        for timer in [Timer::Retry, Timer::Halt, Timer::Caret] {
+            self.timers.remove(&timer);
+        }
     }
 
     pub fn live_cancel_work(&mut self) {
         self.live.intent += 1;
-        (self.live.restart_at, self.live.disk_at) = (None, None);
+        self.timers.remove(&Timer::Restart);
+        self.timers.remove(&Timer::Disk);
         self.live.disk_paths.clear();
     }
 
@@ -198,27 +214,23 @@ impl Actor {
         self.live.rejected.clear();
         self.live.document_seen = false;
         self.publish_live(false);
-        if !self.closed {
-            if restartable {
-                self.later.push_back(Later::Restart { ended: true });
-            } else if self.auto_compile {
-                self.later.push_back(Later::Compile(true));
-            }
+        if restartable {
+            self.live_restart(true);
+        } else {
+            self.auto_build();
         }
     }
 
     fn receive(&mut self, status: Status) {
         self.live.revision = self.live.revision.max(status.revision);
-        let running = status.running;
-        let failed = status.error.is_none() && self.live.phase == Phase::Starting;
-        self.live.status = Some(status);
-        if running {
+        if status.running {
             self.live.phase = Phase::Running;
-        } else if failed {
+        } else if status.error.is_none() && self.live.phase == Phase::Starting {
             self.live.failure = Some(DIDNT_START.into());
         }
+        self.live.error = status.error;
         self.report();
-        if !running {
+        if !status.running {
             self.ended(false);
         }
     }
@@ -226,9 +238,8 @@ impl Actor {
     /// Whether a start was tried: `replacing` restarts the preview this session owns.
     pub fn live_start(&mut self, replacing: bool) -> bool {
         let phase = self.live.phase;
-        if self.closed
+        if replacing && (phase == Phase::Stopping || !self.live.owns)
             || !replacing && phase != Phase::Stopped
-            || replacing && (phase == Phase::Stopping || !self.live.owns)
         {
             return false;
         }
@@ -238,25 +249,29 @@ impl Actor {
         self.live.reported.clear();
         self.live_reset();
         self.publish_live(false);
-        let mut files = Vec::new();
         let mut versions = HashMap::new();
-        for (path, doc) in &self.docs {
+        let files = self.docs.iter().map(|doc| {
             let (text, version) = doc.doc.snapshot();
-            versions.insert(path.clone(), version);
-            files.push(FileBuffer {
-                path: path.clone(),
+            versions.insert(doc.path.clone(), version);
+            FileBuffer {
+                path: doc.path.clone(),
                 text,
-            });
-        }
+            }
+        });
+        let files: Vec<FileBuffer> = files.collect();
         let caret = self.live.wanted.clone().filter(|_| !self.live.window);
         let pane = (!self.live.window).then(|| Pane {
             view: self.live.view,
             caret: caret.clone().map(|(path, offset)| Caret { path, offset }),
         });
-        let start = self
-            .engine
-            .live_start(self.id, &self.root, &files, replacing, pane.as_ref());
-        match start {
+        let root = &self.root;
+        let pane = pane.as_ref();
+        match self.live_call(Call::Start {
+            root,
+            files: &files,
+            replacing,
+            pane,
+        }) {
             Ok(status) => {
                 self.live.owns = true;
                 self.live.synced = versions.keys().cloned().collect();
@@ -265,8 +280,7 @@ impl Actor {
                 self.receive(status);
                 if self.live.active() {
                     self.live.started = Some(Instant::now());
-                    self.listen();
-                    self.flush_pending();
+                    self.listen(0);
                 }
             }
             Err(error) => self.give_up(error),
@@ -274,13 +288,14 @@ impl Actor {
         true
     }
 
+    /// The session's own start again; `ended`: the preview ended by itself.
     pub fn live_restart(&mut self, ended: bool) {
         let tried = self.live_start(true);
         if ended {
             if self.live.active() {
                 self.emit("live_restarted", json!({}));
-            } else if !tried && self.auto_compile {
-                self.later.push_back(Later::Compile(true));
+            } else if !tried {
+                self.auto_build();
             }
         }
     }
@@ -294,11 +309,8 @@ impl Actor {
         self.live_reset();
         self.publish_live(false);
         if self.live.owns {
-            match self.engine.live_stop(self.id) {
-                Ok(status) => {
-                    self.live.owns = false;
-                    self.live.status = Some(status);
-                }
+            match self.live_call(Call::Stop) {
+                Ok(status) => (self.live.owns, self.live.error) = (false, status.error),
                 Err(error) if !self.closed => self.fail(error),
                 Err(_) => {}
             }
@@ -312,63 +324,61 @@ impl Actor {
 
     /// A key's edit, as the document took it: sent on at once where TeXpresso's copy fits it.
     pub fn live_edited(&mut self, path: &str, version: u64, start: u32, length: u32, text: &str) {
-        if !self.live.active() || self.closed {
+        if !self.live.active() {
             return;
         }
         // Typing takes the engine's snapshot along: the caret there is no news.
         let end = start as usize + text.encode_utf16().count();
         self.live.caret = Some((path.to_owned(), end));
-        let live = &self.live;
-        if live.sent.get(path).is_some_and(|sent| version <= *sent) {
+        if self
+            .live
+            .sent
+            .get(path)
+            .is_some_and(|sent| version <= *sent)
+        {
             return;
         }
-        if live.fits(path) {
-            let sent = self
-                .engine
-                .live_edit(self.id, path, start as usize, length as usize, text);
-            match sent {
-                Ok(()) => return,
+        if self.live.fits(path) {
+            match self.live_call(Call::Edit(path, start as usize, length as usize, text)) {
+                Ok(_) => return,
                 Err(error) if error.status == 409 => return self.fail(error),
                 // Refused, so the copy is a step behind: the whole text puts it right, or says why not.
-                Err(_) => {
-                    self.live.synced.remove(path);
-                }
+                Err(_) => {}
             }
         }
-        self.live.pending.insert(path.to_owned(), None);
-        self.flush_pending();
+        self.live_whole(path);
     }
 
-    /// A document's whole text is to go: it opened, or the disk's replaced it.
+    /// A file's whole text is to go: a document opened, the disk's replaced it, or TeXpresso's
+    /// copy is behind.
     pub fn live_whole(&mut self, path: &str) {
-        if self.live.active() && !self.closed {
+        if self.live.active() {
             self.live.synced.remove(path);
-            self.live.pending.insert(path.to_owned(), None);
-            self.later.push_back(Later::FlushLive);
+            self.live.pending.insert(path.to_owned());
+            self.flush_pending();
         }
     }
 
     pub fn flush_pending(&mut self) {
-        if self.live.phase != Phase::Running || self.closed || self.live.pending.is_empty() {
+        if self.live.phase != Phase::Running || self.live.pending.is_empty() {
             return;
         }
-        self.live.retry_at = None;
-        while self.live.phase == Phase::Running && !self.closed {
-            let Some((path, text)) = self.live.pending.pop_first() else {
-                break;
-            };
-            let (text, version) = match text {
-                Some(text) => (text, None),
-                None => match self.docs.get(&path) {
-                    Some(doc) => {
-                        let (text, version) = doc.doc.snapshot();
-                        (text, Some(version))
-                    }
-                    None => continue,
+        self.timers.remove(&Timer::Retry);
+        while self.live.phase == Phase::Running
+            && let Some(path) = self.live.pending.pop_first()
+        {
+            let (text, version) = match self.doc(&path) {
+                Some(doc) => {
+                    let (text, version) = doc.doc.snapshot();
+                    (text, Some(version))
+                }
+                None => match std::fs::read(self.root.join(&path)) {
+                    Ok(bytes) if is_text_file(&path) => (crate::lossy_string(bytes), None),
+                    _ => continue,
                 },
             };
-            match self.engine.live_update(self.id, &path, &text) {
-                Ok(()) => {
+            match self.live_call(Call::Update(&path, &text)) {
+                Ok(_) => {
                     self.live.rejected.remove(&path);
                     if self.live.pending.is_empty() {
                         self.live.failure = None;
@@ -376,9 +386,7 @@ impl Actor {
                     if let Some(version) = version {
                         self.live.sent.insert(path.clone(), version);
                     }
-                    if !self.live.pending.contains_key(&path) {
-                        self.live.synced.insert(path);
-                    }
+                    self.live.synced.insert(path);
                     self.publish_live(false);
                 }
                 // This text can't be taken, whenever it is sent: its error stays until the file is edited.
@@ -390,8 +398,8 @@ impl Actor {
                 Err(error) => {
                     self.fail(error);
                     if self.live.phase == Phase::Running {
-                        self.live.pending.entry(path).or_insert(Some(text));
-                        self.live.retry_at = Some(Instant::now() + self.t.retry);
+                        self.live.pending.insert(path);
+                        self.after(Timer::Retry, RETRY);
                     }
                     return;
                 }
@@ -400,12 +408,11 @@ impl Actor {
     }
 
     pub fn live_rescan(&mut self) {
-        if self.live.phase != Phase::Running || self.closed {
-            return;
-        }
-        match self.engine.live_rescan(self.id) {
-            Ok(status) => self.receive(status),
-            Err(error) => self.fail(error),
+        if self.live.phase == Phase::Running {
+            match self.live_call(Call::Rescan) {
+                Ok(status) => self.receive(status),
+                Err(error) => self.fail(error),
+            }
         }
     }
 
@@ -418,30 +425,26 @@ impl Actor {
             && !self.live.window
             && self.live.sent_view != Some(pages)
         {
-            self.engine.live_view(self.id, pages.0, pages.1);
+            let _ = self.live_call(Call::View(pages.0, pages.1));
             self.live.sent_view = Some(pages);
         }
     }
 
     pub fn live_caret(&mut self, path: String, offset: usize) {
-        let moved = (path, offset);
-        self.live.wanted = Some(moved.clone());
-        if self.live.phase == Phase::Running
-            && !self.live.window
-            && self.live.caret.as_ref() != Some(&moved)
-        {
-            self.live.settle = Some((Instant::now() + self.t.caret, moved));
+        let moved = Some((path, offset));
+        if self.live.phase == Phase::Running && !self.live.window && self.live.caret != moved {
+            self.after(Timer::Caret, CARET);
         }
+        self.live.wanted = moved;
     }
 
     pub fn caret_settled(&mut self) {
-        let Some((_, (path, offset))) = self.live.settle.take() else {
-            return;
-        };
-        let moved = Some((path.clone(), offset));
-        if self.live.fits(&path) && self.live.caret != moved {
-            self.live.caret = moved;
-            self.engine.live_caret(self.id, &path, offset);
+        if let Some((path, offset)) = &self.live.wanted
+            && self.live.fits(path)
+            && self.live.caret != self.live.wanted
+        {
+            let _ = self.live_call(Call::Caret(path, *offset));
+            self.live.caret.clone_from(&self.live.wanted);
         }
     }
 
@@ -453,71 +456,41 @@ impl Actor {
         if !self.live.active() {
             return;
         }
-        let live = &self.live;
-        let mut files = live.synced.iter().chain(live.pending.keys());
+        let mut files = self.live.synced.iter().chain(&self.live.pending);
         if files.all(|path| self.tree.contains(path)) {
-            self.later.push_back(Later::Rescan);
+            self.live_rescan();
         } else {
-            self.live.restart_at = Some(Instant::now() + self.t.live_follow);
+            self.after(Timer::Restart, FOLLOW);
         }
     }
 
     /// Files changed on disk reach TeXpresso. A save of an open document isn't news to it:
     /// a rescan as it typesets the edit stalled it (TeXpresso e8df770).
     pub fn refresh_live_disk(&mut self) {
-        let mut others = false;
-        for path in std::mem::take(&mut self.live.disk_paths) {
-            if !self.live.active() || self.closed {
-                return;
-            }
-            if self.docs.contains_key(&path) {
-                continue;
-            }
-            others = true;
-            if is_text_file(&path)
-                && let Ok(bytes) = std::fs::read(self.root.join(&path))
-            {
-                self.live.synced.remove(&path);
-                let text = crate::lossy_string(bytes);
-                self.live.pending.insert(path, Some(text));
-            }
+        let paths = std::mem::take(&mut self.live.disk_paths);
+        let others: Vec<String> = paths
+            .into_iter()
+            .filter(|path| self.doc(path).is_none())
+            .collect();
+        if !self.live.active() || others.is_empty() {
+            return;
         }
-        if others {
-            self.flush_pending();
-            self.live_rescan();
+        for path in others.into_iter().filter(|path| is_text_file(path)) {
+            self.live.synced.remove(&path);
+            self.live.pending.insert(path);
         }
+        self.flush_pending();
+        self.live_rescan();
     }
 
     // MARK: - What the preview sends back
 
-    fn listen(&mut self) {
-        self.live.listen_seq += 1;
-        let (seq, owner, engine, tx) = (
-            self.live.listen_seq,
-            self.id,
-            std::sync::Arc::clone(&self.engine),
-            self.tx.clone(),
-        );
-        let task = tokio::spawn(async move {
-            let mut after = 0;
-            loop {
-                let news = engine.live_wait(owner, after).await;
-                let running = news.as_ref().is_ok_and(|events| events.running);
-                if let Ok(events) = &news {
-                    after = events.seq;
-                }
-                if tx.send(Msg::LiveNews(seq, news)).is_err() || !running {
-                    break;
-                }
-            }
-        });
-        self.live.listener = Some(task.abort_handle());
+    /// Waits for the news after the `after`th.
+    fn listen(&mut self, after: u64) {
+        self.live.waiting = Some(Arc::clone(&self.engine).live_wait(self.id, after));
     }
 
-    pub fn live_news(&mut self, seq: u64, news: Result<Events, CoreError>) {
-        if seq != self.live.listen_seq {
-            return;
-        }
+    pub fn live_news(&mut self, news: Result<Events, CoreError>) {
         let events = match news {
             Ok(events) => events,
             // Another window's preview now, or a core that can't be asked.
@@ -536,56 +509,49 @@ impl Actor {
             if pdf.pages > 0 {
                 self.live.document_seen = true;
                 let complete = !matches!(pdf.run.as_deref(), Some("stopped" | "partial"));
-                self.emit(
-                    "live_document",
-                    json!({
-                        "path": pdf.path,
-                        "version": pdf.version,
-                        "serial": pdf.serial,
-                        "pages": pdf.pages,
-                        "changed": if skipped { None } else { pdf.changed.clone() },
-                        "complete": complete,
-                    }),
-                );
+                let document = json!({
+                    "path": pdf.path,
+                    "version": pdf.version,
+                    "serial": pdf.serial,
+                    "pages": pdf.pages,
+                    "changed": if skipped { None } else { pdf.changed.as_ref() },
+                    "complete": complete,
+                });
+                self.emit("live_document", document);
             }
         }
         for page in &events.pages {
-            self.emit(
-                "live_page",
-                json!({ "page": page.page, "path": page.path, "serial": page.serial }),
-            );
+            let page = json!({ "page": page.page, "path": page.path, "serial": page.serial });
+            self.emit("live_page", page);
         }
         match run {
-            Some("partial") | None => {}
-            Some(run) => self.run_ended(run == "stopped"),
-        }
-        if !events.running {
-            let restartable = events.error.is_some()
-                && self.live.owns
-                && self
-                    .live
-                    .started
-                    .is_some_and(|at| at.elapsed() > self.t.restartable_after);
-            if !restartable && let Some(error) = &events.error {
-                self.live.failure = Some(error.clone());
-                self.report();
+            None | Some("partial") => {}
+            Some("stopped") if !self.live.halted => {
+                let halts = Instant::now() + HALTS_AFTER;
+                self.timers.entry(Timer::Halt).or_insert(halts);
             }
-            self.ended(restartable);
-        }
-    }
-
-    /// A brace or a dollar half typed stops TeX for a moment at every other key,
-    /// so a stopped run is said so only once it has lasted a while.
-    fn run_ended(&mut self, stopped: bool) {
-        if !stopped {
-            self.live.halting_at = None;
-            if self.live.halted {
-                self.live.halted = false;
-                self.publish_live(false);
+            Some("stopped") => {}
+            Some(_) => {
+                self.timers.remove(&Timer::Halt);
+                if self.live.halted {
+                    self.live.halted = false;
+                    self.publish_live(false);
+                }
             }
-        } else if !self.live.halted && self.live.halting_at.is_none() {
-            self.live.halting_at = Some(Instant::now() + self.t.halts_after);
         }
+        if events.running {
+            return self.listen(events.seq);
+        }
+        let lasted = self
+            .live
+            .started
+            .is_some_and(|at| at.elapsed() > RESTARTABLE_AFTER);
+        let restartable = events.error.is_some() && self.live.owns && lasted;
+        if !restartable && let Some(error) = events.error {
+            self.live.failure = Some(error);
+            self.report();
+        }
+        self.ended(restartable);
     }
 }
 

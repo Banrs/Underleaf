@@ -401,19 +401,21 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
     until(&events, |e| e["type"] == "saved" && e["session"] == session);
     // A reload is the disk's text, not an edit to save.
     unsafe { tl_source_reload(source, b"x".as_ptr(), 1) };
-    let state = call(handle, "session_state", json!({ "session": session }));
-    assert_eq!(state["ok"]["documents"][0]["dirty"], false);
+    let saved = call(handle, "session_save", json!({ "session": session }));
+    assert_eq!(saved["ok"]["saved"], true);
+    let disk = std::fs::read_to_string(dir.path().join("P/main.tex")).unwrap();
+    assert_eq!(disk, format!("{added}{text}"), "nothing to save");
     unsafe { tl_source_free(source) };
     // Without blocking: the answer comes to the callback.
     let (answered, answers) = collector();
     call_async(
         handle,
-        "session_state",
+        "session_save",
         json!({ "session": session }),
         &answered,
     );
     let answer = until(&answers, |_| true);
-    assert!(answer["ok"]["documents"].is_array());
+    assert_eq!(answer["ok"]["saved"], true);
     unsafe { tl_close(handle) };
 }
 
@@ -429,13 +431,14 @@ fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
     assert_eq!(call(handle, "session_open", seven)["status"], 409);
     for round in 0..50 {
         let last = round % 2 == 0;
-        for auto in [!last, last, !last, last] {
-            let args = json!({ "session": 7, "autoCompile": auto });
-            call_async(handle, "session_set_options", args, &sink);
+        // Whether the Live Preview Log shows, which the next live state answers with its log.
+        for shown in [!last, last, !last, last] {
+            let args = json!({ "session": 7, "shown": shown });
+            call_async(handle, "session_live_log", args, &sink);
         }
-        call_async(handle, "session_state", json!({ "session": 7 }), &sink);
-        let state = until(&answers, |answer| answer["ok"]["autoCompile"].is_boolean());
-        assert_eq!(state["ok"]["autoCompile"], last, "round {round}");
+        call_async(handle, "session_live_stop", json!({ "session": 7 }), &sink);
+        let state = until(&answers, |answer| answer["ok"]["phase"].is_string());
+        assert_eq!(state["ok"]["log"].is_string(), last, "round {round}");
     }
     unsafe { tl_close(handle) };
 }

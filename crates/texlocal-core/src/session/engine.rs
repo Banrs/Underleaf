@@ -1,6 +1,6 @@
 //! The programs a session runs, latexmk and TeXpresso, behind one seam, so
-//! the session's rules are tested without them. A preview is its session's,
-//! by the session's number (`owner`).
+//! the session's rules are tested without them; a real host's engine is the
+//! service. A preview is its session's, by the session's number (`owner`).
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -14,106 +14,71 @@ use crate::texpresso::{Events, FileBuffer, Pane, Status};
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
-pub(crate) trait Engine: Send + Sync {
-    fn compile(&self, root: PathBuf) -> Fut<Result<CompileResult, CoreError>>;
-    fn stop_compile(&self, root: &Path);
-    fn clean(&self, root: PathBuf) -> Fut<Result<(), CoreError>>;
-    fn live_start(
-        &self,
-        owner: u64,
-        root: &Path,
-        files: &[FileBuffer],
+/// What a session asks of its preview, as `texpresso::Manager` takes it.
+#[derive(Debug)]
+pub(crate) enum Call<'a> {
+    Start {
+        root: &'a Path,
+        files: &'a [FileBuffer],
         replacing: bool,
-        pane: Option<&Pane>,
-    ) -> Result<Status, CoreError>;
-    fn live_update(&self, owner: u64, path: &str, text: &str) -> Result<(), CoreError>;
-    fn live_edit(
-        &self,
-        owner: u64,
-        path: &str,
-        start: usize,
-        remove: usize,
-        text: &str,
-    ) -> Result<(), CoreError>;
-    fn live_view(&self, owner: u64, first: u32, last: u32);
-    fn live_caret(&self, owner: u64, path: &str, offset: usize);
-    fn live_wait(&self, owner: u64, after: u64) -> Fut<Result<Events, CoreError>>;
-    fn live_stop(&self, owner: u64) -> Result<Status, CoreError>;
-    fn live_rescan(&self, owner: u64) -> Result<Status, CoreError>;
-    fn live_status(&self, owner: u64) -> Result<Status, CoreError>;
+        pane: Option<&'a Pane>,
+    },
+    /// A file's whole text.
+    Update(&'a str, &'a str),
+    /// A key's edit: UTF-16 units removed at a place, and the text put there.
+    Edit(&'a str, usize, usize, &'a str),
+    View(u32, u32),
+    Caret(&'a str, usize),
+    Stop,
+    Rescan,
+    Status,
 }
 
-/// The engine of a real host: the service's compile and TeXpresso managers.
-pub(crate) struct ServiceEngine(pub Arc<Service>);
+pub(crate) trait Engine: Send + Sync {
+    fn compile(self: Arc<Self>, root: PathBuf) -> Fut<Result<CompileResult, CoreError>>;
+    fn stop_compile(&self, root: &Path);
+    fn clean(self: Arc<Self>, root: PathBuf) -> Fut<Result<(), CoreError>>;
+    /// The preview's status, for the calls that answer one; else a default.
+    fn live(&self, owner: u64, call: Call) -> Result<Status, CoreError>;
+    fn live_wait(self: Arc<Self>, owner: u64, after: u64) -> Fut<Result<Events, CoreError>>;
+}
 
-impl Engine for ServiceEngine {
-    fn compile(&self, root: PathBuf) -> Fut<Result<CompileResult, CoreError>> {
-        let service = Arc::clone(&self.0);
-        Box::pin(async move {
-            let tex_dir = service.tex_dir();
-            service.compile.compile(&root, tex_dir.as_deref()).await
-        })
+impl Engine for Service {
+    fn compile(self: Arc<Self>, root: PathBuf) -> Fut<Result<CompileResult, CoreError>> {
+        Box::pin(async move { self.compile.compile(&root, self.tex_dir().as_deref()).await })
     }
 
     fn stop_compile(&self, root: &Path) {
-        self.0.compile.stop(root);
+        self.compile.stop(root);
     }
 
-    fn clean(&self, root: PathBuf) -> Fut<Result<(), CoreError>> {
-        let service = Arc::clone(&self.0);
-        Box::pin(async move { service.compile.clean(&root).await })
+    fn clean(self: Arc<Self>, root: PathBuf) -> Fut<Result<(), CoreError>> {
+        Box::pin(async move { self.compile.clean(&root).await })
     }
 
-    fn live_start(
-        &self,
-        owner: u64,
-        root: &Path,
-        files: &[FileBuffer],
-        replacing: bool,
-        pane: Option<&Pane>,
-    ) -> Result<Status, CoreError> {
-        let path_env = self.0.tool_paths().1;
-        let manager = &self.0.texpresso;
-        manager.start(owner, root, files, replacing, &path_env, pane)
+    fn live(&self, owner: u64, call: Call) -> Result<Status, CoreError> {
+        let manager = &self.texpresso;
+        let done = |result: Result<(), CoreError>| result.map(|()| Status::default());
+        match call {
+            Call::Start {
+                root,
+                files,
+                replacing,
+                pane,
+            } => manager.start(owner, root, files, replacing, &self.tool_paths().1, pane),
+            Call::Update(path, text) => done(manager.update(owner, path, text)),
+            Call::Edit(path, start, remove, text) => {
+                done(manager.edit(owner, path, start, remove, text))
+            }
+            Call::View(first, last) => done(manager.view(owner, first, last)),
+            Call::Caret(path, offset) => done(manager.caret(owner, path, offset)),
+            Call::Stop => manager.stop_request(owner),
+            Call::Rescan => manager.rescan(owner),
+            Call::Status => manager.status(owner),
+        }
     }
 
-    fn live_update(&self, owner: u64, path: &str, text: &str) -> Result<(), CoreError> {
-        self.0.texpresso.update(owner, path, text)
-    }
-
-    fn live_edit(
-        &self,
-        owner: u64,
-        path: &str,
-        start: usize,
-        remove: usize,
-        text: &str,
-    ) -> Result<(), CoreError> {
-        self.0.texpresso.edit(owner, path, start, remove, text)
-    }
-
-    fn live_view(&self, owner: u64, first: u32, last: u32) {
-        let _ = self.0.texpresso.view(owner, first, last);
-    }
-
-    fn live_caret(&self, owner: u64, path: &str, offset: usize) {
-        let _ = self.0.texpresso.caret(owner, path, offset);
-    }
-
-    fn live_wait(&self, owner: u64, after: u64) -> Fut<Result<Events, CoreError>> {
-        let service = Arc::clone(&self.0);
-        Box::pin(async move { service.texpresso.wait(owner, after).await })
-    }
-
-    fn live_stop(&self, owner: u64) -> Result<Status, CoreError> {
-        self.0.texpresso.stop_request(owner)
-    }
-
-    fn live_rescan(&self, owner: u64) -> Result<Status, CoreError> {
-        self.0.texpresso.rescan(owner)
-    }
-
-    fn live_status(&self, owner: u64) -> Result<Status, CoreError> {
-        self.0.texpresso.status(owner)
+    fn live_wait(self: Arc<Self>, owner: u64, after: u64) -> Fut<Result<Events, CoreError>> {
+        Box::pin(async move { self.texpresso.wait(owner, after).await })
     }
 }

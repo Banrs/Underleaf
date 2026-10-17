@@ -25,14 +25,21 @@ pub(crate) struct Change {
 pub(crate) fn watch(root: &Path, tx: mpsc::UnboundedSender<Msg>) -> Option<RecommendedWatcher> {
     let base = root.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        let changes = match event {
-            Ok(event) if !event.need_rescan() => changes(event),
+        let (paths, structural) = match event {
+            Ok(event) if !event.need_rescan() => match event.kind {
+                EventKind::Access(_) => return,
+                EventKind::Create(_)
+                | EventKind::Remove(_)
+                | EventKind::Modify(ModifyKind::Name(_)) => (event.paths, true),
+                _ => (event.paths, false),
+            },
             // Changes may have been lost: the whole folder is looked at again.
-            _ => vec![Change {
-                path: base.clone(),
-                structural: true,
-            }],
+            _ => (vec![base.clone()], true),
         };
+        let changes: Vec<Change> = paths
+            .into_iter()
+            .map(|path| Change { path, structural })
+            .collect();
         if !changes.is_empty() {
             let _ = tx.send(Msg::Fs(changes));
         }
@@ -42,37 +49,22 @@ pub(crate) fn watch(root: &Path, tx: mpsc::UnboundedSender<Msg>) -> Option<Recom
     Some(watcher)
 }
 
-fn changes(event: notify::Event) -> Vec<Change> {
-    let structural = match event.kind {
-        EventKind::Access(_) => return Vec::new(),
-        EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_)) => {
-            true
-        }
-        _ => false,
-    };
-    let paths = event.paths.into_iter();
-    paths.map(|path| Change { path, structural }).collect()
-}
-
 /// The project's entries as last listed (`projects::file_tree`).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct TreeIndex {
-    pub files: HashSet<String>,
-    pub folders: HashSet<String>,
+    files: HashSet<String>,
+    folders: HashSet<String>,
 }
 
 impl TreeIndex {
     pub fn of(tree: &[TreeNode]) -> Self {
         fn add(index: &mut TreeIndex, nodes: &[TreeNode]) {
             for node in nodes {
-                match &node.children {
-                    Some(children) => {
-                        index.folders.insert(node.path.clone());
-                        add(index, children);
-                    }
-                    None => {
-                        index.files.insert(node.path.clone());
-                    }
+                if let Some(children) = &node.children {
+                    index.folders.insert(node.path.clone());
+                    add(index, children);
+                } else {
+                    index.files.insert(node.path.clone());
                 }
             }
         }
@@ -97,18 +89,11 @@ pub(crate) struct Meaning {
     pub listed: BTreeSet<String>,
 }
 
-/// `root`'s path for `path`, with forward slashes; "" for the root itself.
-pub(crate) fn relative(root: &Path, path: &Path) -> Option<String> {
-    let rest = path.strip_prefix(root).ok()?;
-    let parts: Option<Vec<&str>> = rest.components().map(|c| c.as_os_str().to_str()).collect();
-    Some(parts?.join("/"))
-}
-
 pub(crate) fn classify(
     root: &Path,
     changes: &[Change],
     index: &TreeIndex,
-    docs: &[String],
+    docs: &[&str],
 ) -> Meaning {
     let mut meaning = Meaning::default();
     for change in changes {
@@ -120,15 +105,14 @@ pub(crate) fn classify(
             // file in it may have changed unseen.
             if change.structural {
                 meaning.tree = true;
-                meaning.docs.extend(docs.iter().cloned());
+                meaning.docs.extend(docs.iter().map(ToString::to_string));
             }
             continue;
         }
-        for doc in docs {
-            if *doc == rel || change.structural && within(doc, &rel) {
-                meaning.docs.insert(doc.clone());
-            }
-        }
+        let touched = docs
+            .iter()
+            .filter(|doc| **doc == rel || change.structural && within(doc, &rel));
+        meaning.docs.extend(touched.map(ToString::to_string));
         let parent = rel.rsplit_once('/').map_or("", |(parent, _)| parent);
         let shown_folder = parent.is_empty() || index.folders.contains(parent);
         if change.structural && shown_folder && !listed_as_before(root, &rel, index) {
@@ -141,28 +125,28 @@ pub(crate) fn classify(
     meaning
 }
 
-/// A save, the session's or another app's, renames a new file over a listed
-/// one, which leaves the listing as it was; nor does the tree list a hidden
-/// file.
-fn listed_as_before(root: &Path, rel: &str, index: &TreeIndex) -> bool {
-    let name = rel.rsplit('/').next().unwrap_or(rel);
-    name.starts_with('.') || index.files.contains(rel) && is_file_spelt(root, rel)
+/// `root`'s path for `path`, with forward slashes; "" for the root itself.
+fn relative(root: &Path, path: &Path) -> Option<String> {
+    let rest = path.strip_prefix(root).ok()?;
+    let parts: Option<Vec<&str>> = rest.components().map(|c| c.as_os_str().to_str()).collect();
+    Some(parts?.join("/"))
 }
 
-/// A file at `rel`, spelt as the disk spells it: a rename that changes only
-/// case leaves a file at the old spelling on a volume that ignores case.
-fn is_file_spelt(root: &Path, rel: &str) -> bool {
+/// A save, the session's or another app's, renames a new file over a listed
+/// one, which leaves the listing as it was; nor does the tree list a hidden
+/// file. A rename that changes only case leaves a file at the old spelling on
+/// a volume that ignores case, so the file must be there spelt as listed.
+fn listed_as_before(root: &Path, rel: &str, index: &TreeIndex) -> bool {
     let path = root.join(rel);
-    let is_file = fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file());
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return false;
     };
-    is_file
-        && fs::read_dir(parent).is_ok_and(|entries| {
-            entries
-                .flatten()
-                .any(|entry| entry.file_name().as_os_str() == name)
-        })
+    name.to_string_lossy().starts_with('.')
+        || index.files.contains(rel)
+            && fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file())
+            && fs::read_dir(parent).is_ok_and(|mut entries| {
+                entries.any(|entry| entry.is_ok_and(|entry| entry.file_name() == name))
+            })
 }
 
 #[cfg(test)]
@@ -170,9 +154,10 @@ mod tests {
     use super::*;
 
     fn index(files: &[&str], folders: &[&str]) -> TreeIndex {
+        let set = |paths: &[&str]| paths.iter().map(ToString::to_string).collect();
         TreeIndex {
-            files: files.iter().map(ToString::to_string).collect(),
-            folders: folders.iter().map(ToString::to_string).collect(),
+            files: set(files),
+            folders: set(folders),
         }
     }
 
@@ -181,41 +166,43 @@ mod tests {
         Change { path, structural }
     }
 
+    fn set(paths: &[&str]) -> BTreeSet<String> {
+        paths.iter().map(ToString::to_string).collect()
+    }
+
     #[test]
-    fn a_save_over_a_listed_file_changes_its_content_not_the_tree() {
+    fn a_save_renamed_over_a_listed_file_changes_its_content_not_the_tree() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         fs::write(root.join("main.tex"), "x").unwrap();
-        let index = index(&["main.tex"], &[]);
-        let docs = vec!["main.tex".to_string()];
         let changes = [
             change(root, ".texlocal-abc", true),
             change(root, "main.tex", true),
             change(root, "main.tex", false),
         ];
-        let meaning = classify(root, &changes, &index, &docs);
-        assert!(!meaning.tree);
-        assert_eq!(meaning.docs, BTreeSet::from(["main.tex".to_string()]));
-        assert_eq!(meaning.listed, BTreeSet::from(["main.tex".to_string()]));
+        let meaning = classify(root, &changes, &index(&["main.tex"], &[]), &["main.tex"]);
+        let expected = Meaning {
+            tree: false,
+            docs: set(&["main.tex"]),
+            listed: set(&["main.tex"]),
+        };
+        assert_eq!(meaning, expected);
     }
 
     #[test]
-    fn new_removed_and_recased_files_change_the_tree_but_not_build_output() {
+    fn new_gone_and_recased_entries_change_the_tree_and_unlisted_folders_dont() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         fs::create_dir(root.join("build")).unwrap();
         fs::write(root.join("Main.tex"), "x").unwrap();
         let index = index(&["main.tex", "gone.tex"], &["fig"]);
         let tree = |rel: &str| classify(root, &[change(root, rel, true)], &index, &[]).tree;
-        assert!(tree("new.tex"));
-        assert!(tree("gone.tex"));
-        assert!(tree("fig/plot.pdf"));
+        assert!(tree("new.tex") && tree("gone.tex") && tree("fig/plot.pdf"));
         // Renamed in case only: the old spelling is no longer the disk's.
         assert!(tree("main.tex"));
-        assert!(!tree("build/main.aux"));
-        assert!(!tree("unlisted/deep.tex"));
+        assert!(!tree("build/main.aux") && !tree("unlisted/deep.tex"));
         let content = classify(root, &[change(root, "new.tex", false)], &index, &[]);
-        assert!(!content.tree && content.listed.is_empty());
+        assert_eq!(content, Meaning::default());
     }
 
     #[test]
@@ -223,19 +210,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let index = index(&["ch/one.tex", "main.tex"], &["ch"]);
-        let docs = vec!["ch/one.tex".to_string(), "main.tex".to_string()];
-        let moved = classify(root, &[change(root, "ch", true)], &index, &docs);
+        let docs = ["ch/one.tex", "main.tex"];
+        let of = |rel: &str| classify(root, &[change(root, rel, true)], &index, &docs);
+        let moved = of("ch");
         assert!(moved.tree);
-        assert_eq!(moved.docs, BTreeSet::from(["ch/one.tex".to_string()]));
-        let lost = classify(root, &[change(root, "", true)], &index, &docs);
-        assert!(lost.tree && lost.docs.len() == 2);
+        assert_eq!(moved.docs, set(&["ch/one.tex"]));
+        let lost = of("");
+        assert!(lost.tree && lost.docs == set(&docs));
         // A file that only starts like the folder's name isn't in it.
-        let near = classify(root, &[change(root, "c", true)], &index, &docs);
-        assert!(near.docs.is_empty());
-        let elsewhere = Change {
-            path: dir.path().parent().unwrap().join("other"),
-            structural: true,
-        };
+        assert!(of("c").docs.is_empty());
+        let elsewhere = change(root.parent().unwrap(), "other", true);
         assert_eq!(
             classify(root, &[elsewhere], &index, &docs),
             Meaning::default()
