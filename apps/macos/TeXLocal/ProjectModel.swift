@@ -267,7 +267,7 @@ final class ProjectModel {
         case .buildCleaned: inOrder { self.buildCleaned() }
         case .tree(let listed): showTree(listed)
         case .filesChanged(let changed): filesChanged(changed)
-        case .live(let state): texpresso.receive(state)
+        case .live(let state): liveChanged(state)
         case .livePDF(let read): showLive(read)
         case .liveRestarted: notices.note(String(localized: "Live Preview Restarted"))
         }

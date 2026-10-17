@@ -108,6 +108,31 @@ struct PDFSwapTests {
         #expect(text(view) == ["a2", "b3"] && controller.pageCount == 2)
     }
 
+    @Test func aLivePageWaitsForItsOwnRunsDocument() throws {
+        let controller = PDFController(), view = controller.view
+        view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try document(["a", "b"]))
+        func live(_ pages: [String], changed: IndexSet) throws -> LiveRead {
+            .document(LiveDocument(url: URL(filePath: "/live.pdf"), document: try document(pages), changed: changed, complete: true))
+        }
+        func page(_ text: String) throws -> LiveRead {
+            .page(LivePage(index: 0, page: try #require(try document([text]).page(at: 0))))
+        }
+        // Not over the build's PDF. Out of a window, a page PDFKit's document takes at once.
+        controller.showLive(try page("a1"))
+        #expect(text(view) == ["a", "b"])
+        controller.showLive(try live(["a2", "b2"], changed: [1]))
+        controller.showLive(try page("a3"))
+        #expect(text(view) == ["a3", "b2"])
+        // Nor over the last run's; and that run's unread document leaves the next run's first its own changes.
+        controller.showLive(.document(nil))
+        controller.endLiveRun()
+        controller.showLive(try page("a4"))
+        #expect(text(view) == ["a3", "b2"])
+        controller.showLive(try live(["a5", "b5"], changed: [1]))
+        #expect(text(view) == ["a3", "b5"])
+    }
+
     @Test(arguments: [false, true])
     func aLivePageLeavesTheSelectionAndFindOnOtherPages(inView: Bool) async throws {
         let controller = PDFController(), view = controller.view

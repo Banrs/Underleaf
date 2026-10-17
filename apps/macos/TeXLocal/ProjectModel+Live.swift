@@ -42,18 +42,19 @@ extension ProjectModel {
         pdf.clear()
     }
 
-    /// A live PDF as `Core` read it where the event arrived, in the order the session sent them. A page is drawn over a live
-    /// document only, never over the build's.
+    /// The session's state. A run's PDFs start afresh: the session runs none between one run's end and the next's start.
+    func liveChanged(_ state: LiveState) {
+        texpresso.receive(state)
+        if state.phase != .running { pdf.endLiveRun() }
+    }
+
+    /// A live PDF as `Core` read it where the event arrived, in the order the session sent them. A page is drawn over its
+    /// own run's document only, never over the build's or the last run's.
     func showLive(_ read: LiveRead) {
         guard texpresso.active, !closed else { return }
-        switch read {
-        case .document(let live?):
+        if case .document(let live?) = read {
             if !livePDF, app?.showPDF == false { app?.showPDF = true }
             shown = .live(live.url)
-        case .page where !livePDF:
-            return
-        default:
-            break
         }
         pdf.showLive(read)
     }

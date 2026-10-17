@@ -195,7 +195,7 @@ final class PDFController: NSObject {
     func show(_ document: PDFDocument) {
         shownVersion += 1
         liveWaiting.removeAll()
-        (liveBacklog, liveMissed) = (nil, false)
+        (liveBacklog, liveMissed, liveShown) = (nil, false, false)
         clearLiveLater()
         // Read before the swap: a page keeps its document only weakly.
         let place = restorePage == nil ? view.shownPlace : nil
@@ -249,7 +249,7 @@ final class PDFController: NSObject {
         liveSettling?.cancel()
         liveClearing?.cancel()
         liveWaiting.removeAll()
-        (liveBacklog, liveMissed) = (nil, false)
+        (liveBacklog, liveMissed, liveShown) = (nil, false, false)
         view.removeLive()
         view.removeMark()
         find.reset()
@@ -265,6 +265,9 @@ final class PDFController: NSObject {
     @ObservationIgnored private var liveTaking: Task<Void, Never>?
     @ObservationIgnored private var liveBacklog: (document: PDFDocument, pages: IndexSet, complete: Bool)?
     @ObservationIgnored private var liveMissed = false
+    /// Whether the run's first document shows: a page before it goes, as it would be drawn over the build's PDF or the
+    /// last run's.
+    @ObservationIgnored private var liveShown = false
 
     /// How long a page drawn over PDFKit's waits for its whole document, which comes 300 ms after the last key and brings
     /// it first, before PDFKit's document takes it alone.
@@ -281,13 +284,19 @@ final class PDFController: NSObject {
             if liveMissed, changed != nil { changed = IndexSet(integersIn: 0..<live.document.pageCount) }
             liveMissed = false
             showLive(live.document, changed: changed, complete: live.complete)
+            liveShown = true
         case .document(nil):
             liveMissed = true
-        case .page(let live?):
+        case .page(let live?) where liveShown:
             showLive(live.page, at: live.index)
-        case .page(nil):
+        case .page:
             break
         }
+    }
+
+    /// A run of Live Preview ended, or another began: nothing of the last run's counts in the next.
+    func endLiveRun() {
+        (liveMissed, liveShown) = (false, false)
     }
 
     /// Drawn over PDFKit's page; PDFKit's document takes it once the typing pauses, so a key costs one drawing. A page
