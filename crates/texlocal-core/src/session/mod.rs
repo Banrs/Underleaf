@@ -26,12 +26,13 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::analyze::{self, Heading};
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener};
 use crate::projects::{SymbolScan, Symbols};
-use crate::service::{Service, arg, string_arg};
+use crate::service::{Service, arg, out, string_arg};
 use crate::texpresso::Events;
-use crate::{CoreError, lock, settings};
+use crate::{CoreError, lock, paths, settings};
 
 pub use document::Document;
 pub(crate) use engine::{Engine, ServiceEngine};
@@ -106,6 +107,16 @@ struct Open {
     tx: mpsc::UnboundedSender<Msg>,
     /// The session's documents by path, for the host's editor to edit.
     docs: Arc<Mutex<HashMap<String, Document>>>,
+    outline: Arc<Mutex<Outline>>,
+}
+
+/// The outline of the last `analyze` asked for of those finished, which
+/// `outline_current` reads without waiting for the session's task.
+#[derive(Default)]
+pub(crate) struct Outline {
+    /// The analysis's place in the order they were asked for.
+    seq: u64,
+    headings: Vec<Heading>,
 }
 
 /// Every open session, by the number its host gave it, and the hub their events go out through.
@@ -172,7 +183,7 @@ impl Sessions {
         let root = dunce::canonicalize(self.service.project_root(&project)?)?;
         let auto_compile = arg::<Option<bool>>(args, "autoCompile")?.unwrap_or(false);
         let (tx, rx) = mpsc::unbounded_channel();
-        let docs = Arc::default();
+        let (docs, outline) = (Arc::default(), Arc::default());
         let (actor, opened) = actor::Actor::new(actor::Setup {
             id,
             project,
@@ -182,12 +193,13 @@ impl Sessions {
             events: self.hub.emitter(),
             tx: tx.clone(),
             docs: Arc::clone(&docs),
+            outline: Arc::clone(&outline),
             timings: self.timings.clone(),
             auto_compile,
         })?;
         match lock(&self.open).entry(id) {
             Entry::Occupied(_) => return Err(CoreError::conflict("That session is open already")),
-            Entry::Vacant(entry) => entry.insert(Open { tx, docs }),
+            Entry::Vacant(entry) => entry.insert(Open { tx, docs, outline }),
         };
         tokio::spawn(actor.run(rx));
         // All a host shows as the project opens, so it need ask for nothing first.
@@ -203,7 +215,7 @@ impl Sessions {
 
     /// A command for an open session (any but `session_open`), queued for its task as this
     /// is called, so a session takes its commands in the order they were sent however
-    /// their answers are awaited.
+    /// their answers are awaited. `outline_current` alone is answered here, as it is called.
     pub fn send(
         &self,
         command: &str,
@@ -214,13 +226,19 @@ impl Sessions {
         let closing = name == "close";
         let (reply, answer) = oneshot::channel();
         let queued = arg::<u64>(args, "session").and_then(|id| {
-            let tx = lock(&self.open).get(&id).map(|open| open.tx.clone());
+            let open = lock(&self.open);
+            let open = open.get(&id).ok_or_else(gone)?;
+            if name == "outline_current" {
+                // From the outline kept, so it waits for none of the session's work.
+                let _ = reply.send(outline_current(&open.outline, args));
+                return Ok(id);
+            }
             let message = Msg::Command {
                 name,
                 args: args.clone(),
                 reply,
             };
-            tx.ok_or_else(gone)?.send(message).map_err(|_| gone())?;
+            open.tx.send(message).map_err(|_| gone())?;
             Ok(id)
         });
         let open = Arc::clone(&self.open);
@@ -232,6 +250,11 @@ impl Sessions {
             }
             answer
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn outline(&self, session: u64) -> Arc<Mutex<Outline>> {
+        Arc::clone(&lock(&self.open)[&session].outline)
     }
 
     #[cfg(test)]
@@ -248,4 +271,17 @@ impl Sessions {
             let _ = self.send("session_close", &json!({ "session": id })).await;
         }
     }
+}
+
+/// The heading a line of `path` is under, as its place in the outline kept.
+fn outline_current(outline: &Mutex<Outline>, args: &Value) -> Result<Value, CoreError> {
+    let (path, line) = (
+        paths::rel_key(string_arg(args, "path")?)?,
+        arg(args, "line")?,
+    );
+    out(analyze::current_heading(
+        &lock(outline).headings,
+        &path,
+        line,
+    ))
 }

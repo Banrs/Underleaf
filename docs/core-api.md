@@ -36,7 +36,9 @@ the call.
   that came before it is the newer tree.
 - `tl_call` may be called from any thread, several at once. `session_*` commands are quick
   (they never wait for a build or TeXpresso to finish), but go through the session's queue:
-  keep them off the UI thread or use `tl_call_async`.
+  keep them off the UI thread or use `tl_call_async`. `session_analyze` is taken in its turn
+  but worked out beside the session, which goes on with the commands after it meanwhile;
+  `session_outline_current` is answered at once, from no queue.
 - `tl_call_async` queues a session's commands (every `session_*` but `session_open`) for it
   before it returns, so the session takes them in the order they were sent, though their
   answers may come back on different threads in another order. Send a session's commands
@@ -81,7 +83,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_stop_compile` | | null | Drops the queued build too. |
 | `session_clean` | | null | Stops the build, waits for it, removes `build/`; answers when done. |
 | `session_analyze` | `path` | `{tree, words, headingStyles}` | The document the main file reads, from the disk, with the file shown (`path`): when the main file doesn't reach it, the document is that file alone. `tree`: the outline's headings, each `{index, depth, command, level, title, untitled, line, file, foldKey, children?}`; `index` is its place in the outline read in order, `command` its sectioning command without the backslash, `level` that level's name (“Section”), `title` its title as plain text or, `untitled: true`, its level's (“Untitled Section”); `foldKey` names its fold in the ui state. `headingStyles`: the levels the main file's class has (Normal Text first, `{title, command, font: {scale, bold, shape}, marker}`), the class read from the main file as the editor has it. The session keeps the outline for `session_outline_current`. Ask again after each `saved`, a tree or a file changed, and when another file is shown. |
-| `session_outline_current` | `path`, `line` | index or null | The heading a line of `path` is under, as its `index` in the last `session_analyze`'s outline: the file's last at or above the line; null above its first. |
+| `session_outline_current` | `path`, `line` | index or null | The heading a line of `path` is under, as its `index` in the outline of the last `session_analyze` sent of those answered: the file's last at or above the line; null above its first. Ask once the analysis it should read has answered. |
 | `session_issue` | `next` | `{index, issue}` or null | The next or previous issue with a place, round the ends; the host opens `issue.file` at `issue.line`. |
 | `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter. |
 | `session_rename` | `from`, `to` | `{from, to, mainFile, ui}` or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `get_ui_state`) with the entry's paths moved; a host sends its `set_ui_state` first. |

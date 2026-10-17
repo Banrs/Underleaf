@@ -13,8 +13,8 @@ use tokio::time::Instant;
 
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
-use super::{Document, Engine, Msg, Timings};
-use crate::analyze::{self, Heading, ProjectAnalysis};
+use super::{Document, Engine, Msg, Outline, Timings};
+use crate::analyze::{self, ProjectAnalysis};
 use crate::atomic::Stamp;
 use crate::compile::CompileResult;
 use crate::events::Emitter;
@@ -37,6 +37,7 @@ pub(crate) struct Setup {
     pub events: Emitter,
     pub tx: mpsc::UnboundedSender<Msg>,
     pub docs: Arc<Mutex<HashMap<String, Document>>>,
+    pub outline: Arc<Mutex<Outline>>,
     pub timings: Timings,
     pub auto_compile: bool,
 }
@@ -158,8 +159,9 @@ pub(crate) struct Actor {
     pub auto_compile: bool,
     build: Build,
     issues: Vec<LogItem>,
-    /// The outline of the last `analyze`, which `outline_current` reads.
-    outline: Vec<Heading>,
+    outline: Arc<Mutex<Outline>>,
+    /// The analyses asked for.
+    analyses: u64,
     error_count: usize,
     chosen: Option<usize>,
     autosave_at: Option<Instant>,
@@ -226,7 +228,8 @@ impl Actor {
             auto_compile: setup.auto_compile,
             build: Build::default(),
             issues: Vec::new(),
-            outline: Vec::new(),
+            outline: setup.outline,
+            analyses: 0,
             error_count: 0,
             chosen: None,
             autosave_at: None,
@@ -376,11 +379,19 @@ impl Actor {
     // MARK: - Commands
 
     fn command(&mut self, name: &str, args: &Value, reply: Reply) {
-        if name == "clean" {
-            return self.clean(reply);
+        match name {
+            "clean" => self.clean(reply),
+            "analyze" => match string_arg(args, "path").and_then(paths::rel_key) {
+                Ok(path) => self.analyze(path, reply),
+                Err(err) => {
+                    let _ = reply.send(Err(err));
+                }
+            },
+            _ => {
+                let answer = self.answer(name, args);
+                let _ = reply.send(answer);
+            }
         }
-        let answer = self.answer(name, args);
-        let _ = reply.send(answer);
     }
 
     fn answer(&mut self, name: &str, args: &Value) -> Result<Value, CoreError> {
@@ -418,11 +429,6 @@ impl Actor {
             "stop_compile" => {
                 self.stop_compile();
                 Ok(Value::Null)
-            }
-            "analyze" => self.analyze(&path()?),
-            "outline_current" => {
-                let line = arg(args, "line")?;
-                out(analyze::current_heading(&self.outline, &path()?, line))
             }
             "issue" => Ok(self.next_issue(arg(args, "next")?)),
             "choose_issue" => {
@@ -1060,24 +1066,35 @@ impl Actor {
     /// The document the main file reads, as `analyze::analyze_project` finds it for
     /// the file at `path`, and the levels the main file's class has, the class read
     /// from its text as the editor has it; its outline is kept for `outline_current`.
-    fn analyze(&mut self, path: &str) -> Result<Value, CoreError> {
-        // Read each time: another app, or another host's `set_settings`, may have changed it.
-        let main = settings::read_settings(&self.root).main_file;
-        let analysis = analyze::analyze_project(&self.root, &main, path);
-        let main_text = match paths::rel_key(&main)
-            .ok()
-            .and_then(|main| self.docs.get(&main))
-        {
-            Some(doc) => Some(doc.doc.snapshot().0),
-            None => paths::safe_path(&self.root, &main)
+    /// Worked out beside the session, which goes on with its other commands, and
+    /// answered from there; an analysis asked for earlier keeps no outline over it.
+    fn analyze(&mut self, path: String, reply: Reply) {
+        self.analyses += 1;
+        let (seq, root) = (self.analyses, self.root.clone());
+        let (docs, outline) = (Arc::clone(&self.shared), Arc::clone(&self.outline));
+        tokio::task::spawn_blocking(move || {
+            // Read each time: another app, or another host's `set_settings`, may have changed it.
+            let main = settings::read_settings(&root).main_file;
+            let analysis = analyze::analyze_project(&root, &main, &path);
+            let open = paths::rel_key(&main)
                 .ok()
-                .and_then(|path| read_disk(&path).ok())
-                .map(|(text, _)| text),
-        };
-        let class = main_text.as_deref().and_then(headings::document_class);
-        let answer = ProjectAnalysis::new(&analysis, class.as_ref());
-        self.outline = analysis.outline;
-        out(answer)
+                .and_then(|main| lock(&docs).get(&main).cloned());
+            let main_text = match open {
+                Some(doc) => Some(doc.snapshot().0),
+                None => paths::safe_path(&root, &main)
+                    .ok()
+                    .and_then(|path| read_disk(&path).ok())
+                    .map(|(text, _)| text),
+            };
+            let class = main_text.as_deref().and_then(headings::document_class);
+            let answer = out(ProjectAnalysis::new(&analysis, class.as_ref()));
+            let mut kept = lock(&outline);
+            if seq > kept.seq {
+                (kept.seq, kept.headings) = (seq, analysis.outline);
+            }
+            drop(kept);
+            let _ = reply.send(answer);
+        });
     }
 
     // MARK: - Issues

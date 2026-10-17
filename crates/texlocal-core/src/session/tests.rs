@@ -14,11 +14,11 @@ use tokio::sync::{mpsc, oneshot};
 use super::engine::Fut;
 use super::watch::Change;
 use super::{Document, Engine, Msg, Sessions, Timings};
-use crate::CoreError;
 use crate::compile::CompileResult;
 use crate::logparse::LogItem;
 use crate::service::Service;
 use crate::texpresso::{Document as LiveDocument, Events, FileBuffer, Pane, RunEnd, Status};
+use crate::{CoreError, lock};
 
 // MARK: - A fake engine
 
@@ -557,6 +557,35 @@ async fn the_analysis_is_kept_for_the_heading_a_line_is_under() {
         !levels.iter().any(|l| l["command"] == "chapter"),
         "{levels:?}"
     );
+}
+
+/// An analysis is worked out beside the session: one under way holds up no other command,
+/// and one asked for earlier that finishes later leaves the later one's outline.
+#[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "the analyses wait for the outline as long ones would"
+)]
+async fn an_analysis_holds_up_no_other_command_and_the_last_asked_for_is_kept() {
+    let rig = Rig::new(false).await;
+    fs::write(rig.root.join("main.tex"), "\\section{A}\n\\section{B}\n").unwrap();
+    fs::write(rig.root.join("ch.tex"), "\\section{C}\n").unwrap();
+    let outline = rig.sessions.outline(rig.session);
+    let held = lock(&outline);
+    let analyze = |path| {
+        let args = json!({ "session": rig.session, "path": path });
+        rig.sessions.send("session_analyze", &args)
+    };
+    let (earlier, later) = (analyze("main.tex"), analyze("ch.tex"));
+    assert_eq!(rig.state().await["build"]["compiling"], false);
+    drop(held);
+    later.await.unwrap();
+    earlier.await.unwrap();
+    // ch.tex alone, as the main file doesn't reach it.
+    let current = rig
+        .ok("outline_current", json!({ "path": "ch.tex", "line": 5 }))
+        .await;
+    assert_eq!(current, json!(0));
 }
 
 #[tokio::test(start_paused = true)]
