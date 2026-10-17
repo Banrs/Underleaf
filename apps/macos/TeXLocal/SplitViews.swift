@@ -42,17 +42,32 @@ extension NSCursor {
     }
 }
 
+/// A split view that says when a divider is dragged: AppKit tracks the drag within the press on a divider, the only place
+/// the split itself is hit.
+class DraggedSplitView: NSSplitView {
+    var dragging: (Bool) -> Void = { _ in }
+
+    override func mouseDown(with event: NSEvent) {
+        dragging(true)
+        defer { dragging(false) }
+        super.mouseDown(with: event)
+    }
+}
+
 /// AppKit has no split detents: a drag that comes near `detent`, a divider's opening position, stops there, with the alignment haptic as it arrives.
 class DetentSplitViewController: NSSplitViewController {
     var loaded: () -> Void = {}
     var detent: (_ divider: Int) -> CGFloat? = { _ in nil }
     /// A divider that takes no drag, and so shows no resize cursor.
     var fixed: (_ divider: Int) -> Bool = { _ in false }
+    /// As a divider's drag starts, and as it ends.
+    var dragging: (Bool) -> Void = { _ in }
 
-    init(splitView: NSSplitView = NSSplitView()) {
+    init(splitView: DraggedSplitView = DraggedSplitView()) {
         super.init(nibName: nil, bundle: nil)
         splitView.isVertical = true
         splitView.dividerStyle = .thin
+        splitView.dragging = { [unowned self] in dragging($0) }
         self.splitView = splitView
     }
 
@@ -88,7 +103,7 @@ class DetentSplitViewController: NSSplitViewController {
 final class SidebarSplitViewController: DetentSplitViewController {
     weak var header: NSSplitViewItemAccessoryViewController?
 
-    private final class SplitView: NSSplitView {
+    private final class SplitView: DraggedSplitView {
         override func drawDivider(in rect: NSRect) {}
     }
 
@@ -110,7 +125,7 @@ final class SidebarSplitViewController: DetentSplitViewController {
     }
 }
 
-final class ColumnsSplitView: NSSplitView {
+final class ColumnsSplitView: DraggedSplitView {
     override func drawDivider(in rect: NSRect) {
         var shown = rect
         // Short of the bar and the line over it, at its foot: a split view is flipped.
@@ -137,5 +152,28 @@ extension NSView {
     /// Every view under this one whose class has the name.
     func descendants(named name: String) -> [NSView] {
         subviews.flatMap { ($0.className == name ? [$0] : []) + $0.descendants(named: name) }
+    }
+}
+
+extension NSView {
+    /// Every view of the type under this one, and this one if it is.
+    func descendants<View: NSView>(of type: View.Type) -> [View] {
+        [self as? View].compactMap(\.self) + subviews.flatMap { $0.descendants(of: type) }
+    }
+}
+
+extension NSScrollView {
+    /// Out of sight, or back without flashing: a scroller shown again is swapped out and in, which resets AppKit's
+    /// fade, so it stays hidden until the next scroll.
+    func hideOverlayScrollers(_ hidden: Bool) {
+        guard scrollerStyle == .overlay else { return }
+        for key in [\NSScrollView.verticalScroller, \NSScrollView.horizontalScroller] {
+            guard let scroller = self[keyPath: key] else { continue }
+            if !hidden {
+                self[keyPath: key] = NSScroller()
+                self[keyPath: key] = scroller
+            }
+            scroller.alphaValue = hidden ? 0 : 1
+        }
     }
 }

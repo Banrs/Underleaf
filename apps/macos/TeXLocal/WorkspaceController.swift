@@ -29,6 +29,9 @@ final class WorkspaceController: DetentSplitViewController {
     private var panelHeight: CGFloat = 0
     private var paneAnimations = 0
     private var paneFrames: CADisplayLink?
+    /// Pane animations and divider drags under way, which keep the panes' overlay scrollers out of sight (`quiet`).
+    private var quieting = 0
+    private var quietScrollViews: [NSScrollView] = []
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
     /// The panes' frames (`fitColumns`), watched for as long as their tokens are held.
@@ -57,6 +60,10 @@ final class WorkspaceController: DetentSplitViewController {
         // AppKit's fixed inspector takes no drag.
         fixed = { [unowned self] divider in splitViewItems.firstIndex(of: inspectorItem) == divider + 1 }
         columns.detent = { [unowned columns] _ in (columns.splitView as? ColumnsSplitView)?.openingPosition }
+        // A drag resizes the panes live, which would show their overlay scrollers, though nothing scrolls.
+        for split in [self, columns, area, sidebar] as [DetentSplitViewController] {
+            split.dragging = { [unowned self] in quiet($0) }
+        }
         watch()
     }
 
@@ -413,6 +420,8 @@ final class WorkspaceController: DetentSplitViewController {
 
     /// 27.2: AppKit's split animation doesn't always reach the screen: with nothing else waking the run loop, a pane would hold still, then jump to its end.
     private func paneAnimation(_ running: Bool) {
+        // AppKit's split animation puts every pane in live resize, which shows their overlay scrollers too.
+        quiet(running)
         paneAnimations += running ? 1 : -1
         guard paneAnimations == (running ? 1 : 0) else { return }
         if running {
@@ -430,6 +439,16 @@ final class WorkspaceController: DetentSplitViewController {
     }
 
     private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
+
+    /// Scroll bars come with scrolling (HIG, Scroll views): panes resized by a drag or an animation keep their overlay
+    /// scrollers out of sight until the last ends.
+    private func quiet(_ resizing: Bool) {
+        quieting += resizing ? 1 : -1
+        guard quieting == (resizing ? 1 : 0) else { return }
+        if resizing { quietScrollViews = view.descendants(of: NSScrollView.self) }
+        for scroll in quietScrollViews { scroll.hideOverlayScrollers(resizing) }
+        if !resizing { quietScrollViews = [] }
+    }
 
     /// The pane folds down under its header to the sidebar's foot, and opens up from there.
     private func setOutline(_ state: OutlineState) {
