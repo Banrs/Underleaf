@@ -8,17 +8,18 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tempfile::TempDir;
-use texlocal_core::compile::{CompileManager, CompileResult, tex_available};
+use texlocal_core::compile::{CompileManager, CompileResult};
 use texlocal_core::error::CoreError;
 use texlocal_core::paths::project_root;
 use texlocal_core::projects::create_project;
 use texlocal_core::service::Service;
 use texlocal_core::settings::write_settings;
 use texlocal_core::synctex::{InverseLoc, synctex_inverse};
+use texlocal_core::tex::tex_available;
 use tokio::task::JoinHandle;
 
 /// A shell script at `path` that runs `script`.
@@ -27,34 +28,37 @@ fn executable(path: &Path, script: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// A PATH that finds the programs in `bin` first.
+fn path_with(bin: &Path) -> String {
+    let path = std::env::var("PATH").unwrap_or_default();
+    format!("{}:{path}", bin.display())
+}
+
+/// A stub latexmk in `bin` that runs `script`, and the PATH that finds it.
 fn stub_env(bin: &Path, script: &str) -> String {
     fs::create_dir_all(bin).unwrap();
     executable(&bin.join("latexmk"), script);
-    format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    )
+    path_with(bin)
 }
 
 fn project(data: &Path) -> PathBuf {
     create_project(data, "proj", "blank").unwrap();
-    let root = project_root(data, "proj").unwrap();
-    write_settings(&root, &json!({ "mainFile": "main.tex" })).unwrap();
-    root
+    project_root(data, "proj").unwrap()
 }
 
-/// A project, and a manager whose PATH finds a stub latexmk running `script`.
+/// A project, its manager, and a stub latexmk running `script` in the `bin`
+/// beside the project, which its builds find.
 fn setup(script: &str) -> (TempDir, PathBuf, CompileManager) {
     let tmp = TempDir::new().unwrap();
     let root = project(tmp.path());
-    let mut mgr = CompileManager::default();
-    mgr.path_env = Some(stub_env(&tmp.path().join("bin"), script));
-    (tmp, root, mgr)
+    stub_env(&tmp.path().join("bin"), script);
+    (tmp, root, CompileManager::default())
 }
 
+/// A build of the project at `root`, finding the stubs beside it.
 async fn compile(mgr: &CompileManager, root: &Path) -> CompileResult {
-    mgr.compile(root, None).await.unwrap()
+    let stubs = path_with(&root.parent().unwrap().join("bin"));
+    mgr.compile(root, &stubs).await.unwrap()
 }
 
 /// A project's build by a stub latexmk running `script`.
@@ -73,8 +77,8 @@ fn in_flight(mgr: &Arc<CompileManager>, root: &Path) -> JoinHandle<CompileResult
 /// latexmk running `script`.
 fn stub_service(script: &str, ids: &[&str]) -> (TempDir, Arc<Service>) {
     let tmp = TempDir::new().unwrap();
-    let mut service = Service::new(tmp.path().to_path_buf());
-    service.compile.path_env = Some(stub_env(&tmp.path().join("bin"), script));
+    let service = Service::new(tmp.path().to_path_buf());
+    stub_env(&tmp.path().join("bin"), script);
     for id in ids {
         create_project(tmp.path(), id, "blank").unwrap();
     }
@@ -189,43 +193,25 @@ async fn latexmks_record_is_kept_by_a_good_run_and_forgotten_by_any_other_end() 
     assert!(!tmp.path().join("uno/build/main.fdb_latexmk").exists());
 }
 
+/// What a run didn't write is the last build's: a good run shows no old log's
+/// errors, and a failed one doesn't advertise an old PDF, which stays.
 #[tokio::test]
-async fn a_stale_log_is_not_reported() {
+async fn outputs_a_run_did_not_write_are_not_reported_as_its_own() {
     let (_tmp, root, mgr) = setup("mkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n");
     fs::create_dir_all(root.join("build")).unwrap();
-    let log = root.join("build/main.log");
-    fs::write(&log, "./main.tex:9: Stale error.\n").unwrap();
-    let two_minutes_ago = SystemTime::now() - Duration::from_secs(120);
-    fs::File::options()
-        .append(true)
-        .open(&log)
-        .unwrap()
-        .set_times(fs::FileTimes::new().set_modified(two_minutes_ago))
-        .unwrap();
-
+    fs::write(root.join("build/main.log"), "./main.tex:9: Stale error.\n").unwrap();
     let result = compile(&mgr, &root).await;
+    assert!(result.ok && result.errors.is_empty(), "{result:?}");
 
-    assert!(result.ok);
-    assert!(result.errors.is_empty(), "stale log leaked: {result:?}");
-}
-
-#[tokio::test]
-async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
     let (_tmp, root, mgr) = setup(
         "mkdir -p build\nprintf './main.tex:4: Current failure.\\n' > build/main.log\nexit 1\n",
     );
     fs::create_dir_all(root.join("build")).unwrap();
     fs::write(root.join("build/main.pdf"), "old successful output").unwrap();
-
     let result = compile(&mgr, &root).await;
-
-    assert!(!result.ok);
-    assert_eq!(result.pdf, None, "old PDF must not be labelled as this run");
-    assert!(!result.pdf_changed);
-    assert!(
-        root.join("build/main.pdf").exists(),
-        "old preview may remain"
-    );
+    assert!(!result.ok && !result.pdf_changed);
+    assert_eq!(result.pdf, None);
+    assert!(root.join("build/main.pdf").exists());
 }
 
 #[tokio::test]
@@ -303,15 +289,15 @@ esac
         // Each build reads the engine as it is asked for, which tells the three apart.
         let engine = |engine: &str| write_settings(&root, &json!({ "engine": engine })).unwrap();
         engine("xelatex");
-        let mut second = Box::pin(mgr.compile(&root, None));
+        let mut second = Box::pin(compile(&mgr, &root));
         // Poll just until it waits on the first build, then register the third
         // without letting the first release the build directory in between.
         waits(second.as_mut()).await;
         engine("lualatex");
 
         let (third, second, first) = tokio::time::timeout(Duration::from_secs(5), async {
-            let (third, second, first) = tokio::join!(mgr.compile(&root, None), second, first,);
-            (third.unwrap(), second.unwrap(), first.unwrap())
+            let (third, second, first) = tokio::join!(compile(&mgr, &root), second, first);
+            (third, second, first.unwrap())
         })
         .await
         .expect("compile generations deadlocked");
@@ -333,7 +319,7 @@ async fn a_cancelled_waiting_replacement_does_not_let_the_next_build_overtake_it
     let first = in_flight(&mgr, &root);
     appears(&root.join("first.pid"), "first latexmk did not start").await;
 
-    let mut replacement = Box::pin(mgr.compile(&root, None));
+    let mut replacement = Box::pin(compile(&mgr, &root));
     waits(replacement.as_mut()).await;
     drop(replacement);
 
@@ -399,26 +385,21 @@ async fn latexmk_is_given_the_arguments_the_settings_call_for() {
     }
 }
 
+/// A failure the engine's log doesn't explain names its cause: bibtex's own
+/// log, else latexmk's summary of the step that failed, else the exit code.
 #[tokio::test]
-async fn a_bibtex_error_is_reported_from_its_own_log() {
-    let result = built(
-        "mkdir -p build\nprintf 'No errors here.\\n' > build/main.log\nprintf \"I was expecting a \\`,' or a \\`}'---line 1 of file refs.bib\\n\" > build/main.blg\nexit 12\n",
-    )
-    .await;
-
+async fn a_failure_the_engines_log_doesnt_explain_names_its_cause() {
+    let quiet = "mkdir -p build\nprintf 'No errors here.\\n' > build/main.log\n";
+    let bibtex = "printf \"I was expecting a \\`,' or a \\`}'---line 1 of file refs.bib\\n\" > build/main.blg\nexit 12\n";
+    let result = built(&[quiet, bibtex].concat()).await;
     assert!(!result.ok);
-    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
-    assert_eq!(result.errors[0].file.as_deref(), Some("refs.bib"));
-    assert_eq!(result.errors[0].line, Some(1));
-}
+    let places: Vec<_> = (result.errors.iter())
+        .map(|error| (error.file.as_deref(), error.line))
+        .collect();
+    assert_eq!(places, [(Some("refs.bib"), Some(1))]);
 
-#[tokio::test]
-async fn a_failure_the_log_doesnt_explain_names_latexmks_summary() {
-    let result = built(
-        "mkdir -p build\nprintf 'No errors here.\\n' > build/main.log\nprintf 'Collected error summary (may duplicate other messages):\\n  biber build/main: Could not find build/main.bcf\\n'\nexit 12\n",
-    )
-    .await;
-
+    let summary = "printf 'Collected error summary (may duplicate other messages):\\n  biber build/main: Could not find build/main.bcf\\n'\nexit 12\n";
+    let result = built(&[quiet, summary].concat()).await;
     assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
     assert_eq!(
         result.errors[0].message,
@@ -497,7 +478,7 @@ async fn quitting_stops_a_build_asked_for_after_it_and_one_waiting_to_start() {
     let mgr = Arc::new(mgr);
     let first = in_flight(&mgr, &root);
     appears(&root.join("starts"), "first latexmk did not start").await;
-    let mut waiting = Box::pin(mgr.compile(&root, None));
+    let mut waiting = Box::pin(compile(&mgr, &root));
     waits(waiting.as_mut()).await;
 
     mgr.kill_all();
@@ -505,7 +486,7 @@ async fn quitting_stops_a_build_asked_for_after_it_and_one_waiting_to_start() {
     let started = Instant::now();
     let (waiting, first) = tokio::join!(waiting, first);
     assert!(first.unwrap().stopped);
-    assert!(waiting.unwrap().stopped);
+    assert!(waiting.stopped);
     // A build asked for once the app has begun to quit.
     let late = compile(&mgr, &root).await;
     assert!(late.stopped && !late.ok);
@@ -658,18 +639,17 @@ extern "C" fn forked() {
 async fn tools_report_their_version_and_start_by_posix_spawn_never_a_fork() {
     assert_eq!(unsafe { libc::pthread_atfork(None, Some(forked), None) }, 0);
     let before = FORKS.load(std::sync::atomic::Ordering::SeqCst);
-    let (_tmp, root, mgr) = setup("echo 'Latexmk, John Collins, Version 4.85'\nexit 0\n");
-    let status = tex_available(mgr.path_env.as_deref().unwrap()).await;
+    let (tmp, root, mgr) = setup("echo 'Latexmk, John Collins, Version 4.85'\nexit 0\n");
+    let status = tex_available(&path_with(&tmp.path().join("bin"))).await;
     assert!(status.available);
     assert!(status.version.unwrap().starts_with("Latexmk"));
     compile(&mgr, &root).await;
 
-    let none = tex_available("/nonexistent-dir-for-test").await;
-    assert!(!none.available);
-    assert_eq!(none.version, None);
-    let mut missing = CompileManager::default();
-    missing.path_env = Some("/nonexistent-dir-for-test".into());
-    let result = compile(&missing, &root).await;
+    let none = "/nonexistent-dir-for-test";
+    let status = tex_available(none).await;
+    assert!(!status.available);
+    assert_eq!(status.version, None);
+    let result = mgr.compile(&root, none).await.unwrap();
     let message = &result.errors[0].message;
     assert!(message.starts_with("Couldn't start latexmk"), "{message}");
     assert_eq!(FORKS.load(std::sync::atomic::Ordering::SeqCst), before);

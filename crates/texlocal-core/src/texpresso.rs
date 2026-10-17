@@ -20,8 +20,8 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt};
 use tokio::process::ChildStdin;
 use tokio::sync::mpsc;
 
-use crate::compile::{find_tool, program_at};
 use crate::process::{self, Tree};
+use crate::tex::{find_tool, program_at};
 use crate::{BUILD_DIR, CoreError, lock, paths, settings, tail};
 
 const MAX_OUTPUT: usize = 128 * 1024;

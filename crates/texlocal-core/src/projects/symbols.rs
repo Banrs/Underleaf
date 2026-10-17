@@ -9,8 +9,8 @@ use regex::Regex;
 
 use super::skip_unreadable;
 use super::tree::{file_kind, visit_files};
-use crate::atomic::Stamp;
 use crate::error::CoreError;
+use crate::stamp::Stamp;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Symbols {

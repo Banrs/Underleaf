@@ -11,18 +11,16 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::compile::{self, CompileManager, TexStatus, engine_flags};
+use crate::compile::CompileManager;
 use crate::paths::fold_case;
 use crate::projects;
-use crate::settings;
+use crate::settings::{self, AppSettings};
 use crate::synctex;
+use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
-use crate::{CoreError, atomic, import, lock, paths, zipexport};
+use crate::{CoreError, import, lock, paths, wordmatch, zipexport};
 
 const SEARCH_LIMIT: usize = 100;
-/// Shared TeX folder choice, stored beside projects as a file so it never
-/// appears in the project list.
-const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
     "That folder doesn't contain the texpresso program. Choose the folder it's in.";
@@ -133,13 +131,13 @@ impl Service {
 
     /// Probe the current TeX choice, including installs made while the app is open.
     pub async fn status(&self) -> Status {
-        let ((tex_path, texpresso_path), (tex_dir, texpresso_dir)) =
-            (self.tool_paths(), self.app_folders());
+        let app = AppSettings::read(&self.data_dir);
+        let (tex_path, texpresso_path) = tex::tool_paths(&app);
         let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
-        let mut found = compile::tex_available(&tex_path).await;
+        let mut found = tex::tex_available(&tex_path).await;
         found.texpresso = shown(texpresso::discover(&texpresso_path));
-        found.tex_dir = shown(tex_dir);
-        found.texpresso_dir = shown(texpresso_dir);
+        found.tex_dir = shown(app.tex_dir);
+        found.texpresso_dir = shown(app.texpresso_dir);
         self.tex_found.send_replace(found.available);
         found.into()
     }
@@ -154,56 +152,23 @@ impl Service {
     /// The TeX programs folder the user chose, or None to find TeX
     /// automatically. Read per use, so a choice made in another host applies.
     pub fn tex_dir(&self) -> Option<PathBuf> {
-        self.app_folders().0
+        AppSettings::read(&self.data_dir).tex_dir
     }
 
-    fn app_settings(&self) -> serde_json::Map<String, Value> {
-        settings::read_object(&self.data_dir.join(APP_SETTINGS_FILE))
-    }
-
-    /// The TeX and TeXpresso folders chosen, from one read of the settings.
-    fn app_folders(&self) -> (Option<PathBuf>, Option<PathBuf>) {
-        let settings = self.app_settings();
-        let folder = |key| {
-            let dir = settings.get(key)?.as_str()?;
-            (!dir.is_empty()).then(|| PathBuf::from(dir))
-        };
-        (folder("texDir"), folder("texpressoDir"))
-    }
-
-    /// The PATH for TeX's tools, and for TeXpresso's, with its chosen folder first.
+    /// The PATH for TeX's tools, and for TeXpresso's, with the folders chosen.
     pub(crate) fn tool_paths(&self) -> (String, String) {
-        let (tex_dir, texpresso_dir) = self.app_folders();
-        let tex = compile::tex_path(tex_dir.as_deref());
-        let texpresso = match texpresso_dir {
-            Some(dir) => {
-                compile::join_path(std::iter::once(dir).chain(std::env::split_paths(&tex)))
-            }
-            None => tex.clone(),
-        };
-        (tex, texpresso)
-    }
-
-    /// Writes one folder, keeping the other settings.
-    fn set_app_folder(&self, key: &str, dir: Option<&Path>) -> Result<(), CoreError> {
-        let mut settings = self.app_settings();
-        settings.insert(key.into(), json!(dir.map(|d| d.to_string_lossy())));
-        atomic::write(
-            &self.data_dir.join(APP_SETTINGS_FILE),
-            Value::Object(settings).to_string().as_bytes(),
-        )?;
-        Ok(())
+        tex::tool_paths(&AppSettings::read(&self.data_dir))
     }
 
     /// Choose TeXpresso's folder; None or empty goes back to the TeX path.
     pub async fn set_texpresso_dir(&self, dir: Option<&str>) -> Result<Status, CoreError> {
         let chosen = dir.map(str::trim).filter(|d| !d.is_empty()).map(Path::new);
         if let Some(dir) = chosen
-            && compile::program_at(&dir.join("texpresso")).is_none()
+            && tex::program_at(&dir.join("texpresso")).is_none()
         {
             return Err(CoreError::bad_request(NO_TEXPRESSO));
         }
-        self.set_app_folder("texpressoDir", chosen)?;
+        AppSettings::choose(&self.data_dir, "texpressoDir", chosen)?;
         Ok(self.status().await)
     }
 
@@ -217,10 +182,10 @@ impl Service {
                 if !dir.is_absolute() {
                     return Err(CoreError::bad_request(NO_LATEXMK));
                 }
-                Some(compile::tex_bin_dir(dir).ok_or_else(|| CoreError::bad_request(NO_LATEXMK))?)
+                Some(tex::tex_bin_dir(dir).ok_or_else(|| CoreError::bad_request(NO_LATEXMK))?)
             }
         };
-        self.set_app_folder("texDir", chosen.as_deref())?;
+        AppSettings::choose(&self.data_dir, "texDir", chosen.as_deref())?;
         Ok(self.status().await)
     }
 
@@ -238,26 +203,16 @@ impl Service {
             "set_tex_dir" => out(self.set_tex_dir(folder()?.as_deref()).await?),
             "list_projects" => out(projects::list_projects(&self.data_dir)?),
             // The project made is answered, so its `id` is the name it got: a name taken is
-            // numbered past. Its engine is checked first, so the project is made with it or
-            // not at all.
+            // numbered past. It is made with its engine or not at all.
             "create_project" => {
                 let template = arg::<Option<String>>(args, "template")?;
                 let engine = arg::<Option<String>>(args, "engine")?;
-                if let Some(engine) = &engine
-                    && engine_flags(engine).is_none()
-                {
-                    return Err(CoreError::bad_request(format!("Unknown engine: {engine}")));
-                }
-                let made = projects::create_project(
+                out(projects::create_project_with_engine(
                     &self.data_dir,
                     s("name")?,
                     template.as_deref().unwrap_or("article"),
-                )?;
-                if let Some(engine) = engine {
-                    let patch = json!({ "engine": engine });
-                    self.with_project(&made.id, |root| settings::write_settings(root, &patch))?;
-                }
-                out(made)
+                    engine.as_deref(),
+                )?)
             }
             // The first free name of the series "Untitled", "Untitled 2", …, creating nothing:
             // for a host to offer in its New Project field.
@@ -359,14 +314,16 @@ impl Service {
                 s("file")?,
                 arg(args, "line")?,
                 arg(args, "column")?,
-                &arg::<Vec<synctex::PdfPage>>(args, "pages")?,
+                &arg::<Vec<wordmatch::PdfPage>>(args, "pages")?,
             )?),
             // An absolute path in the library as {id, path}; null outside every project.
             "locate" => out(projects::locate(&self.data_dir, Path::new(s("path")?))?),
             // The compiled PDF's location; it may not exist yet.
-            "pdf_path" => Ok(json!(
-                settings::compiled_pdf_path(&root()?)?.to_string_lossy()
-            )),
+            "pdf_path" => {
+                let root = root()?;
+                let pdf = settings::read_settings(&root).output(&root, "pdf")?;
+                Ok(json!(pdf.to_string_lossy()))
+            }
             "project_root" => Ok(json!(root()?.to_string_lossy())),
             "export_zip" => {
                 zipexport::export_zip(&root()?, Path::new(s("dest")?))?;

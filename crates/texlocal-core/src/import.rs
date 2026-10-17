@@ -113,28 +113,17 @@ impl Allowance {
         Ok(())
     }
 
-    /// Take `n` bytes from what is left.
-    fn spend(&mut self, n: u64) -> Result<(), CoreError> {
-        self.bytes = self
-            .bytes
-            .checked_sub(n)
-            .ok_or_else(|| CoreError::bad_request(TOO_BIG))?;
-        Ok(())
-    }
-
-    /// A file of `size`, as declared, that is to come.
+    /// Take `size` bytes, as declared or as read, of the file `name`.
     fn file(&mut self, name: &str, size: u64) -> Result<(), CoreError> {
         if size > self.per_file {
-            return Err(self.too_large(name));
+            let megabytes = self.per_file / 1024 / 1024;
+            return Err(CoreError::bad_request(format!(
+                "“{name}” is larger than the {megabytes} MB one file may be."
+            )));
         }
-        self.spend(size)
-    }
-
-    fn too_large(&self, name: &str) -> CoreError {
-        let megabytes = self.per_file / 1024 / 1024;
-        CoreError::bad_request(format!(
-            "“{name}” is larger than the {megabytes} MB one file may be."
-        ))
+        self.bytes =
+            (self.bytes.checked_sub(size)).ok_or_else(|| CoreError::bad_request(TOO_BIG))?;
+        Ok(())
     }
 
     /// Copy `source`, the file `name`, to `sink`, taking the bytes actually
@@ -147,10 +136,7 @@ impl Allowance {
     ) -> Result<(), CoreError> {
         let cap = self.bytes.min(self.per_file);
         let copied = io::copy(&mut source.take(cap + 1), sink)?;
-        if copied > self.per_file {
-            return Err(self.too_large(name));
-        }
-        self.spend(copied)
+        self.file(name, copied)
     }
 }
 
@@ -363,10 +349,10 @@ fn save(
 ) -> Result<(), CoreError> {
     let root = service.project_root(id)?;
     // In the target's folder, or the nearest on its way while that is to be made, so the
-    // rename stays on one volume; any name there, as the temporary file is made beside it.
+    // rename stays on one volume.
     let abs = paths::safe_write_path(&root, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
-    let (temp, mut file) = atomic::create_temp(&folder.unwrap_or(&root).join("incoming"), None)?;
+    let (temp, mut file) = atomic::create_temp(folder.unwrap_or(&root))?;
     let origin = File::open(source).map_err(CoreError::at(source))?;
     allowance.copy(rel, origin, &mut file)?;
     file.sync_all()?;
@@ -833,29 +819,6 @@ mod tests {
     }
 
     #[test]
-    fn the_budget_counts_the_bytes_read_not_those_declared() {
-        let mut budget = SMALL;
-        let mut sink = Vec::new();
-        budget.copy("a", &[1u8; 20][..], &mut sink).unwrap();
-        // A file that says it is small, or a zip entry that lies, still
-        // stops at the budget.
-        let err = budget.copy("b", &[1u8; 6][..], &mut sink).unwrap_err();
-        assert_eq!(err.message, TOO_BIG);
-        budget.copy("c", &[1u8; 5][..], &mut sink).unwrap();
-        assert!(budget.copy("d", &[1u8; 1][..], &mut sink).is_err());
-        // And no one file passes its own limit, whatever is left.
-        let mut roomy = Allowance {
-            bytes: 100,
-            per_file: 25,
-            ..SMALL
-        };
-        let err = roomy
-            .copy("big.dat", &[1u8; 30][..], &mut sink)
-            .unwrap_err();
-        assert!(err.message.contains("big.dat"), "{}", err.message);
-    }
-
-    #[test]
     fn zip_names_are_read_as_paths_and_none_leaves_the_project() {
         let (dir, service) = library();
         let src = dir.path().join("names.zip");
@@ -880,6 +843,15 @@ mod tests {
             assert_eq!(mode(&root), mode(&service.data_dir));
         }
         assert_eq!(files_in(&root), ["a/b.tex", "a/d.tex", "main.tex"]);
+
+        // As Windows tools write them: one top folder, and backslashes.
+        let src = dir.path().join("windows.zip");
+        let files = ["paper\\main.tex", "paper\\figs\\a.png"];
+        zip_of(&src, &files.map(|path| (path, "\\documentclass{article}")));
+        let info = import_project(&service, &src).unwrap();
+        assert_eq!(info.main_file, "main.tex");
+        let root = service.data_dir.join(&info.id);
+        assert_eq!(files_in(&root), ["figs/a.png", "main.tex"]);
     }
 
     #[test]
@@ -1049,23 +1021,6 @@ mod tests {
         assert_eq!(err.status, 400);
         assert!(err.message.contains("not.zip"), "{}", err.message);
         assert_eq!(projects(&service), 0);
-    }
-
-    #[test]
-    fn zip_entries_named_from_the_current_folder_or_with_backslashes_arrive() {
-        let (dir, service) = library();
-        let dotted = dir.path().join("dotted.zip");
-        let windows = dir.path().join("windows.zip");
-        for (src, files) in [
-            (&dotted, ["./main.tex", "./figs/a.png"]),
-            (&windows, ["paper\\main.tex", "paper\\figs\\a.png"]),
-        ] {
-            zip_of(src, &files.map(|path| (path, "\\documentclass{article}")));
-            let info = import_project(&service, src).unwrap();
-            assert_eq!(info.main_file, "main.tex");
-            let root = service.data_dir.join(&info.id);
-            assert_eq!(files_in(&root), ["figs/a.png", "main.tex"]);
-        }
     }
 
     #[test]

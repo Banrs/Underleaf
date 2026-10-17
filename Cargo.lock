@@ -1157,7 +1157,6 @@ dependencies = [
  "regex",
  "ropey",
  "rust-embed",
- "same-file",
  "serde",
  "serde_json",
  "tempfile",

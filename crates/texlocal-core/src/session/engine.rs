@@ -25,8 +25,10 @@ impl Engine for ServiceEngine {
     fn compile(&self, root: PathBuf) -> Fut<Result<CompileResult, CoreError>> {
         let service = Arc::clone(&self.0);
         Box::pin(async move {
-            let tex_dir = service.tex_dir();
-            service.compile.compile(&root, tex_dir.as_deref()).await
+            service
+                .compile
+                .compile(&root, &service.tool_paths().0)
+                .await
         })
     }
 

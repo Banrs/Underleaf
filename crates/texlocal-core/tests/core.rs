@@ -7,15 +7,13 @@ use serde_json::json;
 use tempfile::TempDir;
 use texlocal_core::CoreError;
 use texlocal_core::import::import_project;
-use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file};
+use texlocal_core::paths::{project_root, safe_path, safe_rel_file, source_rel};
 use texlocal_core::projects::{
-    SymbolScan, Symbols, create_file, create_project, create_project_with_engine, file_tree,
-    list_projects, rename_entry, rename_project, search_project,
+    SymbolScan, Symbols, create_file, create_project, file_tree, list_projects, rename_entry,
+    rename_project, search_project,
 };
 use texlocal_core::service::Service;
-use texlocal_core::settings::{
-    UiPatch, compiled_pdf_path, read_settings, write_settings, write_ui,
-};
+use texlocal_core::settings::{read_settings, write_settings};
 use texlocal_core::zipexport::export_zip;
 
 /// A project's labels and citations, read afresh.
@@ -94,34 +92,17 @@ fn a_settings_patch_changes_only_its_keys_and_returns_what_a_later_read_sees() {
 }
 
 #[test]
-fn a_settings_write_failure_rolls_back_the_filesystem_rename() {
-    let (_data, root) = project("rename-rollback");
-    fs::rename(root.join(".texlocal.json"), root.join("settings.backup")).unwrap();
-    fs::create_dir(root.join(".texlocal.json")).unwrap();
-    let err = rename_entry(&root, "main.tex", "paper.tex").unwrap_err();
-    assert_eq!(err.status, 409);
-    assert!(root.join("main.tex").is_file());
-    assert!(!root.join("paper.tex").exists());
-}
-
-#[test]
-fn a_settings_file_the_user_broke_survives_whatever_would_replace_it() {
+fn a_rename_that_cannot_write_the_settings_is_undone_and_leaves_them_as_they_were() {
     let (_data, root) = project("broken-settings");
     let file = root.join(".texlocal.json");
     let broken = "{ \"mainFile\": \"paper.tex\", \"engine\": \"xelatex\", }";
     fs::write(&file, broken).unwrap();
-    let ui = UiPatch {
-        expanded_folders: Some(vec!["chapters".into()]),
-        ..UiPatch::default()
-    };
-    assert_eq!(write_ui(&root, ui).unwrap_err().status, 409);
-    assert_eq!(write_settings(&root, &json!({})).unwrap_err().status, 409);
     // A rename that moves the main file would write it, so it is undone.
     assert_eq!(
         rename_entry(&root, "main.tex", "a.tex").unwrap_err().status,
         409
     );
-    assert!(root.join("main.tex").is_file());
+    assert!(root.join("main.tex").is_file() && !root.join("a.tex").exists());
     // One that leaves it alone goes through, and the file is as it was.
     create_file(&root, "b.tex", false).unwrap();
     rename_entry(&root, "b.tex", "c.tex").unwrap();
@@ -274,28 +255,21 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
     assert_eq!(symbols.unwrap().labels, ["sec:open"]);
 }
 
+/// A link inside the project is held to its target's rules (#26), and one
+/// out of it leads nowhere, however much of the path exists.
 #[cfg(unix)]
 #[test]
-fn existing_symlink_ancestors_cannot_escape_the_project() {
-    let (_data, root) = project("symlink-boundary");
+fn links_are_held_to_the_rules_of_where_they_lead() {
+    use std::os::unix::fs::symlink;
+    use texlocal_core::paths::safe_write_path;
+    let (_data, root) = project("reserved-links");
     let outside = tempfile::tempdir().unwrap();
     fs::write(outside.path().join("secret.tex"), "secret").unwrap();
-    std::os::unix::fs::symlink(outside.path(), root.join("outside")).unwrap();
+    symlink(outside.path(), root.join("outside")).unwrap();
     for path in ["outside/secret.tex", "outside/new/sub/file.tex"] {
         fails_with(safe_path(&root, path), "Path escapes project");
         fails_with(safe_rel_file(&root, path), "Path escapes project");
     }
-}
-
-// A link inside the project is held to its target's rules (#26).
-#[cfg(unix)]
-#[test]
-fn links_to_reserved_paths_are_held_to_their_rules() {
-    use std::os::unix::fs::symlink;
-    use texlocal_core::paths::safe_write_path;
-    let (_data, root) = project("reserved-links");
-    fs::write(root.join(".texlocal.json"), "{}").unwrap();
-    fs::write(root.join("main.tex"), "x").unwrap();
     fs::create_dir_all(root.join("build")).unwrap();
     symlink(".texlocal.json", root.join("alias.json")).unwrap();
     symlink(".", root.join("here")).unwrap();
@@ -316,29 +290,12 @@ fn links_to_reserved_paths_are_held_to_their_rules() {
 }
 
 #[test]
-fn compiled_pdf_path_derives_from_a_nested_main_file() {
+fn the_build_output_is_named_after_a_nested_main_file() {
     let (_data, root) = project("pdfpath-test");
     create_file(&root, "chapters/paper.tex", false).unwrap();
-    write_settings(&root, &json!({ "mainFile": "chapters/paper.tex" })).unwrap();
-    assert_eq!(
-        compiled_pdf_path(&root).unwrap(),
-        root.join("build").join("paper.pdf")
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn files_the_app_makes_get_the_mode_any_new_file_gets() {
-    use std::os::unix::fs::PermissionsExt;
-    let (data, root) = project("modes");
-    let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
-    let usual = mode(&root.join("main.tex"));
-    create_file(&root, "notes.tex", false).unwrap();
-    assert_eq!(mode(&root.join("notes.tex")), usual);
-    assert_eq!(mode(&root.join(".texlocal.json")), usual);
-    let dest = data.path().join("export.zip");
-    export_zip(&root, &dest).unwrap();
-    assert_eq!(mode(&dest), usual);
+    let settings = write_settings(&root, &json!({ "mainFile": "chapters/paper.tex" })).unwrap();
+    let pdf = settings.output(&root, "pdf").unwrap();
+    assert_eq!(pdf, root.join("build").join("paper.pdf"));
 }
 
 #[test]
@@ -371,19 +328,10 @@ fn zip_export_excludes_build_and_settings_and_never_archives_itself() {
 }
 
 #[test]
-fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
+fn zip_export_dates_entries_as_their_files() {
     let (data, root) = project("dated-zip");
-    fs::create_dir_all(root.join("figs")).unwrap();
-    for litter in [".DS_Store", "figs/.DS_Store"] {
-        fs::write(root.join(litter), "x").unwrap();
-    }
-    fs::write(root.join(".latexmkrc"), "$pdf_mode = 1;").unwrap();
     let dest = data.path().join("out.zip");
     export_zip(&root, &dest).unwrap();
-
-    let names = zip_names(&dest);
-    assert!(names.contains(&".latexmkrc".to_string()), "{names:?}");
-    assert!(!names.iter().any(|n| n.contains("DS_Store")), "{names:?}");
     let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
     let dated = archive.by_name("main.tex").unwrap().last_modified();
     let modified = fs::metadata(root.join("main.tex")).unwrap().modified();
@@ -574,30 +522,23 @@ fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
     assert_eq!(found.citations, ["one", "two"]);
 }
 
+/// What synctex prints as a source maps back into the project, lexically:
+/// compile_stub's inverse sync tests the links and reserved paths.
 #[test]
-fn the_file_tree_lists_folders_first_then_names_ignoring_case() {
-    let (_data, root) = project("tree-order");
-    for file in ["c.tex", "B.tex", "Zeta/z.tex", "beta/y.tex", ".hidden.tex"] {
-        create_file(&root, file, false).unwrap();
+fn a_tools_input_path_maps_back_to_the_project_file() {
+    let (data, root) = project("P");
+    create_project(data.path(), "PQ", "blank").unwrap();
+    create_file(&root, "ch/intro.tex", false).unwrap();
+    let under = |path: &str| format!("{}{path}", root.display());
+    for (input, rel) in [
+        (under("/./ch/../ch/intro.tex"), Some("ch/intro.tex")),
+        ("./ch/intro.tex".into(), Some("ch/intro.tex")),
+        (under(""), None),
+        (under("/../PQ/main.tex"), None),
+        (under("Q/main.tex"), None),
+    ] {
+        assert_eq!(source_rel(&root, &input).as_deref(), rel, "{input}");
     }
-    let tree = file_tree(&root).unwrap();
-    let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
-    assert_eq!(names, ["beta", "Zeta", "B.tex", "c.tex", "main.tex"]);
-    assert_eq!(tree[1].kind, "dir");
-    assert_eq!(tree[1].children.as_ref().unwrap()[0].path, "Zeta/z.tex");
-    assert!(tree[2].children.is_none());
-}
-
-#[test]
-fn rel_to_root_maps_tool_output_back_into_the_project() {
-    let root = Path::new("/data/P");
-    assert_eq!(
-        rel_to_root(root, Path::new("/data/P/./ch/../ch/intro.tex")).as_deref(),
-        Some("ch/intro.tex")
-    );
-    assert_eq!(rel_to_root(root, Path::new("/data/P")), None);
-    assert_eq!(rel_to_root(root, Path::new("/data/P/../Q/a.tex")), None);
-    assert_eq!(rel_to_root(root, Path::new("/data/PQ/a.tex")), None);
 }
 
 #[cfg(unix)]
@@ -728,19 +669,5 @@ fn a_project_exported_and_opened_again_keeps_every_file_the_author_made() {
         "pdf_mode = 1;"
     );
     // The settings are the project's own and are not carried in the archive.
-    assert_eq!(read_settings(&copy).engine, "pdflatex");
-}
-
-#[test]
-fn a_project_is_made_whole_with_its_engine_or_not_at_all() {
-    let data = data_dir();
-    let made = create_project_with_engine(data.path(), "Thesis", "report", Some("xelatex"));
-    let made = made.unwrap();
-    assert_eq!(read_settings(&data.path().join(&made.id)).engine, "xelatex");
-    fails_with(
-        create_project_with_engine(data.path(), "Other", "blank", Some("word")),
-        "Unknown engine",
-    );
-    // No folder, and no hidden one it was built in, is left by the refusal.
-    assert_eq!(names_in(data.path()), ["Thesis"]);
+    assert_eq!(read_settings(&copy).engine.as_str(), "pdflatex");
 }

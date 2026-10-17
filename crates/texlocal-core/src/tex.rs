@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::process::{PROBE_TIMEOUT, run};
+use crate::settings::AppSettings;
 
 /// What `dir` holds; nothing if it can't be read.
 fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
@@ -40,20 +41,20 @@ fn texlive_bins() -> impl Iterator<Item = PathBuf> {
     years.into_iter().flat_map(children)
 }
 
-/// PATH for spawned TeX tools: the folder the user chose first, then the
-/// user's PATH, then the discovered TeX dirs. Built per use — a couple of
+/// The PATHs for TeX's tools, and for TeXpresso's: the TeX folder chosen
+/// first, then the user's PATH, then the discovered TeX dirs; TeXpresso's
+/// with its own folder before all of them. Built per use — a couple of
 /// read_dirs — so a TeX install performed while the app runs is found without
 /// a restart.
-pub fn tex_path(chosen: Option<&Path>) -> String {
+pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
     let user = std::env::var_os("PATH").unwrap_or_default();
-    join_path(
-        chosen
-            .map(Path::to_path_buf)
-            .into_iter()
-            .chain(absolute_dirs(&user))
-            .chain(usual_tex_dirs())
-            .chain(texlive_bins()),
-    )
+    let tex: Vec<PathBuf> = (app.tex_dir.iter().cloned())
+        .chain(absolute_dirs(&user))
+        .chain(usual_tex_dirs())
+        .chain(texlive_bins())
+        .collect();
+    let texpresso = join_path(app.texpresso_dir.iter().chain(&tex).cloned());
+    (join_path(tex), texpresso)
 }
 
 /// Where TeX's installers put its programs, besides TeX Live's years: MacTeX's
@@ -77,7 +78,7 @@ fn usual_tex_dirs() -> Vec<PathBuf> {
 
 /// Folders as a PATH, in the platform's form. A folder whose name holds the
 /// separator can't be one of them, and is left out.
-pub(crate) fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
+fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
     let dirs = dirs
         .into_iter()
         .filter(|dir| std::env::join_paths([dir]).is_ok());
