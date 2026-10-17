@@ -29,7 +29,7 @@ struct PDFPane: View {
             } description: {
                 Text("Install it to compile; TeXLocal finds it afterwards.")
             } actions: {
-                GetMacTeXButton().buttonStyle(.borderedProminent)
+                LinkButton(title: "Get MacTeX", url: Links.mactex).buttonStyle(.borderedProminent)
             }
         } else if project.compiling {
             // The toolbar's Stop can be in its overflow menu: the pane says itself that the build is under way (HIG, Progress indicators).

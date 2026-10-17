@@ -34,7 +34,7 @@ struct InspectorView: View {
                 .disabled(!app.canPreviewLive || !project.initialLoadComplete || project.texpresso.phase == .stopping)
                 if !app.canPreviewLive {
                     HStack {
-                        TeXpressoGuideButton()
+                        LinkButton(title: "Install Guide", url: Links.texpressoGuide)
                         Spacer()
                         SettingsLink { Text("Open Settings…") }
                     }
