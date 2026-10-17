@@ -524,7 +524,10 @@ async fn the_analysis_is_kept_for_the_heading_a_line_is_under() {
     let text = "\\documentclass{book}\n\\chapter{A}\n\\section{B}\n\\section{}\n";
     fs::write(rig.root.join("main.tex"), text).unwrap();
     let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
-    assert_eq!(analysis["words"], 3, "book, A and B");
+    assert_eq!(
+        analysis["words"], 2,
+        "A and B: the class is a name, not a word"
+    );
     assert_eq!(analysis["tree"][0]["children"][0]["command"], "section");
     let untitled = &analysis["tree"][0]["children"][1];
     assert_eq!(untitled["title"], "Untitled Section");

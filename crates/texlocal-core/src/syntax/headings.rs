@@ -12,6 +12,7 @@ use regex::Regex;
 use serde::Serialize;
 
 use super::catalog::{CATALOG, HeadingLevel};
+use super::scan::strip_comment;
 
 /// The class a main file's `\documentclass` names, and the type size its
 /// options set.
@@ -23,9 +24,6 @@ pub struct DocumentClass {
     pub point_size: u32,
 }
 
-/// A comment, from a % that isn't escaped to the line's end, however the line ends.
-static COMMENT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new("(?m)(^|[^\\\\])%[^\n\r\u{85}\u{2028}\u{2029}]*").unwrap());
 static CLASS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\\documentclass\s*(?:\[([^\]]*)\])?\s*\{\s*([^}\s]+)\s*\}").unwrap()
 });
@@ -35,7 +33,9 @@ static CLASS: LazyLock<Regex> = LazyLock::new(|| {
 /// is named is read first, and the whole only when that has none.
 pub fn document_class(text: &str) -> Option<DocumentClass> {
     let named = |text: &str| {
-        let uncommented = COMMENT.replace_all(text, "$1");
+        // A comment ends at either line break.
+        let lines: Vec<&str> = text.split(['\n', '\r']).map(strip_comment).collect();
+        let uncommented = lines.join("\n");
         let c = CLASS.captures(&uncommented)?;
         let options: Vec<&str> = c
             .get(1)

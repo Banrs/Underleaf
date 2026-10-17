@@ -1,8 +1,10 @@
-//! Ranges a spelling checker should skip: TeX names, maths and literal code.
-//! Name arguments include cases that the highlighter leaves uncoloured when
-//! options come first, as in `\usepackage[utf8]{inputenc}`.
+//! Ranges a spelling checker should skip: TeX names, maths and literal code;
+//! and the words of what's left, which the status bar counts. Name arguments
+//! include cases that the highlighter leaves uncoloured when options come
+//! first, as in `\usepackage[utf8]{inputenc}`.
 
-use super::maths::{Point, Scans, Visit};
+use super::scan::{Scanner, Visit};
+use super::scans::{Point, Scans};
 use super::{Text, TextRange, blank, catalog::CATALOG};
 
 /// Absolute UTF-16 ranges to skip in `start..end`: math and literal code from
@@ -116,6 +118,74 @@ impl Visit for Found<'_> {
         let command = (name, command_start, name_end);
         self.reading
             .command(self.text, command, self.end, &mut self.names);
+    }
+}
+
+/// A file's words: the runs of its prose between spaces and TeX's special
+/// characters that hold a letter, prose being what isn't maths, literal
+/// code, a comment, a command's name or the names commands take (packages,
+/// labels, citations, files). Each command outside maths, code and comments
+/// goes to `command` as the scan meets it, by name and where its name ends,
+/// so the outline finds its headings and inputs in the same reading.
+pub(crate) fn words(source: &str, command: impl FnMut(&Text, &str, usize)) -> usize {
+    let text = Text::new(source);
+    let mut reading = Reading {
+        text: &text,
+        skip: Vec::new(),
+        names: Names::default(),
+        command,
+    };
+    let len = text.units.len();
+    Scanner::default().run(&text.units, len, &[], &mut reading);
+    let mut skip = reading.skip;
+    skip.sort_unstable_by_key(|r| r.start);
+    let (mut words, mut at) = (0, 0);
+    for r in skip.iter().chain([&range(len, len)]) {
+        let start = r.start as usize;
+        words += count(&text.units[at..start.max(at)]);
+        at = at.max(start + r.length as usize);
+    }
+    words
+}
+
+/// The words in a run of prose: what's between spaces and TeX's special
+/// characters, where it holds a letter.
+fn count(prose: &[u16]) -> usize {
+    let (mut words, mut lettered) = (0, false);
+    for c in char::decode_utf16(prose.iter().copied()) {
+        let c = c.unwrap_or(char::REPLACEMENT_CHARACTER);
+        if c.is_whitespace() || "{}$&_^~\\%".contains(c) {
+            words += lettered as usize;
+            lettered = false;
+        } else {
+            lettered |= c.is_alphabetic();
+        }
+    }
+    words + lettered as usize
+}
+
+/// What a file's reading for its words passes over.
+struct Reading<'a, F> {
+    text: &'a Text,
+    skip: Vec<TextRange>,
+    names: Names,
+    command: F,
+}
+
+impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
+    fn range(&mut self, from: usize, to: usize) {
+        self.skip.push(range(from, to));
+    }
+
+    fn comment(&mut self, from: usize, to: usize) {
+        self.skip.push(range(from, to));
+    }
+
+    fn command(&mut self, name: &str, command_start: usize, name_end: usize) {
+        self.skip.push(range(command_start, name_end));
+        let (command, end) = ((name, command_start, name_end), self.text.units.len());
+        self.names.command(self.text, command, end, &mut self.skip);
+        (self.command)(self.text, name, name_end);
     }
 }
 

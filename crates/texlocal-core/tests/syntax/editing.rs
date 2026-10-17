@@ -62,7 +62,7 @@ fn math_mode_is_known_at_a_place() {
 #[test]
 fn the_maths_to_preview_is_found_around_a_place() {
     for (source, expected) in fixture().math_at {
-        let (doc, at) = marked(&source);
+        let (mut doc, at) = marked(&source);
         let found = serde_json::to_value(doc.math_at(at)).unwrap();
         assert_eq!(found, expected, "{source}");
     }
