@@ -14,12 +14,12 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tokio::sync::OwnedMutexGuard;
 
-use crate::atomic::Stamp;
 use crate::error::CoreError;
 use crate::logparse::{LogItem, Severity, latexmk_errors, parse_blg, parse_log};
 use crate::paths::safe_rel_file;
 use crate::process::{self, drive};
 use crate::settings::{main_base_name, read_settings};
+use crate::stamp::Stamp;
 use crate::{BUILD_DIR, lock};
 
 // Where these were before compile.rs was split; the code that reaches TeX

@@ -3,56 +3,20 @@
 //! or a crash part-way leaves the old file as it was, where writing in place
 //! would leave it empty or cut short.
 
-use serde::Serialize;
-use std::fs::{self, File, Metadata, Permissions};
+use std::fs::{self, File, Permissions};
 use std::io::{self, Write};
 use std::path::Path;
-use std::time::UNIX_EPOCH;
 use tempfile::TempPath;
 
-/// A file as written: which file it is, its length, and when it was last
-/// written, to the nanosecond, as stat gives them (st_ino, st_size, and
-/// st_mtime and its nanoseconds, from 0 up even before 1970). A client that
-/// keeps it knows a change it is told of for the file is its own write's while
-/// a stat still gives the same, without reading the file back. Windows has no
-/// inode a stat gives, and the stamp none: there, length and date alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct Stamp {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub inode: Option<u64>,
-    pub size: u64,
-    pub seconds: i64,
-    pub nanoseconds: i64,
-}
-
-impl Stamp {
-    pub fn of(meta: &Metadata) -> Self {
-        #[cfg(unix)]
-        let inode = Some(std::os::unix::fs::MetadataExt::ino(meta));
-        #[cfg(not(unix))]
-        let inode = None;
-        let nanos = match meta.modified().map(|time| time.duration_since(UNIX_EPOCH)) {
-            Ok(Ok(after)) => after.as_nanos() as i128,
-            Ok(Err(before)) => -(before.duration().as_nanos() as i128),
-            Err(_) => 0,
-        };
-        // Before 1970 too, as a timespec has it: seconds down, then
-        // nanoseconds up from them.
-        const NANOS: i128 = 1_000_000_000;
-        Self {
-            inode,
-            size: meta.len(),
-            seconds: nanos.div_euclid(NANOS) as i64,
-            nanoseconds: nanos.rem_euclid(NANOS) as i64,
-        }
-    }
-}
+// Stamp has a module of its own; what imports it from here has yet to move.
+pub use crate::stamp::Stamp;
 
 /// A new, empty temporary file beside `path`, removed if it is not persisted,
 /// with the mode it should have once it takes `path`'s place: `existing`, a
 /// replaced file's own, else a new file's (0666 less the umask), as any other
 /// way of making a file gives it. tempfile's own 0600 would leave every file
 /// the app made unreadable to the accounts and tools a project is shared with.
+/// A replaced file's extended attributes go to the new one on macOS.
 pub(crate) fn create_temp(
     path: &Path,
     existing: Option<Permissions>,
@@ -66,13 +30,37 @@ pub(crate) fn create_temp(
         builder.permissions(Permissions::from_mode(0o666));
     }
     let temp = builder.tempfile_in(parent.unwrap_or(Path::new(".")))?;
-    let (file, path) = temp.into_parts();
+    let (file, temp_path) = temp.into_parts();
     // Before the contents, so a private file's text is never readable
     // under the temporary file's default mode.
     if let Some(permissions) = existing {
         file.set_permissions(permissions)?;
+        #[cfg(target_os = "macos")]
+        copy_xattrs(path, &file);
     }
-    Ok((path, file))
+    Ok((temp_path, file))
+}
+
+/// The extended attributes of `from` (a Finder tag, "where from", the
+/// quarantine flag) copied onto `to`. The rename that follows a save gives the
+/// file a new inode, which would otherwise start with none: a tagged file
+/// would lose its tag on the first autosave. A volume without them, or a file
+/// that can't be read, copies none, which a save need not fail for.
+#[cfg(target_os = "macos")]
+fn copy_xattrs(from: &Path, to: &File) {
+    use std::os::fd::AsRawFd;
+    if let Ok(from) = File::open(from) {
+        // SAFETY: both descriptors are open for the call; no copy state is
+        // asked for, and only the attributes are copied.
+        unsafe {
+            libc::fcopyfile(
+                from.as_raw_fd(),
+                to.as_raw_fd(),
+                std::ptr::null_mut(),
+                libc::COPYFILE_XATTR,
+            );
+        }
+    }
 }
 
 /// Moves a finished temporary file into `path`'s place in one rename. std's
@@ -144,6 +132,48 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         fs::write(&file, b"two").unwrap();
         assert_ne!(written, Stamp::of(&fs::metadata(&file).unwrap()));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_save_keeps_the_extended_attributes_of_the_file_it_replaces() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("tagged.tex");
+        fs::write(&file, "one").unwrap();
+        let path = CString::new(file.as_os_str().as_bytes()).unwrap();
+        // A Finder tag is one of these; any name stands for it.
+        let (name, value) = (c"com.example.texlocal-test", b"Red");
+        // SAFETY: a NUL-terminated path and name, and a value of the length given.
+        let set = unsafe {
+            libc::setxattr(
+                path.as_ptr(),
+                name.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+                0,
+            )
+        };
+        assert_eq!(set, 0);
+
+        write(&file, b"two").unwrap();
+
+        let mut got = [0u8; 16];
+        // SAFETY: as above, into a buffer of the length given.
+        let len = unsafe {
+            libc::getxattr(
+                path.as_ptr(),
+                name.as_ptr(),
+                got.as_mut_ptr().cast(),
+                got.len(),
+                0,
+                0,
+            )
+        };
+        assert_eq!(&got[..len.max(0) as usize], value);
+        assert_eq!(fs::read(&file).unwrap(), b"two");
     }
 
     #[test]
