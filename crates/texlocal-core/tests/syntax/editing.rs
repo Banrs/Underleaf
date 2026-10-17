@@ -49,7 +49,19 @@ fn marked(source: &str) -> (SourceDocument, u32) {
 
 #[test]
 fn math_mode_is_known_at_a_place() {
-    for (source, expected, note) in fixture().math_mode {
+    let mut cases = fixture().math_mode;
+    // In each display environment, after it and before it.
+    for name in "equation align gather multline eqnarray alignat flalign".split(' ') {
+        for name in [name.to_owned(), format!("{name}*")] {
+            let (begin, end) = (format!("\\begin{{{name}}}"), format!("\\end{{{name}}}"));
+            cases.extend([
+                (format!("{begin}\n  a |= b\n{end}"), true, name.clone()),
+                (format!("{begin}\n  a = b\n{end}\n|"), false, name.clone()),
+                (format!("|{begin}a{end}"), false, name),
+            ]);
+        }
+    }
+    for (source, expected, note) in cases {
         let before: Vec<u16> = source[..source.find('|').unwrap()].encode_utf16().collect();
         assert_eq!(math_mode_at(&before), expected, "{source} {note}");
     }

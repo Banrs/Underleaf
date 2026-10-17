@@ -18,43 +18,13 @@ const fn runs(release: usize, debug: usize) -> usize {
     }
 }
 
+#[rustfmt::skip]
 const PIECES: &[&str] = &[
-    "\\cite{",
-    "}",
-    "}",
-    "}",
-    "{",
-    "$",
-    "$$",
-    "\\[",
-    "\\]",
-    "\\begin{equation}",
-    "\\end{equation}",
-    "\\begin{verbatim}",
-    "\\end{verbatim}",
-    "\\verb|",
-    "|",
-    "\\textbf{",
-    "\\emph{",
-    "\\text{",
-    "\\textit{",
-    "% c",
-    "\n",
-    "\n",
-    "\n\n",
-    " word ",
-    " prose ",
-    "x^2",
-    "\\usepackage[opt]{pkg}",
-    "\\usepackage\n[a]\n{b}",
-    "\\label{x}",
-    "\\ref{",
-    "\\input{a",
-    "[",
-    "]",
-    "\\\\",
-    "\\",
-    " \n",
+    "\\cite{", "}", "}", "}", "{", "$", "$$", "\\[", "\\]", "\\begin{equation}",
+    "\\end{equation}", "\\begin{verbatim}", "\\end{verbatim}", "\\verb|", "|", "\\textbf{",
+    "\\emph{", "\\text{", "\\textit{", "% c", "\n", "\n", "\n\n", " word ", " prose ", "x^2",
+    "\\usepackage[opt]{pkg}", "\\usepackage\n[a]\n{b}", "\\label{x}", "\\ref{", "\\input{a",
+    "[", "]", "\\\\", "\\", " \n",
 ];
 
 struct Seeded(u32);
@@ -87,22 +57,10 @@ fn pieces(seed: &mut Seeded, blank_lines: bool) -> String {
 
 /// What the pieces above lack: CRLF line ends, characters of two units, and
 /// whole commands and environments, the document's own among them.
+#[rustfmt::skip]
 const MORE: &[&str] = &[
-    "\r\n",
-    "\r\n\r\n",
-    "😀",
-    "𐐀",
-    "é",
-    "%",
-    "\\ref{x}",
-    "\\cite[p.~3]{key}",
-    "\\(",
-    "\\)",
-    "\\begin{align*}",
-    "\\end{align*}",
-    "\\begin{document}",
-    "\\end{document}",
-    "\\underline{",
+    "\r\n", "\r\n\r\n", "😀", "𐐀", "é", "%", "\\ref{x}", "\\cite[p.~3]{key}", "\\(", "\\)",
+    "\\begin{align*}", "\\end{align*}", "\\begin{document}", "\\end{document}", "\\underline{",
     "\\verb*+a+",
 ];
 
