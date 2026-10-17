@@ -98,6 +98,7 @@ enum Family {
     KomaBook,
     Ieee,
     Llncs,
+    Beamer,
     Unsectioned,
 }
 
@@ -112,6 +113,7 @@ fn family(class: &str) -> Option<Family> {
         "scrreprt" | "scrbook" => KomaBook,
         "IEEEtran" => Ieee,
         "llncs" => Llncs,
+        "beamer" => Beamer,
         "letter" | "minimal" => Unsectioned,
         _ => return None,
     })
@@ -166,6 +168,8 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
         Some(AmsBook) => (3, true, false),
         Some(Ieee) => (4, false, true),
         Some(Llncs) => (2, false, false),
+        // Frames print no section headings: only the part page has a number.
+        Some(Beamer) => (0, false, false),
         Some(Unsectioned) => (0, false, false),
         None => (if has_chapters { 2 } else { 3 }, has_chapters, false),
     };
@@ -221,6 +225,8 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
             fonts.insert("paragraph", plain(Shape::Italic));
             without(&mut commands, &["chapter"]);
         }
+        // beamer.cls defines neither \chapter nor \paragraph.
+        Some(Beamer) => without(&mut commands, &["chapter", "paragraph"]),
         Some(Unsectioned) => commands.clear(),
         Some(Book) | None => {}
     }
@@ -325,6 +331,18 @@ mod tests {
             ]
         );
         assert_eq!(titles(&styles(Some("letter"), 10, false)), ["Normal Text"]);
+        let beamer = styles(Some("beamer"), 10, false);
+        assert_eq!(
+            titles(&beamer),
+            [
+                "Normal Text",
+                "Part",
+                "Section",
+                "Subsection",
+                "Subsubsection"
+            ]
+        );
+        assert_eq!(markers(&beamer), [None, Some("I"), None, None, None]);
         // A class it doesn't know has every level, numbered as a book's once there are chapters.
         assert_eq!(markers(&styles(Some("thesis"), 10, true)), report);
         let none = [
