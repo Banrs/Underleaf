@@ -434,7 +434,7 @@ async fn inverse_sync_finds_a_source_of_the_project_by_any_name_tex_gives_it() {
     );
 
     fs::write(root.join("build/generated.tex"), "secret").unwrap();
-    fs::create_dir(root.join("Build")).unwrap();
+    fs::create_dir_all(root.join("Build")).unwrap(); // build/ itself where the volume ignores case
     fs::write(root.join("Build/generated.tex"), "secret").unwrap();
     fs::write(tmp.path().join("outside.tex"), "secret").unwrap();
     std::os::unix::fs::symlink(tmp.path().join("outside.tex"), root.join("linked.tex")).unwrap();
