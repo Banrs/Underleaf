@@ -76,20 +76,16 @@ impl Export<'_> {
 
             let entry_type = entry.file_type()?;
             if entry_type.is_symlink() {
-                // Unresolvable (dangling, a loop): nothing to export, as in
-                // the project walks.
-                let Ok(target) = dunce::canonicalize(&path) else {
-                    continue;
-                };
-                if !target.starts_with(self.root_canonical) {
-                    // Never export data reached through a link outside the project.
-                    continue;
-                }
-                if fs::metadata(&path)?.is_file() {
-                    self.add_file(&rel, &path)?;
-                }
+                // Unresolvable (dangling, a loop), there is nothing to export, as
+                // in the project walks; and never data reached through a link
+                // outside the project.
+                let inside =
+                    dunce::canonicalize(&path).is_ok_and(|t| t.starts_with(self.root_canonical));
                 // Directory links are deliberately skipped. Following them creates
                 // cycles and duplicates; regular directories below are still walked.
+                if inside && fs::metadata(&path)?.is_file() {
+                    self.add_file(&rel, &path)?;
+                }
                 continue;
             }
 

@@ -181,10 +181,6 @@ impl Actor {
             "ui": settings::read_ui(&root),
         });
         let build_pdf = pdf.is_some();
-        let empty = Symbols {
-            citations: Vec::new(),
-            labels: Vec::new(),
-        };
         let mut actor = Self {
             id,
             project,
@@ -198,7 +194,7 @@ impl Actor {
             docs: BTreeMap::new(),
             by_id: HashMap::new(),
             next_doc: 1,
-            symbols: Arc::new(RwLock::new(Arc::new(empty))),
+            symbols: Arc::default(),
             symbols_seq: 0,
             symbols_at: Some(Instant::now()),
             symbol_scan: SymbolScan::default(),

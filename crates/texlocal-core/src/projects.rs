@@ -4,7 +4,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::io::ErrorKind;
+use std::io::ErrorKind::{self, NotFound, PermissionDenied};
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
@@ -94,7 +94,7 @@ pub fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {
         .collect()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Symbols {
     pub citations: Vec<String>,
     pub labels: Vec<String>,
@@ -110,16 +110,8 @@ fn mtime_ms(meta: &fs::Metadata) -> u64 {
 /// A vanished or unreadable entry is skipped without failing a project scan.
 fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError> {
     match result {
-        Ok(value) => Ok(Some(value)),
-        Err(err)
-            if matches!(
-                err.kind(),
-                ErrorKind::NotFound | ErrorKind::PermissionDenied
-            ) =>
-        {
-            Ok(None)
-        }
-        Err(err) => Err(err.into()),
+        Err(err) if matches!(err.kind(), NotFound | PermissionDenied) => Ok(None),
+        result => Ok(Some(result?)),
     }
 }
 
@@ -149,15 +141,12 @@ impl Entry {
 /// unreadable subfolder is empty; the project root must be readable.
 fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> {
     let read = if dir == root {
-        fs::read_dir(dir)?
+        Some(fs::read_dir(dir)?)
     } else {
-        match skip_unreadable(fs::read_dir(dir))? {
-            Some(read) => read,
-            None => return Ok(Vec::new()),
-        }
+        skip_unreadable(fs::read_dir(dir))?
     };
     let mut out = Vec::new();
-    for entry in read {
+    for entry in read.into_iter().flatten() {
         let Some(entry) = skip_unreadable(entry)? else {
             continue;
         };
@@ -336,11 +325,8 @@ pub(crate) fn finish_project(
     root: &Path,
     main_file: String,
 ) -> Result<ProjectInfo, CoreError> {
-    Ok(project_info(
-        name,
-        mtime_ms(&fs::metadata(root)?),
-        main_file,
-    ))
+    let mtime = mtime_ms(&fs::metadata(root)?);
+    Ok(project_info(name, mtime, main_file))
 }
 
 /// The likely main file among a project's top-level .tex files: main.tex,
@@ -402,12 +388,8 @@ pub fn rename_project(
         }
         return Err(err);
     }
-    let main_file = read_settings(&dest).main_file;
-    Ok(project_info(
-        clean,
-        newest(&dest, &fs::metadata(&dest)?),
-        main_file,
-    ))
+    let mtime = newest(&dest, &fs::metadata(&dest)?);
+    Ok(project_info(clean, mtime, read_settings(&dest).main_file))
 }
 
 /// Whether a rename from `src` to `dest` would land on another entry. On a
@@ -512,13 +494,7 @@ pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
 /// `create_file`, numbered past the names taken as Finder numbers copies
 /// ("untitled.tex", "untitled 2.tex"); the path made.
 pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {
-    let (parent, name) = rel.rsplit_once('/').unwrap_or(("", rel));
-    for free in copy_names(name) {
-        let path = if parent.is_empty() {
-            free
-        } else {
-            format!("{parent}/{free}")
-        };
+    for path in copy_paths(rel) {
         match create_file(root, &path, dir) {
             Err(err) if err.status == 409 => {}
             made => return made.map(|()| path),
@@ -548,12 +524,9 @@ fn real_path(path: &Path) -> PathBuf {
 pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError> {
     let library = fs::canonicalize(data_dir)?;
     let real = real_path(path);
-    let Some(rest) = path
-        .is_absolute()
-        .then(|| real.strip_prefix(&library).ok())
-        .flatten()
-    else {
-        return Ok(None);
+    let rest = match real.strip_prefix(&library) {
+        Ok(rest) if path.is_absolute() => rest,
+        _ => return Ok(None),
     };
     let names: Option<Vec<String>> = rest
         .components()
@@ -609,7 +582,9 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
     }
 
     let main_file = read_settings(root).main_file;
-    let moved_main = after_entry(&main_file, &from_rel).map(|rest| format!("{to_rel}{rest}"));
+    // Each project path's new one, None for one the rename leaves.
+    let moved = |path: &str| after_entry(path, &from_rel).map(|rest| format!("{to_rel}{rest}"));
+    let moved_main = moved(&main_file);
     fs::rename(&src, &dest)?;
     if let Some(main_file) = &moved_main
         && let Err(settings_err) = write_settings(root, &json!({ "mainFile": main_file }))
@@ -622,9 +597,7 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
         }
         return Err(settings_err);
     }
-    move_ui(root, |path| {
-        after_entry(path, &from_rel).map(|rest| format!("{to_rel}{rest}"))
-    });
+    move_ui(root, moved);
 
     Ok(RenameResult {
         from: from_rel,
@@ -645,14 +618,19 @@ pub(crate) fn discard_replaced(root: &Path, rel: &str) -> Result<(), CoreError> 
     discard(&safe_path(root, rel)?)
 }
 
-/// The names an entry's copies take in turn, as Finder numbers them: `name`,
-/// then "main 2.tex", "main 3.tex"… or "figures 2", "figures 3"…
-pub(crate) fn copy_names(name: &str) -> impl Iterator<Item = String> {
+/// The paths an entry's copies take in turn in its folder, as Finder numbers
+/// them: `rel`, then "main 2.tex", "main 3.tex"… or "figures 2", "figures 3"…
+pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> {
+    let (parent, name) = rel.rsplit_once('/').unwrap_or(("", rel));
     let numbered = move |n: u32| match name.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => format!("{stem} {n}.{ext}"),
         _ => format!("{name} {n}"),
     };
-    std::iter::once(name.to_owned()).chain((2..).map(numbered))
+    let copies = std::iter::once(name.to_owned()).chain((2..).map(numbered));
+    copies.map(move |copy| match parent {
+        "" => copy,
+        _ => format!("{parent}/{copy}"),
+    })
 }
 
 // ---------- search ----------
@@ -800,10 +778,7 @@ impl SymbolScan {
 
         fn dedup<'a>(symbols: impl Iterator<Item = &'a String>) -> Vec<String> {
             let mut seen = HashSet::new();
-            symbols
-                .filter(|symbol| seen.insert(*symbol))
-                .cloned()
-                .collect()
+            symbols.filter(|s| seen.insert(*s)).cloned().collect()
         }
         // File-name order keeps completions stable, retaining the first occurrence.
         let found = Symbols {
@@ -852,10 +827,7 @@ mod tests {
         assert_eq!(cache.scan(root).unwrap().labels, ["one", "three"]);
         fs::remove_file(root.join("b.tex")).unwrap();
         let found = cache.scan(root).unwrap();
-        assert_eq!(
-            (found.labels, found.citations),
-            (vec!["one".into()], vec!["key".into()])
-        );
+        assert_eq!([found.labels, found.citations], [["one"], ["key"]]);
     }
 
     #[cfg(unix)]
@@ -886,23 +858,22 @@ mod tests {
 
     #[test]
     fn main_file_guards_compare_names_as_the_volume_does() {
-        assert_eq!(
-            after_entry("chapters/main.tex", "chapters"),
-            Some("/main.tex")
-        );
-        assert_eq!(
-            after_entry("chapters/main.tex", "chapters/main.tex"),
-            Some("")
-        );
-        assert_eq!(after_entry("chapters2/main.tex", "chapters"), None);
-        assert_eq!(after_entry("chapters", "chapters/main.tex"), None);
         // On a Mac's or Windows' case-insensitive volume, Main.tex is main.tex.
         let insensitive = cfg!(any(target_os = "macos", windows));
-        assert_eq!(after_entry("main.tex", "Main.tex").is_some(), insensitive);
-        assert_eq!(
-            after_entry("Chapters/a.tex", "chapters"),
-            insensitive.then_some("/a.tex")
-        );
+        for (path, entry, after) in [
+            ("chapters/main.tex", "chapters", Some("/main.tex")),
+            ("chapters/main.tex", "chapters/main.tex", Some("")),
+            ("chapters2/main.tex", "chapters", None),
+            ("chapters", "chapters/main.tex", None),
+            ("main.tex", "Main.tex", insensitive.then_some("")),
+            (
+                "Chapters/a.tex",
+                "chapters",
+                insensitive.then_some("/a.tex"),
+            ),
+        ] {
+            assert_eq!(after_entry(path, entry), after, "{path} in {entry}");
+        }
     }
 
     #[test]
@@ -945,13 +916,10 @@ mod tests {
         let (_data, root) = project();
         create_file(&root, "figs/a.png", false).unwrap();
         let tree = serde_json::to_value(super::file_tree(&root).unwrap()).unwrap();
-        let folder = tree
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|n| n["name"] == "figs");
-        assert_eq!(folder.unwrap()["children"][0]["kind"], "image");
-        assert!(folder.unwrap().get("kind").is_none());
+        // Folders first.
+        let folder = &tree[0];
+        assert_eq!(folder["children"][0]["kind"], "image");
+        assert!(folder["name"] == "figs" && folder.get("kind").is_none());
     }
 
     #[test]

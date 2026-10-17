@@ -66,13 +66,13 @@ fn lenient(raw: &Map<String, Value>) -> Settings {
 
 /// A change to a project's settings: the keys sent are validated and applied,
 /// the rest left as they are. Unknown keys are ignored.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SettingsPatch {
-    pub main_file: Option<String>,
-    pub engine: Option<String>,
-    pub shell_escape: Option<bool>,
-    pub stop_on_first_error: Option<bool>,
+struct SettingsPatch {
+    main_file: Option<String>,
+    engine: Option<String>,
+    shell_escape: Option<bool>,
+    stop_on_first_error: Option<bool>,
 }
 
 impl SettingsPatch {
@@ -115,20 +115,16 @@ fn update(
     Ok(merged)
 }
 
-/// Apply `patch` to the project's settings and return them as written.
-pub fn apply_patch(root: &Path, patch: &SettingsPatch) -> Result<Settings, CoreError> {
-    // What was just written, without reading it back.
-    update(root, |merged| patch.apply(root, merged)).map(|merged| lenient(&merged))
-}
-
-/// `apply_patch` for a patch as JSON.
+/// Apply `patch`, a `SettingsPatch` as JSON, to the project's settings and
+/// return them as written.
 pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError> {
     if !patch.is_object() {
         return Err(CoreError::bad_request("Invalid settings"));
     }
     let patch = SettingsPatch::deserialize(patch)
         .map_err(|err| CoreError::bad_request(format!("Invalid settings: {err}")))?;
-    apply_patch(root, &patch)
+    // What was just written, without reading it back.
+    update(root, |merged| patch.apply(root, merged)).map(|merged| lenient(&merged))
 }
 
 /// What a host keeps of a project's interface, with the project: it moves
@@ -234,36 +230,6 @@ pub fn main_base_name(rel_slash: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn a_patch_changes_only_the_keys_it_names_and_keeps_the_files_other_keys() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        fs::write(
-            root.join(SETTINGS_FILE),
-            r#"{"custom": 7, "engine": "xelatex"}"#,
-        )
-        .unwrap();
-        let patch = json!({ "shellEscape": true, "unknown": 1 });
-        let written = write_settings(root, &patch).unwrap();
-        assert_eq!(
-            (written.engine.as_str(), written.shell_escape),
-            ("xelatex", true)
-        );
-        assert_eq!(read_settings(root).main_file, "main.tex");
-        assert_eq!(read_object(&root.join(SETTINGS_FILE))["custom"], 7);
-        // Nothing is written for a patch that fails.
-        let before = fs::read(root.join(SETTINGS_FILE)).unwrap();
-        for bad in [
-            json!({ "engine": "word", "shellEscape": false }),
-            json!({ "stopOnFirstError": "yes" }),
-            json!({ "mainFile": "../x.tex" }),
-            json!([1]),
-        ] {
-            assert_eq!(write_settings(root, &bad).unwrap_err().status, 400, "{bad}");
-        }
-        assert_eq!(fs::read(root.join(SETTINGS_FILE)).unwrap(), before);
-    }
 
     #[test]
     fn interface_state_replaces_each_list_it_names_and_survives_settings_changes() {

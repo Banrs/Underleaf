@@ -1,7 +1,7 @@
 //! Projects, paths, settings and ZIP export, with the UI-facing error strings.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 use tempfile::TempDir;
@@ -11,7 +11,7 @@ use texlocal_core::projects::{
     SymbolScan, Symbols, create_file, create_project, file_tree, list_projects, rename_entry,
     rename_project, search_project,
 };
-use texlocal_core::settings::{Settings, compiled_pdf_path, read_settings, write_settings};
+use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings};
 use texlocal_core::zipexport::export_zip;
 
 /// A project's labels and citations, read afresh.
@@ -26,9 +26,12 @@ fn data_dir() -> TempDir {
         .unwrap()
 }
 
-fn project(data: &Path, name: &str) -> std::path::PathBuf {
-    create_project(data, name, "blank").unwrap();
-    project_root(data, name).unwrap()
+/// A library holding one blank project, `name`, and the project's folder.
+fn project(name: &str) -> (TempDir, PathBuf) {
+    let data = data_dir();
+    create_project(data.path(), name, "blank").unwrap();
+    let root = project_root(data.path(), name).unwrap();
+    (data, root)
 }
 
 #[track_caller]
@@ -43,28 +46,52 @@ fn zip_names(path: &Path) -> Vec<String> {
 }
 
 #[test]
-fn settings_reject_unsafe_compiler_inputs() {
-    let data = data_dir();
-    let root = project(data.path(), "settings-test");
+fn a_settings_patch_changes_only_its_keys_and_returns_what_a_later_read_sees() {
+    let (data, root) = project("settings-echo");
+    let file = root.join(".texlocal.json");
+    let saved = r#"{ "engine": "xelatex", "stopOnFirstError": 3, "custom": "kept" }"#;
+    fs::write(&file, saved).unwrap();
+    let written = write_settings(&root, &json!({ "shellEscape": true, "unknown": 1 })).unwrap();
+    // The file's engine stays, its mistyped flag reads as the default, and
+    // its unknown key survives.
+    let expected = json!({
+        "mainFile": "main.tex", "engine": "xelatex", "shellEscape": true, "stopOnFirstError": false
+    });
+    assert_eq!(json!(written), expected);
+    assert_eq!(json!(read_settings(&root)), expected);
+    let raw: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    assert_eq!(raw["custom"], "kept");
 
-    fails_with(
-        write_settings(&root, &json!({ "shellEscape": "false" })),
-        "expected a boolean",
-    );
-    fails_with(
-        write_settings(&root, &json!({ "mainFile": "-interaction.tex" })),
-        "Path segments cannot start",
-    );
-    fails_with(
-        write_settings(&root, &json!({ "mainFile": "../outside.tex" })),
-        "Path escapes project",
-    );
+    // A patch that fails writes nothing, its valid keys included.
+    let before = fs::read(&file).unwrap();
+    for (bad, why) in [
+        (
+            json!({ "engine": "word", "shellEscape": false }),
+            "Unknown engine",
+        ),
+        (json!({ "shellEscape": "false" }), "expected a boolean"),
+        (
+            json!({ "mainFile": "-interaction.tex" }),
+            "Path segments cannot start",
+        ),
+        (
+            json!({ "mainFile": "../outside.tex" }),
+            "Path escapes project",
+        ),
+        (json!([1]), "Invalid settings"),
+    ] {
+        fails_with(write_settings(&root, &bad), why);
+    }
+    assert_eq!(fs::read(&file).unwrap(), before);
+
+    write_settings(&root, &json!({ "mainFile": "main.tex" })).unwrap();
+    let listed = list_projects(data.path()).unwrap().remove(0);
+    assert_eq!([listed.id, listed.main_file], ["settings-echo", "main.tex"]);
 }
 
 #[test]
 fn a_settings_write_failure_rolls_back_the_filesystem_rename() {
-    let data = data_dir();
-    let root = project(data.path(), "rename-rollback");
+    let (_data, root) = project("rename-rollback");
     fs::rename(root.join(".texlocal.json"), root.join("settings.backup")).unwrap();
     fs::create_dir(root.join(".texlocal.json")).unwrap();
     let err = rename_entry(&root, "main.tex", "paper.tex").unwrap_err();
@@ -84,8 +111,7 @@ fn names_in(dir: &Path) -> Vec<String> {
 
 #[test]
 fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rules() {
-    let data = data_dir();
-    let root = project(data.path(), "rename-test");
+    let (_data, root) = project("rename-test");
     create_file(&root, "chapters/main.tex", false).unwrap();
     create_file(&root, "chapters2/other.tex", false).unwrap();
     // A folder holding the main file takes it along.
@@ -113,8 +139,7 @@ fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rul
 
 #[test]
 fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
-    let data = data_dir();
-    let root = project(data.path(), "case-test");
+    let (data, root) = project("case-test");
     create_file(&root, "Figures/plot.tex", false).unwrap();
 
     let result = rename_entry(&root, "main.tex", "Main.tex").unwrap();
@@ -139,8 +164,7 @@ fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
 /// then gets another name, not the one the rename is taking.
 #[test]
 fn a_project_made_while_a_rename_is_under_way_gets_another_name() {
-    let data = data_dir();
-    let root = project(data.path(), "X");
+    let (data, root) = project("X");
     fs::write(root.join("main.tex"), "the user's").unwrap();
     let mut made = None;
     let renamed = rename_project(data.path(), "X", "R", |_| {
@@ -160,17 +184,14 @@ fn a_project_made_while_a_rename_is_under_way_gets_another_name() {
 }
 
 #[test]
-fn path_traversal_is_rejected_at_every_boundary() {
-    let data = data_dir();
-    let root = project(data.path(), "paths-test");
+fn path_traversal_and_the_settings_file_are_rejected_at_every_boundary() {
+    let (data, root) = project("paths-test");
     fails_with(project_root(data.path(), "../etc"), "Bad project id");
     // A folder inside a project is not a project of its own.
     create_file(&root, "chapters/intro.tex", false).unwrap();
-    assert_eq!(
-        project_root(data.path(), "paths-test/chapters")
-            .unwrap_err()
-            .status,
-        400
+    fails_with(
+        project_root(data.path(), "paths-test/chapters"),
+        "Bad project id",
     );
     assert_eq!(project_root(data.path(), "./paths-test/").unwrap(), root);
     assert_eq!(
@@ -181,14 +202,25 @@ fn path_traversal_is_rejected_at_every_boundary() {
         fails_with(safe_path(&root, path), "Path escapes project");
     }
     fails_with(safe_path(&root, ""), "Missing path");
+
+    // The settings file's case aliases are reserved on every platform on
+    // purpose, as macOS volumes are case-insensitive too.
+    for name in [
+        ".texlocal.json",
+        ".TEXLOCAL.JSON",
+        ".TexLocal.Json",
+        ".texlocal.JSON",
+    ] {
+        fails_with(safe_path(&root, name), "Reserved file");
+    }
+    assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
 }
 
 #[cfg(unix)]
 #[test]
 fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
     use std::os::unix::fs::PermissionsExt;
-    let data = data_dir();
-    let root = project(data.path(), "locked-test");
+    let (_data, root) = project("locked-test");
     fs::write(root.join("main.tex"), "\\label{sec:open} needle\n").unwrap();
     create_file(&root, "locked/inside.tex", false).unwrap();
     fs::write(root.join("secret.tex"), "needle").unwrap();
@@ -218,8 +250,7 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
 #[cfg(unix)]
 #[test]
 fn existing_symlink_ancestors_cannot_escape_the_project() {
-    let data = data_dir();
-    let root = project(data.path(), "symlink-boundary");
+    let (_data, root) = project("symlink-boundary");
     let outside = tempfile::tempdir().unwrap();
     fs::write(outside.path().join("secret.tex"), "secret").unwrap();
     std::os::unix::fs::symlink(outside.path(), root.join("outside")).unwrap();
@@ -229,31 +260,13 @@ fn existing_symlink_ancestors_cannot_escape_the_project() {
     }
 }
 
-// Not gated: the settings name's case aliases are reserved on every platform
-// on purpose, because macOS volumes are case-insensitive too.
-#[test]
-fn the_settings_file_and_its_case_aliases_are_not_reachable_through_the_file_api() {
-    let data = data_dir();
-    let root = project(data.path(), "reserved-test");
-    for name in [
-        ".texlocal.json",
-        ".TEXLOCAL.JSON",
-        ".TexLocal.Json",
-        ".texlocal.JSON",
-    ] {
-        fails_with(safe_path(&root, name), "Reserved file");
-    }
-    assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
-}
-
 // A link inside the project is held to its target's rules (#26).
 #[cfg(unix)]
 #[test]
 fn links_to_reserved_paths_are_held_to_their_rules() {
     use std::os::unix::fs::symlink;
     use texlocal_core::paths::safe_write_path;
-    let data = data_dir();
-    let root = project(data.path(), "reserved-links");
+    let (_data, root) = project("reserved-links");
     fs::write(root.join(".texlocal.json"), "{}").unwrap();
     fs::write(root.join("main.tex"), "x").unwrap();
     fs::create_dir_all(root.join("build")).unwrap();
@@ -277,8 +290,7 @@ fn links_to_reserved_paths_are_held_to_their_rules() {
 
 #[test]
 fn compiled_pdf_path_derives_from_a_nested_main_file() {
-    let data = data_dir();
-    let root = project(data.path(), "pdfpath-test");
+    let (_data, root) = project("pdfpath-test");
     create_file(&root, "chapters/paper.tex", false).unwrap();
     write_settings(&root, &json!({ "mainFile": "chapters/paper.tex" })).unwrap();
     assert_eq!(
@@ -291,8 +303,7 @@ fn compiled_pdf_path_derives_from_a_nested_main_file() {
 #[test]
 fn files_the_app_makes_get_the_mode_any_new_file_gets() {
     use std::os::unix::fs::PermissionsExt;
-    let data = data_dir();
-    let root = project(data.path(), "modes");
+    let (data, root) = project("modes");
     let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
     let usual = mode(&root.join("main.tex"));
     create_file(&root, "notes.tex", false).unwrap();
@@ -305,44 +316,36 @@ fn files_the_app_makes_get_the_mode_any_new_file_gets() {
 
 #[test]
 fn zip_export_excludes_build_and_settings_and_never_archives_itself() {
-    let data = data_dir();
-    let root = project(data.path(), "zip-test");
+    let (data, root) = project("zip-test");
     create_file(&root, "chapters/intro.tex", false).unwrap();
     create_file(&root, "sub/.texlocal.json", false).unwrap();
     fs::create_dir_all(root.join("build")).unwrap();
     fs::write(root.join("build").join("main.pdf"), "fake").unwrap();
     let dest = data.path().join("out.zip");
     export_zip(&root, &dest).unwrap();
-    let names = zip_names(&dest);
-    assert!(names.contains(&"main.tex".to_string()), "{names:?}");
-    assert!(
-        names.contains(&"chapters/intro.tex".to_string()),
-        "{names:?}"
+    // A nested settings file is the author's.
+    assert_eq!(
+        zip_names(&dest),
+        [
+            "chapters/",
+            "chapters/intro.tex",
+            "main.tex",
+            "sub/",
+            "sub/.texlocal.json"
+        ]
     );
-    assert!(
-        names.contains(&"sub/.texlocal.json".to_string()),
-        "{names:?}"
-    );
-    assert!(!names.iter().any(|n| n.starts_with("build")), "{names:?}");
-    assert!(!names.contains(&".texlocal.json".to_string()), "{names:?}");
 
     // A destination inside the project can replace an old file there, and
     // neither it nor its temporary file lands in the archive.
     let inside = root.join("project.zip");
     fs::write(&inside, "old incomplete archive").unwrap();
     export_zip(&root, &inside).unwrap();
-    let names = zip_names(&inside);
-    assert!(!names.contains(&"project.zip".to_string()), "{names:?}");
-    assert!(
-        !names.iter().any(|name| name.contains(".texlocal-")),
-        "{names:?}"
-    );
+    assert_eq!(zip_names(&inside), zip_names(&dest));
 }
 
 #[test]
 fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
-    let data = data_dir();
-    let root = project(data.path(), "dated-zip");
+    let (data, root) = project("dated-zip");
     fs::create_dir_all(root.join("figs")).unwrap();
     for litter in [".DS_Store", "figs/.DS_Store"] {
         fs::write(root.join(litter), "x").unwrap();
@@ -355,75 +358,47 @@ fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
     assert!(names.contains(&".latexmkrc".to_string()), "{names:?}");
     assert!(!names.iter().any(|n| n.contains("DS_Store")), "{names:?}");
     let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
-    let dated = archive
-        .by_name("main.tex")
-        .unwrap()
-        .last_modified()
-        .unwrap();
-    let modified = fs::metadata(root.join("main.tex"))
-        .unwrap()
-        .modified()
-        .unwrap();
-    let local = chrono::DateTime::<chrono::Local>::from(modified);
-    use chrono::{Datelike, Timelike};
-    assert_eq!(
-        (
-            dated.year(),
-            dated.month(),
-            dated.day(),
-            dated.hour(),
-            dated.minute()
-        ),
-        (
-            local.year() as u16,
-            local.month() as u8,
-            local.day() as u8,
-            local.hour() as u8,
-            local.minute() as u8
-        )
-    );
+    let dated = archive.by_name("main.tex").unwrap().last_modified();
+    let modified = fs::metadata(root.join("main.tex")).unwrap().modified();
+    let local = chrono::DateTime::<chrono::Local>::from(modified.unwrap());
+    // To the minute, as ZIP dates in steps of two seconds.
+    let minute = local.format("%Y-%m-%d %H:%M").to_string();
+    assert_eq!(dated.unwrap().to_string()[..16], minute);
 }
 
 #[test]
 fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
-    let data = data_dir();
-    let root = project(data.path(), "search");
-    fs::write(root.join("ascii.tex"), "One\nThe THEOREM holds\n").unwrap();
-    fs::write(root.join("accents.tex"), "L'ÉCOLE Normale\nStraße\n").unwrap();
-    // An image, though SVG is text: its hits would open as a picture.
-    fs::write(root.join("figure.svg"), "<text>theorem</text>\n").unwrap();
-    let hits = search_project(&root, "theorem", 50).unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].file, "ascii.tex");
-    assert_eq!(hits[0].line, 2);
-    assert_eq!(hits[0].matched, "THEOREM");
-    let hits = search_project(&root, "école", 50).unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].matched, "ÉCOLE");
+    let (_data, root) = project("search");
+    for (file, text) in [
+        ("ascii.tex", "One\nThe THEOREM holds\n"),
+        ("accents.tex", "L'ÉCOLE Normale\nStraße\n"),
+        // An image, though SVG is text: its hits would open as a picture.
+        ("figure.svg", "<text>theorem</text>\n"),
+        // An ASCII match in a file that also contains Unicode.
+        ("mixed.tex", "Café\nsee Lemma 3\n"),
+        ("wide.tex", "Çà İstanbul, GRÖSSE und Größe\n"),
+        ("quick.tex", "the quick brown fox jumps\n"),
+        ("kelvin.tex", "measured 5 \u{212A} today\n"),
+    ] {
+        fs::write(root.join(file), text).unwrap();
+    }
+    // The one hit, as "file:line before[match]after".
+    let hit = |query: &str| {
+        let hits = search_project(&root, query, 50).unwrap();
+        assert_eq!(hits.len(), 1, "{query}");
+        let hit = &hits[0];
+        let (file, line) = (&hit.file, hit.line);
+        format!("{file}:{line} {}[{}]{}", hit.before, hit.matched, hit.after)
+    };
+    assert_eq!(hit("theorem"), "ascii.tex:2 The [THEOREM] holds");
+    assert_eq!(hit("école"), "accents.tex:1 L'[ÉCOLE] Normale");
     assert!(search_project(&root, "zzz", 50).unwrap().is_empty());
-    // An ASCII match in a file that also contains Unicode.
-    fs::write(root.join("mixed.tex"), "Café\nsee Lemma 3\n").unwrap();
-    let hits = search_project(&root, "lemma", 50).unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].line, 2);
-    assert_eq!(hits[0].before, "see ");
-    assert_eq!(hits[0].matched, "Lemma");
+    assert_eq!(hit("lemma"), "mixed.tex:2 see [Lemma] 3");
     // After characters of several bytes, and one whose lowercase is two
     // characters, the snippet still cuts at the match.
-    fs::write(root.join("wide.tex"), "Çà İstanbul, GRÖSSE und Größe\n").unwrap();
-    let hits = search_project(&root, "größe", 50).unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].before, "Çà İstanbul, GRÖSSE und ");
-    assert_eq!(hits[0].matched, "Größe");
-    // A hit carries the text either side of it.
-    fs::write(root.join("quick.tex"), "the quick brown fox jumps\n").unwrap();
-    let hits = search_project(&root, "brown", 50).unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].before, "the quick ");
-    assert_eq!(hits[0].matched, "brown");
-    assert_eq!(hits[0].after, " fox jumps");
+    assert_eq!(hit("größe"), "wide.tex:1 Çà İstanbul, GRÖSSE und [Größe]");
+    assert_eq!(hit("brown"), "quick.tex:1 the quick [brown] fox jumps");
     // U+0130 and the Kelvin sign both lowercase into plain ASCII.
-    fs::write(root.join("kelvin.tex"), "measured 5 \u{212A} today\n").unwrap();
     let files = |query: &str| -> Vec<String> {
         let hits = search_project(&root, query, 50).unwrap();
         hits.into_iter().map(|hit| hit.file).collect()
@@ -441,8 +416,7 @@ fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
 /// units of the line as written, not of its lowercased copy.
 #[test]
 fn a_hit_places_its_match_in_utf16_units_of_the_line() {
-    let data = data_dir();
-    let root = project(data.path(), "search-place");
+    let (_data, root) = project("search-place");
     let hit = |text: &str, query: &str| {
         fs::write(root.join("main.tex"), text).unwrap();
         let mut hits = search_project(&root, query, 50).unwrap();
@@ -466,8 +440,7 @@ fn a_hit_places_its_match_in_utf16_units_of_the_line() {
 /// so search and the symbol scan must see it too.
 #[test]
 fn only_the_top_level_build_folder_stays_out_of_the_scans() {
-    let data = data_dir();
-    let root = project(data.path(), "build-scans");
+    let (_data, root) = project("build-scans");
     fs::create_dir_all(root.join("build")).unwrap();
     fs::write(root.join("build/main.tex"), "needle \\label{gen:one}\n").unwrap();
     fs::write(root.join("build/main.log"), "needle in the build dir").unwrap();
@@ -479,10 +452,8 @@ fn only_the_top_level_build_folder_stays_out_of_the_scans() {
     .unwrap();
 
     let hits = search_project(&root, "needle", 10).unwrap();
-    assert_eq!(
-        hits.iter().map(|h| h.file.as_str()).collect::<Vec<_>>(),
-        vec!["chapters/build/notes.tex"],
-    );
+    let files: Vec<_> = hits.iter().map(|h| h.file.as_str()).collect();
+    assert_eq!(files, ["chapters/build/notes.tex"]);
     let labels = scan_symbols(&root).unwrap().labels;
     assert!(labels.contains(&"deep:one".to_string()));
     assert!(!labels.contains(&"gen:one".to_string()));
@@ -490,8 +461,7 @@ fn only_the_top_level_build_folder_stays_out_of_the_scans() {
 
 #[test]
 fn the_build_folder_name_is_reserved_at_the_top_in_any_case() {
-    let data = data_dir();
-    let root = project(data.path(), "reserved-build");
+    let (_data, root) = project("reserved-build");
     create_file(&root, "figs/a.png", false).unwrap();
     fails_with(create_file(&root, "build", true), "compiled PDF");
     fails_with(create_file(&root, "BUILD/x.tex", false), "compiled PDF");
@@ -505,20 +475,14 @@ fn the_build_folder_name_is_reserved_at_the_top_in_any_case() {
 
 #[test]
 fn a_project_is_dated_by_its_newest_file() {
-    let data = data_dir();
-    let root = project(data.path(), "dated");
+    let (data, root) = project("dated");
     // Saving a file in place leaves its folder's date alone.
     let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
-    let main = fs::File::options()
-        .write(true)
-        .open(root.join("main.tex"))
-        .unwrap();
-    main.set_modified(later).unwrap();
-    let expected = later
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    assert_eq!(list_projects(data.path()).unwrap()[0].mtime, expected);
+    let main = fs::File::options().write(true).open(root.join("main.tex"));
+    main.unwrap().set_modified(later).unwrap();
+    let since = later.duration_since(std::time::UNIX_EPOCH).unwrap();
+    let mtime = list_projects(data.path()).unwrap()[0].mtime;
+    assert_eq!(mtime, since.as_millis() as u64);
 }
 
 #[test]
@@ -526,8 +490,7 @@ fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
     // Plenty of .bib and .tex files are still Latin-1. A Unicode-mode pattern
     // run over the raw bytes cannot step across 0xFC and drops the whole entry
     // containing it; decoding the file first keeps it, lossily.
-    let data = data_dir();
-    let root = project(data.path(), "latin1");
+    let (_data, root) = project("latin1");
     let mut bib = b"@article{m".to_vec();
     bib.push(0xFC); // 'u-umlaut' in ISO-8859-1; invalid on its own as UTF-8
     bib.extend_from_slice(b"ller2020,\n  title={x}\n}\n@article{ok2021,\n  title={y}\n}\n");
@@ -547,43 +510,19 @@ fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
     )
     .unwrap();
 
-    let found = scan_symbols(&root).unwrap();
-    assert!(
-        found.citations.iter().any(|c| c.contains("ller2020")),
-        "the entry carrying the byte was dropped: {:?}",
-        found.citations
-    );
-    assert!(
-        found.citations.contains(&"Smith2020".to_string()),
-        "a non-breaking space was swallowed into the key: {:?}",
-        found.citations
-    );
-    assert!(
-        found.citations.contains(&"Jones2021".to_string()),
-        "an entry was dropped over a non-breaking space: {:?}",
-        found.citations
-    );
-    assert!(
-        found.citations.contains(&"ok2021".to_string()),
-        "{:?}",
-        found.citations
-    );
-    assert!(
-        found.labels.iter().any(|l| l.contains("ller")),
-        "the label carrying the byte was dropped: {:?}",
-        found.labels
-    );
-    assert!(
-        found.labels.contains(&"fig:ok".to_string()),
-        "{:?}",
-        found.labels
-    );
+    // In file-name order: pasted.bib, then refs.bib. The byte's entries are
+    // kept, however it decodes.
+    let Symbols { citations, labels } = scan_symbols(&root).unwrap();
+    assert_eq!(citations.len(), 4, "{citations:?}");
+    assert_eq!(citations[..2], ["Smith2020", "Jones2021"]);
+    assert!(citations[2].contains("ller2020") && citations[3] == "ok2021");
+    assert_eq!(labels.len(), 2, "{labels:?}");
+    assert!(labels[0].contains("ller") && labels[1] == "fig:ok");
 }
 
 #[test]
 fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
-    let data = data_dir();
-    let root = project(data.path(), "bibitems");
+    let (_data, root) = project("bibitems");
     fs::write(
         root.join("main.tex"),
         "\\label{kept} % \\label{old}\n% \\bibitem{gone}\n50\\% \\label{after-percent} \\label{fig:}\n\
@@ -596,17 +535,13 @@ fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
 
     // Files come in name order, and a repeated symbol keeps its first place.
     fs::remove_file(root.join("main.tex")).unwrap();
-    fs::write(
-        root.join("z.tex"),
-        "\\label{shared}\\label{last}\\bibitem{two}",
-    )
-    .unwrap();
-    fs::write(
-        root.join("a.tex"),
-        "\\label{first}\\label{shared}\\bibitem{one}",
-    )
-    .unwrap();
-    fs::write(root.join("refs.bib"), "@article{one,}\n@article{two,}").unwrap();
+    for (file, text) in [
+        ("z.tex", "\\label{shared}\\label{last}\\bibitem{two}"),
+        ("a.tex", "\\label{first}\\label{shared}\\bibitem{one}"),
+        ("refs.bib", "@article{one,}\n@article{two,}"),
+    ] {
+        fs::write(root.join(file), text).unwrap();
+    }
     let found = scan_symbols(&root).unwrap();
     assert_eq!(found.labels, ["first", "shared", "last"]);
     assert_eq!(found.citations, ["one", "two"]);
@@ -614,8 +549,7 @@ fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
 
 #[test]
 fn the_file_tree_lists_folders_first_then_names_ignoring_case() {
-    let data = data_dir();
-    let root = project(data.path(), "tree-order");
+    let (_data, root) = project("tree-order");
     for file in ["c.tex", "B.tex", "Zeta/z.tex", "beta/y.tex", ".hidden.tex"] {
         create_file(&root, file, false).unwrap();
     }
@@ -639,34 +573,6 @@ fn rel_to_root_maps_tool_output_back_into_the_project() {
     assert_eq!(rel_to_root(root, Path::new("/data/PQ/a.tex")), None);
 }
 
-#[test]
-fn a_settings_write_returns_what_a_later_read_sees() {
-    let data = data_dir();
-    let root = project(data.path(), "settings-echo");
-    fs::write(
-        root.join(".texlocal.json"),
-        r#"{ "engine": 3, "custom": "kept" }"#,
-    )
-    .unwrap();
-    let written: Settings = write_settings(&root, &json!({ "shellEscape": true })).unwrap();
-    let read = read_settings(&root);
-    assert_eq!(
-        (&written.main_file, &written.engine, written.shell_escape),
-        (&read.main_file, &read.engine, read.shell_escape)
-    );
-    // The mistyped engine reads as the default; the unknown key survives.
-    assert_eq!(read.engine, "pdflatex");
-    assert!(read.shell_escape);
-    let raw: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(root.join(".texlocal.json")).unwrap()).unwrap();
-    assert_eq!(raw["custom"], "kept");
-
-    write_settings(&root, &json!({ "mainFile": "main.tex" })).unwrap();
-    let listed = list_projects(data.path()).unwrap();
-    assert_eq!(listed[0].id, "settings-echo");
-    assert_eq!(listed[0].main_file, "main.tex");
-}
-
 #[cfg(unix)]
 #[test]
 fn a_new_project_never_lands_on_an_existing_entry_even_a_dangling_link() {
@@ -680,17 +586,13 @@ fn a_new_project_never_lands_on_an_existing_entry_even_a_dangling_link() {
 #[test]
 fn new_projects_are_named_sanitized_and_stocked_with_a_template() {
     let data = data_dir();
-    fails_with(
-        create_project(data.path(), ".hidden", "blank"),
-        "Invalid name",
-    );
-    fails_with(create_project(data.path(), "   ", "blank"), "Invalid name");
+    for bad in [".hidden", "   "] {
+        fails_with(create_project(data.path(), bad, "blank"), "Invalid name");
+    }
     // A taken name gets the first free number, so a second Untitled works.
     for want in ["Untitled", "Untitled 2", "Untitled 3"] {
-        assert_eq!(
-            create_project(data.path(), "Untitled", "blank").unwrap().id,
-            want
-        );
+        let made = create_project(data.path(), "Untitled", "blank").unwrap();
+        assert_eq!(made.id, want);
     }
     let info = create_project(data.path(), "  Thesis  ", "report").unwrap();
     assert_eq!((info.id.as_str(), info.name.as_str()), ("Thesis", "Thesis"));
@@ -700,11 +602,8 @@ fn new_projects_are_named_sanitized_and_stocked_with_a_template() {
         names_in(&root),
         [".texlocal.json", "main.tex", "references.bib"]
     );
-    assert!(
-        fs::read_to_string(root.join("main.tex"))
-            .unwrap()
-            .contains("{report}")
-    );
+    let main = fs::read_to_string(root.join("main.tex")).unwrap();
+    assert!(main.contains("{report}"));
 }
 
 #[cfg(unix)]
@@ -713,14 +612,10 @@ fn the_tree_scans_and_zip_follow_only_links_to_files_inside_the_project_however_
     // A link to a file inside is content. One to a folder, outside, broken or
     // in a loop is not, and must not turn the tree, the scans or the ZIP
     // export into an error, however the project's folder is reached.
-    let data = data_dir();
-    let root = project(data.path(), "links");
+    let (data, root) = project("links");
     let outside = tempfile::tempdir().unwrap();
-    fs::write(
-        outside.path().join("secret.tex"),
-        "needle\n\\label{outside-secret}\n",
-    )
-    .unwrap();
+    let secret = outside.path().join("secret.tex");
+    fs::write(&secret, "needle\n\\label{outside-secret}\n").unwrap();
     fs::write(root.join("source.txt"), "needle \\label{linked}").unwrap();
     fs::create_dir(root.join("figures")).unwrap();
     fs::write(root.join("figures/a.txt"), "figure").unwrap();
@@ -728,7 +623,7 @@ fn the_tree_scans_and_zip_follow_only_links_to_files_inside_the_project_however_
         std::os::unix::fs::symlink(target, root.join(name)).unwrap();
     };
     link(&root.join("source.txt"), "linked.tex");
-    link(&outside.path().join("secret.tex"), "external.tex");
+    link(&secret, "external.tex");
     link(&root.join("figures"), "linked-dir");
     link(&root, "loop");
     link(&root.join("gone.tex"), "broken.tex");
@@ -741,11 +636,8 @@ fn the_tree_scans_and_zip_follow_only_links_to_files_inside_the_project_however_
         let tree = file_tree(base).unwrap();
         let top: Vec<_> = tree.iter().map(|n| n.path.as_str()).collect();
         assert_eq!(top, ["figures", "linked.tex", "main.tex", "source.txt"]);
-        let mut hits: Vec<_> = search_project(base, "needle", 10)
-            .unwrap()
-            .into_iter()
-            .map(|hit| hit.file)
-            .collect();
+        let hits = search_project(base, "needle", 10).unwrap();
+        let mut hits: Vec<_> = hits.into_iter().map(|hit| hit.file).collect();
         hits.sort();
         assert_eq!(hits, ["linked.tex", "source.txt"]);
         assert_eq!(scan_symbols(base).unwrap().labels, ["linked"]);

@@ -186,12 +186,8 @@ mod tests {
         fs::set_permissions(&target, fs::Permissions::from_mode(0o640)).unwrap();
         std::os::unix::fs::symlink(&target, &link).unwrap();
         write(&link, b"new").unwrap();
-        assert!(
-            fs::symlink_metadata(&link)
-                .unwrap()
-                .file_type()
-                .is_symlink()
-        );
+        let kind = fs::symlink_metadata(&link).unwrap().file_type();
+        assert!(kind.is_symlink());
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
         assert_eq!(mode(&target), 0o640);
 

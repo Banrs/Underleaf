@@ -4,6 +4,7 @@
 //! project.
 
 use std::fs;
+use std::io::ErrorKind::{NotADirectory, NotFound};
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::CoreError;
@@ -49,12 +50,7 @@ fn ensure_existing_ancestor_within(
         match fs::symlink_metadata(existing) {
             Ok(_) => break,
             // A file where the path wants a folder ends the path there too.
-            Err(err)
-                if matches!(
-                    err.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                ) =>
-            {
+            Err(err) if matches!(err.kind(), NotFound | NotADirectory) => {
                 existing = existing
                     .parent()
                     .ok_or_else(|| CoreError::bad_request(escape_err))?;
