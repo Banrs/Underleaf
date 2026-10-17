@@ -78,21 +78,6 @@ pub struct Symbol {
     pub command: String,
 }
 
-/// What a host's menus are made from.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Menus<'a> {
-    pub templates: &'a Templates,
-    pub symbol_groups: &'a [SymbolGroup],
-}
-
-pub fn menus() -> Menus<'static> {
-    Menus {
-        templates: &CATALOG.templates,
-        symbol_groups: &CATALOG.symbol_groups,
-    }
-}
-
 pub static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
     serde_json::from_str(include_str!("catalog.json")).expect("catalog.json is valid")
 });
