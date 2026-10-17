@@ -64,8 +64,6 @@ struct FormatPanel: View {
     @FocusState private var focused: String?
     /// The level under the pointer or last reached by the arrow keys, as a menu's highlight.
     @State private var highlighted: String?
-    /// Set while the caret's level is given the keyboard on opening, which isn't a move to highlight.
-    @State private var seeding = false
     /// The selection's, read again as the text or the selection changes.
     @State private var styles = TextStyles()
 
@@ -113,16 +111,11 @@ struct FormatPanel: View {
             return .handled
         }
         // At the caret's level, as a pop-up menu opens at its item.
-        .onAppear {
-            seeding = levels.contains(current)
-            focused = current
-        }
+        .onAppear { focused = current }
+        // A key that moves the keyboard's focus (Tab) highlights where it went; the focus the popover hands out as it
+        // opens, to its first level and then the caret's, comes with the click on Aa and highlights nothing.
         .onChange(of: focused) { _, level in
-            if seeding {
-                seeding = false
-            } else {
-                highlighted = level
-            }
+            if NSApp.currentEvent?.type == .keyDown { highlighted = level }
         }
         .onChange(of: project.editor.changes.count, initial: true) {
             styles = project.editor.textStyles
