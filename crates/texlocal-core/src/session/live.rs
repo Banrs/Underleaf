@@ -4,6 +4,7 @@
 //! hands them on as events.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -14,10 +15,13 @@ use super::Msg;
 use super::actor::{Actor, Later};
 use crate::CoreError;
 use crate::projects::file_kind;
-use crate::texpresso::{Caret, Events, FileBuffer, Pane, Status};
+use crate::texpresso::{Events, FileBuffer, Pane, Status};
 
 const DIDNT_START: &str =
     "TeXpresso didn’t start. Check its location in Settings and the log below.";
+/// The Live Preview Log follows TeX's at most this often: its whole text is copied, sent and
+/// laid out again each time, beside pages that must land within a frame.
+const LOG_EVERY: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -37,8 +41,9 @@ pub(crate) struct Live {
     pub owns: bool,
     /// Paths to send whole: None for the document's own text when sent, else a file's text from disk.
     pub pending: BTreeMap<String, Option<String>>,
-    /// Paths TeXpresso has as the session has them, so a key's edit fits its copy.
-    pub synced: HashSet<String>,
+    /// Paths TeXpresso has a text of. It keeps them through a rescan: only a new start drops
+    /// one whose file went.
+    synced: HashSet<String>,
     /// The version of each document last sent whole: edits up to it are in that text.
     sent: HashMap<String, u64>,
     rejected: BTreeMap<String, String>,
@@ -49,6 +54,8 @@ pub(crate) struct Live {
     revision: u64,
     /// The host shows the Live Preview Log: the `live` event carries it.
     log_shown: bool,
+    /// When the log is next sent, since TeX's changed.
+    pub log_at: Option<Instant>,
     pub halted: bool,
     pub halting_at: Option<Instant>,
     started: Option<Instant>,
@@ -66,7 +73,7 @@ pub(crate) struct Live {
     pub intent: u64,
     /// TeXpresso's own window shows the document, as the user's Start asked: the host's pane
     /// gets none, and TeXpresso is told no view or caret.
-    pub window: bool,
+    window: bool,
     listen_seq: u64,
     listener: Option<AbortHandle>,
     version: u64,
@@ -79,11 +86,10 @@ impl Live {
         matches!(self.phase, Phase::Starting | Phase::Running)
     }
 
-    /// Whether a key's edit or a caret at `path` fits the copy TeXpresso has.
+    /// Whether a key's edit or a caret at `path` may go to TeXpresso as it is: no whole text
+    /// is waiting to go before it. One its copy can't take is refused (412).
     fn fits(&self, path: &str) -> bool {
-        self.phase == Phase::Running
-            && self.synced.contains(path)
-            && !self.pending.contains_key(path)
+        self.phase == Phase::Running && !self.pending.contains_key(path)
     }
 
     fn errors(&self) -> Vec<String> {
@@ -164,7 +170,8 @@ impl Actor {
         live.synced.clear();
         live.sent.clear();
         (live.halted, live.started, live.sent_view, live.caret) = (false, None, None, None);
-        live.version = 0;
+        // Each start's revisions begin again.
+        (live.version, live.revision) = (0, 0);
     }
 
     pub fn live_cancel_work(&mut self) {
@@ -179,7 +186,7 @@ impl Actor {
             // Another window's preview now: nothing more is sent.
             self.live.owns = false;
             self.live_cancel_work();
-            self.ended(false);
+            self.ended();
         }
         self.report();
     }
@@ -188,22 +195,33 @@ impl Actor {
     fn give_up(&mut self, error: CoreError) {
         self.fail(error);
         if self.live.phase != Phase::Stopped {
-            self.ended(false);
+            self.ended();
         }
     }
 
-    fn ended(&mut self, restartable: bool) {
+    fn ended(&mut self) {
         self.live.phase = Phase::Stopped;
         self.live_reset();
         self.live.rejected.clear();
         self.live.document_seen = false;
         self.publish_live(false);
-        if !self.closed {
-            if restartable {
-                self.later.push_back(Later::Restart { ended: true });
-            } else if self.auto_compile {
-                self.later.push_back(Later::Compile(true));
-            }
+        if !self.closed && self.auto_compile {
+            self.later.push_back(Later::Compile(true));
+        }
+    }
+
+    /// A preview that ended for the session to start again, at once (`now`) or when its
+    /// `restart_at` comes. It stays `starting` meanwhile: a host that saw it stop would show
+    /// the build's PDF in place of the live document until the new run's first one came.
+    fn restarting(&mut self, now: bool) {
+        if self.closed {
+            return self.ended();
+        }
+        self.live.phase = Phase::Starting;
+        self.live_reset();
+        self.publish_live(false);
+        if now {
+            self.later.push_back(Later::Restart { ended: true });
         }
     }
 
@@ -219,16 +237,26 @@ impl Actor {
         }
         self.report();
         if !running {
-            self.ended(false);
+            self.ended();
         }
+    }
+
+    /// The user's Start, `window` choosing TeXpresso's own window. A restart still pending
+    /// gives way to it: it would stop the preview this starts.
+    pub fn live_start_asked(&mut self, window: bool) -> Value {
+        if self.live.phase == Phase::Stopped {
+            self.live_cancel_work();
+            self.live.window = window;
+            self.live_start(false);
+        }
+        self.live_state()
     }
 
     /// Whether a start was tried: `replacing` restarts the preview this session owns.
     pub fn live_start(&mut self, replacing: bool) -> bool {
-        let phase = self.live.phase;
         if self.closed
-            || !replacing && phase != Phase::Stopped
-            || replacing && (phase == Phase::Stopping || !self.live.owns)
+            || !replacing && self.live.phase != Phase::Stopped
+            || replacing && !self.live.owns
         {
             return false;
         }
@@ -251,7 +279,7 @@ impl Actor {
         let caret = self.live.wanted.clone().filter(|_| !self.live.window);
         let pane = (!self.live.window).then(|| Pane {
             view: self.live.view,
-            caret: caret.clone().map(|(path, offset)| Caret { path, offset }),
+            caret: caret.clone(),
         });
         let start = self
             .engine
@@ -275,13 +303,13 @@ impl Actor {
     }
 
     pub fn live_restart(&mut self, ended: bool) {
-        let tried = self.live_start(true);
-        if ended {
-            if self.live.active() {
+        if self.live_start(true) {
+            if ended && self.live.active() {
                 self.emit("live_restarted", json!({}));
-            } else if !tried && self.auto_compile {
-                self.later.push_back(Later::Compile(true));
             }
+        } else if self.live.phase != Phase::Stopped {
+            // A restart that can't be tried leaves no preview to wait for.
+            self.ended();
         }
     }
 
@@ -304,7 +332,7 @@ impl Actor {
             }
         }
         if self.live.phase != Phase::Stopped {
-            self.ended(false);
+            self.ended();
         }
     }
 
@@ -330,9 +358,7 @@ impl Actor {
                 Ok(()) => return,
                 Err(error) if error.status == 409 => return self.fail(error),
                 // Refused, so the copy is a step behind: the whole text puts it right, or says why not.
-                Err(_) => {
-                    self.live.synced.remove(path);
-                }
+                Err(_) => {}
             }
         }
         self.live.pending.insert(path.to_owned(), None);
@@ -342,7 +368,6 @@ impl Actor {
     /// A document's whole text is to go: it opened, or the disk's replaced it.
     pub fn live_whole(&mut self, path: &str) {
         if self.live.active() && !self.closed {
-            self.live.synced.remove(path);
             self.live.pending.insert(path.to_owned(), None);
             self.later.push_back(Later::FlushLive);
         }
@@ -376,9 +401,7 @@ impl Actor {
                     if let Some(version) = version {
                         self.live.sent.insert(path.clone(), version);
                     }
-                    if !self.live.pending.contains_key(&path) {
-                        self.live.synced.insert(path);
-                    }
+                    self.live.synced.insert(path);
                     self.publish_live(false);
                 }
                 // This text can't be taken, whenever it is sent: its error stays until the file is edited.
@@ -477,7 +500,6 @@ impl Actor {
             if is_text_file(&path)
                 && let Ok(bytes) = std::fs::read(self.root.join(&path))
             {
-                self.live.synced.remove(&path);
                 let text = crate::lossy_string(bytes);
                 self.live.pending.insert(path, Some(text));
             }
@@ -525,7 +547,10 @@ impl Actor {
         };
         if events.revision > self.live.revision {
             self.live.revision = events.revision;
-            self.publish_live(false);
+            if self.live.log_shown {
+                let at = Instant::now() + LOG_EVERY;
+                self.live.log_at.get_or_insert(at);
+            }
         }
         let run = events.done.as_ref().map(|done| done.run.as_str());
         let run = run.or(events.pdf.as_ref().and_then(|pdf| pdf.run.as_deref()));
@@ -566,12 +591,23 @@ impl Actor {
                     .live
                     .started
                     .is_some_and(|at| at.elapsed() > self.t.restartable_after);
-            if !restartable && let Some(error) = &events.error {
+            // A rename, a new main file or a file gone stopped it, to start again after.
+            let planned = self.live.restart_at.is_some();
+            if restartable || planned {
+                return self.restarting(restartable);
+            }
+            if let Some(error) = &events.error {
                 self.live.failure = Some(error.clone());
                 self.report();
             }
-            self.ended(restartable);
+            self.ended();
         }
+    }
+
+    /// TeX's log changed while the host shows it: it goes with the next `live` event.
+    pub fn log_due(&mut self) {
+        self.live.log_at = None;
+        self.publish_live(false);
     }
 
     /// A brace or a dollar half typed stops TeX for a moment at every other key,

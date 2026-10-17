@@ -240,10 +240,18 @@ async fn run(library: &Path) {
         )
         .await;
     let broken = unicode.replace("Unsaved café", "\\UnderleafInvalidCommand\nUnsaved café");
+    let mut from = client.events.lock().unwrap().len();
     retype(&main_doc, &broken);
     client
         .shows(a, "! Undefined control sequence", "A LaTeX error")
         .await;
+    // The log the host shows follows TeX's by itself, as the `live` event carries it.
+    let error = |e: &Value| {
+        e["log"]
+            .as_str()
+            .is_some_and(|log| log.contains("! Undefined"))
+    };
+    client.event(&mut from, a, "live", error).await;
     let recovered = unicode.replace("UL_MAIN_UNSAVED", "UL_MAIN_RECOVERED");
     retype(&main_doc, &recovered);
     client
@@ -299,11 +307,16 @@ async fn run(library: &Path) {
         std::fs::create_dir_all(root.join("nested")).unwrap();
         std::fs::write(root.join(path), text).unwrap();
     }
+    // It stays `starting` meanwhile: a host told it stopped would show the build's PDF.
+    let restarted = client.events.lock().unwrap().len();
     let nested = json!({ "patch": { "mainFile": "nested/main.tex" } });
     client.ask(a, "set_settings", nested).await;
     client
         .shows(a, "UL_NESTED_SECTION", "A nested main file's input")
         .await;
+    let phases = client.since(restarted, "live");
+    let stopped = phases.iter().find(|e| e["phase"] == "stopped");
+    assert!(stopped.is_none(), "{stopped:?}");
     let nested_doc = client.document(a, "nested/section.tex").await;
     retype(
         &nested_doc,
