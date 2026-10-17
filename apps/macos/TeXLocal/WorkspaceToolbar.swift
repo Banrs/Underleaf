@@ -433,9 +433,29 @@ private final class CompileHost: NSHostingView<CompileButton> {
     private lazy var word = NSHostingView(rootView: CompileButton(compiling: false, compact: false, enabled: true) {})
         .intrinsicContentSize.width
 
+    /// The toolbar places an item at its least width before its own (27.2), so the first width after it is placed is
+    /// judged a turn later.
+    private var placed = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Into the toolbar, or back from its overflow menu: there may be room for the word.
+        placed = false
+        offerWord()
+    }
+
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        if !rootView.compact, newSize.width < word - 0.5 { rootView.compact = true }
+        if placed {
+            fold()
+        } else {
+            placed = true
+            Task { [weak self] in self?.fold() }
+        }
+    }
+
+    private func fold() {
+        if !rootView.compact, frame.width < word - 0.5 { rootView.compact = true }
     }
 
     func offerWord() {
