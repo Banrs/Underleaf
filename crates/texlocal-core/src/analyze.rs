@@ -33,7 +33,6 @@ static TITLE_STYLE: LazyLock<Regex> = LazyLock::new(|| {
 });
 // Grouping braces go; an escaped special shows as itself.
 static TITLE_BRACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([{}&%$#_])|[{}]").unwrap());
-static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
 
 /// A sectioning command: its depth (0 for \part to 5 for \paragraph),
 /// command and level, its title as plain text, its 1-based line and, in a
@@ -289,21 +288,15 @@ fn plain_title(title: &str) -> Option<String> {
     title.push_str(rest);
     let title = TITLE_STYLE.replace_all(&title, "");
     let title = TITLE_BRACE.replace_all(&title, "$1");
-    match SPACES.replace_all(&title, " ").trim_matches(' ') {
-        "" => None,
-        title => Some(title.into()),
-    }
+    let title: Vec<_> = title.split_whitespace().collect();
+    (!title.is_empty()).then(|| title.join(" "))
 }
 
 /// Rough word count of a line's code, up to its comment: drop commands (with
 /// a star and an optional argument) and TeX's special characters, and count
 /// the runs left that contain a letter.
 fn words(line: &str) -> usize {
-    let bytes = line.as_bytes();
-    let end = (0..bytes.len())
-        .find(|&i| bytes[i] == b'%' && (i == 0 || bytes[i - 1] != b'\\'))
-        .unwrap_or(bytes.len());
-    let (mut rest, mut count, mut letter) = (&line[..end], 0, false);
+    let (mut rest, mut count, mut letter) = (headings::uncommented(line), 0, false);
     while let Some(c) = rest.chars().next() {
         rest = &rest[c.len_utf8()..];
         if c == '\\' {
@@ -424,7 +417,12 @@ mod tests {
                 &[],
                 6,
             ),
-            ("one two % three four\n50\\% off % really", &[], 3),
+            // A line break, \\, before a % doesn't escape it.
+            (
+                "one two % three four\n50\\% off % really\nend\\\\% gone",
+                &[],
+                4,
+            ),
             ("x^2 + y_1 = $a$ and~b & c{d}e \\x*[y] z", &[], 9),
             ("123 456 7.5 foo123 [a", &[], 2),
             ("Café naïve Ελληνικά Русский 中文 123 \\é", &[], 6),

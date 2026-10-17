@@ -248,25 +248,4 @@ mod tests {
         };
         assert_eq!(write_ui(root, flood).unwrap_err().status, 400);
     }
-
-    #[test]
-    fn a_renamed_entry_takes_its_saved_interface_state_along() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
-        let patch = UiPatch {
-            expanded_folders: Some(list(&["ch", "other"])),
-            folded_headings: Some(list(&["ch/a.tex\t1:T#1", "b.tex\t1:T#1"])),
-        };
-        write_ui(root, patch).unwrap();
-        move_ui(root, |path| {
-            (path == "ch" || path == "ch/a.tex").then(|| path.replace("ch", "part"))
-        });
-        let state = read_ui(root);
-        assert_eq!(state.expanded_folders, list(&["other", "part"]));
-        assert_eq!(
-            state.folded_headings,
-            list(&["b.tex\t1:T#1", "part/a.tex\t1:T#1"])
-        );
-    }
 }

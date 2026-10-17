@@ -22,20 +22,33 @@ pub struct DocumentClass {
     pub point_size: u32,
 }
 
-/// A comment, from a % that isn't escaped to the line's end, however the line ends.
-static COMMENT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new("(?m)(^|[^\\\\])%[^\n\r\u{85}\u{2028}\u{2029}]*").unwrap());
 static CLASS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\\documentclass\s*(?:\[([^\]]*)\])?\s*\{\s*([^}\s]+)\s*\}").unwrap()
 });
+
+/// A line of TeX without its comment, which starts at the first % that no
+/// backslash escapes (`\%` is a percent sign, `\\%` a line break and a comment).
+pub(crate) fn uncommented(line: &str) -> &str {
+    let mut escaped = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '%' if !escaped => return &line[..i],
+            '\\' => escaped = !escaped,
+            _ => escaped = false,
+        }
+    }
+    line
+}
 
 /// The class named outside comments, if any. LaTeX takes it in the
 /// preamble, so the text up to the first `\begin{document}` after a class
 /// is named is read first, and the whole only when that has none.
 pub fn document_class(text: &str) -> Option<DocumentClass> {
     let named = |text: &str| {
-        let uncommented = COMMENT.replace_all(text, "$1");
-        let c = CLASS.captures(&uncommented)?;
+        // A comment ends at any line break; to CLASS, every break is a space.
+        let lines = text.split(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}']);
+        let code = lines.map(uncommented).collect::<Vec<_>>().join("\n");
+        let c = CLASS.captures(&code)?;
         // KOMA-Script's fontsize=11pt as well as the standard 11pt.
         let options = c.get(1).map_or("", |o| o.as_str()).replace("fontsize=", "");
         let sizes: Vec<&str> = options.split(',').map(str::trim).collect();

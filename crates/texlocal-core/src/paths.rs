@@ -95,8 +95,9 @@ fn check_reserved<S: AsRef<str>>(segments: &[S], write: bool) -> Result<(), Core
     Ok(())
 }
 
-/// The normalized segments of a user path, which name something in the project.
-fn user_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
+/// The normalized segments of a user path, which name something in the
+/// project other than a reserved name.
+fn user_segments(rel: &str, write: bool) -> Result<Vec<&str>, CoreError> {
     if rel.is_empty() {
         return Err(CoreError::bad_request("Missing path"));
     }
@@ -104,6 +105,7 @@ fn user_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     if segments.is_empty() {
         return Err(CoreError::bad_request("Path escapes project"));
     }
+    check_reserved(&segments, write)?;
     Ok(segments)
 }
 
@@ -112,8 +114,7 @@ fn user_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
 /// target's own path is. Also where the path physically leads, relative to
 /// the resolved root.
 fn join_within(root: &Path, rel: &str, write: bool) -> Result<(PathBuf, PathBuf), CoreError> {
-    let segments = user_segments(rel)?;
-    check_reserved(&segments, write)?;
+    let segments = user_segments(rel, write)?;
     let mut abs = root.to_path_buf();
     abs.extend(&segments);
     let physical = physical_within(root, &abs, "Path escapes project")?;
@@ -130,7 +131,7 @@ pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
 /// `safe_path` for a path about to be created or written, which may not be
 /// in the top-level `build` folder, nor lead into it through a link.
 pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
-    Ok(write_paths(root, rel)?.0)
+    Ok(join_within(root, rel, true)?.0)
 }
 
 /// `safe_write_path`, and where the write physically lands, through any link
@@ -181,9 +182,7 @@ pub(crate) fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
 /// disk: pair it with `safe_path`, and use `safe_rel_file` for anything that
 /// reaches a command line.
 pub fn rel_key(rel: &str) -> Result<String, CoreError> {
-    let segments = user_segments(rel)?;
-    check_reserved(&segments, false)?;
-    Ok(segments.join("/"))
+    Ok(user_segments(rel, false)?.join("/"))
 }
 
 /// A path inside the project in a form safe to hand to a command line:

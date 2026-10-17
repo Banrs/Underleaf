@@ -23,6 +23,7 @@ use crate::paths::{
     after_entry, fold_case, project_root, rel_key, safe_path, safe_write_path, sanitize_name,
 };
 use crate::settings::{move_ui, read_settings, write_settings};
+use crate::syntax::headings::uncommented;
 use crate::templates;
 
 #[derive(Debug, Clone, Serialize)]
@@ -172,20 +173,25 @@ fn tree(root: &Path, dir: &Path, prefix: &str) -> Result<Vec<TreeNode>, CoreErro
     Ok(nodes)
 }
 
+impl TreeNode {
+    /// Every node of a tree, folders and files, at every depth.
+    fn all(tree: &[Self]) -> impl Iterator<Item = &Self> {
+        let mut stack: Vec<&Self> = tree.iter().collect();
+        std::iter::from_fn(move || {
+            let node = stack.pop()?;
+            stack.extend(node.children.iter().flatten());
+            Some(node)
+        })
+    }
+}
+
 /// The canonical root and the project paths of its content files.
 fn content_files(root: &Path) -> Result<(PathBuf, Vec<String>), CoreError> {
-    fn files(nodes: Vec<TreeNode>, out: &mut Vec<String>) {
-        for node in nodes {
-            match node.children {
-                Some(children) => files(children, out),
-                None => out.push(node.path),
-            }
-        }
-    }
     let root = dunce::canonicalize(root)?;
-    let mut out = Vec::new();
-    files(tree(&root, &root, "")?, &mut out);
-    Ok((root, out))
+    let nodes = tree(&root, &root, "")?;
+    let files = TreeNode::all(&nodes).filter(|node| node.children.is_none());
+    let files = files.map(|node| node.path.clone()).collect();
+    Ok((root, files))
 }
 
 /// A project's date as the library shows it: the newest of its folders' and top-level
@@ -193,25 +199,17 @@ fn content_files(root: &Path) -> Result<(PathBuf, Vec<String>), CoreError> {
 /// place and so moves its folder's date; a file saved in place by another app moves only
 /// its own, and in a subfolder shows once anything else moves a folder's date.
 pub(crate) fn project_info(name: String, root: &Path, meta: &fs::Metadata) -> ProjectInfo {
-    fn newest(root: &Path, nodes: &[TreeNode], top: bool) -> u64 {
+    let below = dunce::canonicalize(root).ok().and_then(|real| {
+        let nodes = tree(&real, &real, "").ok()?;
+        let dated = TreeNode::all(&nodes).filter(|n| n.children.is_some() || !n.path.contains('/'));
         let date =
-            |node: &TreeNode| fs::metadata(root.join(&node.path)).map_or(0, |m| mtime_ms(&m));
-        let dates = nodes.iter().map(|node| match &node.children {
-            Some(children) => date(node).max(newest(root, children, false)),
-            None if top => date(node),
-            None => 0,
-        });
-        dates.max().unwrap_or(0)
-    }
-    let real = dunce::canonicalize(root);
-    let tree = real
-        .ok()
-        .and_then(|real| Some((tree(&real, &real, "").ok()?, real)));
-    let below = tree.map_or(0, |(nodes, real)| newest(&real, &nodes, true));
+            |node: &TreeNode| fs::metadata(real.join(&node.path)).map_or(0, |m| mtime_ms(&m));
+        dated.map(date).max()
+    });
     ProjectInfo {
         id: name.clone(),
         name,
-        mtime: mtime_ms(meta).max(below),
+        mtime: mtime_ms(meta).max(below.unwrap_or(0)),
         main_file: read_settings(root).main_file,
     }
 }
@@ -246,15 +244,12 @@ pub fn create_project(
     Ok(project_info(clean, &root, &fs::metadata(&root)?))
 }
 
-/// What a new project is called when the user has not said.
-pub const UNTITLED: &str = "Untitled";
-
 /// The first free name in the series "Untitled", "Untitled 2", … (from
 /// `base`, if given): one no entry of the library has, however it is spelled
 /// where the volume ignores case. It creates nothing, so a host can offer it
 /// as the name to edit; `create_project` numbers past anything taken since.
 pub fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, CoreError> {
-    let clean = sanitize_name(base.unwrap_or(UNTITLED))?;
+    let clean = sanitize_name(base.unwrap_or("Untitled"))?;
     let taken: HashSet<String> = match fs::read_dir(data_dir) {
         Ok(entries) => entries
             .map(|entry| entry.map(|e| fold_case(&e.file_name().to_string_lossy())))
@@ -658,20 +653,6 @@ static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\label\{([^}]*[^}
 /// A thebibliography entry's key, which \cite takes as a .bib key.
 static BIBITEM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\bibitem\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}").unwrap());
-
-/// A line of TeX without its comment, which starts at the first % that no
-/// backslash escapes.
-fn uncommented(line: &str) -> &str {
-    let mut escaped = false;
-    for (i, c) in line.char_indices() {
-        match c {
-            '%' if !escaped => return &line[..i],
-            '\\' => escaped = !escaped,
-            _ => escaped = false,
-        }
-    }
-    line
-}
 
 fn parse_symbols(bytes: &[u8], bib: bool) -> Symbols {
     let keys = |re: &Regex, text| {

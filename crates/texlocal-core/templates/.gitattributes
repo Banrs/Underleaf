@@ -1,0 +1,2 @@
+# Read into the core with include_str!, which keeps a checkout's line ends.
+* text eol=lf
