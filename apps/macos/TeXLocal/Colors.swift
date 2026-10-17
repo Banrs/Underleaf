@@ -20,14 +20,8 @@ extension NSColor {
                 "fill": NSColor.secondarySystemFill.rgba(in: appearance)]
     }
 
-    /// In each appearance raised by the core to the HIG's 4.5:1 for text under 18 points on the editor's background and
-    /// its current line, and to WCAG's enhanced 7:1 with Increase Contrast.
-    var legibleAsText: NSColor {
-        let resolved = Dictionary(uniqueKeysWithValues: Self.textAppearances.map { ($0, legibleAsText(in: $0)) })
-        return .adapting(resolved, fallback: self)
-    }
-
-    /// `ratio` in place of the text's 4.5:1 (7:1 with Increase Contrast), as for a non-text mark's 3:1.
+    /// Raised by the core to the HIG's 4.5:1 for text under 18 points on the editor's background and its current line, and
+    /// to WCAG's enhanced 7:1 with Increase Contrast; `ratio` in place of those, as for a non-text mark's 3:1.
     func legibleAsText(in name: NSAppearance.Name, ratio: Double? = nil) -> NSColor {
         guard var args = Self.contrastArguments(in: name), let appearance = NSAppearance(named: name) else { return self }
         args["color"] = rgba(in: appearance)

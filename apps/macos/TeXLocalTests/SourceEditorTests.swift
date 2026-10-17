@@ -419,6 +419,19 @@ struct SourceEditorTests {
         return window
     }
 
+    private func mouse(_ type: NSEvent.EventType, at point: NSPoint, in window: NSWindow, clicks: Int = 1,
+                       _ modifiers: NSEvent.ModifierFlags = []) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: modifiers, timestamp: 0,
+                                        windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1))
+    }
+
+    /// A press at `point` in the window: its release, posted first, ends the text view's own tracking.
+    private func click(at point: NSPoint, releasedAt release: NSPoint? = nil, in window: NSWindow, clicks: Int = 1,
+                       _ modifiers: NSEvent.ModifierFlags = []) throws {
+        NSApp.postEvent(try mouse(.leftMouseUp, at: release ?? point, in: window, clicks: clicks, modifiers), atStart: false)
+        text.mouseDown(with: try mouse(.leftMouseDown, at: point, in: window, clicks: clicks, modifiers))
+    }
+
     private func colour(of word: String) throws -> NSColor? {
         let manager = try #require(text.textLayoutManager)
         text.layoutSubtreeIfNeeded()
@@ -516,16 +529,9 @@ struct SourceEditorTests {
         text.forwardSync = { quietly in { went.append(quietly) } }
         let glyph = text.firstRect(forCharacterRange: NSRange(location: 4, length: 1), actualRange: nil)
         let point = window.convertPoint(fromScreen: NSPoint(x: glyph.minX + 1, y: glyph.midY))
-        func event(_ type: NSEvent.EventType, clicks: Int) throws -> NSEvent {
-            try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
-                                            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1))
-        }
-        // The release ends the text view's own tracking.
-        NSApp.postEvent(try event(.leftMouseUp, clicks: 1), atStart: false)
-        text.mouseDown(with: try event(.leftMouseDown, clicks: 1))
+        try click(at: point, in: window)
         #expect(went.isEmpty && text.selectedRange() == NSRange(location: 4, length: 0))
-        NSApp.postEvent(try event(.leftMouseUp, clicks: 2), atStart: false)
-        text.mouseDown(with: try event(.leftMouseDown, clicks: 2))
+        try click(at: point, in: window, clicks: 2)
         #expect(went == [true] && text.selectedRange() == NSRange(location: 4, length: 3))
     }
 
@@ -539,14 +545,7 @@ struct SourceEditorTests {
         func click(line: Int, shift: Bool = false) throws {
             let glyph = text.firstRect(forCharacterRange: NSRange(location: text.document.lineStart(line), length: 1), actualRange: nil)
             let inText = window.convertPoint(fromScreen: NSPoint(x: glyph.minX, y: glyph.midY))
-            let point = NSPoint(x: text.convert(NSPoint(x: 5, y: 0), to: nil).x, y: inText.y)
-            func event(_ type: NSEvent.EventType) throws -> NSEvent {
-                try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: shift ? .shift : [], timestamp: 0,
-                                                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-            }
-            // The release ends the tracking.
-            NSApp.postEvent(try event(.leftMouseUp), atStart: false)
-            text.mouseDown(with: try event(.leftMouseDown))
+            try self.click(at: NSPoint(x: text.convert(NSPoint(x: 5, y: 0), to: nil).x, y: inText.y), in: window, shift ? .shift : [])
         }
         try click(line: 1)
         #expect(text.selectedRange() == NSRange(location: 0, length: 4) && asked.isEmpty)
@@ -658,26 +657,19 @@ struct SourceEditorTests {
         var asked: [Int] = []
         text.issueClicked = { asked.append($0) }
         let message = try #require(text.issueRows.first?.message).rect
-        func event(_ type: NSEvent.EventType, at point: NSPoint, _ modifiers: NSEvent.ModifierFlags = []) throws -> NSEvent {
-            try #require(NSEvent.mouseEvent(with: type, location: text.convert(point, to: nil), modifierFlags: modifiers, timestamp: 0,
-                                            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-        }
-        let inside = NSPoint(x: message.midX, y: message.midY)
-        // The release ends the tracking.
-        NSApp.postEvent(try event(.leftMouseUp, at: NSPoint(x: message.minX - 20, y: message.midY)), atStart: false)
-        text.mouseDown(with: try event(.leftMouseDown, at: inside))
+        // In the window's coordinates.
+        func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint { text.convert(NSPoint(x: x, y: y), to: nil) }
+        let inside = point(message.midX, message.midY)
+        try click(at: inside, releasedAt: point(message.minX - 20, message.midY), in: window)
         #expect(asked.isEmpty)
-        NSApp.postEvent(try event(.leftMouseUp, at: inside), atStart: false)
-        text.mouseDown(with: try event(.leftMouseDown, at: inside))
+        try click(at: inside, in: window)
         #expect(asked == [2] && text.selectedRange() == NSRange(location: 5, length: 0))
-        NSApp.postEvent(try event(.leftMouseUp, at: inside, .shift), atStart: false)
-        text.mouseDown(with: try event(.leftMouseDown, at: inside, .shift))
+        try click(at: inside, in: window, .shift)
         #expect(asked == [2] && text.selectedRange() == NSRange(location: 5, length: 2))
         text.setSelectedRange(NSRange(location: 5, length: 0))
-        let above = NSPoint(x: text.textContainerOrigin.x + 20, y: message.midY - message.height)
-        NSApp.postEvent(try event(.leftMouseDragged, at: above), atStart: false)
-        NSApp.postEvent(try event(.leftMouseUp, at: above), atStart: false)
-        text.mouseDown(with: try event(.leftMouseDown, at: inside))
+        let above = point(text.textContainerOrigin.x + 20, message.midY - message.height)
+        NSApp.postEvent(try mouse(.leftMouseDragged, at: above, in: window), atStart: false)
+        try click(at: inside, releasedAt: above, in: window)
         #expect(asked == [2] && NSMaxRange(text.selectedRange()) == 7 && (1...3).contains(text.selectedRange().location))
     }
 

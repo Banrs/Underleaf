@@ -43,8 +43,7 @@ struct FilesList: View {
                     TreeRows(nodes: project.tree.nodes, children: \.children, isExpanded: { node in
                         disclosure(\.expandedFolders, of: project, key: node.path,
                                    subtree: node.children?.flattened.filter(\.isDirectory).map(\.path) ?? [])
-                    },
-                             insert: { urls in Task { await project.dropFiles(urls, into: "") } }) { node in
+                    }, insert: { urls in Task { await project.dropFiles(urls, into: "") } }) { node in
                         row(node).tag(node.path)
                     }
                 }

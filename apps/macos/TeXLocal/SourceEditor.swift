@@ -265,12 +265,12 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 struct EditorView: NSViewRepresentable {
     let editor: SourceEditor
     let shown: Bool
-    let fontName: String
-    let fontSize: Int
-    let lineNumbers: Bool
-    let syntaxTheme: SyntaxTheme
-    let autoPair: Bool
-    let autoComplete: Bool
+    @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
+    @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
+    @AppStorage(DefaultsKey.editorLineNumbers) private var lineNumbers = true
+    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.overleaf
+    @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
+    @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true
 
     func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
 

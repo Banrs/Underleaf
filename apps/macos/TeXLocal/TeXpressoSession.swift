@@ -6,8 +6,7 @@ import PDFKit
 nonisolated struct LiveState: Decodable, Sendable {
     let phase: TeXpressoSession.Phase
     let halted: Bool
-    let failure: String?
-    let error: String?
+    let failure, error: String?
     /// The Live Preview Log's whole text, while the window shows it (`session_live_log`) and with an alert; nil otherwise.
     let log: String?
     /// An error the window hasn't been shown yet: the Live Preview Log opens on it. Start's and Stop's answers have none.
@@ -24,10 +23,7 @@ nonisolated struct LiveDocumentEvent: Decodable, Sendable {
 
 /// One page typeset again (`live_page`). The session sends a batch's document before the batch's pages and drops the
 /// pages a document has, so a page is newer than any document before it.
-nonisolated struct LivePageEvent: Decodable, Sendable {
-    let page: Int
-    let path: String
-}
+nonisolated struct LivePageEvent: Decodable, Sendable { let page: Int, path: String }
 
 /// A live event's PDF, read on the core's event thread as the event is decoded, so the main actor gets it ready to draw:
 /// the page's one-page PDF, or the whole document; nil inside where the file couldn't be read.
@@ -35,34 +31,32 @@ nonisolated enum LiveRead: Sendable {
     case document(LiveDocument?)
     case page(LivePage?)
 
-    init(_ event: LiveDocumentEvent) {
-        self = .document(Self.read(event))
-    }
-
-    init(_ event: LivePageEvent) {
-        self = .page(Self.read(event))
-    }
-
     /// The file is complete when it is named, and replaced by another of its name, never rewritten: mapped, it is read as its
     /// pages are drawn and stays whole when its name goes. It has no links to see to: the engine writes its pages through
     /// MuPDF's PDF device, which carries no annotations.
-    private static func read(_ event: LiveDocumentEvent) -> LiveDocument? {
+    init(_ event: LiveDocumentEvent) {
         let url = URL(filePath: event.path)
         guard let data = try? Data(contentsOf: url, options: .alwaysMapped), let document = PDFDocument(data: data),
-              document.pageCount > 0 else { return nil }
+              document.pageCount > 0 else {
+            self = .document(nil)
+            return
+        }
         let changed = event.changed.map { ranges in
             ranges.reduce(into: IndexSet()) { set, range in
                 if range.count == 2, range[0] <= range[1] { set.insert(integersIn: range[0]...range[1]) }
             }
         }
-        return LiveDocument(url: url, document: document, changed: changed, complete: event.complete)
+        self = .document(LiveDocument(url: url, document: document, changed: changed, complete: event.complete))
     }
 
-    /// Nil for a file already gone: TeXpresso keeps a page's last two, and a newer one is coming.
-    private static func read(_ event: LivePageEvent) -> LivePage? {
+    /// None for a file already gone: TeXpresso keeps a page's last two, and a newer one is coming.
+    init(_ event: LivePageEvent) {
         guard let data = try? Data(contentsOf: URL(filePath: event.path), options: .alwaysMapped),
-              let page = PDFDocument(data: data)?.page(at: 0) else { return nil }
-        return LivePage(index: event.page, page: page)
+              let page = PDFDocument(data: data)?.page(at: 0) else {
+            self = .page(nil)
+            return
+        }
+        self = .page(LivePage(index: event.page, page: page))
     }
 }
 
@@ -74,10 +68,7 @@ nonisolated struct LiveDocument: @unchecked Sendable {
     let complete: Bool
 }
 
-nonisolated struct LivePage: @unchecked Sendable {
-    let index: Int
-    let page: PDFPage
-}
+nonisolated struct LivePage: @unchecked Sendable { let index: Int, page: PDFPage }
 
 /// Live Preview as the window shows it: the core's session runs it and says how it goes. Its PDFs go to the PDF pane.
 @Observable

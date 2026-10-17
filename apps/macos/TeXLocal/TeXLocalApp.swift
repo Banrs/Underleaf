@@ -103,15 +103,12 @@ final class DockMenu: NSObject {
     var menu: NSMenu {
         let menu = NSMenu()
         for project in app.recents {
-            let item = NSMenuItem(title: project.name, action: #selector(open(_:)), keyEquivalent: "")
+            let item = menu.addItem(withTitle: project.name, action: #selector(open(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = project.id
-            menu.addItem(item)
         }
         if !menu.items.isEmpty { menu.addItem(.separator()) }
-        let new = NSMenuItem(title: "New Project…", action: #selector(newProject), keyEquivalent: "")
-        new.target = self
-        menu.addItem(new)
+        menu.addItem(withTitle: "New Project…", action: #selector(newProject), keyEquivalent: "").target = self
         return menu
     }
 
@@ -164,10 +161,9 @@ private struct WindowModals: ViewModifier {
 }
 
 #if DEBUG
-/// QA without the screen: with TEXLOCAL_QA_SNAPSHOT set to a folder, the distributed notification
-/// "com.texlocal.qa.snapshot" (its object a name) writes each visible window as the app draws it, at the
-/// backing scale (<name>-<n>.png), and the window's views with their frames in window points (<name>-<n>.txt).
-/// Debug builds only.
+/// QA without the screen (debug builds): with TEXLOCAL_QA_SNAPSHOT set to a folder, the distributed notification
+/// "com.texlocal.qa.snapshot" (its object a name) writes each visible window as the app draws it, at the backing
+/// scale (<name>-<n>.png), and the window's views with their frames in window points (<name>-<n>.txt).
 enum QASnapshot {
     static func install() {
         guard let folder = ProcessInfo.processInfo.environment["TEXLOCAL_QA_SNAPSHOT"] else { return }

@@ -3,18 +3,11 @@ import SwiftUI
 
 struct SourceColumn: View {
     let project: ProjectModel
-    @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
-    @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
-    @AppStorage(DefaultsKey.editorLineNumbers) private var lineNumbers = true
-    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.overleaf
-    @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
-    @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true
 
     var body: some View {
         // Keep the editor under previews so it retains its text and scroll position.
         ZStack {
-            EditorView(editor: project.editor, shown: project.editsText, fontName: fontName, fontSize: fontSize,
-                       lineNumbers: lineNumbers, syntaxTheme: syntaxTheme, autoPair: autoPair, autoComplete: autoComplete)
+            EditorView(editor: project.editor, shown: project.editsText)
                 .ignoresSafeArea(.container, edges: [.top, .bottom])
                 .background(.textSurface)
             if project.openPath == nil {

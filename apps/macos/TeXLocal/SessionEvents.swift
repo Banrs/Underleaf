@@ -62,11 +62,7 @@ nonisolated struct Closed: Decodable, Sendable { let closed: Bool }
 nonisolated struct Ready: Decodable, Sendable { let ready: Bool }
 nonisolated struct ChosenIssue: Decodable, Sendable { let index: Int, issue: LogItem }
 
-nonisolated struct DocumentState: Decodable, Equatable {
-    let path: String
-    let error: String?
-    let held: Bool
-}
+nonisolated struct DocumentState: Decodable, Equatable { let path: String, error: String?, held: Bool }
 
 nonisolated struct ReloadEvent: Decodable { let path, text: String }
 nonisolated struct PathEvent: Decodable, Sendable { let path: String }

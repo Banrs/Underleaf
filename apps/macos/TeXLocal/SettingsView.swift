@@ -197,33 +197,18 @@ private struct ProgramFolder: View {
     enum Program {
         case tex, texpresso
 
-        var title: String {
-            switch self {
-            case .tex: "TeX Distribution"
-            case .texpresso: "TeXpresso Location"
-            }
-        }
+        var title: String { self == .tex ? "TeX Distribution" : "TeXpresso Location" }
 
         var dialogMessage: String {
-            switch self {
-            case .tex: "Choose the folder latexmk is in, such as a TeX distribution’s bin folder."
-            case .texpresso: "Choose the folder the texpresso program is in."
-            }
+            self == .tex ? "Choose the folder latexmk is in, such as a TeX distribution’s bin folder."
+                : "Choose the folder the texpresso program is in."
         }
 
         var automaticFailure: String {
-            switch self {
-            case .tex: "Couldn’t Find TeX Automatically"
-            case .texpresso: "Couldn’t Find TeXpresso Automatically"
-            }
+            self == .tex ? "Couldn’t Find TeX Automatically" : "Couldn’t Find TeXpresso Automatically"
         }
 
-        func chosen(in tex: TexStatus) -> String? {
-            switch self {
-            case .tex: tex.texDir
-            case .texpresso: tex.texpressoDir
-            }
-        }
+        func chosen(in tex: TexStatus) -> String? { self == .tex ? tex.texDir : tex.texpressoDir }
 
         func folder(in tex: TexStatus) -> String? {
             switch self {

@@ -11,15 +11,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         view.textContainer?.size = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         view.textStorage?.delegate = view
         view.displayOptionsWatch = NSWorkspace.shared.notificationCenter.addObserver(
-            of: NSWorkspace.self, for: .accessibilityDisplayOptionsDidChange) { [weak view] _ in view?.displayOptionsChanged() }
+            of: NSWorkspace.self, for: .accessibilityDisplayOptionsDidChange) { [weak view] _ in view?.needsDisplay = true }
         return view
     }
 
     private var displayOptionsWatch: NotificationCenter.ObservationToken?
-
-    private func displayOptionsChanged() {
-        needsDisplay = true
-    }
 
     /// A cursor rect of the list's own lost to the text view's per-move cursor, so the pointer is set on every move.
     private func setsCursor(with event: NSEvent) -> Bool {
@@ -113,7 +109,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         // The closers typing put in and a snippet's fields move with the text; what's typed in a field goes in its other
         // places once the change is done (`didChangeText`).
         mirrorEdits = document.edit(old, with: text, changing: changing, mirroring: mirroring)
-        edits += 1
+        lastMath = nil
         staleColours = min(staleColours ?? edited.location, edited.location)
         changing = nil
         if lineCountDigits != digits(document.lineCount) {
@@ -445,7 +441,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return line
     }
 
-    /// The numbers' grey, raised with Increase Contrast as the syntax colours are (`displayOptionsChanged` redraws them).
+    /// The numbers' grey, raised with Increase Contrast as the syntax colours are (`displayOptionsWatch` redraws them).
     private static let numberColor: NSColor = {
         let raised: [NSAppearance.Name] = [.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
         return .adapting(Dictionary(uniqueKeysWithValues: raised.map { ($0, NSColor.tertiaryLabelColor.legibleAsText(in: $0)) }),
@@ -468,7 +464,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         // The caret's line has the current line's fill, which is the same shape, and not both.
         for issue in issueRows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
             if issue.line != current?.number {
-                Self.issueFill.setFill()
+                NSColor.tertiarySystemFill.setFill()
                 issue.shape.fill()
             }
             NSColor.systemRed.setFill()
@@ -516,8 +512,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
     private var issueGap: CGFloat = 0
     private var issueTips: [(tag: NSView.ToolTipTag, rect: NSRect, text: NSString)] = []
-
-    private static let issueFill = NSColor.tertiarySystemFill
 
     private func issuesChanged() {
         issueLabels.removeAll()
@@ -746,14 +740,14 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     // MARK: the maths preview
 
     private var mathPopover: MathPopover?
-    private var lastMath: (caret: Int, edits: Int, value: MathPreview?)?
-    private var edits = 0
+    /// Until the next edit.
+    private var lastMath: (caret: Int, value: MathPreview?)?
     private var dismissedMath: Int?
 
     private func math(at caret: Int) -> MathPreview? {
-        if let lastMath, lastMath.caret == caret, lastMath.edits == edits { return lastMath.value }
+        if let lastMath, lastMath.caret == caret { return lastMath.value }
         let value = document.mathAt(caret: caret)
-        lastMath = (caret, edits, value)
+        lastMath = (caret, value)
         return value
     }
 

@@ -2,46 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum MenuCommand: CaseIterable {
-    case projectNew
-    case projectOpen
-    case projectClose
-    case projectExport
-    case projectSearch
-    case fileNew
-    case fileNewFolder
-    case fileUpload
-    case fileSave
-    case pdfSave
-    case filePrint
-    case editBold
-    case editItalic
-    case editUnderline
-    case editMath
-    case editComment
-    case editMoveLineUp
-    case editMoveLineDown
-    case editGotoLine
-    case pdfFind
-    case pdfGotoPage
-    case viewToggleSidebar
-    case viewTogglePDF
-    case viewToggleInspector
-    case viewToggleLogs
-    case viewToggleWordCount
-    case viewZoomIn
-    case viewZoomOut
-    case viewActualSize
-    case viewFitWidth
-    case viewFitPage
-    case viewTextBigger
-    case viewTextSmaller
-    case compileRun
-    case compileStop
-    case compileClean
-    case syncForward
-    case syncInverse
-    case issueNext
-    case issuePrevious
+    case projectNew, projectOpen, projectClose, projectExport, projectSearch
+    case fileNew, fileNewFolder, fileUpload, fileSave, pdfSave, filePrint
+    case editBold, editItalic, editUnderline, editMath, editComment, editMoveLineUp, editMoveLineDown, editGotoLine
+    case pdfFind, pdfGotoPage
+    case viewToggleSidebar, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
+    case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage, viewTextBigger, viewTextSmaller
+    case compileRun, compileStop, compileClean, syncForward, syncInverse, issueNext, issuePrevious
 
     var title: String {
         switch self {
@@ -269,8 +236,7 @@ struct AppCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            items([.projectNew, .fileNew, .fileNewFolder])
-            item(.projectOpen)
+            items([.projectNew, .fileNew, .fileNewFolder, .projectOpen])
             Menu("Open Recent") {
                 ForEach(app.recents) { recent in
                     Button {
@@ -305,9 +271,7 @@ struct AppCommands: Commands {
                 Button {} label: { Label("Share…", systemImage: "square.and.arrow.up") }.labelStyle(.titleAndIcon).disabled(true)
             }
         }
-        CommandGroup(replacing: .printItem) {
-            item(.filePrint)
-        }
+        CommandGroup(replacing: .printItem) { item(.filePrint) }
         // A replacement group would lose the spelling and substitution checkmarks.
         TextEditingCommands()
         CommandGroup(before: .textEditing) {
@@ -388,9 +352,8 @@ private struct LivePreviewItem: View {
 
     var body: some View {
         let project = app.commandProject
-        Toggle("Live Preview", isOn: Binding(
-            get: { project?.texpresso.active == true },
-            set: { $0 ? project?.startTeXpresso() : project?.stopTeXpresso() }))
+        Toggle("Live Preview", isOn: Binding(get: { project?.texpresso.active == true },
+                                             set: { $0 ? project?.startTeXpresso() : project?.stopTeXpresso() }))
             .disabled(!app.canPreviewLive || project.map { !$0.initialLoadComplete || $0.texpresso.phase == .stopping } ?? true)
     }
 }

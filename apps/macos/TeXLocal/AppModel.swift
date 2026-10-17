@@ -38,8 +38,7 @@ enum Links {
 }
 
 struct AppAlert: Sendable {
-    let title: String
-    let message: String
+    let title, message: String
 
     init(_ title: String, _ message: String) {
         self.title = title
@@ -77,9 +76,7 @@ struct NewProjectDraft: Identifiable {
     var id: ProjectTemplate { template }
 }
 
-private nonisolated struct FreeName: Decodable {
-    let name: String
-}
+private nonisolated struct FreeName: Decodable { let name: String }
 
 @Observable
 final class AppModel {
@@ -266,8 +263,7 @@ final class AppModel {
         guard !importing.contains(url) else { return }
         importing.append(url)
         defer { importing.removeAll { $0 == url } }
-        let name = url.lastPathComponent
-        guard let info = await alerting("Couldn’t Open “\(name)”", {
+        guard let info = await alerting("Couldn’t Open “\(url.lastPathComponent)”", {
             try await core.call("import_project", ["src": url.path], as: ProjectInfo.self)
         }) else { return }
         await refresh()

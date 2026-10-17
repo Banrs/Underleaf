@@ -3,8 +3,7 @@ import Foundation
 // The Rust core's JSON shapes use camelCase keys.
 
 nonisolated struct ProjectInfo: Decodable, Identifiable {
-    let id: String
-    let name: String
+    let id, name: String
     let mtime: Double
     let mainFile: String
 
@@ -12,13 +11,10 @@ nonisolated struct ProjectInfo: Decodable, Identifiable {
 }
 
 nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
-    nonisolated enum Entry: String, Decodable {
-        case file, dir
-    }
+    nonisolated enum Entry: String, Decodable { case file, dir }
 
     let type: Entry
-    let name: String
-    let path: String
+    let name, path: String
     /// A file's, as the core sorts it by its name; a folder has none.
     var kind: FileKind?
     let children: [TreeNode]?
@@ -63,17 +59,12 @@ nonisolated struct TexStatus: Decodable {
     var version: String?
     /// The number latexmk's version line names: "4.86".
     var latexmkVersion: String?
-    var texDir: String?
-    var found: String?
-    var texpresso: String?
-    var texpressoDir: String?
+    var texDir, found, texpresso, texpressoDir: String?
 }
 
 nonisolated struct ProjectSettings: Decodable {
-    var mainFile: String
-    var engine: String
-    var shellEscape: Bool
-    var stopOnFirstError: Bool
+    var mainFile, engine: String
+    var shellEscape, stopOnFirstError: Bool
 
     mutating func apply(_ change: SettingsChange) {
         switch change {
@@ -109,13 +100,11 @@ nonisolated struct LogItem: Decodable, Equatable {
 
 /// Builds run past errors, so a failed one may still have written a PDF; `stopped` means Stop, a newer build or quitting ended it.
 nonisolated struct CompileResult: Decodable {
-    let ok: Bool
-    let stopped: Bool
+    let ok, stopped: Bool
     let pdf: String?
     let pdfChanged: Bool
     let durationMs: Int
-    let errors: [LogItem]
-    let warnings: [LogItem]
+    let errors, warnings: [LogItem]
     let log: String
 
     var failed: Bool { !ok && !stopped }
@@ -129,9 +118,7 @@ nonisolated struct CompileResult: Decodable {
 nonisolated struct SearchHit: Decodable, Identifiable {
     let file: String
     let line: Int
-    let before: String
-    let match: String
-    let after: String
+    let before, match, after: String
 
     var id: String { "\(file):\(line):\(before.count)" }
 }
@@ -144,60 +131,34 @@ nonisolated struct SearchGroup: Decodable, Identifiable {
     var id: String { file }
 }
 
-nonisolated struct FileText: Decodable {
-    let text: String
-}
+nonisolated struct FileText: Decodable { let text: String }
 
 /// In PDF points, origin at the page's top-left: the baseline point (h, v) and the box's width and height above it.
 nonisolated struct ForwardLoc: Decodable {
     let page: Double
-    let h: Double?
-    let v: Double?
-    let width: Double?
-    let height: Double?
+    let h, v, width, height: Double?
     var matches: [ForwardLoc]? = nil
 }
 
-nonisolated struct InverseLoc: Decodable {
-    let file: String
-    let line: Int
-    let column: Int?
-}
+nonisolated struct InverseLoc: Decodable { let file: String, line: Int, column: Int? }
 
 /// Where a forward search began, for the core to find its word in the PDF's text (`synctex_match`); the column in UTF-16.
 nonisolated struct SyncSource: Sendable {
-    let id: String
-    let file: String
-    let line: Int
-    let column: Int
+    let id, file: String
+    let line, column: Int
 }
 
 /// That word in a page's text: its UTF-16 range there.
-nonisolated struct PageHit: Decodable, Sendable {
-    let page: Int
-    let start: Int
-    let end: Int
-}
+nonisolated struct PageHit: Decodable, Sendable { let page, start, end: Int }
 
 /// A click on a page for `synctex_inverse`: the page's text, and the clicked letter's UTF-16 index in it.
-nonisolated struct PageClick: Equatable, Sendable {
-    let text: String
-    let at: Int
-}
+nonisolated struct PageClick: Equatable, Sendable { let text: String, at: Int }
 
 /// Asked nothing about them, it writes nothing.
-nonisolated struct Imported: Decodable {
-    nonisolated struct Clash: Decodable {
-        let path: String
-    }
-
-    let existing: [Clash]
-}
+nonisolated struct Imported: Decodable { let existing: [PathEvent] }
 
 nonisolated struct RenameResult: Decodable {
-    let from: String
-    let to: String
-    let mainFile: String
+    let from, to, mainFile: String
     /// The sidebar's state, its paths moved with the entry.
     let ui: UIState
 }

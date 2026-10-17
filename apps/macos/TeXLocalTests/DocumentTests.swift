@@ -55,10 +55,7 @@ struct PDFFitTests {
 
     /// A pinch's steps are the scroll view's magnification, which posts no PDFViewScaleChanged until a pinch ends.
     @Test func theScaleFollowsEveryZoom() throws {
-        let controller = PDFController()
-        let view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(try pages(3))
+        let controller = shown(try pages(3)), view = controller.view
         func follows(_ fit: PDFController.Fit?, _ step: String) {
             #expect(controller.scale == view.scaleFactor, "\(step)")
             #expect(controller.fit == fit, "\(step)")
@@ -141,10 +138,8 @@ struct PDFFitTests {
 
     /// The mark is beside the page, not an annotation, which Print and VoiceOver would see.
     @Test func theForwardSearchMarkIsOneAndNoAnnotation() throws {
-        let controller = PDFController()
-        controller.view.setFrameSize(NSSize(width: 600, height: 500))
         let document = try pages(2)
-        controller.show(document)
+        let controller = shown(document)
         controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10))
         #expect(document.page(at: 0)?.annotations.isEmpty == true)
         controller.reveal(ForwardLoc(page: 2, h: 72, v: 300, width: 180, height: 10))
@@ -165,6 +160,14 @@ struct PDFFitTests {
     }
 }
 
+/// A controller at 600 by 500 showing `document`.
+private func shown(_ document: PDFDocument) -> PDFController {
+    let controller = PDFController()
+    controller.view.setFrameSize(NSSize(width: 600, height: 500))
+    controller.show(document)
+    return controller
+}
+
 func textPDF(_ pages: [String], width: CGFloat = 612) throws -> PDFDocument {
     let document = PDFDocument()
     for text in pages {
@@ -181,13 +184,6 @@ struct PDFFindTests {
     init() {
         // The system's find text is the user's: the tests keep their own.
         PDFFind.board = NSPasteboard.withUniqueName()
-    }
-
-    private func shown(_ document: PDFDocument) -> PDFController {
-        let controller = PDFController()
-        controller.view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(document)
-        return controller
     }
 
     private func targets() throws -> PDFController {

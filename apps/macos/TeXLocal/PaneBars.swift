@@ -175,9 +175,7 @@ final class InPlaceRename<ID: Hashable> {
 }
 
 struct ItemActions {
-    let rename: () -> Void
-    let showInFinder: () -> Void
-    let moveToTrash: () -> Void
+    let rename, showInFinder, moveToTrash: () -> Void
 }
 
 /// All three have an icon, as a group has icons for all its items or none (HIG, Menus); "folder" stands for Show in Finder's file-system location.
@@ -222,9 +220,7 @@ struct RenameField: View {
     @Binding var text: String
     var isFile = false
     var forbidden: Character?
-    let ended: () -> Void
-    let commit: () -> Void
-    let cancel: () -> Void
+    let ended, commit, cancel: () -> Void
     @FocusState private var focused: Bool
     @State private var selection: TextSelection?
 

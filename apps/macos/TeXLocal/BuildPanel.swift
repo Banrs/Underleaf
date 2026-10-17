@@ -95,8 +95,7 @@ struct BuildPanel: View {
         if let text = project.result?.log, !text.isEmpty {
             LogPane(text: text, filter: project.panel.logFilter)
         } else {
-            ContentUnavailableView("No Log", systemImage: "text.page",
-                                   description: Text("Compile to see the log here."))
+            ContentUnavailableView("No Log", systemImage: "text.page", description: Text("Compile to see the log here."))
         }
     }
 }

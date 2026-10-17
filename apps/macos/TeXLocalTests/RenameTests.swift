@@ -13,30 +13,6 @@ struct RemapPathTests {
     }
 }
 
-struct TaskSlotTests {
-    @Test(.timeLimit(.minutes(1)))
-    func theLatestOfItsKindCarriesOn() async {
-        var slot: Task<Int, Never>?
-        let first = restart(&slot) { Task.isCancelled ? 0 : 1 }
-        let second = restart(&slot) { Task.isCancelled ? 0 : 2 }
-        #expect(first.isCancelled && !second.isCancelled && slot == second)
-        #expect(await first.value == 0)
-        #expect(await second.value == 2)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func theLastOfItsKindRunsAlone() async {
-        var slot: Task<Void, Never>?, ran: [Int] = []
-        restart(&slot, after: .milliseconds(50)) { ran.append(1) }
-        let first = slot
-        restart(&slot, after: .milliseconds(50)) { ran.append(2) }
-        #expect(first?.isCancelled == true && ran.isEmpty)
-        await first?.value
-        await slot?.value
-        #expect(ran == [2])
-    }
-}
-
 struct InPlaceRenameTests {
     @Test func aRenameEndsOnceWithItsNewName() {
         let rename = InPlaceRename<String>()

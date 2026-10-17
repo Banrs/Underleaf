@@ -14,14 +14,10 @@ final class SourceDocument {
         raw = text.withUTF8 { tl_source_new($0.baseAddress, $0.count) }
     }
 
-    private init(raw: OpaquePointer) {
-        self.raw = raw
-    }
-
     /// The document a project session has open at `path`: each edit is the session's, which saves and previews it.
-    convenience init?(session: UInt64, path: String) {
+    init?(session: UInt64, path: String) {
         guard let raw = Core.shared.source(session: session, path: path) else { return nil }
-        self.init(raw: raw)
+        self.raw = raw
     }
 
     isolated deinit {
@@ -187,13 +183,9 @@ final class SourceDocument {
         ["start": range.location, "length": range.length]
     }
 
-    private func send(_ command: String, _ args: [String: Any]) -> UnsafeMutablePointer<CChar>? {
-        guard let json = try? JSONSerialization.data(withJSONObject: args) else { return nil }
-        return tl_source_call(raw, command, String(decoding: json, as: UTF8.self))
-    }
-
     private func call<T: Decodable>(_ command: String, _ args: [String: Any]) -> T? {
-        Syntax.decode(command, send(command, args))
+        let json = try? JSONSerialization.data(withJSONObject: args)
+        return Syntax.decode(command, json.flatMap { tl_source_call(raw, command, String(decoding: $0, as: UTF8.self)) })
     }
 }
 

@@ -11,18 +11,12 @@ final class WorkspaceController: DetentSplitViewController {
     private let area = DetentSplitViewController()
     private let sidebar = SidebarSplitViewController()
     private(set) var sidebarItem: NSSplitViewItem!
-    private var outlineItem: NSSplitViewItem!
-    private var sourceItem: NSSplitViewItem!
-    private var pdfItem: NSSplitViewItem!
-    private var panelItem: NSSplitViewItem!
-    private var inspectorItem: NSSplitViewItem!
-    private var areaItem: NSSplitViewItem!
-    private var sidebarSearch: NSSplitViewItemAccessoryViewController!
+    private var outlineItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
+    private var sidebarSearch, pdfFind: NSSplitViewItemAccessoryViewController!
     /// The File Outline's header at the files' foot, and its height: as the outline's
     /// first row's room when open, the status bar's when folded.
     private var outlineBar: NSSplitViewItemAccessoryViewController!
     private var outlineBarHeight: NSLayoutConstraint!
-    private var pdfFind: NSSplitViewItemAccessoryViewController!
     private var mounts: [ObjectIdentifier: Mount] = [:]
     private let searchField = FieldHandle()
 

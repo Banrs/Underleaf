@@ -90,9 +90,7 @@ final class Core {
         }
     }
 
-    private nonisolated struct Ignored: Decodable, Sendable {
-        init(from decoder: any Decoder) throws {}
-    }
+    private nonisolated struct Ignored: Decodable, Sendable { init(from decoder: any Decoder) {} }
 
     private nonisolated static func decoded<T: Decodable>(_ command: String, _ envelope: Data) throws -> T {
         let answer: Result<T, CoreError>

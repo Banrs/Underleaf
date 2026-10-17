@@ -311,8 +311,8 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func aCleanBuildClosesOnlyThePanelAFailureOpened() async throws {
-        let project = try await opened().project, panel = project.panel
+    @Test func aCleanBuildClosesOnlyThePanelAFailureOpened() {
+        let panel = BuildPanelModel()
         panel.openForFailedBuild()
         #expect(panel.shown && panel.tab == .issues)
         panel.tab = .log
@@ -337,7 +337,6 @@ final class ProjectFlowTests {
         panel.tab = .texpresso
         panel.shown = false
         #expect(!panel.showsLiveLog)
-        await app.close()
     }
 
     @Test func theOutlineFollowsTheTopHeadingOnly() async throws {
@@ -505,7 +504,7 @@ final class ProjectFlowTests {
         try "x".write(to: folder.appending(path: "build/main.aux"), atomically: false, encoding: .utf8)
         await project.cleanBuildFolder()
         #expect(!exists(folder.appending(path: "build")) && exists(folder.appending(path: "main.tex")))
-        #expect(project.result == nil && project.pdfURL == nil)
+        #expect(project.result == nil && !project.hasPDF)
         await app.close()
     }
 
@@ -629,15 +628,6 @@ final class ProjectFlowTests {
         await project.dropFiles([outside], into: "parts")
         #expect(exists(folder.appending(path: "parts/\(outside.lastPathComponent)")) && exists(outside))
         await app.close()
-    }
-}
-
-private extension ProjectModel {
-    var pdfURL: URL? {
-        switch shown {
-        case .none: nil
-        case .build(let url), .live(let url): url
-        }
     }
 }
 

@@ -162,11 +162,9 @@ struct HomeView: View {
 
     private var texMissing: some View {
         HStack(alignment: .firstTextBaseline) {
-            Label(
-                "MacTeX isn’t installed. Install it to compile; TeXLocal finds it afterwards.",
-                systemImage: "exclamationmark.triangle.fill"
-            )
-            .symbolRenderingMode(.multicolor)
+            Label("MacTeX isn’t installed. Install it to compile; TeXLocal finds it afterwards.",
+                  systemImage: "exclamationmark.triangle.fill")
+                .symbolRenderingMode(.multicolor)
             Spacer()
             GetMacTeXButton()
             Button("Dismiss", systemImage: "xmark") { dismissedTeXTip = true }
@@ -182,8 +180,7 @@ private struct ProjectRow: View {
     let project: ProjectInfo
     let working: Bool
     let rename: InPlaceRename<ProjectInfo.ID>
-    let ended: () -> Void
-    let commit: () -> Void
+    let ended, commit: () -> Void
 
     var body: some View {
         ProjectLabel(detail: Text("\(Text(project.mainFile)) · \(Text(.currentDate, format: .reference(to: project.modified)))"),

@@ -33,6 +33,10 @@ struct PDFSwapTests {
         return window
     }
 
+    private func live(_ pages: [String], changed: IndexSet) throws -> LiveRead {
+        .document(LiveDocument(url: URL(filePath: "/live.pdf"), document: try document(pages), changed: changed, complete: true))
+    }
+
     private func text(_ view: PDFView) -> [String] {
         guard let document = view.document else { return [] }
         return (0..<document.pageCount).map { document.page(at: $0)?.string?.components(separatedBy: " ").first ?? "" }
@@ -95,9 +99,6 @@ struct PDFSwapTests {
         view.setFrameSize(NSSize(width: 600, height: 500))
         controller.show(try document(["a", "b"]))
         let shown = try #require(view.document)
-        func live(_ pages: [String], changed: IndexSet) throws -> LiveRead {
-            .document(LiveDocument(url: URL(filePath: "/live.pdf"), document: try document(pages), changed: changed, complete: true))
-        }
         controller.showLive(.document(nil))
         controller.showLive(try live(["a2", "b2"], changed: [1]))
         #expect(text(view) == ["a2", "b2"] && view.document === shown)
@@ -112,9 +113,6 @@ struct PDFSwapTests {
         let controller = PDFController(), view = controller.view
         view.setFrameSize(NSSize(width: 600, height: 500))
         controller.show(try document(["a", "b"]))
-        func live(_ pages: [String], changed: IndexSet) throws -> LiveRead {
-            .document(LiveDocument(url: URL(filePath: "/live.pdf"), document: try document(pages), changed: changed, complete: true))
-        }
         func page(_ text: String) throws -> LiveRead {
             .page(LivePage(index: 0, page: try #require(try document([text]).page(at: 0))))
         }

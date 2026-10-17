@@ -266,21 +266,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     // MARK: - State
 
     private nonisolated struct State: Equatable {
-        let isLaTeX: Bool
-        let hasPDF: Bool
-        let canShare: Bool
-        let showsPDF: Bool
+        let isLaTeX, hasPDF, canShare, showsPDF: Bool
         let zoomLabel: String
-        let canZoomIn: Bool
-        let canZoomOut: Bool
-        let compiling: Bool
-        let canCompile: Bool
-        let compactCompile: Bool
+        let canZoomIn, canZoomOut, compiling, canCompile, compactCompile: Bool
     }
 
     private var state: State {
-        State(isLaTeX: project.isLaTeX,
-              hasPDF: project.hasPDF, canShare: project.buildPDF != nil, showsPDF: app.showPDF,
+        State(isLaTeX: project.isLaTeX, hasPDF: project.hasPDF, canShare: project.buildPDF != nil, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
               compiling: project.compiling, canCompile: canCompile, compactCompile: compactCompile)
     }
@@ -357,22 +349,18 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     // MARK: - Actions
 
-    private func perform(_ command: MenuCommand) {
-        app.perform(command, on: project)
-    }
-
-    @objc private func back() { perform(.projectClose) }
+    @objc private func back() { app.perform(.projectClose, on: project) }
 
     /// A toolbar button's action comes from its item, as `insertTemplate`'s does (27.2).
     @objc private func showFormat(_ item: NSToolbarItem) {
         format.toggle(relativeTo: item)
     }
 
-    @objc private func bold() { perform(.editBold) }
+    @objc private func bold() { app.perform(.editBold, on: project) }
 
-    @objc private func italic() { perform(.editItalic) }
+    @objc private func italic() { app.perform(.editItalic, on: project) }
 
-    @objc private func underline() { perform(.editUnderline) }
+    @objc private func underline() { app.perform(.editUnderline, on: project) }
 
     @objc private func insertTemplate(_ item: NSToolbarItem) {
         guard let template = Self.buttonTemplates.first(where: { .template($0) == item.itemIdentifier }) else { return }
@@ -385,7 +373,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     @objc private func compile() {
-        perform(project.compiling ? .compileStop : .compileRun)
+        app.perform(project.compiling ? .compileStop : .compileRun, on: project)
     }
 
     /// The overflow menu's Compile, which the item's own view doesn't enable.
@@ -399,7 +387,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
     }
 
-    @objc private func togglePDF() { perform(.viewTogglePDF) }
+    @objc private func togglePDF() { app.perform(.viewTogglePDF, on: project) }
 
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
         project.buildPDF.map { [$0] } ?? []
@@ -453,9 +441,7 @@ private final class ZoomControl: NSSegmentedControl {
 /// form as AppKit's search item goes to its button and back (27.2, measured): the width in one step, the symbol fading
 /// in, or out over the word, in a fifth of a second on Core Animation's default curve.
 private struct CompileButton: View {
-    let compiling: Bool
-    let compact: Bool
-    let enabled: Bool
+    let compiling, compact, enabled: Bool
     let action: () -> Void
     @Environment(\.appearsActive) private var appearsActive
 

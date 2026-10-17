@@ -34,9 +34,7 @@ final class PDFController: NSObject {
     enum Fit { case width, page }
     private(set) var fit: Fit? = .width
 
-    nonisolated enum Zoom: Codable, Equatable {
-        case fitWidth, fitPage, scale(Double)
-    }
+    nonisolated enum Zoom: Codable, Equatable { case fitWidth, fitPage, scale(Double) }
 
     var zoom: Zoom {
         switch fit {
