@@ -115,6 +115,9 @@ without a capture of its bug on the current OS is a candidate for removal.
   (Swift Testing). The tests run a host app that shares the app's defaults unless built
   with another bundle identifier: pass `TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev`, as CI
   does with its own, or quit the installed app first.
+- The Windows app: `dotnet test apps/windows/TeXLocal.Tests -c Debug`; `TeXLocal.exe --smoke`
+  opens Home and exits 0. Run dev builds with a scratch `TEXLOCAL_DATA`, never beside the
+  installed copy (`docs/windows.md`, Building and testing).
 - The live preview's end-to-end check needs the patched engine:
   `cargo test -p texlocal-core --test texpresso_live -- --ignored` (`docs/texpresso.md`).
 - Physical trackpad gestures, the dividers' haptic, interactive IME and visual-material
@@ -132,6 +135,12 @@ xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuratio
 
 Quit TeXLocal, ad-hoc sign the Release product, replace `/Applications/TeXLocal.app`, verify
 its signature, and compare the installed and built binaries.
+
+## Build and install the Windows app
+
+Requires the .NET 10 SDK and Rust stable. Quit TeXLocal, then run `apps/windows/install.ps1`:
+it publishes a self-contained Release build to `%LOCALAPPDATA%\Programs\TeXLocal`, replacing
+what is there, and points the Start menu's TeXLocal shortcut at it.
 
 ## Open
 

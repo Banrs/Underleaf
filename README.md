@@ -23,8 +23,11 @@ macOS and Windows only: there is no Linux build.
 ```sh
 git clone https://github.com/Banrs/Underleaf.git
 cd Underleaf
-open apps/macos/TeXLocal.xcodeproj    # Xcode 27; the build runs cargo itself
+open apps/macos/TeXLocal.xcodeproj    # macOS: Xcode 27; the build runs cargo itself
 ```
+
+On Windows, `apps/windows/install.ps1` builds the app (.NET 10 SDK and Rust) into
+`%LOCALAPPDATA%\Programs\TeXLocal` and adds TeXLocal to the Start menu.
 
 You also need a TeX distribution — see [Requirements](#requirements).
 
@@ -76,13 +79,15 @@ You also need a TeX distribution — see [Requirements](#requirements).
 ## Requirements
 
 A TeX distribution providing `latexmk`, `pdflatex` and `synctex`. On macOS,
-`brew install --cask mactex-no-gui` installs one.
+`brew install --cask mactex-no-gui` installs one; on Windows, TeX Live (its installer
+brings the Perl latexmk needs, MiKTeX's doesn't).
 
 TeXLocal finds TeX on your `PATH` and in the usual install locations
-(`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`), or in a folder
-you choose in Settings.
+(`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`, `C:\texlive\<year>`, MiKTeX), or
+in a folder you choose in Settings.
 
-**To build from source:** Rust (stable); the macOS app also needs Xcode 27.
+**To build from source:** Rust (stable); the macOS app also needs Xcode 27, the Windows app
+the .NET 10 SDK.
 
 Projects are plain folders in `~/TeXLocal` — override with
 `TEXLOCAL_DATA=/path`. No databases, no lock-in.
@@ -115,18 +120,23 @@ cargo test --workspace        # the core builds and tests on macOS and Windows
 open apps/macos/TeXLocal.xcodeproj
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal build
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal test   # Swift Testing
+
+# Windows app (.NET 10): the build runs cargo itself
+dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64
+dotnet test apps/windows/TeXLocal.Tests -c Debug
 ```
 
 These are full regression commands. For an individual change, select the affected
 test files or Xcode methods; keep cursor, menu tracking and visual-material checks
 in native UI verification. `AGENTS.md` records the current evidence and limits.
 
-CI (`.github/workflows/ci.yml`) runs Rust (fmt, clippy, tests) on macOS and Windows and the
-Mac app's `xcodebuild test` on the `xcode-27` runner, each only when a path it builds from
-changed. `ci-ok` is the one check to require.
+CI (`.github/workflows/ci.yml`) runs Rust (fmt, clippy, tests) on macOS and Windows, the
+Windows app's build, tests and smoke run, and the Mac app's `xcodebuild test` on the
+`xcode-27` runner, each only when a path it builds from changed. `ci-ok` is the one check to require.
 
-Keep the version in the workspace `Cargo.toml` and the macOS project (`MARKETING_VERSION` in
-`apps/macos/project.yml` and the `.xcodeproj`) consistent.
+Keep the version in the workspace `Cargo.toml`, the macOS project (`MARKETING_VERSION` in
+`apps/macos/project.yml` and the `.xcodeproj`) and `apps/windows/TeXLocal/TeXLocal.csproj`
+consistent.
 
 ## Security notes
 
