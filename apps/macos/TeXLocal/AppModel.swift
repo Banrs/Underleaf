@@ -194,6 +194,13 @@ final class AppModel {
         performPDF?(action)
     }
 
+    /// The project the window's workspace shows: the open one once it has loaded, and until then the one it showed, so a
+    /// switch from one project to the next never passes through Home. None, Home.
+    func workspaceProject(after shown: ProjectModel?) -> ProjectModel? {
+        guard let project else { return nil }
+        return project.initialLoadComplete ? project : shown
+    }
+
     private let core = Core.shared
     @ObservationIgnored private var texCheck: Task<Void, Never>?
 
@@ -376,7 +383,8 @@ final class AppModel {
         return launchProject
     }
 
-    /// `project` goes straight from one to the next, never nil between, so the window keeps the workspace.
+    /// `project` goes straight from one to the next, never nil between, so the window keeps the workspace
+    /// (`workspaceProject`).
     func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {
         openGeneration += 1
         let generation = openGeneration
