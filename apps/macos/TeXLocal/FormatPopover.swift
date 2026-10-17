@@ -71,12 +71,12 @@ struct FormatPanel: View {
 
     /// Notes' list markers sit a word space from their text.
     private static let markerGap: CGFloat = 4
-    /// The UI kit's menu (macOS 27, Menus, Regular): an item's highlight 5 pt in from the edge with
-    /// 8 pt corners, its content and the separators 16 pt in, the first item 6 pt down.
-    fileprivate static let highlightInset: CGFloat = 5, highlightRadius: CGFloat = 8, contentInset: CGFloat = 16, menuTop: CGFloat = 6
-    /// Notes' Aa (measured, 27.2): its style tiles 5 pt from the top and 8 pt over the divider, its rows at a 29 pt pitch,
-    /// the last 5 pt from the foot.
-    private static let stylesTop: CGFloat = 5, stylesBottom: CGFloat = 8, levelsBottom: CGFloat = 5, notesPitch: CGFloat = 29
+    /// Notes' Aa, read through Accessibility (27.2): 7 pt between each part and the next and at the edges, dividers 7 pt
+    /// in from the sides, rows 28 pt high a point apart and 10 pt in, their content 16 pt in; highlights with 8 pt corners.
+    fileprivate static let gap: CGFloat = 7, dividerInset: CGFloat = 7, rowInset: CGFloat = 10, rowGap: CGFloat = 1,
+                           contentInset: CGFloat = 16, highlightRadius: CGFloat = 8
+    /// Notes' row pitch.
+    fileprivate static let notesPitch: CGFloat = 29
 
     var body: some View {
         let headings = project.headingStyles
@@ -96,24 +96,22 @@ struct FormatPanel: View {
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity)
-            .padding(.top, Self.stylesTop)
-            .padding(.bottom, Self.stylesBottom)
-            Divider()
-                .padding(.horizontal, Self.contentInset)
-            VStack(spacing: 0) {
+            .padding(.vertical, Self.gap)
+            separator
+                .padding(.horizontal, Self.dividerInset)
+            VStack(spacing: Self.rowGap) {
                 ForEach(headings, id: \.command) { style in
                     // The run-in levels set apart from the displayed ones, as Notes sets Block Quote apart from its styles.
                     if style.command == "paragraph", style.command != headings.first?.command {
-                        Divider()
-                            .padding(.horizontal, Self.contentInset - Self.highlightInset)
-                            .padding(.vertical, Self.menuTop)
+                        separator
+                            .padding(.horizontal, Self.dividerInset - Self.rowInset)
+                            .padding(.vertical, Self.gap - Self.rowGap)
                     }
                     row(style, layout: layout, checked: style.command == current)
                 }
             }
-            .padding(.horizontal, Self.highlightInset)
-            .padding(.top, Self.menuTop)
-            .padding(.bottom, Self.levelsBottom)
+            .padding(.horizontal, Self.rowInset)
+            .padding(.vertical, Self.gap)
             .onKeyPress(.downArrow) { move(by: 1, in: levels) }
             .onKeyPress(.upArrow) { move(by: -1, in: levels) }
             .onKeyPress(keys: [.return, .space]) { _ in chooseFocused() }
@@ -140,6 +138,11 @@ struct FormatPanel: View {
         .onChange(of: project.editor.changes.count, initial: true) {
             styles = project.editor.textStyles
         }
+    }
+
+    /// Notes' popover separator: half a point, where SwiftUI's `Divider` takes a point here.
+    private var separator: some View {
+        Divider().frame(height: 0.5)
     }
 
     private func toggle(_ command: MenuCommand, symbol: String, on: Bool, help: LocalizedStringKey) -> some View {
@@ -192,8 +195,8 @@ struct FormatPanel: View {
                 .font(layout.font(style))
                 Spacer(minLength: 12)
             }
-            .padding(.horizontal, Self.contentInset - Self.highlightInset)
-            .frame(height: layout.pitch)
+            .padding(.horizontal, Self.contentInset - Self.rowInset)
+            .frame(height: layout.pitch - Self.rowGap)
             // A menu's highlight, the system's tint, which follows the pointer and the arrow keys;
             // on it the text's styles turn as a selected row's do.
             .foregroundStyle(.primary)
