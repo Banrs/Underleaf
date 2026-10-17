@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-use serde::{Deserialize, Serialize, de::IgnoredAny};
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,9 +12,6 @@ pub struct Catalog {
     pub blocks: BTreeMap<String, String>,
     pub environments: Vec<String>,
     pub bib_entry_types: Vec<String>,
-    /// The sectioning commands the editor recognises, outermost first: the
-    /// heading levels, then `subparagraph`, which the menus don't offer.
-    pub sections: Vec<String>,
     pub cite_commands: Vec<String>,
     pub ref_commands: Vec<String>,
     /// Commands whose options and first argument are names, not prose:
@@ -27,8 +24,8 @@ pub struct Catalog {
     pub text_commands: Vec<String>,
     /// The maths environments the preview renders.
     pub preview_environments: Vec<String>,
-    /// (name, a word for its kind, snippet); "#{…}" marks a snippet field.
-    pub commands: Vec<(String, IgnoredAny, String)>,
+    /// (name, snippet); "#{…}" marks a snippet field.
+    pub commands: Vec<(String, String)>,
     pub templates: Templates,
     /// The levels a line's style can be, outermost first: indexed by the
     /// outline's depth.
@@ -81,21 +78,6 @@ pub struct Symbol {
     pub command: String,
 }
 
-/// What a host's menus are made from.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Menus<'a> {
-    pub templates: &'a Templates,
-    pub symbol_groups: &'a [SymbolGroup],
-}
-
-pub fn menus() -> Menus<'static> {
-    Menus {
-        templates: &CATALOG.templates,
-        symbol_groups: &CATALOG.symbol_groups,
-    }
-}
-
 pub static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
     serde_json::from_str(include_str!("catalog.json")).expect("catalog.json is valid")
 });
@@ -107,20 +89,4 @@ pub fn alternation<S: AsRef<str>>(names: impl IntoIterator<Item = S>) -> String 
         .map(|n| regex::escape(n.as_ref()))
         .collect::<Vec<_>>()
         .join("|")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::CATALOG;
-
-    #[test]
-    fn the_sections_are_the_heading_levels_then_subparagraph() {
-        let mut commands: Vec<&str> = CATALOG
-            .heading_levels
-            .iter()
-            .map(|level| level.command.as_str())
-            .collect();
-        commands.push("subparagraph");
-        assert_eq!(CATALOG.sections, commands);
-    }
 }

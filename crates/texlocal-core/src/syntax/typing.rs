@@ -1,17 +1,17 @@
 //! Typing as the source editor assists it: brackets that close and are
 //! stepped over, Delete back to an indent stop, Return keeping the line's
-//! indentation, a bracket's partner, snippet fields that Tab goes through and
-//! that mirror each other, Move Line Up and Down, and wrapping the selection.
-//! The editor applies the answers and reports back each change (`follow`)
-//! and each selection (`select`): the closers it put in and the snippet's
-//! fields are kept here, between keys.
+//! indentation, and a bracket's partner. The editor applies the answers and
+//! reports back each change (`follow`) and each selection (`select`): the
+//! closers it put in are kept here, between keys, with the snippet's fields
+//! (snippet.rs).
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::{SnippetField, SourceDocument, TextEdit, TextRange, clamp, edit, escaped, is, utf16};
+use super::snippet::Snippet;
+use super::{SourceDocument, TextEdit, TextRange, clamp, escaped, is, space, span, splice, utf16};
 
 /// What a key does instead of what the editor would: an edit, typed as a
 /// key types (so it undoes with the typing around it), and where the
@@ -38,79 +38,23 @@ pub enum Completing {
     Close,
 }
 
-/// Edits, applied from the last as one undo step, and the selections after.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct Change {
-    pub edits: Vec<TextEdit>,
-    pub selections: Vec<TextRange>,
-}
-
-/// Tab: a snippet's next field, or the lines indented.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct Tab {
-    /// The field to select; none, with a snippet, where there's no other.
-    pub field: Option<TextRange>,
-    /// Without a snippet: the indentation, as `SourceDocument::indent` gives it.
-    pub edits: Vec<TextEdit>,
-}
-
-/// The bold, italic or underline Format toggles.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum Style {
-    Bold,
-    Italic,
-    Underline,
-}
-
-/// A place of a snippet's field, in the text.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Field {
-    index: i64,
-    start: i64,
-    length: i64,
-}
-
-impl Field {
-    fn end(&self) -> i64 {
-        self.start + self.length
-    }
-
-    fn holds(&self, start: i64, end: i64) -> bool {
-        self.start <= start && end <= self.end()
-    }
-}
-
-/// Fields with the same index are one field in several places.
-#[derive(Clone, Debug)]
-struct Snippet {
-    fields: Vec<Field>,
-    active: i64,
-}
-
-impl Snippet {
-    /// The active field's first place, the one typed in.
-    fn typed(&self) -> Option<Field> {
-        self.fields.iter().find(|f| f.index == self.active).copied()
-    }
-}
-
 /// What typing keeps between keys.
 #[derive(Default)]
 pub(crate) struct Typing {
     /// Closing brackets put in for the user, which typing one steps over.
-    closers: BTreeSet<i64>,
-    snippet: Option<Snippet>,
-    /// The typed field changed: its other places are to follow it.
-    needs_mirror: bool,
+    pub(super) closers: BTreeSet<usize>,
+    pub(super) snippet: Option<Snippet>,
     /// A closer a key put in, kept once its edit, at `start`, is followed.
-    pending: Option<(i64, i64)>,
+    pending: Option<(usize, usize)>,
 }
 
 const PAIRS: [(&str, &str); 3] = [("(", ")"), ("[", "]"), ("{", "}")];
 
 /// An opening bracket is closed for the user before these, or space, or the end.
 const CLOSE_BEFORE: [&str; 6] = [")", "]", "}", ":", ";", ">"];
+
+/// How far a bracket's partner is looked for, either way.
+const PARTNER_WITHIN: usize = 10_000;
 
 fn closing_of(c: &str) -> Option<&'static str> {
     PAIRS
@@ -123,13 +67,31 @@ fn is_closing(c: &str) -> bool {
     PAIRS.iter().any(|&(_, close)| close == c)
 }
 
+/// Whether a unit is a closing bracket.
+pub(super) fn closing_unit(u: u16) -> bool {
+    bracket(u).is_some_and(|(_, opens)| !opens)
+}
+
+/// If the unit is a bracket, its partner and whether it opens.
+fn bracket(u: u16) -> Option<(u16, bool)> {
+    let (partner, opens) = match u8::try_from(u).ok()? {
+        b'(' => (b')', true),
+        b'[' => (b']', true),
+        b'{' => (b'}', true),
+        b')' => (b'(', false),
+        b']' => (b'[', false),
+        b'}' => (b'{', false),
+        _ => return None,
+    };
+    Some((partner.into(), opens))
+}
+
 /// The character (grapheme cluster) a unit is in, as NSString's composed
 /// character sequence there.
-fn character(units: &[u16], at: i64) -> Option<String> {
-    if at < 0 || at as usize >= units.len() {
+fn character(units: &[u16], at: usize) -> Option<String> {
+    if at >= units.len() {
         return None;
     }
-    let at = at as usize;
     // A window wide enough for any cluster but a pathological one.
     let mut from = at.saturating_sub(32);
     while from > 0 && (0xdc00..0xe000).contains(&units[from]) {
@@ -153,76 +115,16 @@ fn whitespace(c: &str) -> bool {
     c.chars().next().is_some_and(char::is_whitespace)
 }
 
-/// NSString's line terminators: a CRLF is one.
-fn line_break(u: u16) -> bool {
-    matches!(u, 0x0a | 0x0d | 0x85 | 0x2028 | 0x2029)
-}
-
-/// Where the line `at` is on starts, as NSString's lineRange.
-fn line_start(units: &[u16], at: i64) -> i64 {
-    let mut i = at.clamp(0, units.len() as i64) as usize;
-    // Between a CR and its LF is in the line the pair ends.
-    if i > 0 && i < units.len() && units[i] == 0x0a && units[i - 1] == 0x0d {
-        i -= 1;
-    }
-    while i > 0 && !line_break(units[i - 1]) {
-        i -= 1;
-    }
-    i as i64
-}
-
-/// Where the line `at` is on ends, before and after its terminator.
-fn line_end(units: &[u16], at: i64) -> (i64, i64) {
-    let mut i = at.clamp(0, units.len() as i64) as usize;
-    while i < units.len() && !line_break(units[i]) {
-        i += 1;
-    }
-    let contents = i;
-    if i < units.len() {
-        i += if units[i] == 0x0d && units.get(i + 1) == Some(&0x0a) {
-            2
-        } else {
-            1
-        };
-    }
-    (contents as i64, i as i64)
-}
-
-/// NSString's lineRange: the whole lines a range touches, terminators and
-/// all; one ending at a line's start leaves that line.
-fn line_range(units: &[u16], start: i64, length: i64) -> (i64, i64) {
-    let last = if length > 0 {
-        start + length - 1
-    } else {
-        start
-    };
-    (line_start(units, start), line_end(units, last).1)
-}
-
-fn range(start: i64, length: i64) -> TextRange {
-    TextRange {
-        start: start.max(0) as u32,
-        length: length.max(0) as u32,
-    }
-}
-
-fn span(range: TextRange) -> (i64, i64) {
-    (range.start as i64, range.length as i64)
-}
-
-fn substring(units: &[u16], start: i64, end: i64) -> String {
-    String::from_utf16_lossy(&units[start as usize..end as usize])
-}
-
 /// How long the closer after the caret is, between an empty pair: 1, or 2
 /// between `\[` and `\]`.
-fn closer_after(units: &[u16], caret: i64) -> Option<i64> {
-    let close = character(units, caret - 1).and_then(|c| closing_of(&c))?;
-    let at = |i: i64| character(units, i);
+fn closer_after(units: &[u16], caret: usize) -> Option<usize> {
+    let opener = caret.checked_sub(1)?;
+    let close = character(units, opener).and_then(|c| closing_of(&c))?;
+    let at = |i| character(units, i);
     if at(caret).as_deref() == Some(close) {
         return Some(1);
     }
-    (escaped(units, caret as usize - 1)
+    (escaped(units, opener)
         && at(caret).as_deref() == Some("\\")
         && at(caret + 1).as_deref() == Some(close))
     .then_some(2)
@@ -242,14 +144,15 @@ impl SourceDocument {
                 ..Keystroke::default()
             };
         }
-        let (start, length) = span(clamp(selection, self.text.len()));
+        let (start, end) = clamp(selection, self.text.len()).bounds();
+        let length = end - start;
         let next = character(units, start);
         let next_is = |c: &str| next.as_deref() == Some(c);
         if length == 0 && typing.closers.contains(&start) && is_closing(typed) {
             if next_is(typed) {
                 typing.closers.remove(&start);
                 return Keystroke {
-                    selection: Some(range(start + 1, 0)),
+                    selection: Some(span(start + 1, 0)),
                     partner: Some(start as u32),
                     ..Keystroke::default()
                 };
@@ -261,27 +164,23 @@ impl SourceDocument {
                 typing.closers.remove(&start);
                 let mut bracket = start + 1;
                 let mut keystroke = Keystroke::default();
-                if escaped(units, start as usize) {
-                    keystroke.edit = Some(edit(start as u32 - 1, 1, ""));
+                if escaped(units, start) {
+                    keystroke.edit = Some(splice(start - 1, 1, ""));
                     keystroke.completions = Completing::Close;
                     bracket -= 1;
                 }
-                keystroke.selection = Some(range(bracket + 1, 0));
+                keystroke.selection = Some(span(bracket + 1, 0));
                 keystroke.partner = Some(bracket as u32);
                 return keystroke;
             }
         }
         if let Some(close) = closing_of(typed).filter(|_| auto_pair) {
             if length > 0 {
-                let selected = substring(units, start, start + length);
-                typing.pending = Some((start, start + length + 1));
+                let selected = String::from_utf16_lossy(&units[start..end]);
+                typing.pending = Some((start, end + 1));
                 return Keystroke {
-                    edit: Some(edit(
-                        start as u32,
-                        length as u32,
-                        format!("{typed}{selected}{close}"),
-                    )),
-                    selection: Some(range(start + 1, length)),
+                    edit: Some(splice(start, length, format!("{typed}{selected}{close}"))),
+                    selection: Some(span(start + 1, length)),
                     ..Keystroke::default()
                 };
             }
@@ -290,15 +189,15 @@ impl SourceDocument {
                 .is_none_or(|n| whitespace(n) || CLOSE_BEFORE.contains(&n))
             {
                 // \[ closes with \], \{ with \} and \( with \).
-                let pair = if escaped(units, start as usize) {
+                let pair = if escaped(units, start) {
                     format!("{typed}\\{close}")
                 } else {
                     format!("{typed}{close}")
                 };
                 typing.pending = Some((start, start + 1));
                 return Keystroke {
-                    edit: Some(edit(start as u32, 0, pair)),
-                    selection: Some(range(start + 1, 0)),
+                    edit: Some(splice(start, 0, pair)),
+                    selection: Some(span(start + 1, 0)),
                     completions: Completing::Offer,
                     ..Keystroke::default()
                 };
@@ -316,12 +215,12 @@ impl SourceDocument {
     pub fn delete_backward(&mut self, selection: TextRange, auto_pair: bool) -> Keystroke {
         self.typing.pending = None;
         let units = &self.text.units[..];
-        let (caret, length) = span(clamp(selection, self.text.len()));
-        if length != 0 || caret == 0 {
+        let (caret, end) = clamp(selection, self.text.len()).bounds();
+        if end != caret || caret == 0 {
             return Keystroke::default();
         }
-        let delete = |from: i64, to: i64| Keystroke {
-            edit: Some(edit(from as u32, (to - from) as u32, "")),
+        let delete = |from: usize, to: usize| Keystroke {
+            edit: Some(splice(from, to - from, "")),
             completions: Completing::Close,
             ..Keystroke::default()
         };
@@ -332,7 +231,7 @@ impl SourceDocument {
         {
             return delete(caret - 1, caret + closer);
         }
-        let indent = &units[line_start(units, caret) as usize..caret as usize];
+        let indent = &units[self.text.around(caret).start..caret];
         if !indent.is_empty() && indent.iter().all(|&u| is(u, ' ')) {
             let drop = if indent.len().is_multiple_of(2) { 2 } else { 1 };
             return delete(caret - drop, caret);
@@ -346,43 +245,31 @@ impl SourceDocument {
     pub fn insert_newline(&mut self, selection: TextRange) -> Keystroke {
         self.typing.pending = None;
         let units = &self.text.units[..];
-        let (mut start, mut length) = span(clamp(selection, self.text.len()));
-        let (line, line_end_all) = line_range(units, start, 0);
-        let line_text = substring(units, line, line_end_all);
-        // Trimmed of .newlines at both ends, as Foundation trims.
-        let newline = |c: char| {
-            matches!(
-                c,
-                '\n' | '\u{0b}' | '\u{0c}' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}'
-            )
-        };
-        let line_text = line_text.trim_matches(newline);
-        let indent: String = line_text
-            .chars()
-            .take_while(|&c| c == ' ' || c == '\t')
-            .collect();
-        let line_end = line + utf16(line_text) as i64;
-        let between = length == 0 && closer_after(units, start).is_some();
-        let mut insert = format!("\n{indent}");
-        if between {
+        let (mut start, end) = clamp(selection, self.text.len()).bounds();
+        let mut length = end - start;
+        let line = self.text.around(start);
+        let indent = &units[line.start..line.end];
+        let indent = &indent[..indent
+            .iter()
+            .take_while(|&&u| is(u, ' ') || is(u, '\t'))
+            .count()];
+        let indentation = String::from_utf16_lossy(indent);
+        let mut insert = format!("\n{indentation}");
+        if length == 0 && closer_after(units, start).is_some() {
             insert.push('\n');
-            insert.push_str(&indent);
+            insert.push_str(&indentation);
         } else {
-            while start + length < line_end && is(units[(start + length) as usize], ' ') {
+            while start + length < line.end && is(units[start + length], ' ') {
                 length += 1;
             }
-            if start > line
-                && String::from_utf16_lossy(&units[line as usize..start as usize])
-                    .chars()
-                    .all(char::is_whitespace)
-            {
-                length += start - line;
-                start = line;
+            if start > line.start && units[line.start..start].iter().all(|&u| space(u)) {
+                length += start - line.start;
+                start = line.start;
             }
         }
         Keystroke {
-            edit: Some(edit(start as u32, length as u32, insert)),
-            selection: Some(range(start + 1 + utf16(&indent) as i64, 0)),
+            edit: Some(splice(start, length, insert)),
+            selection: Some(span(start + 1 + indent.len(), 0)),
             completions: Completing::Close,
             ..Keystroke::default()
         }
@@ -402,17 +289,17 @@ impl SourceDocument {
         mirroring: bool,
     ) {
         let typing = &mut self.typing;
-        let old = changing
-            .filter(|c| c.start == old.start && c.start + c.length <= old.start + old.length)
-            .unwrap_or(old);
-        let (start, length) = span(old);
-        let end = start + length;
+        let (start, end) = old.bounds();
+        let (start, end) = changing
+            .map(TextRange::bounds)
+            .filter(|&(from, to)| from == start && to <= end)
+            .unwrap_or((start, end));
         typing.closers = typing
             .closers
             .iter()
             .filter_map(|&p| {
                 if p >= end {
-                    Some(p + delta)
+                    Some(p.saturating_add_signed(delta as isize))
                 } else {
                     (p < start).then_some(p)
                 }
@@ -423,24 +310,10 @@ impl SourceDocument {
         {
             typing.closers.insert(closer);
         }
-        let Some(snippet) = &mut typing.snippet else {
-            return;
-        };
-        if !mirroring {
-            if !snippet.typed().is_some_and(|typed| typed.holds(start, end)) {
-                typing.snippet = None;
-                return;
-            }
-            let active = snippet.active;
-            typing.needs_mirror = snippet.fields.iter().filter(|f| f.index == active).count() > 1;
-        }
-        for i in 0..snippet.fields.len() {
-            let field = snippet.fields[i];
-            if field.holds(start, end) && (mirroring || snippet.typed() == Some(field)) {
-                snippet.fields[i].length += delta;
-            } else if field.start >= end {
-                snippet.fields[i].start += delta;
-            }
+        if let Some(snippet) = &mut typing.snippet
+            && !snippet.follow(start, end, delta, mirroring)
+        {
+            typing.snippet = None;
         }
     }
 
@@ -449,254 +322,69 @@ impl SourceDocument {
     /// before its line are no longer stepped over.
     pub fn select(&mut self, selection: TextRange, mirroring: bool) {
         let typing = &mut self.typing;
-        let (start, length) = span(selection);
+        let (start, end) = selection.bounds();
         if !mirroring
             && typing
                 .snippet
                 .as_ref()
-                .is_some_and(|s| !s.fields.iter().any(|f| f.holds(start, start + length)))
+                .is_some_and(|snippet| !snippet.contains(start, end))
         {
             typing.snippet = None;
         }
-        let line = line_start(&self.text.units, start);
+        let line = self.text.around(start).start;
         typing.closers.retain(|&p| p >= line);
     }
 
-    /// A completion's or block's fields, from `at`, the first selected: Tab
-    /// goes through them while there's another, or a field in two places.
-    /// None without a first field.
-    pub fn start_snippet(&mut self, fields: &[SnippetField], at: u32) -> Option<TextRange> {
-        let fields: Vec<Field> = fields
-            .iter()
-            .map(|f| Field {
-                index: f.index as i64,
-                start: at as i64 + f.start as i64,
-                length: f.length as i64,
-            })
-            .collect();
-        let first = *fields.iter().find(|f| f.index == 0)?;
-        self.typing.snippet = (fields.len() > 1).then_some(Snippet { fields, active: 0 });
-        Some(range(first.start, first.length))
-    }
-
-    /// Escape: whether there was a snippet to end.
-    pub fn end_snippet(&mut self) -> bool {
-        self.typing.snippet.take().is_some()
-    }
-
-    /// Tab and Shift-Tab (`step` 1 and -1): a snippet's next field or the one
-    /// before; without one, the lines indented or outdented.
-    pub fn tab(&mut self, selections: &[TextRange], step: i64) -> Tab {
-        let Some(snippet) = &mut self.typing.snippet else {
-            return Tab {
-                field: None,
-                edits: self.indent(selections, step > 0),
-            };
-        };
-        let next = snippet.active + step;
-        let Some(field) = snippet.fields.iter().find(|f| f.index == next).copied() else {
-            return Tab::default();
-        };
-        snippet.active = next;
-        if snippet.fields.iter().all(|f| f.index <= next) {
-            self.typing.snippet = None;
-        }
-        Tab {
-            field: Some(range(field.start, field.length)),
-            edits: vec![],
-        }
-    }
-
-    /// What's typed in a snippet's field for its other places, from the
-    /// last, once `follow` has seen it change; the editor applies them while
-    /// `mirroring`, then selects what it had.
-    pub fn mirror_snippet(&mut self) -> Vec<TextEdit> {
-        let typing = &mut self.typing;
-        let Some(snippet) = typing.snippet.as_ref().filter(|_| typing.needs_mirror) else {
-            return vec![];
-        };
-        let Some(typed) = snippet.typed() else {
-            return vec![];
-        };
-        typing.needs_mirror = false;
-        let units = &self.text.units[..];
-        let len = units.len() as i64;
-        let typed_text = substring(units, typed.start.min(len), typed.end().min(len));
-        snippet
-            .fields
-            .iter()
-            .rev()
-            .filter(|f| f.index == snippet.active && **f != typed)
-            .map(|f| edit(f.start as u32, f.length as u32, typed_text.clone()))
-            .collect()
-    }
-
     /// Where the bracket at `at` is matched, within 10,000 units either way.
+    /// Brackets in comments are no one's, and an escaped one (`\{`, `\]`)
+    /// pairs only with the escaped.
     pub fn partner(&self, at: u32) -> Option<u32> {
+        let at = at as usize;
         let units = &self.text.units[..];
-        let c = *units.get(at as usize)?;
-        let ch = char::from_u32(c as u32)?.to_string();
-        let close = closing_of(&ch);
-        let open = PAIRS.iter().find(|(_, cl)| *cl == ch).map(|&(o, _)| o);
-        let other = close.or(open)?.encode_utf16().next()?;
-        let (mut depth, mut i) = (0i64, at as i64);
-        while (i - at as i64).abs() <= 10_000 && i >= 0 && (i as usize) < units.len() {
-            let d = units[i as usize];
-            if d == c {
-                depth += 1;
-            } else if d == other {
-                depth -= 1;
+        let start = *units.get(at)?;
+        let (partner, opens) = bracket(start)?;
+        let near = at.saturating_sub(PARTNER_WITHIN)..(at + PARTNER_WITHIN + 1).min(units.len());
+        // The brackets outside comments and whether each is escaped, in the
+        // range; a comment is known from its line's start, so reading starts there.
+        let mut brackets = Vec::new();
+        let (mut comment, mut slashes) = (false, 0);
+        let from = self.text.around(near.start).start;
+        for (i, &u) in units.iter().enumerate().take(near.end).skip(from) {
+            let escaped = slashes % 2 == 1;
+            if is(u, '\n') {
+                comment = false;
+            } else if is(u, '%') && !escaped {
+                comment = true;
             }
-            if depth == 0 {
-                return Some(i as u32);
+            if !comment && near.contains(&i) && (u == start || u == partner) {
+                brackets.push((i, u, escaped));
             }
-            i += if close.is_some() { 1 } else { -1 };
+            slashes = if is(u, '\\') { slashes + 1 } else { 0 };
         }
-        None
-    }
-
-    /// Move Line Up or Down: the lines the selections touch, each run of
-    /// them past the line above or below, the selections going with them;
-    /// none when a run is already at the text's start or end.
-    pub fn move_lines(&self, selections: &[TextRange], up: bool) -> Option<Change> {
-        let units = &self.text.units[..];
-        let len = units.len() as i64;
-        // Each selection's whole lines; one ending at a line's start doesn't take that line.
-        let mut runs: Vec<(i64, i64)> = Vec::new();
-        for selection in selections {
-            let (start, length) = span(*selection);
-            let run = line_range(units, start.min(len), length.min(len - start.min(len)));
-            match runs.last_mut() {
-                Some(previous) if run.0 <= previous.1 => {
-                    *previous = (previous.0.min(run.0), previous.1.max(run.1));
-                }
-                _ => runs.push(run),
-            }
-        }
-        runs.sort_by_key(|run| run.0);
-        let mut edits = Vec::new();
-        let mut shifts = Vec::new();
-        for &(start, end) in &runs {
-            // The empty line after a final line break has nothing to move.
-            if end == start || (if up { start == 0 } else { end >= len }) {
-                return None;
-            }
-            let neighbour = line_range(units, if up { start - 1 } else { end }, 0);
-            let whole = (start.min(neighbour.0), end.max(neighbour.1));
-            // The lines' text trades places; the line ends stay where they were,
-            // so a last line without one keeps none.
-            let mut lines = Vec::new();
-            let mut at = whole.0;
-            while at < whole.1 {
-                let (contents, next) = line_end(units, at);
-                let (contents, next) = (contents.min(whole.1), next.min(whole.1));
-                lines.push((
-                    substring(units, at, contents),
-                    substring(units, contents, next),
-                ));
-                at = next;
-            }
-            // The neighbour is one line, first going up and last going down.
-            let mut moved: Vec<&String> = lines.iter().map(|(text, _)| text).collect();
-            if up {
-                moved.rotate_left(1);
-            } else {
-                moved.rotate_right(1);
-            }
-            let joined: String = moved
-                .iter()
-                .zip(&lines)
-                .flat_map(|(text, (_, end))| [text.as_str(), end.as_str()])
-                .collect();
-            edits.push(edit(whole.0 as u32, (whole.1 - whole.0) as u32, joined));
-            let new_start = if up {
-                whole.0
-            } else {
-                whole.0 + (utf16(moved[0]) + utf16(&lines[0].1)) as i64
-            };
-            shifts.push(((start, end), new_start - start));
-        }
-        let selections = selections
-            .iter()
-            .map(|selection| {
-                let (at, length) = span(*selection);
-                let by = shifts
-                    .iter()
-                    .find(|((start, end), _)| {
-                        (*start <= at && at < *end) || (at == *end && length == 0 && *end == len)
-                    })
-                    .map_or(0, |&(_, by)| by);
-                range(at + by, length)
-            })
-            .collect();
-        Some(Change { edits, selections })
-    }
-
-    /// The selection (the first) between a template's text before "$0" and
-    /// after, still selected, or the caret between them.
-    pub fn wrap(&self, selections: &[TextRange], template: &str) -> Change {
-        let (prefix, suffix) = template.split_once("$0").unwrap_or((template, ""));
-        self.wrap_in(selections, prefix, suffix)
-    }
-
-    fn wrap_in(&self, selections: &[TextRange], prefix: &str, suffix: &str) -> Change {
-        let first = selections.first().copied().unwrap_or_default();
-        let selection = clamp(first, self.text.len());
-        let (start, length) = span(selection);
-        let selected = substring(&self.text.units, start, start + length);
-        Change {
-            edits: vec![edit(
-                selection.start,
-                selection.length,
-                format!("{prefix}{selected}{suffix}"),
-            )],
-            selections: vec![range(start + utf16(prefix) as i64, length)],
-        }
-    }
-
-    /// Bold, Italic or Underline off where the selection (the first) is in
-    /// its command, as a word processor's: the command unwraps, the
-    /// selections following the text; on otherwise, round the selection.
-    pub fn toggle_style(&mut self, selections: &[TextRange], style: Style) -> Change {
-        let styles = self.text_styles(selections.first().copied().unwrap_or_default());
-        let (unwrap, command) = match style {
-            Style::Bold => (styles.bold, "\\textbf{"),
-            Style::Italic => (styles.italic, "\\textit{"),
-            Style::Underline => (styles.underline, "\\underline{"),
+        let here = brackets.iter().position(|&(i, ..)| i == at)?;
+        let escaped = brackets[here].2;
+        let same = |b: &&(usize, u16, bool)| b.2 == escaped;
+        let found = if opens {
+            matched(brackets[here..].iter().filter(same), start)
+        } else {
+            matched(brackets[..=here].iter().rev().filter(same), start)
         };
-        match unwrap {
-            Some(edits) => Change {
-                selections: map_selections(&edits, selections),
-                edits,
-            },
-            None => self.wrap_in(selections, command, "}"),
-        }
+        found.map(|i| i as u32)
     }
 }
 
-/// Where selections go through edits (in order, applied from the last): text
-/// put in at a selection's start goes before it, and a selection's end in
-/// replaced text goes to the replacement's end.
-pub fn map_selections(edits: &[TextEdit], selections: &[TextRange]) -> Vec<TextRange> {
-    let map = |position: i64| {
-        let mut shift = 0i64;
-        for e in edits {
-            let inserted = utf16(&e.text) as i64;
-            let (start, length) = (e.start as i64, e.length as i64);
-            if start + length <= position {
-                shift += inserted - length;
-            } else if start < position {
-                return start + shift + inserted;
-            }
+/// Where the depth returns to zero, from the first of `brackets` (the one
+/// matched): each `start` deepens it and each other lessens it.
+fn matched<'a>(
+    brackets: impl Iterator<Item = &'a (usize, u16, bool)>,
+    start: u16,
+) -> Option<usize> {
+    let mut depth = 0;
+    for &(i, u, _) in brackets {
+        depth = if u == start { depth + 1 } else { depth - 1 };
+        if depth == 0 {
+            return Some(i);
         }
-        position + shift
-    };
-    selections
-        .iter()
-        .map(|s| {
-            let (start, length) = span(*s);
-            let from = map(start);
-            range(from, map(start + length) - from)
-        })
-        .collect()
+    }
+    None
 }

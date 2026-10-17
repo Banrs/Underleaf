@@ -52,7 +52,10 @@ pub struct Completions {
 /// backslashes, so `\footnote{see \cite{` is \cite's and `\frac{\al` none's.
 static ARGUMENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\([0-9A-Za-z_]+)\*?(\[[^\]]*\])?\{[^{}\\]*$").unwrap());
-static ENTRY_TYPE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@[0-9A-Za-z_]*$").unwrap());
+/// A bibliography entry's type starts its line, after any indentation:
+/// anywhere else an "@" is an email address's or a package command's.
+static ENTRY_TYPE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(@[0-9A-Za-z_]*)$").unwrap());
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[0-9A-Za-z_]*$").unwrap());
 static FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#\{([^}]*)\}").unwrap());
 
@@ -90,20 +93,25 @@ impl SourceDocument {
                 "begin" | "end" => (&catalog.environments[..], CompletionKind::Environment),
                 _ => return None,
             };
+            // After the brace or comma, and the blanks that usually follow a comma.
             let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
+            let start = before.len() - before[start..].trim_start().len();
             let items = words(matching(names, &before[start..], |n| n), "");
             return offer(start, kind, items);
         }
-        // @article and the like, in a .bib file.
-        if let Some(m) = ENTRY_TYPE.find(&before) {
-            let names = matching(&catalog.bib_entry_types, &m.as_str()[1..], |t| t);
-            return offer(m.start(), CompletionKind::EntryType, words(names, "@"));
+        // @article and the like, in a .bib file. `before` starts at the line's
+        // start unless the line is long, when the "@" is not known to.
+        let whole_line = from == text.lines[line];
+        if let Some(at) = ENTRY_TYPE.captures(&before).filter(|_| whole_line) {
+            let at = at.get(1).unwrap();
+            let names = matching(&catalog.bib_entry_types, &at.as_str()[1..], |t| t);
+            return offer(at.start(), CompletionKind::EntryType, words(names, "@"));
         }
         // \command, once a letter follows the backslash.
         let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
         let items = matching(&catalog.commands, m.as_str(), |c| &c.0)
             .into_iter()
-            .map(|(name, _, snippet)| {
+            .map(|(name, snippet)| {
                 let (text, fields) = expand(text, caret, snippet);
                 Completion {
                     label: name.clone(),
