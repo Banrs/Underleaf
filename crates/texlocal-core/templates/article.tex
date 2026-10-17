@@ -1,0 +1,38 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+
+\title{Your Title Here}
+\author{Your Name}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+A short summary of your work goes here.
+\end{abstract}
+
+\section{Introduction}
+Start writing here. Cite sources like this~\cite{knuth1984}.
+
+\section{Method}
+Inline math like $e^{i\pi} + 1 = 0$, or display math:
+\begin{equation}
+  \int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+  \label{eq:gauss}
+\end{equation}
+Reference equations like Equation~\ref{eq:gauss}.
+
+\section{Conclusion}
+Wrap it up.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

@@ -12,6 +12,7 @@ use crate::compile::{PROBE_TIMEOUT, run};
 use crate::error::CoreError;
 use crate::paths::{rel_to_root, safe_path, safe_rel_file};
 use crate::settings::compiled_pdf_path;
+use crate::syntax::headings::uncommented;
 
 /// Only `page` is required. The rest are omitted when synctex didn't report
 /// them, because the PDF viewer falls back with `??` — which fires on an
@@ -246,14 +247,11 @@ struct Letters {
 
 impl Letters {
     fn push(&mut self, text: &str, group: u32, tex: bool) {
-        let mut end = 0;
-        let mut chars = text.chars().peekable();
+        let text = if tex { uncommented(text) } else { text };
+        let (mut end, mut chars) = (0, text.chars().peekable());
         while let Some(c) = chars.next() {
             let start = end;
             end += c.len_utf16() as u32;
-            if tex && c == '%' {
-                break;
-            }
             if tex && c == '\\' {
                 // A command's name, or the one symbol it escapes.
                 let name = chars.peek().is_some_and(|n| n.is_alphabetic());
