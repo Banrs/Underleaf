@@ -41,8 +41,8 @@ completion list as a SwiftUI glass list.
 `.inspector`) is on trial on its own branch. Panes, bars, sheets, popovers, Settings and Home
 are SwiftUI.
 
-- **Toolbar**: Compile is the window's one prominent item, a word; while building it is Stop,
-  with progress. Aa (text styles), Math and Insert sit over the source; Zoom (minus,
+- **Toolbar**: Compile is the window's one prominent item, a word that becomes a symbol only
+  in a narrow window; while building it is Stop, with progress. Aa (text styles), Math and Insert sit over the source; Zoom (minus,
   percentage, plus), Compile and the PDF and Inspector toggles over the PDF. Tools without
   room go to the system's overflow by `visibilityPriority`.
 - **Source**: one TextKit 2 `NSTextView` (`SourceTextView`) shared across files, never
@@ -91,8 +91,8 @@ are SwiftUI.
 - **Dim, not hidden**, where hiding would make things jump: the File Outline, the panel's
   Warnings toggle with no warnings, Live Preview Log before Live Preview has run, and
   Format items in files the toolbar's are dim in.
-- **Settings** is a multi-pane window per the HIG. The PDF's dark paper is being dropped
-  (Preview has none).
+- **Settings** is a multi-pane window per the HIG: General, Editor, Compiling and Live
+  Preview. The PDF pane goes with its only setting, dark paper (Preview has none).
 - **Words**: the feature is Live Preview; TeXpresso is named only where the program is the
   subject. The verb is Compile, and a run and its result are a build. Interface spelling is
   British (Colours) except LaTeX's own terms (Math).
