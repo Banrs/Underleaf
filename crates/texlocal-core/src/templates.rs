@@ -19,14 +19,23 @@ Hello, world!
 \end{document}
 "#;
 
-const ARTICLE_MAIN: &str = r#"\documentclass[11pt]{article}
-\usepackage[utf8]{inputenc}
+/// What an article and a report load alike.
+macro_rules! preamble {
+    () => {
+        r"\usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{amsmath, amssymb}
 \usepackage{graphicx}
 \usepackage[margin=1in]{geometry}
 \usepackage{hyperref}
+"
+    };
+}
 
+const ARTICLE_MAIN: &str = concat!(
+    "\\documentclass[11pt]{article}\n",
+    preamble!(),
+    r#"
 \title{Your Title Here}
 \author{Your Name}
 \date{\today}
@@ -57,16 +66,13 @@ Wrap it up.
 \bibliography{references}
 
 \end{document}
-"#;
+"#
+);
 
-const REPORT_MAIN: &str = r#"\documentclass[11pt]{report}
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage{amsmath, amssymb}
-\usepackage{graphicx}
-\usepackage[margin=1in]{geometry}
-\usepackage{hyperref}
-
+const REPORT_MAIN: &str = concat!(
+    "\\documentclass[11pt]{report}\n",
+    preamble!(),
+    r#"
 \title{Report Title}
 \author{Your Name}
 \date{\today}
@@ -86,10 +92,11 @@ More content.
 \bibliography{references}
 
 \end{document}
-"#;
+"#
+);
 
 const BEAMER_MAIN: &str = r#"\documentclass{beamer}
-\usetheme{metropolis} % falls back gracefully; try 'Madrid' if unavailable
+\usetheme{Madrid}
 \usepackage{amsmath}
 
 \title{Presentation Title}
@@ -154,5 +161,12 @@ mod tests {
             }
         }
         assert_eq!(files("unknown"), files("article"));
+    }
+
+    #[test]
+    fn the_presentation_loads_only_a_theme_beamer_itself_ships() {
+        // LaTeX has no fallback for a theme that isn't installed: the build fails.
+        let main = files("beamer")[0].1;
+        assert!(main.contains("\\usetheme{Madrid}") && !main.contains("metropolis"));
     }
 }
