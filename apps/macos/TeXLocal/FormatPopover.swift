@@ -50,7 +50,7 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
 
 /// Bold, Italic and Underline, centred, lit when the selection is in their command; then the
 /// levels the document's class has (the core's `heading_styles`), each at its weight and shape
-/// there and its size scaled into Notes', at an even pitch, after its number as the class prints
+/// there and its size scaled into Notes', each row as tall as its font needs, after its number as the class prints
 /// it. A style toggles and the popover stays, as Notes' does; a level is chosen and it closes, as
 /// a menu. It opens with the caret's level checked and nothing highlighted; the arrow keys start
 /// from the checked level, and the pointer highlights a level without taking the keyboard's focus
@@ -69,13 +69,13 @@ struct FormatPanel: View {
     /// The selection's, read again as the text or the selection changes.
     @State private var styles = TextStyles()
 
-    /// LaTeX's run-in headings in every standard class.
-    private static let runIn: Set<String> = ["paragraph", "subparagraph"]
     /// Notes' list markers sit a word space from their text.
     private static let markerGap: CGFloat = 4
     /// The UI kit's menu (macOS 27, Menus, Regular): an item's highlight 5 pt in from the edge with
-    /// 8 pt corners, its content and the separators 16 pt in, the first item 6 pt down.
+    /// 8 pt corners, its content and the separators 16 pt in, the first item 6 pt down. An item is 24 pt
+    /// high and a separator 11 pt, as the menu bar's menus measure (27.2).
     fileprivate static let highlightInset: CGFloat = 5, highlightRadius: CGFloat = 8, contentInset: CGFloat = 16, menuTop: CGFloat = 6
+    static let item: CGFloat = 24, separator: CGFloat = 11
 
     var body: some View {
         let headings = project.headingStyles
@@ -89,23 +89,18 @@ struct FormatPanel: View {
                 toggle(.editItalic, symbol: "italic", on: styles.italic != nil, help: "Make text italic")
                 toggle(.editUnderline, symbol: "underline", on: styles.underline != nil, help: "Underline text")
             }
-            .padding(.vertical, 8)
-            Divider()
-                .padding(.horizontal, Self.contentInset)
+            .padding(.top, Self.menuTop)
+            separator(inset: Self.contentInset)
             VStack(spacing: 0) {
                 ForEach(headings, id: \.command) { style in
-                    // The run-in levels, which start their paragraph's text, sit apart from the levels set on their own
-                    // line, as Notes sets its lists apart from its styles.
-                    if style.command == headings.first(where: { Self.runIn.contains($0.command) })?.command {
-                        Divider()
-                            .padding(.horizontal, Self.contentInset - Self.highlightInset)
-                            .padding(.vertical, Self.menuTop)
+                    if style == headings.first(where: \.isRunIn) {
+                        separator(inset: Self.contentInset - Self.highlightInset)
                     }
                     row(style, layout: layout, checked: style.command == current)
                 }
             }
             .padding(.horizontal, Self.highlightInset)
-            .padding(.vertical, Self.menuTop)
+            .padding(.bottom, Self.menuTop)
             .onKeyPress(.downArrow) { move(by: 1, in: levels) }
             .onKeyPress(.upArrow) { move(by: -1, in: levels) }
             .onKeyPress(keys: [.return, .space]) { _ in chooseFocused() }
@@ -132,6 +127,13 @@ struct FormatPanel: View {
         .onChange(of: project.editor.changes.count, initial: true) {
             styles = project.editor.textStyles
         }
+    }
+
+    /// A menu's separator: its line in the middle of its 11 pt, inset as the menu's content.
+    private func separator(inset: CGFloat) -> some View {
+        Divider()
+            .padding(.horizontal, inset)
+            .padding(.vertical, (Self.separator - 1) / 2)
     }
 
     private func toggle(_ command: MenuCommand, symbol: String, on: Bool, help: LocalizedStringKey) -> some View {
@@ -168,7 +170,7 @@ struct FormatPanel: View {
                 Spacer(minLength: 12)
             }
             .padding(.horizontal, Self.contentInset - Self.highlightInset)
-            .frame(height: layout.pitch)
+            .frame(height: layout.height(style))
             // A menu's highlight, the system's tint, which follows the pointer and the arrow keys;
             // on it the text's styles turn as a selected row's do.
             .foregroundStyle(.primary)
@@ -212,19 +214,15 @@ struct FormatPanel: View {
         return .handled
     }
 
-    /// The levels' fonts at the text's size, the even pitch the largest needs, and the marker
-    /// column, as wide as the widest number shown in its level's font.
+    /// The levels' fonts at the text's size, and the marker column, as wide as the widest number
+    /// shown in its level's font.
     struct Layout {
         private let fonts: [String: NSFont]
-        let pitch: CGFloat
         let markers: CGFloat
 
         init(_ headings: [HeadingStyle]) {
             let fonts = Dictionary(headings.map { ($0.command, Self.font($0.font)) }) { first, _ in first }
             self.fonts = fonts
-            // The rows' even pitch, as Notes': the largest line and a little, and at least the kit's 24 pt item.
-            let line = fonts.values.map { $0.ascender - $0.descender + $0.leading }.max() ?? 16
-            pitch = max(24, (line + 4).rounded(.up))
             markers = headings.compactMap { style in
                 style.marker.map { NSAttributedString(string: $0, attributes: [.font: fonts[style.command]!]).size().width }
             }.max().map { $0.rounded(.up) } ?? 0
@@ -232,6 +230,13 @@ struct FormatPanel: View {
 
         func font(_ style: HeadingStyle) -> Font {
             Font(fonts[style.command] ?? .systemFont(ofSize: NSFont.systemFontSize))
+        }
+
+        /// A row as a menu sizes an item in its own font: the menu's 24 pt for the menu's font (a line of 16 pt), and as
+        /// much more as a larger font's line needs.
+        func height(_ style: HeadingStyle) -> CGFloat {
+            let font = fonts[style.command] ?? .systemFont(ofSize: NSFont.systemFontSize)
+            return max(FormatPanel.item, (font.ascender - font.descender + font.leading + FormatPanel.item - 16).rounded(.up))
         }
 
         /// A level at its weight and shape, its size LaTeX's scaled into Notes' range: \Huge's 2.5 times the text comes

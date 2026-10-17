@@ -120,6 +120,7 @@ const BOOK: &[Look] = &[
     bold("subsection", LARGE_),
     bold("subsubsection", NORMAL),
     bold("paragraph", NORMAL),
+    bold("subparagraph", NORMAL),
 ];
 const ARTICLE: &[Look] = &[
     bold("part", HUGE_),
@@ -127,6 +128,7 @@ const ARTICLE: &[Look] = &[
     bold("subsection", LARGE_),
     bold("subsubsection", NORMAL),
     bold("paragraph", NORMAL),
+    bold("subparagraph", NORMAL),
 ];
 const AMS_ARTICLE: &[Look] = &[
     bold("part", NORMAL),
@@ -134,6 +136,7 @@ const AMS_ARTICLE: &[Look] = &[
     bold("subsection", NORMAL),
     plain("subsubsection", Shape::Italic),
     plain("paragraph", Shape::Upright),
+    plain("subparagraph", Shape::Upright),
 ];
 const AMS_BOOK: &[Look] = &[
     // \@xxpt and \@xivpt, whatever the size option.
@@ -143,6 +146,7 @@ const AMS_BOOK: &[Look] = &[
     bold("subsection", NORMAL),
     plain("subsubsection", Shape::Italic),
     plain("paragraph", Shape::Upright),
+    plain("subparagraph", Shape::Upright),
 ];
 const KOMA_ARTICLE: &[Look] = &[
     bold("part", HUGE),
@@ -150,6 +154,7 @@ const KOMA_ARTICLE: &[Look] = &[
     bold("subsection", LARGE_),
     bold("subsubsection", NORMAL),
     bold("paragraph", NORMAL),
+    bold("subparagraph", NORMAL),
 ];
 /// headings=big, KOMA-Script's default.
 const KOMA_BOOK: &[Look] = &[
@@ -159,6 +164,7 @@ const KOMA_BOOK: &[Look] = &[
     bold("subsection", LARGE_),
     bold("subsubsection", NORMAL),
     bold("paragraph", NORMAL),
+    bold("subparagraph", NORMAL),
 ];
 const IEEE: &[Look] = &[
     plain("section", Shape::SmallCaps),
@@ -274,7 +280,16 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
         },
         marker: None,
     };
-    let levels = CATALOG.heading_levels.iter().enumerate();
+    // \subparagraph has no place in the outline, but a line can be set in it.
+    let subparagraph = HeadingLevel {
+        title: "Subparagraph".to_owned(),
+        command: "subparagraph".to_owned(),
+    };
+    let levels = CATALOG
+        .heading_levels
+        .iter()
+        .chain([&subparagraph])
+        .enumerate();
     let levels = levels.filter_map(|(index, HeadingLevel { title, command })| {
         let &(_, size, bold, shape) = looks.iter().find(|look| look.0 == command)?;
         let points = match size {
@@ -324,10 +339,11 @@ mod tests {
     #[test]
     fn the_class_has_its_levels_and_numbers_them() {
         let article = styles(Some("article"), 10, false);
-        let titled = "Normal Text, Part, Section, Subsection, Subsubsection, Paragraph";
+        let titled =
+            "Normal Text, Part, Section, Subsection, Subsubsection, Paragraph, Subparagraph";
         assert_eq!(titles(&article), titled);
-        assert_eq!(markers(&article), "- I 1 1.1 1.1.1 -");
-        let report = "- I 1 1.1 1.1.1 - -";
+        assert_eq!(markers(&article), "- I 1 1.1 1.1.1 - -");
+        let report = "- I 1 1.1 1.1.1 - - -";
         assert_eq!(markers(&styles(Some("report"), 10, false)), report);
         let ieee = styles(Some("IEEEtran"), 10, false);
         assert_eq!(markers(&ieee), "- I A 1 a");
@@ -340,7 +356,7 @@ mod tests {
         assert_eq!(markers(&beamer), "- I - - -");
         // A class it doesn't know has every level, numbered as a book's once there are chapters.
         assert_eq!(markers(&styles(Some("thesis"), 10, true)), report);
-        let none = "- I - 1 1.1 1.1.1 -";
+        let none = "- I - 1 1.1 1.1.1 - -";
         assert_eq!(markers(&styles(None, 10, false)), none);
     }
 
