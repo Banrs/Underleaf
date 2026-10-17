@@ -271,7 +271,10 @@ final class AppModel {
             try await core.call("import_project", ["src": url.path], as: ProjectInfo.self)
         }) else { return }
         await refresh()
-        if open { await self.open(info.id) }
+        guard open else { return }
+        // Its own row takes over from the copy's as it opens.
+        importing.removeAll { $0 == url }
+        await self.open(info.id)
     }
 
     private func isInLibrary(_ url: URL, open: Bool) async -> Bool {

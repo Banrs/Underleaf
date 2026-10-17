@@ -39,7 +39,7 @@ struct HomeView: View {
         .searchFocused($searching)
         .onChange(of: app.searchFocusToken) { searching = true }
         .task(id: app.opening) {
-            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+            if !copied { do { try await Task.sleep(for: .milliseconds(300)) } catch { return } }
             slowOpening = app.opening
         }
         .task(id: app.importing) {
@@ -77,8 +77,8 @@ struct HomeView: View {
                 }
                 ForEach(shown) { project in
                     // Its own view, so a row redraws only when its rename starts or ends.
-                    ProjectRow(project: project, working: project.id == app.opening && project.id == slowOpening, rename: rename,
-                               ended: { listFocused = true }) { commitRename(project) }
+                    ProjectRow(project: project, working: project.id == app.opening && (project.id == slowOpening || copied),
+                               rename: rename, ended: { listFocused = true }) { commitRename(project) }
                 }
                 if app.projectsLoaded, shown.isEmpty { empty.frame(maxWidth: .infinity).selectionDisabled() }
             } header: {
@@ -149,6 +149,11 @@ struct HomeView: View {
 
     private var copying: [URL] {
         query.isEmpty ? slowImports.filter(app.importing.contains) : []
+    }
+
+    /// A copy shown has ended: the project opening is its own, at work in its own row from then on.
+    private var copied: Bool {
+        slowImports.contains { !app.importing.contains($0) }
     }
 
     private var shown: [ProjectInfo] {
