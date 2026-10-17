@@ -74,6 +74,9 @@ struct FormatPanel: View {
     /// The UI kit's menu (macOS 27, Menus, Regular): an item's highlight 5 pt in from the edge with
     /// 8 pt corners, its content and the separators 16 pt in, the first item 6 pt down.
     fileprivate static let highlightInset: CGFloat = 5, highlightRadius: CGFloat = 8, contentInset: CGFloat = 16, menuTop: CGFloat = 6
+    /// Notes' Aa (measured, 27.2): its style tiles 5 pt from the top and 8 pt over the divider, its rows at a 29 pt pitch,
+    /// the last 5 pt from the foot.
+    private static let stylesTop: CGFloat = 5, stylesBottom: CGFloat = 8, levelsBottom: CGFloat = 5, notesPitch: CGFloat = 29
 
     var body: some View {
         let headings = project.headingStyles
@@ -93,7 +96,8 @@ struct FormatPanel: View {
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, Self.menuTop)
+            .padding(.top, Self.stylesTop)
+            .padding(.bottom, Self.stylesBottom)
             Divider()
                 .padding(.horizontal, Self.contentInset)
             VStack(spacing: 0) {
@@ -108,7 +112,8 @@ struct FormatPanel: View {
                 }
             }
             .padding(.horizontal, Self.highlightInset)
-            .padding(.vertical, Self.menuTop)
+            .padding(.top, Self.menuTop)
+            .padding(.bottom, Self.levelsBottom)
             .onKeyPress(.downArrow) { move(by: 1, in: levels) }
             .onKeyPress(.upArrow) { move(by: -1, in: levels) }
             .onKeyPress(keys: [.return, .space]) { _ in chooseFocused() }
@@ -242,9 +247,9 @@ struct FormatPanel: View {
         init(_ headings: [HeadingStyle]) {
             let fonts = Dictionary(headings.map { ($0.command, Self.font($0.font)) }) { first, _ in first }
             self.fonts = fonts
-            // The rows' even pitch, as Notes': the largest line and a little, and at least the kit's 24 pt item.
+            // The rows' even pitch, Notes': the largest line and a little where that's more.
             let line = fonts.values.map { $0.ascender - $0.descender + $0.leading }.max() ?? 16
-            pitch = max(24, (line + 4).rounded(.up))
+            pitch = max(FormatPanel.notesPitch, (line + 4).rounded(.up))
             markers = headings.compactMap { style in
                 style.marker.map { NSAttributedString(string: $0, attributes: [.font: fonts[style.command]!]).size().width }
             }.max().map { $0.rounded(.up) } ?? 0
