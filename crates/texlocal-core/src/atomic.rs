@@ -12,10 +12,10 @@ use tempfile::TempPath;
 
 /// A file as written: which file it is, its length, and when it was last
 /// written, to the nanosecond, as stat gives them (st_ino, st_size, and
-/// st_mtime and its nanoseconds, from 0 up even before 1970). A client that
-/// keeps it knows a change it is told of for the file is its own write's while
-/// a stat still gives the same, without reading the file back. Windows has no
-/// inode a stat gives, and the stamp none: there, length and date alone.
+/// st_mtime with nanoseconds counted up from it, even before 1970). A client
+/// that keeps it knows a change it is told of is its own write's while a stat
+/// still gives the same, without reading the file back. Windows has no inode:
+/// there, length and date alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Stamp {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -36,8 +36,6 @@ impl Stamp {
             Ok(Err(before)) => -(before.duration().as_nanos() as i128),
             Err(_) => 0,
         };
-        // Before 1970 too, as a timespec has it: seconds down, then
-        // nanoseconds up from them.
         const NANOS: i128 = 1_000_000_000;
         Self {
             inode,
@@ -65,8 +63,9 @@ pub(crate) fn create_temp(
         use std::os::unix::fs::PermissionsExt;
         builder.permissions(Permissions::from_mode(0o666));
     }
-    let temp = builder.tempfile_in(parent.unwrap_or(Path::new(".")))?;
-    let (file, path) = temp.into_parts();
+    let (file, path) = builder
+        .tempfile_in(parent.unwrap_or(Path::new(".")))?
+        .into_parts();
     // Before the contents, so a private file's text is never readable
     // under the temporary file's default mode.
     if let Some(permissions) = existing {
@@ -97,7 +96,7 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
         _ => path.to_path_buf(),
     };
     let permissions = fs::metadata(&target).ok().map(|meta| meta.permissions());
-    if permissions.as_ref().is_some_and(fs::Permissions::readonly) {
+    if permissions.as_ref().is_some_and(Permissions::readonly) {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
     let (temp, mut file) = create_temp(&target, permissions)?;
@@ -124,54 +123,47 @@ mod tests {
     }
 
     #[test]
-    fn a_save_creates_and_replaces_leaving_no_temporary_file() {
+    fn a_save_replaces_leaving_no_temporary_file_and_answers_the_stamp_the_file_has() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("main.tex");
         write(&file, b"one").unwrap();
-        write(&file, b"two").unwrap();
+        let written = write(&file, b"two").unwrap();
         assert_eq!(fs::read(&file).unwrap(), b"two");
         assert_eq!(names(dir.path()), ["main.tex"]);
-    }
-
-    #[test]
-    fn a_save_answers_the_stamp_the_file_then_has() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("main.tex");
-        let written = write(&file, b"one").unwrap();
         assert_eq!(written, Stamp::of(&fs::metadata(&file).unwrap()));
         // Another app's write in place keeps the file but not the stamp, once
         // the clock has moved: Windows dates writes in steps of up to 16 ms.
         std::thread::sleep(std::time::Duration::from_millis(20));
-        fs::write(&file, b"two").unwrap();
+        fs::write(&file, b"three").unwrap();
         assert_ne!(written, Stamp::of(&fs::metadata(&file).unwrap()));
     }
 
     #[test]
-    fn a_save_that_cannot_complete_leaves_the_original_intact() {
+    fn a_save_that_cannot_complete_leaves_the_original_and_no_temporary_file() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("locked.tex");
-        fs::write(&file, "keep").unwrap();
         // A read-only file is refused, as writing it in place would be.
-        let mut perms = fs::metadata(&file).unwrap().permissions();
+        let locked = dir.path().join("locked.tex");
+        fs::write(&locked, "keep").unwrap();
+        let mut perms = fs::metadata(&locked).unwrap().permissions();
         perms.set_readonly(true);
-        fs::set_permissions(&file, perms.clone()).unwrap();
-        assert!(write(&file, b"new").is_err());
-        assert_eq!(fs::read_to_string(&file).unwrap(), "keep");
+        fs::set_permissions(&locked, perms.clone()).unwrap();
+        assert!(write(&locked, b"new").is_err());
+        assert_eq!(fs::read_to_string(&locked).unwrap(), "keep");
         #[allow(clippy::permissions_set_readonly_false)]
         perms.set_readonly(false);
-        fs::set_permissions(&file, perms).unwrap();
+        fs::set_permissions(&locked, perms).unwrap();
 
-        // No temporary file can be made beside it.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
-            let result = write(&file, b"new");
-            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
-            assert!(result.is_err());
-            assert_eq!(fs::read_to_string(&file).unwrap(), "keep");
-            assert_eq!(names(dir.path()), ["locked.tex"]);
-        }
+        // The rename is what fails here, after the new contents are written
+        // (a file cannot take a folder's place, root or not).
+        let folder = dir.path().join("folder");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("inside.tex"), "keep").unwrap();
+        assert!(write(&folder, b"new").is_err());
+        assert_eq!(
+            fs::read_to_string(folder.join("inside.tex")).unwrap(),
+            "keep"
+        );
+        assert_eq!(names(dir.path()), ["folder", "locked.tex"]);
     }
 
     #[cfg(unix)]
@@ -186,8 +178,12 @@ mod tests {
         fs::set_permissions(&target, fs::Permissions::from_mode(0o640)).unwrap();
         std::os::unix::fs::symlink(&target, &link).unwrap();
         write(&link, b"new").unwrap();
-        let kind = fs::symlink_metadata(&link).unwrap().file_type();
-        assert!(kind.is_symlink());
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
         assert_eq!(mode(&target), 0o640);
 

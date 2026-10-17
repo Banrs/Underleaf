@@ -10,9 +10,9 @@ use std::path::{Component, Path, PathBuf};
 use crate::error::CoreError;
 use crate::{BUILD_DIR, SETTINGS_FILE};
 
-/// Split a relative path into normalized segments.
-/// `.` segments drop out; `..` pops — popping past the start is an escape.
-/// Returns an empty vec for inputs that normalize to the base itself.
+/// Split a relative path into normalized segments: `.` drops out, `..` pops,
+/// and popping past the start (or any root or prefix) is an escape. Empty for
+/// inputs that normalize to the base itself.
 pub(crate) fn normalize_segments<'a>(
     rel: &'a str,
     escape_err: &str,
@@ -21,11 +21,7 @@ pub(crate) fn normalize_segments<'a>(
     for component in Path::new(rel).components() {
         match component {
             Component::CurDir => {}
-            Component::ParentDir => {
-                if segments.pop().is_none() {
-                    return Err(CoreError::bad_request(escape_err));
-                }
-            }
+            Component::ParentDir if segments.pop().is_some() => {}
             // Components of a UTF-8 input are themselves UTF-8.
             Component::Normal(segment) => segments.push(segment.to_str().unwrap()),
             _ => return Err(CoreError::bad_request(escape_err)),
@@ -34,35 +30,26 @@ pub(crate) fn normalize_segments<'a>(
     Ok(segments)
 }
 
-/// Resolve only the closest path component that already exists. This retains
-/// lexical path semantics for new files while preventing an existing symlink
-/// from redirecting the final operation outside `root`.
-/// Returns where `target` leads inside `root`: its physical path relative to the
-/// canonical root, the not-yet-existing suffix kept as written.
-fn ensure_existing_ancestor_within(
-    root: &Path,
-    target: &Path,
-    escape_err: &str,
-) -> Result<PathBuf, CoreError> {
+/// Where `target` leads inside `root`: its physical path relative to the
+/// canonical root, the not-yet-existing suffix kept as written. Only the
+/// closest component that exists is resolved, which keeps lexical semantics
+/// for new files while an existing symlink cannot redirect the operation
+/// outside `root`.
+fn physical_within(root: &Path, target: &Path, escape_err: &str) -> Result<PathBuf, CoreError> {
+    let escape = || CoreError::bad_request(escape_err);
     let canonical_root = dunce::canonicalize(root)?;
     let mut existing = target;
-    loop {
-        match fs::symlink_metadata(existing) {
-            Ok(_) => break,
-            // A file where the path wants a folder ends the path there too.
-            Err(err) if matches!(err.kind(), NotFound | NotADirectory) => {
-                existing = existing
-                    .parent()
-                    .ok_or_else(|| CoreError::bad_request(escape_err))?;
-            }
-            Err(err) => return Err(err.into()),
+    while let Err(err) = fs::symlink_metadata(existing) {
+        // A file where the path wants a folder ends the path there too.
+        if !matches!(err.kind(), NotFound | NotADirectory) {
+            return Err(err.into());
         }
+        existing = existing.parent().ok_or_else(escape)?;
     }
-
-    let resolved = dunce::canonicalize(existing).map_err(|_| CoreError::bad_request(escape_err))?;
-    let Ok(inside) = resolved.strip_prefix(&canonical_root) else {
-        return Err(CoreError::bad_request(escape_err));
-    };
+    let resolved = dunce::canonicalize(existing).map_err(|_| escape())?;
+    let inside = resolved
+        .strip_prefix(&canonical_root)
+        .map_err(|_| escape())?;
     let suffix = target.strip_prefix(existing).unwrap_or(Path::new(""));
     // Collected, so a whole existing path keeps no trailing slash.
     Ok(inside.join(suffix).components().collect())
@@ -77,7 +64,7 @@ pub fn project_root(data_dir: &Path, id: &str) -> Result<PathBuf, CoreError> {
     if !root.is_dir() {
         return Err(CoreError::not_found(format!("No such project: {id}")));
     }
-    ensure_existing_ancestor_within(data_dir, &root, "Bad project id")?;
+    physical_within(data_dir, &root, "Bad project id")?;
     Ok(root)
 }
 
@@ -89,12 +76,27 @@ pub(crate) fn project_name(id: &str) -> Result<&str, CoreError> {
     }
 }
 
-/// Normalized project-relative segments for a user-supplied path, with the
-/// reserved-settings-file rule: `.texlocal.json` at the project root is only
-/// writable through write_settings, which validates each key. Its case
+/// The names a user path may not take. `.texlocal.json` at the project root is
+/// only writable through write_settings, which validates each key; its case
 /// aliases are reserved since macOS volumes are usually case-insensitive and
-/// the boundary must not depend on the volume.
-fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
+/// the boundary must not depend on the volume. The top-level `build` folder
+/// holds compile output, so nothing the author writes may take that name, in
+/// any case: on a case-insensitive volume `Build` is the same folder.
+fn check_reserved<S: AsRef<str>>(segments: &[S], write: bool) -> Result<(), CoreError> {
+    let first = segments.first().map(AsRef::as_ref).unwrap_or_default();
+    if segments.len() == 1 && first.eq_ignore_ascii_case(SETTINGS_FILE) {
+        return Err(CoreError::bad_request("Reserved file"));
+    }
+    if write && first.eq_ignore_ascii_case(BUILD_DIR) {
+        return Err(CoreError::bad_request(
+            "“build” holds the compiled PDF. Choose another name.",
+        ));
+    }
+    Ok(())
+}
+
+/// The normalized segments of a user path, which name something in the project.
+fn user_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     if rel.is_empty() {
         return Err(CoreError::bad_request("Missing path"));
     }
@@ -102,67 +104,31 @@ fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     if segments.is_empty() {
         return Err(CoreError::bad_request("Path escapes project"));
     }
-    if is_settings_file(&segments) {
-        return Err(CoreError::bad_request("Reserved file"));
-    }
     Ok(segments)
 }
 
-fn is_settings_file(segments: &[&str]) -> bool {
-    segments.len() == 1 && segments[0].eq_ignore_ascii_case(SETTINGS_FILE)
-}
-
-fn is_in_build_dir(segments: &[&str]) -> bool {
-    segments
-        .first()
-        .is_some_and(|first| first.eq_ignore_ascii_case(BUILD_DIR))
-}
-
-/// Segments of a path relative to the project root, as `ensure_existing_ancestor_within` gives it.
-fn physical_segments(path: &Path) -> Vec<&str> {
-    path.components()
-        .filter_map(|c| match c {
-            Component::Normal(s) => s.to_str(),
-            _ => None,
-        })
-        .collect()
-}
-
-/// `segments` joined onto `root`, provided no existing link leads out of it, nor to the
-/// settings file, nor, for a write, into the build folder: a link inside the project is
-/// held to the rules its target's own path is. Also where the path physically leads,
-/// relative to the resolved root.
-fn join_within(
-    root: &Path,
-    segments: &[&str],
-    write: bool,
-) -> Result<(PathBuf, PathBuf), CoreError> {
+/// `rel` joined onto `root`, provided no existing link leads out of it, nor
+/// to a reserved name: a link inside the project is held to the rules its
+/// target's own path is. Also where the path physically leads, relative to
+/// the resolved root.
+fn join_within(root: &Path, rel: &str, write: bool) -> Result<(PathBuf, PathBuf), CoreError> {
+    let segments = user_segments(rel)?;
+    check_reserved(&segments, write)?;
     let mut abs = root.to_path_buf();
-    abs.extend(segments);
-    let physical = ensure_existing_ancestor_within(root, &abs, "Path escapes project")?;
-    let physical_segments = physical_segments(&physical);
-    if is_settings_file(&physical_segments) {
-        return Err(CoreError::bad_request("Reserved file"));
-    }
-    if write && is_in_build_dir(&physical_segments) {
-        return Err(build_dir_err());
-    }
+    abs.extend(&segments);
+    let physical = physical_within(root, &abs, "Path escapes project")?;
+    let names: Vec<_> = physical.iter().map(|name| name.to_string_lossy()).collect();
+    check_reserved(&names, write)?;
     Ok((abs, physical))
-}
-
-fn build_dir_err() -> CoreError {
-    CoreError::bad_request("“build” holds the compiled PDF. Choose another name.")
 }
 
 /// Absolute path for a user-supplied relative path inside a project.
 pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
-    Ok(join_within(root, &safe_segments(rel)?, false)?.0)
+    Ok(join_within(root, rel, false)?.0)
 }
 
-/// `safe_path` for a path about to be created or written. The project's
-/// top-level `build` folder holds compile output, so no file or folder of the
-/// author's may take that name, in any case: on a case-insensitive volume
-/// `Build` is the same folder, and the tree hides it.
+/// `safe_path` for a path about to be created or written, which may not be
+/// in the top-level `build` folder, nor lead into it through a link.
 pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     Ok(write_paths(root, rel)?.0)
 }
@@ -170,11 +136,7 @@ pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
 /// `safe_write_path`, and where the write physically lands, through any link
 /// on its way, relative to the resolved root.
 pub(crate) fn write_paths(root: &Path, rel: &str) -> Result<(PathBuf, PathBuf), CoreError> {
-    let segments = safe_segments(rel)?;
-    if is_in_build_dir(&segments) {
-        return Err(build_dir_err());
-    }
-    join_within(root, &segments, true)
+    join_within(root, rel, true)
 }
 
 /// A path as the volume compares it: macOS and Windows volumes usually
@@ -219,21 +181,23 @@ pub(crate) fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
 /// disk: pair it with `safe_path`, and use `safe_rel_file` for anything that
 /// reaches a command line.
 pub fn rel_key(rel: &str) -> Result<String, CoreError> {
-    Ok(safe_segments(rel)?.join("/"))
+    let segments = user_segments(rel)?;
+    check_reserved(&segments, false)?;
+    Ok(segments.join("/"))
 }
 
 /// A path inside the project in a form safe to hand to a command line:
 /// relative, no escape, forward slashes, no symlink escape, and no segment a
 /// tool could read as an option.
 pub fn safe_rel_file(root: &Path, rel: &str) -> Result<String, CoreError> {
-    let segments = safe_segments(rel)?;
-    if segments.iter().any(|s| s.starts_with('-')) {
+    let key = rel_key(rel)?;
+    if key.split('/').any(|segment| segment.starts_with('-')) {
         return Err(CoreError::bad_request(
             "Path segments cannot start with \"-\"",
         ));
     }
-    join_within(root, &segments, false)?;
-    Ok(segments.join("/"))
+    join_within(root, &key, false)?;
+    Ok(key)
 }
 
 /// A name for a new folder in the library: one name, without the characters
@@ -241,9 +205,7 @@ pub fn safe_rel_file(root: &Path, rel: &str) -> Result<String, CoreError> {
 /// the dots and spaces at the end it drops).
 pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
     let refused = |c: char| {
-        std::path::is_separator(c)
-            || c == '/'
-            || (cfg!(windows) && (c.is_control() || "<>:\"|?*".contains(c)))
+        std::path::is_separator(c) || (cfg!(windows) && (c.is_control() || "<>:\"|?*".contains(c)))
     };
     let mut clean: String = name
         .trim()
@@ -260,8 +222,8 @@ pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
     Ok(clean)
 }
 
-/// Lexically normalize an absolute path (resolve `.` and `..` without touching
-/// the filesystem), for mapping tool output back into a project.
+/// `path` with `.` and `..` resolved without touching the filesystem, for
+/// mapping tool output back into a project.
 fn normalize_abs(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in path.components() {
@@ -270,7 +232,7 @@ fn normalize_abs(path: &Path) -> PathBuf {
             Component::ParentDir => {
                 out.pop();
             }
-            other => out.push(other.as_os_str()),
+            other => out.push(other),
         }
     }
     out
@@ -283,4 +245,42 @@ pub fn rel_to_root(root: &Path, abs: &Path) -> Option<String> {
     let rel = abs.strip_prefix(normalize_abs(root)).ok()?;
     let parts: Vec<_> = rel.iter().map(|part| part.to_string_lossy()).collect();
     (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_compare_as_the_project_lists_them() {
+        assert!(within("a/b", "a") && within("a", "a") && !within("ab", "a"));
+        assert_eq!(after_entry("a/b/c", "a/b"), Some("/c"));
+        assert_eq!(after_entry("a/b", "a/b"), Some(""));
+        assert_eq!(after_entry("ab", "a"), None);
+        let folds = cfg!(any(target_os = "macos", windows));
+        assert_eq!(after_entry("A/B.tex", "a").is_some(), folds);
+    }
+
+    #[test]
+    fn a_folder_name_is_one_clean_name() {
+        assert_eq!(sanitize_name("  My paper ").unwrap(), "My paper");
+        assert_eq!(sanitize_name("a/b").unwrap(), "ab");
+        assert_eq!(sanitize_name(&"x".repeat(100)).unwrap().len(), 80);
+        for bad in ["", "  ", ".hidden", "/"] {
+            assert_eq!(sanitize_name(bad).unwrap_err().status, 400, "{bad}");
+        }
+    }
+
+    #[test]
+    fn reserved_names_are_refused_in_any_case_and_build_only_for_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert_eq!(
+            rel_key("./a/../.TeXLocal.JSON").unwrap_err().message,
+            "Reserved file"
+        );
+        assert!(safe_path(root, "Build/main.pdf").is_ok());
+        assert!(safe_write_path(root, "BUILD/main.pdf").is_err());
+        assert!(safe_write_path(root, "sub/build/main.tex").is_ok());
+    }
 }

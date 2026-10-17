@@ -10,11 +10,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::atomic;
 use crate::compile::engine_flags;
 use crate::error::CoreError;
 use crate::paths::safe_rel_file;
-use crate::{BUILD_DIR, SETTINGS_FILE};
+use crate::{BUILD_DIR, SETTINGS_FILE, atomic};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,8 +40,15 @@ impl Default for Settings {
 pub(crate) fn read_object(path: &Path) -> Map<String, Value> {
     fs::read(path)
         .ok()
-        .and_then(|bytes| serde_json::from_slice::<Map<String, Value>>(&bytes).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()
+}
+
+fn object(value: impl Serialize) -> Map<String, Value> {
+    match serde_json::to_value(value) {
+        Ok(Value::Object(map)) => map,
+        _ => unreachable!("only structs and maps are given"),
+    }
 }
 
 /// Lenient read: defaults fill in anything missing or mistyped. Validation of
@@ -66,52 +72,32 @@ fn lenient(raw: &Map<String, Value>) -> Settings {
 
 /// A change to a project's settings: the keys sent are validated and applied,
 /// the rest left as they are. Unknown keys are ignored.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SettingsPatch {
+    #[serde(skip_serializing_if = "Option::is_none")]
     main_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     shell_escape: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stop_on_first_error: Option<bool>,
-}
-
-impl SettingsPatch {
-    fn apply(&self, root: &Path, merged: &mut Map<String, Value>) -> Result<(), CoreError> {
-        if let Some(engine) = &self.engine {
-            if engine_flags(engine).is_none() {
-                return Err(CoreError::bad_request(format!("Unknown engine: {engine}")));
-            }
-            merged.insert("engine".into(), engine.as_str().into());
-        }
-        for (key, flag) in [
-            ("shellEscape", self.shell_escape),
-            ("stopOnFirstError", self.stop_on_first_error),
-        ] {
-            if let Some(on) = flag {
-                merged.insert(key.into(), on.into());
-            }
-        }
-        if let Some(main_file) = &self.main_file {
-            merged.insert("mainFile".into(), safe_rel_file(root, main_file)?.into());
-        }
-        Ok(())
-    }
 }
 
 /// Run `change` on the settings file's keys (the defaults under what the file
 /// has, so its unknown keys stay) and write the result atomically.
 fn update(
     root: &Path,
-    change: impl FnOnce(&mut Map<String, Value>) -> Result<(), CoreError>,
+    change: impl FnOnce(&mut Map<String, Value>),
 ) -> Result<Map<String, Value>, CoreError> {
-    let Value::Object(mut merged) = serde_json::to_value(Settings::default()).unwrap() else {
-        unreachable!("Settings serializes as an object");
-    };
+    let mut merged = object(Settings::default());
     merged.extend(read_object(&root.join(SETTINGS_FILE)));
-    change(&mut merged)?;
-    let bytes =
-        serde_json::to_vec_pretty(&merged).map_err(|e| CoreError::internal(e.to_string()))?;
-    atomic::write(&root.join(SETTINGS_FILE), &bytes)?;
+    change(&mut merged);
+    atomic::write(
+        &root.join(SETTINGS_FILE),
+        &serde_json::to_vec_pretty(&merged).expect("a JSON object serializes"),
+    )?;
     Ok(merged)
 }
 
@@ -121,10 +107,21 @@ pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError>
     if !patch.is_object() {
         return Err(CoreError::bad_request("Invalid settings"));
     }
-    let patch = SettingsPatch::deserialize(patch)
+    let mut patch = SettingsPatch::deserialize(patch)
         .map_err(|err| CoreError::bad_request(format!("Invalid settings: {err}")))?;
+    if let Some(engine) = &patch.engine
+        && engine_flags(engine).is_none()
+    {
+        return Err(CoreError::bad_request(format!("Unknown engine: {engine}")));
+    }
+    if let Some(main_file) = &mut patch.main_file {
+        *main_file = safe_rel_file(root, main_file)?;
+    }
     // What was just written, without reading it back.
-    update(root, |merged| patch.apply(root, merged)).map(|merged| lenient(&merged))
+    update(root, |merged| {
+        merged.extend(object(&patch));
+    })
+    .map(|merged| lenient(&merged))
 }
 
 /// What a host keeps of a project's interface, with the project: it moves
@@ -165,10 +162,8 @@ fn store_ui(root: &Path, mut state: UiState) -> Result<UiState, CoreError> {
             return Err(CoreError::bad_request("Too much interface state"));
         }
     }
-    let ui = serde_json::to_value(&state).map_err(|e| CoreError::internal(e.to_string()))?;
     update(root, |merged| {
-        merged.insert("ui".into(), ui);
-        Ok(())
+        merged.insert("ui".into(), serde_json::json!(&state));
     })?;
     Ok(state)
 }
@@ -184,22 +179,21 @@ pub fn write_ui(root: &Path, patch: UiPatch) -> Result<UiState, CoreError> {
 /// project path's new one (None: unmoved): folders by their path, folds by the
 /// file their key starts with. Best effort: the state is a convenience.
 pub(crate) fn move_ui(root: &Path, moved: impl Fn(&str) -> Option<String>) {
-    let mut state = read_ui(root);
-    let mut changed = false;
+    let before = read_ui(root);
+    let mut state = before.clone();
     for folder in &mut state.expanded_folders {
         if let Some(new) = moved(folder) {
-            (*folder, changed) = (new, true);
+            *folder = new;
         }
     }
     for key in &mut state.folded_headings {
-        let new = key
-            .split_once('\t')
-            .and_then(|(file, rest)| Some(format!("{}\t{rest}", moved(file)?)));
-        if let Some(new) = new {
-            (*key, changed) = (new, true);
+        if let Some((file, rest)) = key.split_once('\t')
+            && let Some(new) = moved(file)
+        {
+            *key = format!("{new}\t{rest}");
         }
     }
-    if changed {
+    if state != before {
         let _ = store_ui(root, state);
     }
 }
@@ -253,5 +247,26 @@ mod tests {
             ..UiPatch::default()
         };
         assert_eq!(write_ui(root, flood).unwrap_err().status, 400);
+    }
+
+    #[test]
+    fn a_renamed_entry_takes_its_saved_interface_state_along() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let patch = UiPatch {
+            expanded_folders: Some(list(&["ch", "other"])),
+            folded_headings: Some(list(&["ch/a.tex\t1:T#1", "b.tex\t1:T#1"])),
+        };
+        write_ui(root, patch).unwrap();
+        move_ui(root, |path| {
+            (path == "ch" || path == "ch/a.tex").then(|| path.replace("ch", "part"))
+        });
+        let state = read_ui(root);
+        assert_eq!(state.expanded_folders, list(&["other", "part"]));
+        assert_eq!(
+            state.folded_headings,
+            list(&["b.tex\t1:T#1", "part/a.tex\t1:T#1"])
+        );
     }
 }

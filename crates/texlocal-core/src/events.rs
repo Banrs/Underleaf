@@ -10,12 +10,10 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use serde_json::Value;
 
-use crate::lock;
-
 pub type Listener = Box<dyn Fn(&Value) + Send + Sync>;
 
 pub struct Hub {
-    queue: std::sync::Mutex<Option<mpsc::Sender<Value>>>,
+    queue: Option<mpsc::Sender<Value>>,
     listener: Arc<RwLock<Option<Listener>>>,
 }
 
@@ -37,7 +35,7 @@ impl Default for Hub {
                 }
             });
         Self {
-            queue: std::sync::Mutex::new(spawned.ok().map(|_| queue)),
+            queue: spawned.ok().map(|_| queue),
             listener,
         }
     }
@@ -45,7 +43,8 @@ impl Default for Hub {
 
 impl Hub {
     /// Replaces the listener. Returns once no call to the old one is running,
-    /// so a host may free what it captured.
+    /// so a host may free what it captured: the thread holds the read lock
+    /// through each call.
     pub fn set_listener(&self, listener: Option<Listener>) {
         *self
             .listener
@@ -55,14 +54,14 @@ impl Hub {
 
     /// A sender for one session's events, in the hub's order.
     pub(crate) fn emitter(&self) -> Emitter {
-        Emitter(lock(&self.queue).clone())
+        Emitter(self.queue.clone())
     }
 }
 
 impl Drop for Hub {
     fn drop(&mut self) {
         self.set_listener(None);
-        lock(&self.queue).take();
+        self.queue = None;
     }
 }
 
@@ -103,5 +102,37 @@ mod tests {
         hub.set_listener(None);
         one.send(json!({ "n": 99 }));
         assert!(numbers.recv_timeout(Duration::from_millis(50)).is_err());
+    }
+
+    #[test]
+    fn replacing_the_listener_waits_for_a_running_call_and_a_panic_ends_nothing() {
+        let hub = Hub::default();
+        let (started, running) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let released = std::sync::Mutex::new(released);
+        let (order, log) = mpsc::channel();
+        let call_order = order.clone();
+        hub.set_listener(Some(Box::new(move |event| {
+            if event["n"] == 0 {
+                started.send(()).unwrap();
+                released.lock().unwrap().recv().unwrap();
+                let _ = call_order.send("call ended");
+                panic!("a host's fault");
+            }
+        })));
+        hub.emitter().send(json!({ "n": 0 }));
+        running.recv_timeout(Duration::from_secs(5)).unwrap();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                hub.set_listener(None);
+                let _ = order.send("replaced");
+            });
+            std::thread::sleep(Duration::from_millis(50));
+            release.send(()).unwrap();
+        });
+        assert_eq!(
+            log.try_iter().collect::<Vec<_>>(),
+            ["call ended", "replaced"]
+        );
     }
 }

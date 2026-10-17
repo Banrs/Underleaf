@@ -3,7 +3,6 @@
 //! inside the project cannot archive itself and failures never leave a partial
 //! ZIP at the requested path.
 
-use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -17,87 +16,72 @@ use crate::error::CoreError;
 use crate::{BUILD_DIR, SETTINGS_FILE};
 
 pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
-    let root_canonical = dunce::canonicalize(root)?;
-    let (temp_path, file) = create_temp(dest, None)?;
-
-    // Resolve the archive folder as the walk resolves the project, so a
-    // destination spelled through a link is still recognised there.
+    let root = dunce::canonicalize(root)?;
+    let (temp, file) = create_temp(dest, None)?;
+    // Resolved as the walk resolves the project, so a destination spelled
+    // through a link is still recognised there.
     let parent = dest.parent().filter(|p| !p.as_os_str().is_empty());
+    let archive_dir = dunce::canonicalize(parent.unwrap_or(Path::new(".")))?;
     let mut export = Export {
         writer: ZipWriter::new(file),
         options: SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
-        root_canonical: &root_canonical,
-        archive_dir: dunce::canonicalize(parent.unwrap_or(Path::new(".")))?,
-        archive_names: [dest.file_name(), temp_path.file_name()],
+        skip: [dest.file_name(), temp.file_name()]
+            .map(|name| name.map(|name| archive_dir.join(name))),
+        root: &root,
     };
-    export.add_dir(root, &root_canonical, "")?;
+    export.add_dir(&root, "")?;
     export.writer.finish()?.sync_all()?;
-    Ok(persist(temp_path, dest)?)
+    Ok(persist(temp, dest)?)
 }
 
-/// The parts of an export that do not change as the walk descends: where the
-/// archive is being written, and the two entries there (the destination and
-/// its temporary sibling) that must not end up in it.
 struct Export<'a> {
     writer: ZipWriter<File>,
     options: SimpleFileOptions,
-    root_canonical: &'a Path,
-    archive_dir: PathBuf,
-    archive_names: [Option<&'a OsStr>; 2],
+    root: &'a Path,
+    /// The destination and its temporary sibling, which must not end up in it.
+    skip: [Option<PathBuf>; 2],
 }
 
 impl Export<'_> {
-    /// `dir_canonical` is `dir` resolved, for excluding the archive itself.
-    fn add_dir(&mut self, dir: &Path, dir_canonical: &Path, prefix: &str) -> Result<(), CoreError> {
+    /// `dir` is resolved, which is what the archive's own place is compared with.
+    fn add_dir(&mut self, dir: &Path, prefix: &str) -> Result<(), CoreError> {
         let mut entries = fs::read_dir(dir)?.collect::<io::Result<Vec<_>>>()?;
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        let holds_archive = dir_canonical == self.archive_dir;
-
+        entries.sort_by_key(fs::DirEntry::file_name);
         for entry in entries {
             let file_name = entry.file_name();
-            if holds_archive && self.archive_names.contains(&Some(file_name.as_os_str())) {
-                continue;
-            }
             let name = file_name.to_string_lossy();
+            let top = prefix.is_empty();
             // Finder's folder metadata is not project content.
-            if name.eq_ignore_ascii_case(".DS_Store") {
-                continue;
-            }
-            if prefix.is_empty() && (name.eq_ignore_ascii_case(BUILD_DIR) || name == SETTINGS_FILE)
+            if name.eq_ignore_ascii_case(".DS_Store")
+                || top && (name.eq_ignore_ascii_case(BUILD_DIR) || name == SETTINGS_FILE)
+                || self.skip.contains(&Some(dir.join(&file_name)))
             {
                 continue;
             }
-            let rel = if prefix.is_empty() {
+            let rel = if top {
                 name.into_owned()
             } else {
                 format!("{prefix}/{name}")
             };
             let path = entry.path();
-
-            let entry_type = entry.file_type()?;
-            if entry_type.is_symlink() {
+            let kind = entry.file_type()?;
+            if kind.is_symlink() {
                 // Unresolvable (dangling, a loop), there is nothing to export, as
                 // in the project walks; and never data reached through a link
-                // outside the project.
-                let inside =
-                    dunce::canonicalize(&path).is_ok_and(|t| t.starts_with(self.root_canonical));
-                // Directory links are deliberately skipped. Following them creates
-                // cycles and duplicates; regular directories below are still walked.
+                // outside the project. Directory links are skipped too: following
+                // them creates cycles and duplicates.
+                let inside = dunce::canonicalize(&path).is_ok_and(|to| to.starts_with(self.root));
                 if inside && fs::metadata(&path)?.is_file() {
                     self.add_file(&rel, &path)?;
                 }
-                continue;
-            }
-
-            if entry_type.is_dir() {
-                let canonical = dunce::canonicalize(&path)?;
-                if !canonical.starts_with(self.root_canonical) {
-                    continue;
+            } else if kind.is_dir() {
+                let resolved = dunce::canonicalize(&path)?;
+                if resolved.starts_with(self.root) {
+                    let options = dated(self.options, entry.metadata().and_then(|m| m.modified()));
+                    self.writer.add_directory(format!("{rel}/"), options)?;
+                    self.add_dir(&resolved, &rel)?;
                 }
-                let options = dated(self.options, entry.metadata().and_then(|m| m.modified()));
-                self.writer.add_directory(format!("{rel}/"), options)?;
-                self.add_dir(&path, &canonical, &rel)?;
-            } else if entry_type.is_file() {
+            } else if kind.is_file() {
                 self.add_file(&rel, &path)?;
             }
         }
@@ -131,13 +115,13 @@ fn dated(options: SimpleFileOptions, modified: io::Result<SystemTime>) -> Simple
     };
     let local = chrono::DateTime::<chrono::Local>::from(modified).naive_local();
     // Outside ZIP's 1980–2107, the entry keeps the default.
-    let date = zip::DateTime::try_from(local).ok();
-    date.map_or(options, |date| options.last_modified_time(date))
+    zip::DateTime::try_from(local).map_or(options, |date| options.last_modified_time(date))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::needs_zip64;
+    use super::*;
+    use std::io::Read;
 
     #[test]
     fn a_file_that_could_deflate_past_4_gib_is_written_as_zip64() {
@@ -149,5 +133,33 @@ mod tests {
         assert!(len + len.div_ceil(65_535) * 5 > u32::MAX as u64);
         assert!(needs_zip64(len));
         assert!(needs_zip64(1 << 32));
+    }
+
+    #[test]
+    fn the_archive_holds_the_project_but_not_itself_nor_build_nor_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("ch")).unwrap();
+        fs::create_dir(root.join(BUILD_DIR)).unwrap();
+        fs::write(root.join("main.tex"), "main").unwrap();
+        fs::write(root.join("ch/a.tex"), "a").unwrap();
+        fs::write(root.join(BUILD_DIR).join("main.pdf"), "pdf").unwrap();
+        fs::write(root.join(SETTINGS_FILE), "{}").unwrap();
+        fs::write(root.join(".DS_Store"), "").unwrap();
+        // The destination is inside the project and exists already.
+        let dest = root.join("out.zip");
+        fs::write(&dest, "old").unwrap();
+        export_zip(root, &dest).unwrap();
+
+        let mut zip = zip::ZipArchive::new(File::open(&dest).unwrap()).unwrap();
+        let mut names: Vec<_> = zip.file_names().map(String::from).collect();
+        names.sort();
+        assert_eq!(names, ["ch/", "ch/a.tex", "main.tex"]);
+        let mut text = String::new();
+        zip.by_name("ch/a.tex")
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        assert_eq!(text, "a");
     }
 }
