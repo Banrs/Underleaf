@@ -13,20 +13,16 @@ use crate::paths;
 use crate::syntax::catalog::{CATALOG, alternation};
 use crate::syntax::headings;
 
-static COMMENT_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*%").unwrap());
-static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(^|[^\\])%.*$").unwrap());
-// Headings, inputs and their literal boundaries in reading order. Consume other
-// control sequences too, so an escaped slash cannot start a command.
+// Headings, inputs and their literal boundaries, at a backslash. Other
+// commands fail it at once, so a long document reads fast.
 static TOKEN: LazyLock<Regex> = LazyLock::new(|| {
     let headings = alternation(CATALOG.heading_levels.iter().map(|level| &level.command));
     let literals = alternation(&CATALOG.verbatim_environments);
     Regex::new(&format!(
-        r"%|\\(?:(?P<heading>{headings})\*?\s*(?:\[[^\]]*\])?\s*\{{|(?:input|include|subfile)\s*\{{(?P<braced>[^{{}}%]+)\}}|input\s+(?P<bare>[^{{}}\\%\s]+)|begin\s*\{{(?P<literal>{literals})\}}|verb\*?(?P<delimiter>[^A-Za-z])|[A-Za-z]+|.)"
+        r"^\\(?:(?P<heading>{headings})\*?\s*(?:\[[^\]]*\])?\s*\{{|(?:input|include|subfile)\s*\{{(?P<braced>[^{{}}%]+)\}}|input\s+(?P<bare>[^{{}}\\%\s]+)|begin\s*\{{(?P<literal>{literals})\}}|verb\*?(?P<delimiter>[^A-Za-z]))"
     ))
     .unwrap()
 });
-static COMMAND: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])?").unwrap());
 // What a title drops whole: \texorpdfstring's TeX argument (its PDF string is
 // the group after), labels and notes.
 static TITLE_DROP: LazyLock<Regex> =
@@ -38,8 +34,6 @@ static TITLE_STYLE: LazyLock<Regex> = LazyLock::new(|| {
 // Grouping braces go; an escaped special shows as itself.
 static TITLE_BRACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([{}&%$#_])|[{}]").unwrap());
 static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
-// What separates words: spaces and TeX's special characters.
-static WORD_BREAK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\s{}$&_^~\\%]").unwrap());
 
 /// A sectioning command: its depth (0 for \part to 5 for \paragraph),
 /// command and level, its title as plain text, its 1-based line and, in a
@@ -203,9 +197,7 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
     let text = crate::lossy_string(text);
     let mut literal: Option<String> = None;
     for (index, line) in text.lines().enumerate() {
-        if !COMMENT_LINE.is_match(line) {
-            into.words += words(line);
-        }
+        into.words += words(line);
         let mut code = line;
         let mut heading_on_line = false;
         loop {
@@ -216,21 +208,27 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
                 code = rest;
                 literal = None;
             }
-            let Some(m) = TOKEN.captures(code) else {
+            // A comment ends the line's code.
+            let Some(at) = memchr::memchr2(b'\\', b'%', code.as_bytes())
+                .filter(|&at| code.as_bytes()[at] == b'\\')
+            else {
                 break;
             };
-            let token = m.get(0).unwrap();
-            if token.as_str() == "%" {
-                break;
-            }
-            code = &code[token.end()..];
+            let Some(m) = TOKEN.captures(&code[at..]) else {
+                // Another command's name, or the one character it escapes.
+                let rest = &code[at + 1..];
+                let name = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic());
+                let Some(next) = rest.chars().next() else {
+                    break;
+                };
+                code = &rest[(rest.len() - name.len()).max(next.len_utf8())..];
+                continue;
+            };
+            code = &code[at + m[0].len()..];
             if let Some(heading) = m.name("heading") {
                 if !heading_on_line && let Some(title) = brace_group(code) {
-                    let depth = CATALOG
-                        .heading_levels
-                        .iter()
-                        .position(|level| level.command == heading.as_str())
-                        .expect("a heading level of the catalog");
+                    let mut levels = CATALOG.heading_levels.iter();
+                    let depth = levels.position(|l| l.command == heading.as_str()).unwrap();
                     let (title, line) = (plain_title(title), index + 1);
                     into.outline
                         .push(Heading::new(depth, title, line, Some(file.clone())));
@@ -283,10 +281,9 @@ fn plain_title(title: &str) -> Option<String> {
     while let Some(m) = TITLE_DROP.find(rest) {
         title.push_str(&rest[..m.start()]);
         rest = &rest[m.end()..];
+        // A title's groups close, so its labels' do.
         if let Some(group) = brace_group(rest) {
             rest = &rest[group.len() + 1..];
-        } else {
-            title.push_str(m.as_str());
         }
     }
     title.push_str(rest);
@@ -298,78 +295,129 @@ fn plain_title(title: &str) -> Option<String> {
     }
 }
 
-/// Rough word count of a line's code: drop commands and TeX's special
-/// characters, and count the runs left that contain a letter.
+/// Rough word count of a line's code, up to its comment: drop commands (with
+/// a star and an optional argument) and TeX's special characters, and count
+/// the runs left that contain a letter.
 fn words(line: &str) -> usize {
-    let code = COMMENT
-        .captures(line)
-        .map_or(line, |m| &line[..m.get(1).unwrap().end()]);
-    WORD_BREAK
-        .split(&COMMAND.replace_all(code, " "))
-        .filter(|w| w.chars().any(char::is_alphabetic))
-        .count()
+    let bytes = line.as_bytes();
+    let end = (0..bytes.len())
+        .find(|&i| bytes[i] == b'%' && (i == 0 || bytes[i - 1] != b'\\'))
+        .unwrap_or(bytes.len());
+    let (mut rest, mut count, mut letter) = (&line[..end], 0, false);
+    while let Some(c) = rest.chars().next() {
+        rest = &rest[c.len_utf8()..];
+        if c == '\\' {
+            let name = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic());
+            if name.len() < rest.len() {
+                rest = name.strip_prefix('*').unwrap_or(name);
+                if let Some((_, after)) = rest.strip_prefix('[').and_then(|o| o.split_once(']')) {
+                    rest = after;
+                }
+            }
+        }
+        if c.is_whitespace() || matches!(c, '{' | '}' | '$' | '&' | '_' | '^' | '~' | '\\' | '%') {
+            count += usize::from(letter);
+            letter = false;
+        } else {
+            letter |= c.is_alphabetic();
+        }
+    }
+    count + usize::from(letter)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A heading's depth, title ("" for none) and line.
-    type Outline<'a> = &'a [(usize, &'a str, usize)];
-
     fn heading(depth: usize, title: &str, file: &str, line: usize) -> Heading {
         let title = (!title.is_empty()).then(|| title.into());
         Heading::new(depth, title, line, Some(file.into()))
     }
 
-    /// Headings and words, of one file's text.
+    /// A project folder of `files`, each a path and its text.
+    fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (rel, text) in files {
+            let path = dir.path().join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        dir
+    }
+
+    /// Each heading as "title depth:line", and the words.
+    fn analyse(files: &[(&str, &str)], open: &str) -> (Vec<String>, usize) {
+        let dir = project(files);
+        let found = analyze_project(dir.path(), "main.tex", open);
+        let show = |h: &Heading| {
+            let file = h.file.as_deref().filter(|f| *f != "main.tex");
+            let file = file.map_or_else(String::new, |f| format!(" {f}"));
+            format!("{} {}:{}{file}", h.title, h.depth, h.line)
+        };
+        (found.outline.iter().map(show).collect(), found.words)
+    }
+
     #[test]
     fn a_file_reads_as_its_outline_and_words() {
-        let cases: &[(&str, Outline, usize)] = &[
+        let cases: &[(&str, &[&str], usize)] = &[
             ("", &[], 0),
             ("Hello world\n", &[], 2),
             (
                 "one\r\n\\section{Two}\r\n\\section{Three}\nfour",
-                &[(2, "Two", 2), (2, "Three", 3)],
+                &["Two 2:2", "Three 2:3"],
                 4,
             ),
             (
-                "\\part{P}\n\\chapter{C}\n\\section{S}\n\\subsection{Sub}\n\\subsubsection{SubSub}\n\\paragraph{Para}\n\\subparagraph{Not in the outline}",
+                "\\part{P}\n\\chapter{C}\n\\section{S}\n\\subsection{Sub}\n\\subsubsection{SubSub}\n\
+                 \\paragraph{Para}\n\\subparagraph{Not in the outline}",
                 &[
-                    (0, "P", 1),
-                    (1, "C", 2),
-                    (2, "S", 3),
-                    (3, "Sub", 4),
-                    (4, "SubSub", 5),
-                    (5, "Para", 6),
+                    "P 0:1",
+                    "C 1:2",
+                    "S 2:3",
+                    "Sub 3:4",
+                    "SubSub 4:5",
+                    "Para 5:6",
                 ],
                 10,
             ),
             (
-                "\\section*{Starred}\n\\section[Short]{Long title}\n\\subsection * [x] {Spaced}\n\\section\u{a0}{After a no-break space}",
+                "\\section*{Starred}\n\\section[Short]{Long title}\n\\subsection * [x] {Spaced}\n\
+                 \\section\u{a0}{After a no-break space}",
                 &[
-                    (2, "Starred", 1),
-                    (2, "Long title", 2),
-                    (2, "After a no-break space", 4),
+                    "Starred 2:1",
+                    "Long title 2:2",
+                    "After a no-break space 2:4",
                 ],
                 9,
             ),
-            ("\\section{}\n\\chapter*{}", &[(2, "", 1), (1, "", 2)], 0),
-            ("Text \\section{A} and \\subsection{B}", &[(2, "A", 1)], 4),
+            (
+                "\\section{}\n\\chapter*{}",
+                &["Untitled Section 2:1", "Untitled Chapter 1:2"],
+                0,
+            ),
+            // One heading a line; one that doesn't close on its line is none.
+            (
+                "Text \\section{A} and \\subsection{B}\n\\section{Open",
+                &["A 2:1"],
+                5,
+            ),
             (
                 "% \\section{Hidden}\n  \t% \\section{Indented}\n\\section{Shown} % \\section{After}",
-                &[(2, "Shown", 3)],
+                &["Shown 2:3"],
                 1,
             ),
             (
-                "\\section{\\texorpdfstring{$\\mathbf{E}$-fields}{E-fields} and \\textbf{More}}\n\\subsection{A {\\bfseries Bold} \\textit{and} Heading\\label{sec:a}}\n\\section{Notes\\footnote{See \\cite{x}.}}\n\\section{R\\&D at 50\\% \\{set\\}}",
+                "\\section{\\texorpdfstring{$\\mathbf{E}$-fields}{E-fields} and \\textbf{More}}\n\
+                 \\subsection{A {\\bfseries Bold} \\textit{and} Heading\\label{sec:a}}\n\
+                 \\section{Notes\\footnote{See \\cite{x}.}}\n\\section{R\\&D at 50\\% \\{set\\}}\n\
+                 \\section{\\label{open}",
                 &[
-                    (2, "E-fields and More", 1),
-                    (3, "A Bold and Heading", 2),
-                    (2, "Notes", 3),
-                    (2, "R&D at 50% {set}", 4),
+                    "E-fields and More 2:1",
+                    "A Bold and Heading 3:2",
+                    "Notes 2:3",
+                    "R&D at 50% {set} 2:4",
                 ],
-                17,
+                18,
             ),
             (
                 "Hello \\textbf{bold} world \\cite[p.~3]{key} text \\\\ done",
@@ -377,28 +425,63 @@ mod tests {
                 6,
             ),
             ("one two % three four\n50\\% off % really", &[], 3),
-            ("x^2 + y_1 = $a$ and~b & c{d}e", &[], 8),
-            ("123 456 7.5 foo123", &[], 1),
-            ("Café naïve Ελληνικά Русский 中文 123", &[], 5),
+            ("x^2 + y_1 = $a$ and~b & c{d}e \\x*[y] z", &[], 9),
+            ("123 456 7.5 foo123 [a", &[], 2),
+            ("Café naïve Ελληνικά Русский 中文 123 \\é", &[], 6),
             (
-                "\\begin{verbatim}\n\\section{Hidden}\n\\end{verbatim}\\section{Visible}\n\\verb|\\section{Hidden}| \\section{After}\n\\\\section{Escaped}",
-                &[(2, "Visible", 3), (2, "After", 4)],
-                7,
+                "\\begin{verbatim}\n\\section{Hidden}\n\\end{verbatim}\\section{Visible}\n\
+                 \\verb|\\section{Hidden}| \\section{After}\n\\\\section{Escaped}\n\\verb|open \\section{X}",
+                &["Visible 2:3", "After 2:4"],
+                9,
             ),
         ];
-        let dir = tempfile::tempdir().unwrap();
         for &(text, outline, words) in cases {
-            fs::write(dir.path().join("main.tex"), text).unwrap();
-            let expected = Analysis {
-                outline: outline
-                    .iter()
-                    .map(|&(depth, title, line)| heading(depth, title, "main.tex", line))
-                    .collect(),
-                words,
-            };
-            let found = analyze_project(dir.path(), "main.tex", "main.tex");
-            assert_eq!(found, expected, "{text}");
+            let outline = outline.iter().map(ToString::to_string).collect();
+            assert_eq!(
+                analyse(&[("main.tex", text)], "main.tex"),
+                (outline, words),
+                "{text}"
+            );
         }
+    }
+
+    /// The main file's inputs are read in place, as TeX finds them: each file
+    /// once, by a braced or unbraced name, with .tex before the name as given;
+    /// not in a comment or literal environment. A file the main file doesn't
+    /// reach is its own document; the open file named another way still is.
+    #[test]
+    fn a_project_reads_its_inputs_in_place() {
+        let project = [
+            (
+                "main.tex",
+                "\\section{Intro}\nHello world\n\\input{chapters/a}\n% \\input{loose}\n\
+                 \\include{b}\\input{main}\n\\input chapter\n\\begin{verbatim}\n\\input{loose}\n\
+                 \\end{verbatim}\n\\begin{comment}\n\\input{loose}\n\\end{comment}\n\
+                 \\verb|\\input{loose}|\n\\input{part.tex}\n\\section{End}",
+            ),
+            ("chapters/a.tex", "\\section{A}\none two\n\\input{b.tex}"),
+            ("b.tex", "\\subsection{B}"),
+            ("chapter.tex", "\\section{Chapter}\nbody"),
+            ("part.tex", "\\section{Part}"),
+            ("part.tex.tex", "\\section{Wrong}"),
+            ("loose.tex", "\\section{Loose}\nthree"),
+        ];
+        let whole = ["Intro 2:1", "A 2:1 chapters/a.tex", "B 3:1 b.tex"]
+            .into_iter()
+            .chain(["Chapter 2:1 chapter.tex", "Part 2:1 part.tex", "End 2:15"]);
+        let whole: Vec<String> = whole.map(String::from).collect();
+        for open in [
+            "chapters/a.tex",
+            "./chapters/a.tex",
+            "chapters/../chapters/a.tex",
+        ] {
+            assert_eq!(analyse(&project, open), (whole.clone(), 24), "{open}");
+        }
+        assert_eq!(
+            analyse(&project, "loose.tex"),
+            (vec!["Loose 2:1 loose.tex".into()], 2)
+        );
+        assert_eq!(analyse(&project, "../outside.tex"), (vec![], 0));
     }
 
     #[test]
@@ -415,10 +498,8 @@ mod tests {
         ];
         let tree = outline_tree(&outline);
         let shape = |nodes: &[OutlineNode]| -> Vec<(usize, String, usize)> {
-            nodes
-                .iter()
-                .map(|n| (n.index, n.fold_key.clone(), n.children.len()))
-                .collect()
+            let shape = |n: &OutlineNode| (n.index, n.fold_key.clone(), n.children.len());
+            nodes.iter().map(shape).collect()
         };
         assert_eq!(
             shape(&tree),
@@ -434,115 +515,20 @@ mod tests {
             shape(&tree[1].children),
             [
                 (2, "a.tex\t3:Intro#1".into(), 0),
-                (3, "a.tex\t3:Intro#2".into(), 0),
+                (3, "a.tex\t3:Intro#2".into(), 0)
             ]
         );
-        // On the wire: the heading's own fields, camelCase keys, no empty children; one
-        // without a title is titled by its level.
-        let json = serde_json::to_value(&tree[0]).unwrap();
+        // On the wire: the heading's own fields, camelCase keys, no empty children.
         assert_eq!(
-            json,
-            serde_json::json!({ "index": 0, "depth": 3, "command": "subsection", "level": "Subsection", "title": "Early",
-                "untitled": false, "line": 1, "file": "a.tex", "foldKey": "a.tex\t3:Early#1" })
+            serde_json::to_value(&tree[4]).unwrap(),
+            serde_json::json!({ "index": 6, "depth": 1, "command": "chapter", "level": "Chapter",
+                "title": "Untitled Chapter", "untitled": true, "line": 4, "file": "b.tex",
+                "foldKey": "b.tex\t1:(untitled)#1" })
         );
-        let untitled = serde_json::to_value(&tree[4]).unwrap();
-        assert_eq!(untitled["title"], "Untitled Chapter");
-        assert_eq!(untitled["untitled"], true);
         // The heading a line is under: its file's last at or above it.
         assert_eq!(current_heading(&outline, "a.tex", 9), Some(3));
         assert_eq!(current_heading(&outline, "a.tex", 100), Some(4));
         assert_eq!(current_heading(&outline, "b.tex", 1), None);
         assert_eq!(current_heading(&outline, "c.tex", 5), None);
-    }
-
-    /// A project folder of `files`, each a path and its text.
-    fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        for (rel, text) in files {
-            let path = dir.path().join(rel);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, text).unwrap();
-        }
-        dir
-    }
-
-    /// The main file's inputs read in place, each file once, commented ones not;
-    /// a file the main file doesn't reach is its own document.
-    #[test]
-    fn a_project_reads_its_inputs_in_place() {
-        let dir = project(&[
-            (
-                "main.tex",
-                "\\section{Intro}\nHello world\n\\input{chapters/a}\n% \\input{loose}\n\\include{b}\\input{main}\n\\section{End}",
-            ),
-            ("chapters/a.tex", "\\section{A}\none two\n\\input{b.tex}"),
-            ("b.tex", "\\subsection{B}"),
-            ("loose.tex", "\\section{Loose}\nthree"),
-        ]);
-        fn headings(a: &Analysis) -> Vec<(&str, Option<&str>, usize)> {
-            let outline = a.outline.iter();
-            outline
-                .map(|h| (h.title.as_str(), h.file.as_deref(), h.line))
-                .collect()
-        }
-        let whole = analyze_project(dir.path(), "main.tex", "chapters/a.tex");
-        assert_eq!(
-            headings(&whole),
-            [
-                ("Intro", Some("main.tex"), 1),
-                ("A", Some("chapters/a.tex"), 1),
-                ("B", Some("b.tex"), 1),
-                ("End", Some("main.tex"), 6)
-            ]
-        );
-        assert_eq!(whole.words, 12);
-        let loose = analyze_project(dir.path(), "main.tex", "loose.tex");
-        assert_eq!(headings(&loose), [("Loose", Some("loose.tex"), 1)]);
-        assert_eq!(loose.words, 2);
-    }
-
-    /// Inputs are followed as TeX finds them: by an unbraced name, and by a
-    /// name with its .tex, not given a second; not in a literal or comment
-    /// environment. The open file named another way is still the one read.
-    #[test]
-    fn inputs_are_followed_as_tex_finds_them() {
-        let one = [
-            ("main.tex", "\\section{Main}\n\\input{chapters/one}"),
-            ("chapters/one.tex", "\\section{One}"),
-        ];
-        let unbraced = [
-            (
-                "main.tex",
-                "\\section{Main}\n\\input chapter\n\\section{End}",
-            ),
-            ("chapter.tex", "\\section{Chapter}\nbody"),
-        ];
-        let named_tex = [
-            ("main.tex", "\\input{part.tex}"),
-            ("part.tex", "\\section{Part}"),
-            ("part.tex.tex", "\\section{Wrong}"),
-        ];
-        let literal = [
-            (
-                "main.tex",
-                "\\section{Main}\n\\begin{verbatim}\n\\input{example}\n\\end{verbatim}\n\\begin{comment}\n\\input{example}\n\\end{comment}\n\\verb|\\input{example}|\n\\input{real}",
-            ),
-            ("example.tex", "\\section{Example}"),
-            ("real.tex", "\\section{Real}"),
-        ];
-        let cases: [(&[_], &str, &[&str]); 6] = [
-            (&one, "chapters/one.tex", &["Main", "One"]),
-            (&one, "./chapters/one.tex", &["Main", "One"]),
-            (&one, "chapters/../chapters/one.tex", &["Main", "One"]),
-            (&unbraced, "main.tex", &["Main", "Chapter", "End"]),
-            (&named_tex, "main.tex", &["Part"]),
-            (&literal, "main.tex", &["Main", "Real"]),
-        ];
-        for (files, open, titles) in cases {
-            let dir = project(files);
-            let found = analyze_project(dir.path(), "main.tex", open).outline;
-            let found: Vec<_> = found.iter().map(|h| h.title.as_str()).collect();
-            assert_eq!(found, titles, "{files:?} with {open} open");
-        }
     }
 }
