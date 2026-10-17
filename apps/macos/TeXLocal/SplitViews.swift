@@ -62,6 +62,8 @@ class DetentSplitViewController: NSSplitViewController {
     var fixed: (_ divider: Int) -> Bool = { _ in false }
     /// As a divider's drag starts, and as it ends.
     var dragging: (Bool) -> Void = { _ in }
+    /// Where a divider takes drags, from where AppKit would have it.
+    var grip: (_ divider: Int, _ rect: NSRect) -> NSRect = { $1 }
 
     init(splitView: DraggedSplitView = DraggedSplitView()) {
         super.init(nibName: nil, bundle: nil)
@@ -94,7 +96,8 @@ class DetentSplitViewController: NSSplitViewController {
     override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
                             forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
         fixed(dividerIndex) ? .zero
-            : super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect, ofDividerAt: dividerIndex)
+            : grip(dividerIndex, super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect,
+                                                 ofDividerAt: dividerIndex))
     }
 }
 

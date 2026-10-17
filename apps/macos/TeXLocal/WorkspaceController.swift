@@ -255,6 +255,8 @@ final class WorkspaceController: DetentSplitViewController {
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         area.loaded = { [unowned self] in if !project.panel.shown { panelItem.isCollapsed = true } }
+        // The panel resizes from the status bar's top line, as Xcode's debug area does from its bar's: a split view is flipped.
+        area.grip = { _, rect in rect.offsetBy(dx: 0, dy: -(BarMetrics.height + BarMetrics.line)) }
 
         areaItem = NSSplitViewItem(viewController: area)
         addSplitViewItem(areaItem)

@@ -55,7 +55,8 @@ the hosts' contract with the core.
   under the text.
 - **Status bar**: across the source and PDF columns at Xcode's spacing (`BarMetrics`), over
   AppKit's own scroll edge, its automatic style, as Xcode's editor bar has; the bar draws no
-  ground, only its point line. Each pane has an empty bottom accessory of the bar's height for
+  ground, only its line, a device pixel as the hard edge over the File Outline is. The build
+  panel resizes from that line, as Xcode's debug area does (`area.grip`). Each pane has an empty bottom accessory of the bar's height for
   its own edge, safe area and scrollers, and the bar lies over both (`buildStatusBar`): one
   accessory across the columns gave its edge to only one pane, about half the launches (27.2).
   In Dark each pane's edge takes that pane's tone, AppKit's look, kept on purpose. After a failed

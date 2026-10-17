@@ -17,6 +17,7 @@ enum BarMetrics {
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+    @Environment(\.displayScale) private var displayScale
     let project: ProjectModel
 
     var body: some View {
@@ -29,7 +30,8 @@ struct StatusBar: View {
         // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`). No ground of its own:
         // AppKit's scroll edge lies under the bar (`WorkspaceController.buildStatusBar`), and draws no line, so the bar has its own.
         .padding(.top, BarMetrics.line)
-        .overlay(alignment: .top) { Divider() }
+        // A device pixel, as the hard scroll edge's line and the splits' thin dividers are.
+        .overlay(alignment: .top) { Rectangle().fill(.separator).frame(height: 1 / displayScale) }
         // Clicks between its controls stay with the bar, not the text or pages scrolled beneath it.
         .contentShape(.rect)
         .monospacedDigit()
