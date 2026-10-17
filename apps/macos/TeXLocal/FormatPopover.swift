@@ -73,7 +73,7 @@ struct FormatPanel: View {
     private static let markerGap: CGFloat = 4
     /// The UI kit's menu (macOS 27, Menus, Regular): an item's highlight 5 pt in from the edge with
     /// 8 pt corners, its content and the separators 16 pt in, the first item 6 pt down.
-    private static let highlightInset: CGFloat = 5, highlightRadius: CGFloat = 8, contentInset: CGFloat = 16, menuTop: CGFloat = 6
+    fileprivate static let highlightInset: CGFloat = 5, highlightRadius: CGFloat = 8, contentInset: CGFloat = 16, menuTop: CGFloat = 6
 
     var body: some View {
         let headings = project.headingStyles
@@ -82,12 +82,14 @@ struct FormatPanel: View {
         // Read once: it searches the outline.
         let current = project.headingCommand
         VStack(spacing: 0) {
-            HStack {
+            // The three share the width, edge to edge with the levels' highlights below.
+            HStack(spacing: Self.highlightInset) {
                 toggle(.editBold, symbol: "bold", on: styles.bold != nil, help: "Make text bold")
                 toggle(.editItalic, symbol: "italic", on: styles.italic != nil, help: "Make text italic")
                 toggle(.editUnderline, symbol: "underline", on: styles.underline != nil, help: "Underline text")
             }
-            .padding(.vertical, 8)
+            .padding(.horizontal, Self.highlightInset)
+            .padding(.vertical, Self.menuTop)
             Divider()
                 .padding(.horizontal, Self.contentInset)
             VStack(spacing: 0) {
@@ -129,13 +131,30 @@ struct FormatPanel: View {
         Toggle(command.title, systemImage: symbol, isOn: Binding(get: { on }, set: { _ in
             app.perform(command, on: project)
         }))
-        .toggleStyle(.button)
-        .buttonStyle(.accessoryBar)
-        .labelStyle(.iconOnly)
-        .controlSize(.large)
-        .imageScale(.large)
+        .toggleStyle(GlassTile())
         // What it does, as the toolbar's own buttons for these say (HIG, Offering help).
         .help(help)
+    }
+
+    /// Notes' style toggles: the symbol alone, on a tile of the accent's glass while on, as wide as its share of the row.
+    private struct GlassTile: ToggleStyle {
+        /// Notes' tile's height.
+        private static let side: CGFloat = 24
+
+        func makeBody(configuration: Configuration) -> some View {
+            Button { configuration.isOn.toggle() } label: {
+                configuration.label
+                    .labelStyle(.iconOnly)
+                    .imageScale(.large)
+                    .foregroundStyle(configuration.isOn ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                    .frame(maxWidth: .infinity, minHeight: Self.side, maxHeight: Self.side)
+                    .glassEffect(configuration.isOn ? .regular.tint(.accentColor).interactive() : .identity,
+                                 in: .rect(cornerRadius: FormatPanel.highlightRadius))
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(configuration.isOn ? [.isToggle, .isSelected] : .isToggle)
+        }
     }
 
     private func row(_ style: HeadingStyle, layout: Layout, checked: Bool) -> some View {
