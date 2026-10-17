@@ -72,7 +72,8 @@ apps/windows/
   before returning.
 - **Events.** The listener parses each event and hands it to a `post` delegate given to
   `Core.Open` (the app passes `DispatcherQueue.TryEnqueue`); pages subscribe to
-  `Core.Event`, and the workspace reads its session's into a typed `DocEvent`. Nothing blocks in a
+  `Core.Event`, and the workspace reads its session's into a typed `DocEvent`, by the number it
+  gives the session before `session_open` (events can come before the answer). Nothing blocks in a
   callback.
 - **Sources.** `Source` is used from the UI thread only (the editor's), so calls never overlap.
   Offsets are UTF-16 on both sides; no conversion.
@@ -266,7 +267,7 @@ secondary text at margin 16,12 is enough.
   where they land (a clash asks Replace, Keep both, Cancel). Its context menu, with File Explorer's
   icons: New file, New folder, Set as main file, Rename (F2), Show in File Explorer, Delete (Del,
   disabled on the main file). Outline: the headings of the document the shown file belongs to
-  (`analyze_project`), the caret's selected (`outline_current`), also when the tab is switched to;
+  (`session_analyze`), the caret's selected (`session_outline_current`), also when the tab is switched to;
   a heading opens its line; folds
   are kept with the open folders in the project's UI state. Results: one expanded row per file
   (its path and count) with its hits under it on up to two lines, the line number at the right; a
@@ -387,12 +388,13 @@ secondary text at margin 16,12 is enough.
 ## Core gaps
 
 Logic the Windows app needs that belongs in a crate, not C#. Already on `main`: sessions and
-events, autosave, watcher, `analyze_project` tree with fold keys, `outline_current`, file kinds,
-`create_entry {free}`, `locate`, `get_ui_state`/`set_ui_state`, `synctex_match`; and in
-texlocal-syntax (`tl_source_call`, `tl_syntax_call`): the typing transforms, `themes` /
-`theme_colors` / `legible` / `contrast`, `menus` (symbol groups, insert, maths, list and reference
-templates), `document_class` / `heading_styles`, and `math_svg` / `glyph_svg` through RaTeX;
-`search_project` hits carry their column and length in UTF-16 units.
+events, autosave, watcher, `session_analyze` (the outline tree with fold keys, the words and the
+main file's heading styles), `session_outline_current`, file kinds, `create_entry {free}`,
+`locate`, `get_ui_state`/`set_ui_state`, `synctex_match`; and in the core's syntax module
+(`tl_source_*`, `tl_syntax_call`): the typing transforms and snippet mirrors, `themes` /
+`theme_colors` / `legible`, `menus` (symbol groups, insert, maths, list and reference templates),
+`heading_styles`, and `math_svg` / `glyph_svg` through RaTeX; `search_project` answers its hits by
+file, each with its column and length in UTF-16 units.
 
 1. (Landed: typing transforms.)
 2. **Catalogue command**: the project templates (Blank, Article, Report, Presentation) and the
@@ -425,19 +427,15 @@ templates), `document_class` / `heading_styles`, and `math_svg` / `glyph_svg` th
 14. **Issue indices on lines**: the `issues` event's lines don't say which issue (index into
     `errors` + `warnings`) they show, so a click on a line-end box looks up the first issue with
     that file and line before `session_choose_issue`.
-15. **PDF path**: `session_open` answers an absolute `pdf` and `build_finished`'s `result.pdf` is
-    project-relative, and there is no `pdf_path` command; the host joins the session's `root`.
+15. (Landed: `session_open`'s `pdf` and `build_finished`'s `result.pdf` are absolute.)
 16. **TeX status for display**: `status` gives the latexmk version ("4.88") and the distribution
     ("TeX Live 2026"), not the raw `-v` banner; Settings shows `version` as given meanwhile.
 17. **Casing**: `menus` and `heading_styles` take a casing argument ("sentence" for Windows), and
     the host's `Sentence()` goes.
-18. **Untitled headings**: `analyze_project` gives display titles for empty headings ("Untitled
-    section") in place of "(untitled)".
-19. **The project's heading styles**: the main file's class, point size and `hasChapters` come from
-    the core, replacing `read_file` + `document_class` + `heading_styles` and the host's scan.
+18. (Landed: an empty heading is its level's, "Untitled Section", with `untitled`.)
+19. (Landed: `session_analyze` answers the main file's `headingStyles`.)
 20. **The caret's heading**: `text_styles` also returns the caret line's heading command.
-21. **Outline in the session**: the session keeps its last analysis, so `outline_current {session,
-    path, line}` needs no outline sent back.
+21. (Landed: `session_outline_current {session, path, line}`.)
 22. **Main file in the tree**: `TreeNode.main`, and a `tree` event when the main file changes
     (settings, renames above it); the host's `mainFile` mirror goes.
 23. **Editable files**: `TreeNode.editable`, and `session_open_document` returns the kind; the

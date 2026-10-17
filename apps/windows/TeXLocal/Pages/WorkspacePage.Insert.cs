@@ -21,8 +21,8 @@ public sealed class PaletteGroup(string title, IEnumerable<PaletteItem> items) :
     public string Title => title;
 }
 
-/// The Insert menu and the symbol palette, from the core's catalogue (menus) and the main file's class (heading_styles);
-/// symbols as RaTeX draws them (glyph_svg).
+/// The Insert menu and the symbol palette, from the core's catalogue (menus) and the main file's class (session_analyze's
+/// headingStyles); symbols as RaTeX draws them (glyph_svg).
 public sealed partial class WorkspacePage
 {
     static readonly Menus Catalogue = Source.SyntaxCall<Menus>("menus", new { })!;
@@ -36,7 +36,7 @@ public sealed partial class WorkspacePage
         After(InsertAnchor, templates.Insert);
         foreach (var t in templates.List) ListMenu.Items.Add(Item(t));
         foreach (var t in templates.References) ReferencesMenu.Items.Add(Item(t));
-        ShowHeadings(Source.SyntaxCall<HeadingStyle[]>("heading_styles", new { @class = (string?)null }) ?? []);
+        ShowHeadings(Source.SyntaxCall<HeadingStyle[]>("heading_styles", new { }) ?? []);
     }
 
     void After(MenuFlyoutItemBase anchor, Template[] templates)
@@ -61,22 +61,8 @@ public sealed partial class WorkspacePage
     static string Sentence(string title) => string.Join(' ', title.Split(' ').Select((word, i) =>
         i == 0 || word.Length < 2 || word.Skip(1).Any(char.IsUpper) ? word : char.ToLowerInvariant(word[0]) + word[1..]));
 
-    /// The levels the main file's class has, each numbered and set as the class sets it (core gap 19).
-    async Task ReadHeadingStyles()
-    {
-        string? text;
-        try { text = mainFile == Editor.Path ? Editor.Text : (await Core.CallAsync("read_file", new { id, path = mainFile })).GetProperty("text").GetString(); }
-        catch (CoreException) { text = null; }
-        var documentClass = text is null ? null : Source.SyntaxCall<DocumentClass>("document_class", new { text });
-        ShowHeadings(Source.SyntaxCall<HeadingStyle[]>("heading_styles", new
-        {
-            @class = documentClass?.Name,
-            pointSize = documentClass?.PointSize ?? 10,
-            hasChapters = analysis?.Outline.Any(h => h.Depth == 1) ?? false,
-        }) ?? []);
-    }
-
-    /// Insert › Heading, as Word's styles gallery: each level in its own size, weight and shape, with its number.
+    /// Insert › Heading, as Word's styles gallery: each level in its own size, weight and shape, with its number; until a
+    /// file is analysed, every level.
     void ShowHeadings(HeadingStyle[] styles)
     {
         HeadingMenu.Items.Clear();
@@ -97,11 +83,11 @@ public sealed partial class WorkspacePage
     }
 
     /// The caret line's level, and the selection's bold, italic and underline; LaTeX's commands only in a .tex file.
-    void ShowInsertChecks(Heading? heading)
+    void ShowInsertChecks(OutlineNode? heading)
     {
         var latex = Editor.Path?.EndsWith(".tex", StringComparison.OrdinalIgnoreCase) == true;
         foreach (var item in InsertMenu.Items) item.IsEnabled = latex;
-        var command = heading is { Depth: var d } && d < Catalogue.HeadingLevels.Length ? Catalogue.HeadingLevels[d].Command : "";
+        var command = heading?.Command ?? "";
         foreach (var item in HeadingMenu.Items.OfType<RadioMenuFlyoutItem>()) item.IsChecked = (string)item.Tag == command;
         var styles = latex ? Editor.Styles : new TextStyles(null, null, null);
         (BoldItem.IsChecked, ItalicItem.IsChecked, UnderlineItem.IsChecked) = (styles.Bold is not null, styles.Italic is not null, styles.Underline is not null);

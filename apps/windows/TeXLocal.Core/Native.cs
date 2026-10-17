@@ -17,7 +17,10 @@ internal static unsafe partial class Native
     [LibraryImport(Lib)] public static partial void tl_close(nint h);
     [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial nint tl_session_source(nint h, ulong session, string path);
     [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial nint tl_source_new(string text, nuint len);
-    [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial void tl_source_edit(nint s, uint start, uint length, string text, nuint len);
+    [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial nint tl_source_edit(nint s, uint start, uint length, string text, nuint len, nint changing, [MarshalAs(UnmanagedType.U1)] bool mirroring);
+    [LibraryImport(Lib)] public static partial void tl_source_select(nint s, uint start, uint length, [MarshalAs(UnmanagedType.U1)] bool mirroring);
+    [LibraryImport(Lib)] public static partial byte* tl_source_text(nint s, nuint* len);
+    [LibraryImport(Lib)] public static partial void tl_source_free_text(byte* text, nuint len);
     [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial void tl_source_reload(nint s, string text, nuint len);
     [LibraryImport(Lib)] public static partial uint tl_source_line_at(nint s, uint offset);
     [LibraryImport(Lib)] public static partial uint tl_source_line_start(nint s, uint line);

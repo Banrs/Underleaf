@@ -35,7 +35,7 @@ public sealed class NavItem
 }
 
 /// The sidebar, as Word's navigation pane: Files, the Outline of the shown file's document, and project search's Results
-/// as VS Code's search view. Outline, words and hits are the core's (analyze_project, outline_current, search_project).
+/// as VS Code's search view. Outline, words and hits are the core's (session_analyze, session_outline_current, search_project).
 public sealed partial class WorkspacePage
 {
     readonly RenameFlyout rename = new();
@@ -65,15 +65,14 @@ public sealed partial class WorkspacePage
         Children = n.Children is { } c ? Headings(c) : null,
     })];
 
-    /// An empty heading by its level, "Untitled subsection", until the core names them (core gap 18).
-    static string Title(OutlineNode n) => n.Title != "(untitled)" ? n.Title
-        : $"Untitled {(n.Depth < Catalogue.HeadingLevels.Length ? Catalogue.HeadingLevels[n.Depth].Title : "section").ToLowerInvariant()}";
+    /// An empty heading by its level, in sentence case: "Untitled subsection".
+    static string Title(OutlineNode n) => n.Untitled ? Sentence(n.Title) : n.Title;
 
-    static List<NavItem> Results(SearchHit[] hits) => [.. hits.GroupBy(h => h.File).Select(g => new NavItem
+    static List<NavItem> Results(SearchFile[] files) => [.. files.Select(f => new NavItem
     {
-        Lead = g.Key, Glyph = "\uE8A5", Trailing = $"{g.Count()}", Tip = g.Key, IsExpanded = true,
-        Spoken = $"{g.Key}, {g.Count()} {(g.Count() == 1 ? "result" : "results")}",
-        Children = [.. g.Select(h => new NavItem
+        Lead = f.File, Glyph = "\uE8A5", Trailing = $"{f.Hits.Length}", Tip = f.File, IsExpanded = true,
+        Spoken = $"{f.File}, {f.Hits.Length} {(f.Hits.Length == 1 ? "result" : "results")}",
+        Children = [.. f.Hits.Select(h => new NavItem
         {
             Lead = h.Before, Strong = h.Match, Tail = h.After, Lines = 2, Trailing = $"{h.Line}", Tip = h.Before + h.Match + h.After,
             Spoken = $"Line {h.Line}: {h.Before}{h.Match}{h.After}", Target = h,
@@ -160,6 +159,13 @@ public sealed partial class WorkspacePage
 
     void SaveFolds() => _ = Core.CallAsync("set_ui_state", new { id, patch = new { expandedFolders = expanded.Order(), foldedHeadings = folded.Order() } });
 
+    /// The project's UI state: as it opens, and after a rename, which moves the entry's paths.
+    void ReadFolds(JsonElement ui)
+    {
+        expanded = [.. ui.GetProperty("expandedFolders").EnumerateArray().Select(f => f.GetString()!)];
+        folded = [.. ui.GetProperty("foldedHeadings").EnumerateArray().Select(f => f.GetString()!)];
+    }
+
     async void OnInvoked(TreeView sender, TreeViewItemInvokedEventArgs args) => await ((args.InvokedItem as NavItem)?.Target switch
     {
         TreeNode { Type: not "dir" } node => OpenDocument(node.Path, node.Kind),
@@ -174,13 +180,13 @@ public sealed partial class WorkspacePage
     async Task Analyze()
     {
         if (Editor.Path is not { } path) return;
-        try { analysis = await Core.CallAsync<Analysis>("analyze_project", new { id, file = path }); }
+        try { analysis = await Core.CallAsync<Analysis>("session_analyze", new { session, path }); }
         catch (CoreException) { return; }
         if (Editor.Path != path) return;
         Words.Text = analysis.Words == 1 ? "1 word" : $"{analysis.Words:N0} words";
         (OutlineTree.ItemsSource, caretHeading) = (Headings(analysis.Tree), null);
         ShowSide();
-        await ReadHeadingStyles();
+        ShowHeadings(analysis.HeadingStyles);
         CaretSettled();
     }
 
@@ -190,7 +196,7 @@ public sealed partial class WorkspacePage
         if (analysis is not { } shown || Editor.Path is not { } path) return;
         var line = Editor.Caret.Line;
         ShowInsertChecks(shown.Outline.FirstOrDefault(h => h.File == path && h.Line == line));
-        var index = await Core.CallAsync<int?>("outline_current", new { outline = shown.Outline, file = path, line });
+        var index = await Core.CallAsync<int?>("session_outline_current", new { session, path, line });
         if (analysis != shown) return;
         caretHeading = Find(OutlineTree.ItemsSource as List<NavItem>, i => i.Target is OutlineNode n && n.Index == index);
         SelectCaretHeading();
@@ -234,19 +240,19 @@ public sealed partial class WorkspacePage
     {
         var query = App.Window.Search.Text.Trim();
         var generation = ++searches;
-        SearchHit[] hits = [];
+        SearchFile[] files = [];
         string? error = null;
         if (query.Length > 0)
-            try { hits = await Core.CallAsync<SearchHit[]>("search_project", new { id, query }); }
+            try { files = await Core.CallAsync<SearchFile[]>("search_project", new { id, query }); }
             catch (CoreException ex) { error = ex.Message; }
         if (generation != searches) return;
         (searched, searchError) = (query, error);
-        ResultsTree.ItemsSource = Results(hits);
+        ResultsTree.ItemsSource = Results(files);
         if (query.Length > 0)
         {
             Split.IsPaneOpen = true;
             SideTabs.SelectedItem = ResultsTab;
-            Announce(App.Window.Search, hits.Length switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" }, "search");
+            Announce(App.Window.Search, files.Sum(f => f.Hits.Length) switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" }, "search");
         }
         ShowSide();
     }
@@ -302,12 +308,16 @@ public sealed partial class WorkspacePage
         if (Picked is { } node && FilesTree.ContainerFromItem(FilesTree.SelectedItem) is FrameworkElement row) Rename(node, row);
     }
 
-    /// The core's refusal shows in the flyout. A rename above the main file moves it, so the settings are read again.
+    /// The core's refusal shows in the flyout. A rename above the main file moves it, and the folders open move with
+    /// it; the answer is null if the files couldn't be saved first.
     void Rename(TreeNode node, FrameworkElement row) => rename.Show(row, node.Name, async name =>
     {
         var to = Join(ParentOf(node.Path), name);
-        await Core.CallAsync("session_rename", new { session, from = node.Path, to });
-        mainFile = MainFile(await Core.CallAsync("get_settings", new { id }));
+        if (await Core.CallAsync("session_rename", new { session, from = node.Path, to }) is { ValueKind: JsonValueKind.Object } renamed)
+        {
+            mainFile = MainFile(renamed);
+            ReadFolds(renamed.GetProperty("ui"));
+        }
         await RefreshTree();
         Select(FilesTree, i => i.Key == to);
     });

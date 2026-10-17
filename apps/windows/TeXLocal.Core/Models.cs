@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace TeXLocal.Bridge;
 
 /// <param name="Mtime">Milliseconds since the epoch; list_projects sorts newest first.</param>
@@ -13,7 +15,10 @@ public sealed record TreeNode(string Type, string Name, string Path, string? Kin
 /// <param name="Found">The folder the working latexmk runs from.</param>
 public sealed record TexStatus(bool Available, string? Version, string? TexDir, string? Found);
 
-public sealed record SessionOpened(ulong Session, string Root, string? Pdf, TreeNode[] Tree);
+/// <param name="Pdf">The last build's, absolute, if it is on disk.</param>
+/// <param name="Settings">As get_settings.</param>
+/// <param name="Ui">As get_ui_state.</param>
+public sealed record SessionOpened(ulong Session, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, JsonElement Ui);
 
 public sealed record Clash(string Path);
 
@@ -22,7 +27,7 @@ public sealed record Imported(Clash[] Existing);
 /// <param name="Type">error or warning.</param>
 public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short);
 
-/// <param name="Pdf">Relative to the project root.</param>
+/// <param name="Pdf">Absolute.</param>
 /// <param name="PdfChanged">True only when this run finished and wrote the PDF it returns.</param>
 public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, string? Pdf, LogItem[] Errors, LogItem[] Warnings, string Log, bool PdfChanged);
 
@@ -75,20 +80,28 @@ public sealed record TextStyles(TextEdit[]? Bold, TextEdit[]? Italic, TextEdit[]
 /// RaTeX's SVG and its size in the points of the size asked for, or why there's none.
 public sealed record MathSvg(string? Svg, double Width, double Height, string? Error);
 
-/// <param name="Depth">0 for \part to 5 for \paragraph.</param>
-/// <param name="Title">Plain text, "(untitled)" when empty.</param>
-public sealed record Heading(int Depth, string Title, int Line, string? File);
+/// A heading and what nests under it, by its place in the outline read in order; FoldKey names its fold in the
+/// project's UI state.
+/// <param name="Command">Its sectioning command without the backslash: "section".</param>
+/// <param name="Title">Plain text; untitled, its level's: "Untitled Section".</param>
+public sealed record OutlineNode(int Index, string Command, string Title, bool Untitled, int Line, string? File, string FoldKey,
+    OutlineNode[]? Children)
+{
+    public IEnumerable<OutlineNode> AndBelow => [this, .. (Children ?? []).SelectMany(c => c.AndBelow)];
+}
 
-/// A heading and what nests under it; FoldKey names its fold in the project's UI state.
-public sealed record OutlineNode(int Index, int Depth, string Title, int Line, string? File, string FoldKey, OutlineNode[]? Children);
-
-/// analyze_project: the outline in reading order, the words, and the outline as a tree.
-public sealed record Analysis(Heading[] Outline, int Words, OutlineNode[] Tree);
+/// session_analyze: the outline as a tree, the words, and the levels the main file's class has.
+public sealed record Analysis(OutlineNode[] Tree, int Words, HeadingStyle[] HeadingStyles)
+{
+    /// The headings in reading order.
+    public IEnumerable<OutlineNode> Outline => Tree.SelectMany(n => n.AndBelow);
+}
 
 /// <param name="Column">Where the match starts in its line, in UTF-16 units from 0.</param>
 public sealed record SearchHit(string File, int Line, int Column, int Length, string Before, string Match, string After);
 
-public sealed record DocumentClass(string Name, int PointSize);
+/// A file's hits, as search_project answers them.
+public sealed record SearchFile(string File, SearchHit[] Hits);
 
 /// <param name="Shape">upright, italic or smallCaps.</param>
 public sealed record HeadingFont(double Scale, bool Bold, string Shape);
@@ -101,11 +114,9 @@ public sealed record Template(string Title, string Body, bool Inline);
 
 public sealed record Templates(Template[] Math, Template[] Insert, Template[] List, Template[] References);
 
-public sealed record HeadingLevel(string Title, string Command);
-
 public sealed record MathSymbol(string Command);
 
 public sealed record SymbolGroup(string Title, MathSymbol[] Symbols);
 
 /// The catalogue the Insert menu and the palette are made from.
-public sealed record Menus(Templates Templates, HeadingLevel[] HeadingLevels, SymbolGroup[] SymbolGroups);
+public sealed record Menus(Templates Templates, SymbolGroup[] SymbolGroups);

@@ -52,18 +52,55 @@ public sealed class CoreTests : IDisposable
         var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Session" });
         var saved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         core.Event += e => { if (e.Type == "saved") saved.TrySetResult(); };
-        var opened = await core.CallAsync<SessionOpened>("session_open", new { id = made.Id });
-        await core.CallAsync("session_open_document", new { session = opened.Session, path = "main.tex" });
-        using (var source = core.SessionSource(opened.Session, "main.tex"))
+        const ulong session = 1;
+        await core.CallAsync("session_open", new { id = made.Id, session });
+        await core.CallAsync("session_open_document", new { session, path = "main.tex" });
+        using (var source = core.SessionSource(session, "main.tex"))
         {
             Assert.NotNull(source);
             source.Edit(0, 0, "% x\n");
         }
-        await core.CallAsync("session_save", new { session = opened.Session });
+        await core.CallAsync("session_save", new { session });
         await saved.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var text = (await core.CallAsync("read_file", new { id = made.Id, path = "main.tex" })).GetProperty("text").GetString();
         Assert.StartsWith("% x", text);
-        await core.CallAsync("session_close", new { session = opened.Session });
+        await core.CallAsync("session_close", new { session });
+    }
+
+    [Fact]
+    public async Task SessionAnalysesTheShownFile()
+    {
+        var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Outline" });
+        const string text = "\\documentclass{book}\n\\begin{document}\n\\chapter{One}\n\\section{}\nx\n\\end{document}\n";
+        await core.CallAsync("write_file", new { id = made.Id, path = "main.tex", text });
+        const ulong session = 7;
+        var opened = await core.CallAsync<SessionOpened>("session_open", new { id = made.Id, session });
+        Assert.Equal(session, opened.Session);
+        Assert.Equal("main.tex", opened.Settings.GetProperty("mainFile").GetString());
+        Assert.Equal(JsonValueKind.Array, opened.Ui.GetProperty("expandedFolders").ValueKind);
+        await core.CallAsync("session_open_document", new { session, path = "main.tex" });
+        using (var source = core.SessionSource(session, "main.tex")) Assert.Equal(text, source?.Text);
+        var analysis = await core.CallAsync<Analysis>("session_analyze", new { session, path = "main.tex" });
+        Assert.Equal(new[] { "chapter", "section" }, analysis.Outline.Select(h => h.Command));
+        var untitled = analysis.Outline.Last();
+        Assert.True(untitled.Untitled);
+        Assert.Equal("Untitled Section", untitled.Title);
+        Assert.Equal("", analysis.HeadingStyles[0].Command);
+        Assert.Contains(analysis.HeadingStyles, s => s.Command == "chapter");
+        Assert.Equal<int?>(untitled.Index, await core.CallAsync<int?>("session_outline_current", new { session, path = "main.tex", line = 5 }));
+        Assert.Null(await core.CallAsync<int?>("session_outline_current", new { session, path = "main.tex", line = 1 }));
+        await core.CallAsync("session_close", new { session });
+    }
+
+    [Fact]
+    public async Task SearchAnswersByFile()
+    {
+        var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Search" });
+        await core.CallAsync("write_file", new { id = made.Id, path = "notes.tex", text = "a needle\nNeedle b\n" });
+        var notes = Assert.Single(await core.CallAsync<SearchFile[]>("search_project", new { id = made.Id, query = "needle" }));
+        Assert.Equal("notes.tex", notes.File);
+        Assert.Equal(new[] { 1, 2 }, notes.Hits.Select(h => h.Line));
+        Assert.Equal(("a ", "needle", 2, 6), (notes.Hits[0].Before, notes.Hits[0].Match, notes.Hits[0].Column, notes.Hits[0].Length));
     }
 
     [Fact]
@@ -93,6 +130,15 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void MenusAndLevelsDecode()
+    {
+        var menus = Source.SyntaxCall<Menus>("menus", new { });
+        Assert.NotEmpty(menus!.Templates.Insert);
+        Assert.NotEmpty(menus.SymbolGroups);
+        Assert.Equal("", Source.SyntaxCall<HeadingStyle[]>("heading_styles", new { })?[0].Command);
+    }
+
+    [Fact]
     public void NullAnswersAreDefault()
     {
         using var source = Source.New("x");
@@ -114,8 +160,21 @@ public sealed class CoreTests : IDisposable
     {
         using var source = Source.New("a\0é");
         source.Edit(3, 0, "\0\U0001F600");
-        Assert.Equal("a\0é\0\U0001F600", source.Call<string>("text", new { }));
+        Assert.Equal("a\0é\0\U0001F600", source.Text);
         source.Reload("");
-        Assert.Equal("", source.Call<string>("text", new { }));
+        Assert.Equal("", source.Text);
+    }
+
+    [Fact]
+    public void SnippetFieldsMirror()
+    {
+        using var source = Source.New("\\begin{}\n\\end{}");
+        source.Call("start_snippet", new { fields = new[] { new SnippetField(7, 0, 0), new SnippetField(14, 0, 0) }, at = 0 });
+        Assert.Equal(new[] { new TextEdit(15, 0, "x") }, source.Edit(7, 0, "x"));
+        Assert.Null(source.Edit(15, 0, "x", mirroring: true));
+        source.Select(new(8, 0), false);
+        Assert.Equal("\\begin{x}\n\\end{x}", source.Text);
+        source.Select(new(0, 0), false);
+        Assert.Null(source.Edit(0, 0, "%"));
     }
 }

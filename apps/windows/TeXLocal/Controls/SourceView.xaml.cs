@@ -40,7 +40,7 @@ public sealed class IssueMark(IssueLine issue)
 }
 
 /// The source editor: a RichEditBox whose text and highlighting are the session document's, and whose typing the core
-/// assists (brackets, indentation, snippets, completion) as texlocal-syntax answers it.
+/// assists (brackets, indentation, snippets, completion) through its syntax module.
 public sealed partial class SourceView : UserControl
 {
     // The completion list: rows, rows shown, and its labels' inset from its edge (border, padding, glyph, spacing).
@@ -209,12 +209,14 @@ public sealed partial class SourceView : UserControl
     }
 
     /// Completes once the whole text is in. RichEdit drops the text's colours if it gets them before
-    /// its template is applied and it has been laid out, so the first file waits for both.
-    public async Task Show(string path, string content, Source src)
+    /// its template is applied and it has been laid out, so the first file waits for both, then reads
+    /// the document's text, with any reload that came meanwhile.
+    public async Task Show(string path, Source src)
     {
         await ready.Task;
         source?.Dispose();
         (Path, source) = (path, src);
+        var content = src.Text;
         var lf = content.Replace("\r\n", "\n").Replace('\r', '\n');
         if (lf != content) src.Reload(lf);
         SetIssues([]);
@@ -402,13 +404,12 @@ public sealed partial class SourceView : UserControl
     /// typed in a field goes in its other places.
     void Mirror(int start, int removed, string inserted, bool colour)
     {
-        source!.Edit(start, removed, inserted);
-        source.Call("follow", new { old = new { start, length = removed }, delta = inserted.Length - removed, mirroring });
+        var mirrors = source!.Edit(start, removed, inserted, mirroring);
         Text = string.Concat(Text.AsSpan(0, start), inserted, Text.AsSpan(start + removed));
         lastEnd = start + inserted.Length;
         edits++;
         if (colour) Colour(source.LineAt(start), source.LineAt(start + inserted.Length));
-        if (mirroring || source.Call<TextEdit[]>("mirror_snippet", new { }) is not { Length: > 0 } mirrors) return;
+        if (mirrors is not { Length: > 0 }) return;
         // The typing stays where it was, moved only by copies put in before it.
         var (from, to, end) = (Document.Selection.StartPosition, Document.Selection.EndPosition, lastEnd);
         mirroring = true;
@@ -567,7 +568,7 @@ public sealed partial class SourceView : UserControl
         if (!changed)
         {
             before = s;
-            if (source is not null && !loading) source.Call("select", new { selection = s, mirroring });
+            if (source is not null && !loading) source.Select(s, mirroring);
         }
         if ((s.Start, s.End) != placed)
         {
@@ -837,7 +838,7 @@ public sealed partial class SourceView : UserControl
             if (!restored && (removed > 0 || EndsWord(inserted))) NextUndoGroup();
         }
         before = Selected;
-        source.Call("select", new { selection = before, mirroring });
+        source.Select(before, mirroring);
         if (reoffer)
         {
             reoffer = false;

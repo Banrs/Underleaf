@@ -34,6 +34,7 @@ public sealed partial class WorkspacePage : Page
 
     static readonly string[] shownEvents = ["tree", "document", "saved", "document_reload", "document_closed", "document_renamed",
         "conflict", "issues", "build", "build_finished", "build_cleaned"];
+    static ulong sessions;
     readonly DispatcherQueueTimer searchTimer, caretTimer;
     readonly HashSet<string> unsaved = [];
     readonly Dictionary<string, IssueLine[]> issueLines = [];
@@ -136,6 +137,7 @@ public sealed partial class WorkspacePage : Page
         try { await OpenSession(); }
         catch (CoreException ex)
         {
+            session = 0;
             await App.Alert("Can't open this project", ex.Message);
             App.Window.GoHome();
         }
@@ -162,21 +164,21 @@ public sealed partial class WorkspacePage : Page
 
     public void TogglePane() => Split.IsPaneOpen = !Split.IsPaneOpen;
 
+    /// The session is numbered before it opens, so the events that come before its answer are this page's too; a tree
+    /// or a build among them is newer than the answer's.
     async Task OpenSession()
     {
         texAvailable = (await Core.CallAsync<TexStatus>("status")).Available;
         CompileButton.IsEnabled = CompileItem.IsEnabled = texAvailable;
-        var opened = await Core.CallAsync<SessionOpened>("session_open", new { id, autoCompile = Prefs.AutoCompile && texAvailable });
-        (session, root) = (opened.Session, opened.Root);
-        var settings = await Core.CallAsync("get_settings", new { id });
-        mainFile = MainFile(settings);
-        ShellEscapeItem.IsChecked = settings.GetProperty("shellEscape").GetBoolean();
-        StopOnErrorItem.IsChecked = settings.GetProperty("stopOnFirstError").GetBoolean();
-        var ui = await Core.CallAsync("get_ui_state", new { id });
-        expanded = [.. ui.GetProperty("expandedFolders").EnumerateArray().Select(f => f.GetString()!)];
-        folded = [.. ui.GetProperty("foldedHeadings").EnumerateArray().Select(f => f.GetString()!)];
-        ShowTree(opened.Tree);
-        if (opened.Pdf is { } pdf) await Pdf.Load(Full(pdf));
+        session = ++sessions;
+        var opened = await Core.CallAsync<SessionOpened>("session_open", new { id, session, autoCompile = Prefs.AutoCompile });
+        root = opened.Root;
+        mainFile = MainFile(opened.Settings);
+        ShellEscapeItem.IsChecked = opened.Settings.GetProperty("shellEscape").GetBoolean();
+        StopOnErrorItem.IsChecked = opened.Settings.GetProperty("stopOnFirstError").GetBoolean();
+        ReadFolds(opened.Ui);
+        ShowTree(treeJson.Length > 0 ? tree : opened.Tree, true);
+        if (opened.Pdf is { } pdf && result is null) await Pdf.Load(pdf);
         ShowBuild();
         Select(FilesTree, i => i.Key == mainFile);
         if (Picked is { Type: not "dir" } main) await OpenDocument(main.Path, main.Kind);
@@ -234,10 +236,10 @@ public sealed partial class WorkspacePage : Page
         {
             if (Editor.Path is { } shown && !(await Core.CallAsync("session_close_document", new { session, path = shown })).GetProperty("closed").GetBoolean())
                 return false;
-            var text = (await Core.CallAsync("session_open_document", new { session, path })).GetProperty("text").GetString() ?? "";
+            await Core.CallAsync("session_open_document", new { session, path });
             if (Core.SessionSource(session, path) is not { } source) return false;
             (Editor.Visibility, NoFile.Visibility) = (Visibility.Visible, Visibility.Collapsed);
-            await Editor.Show(path, text, source);
+            await Editor.Show(path, source);
             Editor.SetIssues(issueLines.GetValueOrDefault(path, []));
             ShowSaved();
             ShowCaret();
@@ -318,7 +320,7 @@ public sealed partial class WorkspacePage : Page
             IssueList.SelectedIndex = IssueList.Items.Count > 0 ? 0 : -1;
         }
         if (ev.Announce) Announce(BuildState, failed ? $"Build failed, {done.Errors.Length} {(done.Errors.Length == 1 ? "error" : "errors")}" : "Build succeeded", "build");
-        if (done.Pdf is { } pdf && (done.PdfChanged || Pdf.PageCount == 0)) _ = Pdf.Load(Full(pdf));
+        if (done.Pdf is { } pdf && (done.PdfChanged || Pdf.PageCount == 0)) _ = Pdf.Load(pdf);
         outdated = ev.Outdated;
         ShowBuild();
     }
@@ -415,7 +417,7 @@ public sealed partial class WorkspacePage : Page
     void OnAutoCompile(object sender, RoutedEventArgs e)
     {
         Prefs.AutoCompile = AutoCompileItem.IsChecked;
-        Run("Can't change this setting", () => Core.CallAsync("session_set_options", new { session, autoCompile = Prefs.AutoCompile && texAvailable }));
+        Run("Can't change this setting", () => Core.CallAsync("session_set_options", new { session, autoCompile = Prefs.AutoCompile }));
     }
 
     void OnBuildSetting(object sender, RoutedEventArgs e) => Run("Can't change this setting", () => Core.CallAsync("session_set_settings",
