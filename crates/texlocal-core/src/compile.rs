@@ -793,8 +793,9 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
     if let Some(blg) = run.read("blg", unchanged) {
         items.extend(parse_blg(&blg));
     }
-    let (mut errors, warnings): (Vec<_>, Vec<_>) =
-        items.into_iter().partition(|item| item.kind == "error");
+    let (mut errors, warnings): (Vec<_>, Vec<_>) = items
+        .into_iter()
+        .partition(|item| item.kind == crate::logparse::Severity::Error);
 
     // Not from a build cut short, which may have left it half-written.
     let wrote_pdf = matches!(end, End::Exited(_)) && run.wrote("pdf");

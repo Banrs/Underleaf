@@ -61,7 +61,7 @@ fn built(pdf: bool, errors: Vec<LogItem>) -> CompileResult {
 
 fn issue(line: u32, message: &str) -> LogItem {
     LogItem {
-        kind: "error",
+        kind: crate::logparse::Severity::Error,
         file: Some("main.tex".into()),
         line: Some(line),
         message: message.into(),
