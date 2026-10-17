@@ -257,31 +257,42 @@ final class WorkspaceController: DetentSplitViewController {
         area.splitView.autosaveName = "Area"
         let columnsItem = NSSplitViewItem(viewController: columns)
         columnsItem.minimumThickness = ColumnMetrics.columnsMinimum
-        // Their text and the PDF's pages scroll on beneath it, and it rides up with them as the panel opens.
-        let statusBar = accessory(StatusBar(project: project))
-        // 27.2: AppKit's insets pad the bar but leave the panes' scrollers and safe area at the padded height.
-        statusBar.automaticallyAppliesContentInsets = false
-        // 27.2: AppKit gives an accessory's scroll edge to the scroll view of one toolbar section, and keeps it there once the
-        // PDF has been hidden, so the other pane's text went sharp under the bar. The ground is the bar's own: a blur on a
-        // plain view over the panes, as a background filter draws nothing on the accessory or inside it.
-        statusBar.preferredScrollEdgeEffectStyle = .soft
-        let ground = NSView()
-        ground.blurBackdrop()
-        ground.translatesAutoresizingMaskIntoConstraints = false
-        columns.view.addSubview(ground)
-        NSLayoutConstraint.activate([
-            ground.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
-            ground.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
-            ground.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
-            ground.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line),
-        ])
-        columnsItem.addBottomAlignedAccessoryViewController(statusBar)
+        buildStatusBar()
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         area.loaded = { [unowned self] in if !project.panel.shown { panelItem.isCollapsed = true } }
 
         areaItem = NSSplitViewItem(viewController: area)
         addSplitViewItem(areaItem)
+    }
+
+    /// The editors' own bar, across both panes at the columns' foot: their text and the PDF's pages scroll on beneath it, and
+    /// it rides up with them as the panel opens. Under it, AppKit's own scroll edge, its automatic style, as under the toolbar:
+    /// the bar draws no ground of its own, only its line (`StatusBar`). 27.2: AppKit gives an accessory's edge to the scroll
+    /// view of one toolbar section, and the columns span two, so an accessory there left the other pane's text sharp under
+    /// the bar (about half the launches, and always after the PDF had been hidden). Each pane has an empty accessory of the
+    /// bar's height instead, for its own edge, safe area and scrollers, and the bar lies over both.
+    private func buildStatusBar() {
+        for item in [sourceItem!, pdfItem!] {
+            let space = NSSplitViewItemAccessoryViewController()
+            space.view = NSView()
+            space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line).isActive = true
+            // 27.2: AppKit's insets would pad it, and the pane's safe area with it.
+            space.automaticallyAppliesContentInsets = false
+            item.addBottomAlignedAccessoryViewController(space)
+        }
+        let bar = NSHostingView(rootView: StatusBar(project: project).environment(app))
+        bar.sizingOptions = []
+        // Not the toolbar's inset the columns take for its last section (`buildArea`).
+        bar.safeAreaRegions = []
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        columns.view.addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
+            bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
+            bar.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line),
+        ])
     }
 
     private func buildInspector() {

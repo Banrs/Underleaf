@@ -52,11 +52,12 @@ the hosts' contract with the core.
   the build panel on it. Its measures follow the text's size. Underline styles set as
   rendering attributes aren't drawn (27.2), so an undefined command's underline is drawn
   under the text.
-- **Status bar**: the source and PDF columns' bottom accessory at Xcode's spacing
-  (`BarMetrics`), on a ground of its own (83% of the editors' colour over a Core Image blur,
-  `blurBackdrop`) and a point line above it. AppKit's own scroll edge can't be its ground on
-  27.2: it goes to one pane's scroll view only, and stays there once the PDF has been hidden. After a failed save, or a Cancel in an alert about the file on disk, it says Not
-  Saved and that button saves.
+- **Status bar**: across the source and PDF columns at Xcode's spacing (`BarMetrics`), with
+  no ground of its own: AppKit's automatic scroll edge lies under it, as under the toolbar,
+  and a point line above it. On 27.2 AppKit gives a split accessory's edge to one toolbar
+  section's scroll view, so each pane has an empty bottom accessory of the bar's height and
+  the bar is a plain view over both at the columns' foot (`buildStatusBar`). After a failed
+  save, or a Cancel in an alert about the file on disk, it says Not Saved and that button saves.
 - **Build panel**: below the columns, so the status bar rides up as it opens. A bar at its
   foot, as Xcode's console bar: a pop-up for Issues, Build Log and Live Preview Log, then
   Warnings or Copy Log, then a filter. The bar is a SwiftUI safe-area bar, where the filter
