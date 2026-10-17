@@ -26,9 +26,9 @@ pub(crate) fn watch(root: &Path, tx: mpsc::UnboundedSender<Msg>) -> Option<Recom
     let base = root.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let changes = match event {
-            Ok(event) => changes(&base, event),
+            Ok(event) if !event.need_rescan() => changes(event),
             // Changes may have been lost: the whole folder is looked at again.
-            Err(_) => vec![Change {
+            _ => vec![Change {
                 path: base.clone(),
                 structural: true,
             }],
@@ -42,14 +42,7 @@ pub(crate) fn watch(root: &Path, tx: mpsc::UnboundedSender<Msg>) -> Option<Recom
     Some(watcher)
 }
 
-fn changes(root: &Path, event: notify::Event) -> Vec<Change> {
-    if event.need_rescan() {
-        let path = root.to_path_buf();
-        return vec![Change {
-            path,
-            structural: true,
-        }];
-    }
+fn changes(event: notify::Event) -> Vec<Change> {
     let structural = match event.kind {
         EventKind::Access(_) => return Vec::new(),
         EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_)) => {
@@ -184,11 +177,7 @@ mod tests {
     }
 
     fn change(root: &Path, rel: &str, structural: bool) -> Change {
-        let path = if rel.is_empty() {
-            root.to_path_buf()
-        } else {
-            root.join(rel)
-        };
+        let path = root.join(rel);
         Change { path, structural }
     }
 

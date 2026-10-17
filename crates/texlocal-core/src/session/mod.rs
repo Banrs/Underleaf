@@ -32,7 +32,7 @@ use crate::events::{Hub, Listener};
 use crate::projects::{SymbolScan, Symbols};
 use crate::service::{Service, arg, out, string_arg};
 use crate::texpresso::Events;
-use crate::{CoreError, lock, paths, settings};
+use crate::{CoreError, lock, paths};
 
 pub use document::Document;
 pub(crate) use engine::{Engine, ServiceEngine};
@@ -183,34 +183,18 @@ impl Sessions {
         let root = dunce::canonicalize(self.service.project_root(&project)?)?;
         let auto_compile = arg::<Option<bool>>(args, "autoCompile")?.unwrap_or(false);
         let (tx, rx) = mpsc::unbounded_channel();
-        let (docs, outline) = (Arc::default(), Arc::default());
-        let (actor, opened) = actor::Actor::new(actor::Setup {
-            id,
-            project,
-            root: root.clone(),
-            service: Arc::clone(&self.service),
-            engine: Arc::clone(&self.engine),
-            events: self.hub.emitter(),
-            tx: tx.clone(),
-            docs: Arc::clone(&docs),
-            outline: Arc::clone(&outline),
-            timings: self.timings.clone(),
-            auto_compile,
-        })?;
+        let (actor, opened) = actor::Actor::new(self, id, project, root, tx, auto_compile)?;
+        let open = Open {
+            tx: actor.tx.clone(),
+            docs: Arc::clone(&actor.shared),
+            outline: Arc::clone(&actor.outline),
+        };
         match lock(&self.open).entry(id) {
             Entry::Occupied(_) => return Err(CoreError::conflict("That session is open already")),
-            Entry::Vacant(entry) => entry.insert(Open { tx, docs, outline }),
+            Entry::Vacant(entry) => entry.insert(open),
         };
         tokio::spawn(actor.run(rx));
-        // All a host shows as the project opens, so it need ask for nothing first.
-        Ok(json!({
-            "session": id,
-            "root": root.to_string_lossy(),
-            "pdf": opened.pdf,
-            "tree": opened.tree,
-            "settings": opened.settings,
-            "ui": settings::read_ui(&root),
-        }))
+        Ok(opened)
     }
 
     /// A command for an open session (any but `session_open`), queued for its task as this
@@ -275,13 +259,8 @@ impl Sessions {
 
 /// The heading a line of `path` is under, as its place in the outline kept.
 fn outline_current(outline: &Mutex<Outline>, args: &Value) -> Result<Value, CoreError> {
-    let (path, line) = (
-        paths::rel_key(string_arg(args, "path")?)?,
-        arg(args, "line")?,
-    );
-    out(analyze::current_heading(
-        &lock(outline).headings,
-        &path,
-        line,
-    ))
+    let path = paths::rel_key(string_arg(args, "path")?)?;
+    let line = arg(args, "line")?;
+    let current = analyze::current_heading(&lock(outline).headings, &path, line);
+    out(current)
 }

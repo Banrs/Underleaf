@@ -130,14 +130,6 @@ impl Service {
         })
     }
 
-    /// Stop what runs in a project about to move or go: a build or live
-    /// preview would go on in the moved folder, and report back from the old
-    /// path.
-    fn stop_runs(&self, root: &Path) -> Result<(), CoreError> {
-        self.compile.stop(root);
-        self.texpresso.stop(root)
-    }
-
     // ---------- status ----------
 
     /// Probe the current TeX choice, including installs made while the app is open.
@@ -233,13 +225,6 @@ impl Service {
         Ok(self.status().await)
     }
 
-    // ---------- files ----------
-
-    /// The compiled PDF's location; it may not exist yet.
-    pub fn pdf_path(&self, id: &str) -> Result<PathBuf, CoreError> {
-        settings::compiled_pdf_path(&self.project_root(id)?)
-    }
-
     // ---------- project sessions (session/) ----------
 
     /// Writes a project file's text under the project's lock; the file's
@@ -257,14 +242,11 @@ impl Service {
     pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
         let s = |key: &str| string_arg(args, key);
         let root = || self.project_root(s("id")?);
+        let folder = || arg::<Option<String>>(args, "dir");
         match command {
             "status" => out(self.status().await),
-            "set_texpresso_dir" => out(self
-                .set_texpresso_dir(arg::<Option<String>>(args, "dir")?.as_deref())
-                .await?),
-            "set_tex_dir" => out(self
-                .set_tex_dir(arg::<Option<String>>(args, "dir")?.as_deref())
-                .await?),
+            "set_texpresso_dir" => out(self.set_texpresso_dir(folder()?.as_deref()).await?),
+            "set_tex_dir" => out(self.set_tex_dir(folder()?.as_deref()).await?),
             "list_projects" => out(projects::list_projects(&self.data_dir)?),
             // The project made is answered, so its `id` is the name it got: a name taken is
             // numbered past. Its engine is checked first, so the project is made with it or
@@ -302,7 +284,12 @@ impl Service {
                 let (id, name) = (s("id")?, s("name")?);
                 let names = [paths::project_name(id)?, &paths::sanitize_name(name)?];
                 out(self.locked(&names, || {
-                    let stop = |root: &Path| self.stop_runs(root);
+                    // A build or live preview would go on in the moved folder, and report back
+                    // from the old path.
+                    let stop = |root: &Path| {
+                        self.compile.stop(root);
+                        self.texpresso.stop(root)
+                    };
                     projects::rename_project(&self.data_dir, id, name, stop)
                 })?)
             }
@@ -330,17 +317,14 @@ impl Service {
             // documents itself; the Mac app's tests write their files with it.
             "write_file" => {
                 let (path, text) = (s("path")?, s("text")?);
-                out(self.with_project(s("id")?, |root| {
-                    let abs = paths::safe_write_path(root, path)?;
-                    projects::write_creating(&abs, text.as_bytes())
-                })?)
+                out(self.write_text(s("id")?, path, text)?)
             }
             // With `free`, a taken name is numbered past ("untitled 2.tex") rather than refused.
             "create_entry" => {
-                let (path, dir) = (s("path")?, arg::<Option<bool>>(args, "dir")?);
+                let path = s("path")?;
+                let dir = arg::<Option<bool>>(args, "dir")?.unwrap_or(false);
                 let free = arg::<Option<bool>>(args, "free")?.unwrap_or(false);
                 out(self.with_project(s("id")?, |root| {
-                    let dir = dir.unwrap_or(false);
                     let made = if free {
                         projects::create_free(root, path, dir)?
                     } else {
@@ -353,18 +337,15 @@ impl Service {
             // A session builds and cleans; this stops a project's build from outside it, as
             // before the project goes to the Trash.
             "stop_compile" => out(self.compile.stop(&root()?)),
-            "synctex_forward" => {
-                let root = root()?;
-                out(synctex::synctex_forward_at(
-                    &root,
-                    s("file")?,
-                    arg(args, "line")?,
-                    arg(args, "column")?,
-                    self.live_pdf(args)?.as_deref(),
-                    &self.tool_paths().0,
-                )
-                .await?)
-            }
+            "synctex_forward" => out(synctex::synctex_forward_at(
+                &root()?,
+                s("file")?,
+                arg(args, "line")?,
+                arg(args, "column")?,
+                self.live_pdf(args)?.as_deref(),
+                &self.tool_paths().0,
+            )
+            .await?),
             "synctex_inverse" => {
                 let root = root()?;
                 // `text`, the clicked page's text, and `at`, the clicked character's UTF-16 index in it.
@@ -391,7 +372,10 @@ impl Service {
             )?),
             // An absolute path in the library as {id, path}; null outside every project.
             "locate" => out(projects::locate(&self.data_dir, Path::new(s("path")?))?),
-            "pdf_path" => Ok(json!(self.pdf_path(s("id")?)?.to_string_lossy())),
+            // The compiled PDF's location; it may not exist yet.
+            "pdf_path" => Ok(json!(
+                settings::compiled_pdf_path(&root()?)?.to_string_lossy()
+            )),
             "project_root" => Ok(json!(root()?.to_string_lossy())),
             "export_zip" => {
                 zipexport::export_zip(&root()?, Path::new(s("dest")?))?;
@@ -407,7 +391,7 @@ impl Service {
             "import_files" => out(import::import_files(
                 self,
                 s("id")?,
-                &arg::<Option<String>>(args, "dir")?.unwrap_or_default(),
+                &folder()?.unwrap_or_default(),
                 &arg::<Option<Vec<PathBuf>>>(args, "paths")?.unwrap_or_default(),
                 arg(args, "conflict")?,
             )?),
@@ -544,28 +528,31 @@ mod tests {
         assert!(data.path().join("P/p.tex").is_file());
     }
 
+    /// Two commands at once, each on a thread of its own, let go together.
+    fn race(service: &Service, calls: [(&str, Value); 2]) -> [Result<Value, CoreError>; 2] {
+        let start = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let calls = calls.map(|(command, args)| {
+                let start = &start;
+                scope.spawn(move || {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .build()
+                        .unwrap();
+                    start.wait();
+                    runtime.block_on(service.call(command, &args))
+                })
+            });
+            calls.map(|call| call.join().unwrap())
+        })
+    }
+
     #[test]
     fn of_two_renames_to_one_name_the_second_finds_it_taken() {
         for _ in 0..50 {
             let (data, service) = service();
-            let start = std::sync::Barrier::new(2);
-            let statuses: Vec<_> = std::thread::scope(|scope| {
-                let renames = ["P", "Q"].map(|id| {
-                    let (service, start) = (&service, &start);
-                    scope.spawn(move || {
-                        let runtime = tokio::runtime::Builder::new_current_thread()
-                            .build()
-                            .unwrap();
-                        let args = json!({ "id": id, "name": "R" });
-                        start.wait();
-                        runtime.block_on(service.call("rename_project", &args))
-                    })
-                });
-                renames
-                    .map(|rename| rename.join().unwrap().map_or_else(|e| e.status, |_| 200))
-                    .into()
-            });
-            let mut statuses = statuses;
+            let rename = |id| ("rename_project", json!({ "id": id, "name": "R" }));
+            let renamed = race(&service, [rename("P"), rename("Q")]);
+            let mut statuses = renamed.map(|result| result.map_or_else(|e| e.status, |_| 200));
             statuses.sort_unstable();
             assert_eq!(statuses, [200, 409]);
             let left = fs::read_dir(data.path()).unwrap().count();
@@ -578,27 +565,17 @@ mod tests {
         for round in 0..120 {
             let (data, service) = service();
             fs::write(data.path().join("P/main.tex"), "the user's").unwrap();
-            let start = std::sync::Barrier::new(2);
-            let call = |command: &'static str, args: Value| {
-                let (service, start) = (&service, &start);
-                move || {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .build()
-                        .unwrap();
-                    start.wait();
-                    let result = runtime.block_on(service.call(command, &args));
-                    result.map_err(|e| (e.status, e.message))
-                }
-            };
-            let (renamed, made) = std::thread::scope(|scope| {
-                let rename = call("rename_project", json!({ "id": "P", "name": "R" }));
-                let create = call(
-                    "create_project",
-                    json!({ "name": "R", "template": "blank" }),
-                );
-                let (rename, create) = (scope.spawn(rename), scope.spawn(create));
-                (rename.join().unwrap(), create.join().unwrap())
-            });
+            let [renamed, made] = race(
+                &service,
+                [
+                    ("rename_project", json!({ "id": "P", "name": "R" })),
+                    (
+                        "create_project",
+                        json!({ "name": "R", "template": "blank" }),
+                    ),
+                ],
+            );
+            let renamed = renamed.map_err(|e| (e.status, e.message));
             // The new project is always made; the rename goes ahead or finds
             // the name taken.
             assert!(made.is_ok(), "round {round}: create {made:?}");

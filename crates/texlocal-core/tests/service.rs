@@ -1,7 +1,6 @@
 // The command surface: the JSON dispatch every host forwards to.
 
 use std::path::Path;
-
 use std::sync::Arc;
 
 use serde_json::{Value, json};
@@ -60,10 +59,8 @@ async fn a_free_project_name_is_the_next_untitled() {
     assert_eq!(from_taken["name"], expected);
     // A new project whose name is taken is numbered past it.
     let args = json!({ "name": "Untitled 3", "template": "blank" });
-    assert_eq!(
-        call(&service, "create_project", args).await["id"],
-        "Untitled 3 2"
-    );
+    let numbered = call(&service, "create_project", args).await;
+    assert_eq!(numbered["id"], "Untitled 3 2");
     // Names the path rules refuse are refused, not numbered.
     let bad = json!({ "name": ".hidden" });
     assert_eq!(status_of(&service, "free_project_name", bad).await, 400);
@@ -86,37 +83,21 @@ async fn a_new_project_is_made_with_its_engine_or_not_at_all() {
 #[tokio::test]
 async fn dispatch_round_trips_project_and_file_commands() {
     let (_dir, service) = service();
-    let info = call(
-        &service,
-        "create_project",
-        json!({ "name": "Paper", "template": "blank" }),
-    )
-    .await;
+    let args = json!({ "name": "Paper", "template": "blank" });
+    let info = call(&service, "create_project", args).await;
     let id = info["id"].as_str().unwrap().to_string();
 
     let listed = call(&service, "list_projects", json!({})).await;
     assert_eq!(listed[0]["id"], id);
 
-    call(
-        &service,
-        "write_file",
-        json!({ "id": id, "path": "sec/a.tex", "text": "hello needle" }),
-    )
-    .await;
-    let read = call(
-        &service,
-        "read_file",
-        json!({ "id": id, "path": "sec/a.tex" }),
-    )
-    .await;
+    let args = json!({ "id": id, "path": "sec/a.tex", "text": "hello needle" });
+    call(&service, "write_file", args).await;
+    let args = json!({ "id": id, "path": "sec/a.tex" });
+    let read = call(&service, "read_file", args).await;
     assert_eq!(read, json!({ "text": "hello needle" }));
 
-    let groups = call(
-        &service,
-        "search_project",
-        json!({ "id": id, "query": "needle" }),
-    )
-    .await;
+    let args = json!({ "id": id, "query": "needle" });
+    let groups = call(&service, "search_project", args).await;
     assert_eq!(groups[0]["file"], "sec/a.tex");
     assert_eq!(groups[0]["hits"][0]["after"], "");
     assert_eq!(groups[0]["hits"][0]["column"], 6);
@@ -152,11 +133,8 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
         "export_project",
         "save_pdf_as",
     ] {
-        assert_eq!(
-            status_of(&service, command, json!({ "id": "P" })).await,
-            404,
-            "{command}"
-        );
+        let status = status_of(&service, command, json!({ "id": "P" })).await;
+        assert_eq!(status, 404, "{command}");
     }
     let pdf = call(&service, "pdf_path", json!({ "id": "P" })).await;
     assert!(pdf.as_str().unwrap().ends_with(".pdf"), "{pdf}");
@@ -188,12 +166,8 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
             "Invalid argument `text`: invalid type: null, expected a string"
         );
     }
-    let main = call(
-        &service,
-        "read_file",
-        json!({ "id": "P", "path": "main.tex" }),
-    )
-    .await;
+    let args = json!({ "id": "P", "path": "main.tex" });
+    let main = call(&service, "read_file", args).await;
     assert!(!main["text"].as_str().unwrap().is_empty());
 }
 
@@ -234,10 +208,8 @@ async fn set_tex_dir_accepts_a_folder_with_latexmk_or_a_tex_root_above_one() {
         .unwrap_err();
     assert_eq!(empty.status, 400);
     assert!(empty.message.contains("doesn't contain latexmk"));
-    assert_eq!(
-        status_of(&service, "set_tex_dir", json!({ "dir": "relative/bin" })).await,
-        400
-    );
+    let relative = json!({ "dir": "relative/bin" });
+    assert_eq!(status_of(&service, "set_tex_dir", relative).await, 400);
     assert_eq!(service.tex_dir(), None);
 
     let bin = fake_tex(&tex.path().join("bin").join("x"));
@@ -269,16 +241,10 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
     assert!(call(&service, "status", json!({})).await["texpressoDir"].is_null());
 
     let exe = fake_program(empty.path(), "texpresso", "");
-    let status = call(
-        &service,
-        "set_texpresso_dir",
-        json!({ "dir": empty.path() }),
-    )
-    .await;
-    assert_eq!(
-        status["texpressoDir"],
-        empty.path().to_string_lossy().as_ref()
-    );
+    let args = json!({ "dir": empty.path() });
+    let status = call(&service, "set_texpresso_dir", args).await;
+    let chosen = empty.path().to_string_lossy();
+    assert_eq!(status["texpressoDir"], chosen.as_ref());
     assert_eq!(status["texDir"], bin);
     if std::env::var_os("TEXLOCAL_TEXPRESSO").is_none() {
         let exe = dunce::canonicalize(&exe).unwrap();
@@ -299,20 +265,14 @@ async fn the_tex_dir_persists_in_the_data_dir_and_clears_to_automatic() {
 
     // The settings file is not listed as a project.
     let listed = call(&service, "list_projects", json!({})).await;
-    let ids: Vec<&str> = listed
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| p["id"].as_str().unwrap())
-        .collect();
-    assert_eq!(ids, ["P"]);
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["id"], "P");
 
     // Another host on the same data dir sees the same choice.
     let other = Service::new(dir.path().to_path_buf());
     assert_eq!(other.tex_dir(), Some(tex.path().to_path_buf()));
-    let saved: Value =
-        serde_json::from_slice(&std::fs::read(dir.path().join(".texlocal-app.json")).unwrap())
-            .unwrap();
+    let saved = std::fs::read(dir.path().join(".texlocal-app.json")).unwrap();
+    let saved: Value = serde_json::from_slice(&saved).unwrap();
     assert_eq!(saved, json!({ "texDir": bin }));
 
     let status = call(&service, "set_tex_dir", json!({ "dir": null })).await;
@@ -359,13 +319,6 @@ async fn status_reports_the_current_tex_choice() {
 #[tokio::test]
 async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
     let (dir, service) = with_project();
-    let write = |path: &'static str, text: &'static str| {
-        call(
-            &service,
-            "write_file",
-            json!({ "id": "P", "path": path, "text": text }),
-        )
-    };
 
     // A free name is numbered past those taken; a plain create still refuses one.
     for expected in ["untitled.tex", "untitled 2.tex"] {
@@ -387,12 +340,8 @@ async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
 
     // The interface state is kept with the project (and follows a rename: projects.rs).
     let patch = json!({ "expandedFolders": ["sec"], "foldedHeadings": ["sec/a.tex\t2:A#1"] });
-    call(
-        &service,
-        "set_ui_state",
-        json!({ "id": "P", "patch": patch }),
-    )
-    .await;
+    let args = json!({ "id": "P", "patch": patch });
+    call(&service, "set_ui_state", args).await;
     let ui = call(&service, "get_ui_state", json!({ "id": "P" })).await;
     assert_eq!(ui, patch);
     // It is not a file the generic APIs reach.
@@ -401,7 +350,8 @@ async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
     assert_eq!(status_of(&service, "write_file", args).await, 400);
 
     // The word a source line's caret is on, among a forward sync's pages.
-    write("main.tex", "alpha beta gamma\n").await;
+    let args = json!({ "id": "P", "path": "main.tex", "text": "alpha beta gamma\n" });
+    call(&service, "write_file", args).await;
     let page = json!({ "page": 2, "text": "alpha beta gamma", "near": [[0, 16]] });
     let args = json!({ "id": "P", "file": "main.tex", "line": 1, "column": 8, "pages": [page] });
     let hit = call(&service, "synctex_match", args).await;
@@ -418,12 +368,8 @@ async fn a_rename_answers_the_moved_ui_state_and_the_main_file_it_moved() {
     std::fs::create_dir(root.join("ch")).unwrap();
     std::fs::write(root.join("ch/a.tex"), "").unwrap();
     let patch = json!({ "expandedFolders": ["ch"] });
-    call(
-        &service,
-        "set_ui_state",
-        json!({ "id": "P", "patch": patch }),
-    )
-    .await;
+    let args = json!({ "id": "P", "patch": patch });
+    call(&service, "set_ui_state", args).await;
     let sessions = Sessions::new(Arc::clone(&service));
     let ask = async |command: &str, args: Value| {
         let answer = sessions.call(command, &args).await;

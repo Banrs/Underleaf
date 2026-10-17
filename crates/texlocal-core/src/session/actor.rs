@@ -7,13 +7,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use notify::RecommendedWatcher;
+use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
-use super::{Document, Engine, Msg, Outline, Timings};
+use super::{Document, Engine, Msg, Outline, Sessions, Timings};
 use crate::analyze::{self, ProjectAnalysis};
 use crate::atomic::Stamp;
 use crate::compile::CompileResult;
@@ -22,33 +23,14 @@ use crate::logparse::LogItem;
 use crate::paths::{self, within};
 use crate::projects::{self, SymbolScan, Symbols};
 use crate::service::{Service, arg, out, string_arg};
-use crate::settings::{self, Settings};
+use crate::settings;
 use crate::syntax::{TextRange, headings};
 use crate::{CoreError, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 
-pub(crate) struct Setup {
-    pub id: u64,
-    pub project: String,
-    pub root: PathBuf,
-    pub service: Arc<Service>,
-    pub engine: Arc<dyn Engine>,
-    pub events: Emitter,
-    pub tx: mpsc::UnboundedSender<Msg>,
-    pub docs: Arc<Mutex<HashMap<String, Document>>>,
-    pub outline: Arc<Mutex<Outline>>,
-    pub timings: Timings,
-    pub auto_compile: bool,
-}
-
-pub(crate) struct Opened {
-    pub pdf: Option<String>,
-    pub tree: Value,
-    pub settings: Settings,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum Conflict {
     /// Another app changed the file while it has unsaved edits here.
     Changed,
@@ -56,16 +38,8 @@ pub(crate) enum Conflict {
     Gone,
 }
 
-impl Conflict {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Changed => "changed",
-            Self::Gone => "gone",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 enum Reload {
     Disk,
     Revert,
@@ -139,7 +113,7 @@ pub(crate) struct Actor {
     pub engine: Arc<dyn Engine>,
     events: Emitter,
     pub tx: mpsc::UnboundedSender<Msg>,
-    shared: Arc<Mutex<HashMap<String, Document>>>,
+    pub shared: Arc<Mutex<HashMap<String, Document>>>,
     pub t: Timings,
     pub docs: BTreeMap<String, Doc>,
     by_id: HashMap<u64, String>,
@@ -159,7 +133,7 @@ pub(crate) struct Actor {
     pub auto_compile: bool,
     build: Build,
     issues: Vec<LogItem>,
-    outline: Arc<Mutex<Outline>>,
+    pub outline: Arc<Mutex<Outline>>,
     /// The analyses asked for.
     analyses: u64,
     error_count: usize,
@@ -180,39 +154,47 @@ pub(crate) struct Actor {
 }
 
 impl Actor {
-    /// The session, and what the answer to its open tells the host.
-    pub fn new(setup: Setup) -> Result<(Self, Opened), CoreError> {
-        let tree = projects::file_tree(&setup.root)?;
-        let watcher = setup
+    /// The session numbered `id`, and the answer to its open.
+    pub fn new(
+        sessions: &Sessions,
+        id: u64,
+        project: String,
+        root: PathBuf,
+        tx: mpsc::UnboundedSender<Msg>,
+        auto_compile: bool,
+    ) -> Result<(Self, Value), CoreError> {
+        let tree = projects::file_tree(&root)?;
+        let watcher = sessions
             .timings
             .watch
-            .then(|| watch::watch(&setup.root, setup.tx.clone()))
+            .then(|| watch::watch(&root, tx.clone()))
             .flatten();
-        let settings = settings::read_settings(&setup.root);
-        let pdf = settings
-            .pdf_path(&setup.root)
-            .ok()
-            .filter(|pdf| pdf.is_file());
-        let opened = Opened {
-            pdf: pdf.as_ref().map(|pdf| pdf.to_string_lossy().into_owned()),
-            tree: out(&tree)?,
-            settings,
-        };
+        let settings = settings::read_settings(&root);
+        let pdf = settings.pdf_path(&root).ok().filter(|pdf| pdf.is_file());
+        // All a host shows as the project opens, so it need ask for nothing first.
+        let opened = json!({
+            "session": id,
+            "root": root.to_string_lossy(),
+            "pdf": pdf.as_ref().map(|pdf| pdf.to_string_lossy()),
+            "tree": out(&tree)?,
+            "settings": settings,
+            "ui": settings::read_ui(&root),
+        });
         let build_pdf = pdf.is_some();
         let empty = Symbols {
             citations: Vec::new(),
             labels: Vec::new(),
         };
         let mut actor = Self {
-            id: setup.id,
-            project: setup.project,
-            root: setup.root,
-            service: setup.service,
-            engine: setup.engine,
-            events: setup.events,
-            tx: setup.tx,
-            shared: setup.docs,
-            t: setup.timings,
+            id,
+            project,
+            root,
+            service: Arc::clone(&sessions.service),
+            engine: Arc::clone(&sessions.engine),
+            events: sessions.hub.emitter(),
+            tx,
+            shared: Arc::default(),
+            t: sessions.timings.clone(),
             docs: BTreeMap::new(),
             by_id: HashMap::new(),
             next_doc: 1,
@@ -225,10 +207,10 @@ impl Actor {
             result_edits: 0,
             build_pdf,
             outdated: false,
-            auto_compile: setup.auto_compile,
+            auto_compile,
             build: Build::default(),
             issues: Vec::new(),
-            outline: setup.outline,
+            outline: Arc::default(),
             analyses: 0,
             error_count: 0,
             chosen: None,
@@ -394,19 +376,19 @@ impl Actor {
         }
     }
 
+    /// Commands that answer something return it; the rest answer null.
     fn answer(&mut self, name: &str, args: &Value) -> Result<Value, CoreError> {
         let path = || paths::rel_key(string_arg(args, "path")?);
         match name {
-            "close" => Ok(self.close()),
-            "state" => Ok(self.state()),
+            "close" => return Ok(self.close()),
+            "state" => return Ok(self.state()),
             "set_options" => {
                 if let Some(auto) = arg::<Option<bool>>(args, "autoCompile")? {
                     self.auto_compile = auto;
                 }
-                Ok(Value::Null)
             }
-            "open_document" => self.open_document(&path()?).map(|()| Value::Null),
-            "close_document" => self.close_document(&path()?),
+            "open_document" => self.open_document(&path()?)?,
+            "close_document" => return self.close_document(&path()?),
             "composing" => {
                 let (path, composing) = (path()?, arg::<bool>(args, "composing")?);
                 if let Some(doc) = self.docs.get_mut(&path) {
@@ -415,79 +397,55 @@ impl Actor {
                         self.autosave_at = Some(Instant::now() + self.t.autosave);
                     }
                 }
-                Ok(Value::Null)
             }
             "save" => {
                 let reporting = arg::<Option<bool>>(args, "reporting")?.unwrap_or(true);
-                Ok(json!({ "saved": self.save_edits(reporting)? }))
+                return Ok(json!({ "saved": self.save_edits(reporting)? }));
             }
-            "resolve" => self.resolve(&path()?, string_arg(args, "answer")?),
-            "compile" => {
-                let auto = arg::<Option<bool>>(args, "auto")?.unwrap_or(false);
-                self.compile(auto).map(|()| Value::Null)
-            }
-            "stop_compile" => {
-                self.stop_compile();
-                Ok(Value::Null)
-            }
-            "issue" => Ok(self.next_issue(arg(args, "next")?)),
+            "resolve" => return self.resolve(&path()?, string_arg(args, "answer")?),
+            "compile" => self.compile(arg::<Option<bool>>(args, "auto")?.unwrap_or(false))?,
+            "stop_compile" => self.stop_compile(),
+            "issue" => return Ok(self.next_issue(arg(args, "next")?)),
             "choose_issue" => {
                 self.chosen = arg(args, "index")?;
-                Ok(self.chosen_issue())
+                return Ok(self.chosen_issue());
             }
             "rename" => {
-                let (from, to) = (
-                    paths::rel_key(string_arg(args, "from")?)?,
-                    string_arg(args, "to")?,
-                );
-                self.rename(&from, to)
+                let from = paths::rel_key(string_arg(args, "from")?)?;
+                return self.rename(&from, string_arg(args, "to")?);
             }
-            "set_settings" => self.set_settings(&arg(args, "patch")?),
-            "prepare_delete" => self.prepare_delete(&path()?),
+            "set_settings" => return self.set_settings(&arg(args, "patch")?),
+            "prepare_delete" => return self.prepare_delete(&path()?),
             "deleted" => {
                 let path = path()?;
                 self.deleting = None;
                 if arg::<Option<bool>>(args, "trashed")?.unwrap_or(true) {
-                    let inside: Vec<String> = self
-                        .docs
-                        .keys()
-                        .filter(|p| within(p, &path))
-                        .cloned()
-                        .collect();
-                    for doc in inside {
+                    for doc in self.docs_within(&path) {
                         self.close_doc(&doc, "deleted");
                     }
                     self.reload_tree();
                 }
-                Ok(Value::Null)
             }
             "live_start" => {
                 self.live.intent += 1;
                 self.live.window = arg::<Option<bool>>(args, "window")?.unwrap_or(false);
                 self.live_start(false);
-                Ok(self.live_state())
+                return Ok(self.live_state());
             }
             "live_stop" => {
                 self.live_cancel_work();
                 self.live_stop();
-                Ok(self.live_state())
+                return Ok(self.live_state());
             }
-            "live_log" => {
-                self.show_live_log(arg(args, "shown")?);
-                Ok(Value::Null)
+            "live_log" => self.show_live_log(arg(args, "shown")?),
+            "live_view" => self.live_view(arg(args, "first")?, arg(args, "last")?),
+            "live_caret" => self.live_caret(path()?, arg(args, "offset")?),
+            _ => {
+                let unknown = format!("Unknown command: session_{name}");
+                return Err(CoreError::not_found(unknown));
             }
-            "live_view" => {
-                self.live_view(arg(args, "first")?, arg(args, "last")?);
-                Ok(Value::Null)
-            }
-            "live_caret" => {
-                self.live_caret(path()?, arg(args, "offset")?);
-                Ok(Value::Null)
-            }
-            _ => Err(CoreError::not_found(format!(
-                "Unknown command: session_{name}"
-            ))),
         }
+        Ok(Value::Null)
     }
 
     /// A snapshot, with what the events leave out.
@@ -498,7 +456,7 @@ impl Actor {
             .map(|doc| {
                 let mut state = doc.state();
                 state["dirty"] = doc.dirty().into();
-                state["conflict"] = doc.asking.map(Conflict::name).into();
+                state["conflict"] = json!(doc.asking);
                 state
             })
             .collect();
@@ -643,14 +601,19 @@ impl Actor {
     // MARK: - Saving
 
     fn autosave(&mut self) {
-        let dirty: Vec<String> = self.dirty_paths();
         let mut ok = true;
-        for path in dirty {
+        for path in self.dirty_paths() {
             ok &= self.save_doc(&path, false, true).unwrap_or(false);
         }
         if ok && self.auto_compile {
             self.later.push_back(Later::Compile(true));
         }
+    }
+
+    /// The open documents at `dir` or inside it.
+    fn docs_within(&self, dir: &str) -> Vec<String> {
+        let docs = self.docs.keys();
+        docs.filter(|p| within(p, dir)).cloned().collect()
     }
 
     fn dirty_paths(&self) -> Vec<String> {
@@ -747,7 +710,7 @@ impl Actor {
     fn ask(&mut self, path: &str, kind: Conflict) {
         if let Some(doc) = self.docs.get_mut(path) {
             doc.asking = Some(kind);
-            self.emit("conflict", json!({ "path": path, "kind": kind.name() }));
+            self.emit("conflict", json!({ "path": path, "kind": kind }));
             self.publish_doc(path);
         }
     }
@@ -796,11 +759,6 @@ impl Actor {
     fn request_reload(&mut self, path: &str, text: &str, reason: Reload) {
         if let Some(doc) = self.docs.get_mut(path) {
             doc.reload = Some(reason);
-            let reason = if reason == Reload::Revert {
-                "revert"
-            } else {
-                "disk"
-            };
             self.emit(
                 "document_reload",
                 json!({ "path": path, "text": text, "reason": reason }),
@@ -1005,12 +963,8 @@ impl Actor {
     fn finish_build(&mut self) {
         self.build.compiling = false;
         // After a failed save the queued build would only build stale text.
-        let again = if self.build.saved && !self.closed {
-            self.build.queued
-        } else {
-            None
-        };
-        self.build.queued = None;
+        let saved = self.build.saved && !self.closed;
+        let again = self.build.queued.take().filter(|_| saved);
         self.publish_build();
         if let Some(reply) = self.clean_waiting.take() {
             self.start_clean(reply);
@@ -1153,23 +1107,16 @@ impl Actor {
         let places: Vec<usize> = (0..self.issues.len())
             .filter(|&i| self.issues[i].file.is_some())
             .collect();
-        let (Some(&first), Some(&last)) = (places.first(), places.last()) else {
-            return Value::Null;
+        let chosen = self.chosen;
+        let place = if next {
+            let after = places.iter().find(|&&p| chosen.is_none_or(|c| p > c));
+            after.or(places.first())
+        } else {
+            let before = places.iter().rev().find(|&&p| chosen.is_none_or(|c| p < c));
+            before.or(places.last())
         };
-        let place = match self.chosen {
-            Some(chosen) if next => places
-                .iter()
-                .copied()
-                .find(|&p| p > chosen)
-                .unwrap_or(first),
-            Some(chosen) => places
-                .iter()
-                .copied()
-                .rev()
-                .find(|&p| p < chosen)
-                .unwrap_or(last),
-            None if next => first,
-            None => last,
+        let Some(&place) = place else {
+            return Value::Null;
         };
         self.chosen = Some(place);
         self.chosen_issue()
@@ -1193,22 +1140,10 @@ impl Actor {
         let (renamed, main) = renamed?;
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
         // Whatever was open at the new name is stale: the name was free.
-        let stale: Vec<String> = self
-            .docs
-            .keys()
-            .filter(|p| within(p, to))
-            .cloned()
-            .collect();
-        for path in stale {
+        for path in self.docs_within(to) {
             self.close_doc(&path, "gone");
         }
-        let moved: Vec<String> = self
-            .docs
-            .keys()
-            .filter(|p| within(p, from))
-            .cloned()
-            .collect();
-        for old in moved {
+        for old in self.docs_within(from) {
             let new = format!("{to}{}", &old[from.len()..]);
             let mut doc = self.docs.remove(&old).expect("listed");
             doc.path.clone_from(&new);

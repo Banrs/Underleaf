@@ -99,13 +99,8 @@ impl Document {
 
     /// The project's labels and citations, which completions offer.
     pub fn symbols(&self) -> Arc<Symbols> {
-        Arc::clone(
-            &self
-                .0
-                .symbols
-                .read()
-                .unwrap_or_else(PoisonError::into_inner),
-        )
+        let symbols = &self.0.symbols;
+        Arc::clone(&symbols.read().unwrap_or_else(PoisonError::into_inner))
     }
 
     pub(crate) fn id(&self) -> u64 {
