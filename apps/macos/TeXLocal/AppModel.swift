@@ -97,13 +97,17 @@ final class AppModel {
     var exporting: ExportFile?
     var searchFocusToken = 0
     @ObservationIgnored var performPDF: ((PDFAction) -> Void)?
+    /// Where the settings below are kept: the user's defaults, or a test's own.
+    @ObservationIgnored let defaults: UserDefaults
+    /// AppKit keeps the window's split positions and toolbar in the standard defaults itself: only with the user's settings.
+    var savesLayout: Bool { defaults === UserDefaults.standard }
 
     // Stored here rather than as @AppStorage so the menus and models observe them.
     var sidebarVisible: Bool {
-        didSet { UserDefaults.standard.set(sidebarVisible, forKey: DefaultsKey.sidebarVisible) }
+        didSet { defaults.set(sidebarVisible, forKey: DefaultsKey.sidebarVisible) }
     }
     var inspectorVisible: Bool {
-        didSet { UserDefaults.standard.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) }
+        didSet { defaults.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) }
     }
     /// Folded by a window too narrow for them, which brings them back as it widens: not hidden,
     /// and not saved (`sidebarShown`, `inspectorShown`).
@@ -120,32 +124,34 @@ final class AppModel {
     }
     var autoCompile: Bool {
         didSet {
-            UserDefaults.standard.set(autoCompile, forKey: DefaultsKey.autoCompile)
+            defaults.set(autoCompile, forKey: DefaultsKey.autoCompile)
             project?.autoCompileChanged()
         }
     }
     var showWordCount: Bool {
-        didSet { UserDefaults.standard.set(showWordCount, forKey: DefaultsKey.showWordCount) }
+        didSet { defaults.set(showWordCount, forKey: DefaultsKey.showWordCount) }
     }
     /// View › Show PDF and the toolbar keep the choice for later launches; a PDF command or Go to PDF Position shows it for now.
     var showPDF: Bool
     var outlineCollapsed: Bool {
-        didSet { UserDefaults.standard.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) }
+        didSet { defaults.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) }
     }
     /// The menus act on the project only while its window is key, not behind Settings or a sheet.
     var mainWindowIsKey = false
     var commandProject: ProjectModel? { mainWindowIsKey && project?.closed != true ? project : nil }
     var chosenItem: ItemActions?
     var recentProjects: [String] {
-        didSet { UserDefaults.standard.set(recentProjects, forKey: DefaultsKey.recentProjects) }
+        didSet { defaults.set(recentProjects, forKey: DefaultsKey.recentProjects) }
     }
     /// Filtered, not pruned on refresh: a library that lists empty (another TEXLOCAL_DATA, a missing folder) would wipe them.
     var recents: [ProjectInfo] {
         recentProjects.compactMap { id in projects.first { $0.id == id } }
     }
 
-    init() {
-        let defaults = UserDefaults.standard
+    /// The launch arguments the QA scripts pass (-openProject, -sidebarVisible, -showPDF and the like) are read from the
+    /// standard defaults' argument domain.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         defaults.register(defaults: [DefaultsKey.sidebarVisible: true, DefaultsKey.autoCompile: true,
                                      DefaultsKey.showWordCount: true, DefaultsKey.showPDF: true])
         sidebarVisible = defaults.bool(forKey: DefaultsKey.sidebarVisible)
@@ -162,7 +168,7 @@ final class AppModel {
     /// a moment later: not awaited, as the menus and buttons that ask don't wait.
     func newProject(_ template: ProjectTemplate? = nil) {
         guard libraryProblem == nil else { return }
-        let template = template ?? UserDefaults.standard.string(forKey: DefaultsKey.newProjectTemplate)
+        let template = template ?? defaults.string(forKey: DefaultsKey.newProjectTemplate)
             .flatMap(ProjectTemplate.init(rawValue:)) ?? .standard
         Task {
             let free = try? await core.call("free_project_name", as: FreeName.self)
@@ -182,12 +188,35 @@ final class AppModel {
 
     func togglePDF() {
         showPDF.toggle()
-        UserDefaults.standard.set(showPDF, forKey: DefaultsKey.showPDF)
+        defaults.set(showPDF, forKey: DefaultsKey.showPDF)
     }
 
     func requestPDF(_ action: PDFAction) {
         showPDF = true
         performPDF?(action)
+    }
+
+    nonisolated enum SideColumn { case sidebar, inspector }
+
+    /// A side column the split opened or shut. Shut by the window, for want of room, it stays the user's shown column,
+    /// unsaved, and the split brings it back as the window widens. Shut by the user, with its toggle or on its divider,
+    /// it is hidden, and saved so.
+    func sideColumn(_ column: SideColumn, shown: Bool, byWindow: Bool) {
+        let (visible, folded): (ReferenceWritableKeyPath<AppModel, Bool>, ReferenceWritableKeyPath<AppModel, Bool>) =
+            column == .sidebar ? (\.sidebarVisible, \.sidebarFolded) : (\.inspectorVisible, \.inspectorFolded)
+        if shown || !byWindow {
+            if self[keyPath: folded] { self[keyPath: folded] = false }
+            if self[keyPath: visible] != shown { self[keyPath: visible] = shown }
+        } else if self[keyPath: visible], !self[keyPath: folded] {
+            self[keyPath: folded] = true
+        }
+    }
+
+    /// The project the window's workspace shows: the open one once it has loaded, and until then the one it showed, so a
+    /// switch from one project to the next never passes through Home. None, Home.
+    func workspaceProject(after shown: ProjectModel?) -> ProjectModel? {
+        guard let project else { return nil }
+        return project.initialLoadComplete ? project : shown
     }
 
     private let core = Core.shared
@@ -237,7 +266,7 @@ final class AppModel {
 
     /// With the engine Settings names for new projects: the core makes the project with it or not at all.
     func create(name: String, template: ProjectTemplate) async throws {
-        let engine = UserDefaults.standard.string(forKey: DefaultsKey.newProjectEngine).flatMap(TeXEngine.init(rawValue:))
+        let engine = defaults.string(forKey: DefaultsKey.newProjectEngine).flatMap(TeXEngine.init(rawValue:))
         let info = try await core.call("create_project", ["name": name, "template": template.rawValue, "engine": engine?.rawValue],
                                        as: ProjectInfo.self)
         await refresh()
@@ -372,7 +401,8 @@ final class AppModel {
         return launchProject
     }
 
-    /// `project` goes straight from one to the next, never nil between, so the window keeps the workspace.
+    /// `project` goes straight from one to the next, never nil between, so the window keeps the workspace
+    /// (`workspaceProject`).
     func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {
         openGeneration += 1
         let generation = openGeneration

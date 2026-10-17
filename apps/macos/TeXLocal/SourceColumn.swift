@@ -9,18 +9,14 @@ struct SourceColumn: View {
         ZStack {
             EditorView(editor: project.editor, shown: project.editsText)
                 .ignoresSafeArea(.container, edges: [.top, .bottom])
-                .background(.textSurface)
             if project.openPath == nil {
                 ContentUnavailableView("No File Open", systemImage: "text.document",
                                        description: Text("Choose a file in the sidebar."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.textSurface)
             } else if !project.editsText, let url = project.openURL {
                 FilePreview(url: url, version: project.previewVersion)
             }
         }
-        .modifier(WorkspaceModals(project: project))
-        .windowModals()
     }
 }
 

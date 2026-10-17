@@ -3,6 +3,8 @@ import Testing
 @testable import TeXLocal
 
 struct MenuCommandTests {
+    private let defaults = TestDefaults()
+
     @Test func noTwoCommandsShareAMacChord() {
         var seen: [KeyboardShortcut: MenuCommand] = [:]
         for command in MenuCommand.allCases {
@@ -13,7 +15,7 @@ struct MenuCommandTests {
     }
 
     @Test func findInProjectSearchesTheProjectsOnHome() {
-        let app = AppModel()
+        let app = AppModel(defaults: defaults.store)
         app.mainWindowIsKey = true
         #expect(app.isEnabled(.projectSearch, on: nil) && app.title(.projectSearch, on: nil) == "Find Project…")
         app.mainWindowIsKey = false
@@ -21,7 +23,7 @@ struct MenuCommandTests {
     }
 
     @Test func theFormatCommandsAreLaTeXs() {
-        let app = AppModel()
+        let app = AppModel(defaults: defaults.store)
         let project = ProjectModel(id: "MenuCommandTests", app: app)
         let latex = [MenuCommand.editBold, .editItalic, .editUnderline, .editMath]
         #expect(!(latex + [.editComment, .syncInverse]).contains { app.isEnabled($0, on: project) })
@@ -37,9 +39,7 @@ struct MenuCommandTests {
 
     /// The one reckoning the pane, its header and View's command share: open for LaTeX unless folded, hidden for search results.
     @Test func theFileOutlineIsOpenForLaTeXUnlessFoldedOrSearched() {
-        let app = AppModel()
-        let collapsed = app.outlineCollapsed
-        defer { app.outlineCollapsed = collapsed }
+        let app = AppModel(defaults: defaults.store)
         let project = ProjectModel(id: "MenuCommandTests", app: app)
         app.outlineCollapsed = false
         project.tree.show(.sources)
@@ -52,6 +52,26 @@ struct MenuCommandTests {
         app.outlineCollapsed = false
         project.search.query = "needle"
         #expect(app.outlineState(of: project) == .hidden)
+    }
+
+    /// The toolbar's buttons and their copies in the overflow menu answer alike: the LaTeX tools off outside LaTeX.
+    @Test func theToolbarsOverflowCopiesValidateAsItsButtons() throws {
+        let app = AppModel(defaults: defaults.store)
+        let project = ProjectModel(id: "MenuCommandTests", app: app)
+        let toolbar = WorkspaceToolbar(app: app, project: project)
+        defer { toolbar.close() }
+        let template = try #require(toolbar.toolbarAllowedItemIdentifiers(toolbar.toolbar).first { $0.rawValue.hasPrefix("template.") })
+        let items = try [NSToolbarItem.Identifier.bold, template].map { id in
+            try #require(toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: id, willBeInsertedIntoToolbar: false))
+        }
+        project.tree.show(.sources)
+        for (path, latex) in [("references.bib", false), ("main.tex", true)] {
+            project.openPath = path
+            for item in items {
+                let copy = NSMenuItem(title: item.label, action: item.action, keyEquivalent: "")
+                #expect(toolbar.validateToolbarItem(item) == latex && toolbar.validateMenuItem(copy) == latex, "\(path)")
+            }
+        }
     }
 }
 

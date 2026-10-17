@@ -20,6 +20,26 @@ func settle() async {
     for _ in 0..<50 { await Task.yield() }
 }
 
+/// An empty defaults domain of a test's own, for an `AppModel` whose settings would otherwise go to the user's. A suite
+/// holds one for each test, as Swift Testing makes the suite afresh for each, and it goes as the test ends.
+nonisolated final class TestDefaults {
+    private let name = "TeXLocalTests." + UUID().uuidString
+    let store: UserDefaults
+
+    init() {
+        store = UserDefaults(suiteName: name)!
+    }
+
+    deinit {
+        UserDefaults.standard.removePersistentDomain(forName: name)
+    }
+
+    /// What was written, not what the app registers for a key nothing has set.
+    func saved(_ key: String) -> Any? {
+        UserDefaults.standard.persistentDomain(forName: name)?[key]
+    }
+}
+
 func isClose(_ a: CGFloat, _ b: CGFloat, within tolerance: CGFloat = 0.5) -> Bool {
     abs(a - b) <= tolerance
 }
