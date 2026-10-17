@@ -20,9 +20,9 @@ struct StatusBar: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let project: ProjectModel
 
-    /// Xcode's bar: the editor's colour at rest, over a blur of what scrolls beneath (`blurBackdrop`), which passes about a
-    /// sixth of the text's contrast.
-    private var wash: Double { reduceTransparency ? 1 : 0.83 }
+    /// Xcode's bar, measured over solid lines of text: the editor's colour at rest over a blur of what scrolls beneath
+    /// (`blurBackdrop`), passing about an eighth of a line's contrast, the same at every depth in the bar.
+    private var wash: Double { reduceTransparency ? 1 : 0.8 }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -204,7 +204,7 @@ extension View {
 extension NSView {
     /// A blur of what the window draws behind the view, with no colour of its own: every material and Liquid Glass tints what
     /// it blurs. 27.2: the filter draws nothing on an accessory's view or a hosting view.
-    func blurBackdrop(radius: Double = 12) {
+    func blurBackdrop(radius: Double = 6.5) {
         wantsLayer = true
         layerUsesCoreImageFilters = true
         layer?.masksToBounds = true
