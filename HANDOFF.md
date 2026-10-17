@@ -54,10 +54,13 @@ the hosts' contract with the core.
   rendering attributes aren't drawn (27.2), so an undefined command's underline is drawn
   under the text.
 - **Status bar**: across the source and PDF columns at Xcode's spacing (`BarMetrics`), with
-  no ground of its own: AppKit's automatic scroll edge lies under it, as under the toolbar,
-  and a point line above it. On 27.2 AppKit gives a split accessory's edge to one toolbar
-  section's scroll view, so each pane has an empty bottom accessory of the bar's height and
-  the bar is a plain view over both at the columns' foot (`buildStatusBar`). After a failed
+  Xcode's scroll-through: the editor's colour at rest (83%, all of it under Reduce
+  Transparency) over a Core Image blur of what passes beneath (`blurBackdrop`), and a point
+  line above it. AppKit's edge can't draw that over an NSTextView or a PDFView (it rests
+  lighter than the editor in Dark, and each pane's takes that pane's colour, so the bar was
+  two-tone). Each pane has an empty bottom accessory of the bar's height, for its safe area
+  and scrollers, at the soft edge, which draws nothing there; the blur and the bar are plain
+  views over both at the columns' foot (`buildStatusBar`). After a failed
   save, or a Cancel in an alert about the file on disk, it says Not Saved and that button saves.
 - **Build panel**: below the columns, so the status bar rides up as it opens. A bar at its
   foot, as Xcode's console bar: a pop-up for Issues, Build Log and Live Preview Log, then

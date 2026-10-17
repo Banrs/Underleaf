@@ -261,11 +261,10 @@ final class WorkspaceController: DetentSplitViewController {
     }
 
     /// The editors' own bar, across both panes at the columns' foot: their text and the PDF's pages scroll on beneath it, and
-    /// it rides up with them as the panel opens. Under it, AppKit's own scroll edge, its automatic style, as under the toolbar:
-    /// the bar draws no ground of its own, only its line (`StatusBar`). 27.2: AppKit gives an accessory's edge to the scroll
-    /// view of one toolbar section, and the columns span two, so an accessory there left the other pane's text sharp under
-    /// the bar (about half the launches, and always after the PDF had been hidden). Each pane has an empty accessory of the
-    /// bar's height instead, for its own edge, safe area and scrollers, and the bar lies over both.
+    /// it rides up with them as the panel opens. Its scroll-through is Xcode's: the editor's colour at rest and a soft ghost of
+    /// what passes beneath (`StatusBar`), over a blur of its own. AppKit's edge can't draw that over an NSTextView or a PDFView
+    /// (it rests lighter than the editor in Dark and takes each pane's colour), so each pane's empty accessory, there for its
+    /// safe area and scrollers, asks for the soft edge, which draws nothing over them (27.2).
     private func buildStatusBar() {
         for item in [sourceItem!, pdfItem!] {
             let space = NSSplitViewItemAccessoryViewController()
@@ -273,20 +272,25 @@ final class WorkspaceController: DetentSplitViewController {
             space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line).isActive = true
             // 27.2: AppKit's insets would pad it, and the pane's safe area with it.
             space.automaticallyAppliesContentInsets = false
+            space.preferredScrollEdgeEffectStyle = .soft
             item.addBottomAlignedAccessoryViewController(space)
         }
+        let ground = NSView()
+        ground.blurBackdrop()
         let bar = NSHostingView(rootView: StatusBar(project: project).environment(app))
         bar.sizingOptions = []
         // Not the toolbar's inset the columns take for its last section (`buildArea`).
         bar.safeAreaRegions = []
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        columns.view.addSubview(bar)
-        NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
-            bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
-            bar.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line),
-        ])
+        for view in [ground, bar] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            columns.view.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
+                view.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
+                view.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.line),
+            ])
+        }
     }
 
     private func buildInspector() {
