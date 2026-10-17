@@ -25,8 +25,7 @@ pub(crate) fn skipped(
         run,
         names,
     } = scans.resume(text, start as usize, end_index);
-    let mut reading = Reading::new(text, end_index, checker, |_: &Text, _: &str, _: usize| {});
-    reading.names = names;
+    let mut reading = Reading::new(text, end_index, names, checker, |_: &Text, _: &str, _| {});
     reading
         .ranges
         .extend(run.map(|(from, to)| span(from, to - from)));
@@ -120,13 +119,13 @@ struct Reading<'a, F> {
 }
 
 impl<'a, F: FnMut(&Text, &str, usize)> Reading<'a, F> {
-    fn new(text: &'a Text, end: usize, checker: Option<Checker>, command: F) -> Self {
+    fn new(text: &'a Text, end: usize, names: Names, checker: Option<Checker>, command: F) -> Self {
         Self {
             text,
             end,
             ranges: Vec::new(),
             others: Vec::new(),
-            names: Names::default(),
+            names,
             commands: checker.is_some(),
             comments: checker == Some(Checker::WritingTools),
             command,
@@ -166,7 +165,8 @@ impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
 pub(crate) fn words(source: &str, command: impl FnMut(&Text, &str, usize)) -> usize {
     let text = Text::new(source);
     let len = text.units.len();
-    let mut reading = Reading::new(&text, len, Some(Checker::WritingTools), command);
+    let writing = Some(Checker::WritingTools);
+    let mut reading = Reading::new(&text, len, Names::default(), writing, command);
     Scanner::default().run(&text.units, len, &[], &mut reading);
     let mut skipped = reading.ranges;
     skipped.extend(reading.others);

@@ -439,7 +439,7 @@ fn is_digit(u: u16) -> bool {
     u < 128 && (u as u8).is_ascii_digit()
 }
 
-/// ECMAScript's \w.
+/// A letter, digit or underscore of ASCII: stex's word.
 fn word(u: u16) -> bool {
     u < 128 && ((u as u8).is_ascii_alphanumeric() || u == b'_' as u16)
 }

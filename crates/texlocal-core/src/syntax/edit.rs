@@ -313,10 +313,6 @@ impl SourceDocument {
     /// after, still selected, or the caret between them.
     pub fn wrap(&self, selections: &[TextRange], template: &str) -> Change {
         let (prefix, suffix) = template.split_once("$0").unwrap_or((template, ""));
-        self.wrap_in(selections, prefix, suffix)
-    }
-
-    fn wrap_in(&self, selections: &[TextRange], prefix: &str, suffix: &str) -> Change {
         let first = selections.first().copied().unwrap_or_default();
         let (start, end) = clamp(first, self.text.len()).bounds();
         let selected = String::from_utf16_lossy(&self.text.units[start..end]);
@@ -335,17 +331,17 @@ impl SourceDocument {
     /// selections following the text; on otherwise, round the selection.
     pub fn toggle_style(&mut self, selections: &[TextRange], style: Style) -> Change {
         let styles = self.text_styles(selections.first().copied().unwrap_or_default());
-        let (unwrap, command) = match style {
-            Style::Bold => (styles.bold, "\\textbf{"),
-            Style::Italic => (styles.italic, "\\textit{"),
-            Style::Underline => (styles.underline, "\\underline{"),
+        let (unwrap, template) = match style {
+            Style::Bold => (styles.bold, "\\textbf{$0}"),
+            Style::Italic => (styles.italic, "\\textit{$0}"),
+            Style::Underline => (styles.underline, "\\underline{$0}"),
         };
         match unwrap {
             Some(edits) => Change {
                 selections: map_selections(&edits, selections),
                 edits,
             },
-            None => self.wrap_in(selections, command, "}"),
+            None => self.wrap(selections, template),
         }
     }
 }

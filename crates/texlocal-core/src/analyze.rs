@@ -182,53 +182,36 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
         return;
     };
     let text = crate::lossy_string(text);
-    // The file's headings and inputs in reading order, one heading a line,
-    // found as its words are counted: by the scanner, so none is in a
-    // comment, maths or literal code.
-    let (mut found, mut heading_line) = (Vec::new(), None);
-    into.words += prose::words(&text, |text, name, name_end| {
+    // The file's headings in reading order, one a line, and the files it
+    // reads in, read where it does: found as its words are counted, by the
+    // scanner, so none is in a comment, maths or literal code.
+    let mut heading_line = None;
+    let words = prose::words(&text, |text, name, name_end| {
         let line = text.line_index(name_end as u32) + 1;
         let units = &text.units;
-        if let Some(depth) = CATALOG
-            .heading_levels
-            .iter()
-            .position(|l| l.command == name)
-        {
+        let mut levels = CATALOG.heading_levels.iter();
+        if let Some(depth) = levels.position(|l| l.command == name) {
             if heading_line != Some(line)
                 && let Some(title) = title(units, name_end)
             {
                 let heading = Heading::new(depth, plain_title(&title), line, Some(file.clone()));
-                found.push(Found::Heading(heading));
+                into.outline.push(heading);
             }
             heading_line = Some(line);
         } else if matches!(name, "input" | "include" | "subfile")
             && let Some(name) = input_name(units, name_end, name == "input")
         {
-            found.push(Found::Input(name));
-        }
-    });
-    for found in found {
-        match found {
-            Found::Heading(heading) => into.outline.push(heading),
-            Found::Input(name) => {
-                let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(&name));
-                // TeX tries name.tex before the name as written.
-                if let Some(input) = [tex, name]
-                    .into_iter()
-                    .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
-                {
-                    read(root, &input, seen, into);
-                }
+            let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(&name));
+            // TeX tries name.tex before the name as written.
+            if let Some(input) = [tex, name]
+                .into_iter()
+                .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
+            {
+                read(root, &input, seen, into);
             }
         }
-    }
-}
-
-/// What a file has for the outline.
-enum Found {
-    Heading(Heading),
-    /// A file it reads in, as named.
-    Input(String),
+    });
+    into.words += words;
 }
 
 /// A heading's title, from where its command's name ends: past its star and

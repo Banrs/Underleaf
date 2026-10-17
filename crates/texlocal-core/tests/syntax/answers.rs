@@ -2,7 +2,7 @@
 //! name arguments, text styles, maths at a point) are the same however
 //! they're reached: resumed from kept points, after edits that forget some
 //! of them, as on a document read fresh. How far a question reads is
-//! checked beside the scanner (maths.rs).
+//! checked beside the kept points (scans.rs).
 
 use std::fmt::Debug;
 

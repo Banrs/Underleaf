@@ -521,25 +521,28 @@ fn lines_move_up_and_down() {
 }
 
 #[test]
-fn selections_in_any_order_move_together() {
-    let mut e = Editor::open("1\n2\n3\n4\n5", Some(0));
-    // Line 5, line 2, and line 5 again.
-    e.set_selections(vec![range(8, 1), range(2, 1), caret(8)]);
-    e.change(|doc, s| doc.move_lines(s, true).unwrap());
-    assert_eq!(e.string(), "2\n1\n3\n5\n4");
-    assert_eq!(e.selections, [range(6, 1), range(0, 1), caret(6)]);
-    assert_eq!(e.doc.text(), e.string());
-}
-
-#[test]
 fn several_selections_move_together() {
-    let mut e = Editor::open("1\n2\n3\n4\n5\n6", Some(0));
-    // Lines 2–3 (selected up to line 4's start) and line 5.
-    e.set_selections(vec![range(2, 4), range(8, 1)]);
-    e.change(|doc, s| doc.move_lines(s, true).unwrap());
-    assert_eq!(e.string(), "2\n3\n1\n5\n4\n6");
-    assert_eq!(e.selections, [range(0, 4), range(6, 1)]);
-    assert_eq!(e.doc.text(), e.string());
+    let cases = [
+        // Lines 2–3 (selected up to line 4's start) and line 5.
+        (
+            vec![range(2, 4), range(8, 1)],
+            "2\n3\n1\n5\n4\n6",
+            vec![range(0, 4), range(6, 1)],
+        ),
+        // In any order: line 5, line 2, and line 5 again.
+        (
+            vec![range(8, 1), range(2, 1), caret(8)],
+            "2\n1\n3\n5\n4\n6",
+            vec![range(6, 1), range(0, 1), caret(6)],
+        ),
+    ];
+    for (selections, text, after) in cases {
+        let mut e = Editor::open("1\n2\n3\n4\n5\n6", Some(0));
+        e.set_selections(selections);
+        e.change(|doc, s| doc.move_lines(s, true).unwrap());
+        assert_eq!((e.string(), &e.selections), (text.into(), &after));
+        assert_eq!(e.doc.text(), e.string());
+    }
 }
 
 #[test]
