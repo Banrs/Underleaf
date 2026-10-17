@@ -204,8 +204,7 @@ async fn run(library: &Path) {
     for (path, text) in [("main.tex", main), ("section.tex", section)] {
         std::fs::write(root.join(path), text).unwrap();
     }
-    let engine = json!({ "id": id, "patch": { "engine": "xelatex" } });
-    service.call("set_settings", &engine).await.unwrap();
+    texlocal_core::settings::write_settings(&root, &json!({ "engine": "xelatex" })).unwrap();
 
     // As the Mac app starts it: the pages in view first, the document shown in its pane.
     let a = client.open().await;

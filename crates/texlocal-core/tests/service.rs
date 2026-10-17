@@ -342,8 +342,8 @@ async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
     let patch = json!({ "expandedFolders": ["sec"], "foldedHeadings": ["sec/a.tex\t2:A#1"] });
     let args = json!({ "id": "P", "patch": patch });
     call(&service, "set_ui_state", args).await;
-    let ui = call(&service, "get_ui_state", json!({ "id": "P" })).await;
-    assert_eq!(ui, patch);
+    let ui = texlocal_core::settings::read_ui(&service.project_root("P").unwrap());
+    assert_eq!(serde_json::to_value(ui).unwrap(), patch);
     // It is not a file the generic APIs reach.
     let name = ".texlocal.json";
     let args = json!({ "id": "P", "path": name, "text": "{}" });

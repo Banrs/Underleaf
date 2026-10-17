@@ -70,7 +70,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `session_open` | `id`, `session`, `autoCompile?` | `{session, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` as `get_ui_state`: all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
+| `session_open` | `id`, `session`, `autoCompile?` | `{session, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` the project's ui state (`{expandedFolders, foldedHeadings}`, as `set_ui_state` answers it): all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
 | `session_state` | | `{documents: [document state], build, live, autoCompile}` | A snapshot, for a host coming up; a document's state also has `dirty` and `conflict` (`changed`/`gone`/null), the build's `queued`. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
@@ -86,8 +86,8 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_outline_current` | `path`, `line` | index or null | The heading a line of `path` is under, as its `index` in the outline of the last `session_analyze` sent of those answered: the file's last at or above the line; null above its first. Ask once the analysis it should read has answered. |
 | `session_issue` | `next` | `{index, issue}` or null | The next or previous issue with a place, round the ends; the host opens `issue.file` at `issue.line`. |
 | `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter. |
-| `session_rename` | `from`, `to` | `{from, to, mainFile, ui}` or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `get_ui_state`) with the entry's paths moved; a host sends its `set_ui_state` first. |
-| `session_set_settings` | `patch` | settings | As `set_settings`; a new main file stops the build, restarts the preview, builds. |
+| `session_rename` | `from`, `to` | `{from, to, mainFile, ui}` or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `session_open`'s) with the entry's paths moved; a host sends its `set_ui_state` first. |
+| `session_set_settings` | `patch` | settings | Merges `patch` into the project's settings and answers them (as `get_settings`); a new main file stops the build, restarts the preview, builds. |
 | `session_prepare_delete` | `path` | `{ready}` | Saves, refuses the main file (409), then holds saves under `path` until `session_deleted`. The host trashes the item itself (undoable). |
 | `session_deleted` | `path`, `trashed?` (true) | null | Closes documents under `path` and reads the tree again. |
 | `session_live_start` | `window?` | live state | The user's Start: takes the project over from another window. `window: true` leaves the document to TeXpresso's own window (the Settings fallback): no `live_document` or `live_page` comes, and TeXpresso is told no view or caret. The session's own restarts keep the choice. |
@@ -97,7 +97,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_live_log` | `shown` | null | Whether the host shows the Live Preview Log. While it does, each `live` event carries the log, and one comes at once. |
 
 Every other command (`file_tree`, `read_file`, `search_project`, `synctex_*`,
-`get_ui_state`, `pdf_path` for a new main file's PDF, …) is the service's, unchanged. While the
+`set_ui_state`, `pdf_path` for a new main file's PDF, …) is the service's, unchanged. While the
 PDF shown is the live document, pass `live: true, session: <the session's number>` to
 `synctex_forward` and `synctex_inverse`.
 
@@ -215,8 +215,10 @@ Every change a host follows since commit d6bee12, in the order made.
   two `session_open` call sites and filter events by it from before the call. This removes
   the cause of Windows dropping a new session's first events (its filter took the number from
   the answer, whose continuation may run after Listen has posted them).
-- `session_open` also answers `settings` and `ui`, so a host need not call `get_settings` and
-  `get_ui_state` after it.
+- `session_open` also answers `settings` and `ui`, so a host need not call `get_settings` after
+  it. The service commands `get_ui_state` and `set_settings` are gone: the ui state comes with
+  `session_open` and `session_rename`, and an open project's settings change with
+  `session_set_settings`.
 - A build's `result.pdf` (`build_finished`) is an absolute path, as `session_open`'s `pdf` is;
   it was relative to the project. Windows' `Full(pdf)` still finds it, as `Path.Combine` keeps
   a rooted second path, but can go.
@@ -260,7 +262,7 @@ Every change a host follows since commit d6bee12, in the order made.
 - `search_project` answers its hits by file (`[{file, hits}]`), and `status`, `set_tex_dir` and
   `set_texpresso_dir` answer `latexmkVersion`.
 - `session_rename` also answers `ui`, the ui state with the entry's paths moved, so a host
-  need not call `get_ui_state` after it (it sends any `set_ui_state` before the rename).
+  needs no other read of it (it sends any `set_ui_state` before the rename).
 
 ## From the Mac app's Swift
 
