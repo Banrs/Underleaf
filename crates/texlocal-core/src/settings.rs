@@ -5,6 +5,7 @@
 //! Only known keys are accepted, each validated rather than merged as sent.
 
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -37,12 +38,26 @@ impl Default for Settings {
     }
 }
 
-/// A JSON object from a file; empty if the file is missing or not one.
+/// A JSON object from a file: empty if there is no file, an error (409) if
+/// there is one that can't be read or isn't an object. Writers go through this,
+/// so a file the user is mid-way through editing is never replaced by defaults.
+fn load_object(path: &Path) -> Result<Map<String, Value>, CoreError> {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let unreadable = |why: String| {
+        CoreError::conflict(format!(
+            "“{name}” can't be read ({why}), so it was left as it is. Correct it, or delete it to start again."
+        ))
+    };
+    let bytes = match fs::read(path) {
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Map::new()),
+        read => read.map_err(|err| unreadable(CoreError::from(err).message))?,
+    };
+    serde_json::from_slice(&bytes).map_err(|err| unreadable(err.to_string()))
+}
+
+/// A JSON object from a file; empty if there is none or it can't be read.
 pub(crate) fn read_object(path: &Path) -> Map<String, Value> {
-    fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Map<String, Value>>(&bytes).ok())
-        .unwrap_or_default()
+    load_object(path).unwrap_or_default()
 }
 
 /// Lenient read: defaults fill in anything missing or mistyped. Validation of
@@ -66,40 +81,41 @@ fn lenient(raw: &Map<String, Value>) -> Settings {
 
 /// A change to a project's settings: the keys sent are validated and applied,
 /// the rest left as they are. Unknown keys are ignored.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SettingsPatch {
+    #[serde(skip_serializing_if = "Option::is_none")]
     main_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     shell_escape: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stop_on_first_error: Option<bool>,
 }
 
 impl SettingsPatch {
-    fn apply(&self, root: &Path, merged: &mut Map<String, Value>) -> Result<(), CoreError> {
-        if let Some(engine) = &self.engine {
-            if engine_flags(engine).is_none() {
-                return Err(CoreError::bad_request(format!("Unknown engine: {engine}")));
-            }
-            merged.insert("engine".into(), engine.as_str().into());
-        }
-        for (key, flag) in [
-            ("shellEscape", self.shell_escape),
-            ("stopOnFirstError", self.stop_on_first_error),
-        ] {
-            if let Some(on) = flag {
-                merged.insert(key.into(), on.into());
-            }
+    /// The keys to store: the types have checked the flags, and this checks
+    /// the engine and the main file, which is stored as `safe_rel_file` spells it.
+    fn checked(mut self, root: &Path) -> Result<Map<String, Value>, CoreError> {
+        if let Some(engine) = &self.engine
+            && engine_flags(engine).is_none()
+        {
+            return Err(CoreError::bad_request(format!("Unknown engine: {engine}")));
         }
         if let Some(main_file) = &self.main_file {
-            merged.insert("mainFile".into(), safe_rel_file(root, main_file)?.into());
+            self.main_file = Some(safe_rel_file(root, main_file)?);
         }
-        Ok(())
+        let Ok(Value::Object(keys)) = serde_json::to_value(&self) else {
+            unreachable!("a patch serializes as an object");
+        };
+        Ok(keys)
     }
 }
 
 /// Run `change` on the settings file's keys (the defaults under what the file
-/// has, so its unknown keys stay) and write the result atomically.
+/// has, so its unknown keys stay) and write the result atomically. A file that
+/// exists but can't be read is not written over (409).
 fn update(
     root: &Path,
     change: impl FnOnce(&mut Map<String, Value>) -> Result<(), CoreError>,
@@ -107,7 +123,7 @@ fn update(
     let Value::Object(mut merged) = serde_json::to_value(Settings::default()).unwrap() else {
         unreachable!("Settings serializes as an object");
     };
-    merged.extend(read_object(&root.join(SETTINGS_FILE)));
+    merged.extend(load_object(&root.join(SETTINGS_FILE))?);
     change(&mut merged)?;
     let bytes =
         serde_json::to_vec_pretty(&merged).map_err(|e| CoreError::internal(e.to_string()))?;
@@ -123,8 +139,13 @@ pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError>
     }
     let patch = SettingsPatch::deserialize(patch)
         .map_err(|err| CoreError::bad_request(format!("Invalid settings: {err}")))?;
+    let keys = patch.checked(root)?;
     // What was just written, without reading it back.
-    update(root, |merged| patch.apply(root, merged)).map(|merged| lenient(&merged))
+    update(root, |merged| {
+        merged.extend(keys);
+        Ok(())
+    })
+    .map(|merged| lenient(&merged))
 }
 
 /// What a host keeps of a project's interface, with the project: it moves
@@ -253,5 +274,35 @@ mod tests {
             ..UiPatch::default()
         };
         assert_eq!(write_ui(root, flood).unwrap_err().status, 400);
+    }
+
+    #[test]
+    fn a_settings_file_that_cannot_be_read_is_never_written_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, file) = (dir.path(), dir.path().join(SETTINGS_FILE));
+        // A hand edit left half-done, then something that is no object.
+        for broken in ["{ \"mainFile\": \"thesis.tex\", }", "[1]"] {
+            fs::write(&file, broken).unwrap();
+            let ui = UiPatch {
+                expanded_folders: Some(vec!["a".into()]),
+                ..UiPatch::default()
+            };
+            assert_eq!(write_ui(root, ui).unwrap_err().status, 409);
+            let err = write_settings(root, &json!({ "engine": "lualatex" })).unwrap_err();
+            assert_eq!(err.status, 409);
+            assert!(err.message.contains(SETTINGS_FILE), "{}", err.message);
+            move_ui(root, |_| Some("moved".into()));
+            assert_eq!(fs::read_to_string(&file).unwrap(), broken);
+            // Reading stays lenient: the project still opens, on defaults.
+            assert_eq!(read_settings(root).main_file, "main.tex");
+        }
+        // Nothing there is no reason to refuse: the first write makes it.
+        fs::remove_file(&file).unwrap();
+        write_settings(root, &json!({ "engine": "lualatex" })).unwrap();
+        assert_eq!(read_settings(root).engine, "lualatex");
+        // A folder where the file belongs can't be read as one.
+        fs::remove_file(&file).unwrap();
+        fs::create_dir(&file).unwrap();
+        assert_eq!(write_ui(root, UiPatch::default()).unwrap_err().status, 409);
     }
 }

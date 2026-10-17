@@ -11,7 +11,9 @@ use texlocal_core::projects::{
     SymbolScan, Symbols, create_file, create_project, file_tree, list_projects, rename_entry,
     rename_project, search_project,
 };
-use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings};
+use texlocal_core::settings::{
+    UiPatch, compiled_pdf_path, read_settings, write_settings, write_ui,
+};
 use texlocal_core::zipexport::export_zip;
 
 /// A project's labels and citations, read afresh.
@@ -95,9 +97,33 @@ fn a_settings_write_failure_rolls_back_the_filesystem_rename() {
     fs::rename(root.join(".texlocal.json"), root.join("settings.backup")).unwrap();
     fs::create_dir(root.join(".texlocal.json")).unwrap();
     let err = rename_entry(&root, "main.tex", "paper.tex").unwrap_err();
-    assert_eq!(err.status, 500);
+    assert_eq!(err.status, 409);
     assert!(root.join("main.tex").is_file());
     assert!(!root.join("paper.tex").exists());
+}
+
+#[test]
+fn a_settings_file_the_user_broke_survives_whatever_would_replace_it() {
+    let (_data, root) = project("broken-settings");
+    let file = root.join(".texlocal.json");
+    let broken = "{ \"mainFile\": \"paper.tex\", \"engine\": \"xelatex\", }";
+    fs::write(&file, broken).unwrap();
+    let ui = UiPatch {
+        expanded_folders: Some(vec!["chapters".into()]),
+        ..UiPatch::default()
+    };
+    assert_eq!(write_ui(&root, ui).unwrap_err().status, 409);
+    assert_eq!(write_settings(&root, &json!({})).unwrap_err().status, 409);
+    // A rename that moves the main file would write it, so it is undone.
+    assert_eq!(
+        rename_entry(&root, "main.tex", "a.tex").unwrap_err().status,
+        409
+    );
+    assert!(root.join("main.tex").is_file());
+    // One that leaves it alone goes through, and the file is as it was.
+    create_file(&root, "b.tex", false).unwrap();
+    rename_entry(&root, "b.tex", "c.tex").unwrap();
+    assert_eq!(fs::read_to_string(&file).unwrap(), broken);
 }
 
 fn names_in(dir: &Path) -> Vec<String> {
