@@ -390,7 +390,7 @@ secondary text at margin 16,12 is enough.
 Logic the Windows app needs that belongs in a crate, not C#. Already on `main`: sessions and
 events, autosave, watcher, `session_analyze` (the outline tree with fold keys, the words and the
 main file's heading styles), `session_outline_current`, file kinds, `create_entry {free}`,
-`locate`, `get_ui_state`/`set_ui_state`, `synctex_match`; and in the core's syntax module
+`locate`, `set_ui_state` and `session_open`'s `ui`, `synctex_match`; and in the core's syntax module
 (`tl_source_*`, `tl_syntax_call`): the typing transforms and snippet mirrors, `themes` /
 `theme_colors` / `legible`, `menus` (symbol groups, insert, maths, list and reference templates),
 `heading_styles`, and `math_svg` / `glyph_svg` through RaTeX; `search_project` answers its hits by
@@ -451,7 +451,7 @@ file, each with its column and length in UTF-16 units.
     a `math_preview {caret, size, color}`.
 28. **Compositing**: `theme_colors` composites translucent `system` colours onto `background`
     itself, and the host's `Over` goes.
-29. **The workspace's place**: `get_ui_state`/`set_ui_state` keep the file shown, the caret line,
+29. **The workspace's place**: the ui state (`set_ui_state`, `session_open`'s `ui`) keeps the file shown, the caret line,
     the PDF page and the PDF zoom (fitWidth, fitPage or a scale).
 30. **Nearest-line inverse SyncTeX**: `synctex_inverse {nearest: true}`, for Go to source position
     in whitespace.

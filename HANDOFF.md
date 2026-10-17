@@ -92,8 +92,8 @@ the hosts' contract with the core.
   `ProjectModel` on the main actor in order. `ProjectModel` is split by concern:
   `ProjectModel.swift` (state, events, editing, outline, conflicts, settings),
   `+Build`, `+Live` (live preview and SyncTeX), `+Files`, and `SessionEvents.swift`. The
-  sidebar's open folders and folded headings are the project's settings (`get_ui_state`,
-  `set_ui_state`, and a rename's answer), not UserDefaults.
+  sidebar's open folders and folded headings are the project's settings (`set_ui_state`,
+  and `session_open`'s and a rename's `ui`), not UserDefaults.
 - **Editor logic is the core's**: each key asks the source (`tl_source_call`: `type`,
   `delete_backward`, `insert_newline`) for the edit to type instead; each storage edit is
   told back once (`tl_source_edit`, which also answers a snippet's mirror edits) and each

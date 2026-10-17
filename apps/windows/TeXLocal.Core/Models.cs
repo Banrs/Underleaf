@@ -17,7 +17,7 @@ public sealed record TexStatus(bool Available, string? Version, string? TexDir, 
 
 /// <param name="Pdf">The last build's, absolute, if it is on disk.</param>
 /// <param name="Settings">As get_settings.</param>
-/// <param name="Ui">As get_ui_state.</param>
+/// <param name="Ui">The ui state, as set_ui_state takes it.</param>
 public sealed record SessionOpened(ulong Session, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, JsonElement Ui);
 
 public sealed record Clash(string Path);
