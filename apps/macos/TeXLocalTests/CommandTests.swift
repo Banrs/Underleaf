@@ -3,6 +3,8 @@ import Testing
 @testable import TeXLocal
 
 struct MenuCommandTests {
+    private let defaults = TestDefaults()
+
     @Test func noTwoCommandsShareAMacChord() {
         var seen: [KeyboardShortcut: MenuCommand] = [:]
         for command in MenuCommand.allCases {
@@ -13,7 +15,7 @@ struct MenuCommandTests {
     }
 
     @Test func findInProjectSearchesTheProjectsOnHome() {
-        let app = AppModel()
+        let app = AppModel(defaults: defaults.store)
         app.mainWindowIsKey = true
         #expect(app.isEnabled(.projectSearch, on: nil) && app.title(.projectSearch, on: nil) == "Find Project…")
         app.mainWindowIsKey = false
@@ -21,7 +23,7 @@ struct MenuCommandTests {
     }
 
     @Test func theFormatCommandsAreLaTeXs() {
-        let app = AppModel()
+        let app = AppModel(defaults: defaults.store)
         let project = ProjectModel(id: "MenuCommandTests", app: app)
         let latex = [MenuCommand.editBold, .editItalic, .editUnderline, .editMath]
         #expect(!(latex + [.editComment, .syncInverse]).contains { app.isEnabled($0, on: project) })
@@ -37,9 +39,7 @@ struct MenuCommandTests {
 
     /// The one reckoning the pane, its header and View's command share: open for LaTeX unless folded, hidden for search results.
     @Test func theFileOutlineIsOpenForLaTeXUnlessFoldedOrSearched() {
-        let app = AppModel()
-        let collapsed = app.outlineCollapsed
-        defer { app.outlineCollapsed = collapsed }
+        let app = AppModel(defaults: defaults.store)
         let project = ProjectModel(id: "MenuCommandTests", app: app)
         app.outlineCollapsed = false
         project.tree.show(.sources)
