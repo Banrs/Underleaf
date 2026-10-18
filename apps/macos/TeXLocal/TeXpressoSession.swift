@@ -109,9 +109,7 @@ final class TeXpressoSession {
         }
     }
 
-    isolated deinit {
-        logWatch?.cancel()
-    }
+    isolated deinit { logWatch?.cancel() }
 
     // MARK: - The session's state
 
@@ -122,9 +120,7 @@ final class TeXpressoSession {
         acknowledged = false
     }
 
-    func stopping() {
-        if active { phase = .stopping }
-    }
+    func stopping() { if active { phase = .stopping } }
 
     /// Stop's answer, for a preview that had ended already, which sends no event.
     func stopped(_ state: LiveState) {

@@ -5,10 +5,7 @@ struct TeXLocalApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        Settings {
-            SettingsView()
-                .environment(delegate.app)
-        }
+        Settings { SettingsView().environment(delegate.app) }
         .commands {
             AppCommands(app: delegate.app)
             ToolbarCommands()

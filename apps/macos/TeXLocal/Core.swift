@@ -152,15 +152,11 @@ final class Core {
 
     /// Synchronous: it runs as the app quits.
     func killAll() {
-        guard let handle else { return }
-        _ = Core.run(handle, "kill_all", "{}")
+        if let handle { _ = Core.run(handle, "kill_all", "{}") }
     }
 
     /// The session's open document at `path`, for the editor: its edits are the session's. Nil if it isn't open.
-    func source(session: UInt64, path: String) -> OpaquePointer? {
-        guard let handle else { return nil }
-        return tl_session_source(handle, session, path)
-    }
+    func source(session: UInt64, path: String) -> OpaquePointer? { handle.flatMap { tl_session_source($0, session, path) } }
 
     // MARK: - Events
 

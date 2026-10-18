@@ -227,9 +227,7 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .printItem) { items(.filePrint) }
         // A replacement group would lose the spelling and substitution checkmarks.
         TextEditingCommands()
-        CommandGroup(before: .textEditing) {
-            items(.projectSearch, .pdfFind)
-        }
+        CommandGroup(before: .textEditing) { items(.projectSearch, .pdfFind) }
         CommandGroup(after: .pasteboard) {
             Divider()
             items(.editComment, .editMoveLineUp, .editMoveLineDown)

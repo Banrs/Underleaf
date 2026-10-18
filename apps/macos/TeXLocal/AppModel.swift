@@ -40,10 +40,7 @@ enum Links {
 struct AppAlert: Sendable {
     let title, message: String
 
-    init(_ title: String, _ message: String) {
-        self.title = title
-        self.message = message
-    }
+    init(_ title: String, _ message: String) { (self.title, self.message) = (title, message) }
 
     init(_ title: String, _ error: any Error) { self.init(title, error.localizedDescription) }
 }
