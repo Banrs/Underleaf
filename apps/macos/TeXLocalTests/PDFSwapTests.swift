@@ -23,12 +23,8 @@ struct PDFSwapTests {
 
     /// In an on-screen window, unseen: PDFKit draws pages only there.
     private func onScreen(_ controller: PDFController) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 500, height: 600), styleMask: [.titled],
-                              backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
+        let window = unseenWindow(NSRect(x: 100, y: 100, width: 500, height: 600))
         window.contentView = controller.view
-        window.alphaValue = 0
-        window.orderFront(nil)
         return window
     }
 
@@ -57,19 +53,16 @@ struct PDFSwapTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(!samples.contains(0), "samples \(samples)")
-        #expect(view.document === shown)
-        #expect(text(view) == ["rebuild\(rebuilds - 1)"])
+        #expect(view.document === shown && text(view) == ["rebuild\(rebuilds - 1)"])
     }
 
     @Test func aRebuildChangesThePageCount() throws {
         let controller = showing(try document(["a", "b", "c"])), view = controller.view
         controller.go(toPage: 2)
         controller.show(try document(["a2", "b2", "c2", "d2"]))
-        #expect(text(view) == ["a2", "b2", "c2", "d2"])
-        #expect(controller.page == 2 && controller.pageCount == 4)
+        #expect(text(view) == ["a2", "b2", "c2", "d2"] && controller.page == 2 && controller.pageCount == 4)
         controller.show(try document(["a3"]))
-        #expect(text(view) == ["a3"])
-        #expect(controller.page == 1 && controller.pageCount == 1)
+        #expect(text(view) == ["a3"] && controller.page == 1 && controller.pageCount == 1)
     }
 
     @Test func aLiveDocumentTakesOnlyThePagesThatChanged() throws {
@@ -122,10 +115,9 @@ struct PDFSwapTests {
 
     @Test(arguments: [false, true])
     func aLivePageLeavesTheSelectionAndFindOnOtherPages(inView: Bool) async throws {
-        let controller = PDFController(), view = controller.view
+        let controller = inView ? PDFController() : sizedController(), view = controller.view
         let window = inView ? onScreen(controller) : nil
         defer { window?.close() }
-        if !inView { view.setFrameSize(NSSize(width: 600, height: 500)) }
         controller.show(try document(["alpha", "beta", "alpha"]))
         if inView { try await waitUntil(timeout: .seconds(5)) { paper(view) > 0 } }
         let shown = try #require(view.document)
@@ -158,8 +150,7 @@ struct PDFSwapTests {
     }
 
     @Test func aDocumentIsShownWholeOnceTheAppHasGrown() throws {
-        let controller = PDFController(), view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
+        let controller = sizedController(), view = controller.view
         var memory: UInt64 = 1 << 30
         controller.memory = { memory }
         controller.show(try document(["a", "b"]))

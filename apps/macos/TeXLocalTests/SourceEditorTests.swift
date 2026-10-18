@@ -229,7 +229,7 @@ struct SourceEditorTests {
         #expect(clip.bounds.minY == -clip.contentInsets.top)
     }
 
-    /// From here each `event` is a top-level undo group of its own, as AppKit groups an event's changes.
+    /// From here each `grouping` is a top-level undo group of its own, as AppKit groups an event's changes.
     private func groupingByEvent() throws -> UndoManager {
         let undo = try #require(text.undoManager)
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
@@ -237,20 +237,14 @@ struct SourceEditorTests {
         return undo
     }
 
-    private func event(_ action: () -> Void) {
-        text.undoManager?.beginUndoGrouping()
-        action()
-        text.undoManager?.endUndoGrouping()
-    }
-
-    @Test func aCommandIsItsOwnUndoStep() throws {
+    @Test func aCommandIsItsOwnUndoStep() async throws {
         open("", caret: 0)
         let undo = try groupingByEvent()
-        event { type("a") }
-        event { type("b") }
-        event { editor.perform(.bold) }
+        await undo.grouping { type("a") }
+        await undo.grouping { type("b") }
+        await undo.grouping { editor.perform(.bold) }
         #expect(undo.undoActionName == "Bold")
-        event { type("c") }
+        await undo.grouping { type("c") }
         #expect(text.string == "ab\\textbf{c}")
         undo.undo()
         #expect(text.string == "ab\\textbf{}" && undo.undoActionName == "Bold")
@@ -258,7 +252,7 @@ struct SourceEditorTests {
         #expect(text.string == "ab" && text.document.text == text.string)
     }
 
-    @Test func linesMoveUpAndDown() throws {
+    @Test func linesMoveUpAndDown() async throws {
         open("a\nb\nc\nd", caret: 2)
         #expect(editor.perform(.moveLineUp))
         #expect(text.string == "b\na\nc\nd" && text.selectedRange() == .caret(0))
@@ -269,7 +263,7 @@ struct SourceEditorTests {
         #expect(text.string == "b\na\nd\nc" && text.selectedRange() == NSRange(location: 6, length: 1))
         #expect(!editor.perform(.moveLineDown))
         let undo = try groupingByEvent()
-        event { #expect(editor.perform(.moveLineUp)) }
+        await undo.grouping { #expect(editor.perform(.moveLineUp)) }
         #expect(text.string == "b\na\nc\nd" && text.selectedRange() == NSRange(location: 4, length: 1))
         #expect(undo.undoActionName == "Move Line Up")
         undo.undo()
@@ -402,9 +396,11 @@ struct SourceEditorTests {
         #expect(kept.map(\.resultType) == prose.flatMap { _ in [.spelling, .correction, .replacement] })
     }
 
+    /// Ordered in, unseen, where `onScreen`.
     @discardableResult
-    private func inWindow() -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    private func inWindow(onScreen: Bool = false) -> NSWindow {
+        let rect = NSRect(x: 0, y: 0, width: 600, height: 400)
+        let window = onScreen ? unseenWindow(rect) : NSWindow(contentRect: rect, styleMask: [.titled], backing: .buffered, defer: false)
         editor.scrollView.frame = window.contentView!.bounds
         window.contentView!.addSubview(editor.scrollView)
         editor.shown = true
@@ -495,10 +491,7 @@ struct SourceEditorTests {
     }
 
     @Test func aThemeRecoloursTheText() async throws {
-        let window = inWindow()
-        window.isReleasedWhenClosed = false
-        window.alphaValue = 0
-        window.orderFront(nil)
+        let window = inWindow(onScreen: true)
         defer { window.close() }
         open("\\section{A} % note")
         #expect(SyntaxTheme.all.map(\.id) == ["overleaf", "texstudio", "system"] && SyntaxTheme(rawValue: "gone") == nil)

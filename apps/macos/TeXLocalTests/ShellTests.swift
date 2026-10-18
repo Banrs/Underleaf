@@ -63,10 +63,8 @@ struct ShellTests {
         try await resize(window, to: least)
         #expect(window.contentView?.frame.width == least)
         // Compile as its symbol, a circle, still Compile to the overflow menu and VoiceOver.
-        #expect(workspace.toolbar.compactCompile)
-        #expect(button.fittingSize == NSSize(width: 36, height: 36))
-        #expect(compile.label == MenuCommand.compileRun.title)
-        #expect(compile.menuFormRepresentation?.title == MenuCommand.compileRun.title)
+        #expect(workspace.toolbar.compactCompile && button.fittingSize == NSSize(width: 36, height: 36))
+        #expect(compile.label == MenuCommand.compileRun.title && compile.menuFormRepresentation?.title == MenuCommand.compileRun.title)
         for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {
             let item = try item(id, in: workspace)
             #expect(!item.isHidden && item.visibilityPriority == .low)
@@ -76,8 +74,7 @@ struct ShellTests {
             #expect(try item(id, in: workspace).visibilityPriority == .high)
         }
         try await resize(window, to: 1300)
-        #expect(!workspace.toolbar.compactCompile)
-        #expect(button.fittingSize.width == word)
+        #expect(!workspace.toolbar.compactCompile && button.fittingSize.width == word)
     }
 
     /// Stop, with the build's spinner, is as wide as Compile was, as its word and as its symbol: the tools beside it stay
@@ -92,9 +89,8 @@ struct ShellTests {
             let idle = button.fittingSize
             workspace.project.compiling = true
             try await waitUntil { compile.label == MenuCommand.compileStop.title }
-            #expect(button.fittingSize == idle)
+            #expect(button.fittingSize == idle && compile.backgroundTintColor == .clear)
             #expect(compile.menuFormRepresentation?.title == MenuCommand.compileStop.title)
-            #expect(compile.backgroundTintColor == .clear)
             workspace.project.compiling = false
             try await waitUntil { compile.label == MenuCommand.compileRun.title }
             #expect(button.fittingSize == idle && compile.backgroundTintColor == nil)
@@ -117,8 +113,7 @@ struct ShellTests {
         // The toolbar tells the workspace a turn later.
         try await waitUntil { !workspace.toolbar.holdsDefaultItems && !workspace.toolbar.compactCompile }
         try await resize(window, to: ColumnMetrics.contentMinimum.width)
-        #expect(workspace.toolbar.compactCompile)
-        #expect(toolbar.visibleItems?.contains { $0.itemIdentifier == .compile } == true)
+        #expect(workspace.toolbar.compactCompile && toolbar.visibleItems?.contains { $0.itemIdentifier == .compile } == true)
         try await resize(window, to: 700)
         #expect(!workspace.toolbar.compactCompile)
         toolbar.itemIdentifiers = defaults

@@ -22,6 +22,15 @@ func settle() async {
 
 func isClose(_ a: CGFloat, _ b: CGFloat, within tolerance: CGFloat = 0.5) -> Bool { abs(a - b) <= tolerance }
 
+/// A blank project in the test library (`TEXLOCAL_DATA`), whose folder the caller removes.
+func newProject() async throws -> ProjectInfo {
+    try await Core.shared.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"], as: ProjectInfo.self)
+}
+
+extension ProjectInfo {
+    var folder: URL { Core.libraryFolder.appending(path: id) }
+}
+
 extension [TreeNode] {
     /// A main file and a bibliography, as the core lists them.
     static var sources: [TreeNode] {
@@ -39,10 +48,25 @@ extension UndoManager {
     }
 }
 
-/// A controller at 600 by 500 showing `document`.
-func showing(_ document: PDFDocument) -> PDFController {
+/// A window that is on screen but unseen, kept until it is closed.
+func unseenWindow(_ rect: NSRect, style: NSWindow.StyleMask = [.titled]) -> NSWindow {
+    let window = NSWindow(contentRect: rect, styleMask: style, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.alphaValue = 0
+    window.orderFront(nil)
+    return window
+}
+
+/// A controller at 600 by 500.
+func sizedController() -> PDFController {
     let controller = PDFController()
     controller.view.setFrameSize(NSSize(width: 600, height: 500))
+    return controller
+}
+
+/// A controller at 600 by 500 showing `document`.
+func showing(_ document: PDFDocument) -> PDFController {
+    let controller = sizedController()
     controller.show(document)
     return controller
 }

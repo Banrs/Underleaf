@@ -18,8 +18,7 @@ struct InPlaceRenameTests {
         let rename = InPlaceRename<String>()
         rename.begin("ch/intro.tex", name: "intro.tex")
         rename.name = "  start.tex "
-        #expect(rename.end("ch/intro.tex", from: "intro.tex") == "start.tex")
-        #expect(rename.id == nil)
+        #expect(rename.end("ch/intro.tex", from: "intro.tex") == "start.tex" && rename.id == nil)
         // Return, then the field losing focus as it goes: the second finds the rename over.
         #expect(rename.end("ch/intro.tex", from: "intro.tex") == nil)
     }
@@ -29,15 +28,13 @@ struct InPlaceRenameTests {
         let rename = InPlaceRename<String>()
         rename.begin("intro.tex", name: "intro.tex")
         rename.name = name
-        #expect(rename.end("intro.tex", from: "intro.tex") == nil)
-        #expect(rename.id == nil)
+        #expect(rename.end("intro.tex", from: "intro.tex") == nil && rename.id == nil)
     }
 
     @Test func anotherRowLeavesTheRenameOpen() {
         let rename = InPlaceRename<String>()
         rename.begin("a.tex", name: "a.tex")
         rename.name = "b.tex"
-        #expect(rename.end("c.tex", from: "c.tex") == nil)
-        #expect(rename.id == "a.tex")
+        #expect(rename.end("c.tex", from: "c.tex") == nil && rename.id == "a.tex")
     }
 }

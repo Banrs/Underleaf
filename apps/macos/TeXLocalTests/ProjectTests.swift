@@ -16,9 +16,8 @@ struct CoreTests {
     }
 
     @Test func aCoreErrorIsDecodedAndAMisshapenAnswerIsSaidInTheAppsWords() async throws {
-        let core = Core.shared
-        let info = try await core.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"], as: ProjectInfo.self)
-        defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
+        let core = Core.shared, info = try await newProject()
+        defer { try? FileManager.default.removeItem(at: info.folder) }
         let error = await #expect(throws: CoreError.self) {
             _ = try await core.call("read_file", ["id": info.id, "path": "../../x"], as: FileText.self)
         }
@@ -32,9 +31,8 @@ struct CoreTests {
 
     /// The app numbers its sessions, and their events reach the observer of the number, decoded.
     @Test func aSessionsEventsReachTheObserverOfItsNumber() async throws {
-        let core = Core.shared
-        let info = try await core.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"], as: ProjectInfo.self)
-        defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
+        let core = Core.shared, info = try await newProject()
+        defer { try? FileManager.default.removeItem(at: info.folder) }
         var events: [SessionEvent] = []
         let session = core.observe { events.append($0) }
         defer { core.forget(session) }
@@ -75,16 +73,16 @@ final class ProjectFlowTests {
     }
 
     private func project(_ text: String = "text") async throws -> (info: ProjectInfo, folder: URL) {
-        let info = try await Core.shared.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"],
-                                              as: ProjectInfo.self)
-        let folder = Core.libraryFolder.appending(path: info.id)
-        folders.append(folder)
+        let info = try await newProject()
+        folders.append(info.folder)
         try await Core.shared.call("write_file", ["id": info.id, "path": info.mainFile, "text": text])
-        return (info, folder)
+        return (info, info.folder)
     }
 
-    private func opened(_ text: String = "text") async throws -> (project: ProjectModel, folder: URL) {
+    /// Opened with its main file's `text` and the `others` written beside it.
+    private func opened(_ text: String = "text", with others: [String: String] = [:]) async throws -> (project: ProjectModel, folder: URL) {
         let (info, folder) = try await project(text)
+        for (path, other) in others { try await Core.shared.call("write_file", ["id": info.id, "path": path, "text": other]) }
         await app.open(info.id)
         return (try #require(app.project), folder)
     }
@@ -148,11 +146,9 @@ final class ProjectFlowTests {
             await rename.value
             #expect(await save.value)
 
-            #expect(project.openPath == to && project.editor.document?.path == to)
-            #expect(project.editor.document?.text == expected)
+            #expect(project.openPath == to && project.editor.document?.path == to && project.editor.document?.text == expected)
             #expect(try String(contentsOf: folder.appending(path: to), encoding: .utf8) == expected)
-            #expect(!exists(folder.appending(path: from)))
-            #expect(project.diskConflict == nil && project.missingFile == nil)
+            #expect(!exists(folder.appending(path: from)) && project.diskConflict == nil && project.missingFile == nil)
         }
         #expect(app.alert == nil)
         await app.close()
@@ -227,11 +223,6 @@ final class ProjectFlowTests {
         try await waitUntil { notices.current == nil }
     }
 
-    @Test func aProjectThatCannotLoadStaysClosed() async throws {
-        await app.open("No Such Project \(UUID().uuidString.prefix(8))")
-        #expect(app.project == nil && app.alert != nil && !app.isOpening)
-    }
-
     @Test func aProjectOpensOnItsBuiltPDF() async throws {
         let (info, folder) = try await project()
         try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
@@ -244,7 +235,10 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func aRefusalOnHomeIsAnAlertThatNamesIt() async throws {
+    /// A project that can't load stays closed; an import or rename the core refuses names what it was about.
+    @Test func aRefusalOnHomeIsAnAlert() async throws {
+        await app.open("No Such Project \(UUID().uuidString.prefix(8))")
+        #expect(app.project == nil && app.alert != nil && !app.isOpening)
         let missing = files.temporaryDirectory.appending(path: "\(UUID().uuidString).zip")
         await app.importProject(from: missing)
         #expect(app.alert?.title == "Couldn’t Open “\(missing.lastPathComponent)”" && app.project == nil && !app.isOpening)
@@ -270,10 +264,8 @@ final class ProjectFlowTests {
         let folder = files.temporaryDirectory.appending(path: "texpresso-\(UUID().uuidString)")
         try files.createDirectory(at: folder, withIntermediateDirectories: true)
         folders.append(folder)
-        let page = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
-        page.string = "live"
         let pdf = folder.appending(path: "live.pdf")
-        try page.dataWithPDF(inside: page.bounds).write(to: pdf)
+        try #require(try textPDF(["live"]).dataRepresentation()).write(to: pdf)
         let script = folder.appending(path: "texpresso")
         try """
         #!/bin/sh
@@ -360,11 +352,8 @@ final class ProjectFlowTests {
     }
 
     @Test func theOutlineReadsTheInputs() async throws {
-        let (info, folder) = try await project("\\section{Intro}\nOne two\n\\include{chapters/a}")
-        try files.createDirectory(at: folder.appending(path: "chapters"), withIntermediateDirectories: false)
-        try "\\section{A}\nthree".write(to: folder.appending(path: "chapters/a.tex"), atomically: false, encoding: .utf8)
-        await app.open(info.id)
-        let project = try #require(app.project)
+        let project = try await opened("\\section{Intro}\nOne two\n\\include{chapters/a}",
+                                       with: ["chapters/a.tex": "\\section{A}\nthree"]).project
         #expect(project.initialLoadComplete && project.outline.map(\.file) == ["main.tex", "chapters/a.tex"] && project.words == 6)
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
@@ -374,10 +363,8 @@ final class ProjectFlowTests {
 
     /// The levels are those of the class the main file names outside comments, at its type size, whichever file shows.
     @Test func theLevelsAreTheMainFilesClasses() async throws {
-        let (info, folder) = try await project("% \\documentclass{article}\n\\documentclass[11pt]{report}\n\\include{a}")
-        try "\\section{A}\nthree".write(to: folder.appending(path: "a.tex"), atomically: false, encoding: .utf8)
-        await app.open(info.id)
-        let project = try #require(app.project)
+        let project = try await opened("% \\documentclass{article}\n\\documentclass[11pt]{report}\n\\include{a}",
+                                       with: ["a.tex": "\\section{A}\nthree"]).project
         let reports = { project.headingStyles.contains { $0.command == "chapter" } }
         try await waitUntil(reports)
         project.reveal(project.outline[0])
@@ -490,8 +477,7 @@ final class ProjectFlowTests {
     }
 
     @Test func aSearchListsItsHitsByFile() async throws {
-        let project = try await opened("needle\nhay\nNeedle").project
-        try await Core.shared.call("write_file", ["id": project.id, "path": "appendix.tex", "text": "a needle"])
+        let project = try await opened("needle\nhay\nNeedle", with: ["appendix.tex": "a needle"]).project
         project.search.query = "needle"
         await project.search.run()
         #expect(project.search.hitCount == 3 && project.search.failure == nil)
@@ -537,8 +523,7 @@ final class ProjectFlowTests {
 
     /// The rename's answer has the state the core moved, written before the rename asked for it.
     @Test func anOpenFolderStaysOpenUnderItsNewName() async throws {
-        let project = try await opened().project
-        try await Core.shared.call("write_file", ["id": project.id, "path": "ch/a.tex", "text": ""])
+        let project = try await opened(with: ["ch/a.tex": ""]).project
         project.expandedFolders = ["ch"]
         await project.renameEntry("ch", to: "chapters")
         #expect(project.expandedFolders == ["chapters"])

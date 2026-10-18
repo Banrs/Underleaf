@@ -29,8 +29,7 @@ struct FindTests {
 struct PDFFitTests {
     @Test(arguments: zip([CGFloat(0), 37], [0, 90]))
     func fitPageKeepsTheWholePageInView(_ bottomInset: CGFloat, _ rotation: Int) throws {
-        let controller = PDFController(), view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
+        let controller = sizedController(), view = controller.view
         view.additionalSafeAreaInsets.bottom = bottomInset
         #expect(view.displayMode == .singlePageContinuous)
         view.displaysPageBreaks = true
@@ -56,8 +55,7 @@ struct PDFFitTests {
     @Test func theScaleFollowsEveryZoom() throws {
         let controller = showing(try pages(3)), view = controller.view
         func follows(_ fit: PDFController.Fit?, _ step: String) {
-            #expect(controller.scale == view.scaleFactor, "\(step)")
-            #expect(controller.fit == fit, "\(step)")
+            #expect(controller.scale == view.scaleFactor && controller.fit == fit, "\(step)")
         }
         follows(.width, "opened")
         view.setFrameSize(NSSize(width: 800, height: 500))
@@ -91,11 +89,9 @@ struct PDFFitTests {
         // The PDF can finish loading before SwiftUI gives the owned view its first size.
         view.setFrameSize(NSSize(width: 600, height: 500))
         view.layoutDocumentView()
-        #expect(project.pdf.pageCount == 3)
-        #expect(project.saved.pdfPage == 3)
+        #expect(project.pdf.pageCount == 3 && project.saved.pdfPage == 3)
         project.pdf.setScale(view.maxScaleFactor)
-        #expect(!app.isEnabled(.viewZoomIn, on: project))
-        #expect(app.isEnabled(.viewZoomOut, on: project))
+        #expect(!app.isEnabled(.viewZoomIn, on: project) && app.isEnabled(.viewZoomOut, on: project))
         project.tree.show(.sources)
         project.openPath = "references.bib"
         #expect(!app.isEnabled(.syncForward, on: project))
@@ -106,8 +102,7 @@ struct PDFFitTests {
     }
 
     @Test func goToPageKeepsToTheDocument() throws {
-        let controller = PDFController()
-        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        let controller = sizedController()
         controller.go(toPage: 2)
         #expect(controller.page == 0)
         controller.show(try pages(3))
@@ -128,8 +123,7 @@ struct PDFFitTests {
         #expect(project.saved.pdfZoom == zoom)
         project.pdf.view.setFrameSize(NSSize(width: 600, height: 500))
         project.pdf.view.layoutDocumentView()
-        #expect(project.pdf.restoreZoom == nil)
-        #expect(project.saved.pdfZoom == zoom)
+        #expect(project.pdf.restoreZoom == nil && project.saved.pdfZoom == zoom)
         if case .scale(let scale) = zoom { #expect(abs(project.pdf.view.scaleFactor - scale) < 0.001) }
         let old = Data(#"{"project":"p","line":1,"buildPanel":false,"pdfPage":2}"#.utf8)
         #expect(try JSONDecoder().decode(SavedWorkspace.self, from: old).pdfZoom == nil)
@@ -278,17 +272,15 @@ struct PDFFindTests {
     /// PDFKit's word lookup crashes on a page whose document has gone; it has no word.
     @Test func aPageWithoutItsDocumentHasNoWord() throws {
         let page = try autoreleasepool { try #require(try textPDF(["alpha beta"]).page(at: 0)) }
-        #expect(page.document == nil)
-        #expect(page.click(at: CGPoint(x: 10, y: 10)) == nil)
+        #expect(page.document == nil && page.click(at: CGPoint(x: 10, y: 10)) == nil)
     }
 
     /// The core finds the source's word in the text round SyncTeX's box, and the PDF selects it.
     @Test func forwardSearchSelectsTheWordTheCoreFinds() async throws {
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         let line = "An echo repeats. An echo repeats."
-        let info = try await Core.shared.call("create_project", ["name": "Sync \(UUID().uuidString.prefix(8))", "template": "blank"],
-                                              as: ProjectInfo.self)
-        defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
+        let info = try await newProject()
+        defer { try? FileManager.default.removeItem(at: info.folder) }
         try await Core.shared.call("write_file", ["id": info.id, "path": info.mainFile, "text": line])
         let pdf = try textPDF([line], width: 180), page = try #require(pdf.page(at: 0))
         let rendered = try #require(page.string)
@@ -324,8 +316,7 @@ struct PDFFindTests {
 
     @Test(arguments: zip([NSScroller.Style.overlay, .legacy], [CGFloat?.none, 1.75]))
     func aRebuildFindsAgainInPlace(_ scrollerStyle: NSScroller.Style, _ scale: CGFloat?) async throws {
-        let controller = PDFController(), view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
+        let controller = sizedController(), view = controller.view
         try #require(view.subviews.compactMap { $0 as? NSScrollView }.first).scrollerStyle = scrollerStyle
         controller.show(try textPDF(["needle", "filler", "needle", "needle"]))
         if let scale { controller.setScale(scale) }
