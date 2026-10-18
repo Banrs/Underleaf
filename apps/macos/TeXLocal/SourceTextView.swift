@@ -358,6 +358,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
+        // 27.2: until a scroll prepares content, as after a launch or a resize, TextKit's content view ends where the scroll
+        // view's insets start, so the lines it lays out under the status bar aren't drawn there.
+        if !visibleRect.isEmpty, !preparedContentRect.contains(visibleRect) { prepareContent(in: visibleRect) }
         fragments.sort { $0.offset < $1.offset }
         if let from = staleColours { colour(from: from) }
         showCompletions(reload: false)

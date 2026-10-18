@@ -57,15 +57,17 @@ the hosts' contract with the core.
   rendering attributes aren't drawn (27.2), so an undefined command's underline is drawn
   under the text.
 - **Status bar**: across the source and PDF columns as Xcode's editor bar: a 36 pt bar
-  (`BarMetrics`) on the text's ground with a separator's device pixel along its top, level with
-  the File Outline header's (AppKit's edge line), drawn by one view to the window's edge
-  (`BarGround`). Each pane has an empty bottom accessory of the bar's height for its safe area
-  and scrollers. AppKit's own edges couldn't be the ground: PDFKit's scroll view takes no style
-  and blurred the white page grey in Dark, and an accessory stops half a point short of a hidden
-  inspector's divider, where the page showed beside the window's border (27.2). A fitted page
-  meets the pane's sides. The splits keep AppKit's weights, as Mail's and Xcode's: a point
-  between the columns and over the build panel, half a point for the sidebar and inspector. The
-  build panel resizes from the bar's line, as Xcode's debug area does (`area.grip`). After a
+  (`BarMetrics`) over AppKit's hard scroll edge, which is Xcode's: each pane has an empty bottom
+  accessory of the bar's height with the hard style, for its edge, safe area and scrollers, and the
+  bar lies over both (one accessory across the columns gave its edge to one pane only, 27.2). Text
+  and pages ghost through it, about 11% of their contrast, evenly over its height, under AppKit's
+  own line. Until a scroll prepares content, TextKit's content view ends at the scroll view's
+  insets, so the source prepares its visible rect after each viewport layout or the lines under the
+  bar wouldn't draw after a launch or a resize (27.2). A fitted page meets the pane's sides. The
+  splits keep AppKit's weights, as Mail's and Xcode's: a point between the columns and over the
+  build panel, half a point for the sidebar and inspector. The build panel resizes from the bar's
+  line and is dragged open and shut there, as Xcode's debug area (`area.grip`, an additional
+  effective rect, which the split hit-tests before the bar; the panel's `canCollapse`). After a
   failed save, or a Cancel in an alert about the file on disk, it says Not Saved and that
   button saves.
 - **Build panel**: below the columns, so the status bar rides up as it opens. A bar at its

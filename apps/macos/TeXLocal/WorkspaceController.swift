@@ -74,6 +74,11 @@ final class WorkspaceController: DetentSplitViewController {
                 fold(visible, shown: \.inspectorVisible, folded: \.inspectorFolded)
             },
             follow(pdfItem) { [unowned self] _ in fitColumns() },
+            // A drag opens or closes it without the model's asking; the autosave's restore at load doesn't count.
+            follow(panelItem) { [unowned self] shown in
+                guard [.leftMouseDragged, .leftMouseUp].contains(NSApp.currentEvent?.type), project.panel.shown != shown else { return }
+                project.panel.shown = shown
+            },
         ]
         // The panes' own frames: the splits tell of a resize before the nested panes have theirs.
         resizes = [sourceItem, pdfItem].map { pane in
@@ -230,6 +235,9 @@ final class WorkspaceController: DetentSplitViewController {
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: panelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
         panelItem.holdingPriority = .defaultLow + 1
+        // As Xcode's debug area: dragged under its least height from the status bar's line it closes, and dragged up from
+        // there it opens.
+        panelItem.canCollapse = true
 
         area.splitView.isVertical = false
         area.splitView.autosaveName = "Area"
@@ -239,18 +247,21 @@ final class WorkspaceController: DetentSplitViewController {
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         area.loaded = { [unowned self] in if !project.panel.shown { panelItem.isCollapsed = true } }
-        // The panel resizes from the status bar's top line, as Xcode's debug area does from its bar's: a split view is flipped.
-        area.grip = { _, rect in rect.offsetBy(dx: 0, dy: -BarMetrics.height) }
+        // The panel resizes from the status bar's top line, as Xcode's debug area does from its bar's, and opens from there
+        // while shut. A split view is flipped, and a thin divider takes presses 2 pt either side of its line.
+        area.grip = { [unowned area] _ in
+            let split = area.splitView, line = split.arrangedSubviews[0].frame.maxY - BarMetrics.height
+            return NSRect(x: 0, y: line - 2, width: split.bounds.width, height: split.dividerThickness + 4)
+        }
 
         areaItem = NSSplitViewItem(viewController: area)
         addSplitViewItem(areaItem)
     }
 
     /// The editors' own bar, across both panes at the columns' foot: their text and the PDF's pages scroll on beneath it, and
-    /// it rides up with them as the panel opens. 27.2: AppKit gives an accessory's edge to the scroll view of one toolbar
-    /// section, and the columns span two, so one accessory across them left the other pane's text sharp under the bar (about
-    /// half the launches). Each pane has an empty accessory of the bar's height instead, for its own edge, safe area and
-    /// scrollers, and the bar lies over both.
+    /// it rides up with them as the panel opens. Each pane has an empty bottom accessory of the bar's height with AppKit's hard
+    /// scroll edge, as Xcode's editor bar has: the ground, its line and what shows through are AppKit's, and the bar lies over
+    /// both. 27.2: one accessory across the columns gave its edge to one pane's scroll view only, about half the launches.
     private func buildStatusBar() {
         for item in [sourceItem!, pdfItem!] {
             let space = NSSplitViewItemAccessoryViewController()
@@ -258,6 +269,8 @@ final class WorkspaceController: DetentSplitViewController {
             space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
             // 27.2: AppKit's insets would pad it, and the pane's safe area with it.
             space.automaticallyAppliesContentInsets = false
+            // A bar of text and controls: even over its whole height, as under Xcode's editor bar.
+            space.preferredScrollEdgeEffectStyle = .hard
             item.addBottomAlignedAccessoryViewController(space)
         }
         let bar = NSHostingView(rootView: StatusBar(project: project).environment(app))
@@ -265,15 +278,9 @@ final class WorkspaceController: DetentSplitViewController {
         // Not the toolbar's inset the columns take for its last section (`buildArea`).
         bar.safeAreaRegions = []
         bar.translatesAutoresizingMaskIntoConstraints = false
-        // As Xcode's editor bar, its own ground and line across both panes to the window's edge: AppKit's edges under it
-        // differ by pane (PDFKit's takes no style, 27.2), and the accessories stop short of a hidden inspector's divider.
-        let ground = BarGround()
-        ground.translatesAutoresizingMaskIntoConstraints = false
-        columns.view.addSubview(ground)
         columns.view.addSubview(bar)
         NSLayoutConstraint.activate(bar.pinned(to: columns.view, edges: [.leading, .trailing, .bottom])
-            + ground.pinned(to: bar, edges: [.leading, .trailing, .bottom])
-            + [bar.heightAnchor.constraint(equalToConstant: BarMetrics.height), ground.height])
+            + [bar.heightAnchor.constraint(equalToConstant: BarMetrics.height)])
     }
 
     private func buildInspector() {

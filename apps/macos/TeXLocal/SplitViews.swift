@@ -59,8 +59,8 @@ class DetentSplitViewController: NSSplitViewController {
     var fixed: (_ divider: Int) -> Bool = { _ in false }
     /// As a divider's drag starts, and as it ends.
     var dragging: (Bool) -> Void = { _ in }
-    /// Where a divider takes drags, from where AppKit would have it.
-    var grip: (_ divider: Int, _ rect: NSRect) -> NSRect = { $1 }
+    /// Where a divider also takes drags, over the panes' own views: the split hit-tests it before them.
+    var grip: (_ divider: Int) -> NSRect = { _ in .zero }
 
     init(splitView: DraggedSplitView = DraggedSplitView()) {
         super.init(nibName: nil, bundle: nil)
@@ -93,8 +93,12 @@ class DetentSplitViewController: NSSplitViewController {
     override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
                             forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
         fixed(dividerIndex) ? .zero
-            : grip(dividerIndex, super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect,
-                                                 ofDividerAt: dividerIndex))
+            : super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect, ofDividerAt: dividerIndex)
+    }
+
+    override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
+        let rect = super.splitView(splitView, additionalEffectiveRectOfDividerAt: dividerIndex)
+        return grip(dividerIndex).isEmpty ? rect : grip(dividerIndex)
     }
 }
 
@@ -138,32 +142,6 @@ final class ColumnsSplitView: DraggedSplitView {
     }
 
     var openingPosition: CGFloat { ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded() }
-}
-
-/// The status bar's ground, as Xcode's editor bar: the text's background, with a separator's device pixel along its top, a
-/// row over the bar, where AppKit's edge would draw its line and the File Outline header's is.
-final class BarGround: NSView {
-    private(set) lazy var height = heightAnchor.constraint(equalToConstant: Self.height(NSScreen.main?.backingScaleFactor))
-
-    private static func height(_ scale: CGFloat?) -> CGFloat { BarMetrics.height + 1 / (scale ?? 2) }
-
-    override var isFlipped: Bool { true }
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.untintedTextBackground.setFill()
-        bounds.fill()
-        NSColor.separatorColor.setFill()
-        NSRect(x: 0, y: 0, width: bounds.width, height: 1 / (window?.backingScaleFactor ?? 2)).fill(using: .sourceOver)
-    }
-
-    override func viewDidChangeBackingProperties() {
-        super.viewDidChangeBackingProperties()
-        guard let window else { return }
-        height.constant = Self.height(window.backingScaleFactor)
-        needsDisplay = true
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 extension NSView {

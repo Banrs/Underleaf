@@ -214,6 +214,21 @@ struct SourceEditorTests {
         #expect(text.textContainer?.size.width == text.frame.width - 2 * text.textContainerInset.width)
     }
 
+    /// 27.2: until a scroll prepares content, TextKit's content view can end at the scroll view's insets, which left the lines
+    /// under the status bar undrawn after a launch or a resize. Once laid out, the source has prepared all that shows.
+    @Test func theShownTextIsPreparedBeforeAnyScroll() async throws {
+        let window = inWindow()
+        // The bar's accessory gives the pane its safe area, which the scroll view takes as its insets.
+        try #require(window.contentView).additionalSafeAreaInsets.bottom = BarMetrics.height
+        window.orderFrontUnseen()
+        open(String(repeating: "A line of text.\n", count: 200), caret: 0)
+        window.setContentSize(NSSize(width: 700, height: 450))
+        editor.scrollView.frame = try #require(window.contentView).bounds
+        try await waitUntil { text.preparedContentRect.contains(text.visibleRect) } state: {
+            "prepared \(text.preparedContentRect), shown \(text.visibleRect)"
+        }
+    }
+
     @Test func aFileShownAgainIsWhereItWasLeft() throws {
         inWindow()
         let long = (1...2000).map { "Line \($0)" }.joined(separator: "\n")

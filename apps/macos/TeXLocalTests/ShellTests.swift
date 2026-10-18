@@ -144,6 +144,22 @@ struct ShellTests {
 
     /// Aa opens Notes' popover; its overflow form is a menu of the styles and the class's levels by name, as the menu
     /// bar's Section Level, while the popover numbers them as the class does ("1.1" for a subsection).
+    /// As Xcode's debug area, the build panel is dragged open, resized and dragged shut from the status bar's line: the area's
+    /// split takes a press there before the bar does, with the panel shut and open.
+    @Test func theStatusBarsLineTakesThePanelsDrag() async throws {
+        let (window, workspace) = try await workspace()
+        defer { workspace.close(); window.close() }
+        let area = try #require(workspace.view.descendants(of: NSSplitView.self).first { $0.autosaveName == "Area" })
+        let outside = try #require(area.superview)
+        func pressed() -> NSView? {
+            area.hitTest(outside.convert(NSPoint(x: 400, y: area.arrangedSubviews[0].frame.maxY - BarMetrics.height), from: area))
+        }
+        #expect(pressed() === area)
+        workspace.project.panel.shown = true
+        try await waitUntil { area.arrangedSubviews[0].frame.maxY < area.bounds.height - ColumnMetrics.panelMinimum }
+        #expect(pressed() === area)
+    }
+
     @Test func formatIsAPopoverWithAMenuForm() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
