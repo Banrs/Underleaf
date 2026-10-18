@@ -11,6 +11,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
+use super::actor::Newline;
 use super::engine::Fut;
 use super::watch::Change;
 use super::{Document, Engine, Msg, Sessions, Timings};
@@ -601,6 +602,26 @@ async fn a_document_edited_since_the_build_shows_no_marks_when_it_opens_again() 
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_edit_heard_of_after_its_build_began_is_in_it() {
+    let mut rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    // Typed after Compile was asked for, before the session took the request.
+    let args = json!({ "session": rig.session, "auto": false });
+    let compile = rig.sessions.send("session_compile", &args);
+    doc.edit(5, 0, "!");
+    compile.await.unwrap();
+    assert_eq!(rig.disk("main.tex"), "Hello!");
+    rig.state().await;
+    rig.fake.finish_build(built(true, vec![issue(1, "a")]));
+    wait(1).await;
+    let events = rig.events().await;
+    let finished = events.iter().find(|e| e["type"] == "build_finished");
+    assert_eq!(finished.unwrap()["outdated"], false);
+    let issues = events.iter().rfind(|e| e["type"] == "issues");
+    assert_eq!(issues.unwrap()["lines"][0]["line"], 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_failed_build_announces_and_an_automatic_one_only_when_the_errors_change() {
     let mut rig = Rig::new(false).await;
     rig.ok("compile", json!({ "auto": true })).await;
@@ -751,6 +772,70 @@ async fn a_new_file_changes_the_tree_and_a_changed_unopened_file_is_told_of() {
     assert_eq!(changed[0]["paths"], json!(["refs.bib"]));
 }
 
+#[test]
+fn a_file_ends_its_lines_as_its_first_line_break_does() {
+    assert_eq!(Newline::of("a\r\nb\nc"), Newline::CrLf);
+    assert_eq!(Newline::of("a\rb"), Newline::Cr);
+    assert_eq!(Newline::of("a\nb\r\n"), Newline::Lf);
+    assert_eq!(Newline::of("a"), Newline::Lf);
+    assert_eq!(Newline::CrLf.written("a\nb\r\nc\rd"), "a\r\nb\r\nc\r\nd");
+    assert_eq!(Newline::Cr.written("a\nb"), "a\rb");
+    assert_eq!(Newline::Lf.written("a\r\nb"), "a\nb");
+    assert!(matches!(
+        Newline::Lf.written("a\nb"),
+        std::borrow::Cow::Borrowed(_)
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_document_holds_line_feeds_and_saves_the_files_own_line_ends() {
+    let mut rig = Rig::new(false).await;
+    fs::write(rig.root.join("main.tex"), "a\r\nb\r\n").unwrap();
+    let doc = rig.open("main.tex").await;
+    assert_eq!(doc.snapshot().0, "a\nb\n");
+    // A paste with its own line end.
+    doc.edit(4, 0, "c\r\nd");
+    wait(800).await;
+    assert_eq!(rig.disk("main.tex"), "a\r\nb\r\nc\r\nd");
+    // Another app changing only the line ends changes no text, and the next save keeps its.
+    rig.write_elsewhere("main.tex", "a\nb\nc\nd");
+    wait(300).await;
+    assert!(rig.of_type("document_reload").await.is_empty());
+    doc.edit(8, 0, "!");
+    wait(800).await;
+    assert_eq!(rig.disk("main.tex"), "a\nb\nc\nd!");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_file_that_isnt_utf8_neither_opens_nor_is_written_over() {
+    let mut rig = Rig::new(false).await;
+    let latin = b"caf\xe9";
+    fs::write(rig.root.join("latin.tex"), latin).unwrap();
+    let refused = rig
+        .call("open_document", json!({ "path": "latin.tex" }))
+        .await;
+    assert_eq!(refused.unwrap_err().status, 400);
+    // Open, it closes once another app makes it so.
+    rig.open("main.tex").await;
+    fs::write(rig.root.join("main.tex"), latin).unwrap();
+    rig.changed("main.tex", false);
+    wait(300).await;
+    let closed = rig.of_type("document_closed").await;
+    assert_eq!(closed[0]["reason"], "gone");
+    // With unsaved edits it is asked about, and Revert closes it.
+    fs::write(rig.root.join("main.tex"), "Hello").unwrap();
+    let doc = rig.open("main.tex").await;
+    doc.edit(5, 0, " mine");
+    fs::write(rig.root.join("main.tex"), latin).unwrap();
+    rig.changed("main.tex", false);
+    wait(300).await;
+    assert_eq!(rig.of_type("conflict").await[0]["kind"], "changed");
+    wait(800).await;
+    rig.resolve("revert").await;
+    assert!(rig.sessions.document(rig.session, "main.tex").is_none());
+    assert_eq!(fs::read(rig.root.join("main.tex")).unwrap(), latin);
+}
+
 // MARK: - Files
 
 #[tokio::test(start_paused = true)]
@@ -776,6 +861,11 @@ async fn the_main_file_cant_go_to_the_trash_and_nothing_puts_a_trashed_file_back
     let rig = Rig::new(false).await;
     let refused = rig
         .call("prepare_delete", json!({ "path": "main.tex" }))
+        .await;
+    assert_eq!(refused.unwrap_err().status, 409);
+    // Named as the volume names it, in any case.
+    let refused = rig
+        .call("prepare_delete", json!({ "path": "MAIN.tex" }))
         .await;
     assert_eq!(refused.unwrap_err().status, 409);
     fs::write(rig.root.join("old.tex"), "old").unwrap();
@@ -857,6 +947,27 @@ async fn keys_go_to_texpresso_as_made_and_a_refused_one_sends_the_whole_text() {
     doc.edit(7, 0, ".");
     rig.state().await;
     assert_eq!(rig.fake.edits.lock().unwrap().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_file_changed_on_disk_goes_to_texpresso_unless_too_large_to_send() {
+    let rig = Rig::new(false).await;
+    for file in ["ch.tex", "big.tex"] {
+        fs::write(rig.root.join(file), "x").unwrap();
+        rig.changed(file, true);
+    }
+    wait(300).await;
+    live(&rig).await;
+    let big = "x".repeat(crate::texpresso::MAX_FILE + 1);
+    for (file, text) in [("ch.tex", "chapter"), ("big.tex", big.as_str())] {
+        rig.write_elsewhere(file, text);
+    }
+    wait(1000).await;
+    rig.state().await;
+    let updates = rig.fake.updates.lock().unwrap().clone();
+    assert_eq!(updates, [("ch.tex".to_string(), "chapter".to_string())]);
+    // TeXpresso reads it from the disk itself.
+    assert!(rig.fake.called("live_rescan") > 0);
 }
 
 #[tokio::test(start_paused = true)]

@@ -24,7 +24,7 @@ use crate::atomic::Stamp;
 use crate::compile::{Tree, find_tool, program_at};
 use crate::{BUILD_DIR, CoreError, SETTINGS_FILE, lock, paths, settings, tail};
 
-const MAX_FILE: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_FILE: usize = 8 * 1024 * 1024;
 const MAX_FILES: usize = 256;
 const MAX_TOTAL: usize = 64 * 1024 * 1024;
 const MAX_OUTPUT: usize = 128 * 1024;

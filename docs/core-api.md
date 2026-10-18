@@ -74,7 +74,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
 | `session_state` | | `{documents: [document state], build, live, autoCompile}` | A snapshot, for a host coming up; a document's state also has `dirty` and `conflict` (`changed`/`gone`/null), the build's `queued`. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
-| `session_open_document` | `path` | null | Text files only. The editor reads the text from the document's source (`tl_source_text`) once it shows it, so it has whatever reloads came meanwhile. |
+| `session_open_document` | `path` | null | Text files only, in UTF-8: another encoding is refused (400), as a save would change its bytes. The editor reads the text from the document's source (`tl_source_text`) once it shows it, so it has whatever reloads came meanwhile. |
 | `session_close_document` | `path` | `{closed}` | Saves first, asking about conflicts; `closed: false` if that failed. |
 | `session_composing` | `path`, `composing` | null | Marked (IME) text: the autosave waits until it ends. |
 | `session_save` | `reporting?` (true) | `{saved}` | Every unsaved document. A failed write is the error; a conflict is asked (`conflict`) and `saved` is false. A build follows when it wrote and automatic builds are on. |
@@ -88,7 +88,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter. |
 | `session_rename` | `from`, `to` | `{from, to, mainFile, ui}` or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `get_ui_state`) with the entry's paths moved; a host sends its `set_ui_state` first. |
 | `session_set_settings` | `patch` | settings | As `set_settings`; a new main file stops the build, restarts the preview, builds. |
-| `session_prepare_delete` | `path` | `{ready}` | Saves, refuses the main file (409), then holds saves under `path` until `session_deleted`. The host trashes the item itself (undoable). |
+| `session_prepare_delete` | `path` | `{ready}` | Saves, refuses the main file (409, its path compared as the volume compares names), then holds saves under `path` until `session_deleted`. Not `ready`: a save is asked about, and the host deletes nothing. The host trashes the item itself (undoable). |
 | `session_deleted` | `path`, `trashed?` (true) | null | Closes documents under `path` and reads the tree again. |
 | `session_live_start` | `window?` | live state | The user's Start: takes the project over from another window. `window: true` leaves the document to TeXpresso's own window (the Settings fallback): no `live_document` or `live_page` comes, and TeXpresso is told no view or caret. The session's own restarts keep the choice. |
 | `session_live_stop` | | live state | |
@@ -118,7 +118,7 @@ Syntax commands (`tl_syntax_call`), JSON in, JSON out:
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `drop_text` | `path`, `kind`, `into?` ("tex") | `{"insert": "\\includegraphics{path}"}`, `{"open": true}` or `null` | What a project file dropped on the editor does. `path` is the file's project path and `kind` its `file_tree` kind (`image`, `pdf`, `tex`, …; a folder has none: `null`, nothing happens). `into` is the kind of the file dropped on. An `image` or `pdf` dropped on a `tex` file inserts `\includegraphics{path}` at the caret; any other file opens (`{"open": true}`). The path is written as given. |
+| `drop_text` | `path`, `kind`, `into?` ("tex") | `{"insert": "\\includegraphics{path}"}`, `{"open": true}` or `null` | What a project file dropped on the editor does. `path` is the file's project path and `kind` its `file_tree` kind (`image`, `pdf`, `tex`, …; a folder has none: `null`, nothing happens). `into` is the kind of the file dropped on. An `image` or `pdf` dropped on a `tex` file inserts `\includegraphics{path}` at the caret, unless TeX can't read the path as written (`%`, `#`, `\` or unpaired braces); any other file opens (`{"open": true}`). The path is written as given. |
 | `heading_styles` | `class?`, `pointSize?` (10), `hasChapters?` | as `session_analyze`'s `headingStyles` | The levels without a project: no `class` gives every level, numbered as a book's with `hasChapters`. |
 | `legible` | `color`, `background`, `fill`, `increaseContrast?`, `ratio?` | `[r, g, b, a]` | The colour raised to a contrast `ratio` against the background and the current line. Without `ratio`: 4.5, or 7 with `increaseContrast`. With `ratio`, `increaseContrast` is ignored; a PDF find border under Increase Contrast wants `ratio: 3.0`. |
 
@@ -167,7 +167,9 @@ editor's thread.
 ## The rules the session keeps
 
 - **Text**: a document's text is the session's. The host sends each edit once
-  (`tl_source_edit`); saves, TeXpresso and highlighting read the same text.
+  (`tl_source_edit`); saves, TeXpresso and highlighting read the same text. It ends every line
+  with `\n` alone; a save writes the file's own line end (its first line break's) for every
+  line break, a pasted one included.
 - **Autosave** 700 ms after the last edit, of every document with unsaved edits; then an
   automatic build. Nothing is saved while a conflict is open or after Cancel (`held`) until a
   save is asked for (which asks again), while a reload is pending, or under a path being deleted.
@@ -177,7 +179,9 @@ editor's thread.
 - **Watcher**: changes are taken together for 250 ms. The tree is read again when a listed
   folder gained, lost or renamed an entry (a save renaming over a listed file doesn't count;
   hidden files and `build/` never do). An open document's file changed: reloaded if it has no
-  unsaved edits, else asked about once. Gone: closed, or asked about if it has unsaved edits.
+  unsaved edits, else asked about once; a change to its line ends alone is no change. Gone, or
+  no longer UTF-8: closed, or asked about if it has unsaved edits (Revert then closes one that
+  isn't UTF-8).
 - **Builds**: one at a time; a request during one queues one more (manual wins over
   automatic); Stop drops it. Automatic builds wait while live preview runs or is restarting,
   and run only once `status` has found TeX (both hosts ask it as they start).
@@ -261,6 +265,13 @@ Every change a host follows since commit d6bee12, in the order made.
   `set_texpresso_dir` answer `latexmkVersion`.
 - `session_rename` also answers `ui`, the ui state with the entry's paths moved, so a host
   need not call `get_ui_state` after it (it sends any `set_ui_state` before the rename).
+- A document ends its lines with `\n` alone, whatever the file's are, and saves keep the file's.
+  Windows: the editor no longer normalises a CRLF file itself (`SourceView.Show`'s `Reload`, which
+  marked the normalised text saved).
+- `session_open_document` refuses a file that isn't UTF-8 (400); it opened with U+FFFD in place of
+  the bytes, which the first save wrote over the file.
+- `drop_text` opens a file whose path TeX can't read in `\includegraphics` (`%`, `#`, `\`,
+  unpaired braces) rather than inserting it.
 
 ## From the Mac app's Swift
 

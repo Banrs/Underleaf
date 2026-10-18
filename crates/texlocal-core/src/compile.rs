@@ -442,6 +442,12 @@ impl RunningEntry {
 type Registry = HashMap<PathBuf, RunningEntry>;
 type ProjectGate = tokio::sync::Mutex<()>;
 
+/// A project's place in the registry: its root resolved, so a Stop finds the build
+/// however either spells the root (a session resolves it; a library path may not be).
+fn key(root: &Path) -> PathBuf {
+    dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
+}
+
 /// One compile per project, supersede-kill semantics, and kill-all on quit.
 #[derive(Default)]
 pub struct CompileManager {
@@ -454,7 +460,7 @@ pub struct CompileManager {
 /// loses latexmk's record, before the gate is released.
 struct Registration<'a> {
     manager: &'a CompileManager,
-    root: &'a Path,
+    key: PathBuf,
     gate: Arc<ProjectGate>,
     request: Arc<()>,
     gate_guard: Option<OwnedMutexGuard<()>>,
@@ -470,7 +476,7 @@ struct Registration<'a> {
 impl Registration<'_> {
     /// Stop marked it, a newer request replaced it, or kill_all cleared it.
     fn stopped(&self, running: &Registry) -> bool {
-        let entry = &running[self.root];
+        let entry = &running[&self.key];
         entry.stopped || !entry.latest_is(&self.request)
     }
 }
@@ -478,7 +484,7 @@ impl Registration<'_> {
 impl Drop for Registration<'_> {
     fn drop(&mut self) {
         let mut running = lock(&self.manager.running);
-        let entry = running.get_mut(self.root).expect("registered project");
+        let entry = running.get_mut(&self.key).expect("registered project");
         if entry.latest_is(&self.request) {
             entry.latest = None;
         }
@@ -500,7 +506,7 @@ impl Drop for Registration<'_> {
         self.gate_guard = None;
         // Only the registry and this registration still own the idle gate.
         if Arc::strong_count(&self.gate) == 2 {
-            running.remove(self.root);
+            running.remove(&self.key);
         }
     }
 }
@@ -584,7 +590,10 @@ impl CompileManager {
     /// doesn't start it.
     pub fn stop(&self, root: &Path) -> bool {
         let mut running = lock(&self.running);
-        let Some(entry) = running.get_mut(root).filter(|entry| entry.latest.is_some()) else {
+        let Some(entry) = running
+            .get_mut(&key(root))
+            .filter(|entry| entry.latest.is_some())
+        else {
             return false;
         };
         entry.stopped = true;
@@ -601,12 +610,7 @@ impl CompileManager {
     /// folder that isn't there is already clean.
     pub async fn clean(&self, root: &Path) -> Result<(), CoreError> {
         self.stop(root);
-        let gate = Arc::clone(
-            &lock(&self.running)
-                .entry(root.to_path_buf())
-                .or_default()
-                .gate,
-        );
+        let gate = Arc::clone(&lock(&self.running).entry(key(root)).or_default().gate);
         let _idle = gate.lock().await;
         match std::fs::remove_dir_all(root.join(BUILD_DIR)) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
@@ -614,9 +618,10 @@ impl CompileManager {
         }
     }
 
-    fn register<'a>(&'a self, root: &'a Path) -> Registration<'a> {
+    fn register(&self, root: &Path) -> Registration<'_> {
+        let key = key(root);
         let mut running = lock(&self.running);
-        let entry = running.entry(root.to_path_buf()).or_default();
+        let entry = running.entry(key.clone()).or_default();
         let request = Arc::new(());
         entry.latest = Some(Arc::clone(&request));
         entry.stopped = false;
@@ -627,7 +632,7 @@ impl CompileManager {
         }
         Registration {
             manager: self,
-            root,
+            key,
             gate: Arc::clone(&entry.gate),
             request,
             gate_guard: None,
@@ -738,11 +743,12 @@ impl CompileManager {
             if registration.stopped(&running) {
                 return Ok(Self::stopped_early(request_started));
             }
-            running.get_mut(root).unwrap().record = Some(run.output("fdb_latexmk"));
+            let entry = running.get_mut(&registration.key).unwrap();
+            entry.record = Some(run.output("fdb_latexmk"));
             base_command("latexmk", Some(root), &path_env)
                 .and_then(|mut cmd| Tree::spawn(cmd.args(&args)))
                 .inspect(|(_, tree)| {
-                    running.get_mut(root).unwrap().tree = Some(tree.clone());
+                    running.get_mut(&registration.key).unwrap().tree = Some(tree.clone());
                 })
         };
         // Kept only if the run ends ok: a cancelled one drops it with the gate.
@@ -758,7 +764,8 @@ impl CompileManager {
                 let mut running = lock(&self.running);
                 // Reaped: a Stop from here on must not signal its group, whose
                 // number may already be another process's.
-                running.get_mut(root).expect("registered project").tree = None;
+                let entry = running.get_mut(&registration.key);
+                entry.expect("registered project").tree = None;
                 let end = if registration.stopped(&running) {
                     End::Stopped
                 } else if timed_out {
@@ -768,7 +775,8 @@ impl CompileManager {
                 };
                 if end == End::Exited(0) {
                     // A good run's record is kept, whatever stops it from here.
-                    running.get_mut(root).expect("registered project").record = None;
+                    let entry = running.get_mut(&registration.key);
+                    entry.expect("registered project").record = None;
                 }
                 (end, output)
             }
@@ -876,6 +884,17 @@ mod tests {
     use crate::tail;
     use std::ffi::OsString;
     use std::path::Path;
+
+    #[test]
+    fn a_build_stops_by_its_root_however_spelt() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("P")).unwrap();
+        let root = dunce::canonicalize(dir.path().join("P")).unwrap();
+        let manager = super::CompileManager::default();
+        let _build = manager.register(&root);
+        // Through a parent's link, as the temporary folder is on macOS, or with a step back.
+        assert!(manager.stop(&dir.path().join("P/../P")));
+    }
 
     #[tokio::test]
     async fn cleaning_removes_the_build_folder_and_a_missing_one_is_clean() {

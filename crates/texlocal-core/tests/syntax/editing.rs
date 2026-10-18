@@ -91,6 +91,13 @@ fn a_line_becomes_a_heading() {
         let expected = (6, units(&line), text, 6 + cursor);
         assert_eq!(found, expected, "{line} as {command}");
     }
+    // A CRLF line keeps its CR.
+    let doc = SourceDocument::new("Intro\r\nbelow");
+    let Insertion { edit, .. } = doc.set_heading(0, "section");
+    assert_eq!(
+        (edit.start, edit.length, edit.text.as_str()),
+        (0, 5, "\\section{Intro}")
+    );
 }
 
 #[test]

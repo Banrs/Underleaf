@@ -324,6 +324,11 @@ fn zip_export_excludes_build_and_settings_and_never_archives_itself() {
     create_file(&root, "sub/.texlocal.json", false).unwrap();
     fs::create_dir_all(root.join("build")).unwrap();
     fs::write(root.join("build").join("main.pdf"), "fake").unwrap();
+    // The settings file spelt in another case, as the volume still finds it; and Git's history.
+    let _ = fs::remove_file(root.join(".texlocal.json"));
+    fs::write(root.join(".TeXLocal.json"), "{}").unwrap();
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main").unwrap();
     let dest = data.path().join("out.zip");
     export_zip(&root, &dest).unwrap();
     // A nested settings file is the author's.

@@ -65,6 +65,8 @@ pub struct Service {
     /// not folded: ids are the names list_projects read from the folder, so
     /// every client spells a project as its folder is stored.
     edits: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Held to read, change and write the app's settings, so two changes keep both.
+    app_writes: Mutex<()>,
     /// Whether the last look for TeX (`status`) found it: sessions build by themselves only
     /// then. None found before the first look.
     pub(crate) tex_found: AtomicBool,
@@ -77,6 +79,7 @@ impl Service {
             compile: CompileManager::default(),
             texpresso: crate::texpresso::Manager::default(),
             edits: Mutex::default(),
+            app_writes: Mutex::default(),
             tex_found: AtomicBool::new(false),
         }
     }
@@ -187,6 +190,7 @@ impl Service {
 
     /// Writes one folder, keeping the other settings.
     fn set_app_folder(&self, key: &str, dir: Option<&Path>) -> Result<(), CoreError> {
+        let _writing = lock(&self.app_writes);
         let mut settings = self.app_settings();
         settings.insert(key.into(), json!(dir.map(|d| d.to_string_lossy())));
         atomic::write(

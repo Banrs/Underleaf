@@ -59,11 +59,13 @@ impl Export<'_> {
                 continue;
             }
             let name = file_name.to_string_lossy();
-            // Finder's folder metadata is not project content.
-            if name.eq_ignore_ascii_case(".DS_Store") {
+            // Finder's folder metadata and Git's history are not project content.
+            if name.eq_ignore_ascii_case(".DS_Store") || name.eq_ignore_ascii_case(".git") {
                 continue;
             }
-            if prefix.is_empty() && (name.eq_ignore_ascii_case(BUILD_DIR) || name == SETTINGS_FILE)
+            if prefix.is_empty()
+                && (name.eq_ignore_ascii_case(BUILD_DIR)
+                    || name.eq_ignore_ascii_case(SETTINGS_FILE))
             {
                 continue;
             }

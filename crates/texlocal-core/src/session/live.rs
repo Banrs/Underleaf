@@ -14,7 +14,7 @@ use super::Msg;
 use super::actor::{Actor, Later};
 use crate::CoreError;
 use crate::projects::file_kind;
-use crate::texpresso::{Caret, Events, FileBuffer, Pane, Status};
+use crate::texpresso::{Caret, Events, FileBuffer, MAX_FILE, Pane, Status};
 
 const DIDNT_START: &str =
     "TeXpresso didn’t start. Check its location in Settings and the log below.";
@@ -463,7 +463,8 @@ impl Actor {
     }
 
     /// Files changed on disk reach TeXpresso. A save of an open document isn't news to it:
-    /// a rescan as it typesets the edit stalled it (TeXpresso e8df770).
+    /// a rescan as it typesets the edit stalled it (TeXpresso e8df770). One too large to
+    /// send it reads from the disk itself at the rescan.
     pub fn refresh_live_disk(&mut self) {
         let mut others = false;
         for path in std::mem::take(&mut self.live.disk_paths) {
@@ -474,8 +475,12 @@ impl Actor {
                 continue;
             }
             others = true;
+            let file = self.root.join(&path);
+            let sendable =
+                || std::fs::metadata(&file).is_ok_and(|meta| meta.len() <= MAX_FILE as u64);
             if is_text_file(&path)
-                && let Ok(bytes) = std::fs::read(self.root.join(&path))
+                && sendable()
+                && let Ok(bytes) = std::fs::read(&file)
             {
                 self.live.synced.remove(&path);
                 let text = crate::lossy_string(bytes);

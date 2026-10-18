@@ -410,9 +410,8 @@ file, each with its column and length in UTF-16 units.
 7. **App settings store**: validated shared preferences (font, size 10–28, theme, typing switches,
    app theme, autocompile, spell check, template, engine, with their defaults) instead of a
    per-host store, so `Prefs`' editor defaults and clamp leave C#.
-8. **Line endings**: `session_open_document` reports `eol`; saves keep it. RichEdit holds one CR
-   per paragraph, so the app shows LF-normalised text. Wanted too: LF text with a recorded `eol`,
-   and pasted text normalised by the core.
+8. (Landed: line endings. A document holds `\n` alone and a save writes the file's own, a pasted
+   line end included.)
 9. **Project deletion**: `prepare_delete_project {id}` stopping builds and previews and refusing
    an open session, before the host recycles the folder.
 10. **SyncTeX highlight box**: `synctex_forward` answers the final top-left box (24 pt minimum

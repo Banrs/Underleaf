@@ -210,18 +210,16 @@ public sealed partial class SourceView : UserControl
 
     /// Completes once the whole text is in. RichEdit drops the text's colours if it gets them before
     /// its template is applied and it has been laid out, so the first file waits for both, then reads
-    /// the document's text, with any reload that came meanwhile.
+    /// the document's text, with any reload that came meanwhile. The core's documents end every line
+    /// with \n alone, as RichEdit's paragraphs read back, and save the file's own line ends.
     public async Task Show(string path, Source src)
     {
         await ready.Task;
         source?.Dispose();
         (Path, source) = (path, src);
-        var content = src.Text;
-        var lf = content.Replace("\r\n", "\n").Replace('\r', '\n');
-        if (lf != content) src.Reload(lf);
         SetIssues([]);
         scroller?.ChangeView(0, 0, null, true);
-        await SetText(lf);
+        await SetText(src.Text);
     }
 
     public void Rename(string path) => Path = path;

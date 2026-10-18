@@ -562,18 +562,22 @@ impl SourceDocument {
         let units = &self.text.units[..];
         let len = units.len() as i64;
         // Each selection's whole lines; one ending at a line's start doesn't take that line.
-        let mut runs: Vec<(i64, i64)> = Vec::new();
-        for selection in selections {
-            let (start, length) = span(*selection);
-            let run = line_range(units, start.min(len), length.min(len - start.min(len)));
-            match runs.last_mut() {
-                Some(previous) if run.0 <= previous.1 => {
-                    *previous = (previous.0.min(run.0), previous.1.max(run.1));
-                }
-                _ => runs.push(run),
+        // In the text's order, whatever the selections', so runs that meet are one.
+        let mut runs: Vec<(i64, i64)> = selections
+            .iter()
+            .map(|selection| {
+                let (start, length) = span(*selection);
+                line_range(units, start.min(len), length.min(len - start.min(len)))
+            })
+            .collect();
+        runs.sort_unstable();
+        runs.dedup_by(|run, kept| {
+            let meets = run.0 <= kept.1;
+            if meets {
+                kept.1 = kept.1.max(run.1);
             }
-        }
-        runs.sort_by_key(|run| run.0);
+            meets
+        });
         let mut edits = Vec::new();
         let mut shifts = Vec::new();
         for &(start, end) in &runs {

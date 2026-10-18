@@ -1,6 +1,7 @@
 //! One project session's task: its documents, saves, builds and the file
 //! watcher's news, handled one message at a time, so no two of them race.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,6 +29,8 @@ use crate::syntax::{TextRange, headings};
 use crate::{CoreError, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
+const NOT_UTF8: &str =
+    "It isn't UTF-8 text, and saving it here would change it. Convert it to UTF-8 to edit it.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -52,7 +55,9 @@ pub(crate) struct Doc {
     saved: u64,
     /// Save Anyway: written though the text is the disk's.
     force: bool,
+    /// The disk's text as the document would hold it; None while the file isn't UTF-8.
     disk_text: Option<String>,
+    newline: Newline,
     /// While a stat still gives it, a change told of is the session's own save, or none.
     disk_stamp: Option<Stamp>,
     /// Asked about once; until answered, no save writes over the other app's change
@@ -89,6 +94,9 @@ struct Build {
     auto: bool,
     /// The edit count when it began.
     built: u64,
+    /// The version of each open document it builds (by id): an edit the session hears of
+    /// after it began is in it all the same when the document had it by then.
+    versions: HashMap<u64, u64>,
     /// Its saves went through: else what it queued would build stale text.
     saved: bool,
 }
@@ -484,7 +492,8 @@ impl Actor {
         if self.docs.contains_key(path) {
             return Ok(());
         }
-        let (text, stamp) = read_disk(&paths::safe_path(&self.root, path)?)?;
+        let (disk, stamp) = read_disk(&paths::safe_path(&self.root, path)?)?;
+        let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(NOT_UTF8))?;
         let id = self.next_doc;
         self.next_doc += 1;
         let symbols = Arc::clone(&self.symbols);
@@ -495,6 +504,7 @@ impl Actor {
             saved: 0,
             force: false,
             disk_text: Some(text),
+            newline,
             disk_stamp: stamp,
             conflict: None,
             asking: None,
@@ -542,7 +552,18 @@ impl Actor {
         let Some(path) = self.by_id.get(&doc).cloned() else {
             return;
         };
+        // Made before the build running saved it, though heard of only now.
+        let built = self.build.compiling
+            && self.build.built == self.edits
+            && self
+                .build
+                .versions
+                .get(&doc)
+                .is_some_and(|&had| version <= had);
         self.edits += 1;
+        if built {
+            self.build.built = self.edits;
+        }
         self.last_edits.insert(path.clone(), self.edits);
         self.clear_issues(&path);
         if self.has_pdf() && !self.outdated {
@@ -642,11 +663,12 @@ impl Actor {
             return Ok(false);
         }
         let (text, version) = doc.doc.snapshot();
-        let written = self.service.write_text(&self.project, path, &text);
+        let file = doc.newline.written(&text);
+        let written = self.service.write_text(&self.project, path, &file);
         let doc = self.docs.get_mut(path).expect("the document is open");
         let result = match written {
             Ok(stamp) => {
-                (doc.disk_text, doc.disk_stamp) = (Some(text), Some(stamp));
+                (doc.disk_text, doc.disk_stamp) = (Some(lf(text)), Some(stamp));
                 (doc.saved, doc.force, doc.held, doc.error) = (version, false, false, None);
                 self.symbols_at = Some(Instant::now() + self.t.symbols);
                 self.emit("saved", json!({ "path": path }));
@@ -743,8 +765,10 @@ impl Actor {
         match answer {
             "save" => Ok(json!({ "saved": self.save_edits(true)? })),
             "revert" => {
-                if let Some(text) = disk_text {
-                    self.request_reload(path, &text, Reload::Revert);
+                match disk_text {
+                    Some(text) => self.request_reload(path, &text, Reload::Revert),
+                    // The file isn't UTF-8 now, so the editor can't show it.
+                    None => self.close_doc(path, "gone"),
                 }
                 Ok(Value::Null)
             }
@@ -807,10 +831,22 @@ impl Actor {
         if exact.is_some() && fs::metadata(&abs).ok().map(|meta| Stamp::of(&meta)) == exact {
             return;
         }
-        let Ok((text, stamp)) = read_disk(&abs) else {
+        let Ok((disk, stamp)) = read_disk(&abs) else {
             return;
         };
         doc.disk_stamp = stamp;
+        let Some((text, newline)) = disk else {
+            // No longer UTF-8: the editor can't show it, nor save over it unasked.
+            doc.disk_text = None;
+            if !doc.dirty() {
+                return self.close_doc(path, "gone");
+            }
+            if doc.conflict.replace(Conflict::Changed).is_none() {
+                self.ask(path, Conflict::Changed);
+            }
+            return;
+        };
+        doc.newline = newline;
         if doc.disk_text.as_deref() == Some(text.as_str()) {
             return;
         }
@@ -903,6 +939,11 @@ impl Actor {
         let saved = self.flush_all(!auto);
         self.build.saved = saved.as_ref().is_ok_and(|saved| *saved);
         self.build.built = self.edits;
+        self.build.versions = self
+            .docs
+            .values()
+            .map(|doc| (doc.doc.id(), doc.saved))
+            .collect();
         if self.build.saved && !(auto && self.live_previewing()) {
             let (build, tx) = (self.engine.compile(self.root.clone()), self.tx.clone());
             tokio::spawn(async move {
@@ -1037,8 +1078,8 @@ impl Actor {
                 Some(doc) => Some(doc.snapshot().0),
                 None => paths::safe_path(&root, &main)
                     .ok()
-                    .and_then(|path| read_disk(&path).ok())
-                    .map(|(text, _)| text),
+                    .and_then(|path| fs::read(path).ok())
+                    .map(crate::lossy_string),
             };
             let class = main_text.as_deref().and_then(headings::document_class);
             let answer = out(ProjectAnalysis::new(&analysis, class.as_ref()));
@@ -1206,7 +1247,7 @@ impl Actor {
         if !self.flush_all(true)? || !self.dirty_paths().is_empty() {
             return Ok(json!({ "ready": false }));
         }
-        if within(&settings::read_settings(&self.root).main_file, path) {
+        if paths::after_entry(&settings::read_settings(&self.root).main_file, path).is_some() {
             return Err(CoreError::conflict(MAIN_FILE_TRASH));
         }
         self.deleting = Some(path.to_owned());
@@ -1254,9 +1295,59 @@ fn issue_lines(
         .collect()
 }
 
-/// A file's text, and its stamp from before the read: a write meanwhile gives
-/// another stamp at the next look, which reads it again.
-fn read_disk(path: &Path) -> Result<(String, Option<Stamp>), CoreError> {
+/// A file's text as a document holds it and how the file ends its lines, None for a
+/// file that isn't UTF-8, whose bytes a save would change; and its stamp from before
+/// the read: a write meanwhile gives another stamp at the next look, which reads it again.
+fn read_disk(path: &Path) -> Result<(Option<DiskText>, Option<Stamp>), CoreError> {
     let stamp = fs::metadata(path).ok().map(|meta| Stamp::of(&meta));
-    Ok((crate::lossy_string(fs::read(path)?), stamp))
+    let disk = String::from_utf8(fs::read(path)?).ok().map(|text| {
+        let newline = Newline::of(&text);
+        (lf(text), newline)
+    });
+    Ok((disk, stamp))
+}
+
+type DiskText = (String, Newline);
+
+/// How a file ends its lines, as its first line break does. A document holds `\n`
+/// alone, as an editor that keeps one character per line break needs, and a save
+/// writes the file's own ending for every line break.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Newline {
+    Lf,
+    CrLf,
+    Cr,
+}
+
+impl Newline {
+    pub fn of(text: &str) -> Self {
+        let Some(at) = text.find(['\r', '\n']) else {
+            return Self::Lf;
+        };
+        match &text.as_bytes()[at..] {
+            [b'\r', b'\n', ..] => Self::CrLf,
+            [b'\r', ..] => Self::Cr,
+            _ => Self::Lf,
+        }
+    }
+
+    /// `text` as the file has it: every line break, however a paste ended it, this one.
+    pub fn written(self, text: &str) -> Cow<'_, str> {
+        let ending = match self {
+            Self::Lf if !text.contains('\r') => return Cow::Borrowed(text),
+            Self::Lf => return Cow::Owned(lf(text.to_owned())),
+            Self::CrLf => "\r\n",
+            Self::Cr => "\r",
+        };
+        Cow::Owned(lf(text.to_owned()).replace('\n', ending))
+    }
+}
+
+/// `text` with every line break `\n` alone, as a document holds it.
+pub(crate) fn lf(text: String) -> String {
+    if text.contains('\r') {
+        text.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        text
+    }
 }

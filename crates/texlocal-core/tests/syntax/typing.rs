@@ -451,6 +451,12 @@ fn several_selections_move_together() {
     assert_eq!(e.string(), "2\n3\n1\n5\n4\n6");
     assert_eq!(e.selections, [range(0, 4), range(6, 1)]);
     assert_eq!(e.doc.text(), e.string());
+    // Given last first, they move as the same lines.
+    let mut e = Editor::open("1\n2\n3\n4\n5\n6", Some(0));
+    e.set_selections(vec![range(8, 1), range(2, 4)]);
+    e.change(|doc, s| doc.move_lines(s, true).unwrap());
+    assert_eq!(e.string(), "2\n3\n1\n5\n4\n6");
+    assert_eq!(e.doc.text(), e.string());
 }
 
 #[test]

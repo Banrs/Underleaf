@@ -107,6 +107,8 @@ impl SourceDocument {
         let text = &self.text;
         let index = text.line_index(caret.min(text.len()));
         let (line, start) = (text.line(index), text.lines[index]);
+        // A CRLF line's CR is its end, not its text.
+        let line = line.strip_suffix(&[0x0d]).unwrap_or(line);
         let length = line.len() as u32;
         let line = String::from_utf16_lossy(line);
         let line = line.as_str();
