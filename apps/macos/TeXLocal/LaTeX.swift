@@ -4,16 +4,13 @@ import Foundation
 /// which every frontend's menus are made from.
 nonisolated struct Menus: Decodable, Sendable {
     nonisolated struct Templates: Decodable, Sendable {
-        let math: [Template]
-        let insert: [Template]
-        let list: [Template]
+        let math, insert, list: [Template]
         /// Cross-references, citations and links.
         let references: [Template]
     }
 
     nonisolated struct Symbol: Decodable, Sendable {
-        let glyph: String
-        let command: String
+        let glyph, command: String
     }
 
     nonisolated struct SymbolGroup: Decodable, Sendable {
@@ -54,9 +51,7 @@ nonisolated struct HeadingStyle: Equatable, Decodable, Sendable {
         var shape: Shape
     }
 
-    nonisolated enum Shape: String, Decodable, Sendable {
-        case upright, italic, smallCaps
-    }
+    nonisolated enum Shape: String, Decodable, Sendable { case upright, italic, smallCaps }
 
     let title: String
     /// Without its backslash; empty for Normal Text.

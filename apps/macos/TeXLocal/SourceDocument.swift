@@ -52,17 +52,9 @@ final class SourceDocument {
         text.withUTF8 { tl_source_reload(raw, $0.baseAddress, $0.count) }
     }
 
-    func line(at offset: Int) -> Int {
-        Int(tl_source_line_at(raw, UInt32(offset)))
-    }
-
-    func lineStart(_ line: Int) -> Int {
-        Int(tl_source_line_start(raw, UInt32(max(1, line))))
-    }
-
-    var lineCount: Int {
-        Int(tl_source_line_count(raw))
-    }
+    func line(at offset: Int) -> Int { Int(tl_source_line_at(raw, UInt32(offset))) }
+    func lineStart(_ line: Int) -> Int { Int(tl_source_line_start(raw, UInt32(max(1, line)))) }
+    var lineCount: Int { Int(tl_source_line_count(raw)) }
 
     func highlights(in range: NSRange) -> [(range: NSRange, kind: HighlightKind)] {
         var count = 0
@@ -76,41 +68,21 @@ final class SourceDocument {
     /// What spelling or Writing Tools leave alone where `range` is: code, and what isn't prose, each from its start,
     /// however far before the range.
     func codeRanges(in range: NSRange, for checker: Checker) -> [NSRange] {
-        let ranges: [SourceRange] = call("code_ranges", ["selection": Self.json(range), "for": checker.rawValue]) ?? []
+        let ranges: [SourceRange] = call("code_ranges", ["selection": range.json, "for": checker.rawValue]) ?? []
         return ranges.map(\.range)
     }
 
-    nonisolated enum Checker: String {
-        case spelling, writingTools
-    }
+    nonisolated enum Checker: String { case spelling, writingTools }
 
-    func completions(caret: Int, explicit: Bool) -> Completions? {
-        call("completions", ["caret": caret, "explicit": explicit])
-    }
-
-    func toggleComment(_ selections: [NSRange]) -> [TextEdit] {
-        call("toggle_comment", ["selections": selections.map(Self.json)]) ?? []
-    }
-
-    func setHeading(caret: Int, command: String) -> Insertion? {
-        call("set_heading", ["caret": caret, "command": command])
-    }
-
-    func insertBlock(_ id: String, replacing selection: NSRange) -> Insertion? {
-        call("insert_block", ["id": id, "selection": Self.json(selection)])
-    }
-
+    func completions(caret: Int, explicit: Bool) -> Completions? { call("completions", ["caret": caret, "explicit": explicit]) }
+    func toggleComment(_ selections: [NSRange]) -> [TextEdit] { call("toggle_comment", ["selections": selections.map(\.json)]) ?? [] }
+    func setHeading(caret: Int, command: String) -> Insertion? { call("set_heading", ["caret": caret, "command": command]) }
+    func insertBlock(_ id: String, replacing selection: NSRange) -> Insertion? { call("insert_block", ["id": id, "selection": selection.json]) }
     func insertSymbol(_ command: String, replacing selection: NSRange) -> Insertion? {
-        call("insert_symbol", ["command": command, "selection": Self.json(selection)])
+        call("insert_symbol", ["command": command, "selection": selection.json])
     }
-
-    func textStyles(_ selection: NSRange) -> TextStyles {
-        call("text_styles", ["selection": Self.json(selection)]) ?? TextStyles()
-    }
-
-    func mathAt(caret: Int) -> MathPreview? {
-        call("math_at", ["caret": caret])
-    }
+    func textStyles(_ selection: NSRange) -> TextStyles { call("text_styles", ["selection": selection.json]) ?? TextStyles() }
+    func mathAt(caret: Int) -> MathPreview? { call("math_at", ["caret": caret]) }
 
     /// By its UTF-8 bytes, so a U+0000 in it stays.
     var text: String {
@@ -124,21 +96,17 @@ final class SourceDocument {
 
     /// A character typed in place of the selection.
     func type(_ text: String, replacing selection: NSRange, autoPair: Bool) -> Keystroke {
-        call("type", ["selection": Self.json(selection), "text": text, "autoPair": autoPair]) ?? Keystroke()
+        call("type", ["selection": selection.json, "text": text, "autoPair": autoPair]) ?? Keystroke()
     }
 
     func deleteBackward(_ selection: NSRange, autoPair: Bool) -> Keystroke {
-        call("delete_backward", ["selection": Self.json(selection), "autoPair": autoPair]) ?? Keystroke()
+        call("delete_backward", ["selection": selection.json, "autoPair": autoPair]) ?? Keystroke()
     }
 
-    func insertNewline(_ selection: NSRange) -> Keystroke {
-        call("insert_newline", ["selection": Self.json(selection)]) ?? Keystroke()
-    }
+    func insertNewline(_ selection: NSRange) -> Keystroke { call("insert_newline", ["selection": selection.json]) ?? Keystroke() }
 
     /// Where the bracket at `at` is matched.
-    func partner(of at: Int) -> Int? {
-        call("partner", ["at": at])
-    }
+    func partner(of at: Int) -> Int? { call("partner", ["at": at]) }
 
     /// A completion's or block's fields, put in at `at`: the first field's range, to select.
     func startSnippet(_ fields: [SnippetField], at: Int) -> NSRange? {
@@ -148,45 +116,40 @@ final class SourceDocument {
     }
 
     /// Whether there was a snippet to end.
-    func endSnippet() -> Bool {
-        call("end_snippet", [:]) ?? false
-    }
+    func endSnippet() -> Bool { call("end_snippet", [:]) ?? false }
 
     /// Tab (1) or Shift-Tab (-1): a snippet's next field to select, or the lines' indentation.
-    func tab(_ selections: [NSRange], step: Int) -> Tabbing {
-        call("tab", ["selections": selections.map(Self.json), "step": step]) ?? Tabbing()
-    }
+    func tab(_ selections: [NSRange], step: Int) -> Tabbing { call("tab", ["selections": selections.map(\.json), "step": step]) ?? Tabbing() }
 
     /// Nil when a line has nowhere to go.
-    func moveLines(_ selections: [NSRange], up: Bool) -> Change? {
-        call("move_lines", ["selections": selections.map(Self.json), "up": up])
-    }
+    func moveLines(_ selections: [NSRange], up: Bool) -> Change? { call("move_lines", ["selections": selections.map(\.json), "up": up]) }
 
     func toggle(_ style: TextStyle, _ selections: [NSRange]) -> Change? {
-        call("toggle_style", ["selections": selections.map(Self.json), "style": style.rawValue])
+        call("toggle_style", ["selections": selections.map(\.json), "style": style.rawValue])
     }
 
     /// The selection round a template's "$0".
     func wrap(_ selections: [NSRange], in template: String) -> Change? {
-        call("wrap", ["selections": selections.map(Self.json), "template": template])
+        call("wrap", ["selections": selections.map(\.json), "template": template])
     }
 
     func map(_ selections: [NSRange], through edits: [TextEdit]) -> [NSRange] {
         let edits = edits.map { ["start": $0.start, "length": $0.length, "text": $0.text] as [String: Any] }
-        let mapped: [SourceRange]? = call("map_selections", ["edits": edits, "selections": selections.map(Self.json)])
+        let mapped: [SourceRange]? = call("map_selections", ["edits": edits, "selections": selections.map(\.json)])
         return mapped?.map(\.range) ?? selections
     }
 
     // MARK: calls
 
-    private static func json(_ range: NSRange) -> [String: Int] {
-        ["start": range.location, "length": range.length]
-    }
-
     private func call<T: Decodable>(_ command: String, _ args: [String: Any]) -> T? {
         let json = try? JSONSerialization.data(withJSONObject: args)
         return Syntax.decode(command, json.flatMap { tl_source_call(raw, command, String(decoding: $0, as: UTF8.self)) })
     }
+}
+
+private extension NSRange {
+    /// A range as the core's commands take it.
+    var json: [String: Int] { ["start": location, "length": length] }
 }
 
 /// The core's syntax module's commands that need no document (`tl_syntax_call`): the themes' colours, the menus'
@@ -221,8 +184,7 @@ nonisolated enum Syntax {
     /// Maths (`math_svg`) or a symbol (`glyph_svg`) as the core draws it, or why it can't.
     nonisolated struct Drawing: Decodable, Sendable {
         var svg: String?
-        var width: Double?
-        var height: Double?
+        var width, height: Double?
         var error: String?
     }
 }
@@ -232,15 +194,13 @@ enum HighlightKind: UInt32, CaseIterable {
 }
 
 nonisolated struct SourceRange: Decodable, Equatable {
-    var start: Int
-    var length: Int
+    var start, length: Int
 
     var range: NSRange { NSRange(location: start, length: length) }
 }
 
 nonisolated struct TextEdit: Decodable, Equatable {
-    var start: Int
-    var length: Int
+    var start, length: Int
     var text: String
 
     init(_ range: NSRange, _ text: String) {
@@ -259,9 +219,7 @@ nonisolated struct Change: Decodable {
 /// What a key does instead of what the view would: an edit, typed as a key types, and where the selection goes.
 /// Neither: the view handles the key itself.
 nonisolated struct Keystroke: Decodable {
-    nonisolated enum Completing: String, Decodable {
-        case keep, offer, close
-    }
+    nonisolated enum Completing: String, Decodable { case keep, offer, close }
 
     var edit: TextEdit?
     /// Once the edit is in, if not where the edit leaves it.
@@ -277,14 +235,10 @@ nonisolated struct Tabbing: Decodable {
     var edits: [TextEdit] = []
 }
 
-nonisolated enum TextStyle: String {
-    case bold, italic, underline
-}
+nonisolated enum TextStyle: String { case bold, italic, underline }
 
 nonisolated struct TextStyles: Decodable, Equatable {
-    var bold: [TextEdit]?
-    var italic: [TextEdit]?
-    var underline: [TextEdit]?
+    var bold, italic, underline: [TextEdit]?
 }
 
 nonisolated struct Insertion: Decodable {
@@ -300,8 +254,7 @@ nonisolated struct Completions: Decodable {
 }
 
 nonisolated struct Completion: Decodable {
-    var label: String
-    var text: String
+    var label, text: String
     var fields: [SnippetField]
 }
 
@@ -312,7 +265,5 @@ nonisolated struct MathPreview: Decodable, Equatable {
 }
 
 nonisolated struct SnippetField: Decodable {
-    var start: Int
-    var length: Int
-    var index: Int
+    var start, length, index: Int
 }
