@@ -29,7 +29,7 @@ struct PDFPane: View {
             } description: {
                 Text("Install it to compile; TeXLocal finds it afterwards.")
             } actions: {
-                GetMacTeXButton().buttonStyle(.borderedProminent)
+                OpenLinkButton.getMacTeX.buttonStyle(.borderedProminent)
             }
         } else if project.compiling {
             ContentUnavailableView("Compiling…", systemImage: "richtext.page")

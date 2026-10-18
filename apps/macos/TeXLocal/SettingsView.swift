@@ -27,6 +27,19 @@ extension View {
     }
 }
 
+// A setting with a line under its title saying what it does, as Settings and the inspector show them.
+extension Toggle where Label == TupleView<(Text, Text)> {
+    init(_ title: LocalizedStringKey, detail: LocalizedStringKey, isOn: Binding<Bool>) {
+        self.init(isOn: isOn) { Text(title); Text(detail) }
+    }
+}
+
+extension Picker where Label == TupleView<(Text, Text)> {
+    init(_ title: LocalizedStringKey, detail: LocalizedStringKey, selection: Binding<SelectionValue>, @ViewBuilder content: () -> Content) {
+        self.init(selection: selection, content: content) { Text(title); Text(detail) }
+    }
+}
+
 private struct GeneralSettings: View {
     @AppStorage(DefaultsKey.newProjectTemplate) private var template = ProjectTemplate.standard
     @AppStorage(DefaultsKey.newProjectEngine) private var engine = TeXEngine.pdflatex
@@ -49,11 +62,8 @@ private struct GeneralSettings: View {
                 Picker("Template", selection: $template) {
                     ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) }
                 }
-                Picker(selection: $engine) {
+                Picker("Engine", detail: "Each project can change its engine in the inspector.", selection: $engine) {
                     ForEach(TeXEngine.allCases) { Text($0.title).tag($0) }
-                } label: {
-                    Text("Engine")
-                    Text("Each project can change its engine in the inspector.")
                 }
             }
         }
@@ -83,23 +93,15 @@ private struct EditorSettings: View {
                     if !fontName.isEmpty, !Self.families.contains(fontName) { Text(fontName).tag(fontName) }
                 }
                 Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
-                Picker(selection: $syntaxTheme) {
+                Picker("Theme", detail: "Colours for commands, math and comments. All follow light and dark appearance.",
+                       selection: $syntaxTheme) {
                     ForEach(SyntaxTheme.all) { Text($0.title).tag($0) }
-                } label: {
-                    Text("Theme")
-                    Text("Colours for commands, math and comments. All follow light and dark appearance.")
                 }
                 Toggle("Show Line Numbers", isOn: $lineNumbers)
             }
             Section("Typing") {
-                Toggle(isOn: $autoPair) {
-                    Text("Close Brackets Automatically")
-                    Text("Typing (, [ or { adds its partner.")
-                }
-                Toggle(isOn: $autoComplete) {
-                    Text("Suggest Completions While Typing")
-                    Text("When off, press Option-Escape to see suggestions.")
-                }
+                Toggle("Close Brackets Automatically", detail: "Typing (, [ or { adds its partner.", isOn: $autoPair)
+                Toggle("Suggest Completions While Typing", detail: "When off, press Option-Escape to see suggestions.", isOn: $autoComplete)
             }
         }
     }
@@ -120,14 +122,8 @@ private struct CompilingSettings: View {
         @Bindable var app = app
         Form {
             Section {
-                Toggle(isOn: $app.autoCompile) {
-                    Text("Compile Automatically")
-                    Text("Compiles shortly after you stop typing.")
-                }
-                Toggle(isOn: $syncAfterCompile) {
-                    Text("Scroll to Cursor After Compiling")
-                    Text("Scrolls the PDF to the line you are editing.")
-                }
+                Toggle("Compile Automatically", detail: "Compiles shortly after you stop typing.", isOn: $app.autoCompile)
+                Toggle("Scroll to Cursor After Compiling", detail: "Scrolls the PDF to the line you are editing.", isOn: $syncAfterCompile)
             }
             Section {
                 ProgramFolder(program: .tex)
@@ -144,11 +140,10 @@ private struct PDFSettings: View {
 
     var body: some View {
         Form {
-            Picker(selection: $paper) {
+            Picker("Page Colour",
+                   detail: "Dark inverts the PDF’s pages for reading at night, keeping their colours’ hues. Printing and saving are unaffected.",
+                   selection: $paper) {
                 ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
-            } label: {
-                Text("Page Colour")
-                Text("Dark inverts the PDF’s pages for reading at night, keeping their colours’ hues. Printing and saving are unaffected.")
             }
         }
     }
@@ -167,17 +162,14 @@ private struct LivePreviewSettings: View {
                             Text("Installed")
                         } else {
                             Text("Not Installed")
-                            TeXpressoGuideButton()
+                            OpenLinkButton.texpressoGuide
                         }
                     }
                 }
                 // An app opened from the Finder sees no shell PATH.
                 ProgramFolder(program: .texpresso)
-                Picker(selection: $viewer) {
+                Picker("Show Live Preview In", detail: "Takes effect the next time Live Preview starts.", selection: $viewer) {
                     ForEach(LiveViewer.allCases) { Text($0.title).tag($0) }
-                } label: {
-                    Text("Show Live Preview In")
-                    Text("Takes effect the next time Live Preview starts.")
                 }
             } footer: {
                 Text("Live Preview is experimental. It uses TeXpresso to update the PDF as you type, without compiling.")
@@ -230,7 +222,7 @@ private struct ProgramFolder: View {
             let chosen = program.chosen(in: tex)
             LabeledContent {
                 HStack {
-                    if program == .tex, !tex.available { GetMacTeXButton() }
+                    if program == .tex, !tex.available { OpenLinkButton.getMacTeX }
                     if app.settingTeX { ProgressView().controlSize(.small).accessibilityLabel("Checking \(program.title)") }
                     Picker(program.title, selection: Binding<Choice>(get: { chosen == nil ? .automatic : .chosen }, set: {
                         switch $0 {

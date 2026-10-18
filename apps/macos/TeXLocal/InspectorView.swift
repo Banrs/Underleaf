@@ -25,16 +25,13 @@ struct InspectorView: View {
             }
             .disabled(project.settings == nil)
             Section {
-                Toggle(isOn: Binding(get: { project.texpresso.active },
-                                     set: { $0 ? project.startTeXpresso() : project.stopTeXpresso() })) {
-                    Text("Live Preview")
-                    Text(app.canPreviewLive ? "Experimental. Updates the preview as you type, without compiling."
-                         : "Live Preview needs TeXpresso. Install it, or choose its folder in Settings.")
-                }
+                Toggle("Live Preview", detail: app.canPreviewLive ? "Experimental. Updates the preview as you type, without compiling."
+                           : "Live Preview needs TeXpresso. Install it, or choose its folder in Settings.",
+                       isOn: Binding(get: { project.texpresso.active }, set: { $0 ? project.startTeXpresso() : project.stopTeXpresso() }))
                 .disabled(!app.canPreviewLive || !project.initialLoadComplete || project.texpresso.phase == .stopping)
                 if !app.canPreviewLive {
                     HStack {
-                        TeXpressoGuideButton()
+                        OpenLinkButton.texpressoGuide
                         Spacer()
                         SettingsLink { Text("Open Settings…") }
                     }
@@ -44,11 +41,9 @@ struct InspectorView: View {
         .formStyle(.grouped)
     }
 
-    private func toggle(_ title: String, _ detail: String, _ change: @escaping (Bool) -> SettingsChange, _ isOn: Bool) -> some View {
-        Toggle(isOn: Binding(get: { isOn }, set: { on in Task.immediate { await project.patchSettings(change(on)) } })) {
-            Text(title)
-            Text(detail)
-        }
+    private func toggle(_ title: LocalizedStringKey, _ detail: LocalizedStringKey, _ change: @escaping (Bool) -> SettingsChange,
+                        _ isOn: Bool) -> some View {
+        Toggle(title, detail: detail, isOn: Binding(get: { isOn }, set: { on in Task.immediate { await project.patchSettings(change(on)) } }))
     }
 }
 

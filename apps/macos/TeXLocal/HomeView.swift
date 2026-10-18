@@ -156,7 +156,7 @@ struct HomeView: View {
                   systemImage: "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
             Spacer()
-            GetMacTeXButton()
+            OpenLinkButton.getMacTeX
             Button("Dismiss", systemImage: "xmark") { dismissedTeXTip = true }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
@@ -210,16 +210,15 @@ private struct ProjectLabel<Name: View>: View {
     }
 }
 
-struct GetMacTeXButton: View {
+/// A button that opens a page in the browser.
+struct OpenLinkButton: View {
+    static var getMacTeX: Self { Self(title: "Get MacTeX", url: Links.mactex) }
+    static var texpressoGuide: Self { Self(title: "Install Guide", url: Links.texpressoGuide) }
+    let title: LocalizedStringKey
+    let url: URL
     @Environment(\.openURL) private var openURL
 
-    var body: some View { Button("Get MacTeX") { openURL(Links.mactex) } }
-}
-
-struct TeXpressoGuideButton: View {
-    @Environment(\.openURL) private var openURL
-
-    var body: some View { Button("Install Guide") { openURL(Links.texpressoGuide) } }
+    var body: some View { Button(title) { openURL(url) } }
 }
 
 enum ProjectTemplate: String, CaseIterable, Identifiable {
