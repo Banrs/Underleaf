@@ -285,9 +285,7 @@ final class PDFController: NSObject {
     }
 
     /// A run of Live Preview ended, or another began: nothing of the last run's counts in the next.
-    func endLiveRun() {
-        (liveMissed, liveShown) = (false, false)
-    }
+    func endLiveRun() { (liveMissed, liveShown) = (false, false) }
 
     /// Drawn over PDFKit's page; PDFKit's document takes it once the typing pauses, so a key costs one drawing. A page
     /// past the document showing goes: the next document has it.
@@ -414,11 +412,8 @@ final class PDFController: NSObject {
     /// The source's word is looked for in the text of the pages round SyncTeX's boxes (`synctex_match`) and selected; where
     /// it isn't found once, SyncTeX's box flashes.
     func reveal(_ loc: ForwardLoc, from source: SyncSource? = nil) {
-        guard view.hasShownArea else {
-            pendingReveal = (loc, source)
-            return
-        }
-        pendingReveal = nil
+        pendingReveal = view.hasShownArea ? nil : (loc, source)
+        guard pendingReveal == nil else { return }
         revealing?.cancel()
         guard let document = view.document, let located = document.page(ifAt: Int(loc.page) - 1) else { return }
         guard let source else { return showFound(loc, on: located, hit: nil) }
@@ -517,9 +512,7 @@ extension PDFPage {
 
 extension PDFDocument {
     /// `page(at:)` raises outside the document.
-    func page(ifAt index: Int) -> PDFPage? {
-        (0..<pageCount).contains(index) ? page(at: index) : nil
-    }
+    func page(ifAt index: Int) -> PDFPage? { (0..<pageCount).contains(index) ? page(at: index) : nil }
 
     /// PDFKit answers NSNotFound for a page that has left the document.
     func number(of page: PDFPage) -> Int? {

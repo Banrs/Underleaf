@@ -8,9 +8,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     static let maxMatches = 5000
     static let debounce: Duration = .milliseconds(200)
 
-    static func normalize(_ query: String) -> String {
-        String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery))
-    }
+    static func normalize(_ query: String) -> String { String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery)) }
 
     static func count(_ index: Int, of total: Int, limited: Bool, for query: String) -> String {
         if query.isEmpty { return "" }
@@ -34,9 +32,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
 
     private let view: SyncPDFView
     /// Whether the bar is open.
-    var isOpen = false {
-        didSet { if isOpen, !oldValue, text.isEmpty { text = Self.shared ?? "" } }
-    }
+    var isOpen = false { didSet { if isOpen, !oldValue, text.isEmpty { text = Self.shared ?? "" } } }
     /// What the field holds, which can be ahead of `query`.
     var text = ""
     let field = FieldHandle()
@@ -50,9 +46,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     @ObservationIgnored private var running: (document: PDFDocument, query: String, keepingPlace: Bool, found: [PDFSelection])?
     @ObservationIgnored private var startFrom: (anchor: Position, step: Int)?
 
-    init(view: SyncPDFView) {
-        self.view = view
-    }
+    init(view: SyncPDFView) { self.view = view }
 
     isolated deinit {
         running?.document.delegate = nil
@@ -82,9 +76,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     }
 
     /// The bar's text again over the document as it now is, where the pane left off.
-    func rerun() {
-        if isOpen { search(text, keepingPlace: true) }
-    }
+    func rerun() { if isOpen { search(text, keepingPlace: true) } }
 
     /// Cancelling posts its end at once, unheard as `running` is cleared first.
     func cancel() {

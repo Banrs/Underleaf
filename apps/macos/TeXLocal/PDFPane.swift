@@ -70,9 +70,7 @@ struct PDFRepresentable: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: SyncPDFView, context: Context) {
-        view.darkPaper = darkPaper
-    }
+    func updateNSView(_ view: SyncPDFView, context: Context) { view.darkPaper = darkPaper }
 }
 
 struct PDFFindBar: View {
@@ -130,9 +128,7 @@ struct ScaleMenuItems: View {
         }
     }
 
-    private func choice(_ inUse: Bool, apply: @escaping () -> Void) -> Binding<Bool> {
-        Binding(get: { inUse }, set: { _ in apply() })
-    }
+    private func choice(_ inUse: Bool, apply: @escaping () -> Void) -> Binding<Bool> { Binding(get: { inUse }, set: { _ in apply() }) }
 }
 
 enum PDFPaper: String, CaseIterable, Identifiable {

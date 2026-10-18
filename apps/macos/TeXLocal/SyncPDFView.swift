@@ -27,9 +27,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     /// The knob is over the paper, whatever the window's appearance.
-    func matchScroller() {
-        pageScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark
-    }
+    func matchScroller() { pageScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark }
 
     override func zoomIn(_ sender: Any?) {
         autoScales = false
@@ -196,13 +194,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         overlay.addSubview(mark)
     }
 
-    override func mouseMoved(with event: NSEvent) {
-        if !updateDividerCursor(with: event) { super.mouseMoved(with: event) }
-    }
-
-    override func cursorUpdate(with event: NSEvent) {
-        if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) }
-    }
+    override func mouseMoved(with event: NSEvent) { if !updateDividerCursor(with: event) { super.mouseMoved(with: event) } }
+    override func cursorUpdate(with event: NSEvent) { if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) } }
 
     /// SwiftUI reassigns unchanged frames during layout; PDFView would refit the width and undo a pinch in its own
     /// `setFrame:` while auto-scaling is active (27.2).
@@ -268,9 +261,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         return menu
     }
 
-    @objc private func goToSource(_ item: NSMenuItem) {
-        if let location = item.representedObject as? CGPoint { goToSource(at: location) }
-    }
+    @objc private func goToSource(_ item: NSMenuItem) { if let location = item.representedObject as? CGPoint { goToSource(at: location) } }
 
     private func goToSource(at location: CGPoint) {
         guard let page = page(for: location, nearest: true), let number = document?.number(of: page) else { return }
@@ -294,9 +285,7 @@ private class FilterView: NSView {
 
 private final class PageOverlay: FilterView {
     /// Over the page and everything PDFKit lays under its tiles, so no white is left at its edges.
-    var dark = false {
-        didSet { layer?.backgroundFilters = dark ? SyncPDFView.invert : nil }
-    }
+    var dark = false { didSet { layer?.backgroundFilters = dark ? SyncPDFView.invert : nil } }
 }
 
 private final class MarkView: NSView {
