@@ -6,7 +6,7 @@ import Testing
 /// One at a time: AppKit keeps toolbars of one identifier alike, so a tool taken out of one window's is out of every window's.
 @Suite(.serialized)
 struct ShellTests {
-    /// A workspace with the PDF shown, in a window at its widest.
+    /// A workspace with the PDF shown, in a window 1,300 points wide.
     private func workspace(sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
         let app = AppModel()
         app.sidebarVisible = sidebar
