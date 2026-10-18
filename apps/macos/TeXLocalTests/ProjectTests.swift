@@ -4,6 +4,20 @@ import PDFKit
 import Testing
 @testable import TeXLocal
 
+private extension UndoManager {
+    /// What `work` registers, as one action.
+    func grouping(_ work: () async -> Void) async {
+        beginUndoGrouping()
+        await work()
+        endUndoGrouping()
+    }
+}
+
+private extension SourceTextView.FileDrop {
+    var inserted: String? { if case .insert(let text) = self { text } else { nil } }
+    var opens: (() -> Void)? { if case .open(let open) = self { open } else { nil } }
+}
+
 /// Projects are removed, not trashed: `delete_project` trashes through Finder, which a headless test host can't drive.
 struct CoreTests {
     init() throws {
@@ -92,6 +106,14 @@ final class ProjectFlowTests {
 
     private func exists(_ url: URL) -> Bool { files.fileExists(atPath: url.path(percentEncoded: false)) }
 
+    /// The window's, which groups only where a test says.
+    private func windowUndo() -> UndoManager {
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        app.undoSource = { undo }
+        return undo
+    }
+
     /// The session builds on a thread of its own, and says when it's done.
     private func built(_ project: ProjectModel, auto: Bool = false) async throws {
         let before = project.finishedBuilds
@@ -117,10 +139,8 @@ final class ProjectFlowTests {
         let opens = [Task { await app.open(first.id) }, Task { await app.open(second.id) }]
         for open in opens { await open.value }
 
-        #expect(app.project?.id == second.id)
         let document = app.project?.editor.document
-        #expect(document?.path == second.mainFile)
-        #expect(document?.text == "second")
+        #expect(app.project?.id == second.id && document?.path == second.mainFile && document?.text == "second")
         await app.close()
     }
 
@@ -148,15 +168,10 @@ final class ProjectFlowTests {
     }
 
     @Test func aFileRenameCanBeUndoneAndRedone() async throws {
-        let undo = UndoManager()
-        undo.groupsByEvent = false
-        app.undoSource = { undo }
-        let (project, folder) = try await opened()
+        let undo = windowUndo(), (project, folder) = try await opened()
         #expect(project.settings?.mainFile == "main.tex")
 
-        undo.beginUndoGrouping()
-        await project.renameEntry("main.tex", to: "thesis.tex")
-        undo.endUndoGrouping()
+        await undo.grouping { await project.renameEntry("main.tex", to: "thesis.tex") }
         #expect(exists(folder.appending(path: "thesis.tex")) && project.settings?.mainFile == "thesis.tex")
         #expect(undo.undoActionName == "Rename")
 
@@ -175,10 +190,9 @@ final class ProjectFlowTests {
         #expect(project.editor.perform(.bold))
         let expected = project.editor.textView.string
         let zip = try await project.exportZip()
-        let unzip = Process()
+        let unzip = Process(), pipe = Pipe()
         unzip.executableURL = URL(filePath: "/usr/bin/unzip")
         unzip.arguments = ["-p", zip.path(percentEncoded: false), try #require(project.openPath)]
-        let pipe = Pipe()
         unzip.standardOutput = pipe
         try unzip.run()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -305,9 +319,7 @@ final class ProjectFlowTests {
         let shown = project.pdf.shownVersion
         project.panel.tab = .issues
         try await built(project)
-        #expect(project.result?.ok == true && project.result?.pdfChanged == false)
-        #expect(project.pdf.shownVersion == shown)
-        #expect(project.panel.shown)
+        #expect(project.result?.ok == true && project.result?.pdfChanged == false && project.pdf.shownVersion == shown && project.panel.shown)
         await app.close()
     }
 
@@ -362,10 +374,7 @@ final class ProjectFlowTests {
         try "\\section{A}\nthree".write(to: folder.appending(path: "chapters/a.tex"), atomically: false, encoding: .utf8)
         await app.open(info.id)
         let project = try #require(app.project)
-        #expect(project.initialLoadComplete)
-        #expect(project.outline.count == 2)
-        #expect(project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
-        #expect(project.words == 6)
+        #expect(project.initialLoadComplete && project.outline.map(\.file) == ["main.tex", "chapters/a.tex"] && project.words == 6)
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
         #expect(project.headingCommand == "section")
@@ -425,16 +434,11 @@ final class ProjectFlowTests {
     }
 
     @Test func aClosedProjectsTrashCannotBeUndone() async throws {
-        let undo = UndoManager()
-        undo.groupsByEvent = false
-        app.undoSource = { undo }
-        let (project, folder) = try await opened()
+        let undo = windowUndo(), (project, folder) = try await opened()
         let notes = folder.appending(path: "notes.tex")
         try "notes".write(to: notes, atomically: false, encoding: .utf8)
 
-        undo.beginUndoGrouping()
-        await project.deleteEntry("notes.tex")
-        undo.endUndoGrouping()
+        await undo.grouping { await project.deleteEntry("notes.tex") }
         #expect(!exists(notes) && undo.undoActionName == "Move to Trash")
         // Back from the Trash, which is left as it was; the Redo is the item's too.
         undo.undo()
@@ -445,16 +449,11 @@ final class ProjectFlowTests {
     }
 
     @Test func aRenameOnHomeCannotBeUndoneUnderAProject() async throws {
-        let undo = UndoManager()
-        undo.groupsByEvent = false
-        app.undoSource = { undo }
-        let info = try await project().info
+        let undo = windowUndo(), info = try await project().info
         let renamed = "Renamed \(UUID().uuidString.prefix(8))"
         folders.append(Core.libraryFolder.appending(path: renamed))
 
-        undo.beginUndoGrouping()
-        await app.rename(info, to: renamed)
-        undo.endUndoGrouping()
+        await undo.grouping { await app.rename(info, to: renamed) }
         #expect(undo.canUndo && undo.undoActionName == "Rename")
         await app.open(renamed)
         #expect(app.project?.id == renamed && !undo.canUndo)
@@ -463,22 +462,13 @@ final class ProjectFlowTests {
 
     @Test func aDroppedFileOpens() async throws {
         let (project, folder) = try await opened()
-        let notes = folder.appending(path: "notes.tex")
+        let notes = folder.appending(path: "notes.tex"), plot = folder.appending(path: "plot.png")
         try "notes".write(to: notes, atomically: false, encoding: .utf8)
-        try await waitUntil(timeout: .seconds(5)) { project.tree.nodes.flattened.contains { $0.path == "notes.tex" } }
-        let drop = project.editor.textView.fileDrop
-
-        let plot = folder.appending(path: "plot.png")
         try Data().write(to: plot)
-        try await waitUntil(timeout: .seconds(5)) { project.tree.nodes.flattened.contains { $0.path == "plot.png" } }
-        guard case .insert("\\includegraphics{plot.png}") = drop(plot) else {
-            Issue.record("An image dropped on LaTeX is a figure")
-            return
-        }
-        guard case .open(let openNotes) = drop(notes) else {
-            Issue.record("A text file dropped on the source opens")
-            return
-        }
+        try await waitUntil(timeout: .seconds(5)) { Set(project.tree.nodes.flattened.map(\.path)).isSuperset(of: ["notes.tex", "plot.png"]) }
+        let drop = project.editor.textView.fileDrop
+        #expect(drop(plot)?.inserted == "\\includegraphics{plot.png}", "An image dropped on LaTeX is a figure")
+        let openNotes = try #require(drop(notes)?.opens, "A text file dropped on the source opens")
         openNotes()
         try await waitUntil(timeout: .seconds(5)) { project.openPath == "notes.tex" }
         #expect(drop(files.temporaryDirectory.appending(path: "outside.tex")) == nil)
@@ -632,59 +622,58 @@ final class ProjectFlowTests {
 }
 
 @Suite(.timeLimit(.minutes(1)))
-struct UndoableTrashTests {
-    @Test func undoPutsATrashedItemBackAndRedoTrashesItAgain() async throws {
-        let files = FileManager.default
-        let url = files.temporaryDirectory.appending(path: "undo-\(UUID().uuidString.prefix(8)).tex")
-        try "text".write(to: url, atomically: false, encoding: .utf8)
-        let undo = UndoManager()
+final class UndoableTrashTests {
+    private let files = FileManager.default
+    private let url = FileManager.default.temporaryDirectory.appending(path: "undo-\(UUID().uuidString.prefix(8)).tex")
+    private let undo = UndoManager()
+    private var listed = 0
+
+    init() throws {
         undo.groupsByEvent = false
-        var listed = 0
-        // Not kept here: the undo manager's entries keep it, as in the app.
-        var item: UndoableTrash? = UndoableTrash(original: url, name: url.lastPathComponent, undoManager: undo,
-                                 trash: { item in (try? item.recycle()) != nil },
-                                 changed: { listed += 1 }, failed: { title, _ in Issue.record("\(title)") })
-        undo.beginUndoGrouping()
-        await item?.moveToTrash()
-        undo.endUndoGrouping()
-        item = nil
-        #expect(!files.fileExists(atPath: url.path) && undo.undoActionName == "Move to Trash")
+        try "text".write(to: url, atomically: false, encoding: .utf8)
+    }
+
+    isolated deinit {
+        try? files.removeItem(at: url)
+    }
+
+    private var exists: Bool { files.fileExists(atPath: url.path) }
+
+    /// Moved as one action by an item only the undo manager's entries keep, as in the app; `slowly` as the project's lane
+    /// can be behind a save.
+    private func trash(slowly: Bool = false) async {
+        let item = UndoableTrash(original: url, name: url.lastPathComponent, undoManager: undo, trash: { item in
+            if slowly { try? await Task.sleep(for: .milliseconds(200)) }
+            return (try? item.recycle()) != nil
+        }, changed: { [weak self] in self?.listed += 1 }, failed: { title, _ in Issue.record("\(title)") })
+        await undo.grouping { await item.moveToTrash() }
+    }
+
+    @Test func undoPutsATrashedItemBackAndRedoTrashesItAgain() async throws {
+        await trash()
+        #expect(!exists && undo.undoActionName == "Move to Trash")
 
         undo.undo()
-        try await waitUntil { files.fileExists(atPath: url.path) && listed == 1 }
+        try await waitUntil { exists && listed == 1 }
         #expect(try String(contentsOf: url, encoding: .utf8) == "text" && undo.canRedo && listed == 1)
 
         undo.redo()
-        try await waitUntil { !files.fileExists(atPath: url.path) && listed == 2 }
+        try await waitUntil { !exists && listed == 2 }
         #expect(undo.canUndo)
 
         undo.undo()
-        try await waitUntil { files.fileExists(atPath: url.path) }
-        try files.removeItem(at: url)
+        try await waitUntil { exists }
     }
 
     /// An Undo asked while a Redo is still on its way to the Trash waits for it, rather than finding nothing to put back (#36).
     @Test func anUndoDuringARedoWaitsForIt() async throws {
-        let files = FileManager.default
-        let url = files.temporaryDirectory.appending(path: "undo-\(UUID().uuidString.prefix(8)).tex")
-        try "text".write(to: url, atomically: false, encoding: .utf8)
-        let undo = UndoManager()
-        undo.groupsByEvent = false
-        var listed = 0
-        // Slow, as the project's lane can be behind a save.
-        let item = UndoableTrash(original: url, name: url.lastPathComponent, undoManager: undo,
-                                 trash: { item in try? await Task.sleep(for: .milliseconds(200)); return (try? item.recycle()) != nil },
-                                 changed: { listed += 1 }, failed: { title, _ in Issue.record("\(title)") })
-        undo.beginUndoGrouping()
-        await item.moveToTrash()
-        undo.endUndoGrouping()
+        await trash(slowly: true)
         undo.undo()
-        try await waitUntil { files.fileExists(atPath: url.path) && listed == 1 }
+        try await waitUntil { exists && listed == 1 }
 
         undo.redo()
         undo.undo()
         try await waitUntil { listed == 3 }
-        #expect(files.fileExists(atPath: url.path) && undo.canRedo && !undo.canUndo)
-        try files.removeItem(at: url)
+        #expect(exists && undo.canRedo && !undo.canUndo)
     }
 }
