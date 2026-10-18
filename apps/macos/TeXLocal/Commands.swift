@@ -15,6 +15,14 @@ enum MenuCommand: CaseIterable {
     /// ⌥⌘G is Go to Page, as in the Mac's PDF readers; Find in PDF… has none, as ⌘F finds in the PDF while it has the keyboard.
     var shortcut: KeyboardShortcut? { entry.shortcut }
 
+    /// Text commands on the source's selection, which the menu bar's follow the source's keyboard for (`isEnabledInMenuBar`).
+    var editsSelection: Bool {
+        switch self {
+        case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editMoveLineUp, .editMoveLineDown: true
+        default: false
+        }
+    }
+
     var symbol: String? {
         switch self {
         case .editBold: "bold"
@@ -106,6 +114,12 @@ extension AppModel {
         case .issueNext, .issuePrevious: project?.issues.contains { $0.file != nil } == true
         default: project != nil
         }
+    }
+
+    /// As Xcode's and Notes': with a field, the file list or the PDF focused, the menu bar's text commands are dim and their
+    /// shortcuts are the focused view's. The toolbar's still act on the source, which is theirs.
+    func isEnabledInMenuBar(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
+        isEnabled(command, on: project) && (!command.editsSelection || project?.sourceHasKeyboard == true)
     }
 
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
@@ -231,11 +245,10 @@ struct AppCommands: Commands {
             Divider()
             items(.editComment, .editMoveLineUp, .editMoveLineDown)
         }
+        // A submenu stays available while its items are dim (HIG Menus).
         CommandGroup(replacing: .textFormatting) {
-            items(.editBold, .editItalic, .editUnderline)
-            Divider()
+            Menu("Font") { items(.editBold, .editItalic, .editUnderline) }
             Menu("Section Level") { SectionLevelItems(project: project) }
-                .disabled(project?.isLaTeX != true)
         }
         CommandGroup(replacing: .sidebar) {
             items(.viewToggleSidebar)
@@ -255,12 +268,10 @@ struct AppCommands: Commands {
             items(.issueNext, .issuePrevious)
         }
         CommandMenu("Insert") {
-            Group {
-                MathMenuItems(project: project, shortcut: MenuCommand.editMath.shortcut) { app.perform(.editMath, on: project) }
-                Divider()
-                InsertMenuItems(project: project)
-            }
-            .disabled(project?.isLaTeX != true)
+            MathMenuItems(project: project, shortcut: MenuCommand.editMath.shortcut,
+                          inlineMathEnabled: app.isEnabledInMenuBar(.editMath, on: project)) { app.perform(.editMath, on: project) }
+            Divider()
+            InsertMenuItems(project: project)
         }
         CommandMenu("Compile") {
             items(.compileRun, .compileStop, .compileClean)
@@ -268,7 +279,7 @@ struct AppCommands: Commands {
             Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
             LivePreviewItem(app: app)
             Divider()
-            EnginePicker(project: project)
+            Menu("Engine") { EngineItems(project: project) }
             SetMainFileItem(app: app)
         }
     }
@@ -289,7 +300,23 @@ private struct CommandItem: View {
         .labelStyle(.titleAndIcon)
         // ⌘N follows whether a project is open, not which window is key.
         .keyboardShortcut(app.shortcut(command, on: app.project))
-        .disabled(!app.isEnabled(command, on: project))
+        .disabled(!app.isEnabledInMenuBar(command, on: project))
+    }
+}
+
+/// Compile ▸ Engine's choices, which dim with no project rather than the submenu.
+private struct EngineItems: View {
+    let project: ProjectModel?
+
+    var body: some View {
+        let engine = project?.settings?.engine
+        ForEach(TeXEngine.allCases) { choice in
+            Toggle(choice.title, isOn: Binding(get: { engine == choice.id }, set: { _ in
+                if let project { Task.immediate { await project.patchSettings(.engine(choice.id)) } }
+            }))
+        }
+        .disabled(engine == nil)
+        if let engine, TeXEngine(rawValue: engine) == nil { Toggle(engine, isOn: .constant(true)) }
     }
 }
 

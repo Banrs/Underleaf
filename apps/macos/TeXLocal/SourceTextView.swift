@@ -293,6 +293,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     /// Each time TextKit lays out the viewport: a scroll past what it had laid out, an edit, a new width.
     var laidOut: () -> Void = {}
+    /// Whether the text has the window's keyboard, told as it takes and gives it up.
+    var keyboardChanged: (Bool) -> Void = { _ in }
 
     /// 27.2: AppKit's Jump to Selection lands lines off where TextKit 2 has only estimated the heights above.
     override func centerSelectionInVisibleArea(_ sender: Any?) {
@@ -698,7 +700,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func becomeFirstResponder() -> Bool {
         defer { Task { self.previewMath() } }
-        return super.becomeFirstResponder()
+        guard super.becomeFirstResponder() else { return false }
+        keyboardChanged(true)
+        return true
     }
 
     override func resignFirstResponder() -> Bool {
@@ -706,7 +710,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             mathPopover?.close()
             closeCompletions()
         }
-        return super.resignFirstResponder()
+        guard super.resignFirstResponder() else { return false }
+        keyboardChanged(false)
+        return true
     }
 
     private var keyWatches: [NotificationCenter.ObservationToken] = []
@@ -1022,12 +1028,16 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let first = line(at: event)
         let anchor = event.modifierFlags.contains(.shift) ? selectedRange() : first
         window?.makeFirstResponder(self)
+        // Periodic events keep it scrolling while the pointer holds still past an edge, as a drag in the text does.
+        NSEvent.startPeriodicEvents(afterDelay: 0.1, withPeriod: 0.05)
+        defer { NSEvent.stopPeriodicEvents() }
         var current = event
         repeat {
             setSelectedRange(NSUnionRange(anchor, line(at: current)))
             autoscroll(with: current)
-            guard let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) else { break }
-            current = next
+            guard let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp, .periodic]) else { break }
+            // A periodic event has no place: the last drag's, scrolled under, is the next line.
+            if next.type != .periodic { current = next }
         } while current.type != .leftMouseUp
         let number = document.line(at: first.location)
         if selectedRange() == first, issueLines[number] != nil { issueClicked(number) }

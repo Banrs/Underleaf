@@ -1,0 +1,41 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "extended-srgb:0.22745,0.50588,0.96078,1.00000",
+      "extended-srgb:0.11373,0.30588,0.84706,1.00000"
+    ],
+    "orientation": {
+      "start": {
+        "x": 0.5,
+        "y": 0
+      },
+      "stop": {
+        "x": 0.5,
+        "y": 1
+      }
+    }
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "TeX.svg",
+          "name": "TeX"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

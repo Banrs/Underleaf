@@ -68,7 +68,8 @@ the hosts' contract with the core.
   and inspector. The build panel resizes from the bar's line and is dragged open and shut there, as
   Xcode's debug area (`area.grip`, an additional effective rect, which the split hit-tests before
   the bar; the panel's `canCollapse`). After a failed save, or a Cancel in an alert about the file
-  on disk, it says Not Saved and that button saves.
+  on disk, it says Not Saved and that button saves; a failed autosave is also told once in an
+  alert, as NSDocument's are.
 - **Build panel**: below the columns, so the status bar rides up as it opens. A bar at its
   foot, as Xcode's console bar: a pop-up for Issues, Build Log and Live Preview Log, then
   Warnings or Copy Log, then a filter. The bar is a SwiftUI safe-area bar, where the filter

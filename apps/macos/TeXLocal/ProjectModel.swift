@@ -79,6 +79,8 @@ final class ProjectModel {
     let search: ProjectSearch
 
     let editor = SourceEditor()
+    /// The menu bar's text commands follow it (`isEnabledInMenuBar`).
+    private(set) var sourceHasKeyboard = false
     @ObservationIgnored weak var app: AppModel?
     let core = Core.shared
     @ObservationIgnored private var analysis: Task<Void, Never>?
@@ -139,7 +141,10 @@ final class ProjectModel {
 
     var showsLastSuccessfulBuild: Bool { hasPDF && result?.failed == true && result?.pdf == nil }
 
-    func report(_ error: any Error, _ title: String) { app?.alert = AppAlert(title, error) }
+    /// Once: a failed save's document event may have shown it already.
+    func report(_ error: any Error, _ title: String) {
+        if app?.alert?.title != title { app?.alert = AppAlert(title, error) }
+    }
 
     /// What `work` answers, or nil once its failure is reported under `title`, which a closed project doesn't report.
     @discardableResult
@@ -211,6 +216,7 @@ final class ProjectModel {
             liveCaret()
         }
         editor.textView.composing = { [weak self] composing in self?.composing(composing) }
+        editor.textView.keyboardChanged = { [weak self] in self?.sourceHasKeyboard = $0 }
         editor.onScroll = { [weak self] line in
             guard let self, line != topLine else { return }
             topLine = line
@@ -276,7 +282,11 @@ final class ProjectModel {
         let before = documents[state.path]
         documents[state.path] = state
         if !state.held { heldReasons[state.path] = nil }
-        if state.error != nil, before?.error == nil { notices.announce(String(localized: "“\(state.path.fileName)” Wasn’t Saved")) }
+        // A failed autosave is told once in an alert, as NSDocument's are; Not Saved stays in the status bar until a save succeeds.
+        if let error = state.error, before?.error == nil {
+            let title = String(localized: "“\(state.path.fileName)” Wasn’t Saved")
+            if let app, app.alert == nil, !closed { app.alert = AppAlert(title, error) } else { notices.announce(title) }
+        }
     }
 
     /// Another app's text, or the disk's after Revert: shown without an edit, as the session waits for to save the file again.

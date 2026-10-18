@@ -134,7 +134,7 @@ extension ProjectModel {
         guard await save() else {
             let name = openPath?.fileName ?? id
             throw CocoaError(.fileWriteUnknown, userInfo: [
-                NSLocalizedFailureReasonErrorKey: String(localized: "“\(name)” couldn’t be saved, so the archive would be missing its changes."),
+                NSLocalizedDescriptionKey: String(localized: "“\(name)” couldn’t be saved, so the archive would be missing its changes."),
             ])
         }
         removeExport()

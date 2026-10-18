@@ -125,7 +125,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                             MathMenuItems(project: project) { [app, project] in app.perform(.editMath, on: project) },
                             help: "Insert math or a symbol")
         case .insert:
-            item = menuItem(id, "Insert", "ellipsis", InsertMenuItems(project: project),
+            item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project),
                             help: "Insert a figure, table, list or reference")
         case .bold:
             item = button(id, MenuCommand.editBold.title, "bold", #selector(bold), help: "Make text bold")
