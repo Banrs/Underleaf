@@ -32,7 +32,7 @@ extension ProjectModel {
     /// behind it, where it ends the build however soon it comes; the core's `build` events then confirm or end it. An
     /// automatic one waits for them, as the core may leave it.
     func compile(auto: Bool = false) async {
-        guard let session, !closed, texAvailable else { return }
+        guard let session, !closed, app?.tex?.available == true else { return }
         if !auto, !compiling {
             compiling = true
             AccessibilityNotification.Announcement(String(localized: "Compiling")).post()

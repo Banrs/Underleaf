@@ -138,7 +138,6 @@ final class ProjectModel {
     var warningCount: Int { result?.warnings.count ?? 0 }
 
     var showsLastSuccessfulBuild: Bool { hasPDF && result?.failed == true && result?.pdf == nil }
-    var texAvailable: Bool { app?.tex?.available ?? false }
 
     func report(_ error: any Error, _ title: String) { app?.alert = AppAlert(title, error) }
 

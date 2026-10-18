@@ -96,7 +96,7 @@ extension AppModel {
         case .fileSave, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .viewTextBigger, .viewTextSmaller:
             project?.editsText == true
         case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
-        case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
+        case .compileRun: tex?.available == true && project?.compiling == false
         case .compileStop: project?.compiling == true
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
         case .viewZoomOut: project.map { $0.hasPDF && $0.pdf.canZoomOut } ?? false
