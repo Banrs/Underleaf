@@ -552,10 +552,33 @@ pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError
 }
 
 pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<atomic::Stamp, CoreError> {
-    if let Some(parent) = abs.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    Ok(atomic::write(abs, contents)?)
+    abs.parent()
+        .map_or(Ok(()), fs::create_dir_all)
+        .and_then(|()| atomic::write(abs, contents))
+        .map_err(|err| write_error(abs, &err))
+}
+
+/// A failed write in Foundation's words, as the hosts show it in an alert
+/// whose title already says the file wasn't saved.
+fn write_error(abs: &Path, err: &std::io::Error) -> CoreError {
+    let name = |path: &Path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+    };
+    let file = name(abs).unwrap_or_default();
+    CoreError::internal(match err.kind() {
+        PermissionDenied => {
+            let folder = abs.parent().and_then(name).unwrap_or_default();
+            format!("You don’t have permission to save the file “{file}” in the folder “{folder}”.")
+        }
+        ErrorKind::ReadOnlyFilesystem => {
+            format!("The file “{file}” couldn’t be saved because the volume is read only.")
+        }
+        ErrorKind::StorageFull => {
+            format!("The file “{file}” couldn’t be saved because there isn’t enough space.")
+        }
+        _ => format!("The file “{file}” couldn’t be saved ({err})."),
+    })
 }
 
 fn is_under(path: &str, dir: &str) -> bool {
@@ -835,6 +858,23 @@ mod tests {
         fs::remove_file(root.join("b.tex")).unwrap();
         let found = cache.scan(root).unwrap();
         assert_eq!([found.labels, found.citations], [["one"], ["key"]]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_refused_says_so_in_a_sentence_naming_the_file_and_folder() {
+        use super::write_creating;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Thesis");
+        fs::create_dir(&folder).unwrap();
+        fs::set_permissions(&folder, fs::Permissions::from_mode(0o555)).unwrap();
+        let err = write_creating(&folder.join("main.tex"), b"x").unwrap_err();
+        fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            err.message,
+            "You don’t have permission to save the file “main.tex” in the folder “Thesis”."
+        );
     }
 
     #[cfg(unix)]
