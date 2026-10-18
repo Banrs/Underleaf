@@ -123,9 +123,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let document = textView.document
         let start = document.lineStart(line)
         let end = line < document.lineCount ? document.lineStart(line + 1) - 1 : textView.text.length
-        let word = column.map {
-            textView.selectionRange(forProposedRange: .caret(min(start + $0, end)), granularity: .selectByWord)
-        }
+        let word = column.map { textView.selectionRange(forProposedRange: .caret(min(start + $0, end)), granularity: .selectByWord) }
         textView.setSelectedRange(word ?? .caret(start))
         scroll(to: start, atTop: atTop)
         if focus { self.focus() }

@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Aa's popover, as Notes' Aa: the styles' toggles, then the levels, the caret's checked. The
-/// menu bar's Format menu and the toolbar's overflow menu keep them as plain menu items.
+/// Aa's popover, as Notes' Aa: the styles' toggles, then the levels, the caret's checked. The menu bar's Format menu and
+/// the toolbar's overflow menu keep them as plain menu items.
 final class FormatPopover: NSObject, NSPopoverDelegate {
     let popover = NSPopover()
     private let app: AppModel
@@ -11,9 +11,7 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     private var closingClick: Int?
 
     /// The mouse click being handled; its press and release have one number.
-    private var click: Int? {
-        NSApp.currentEvent.flatMap { [.leftMouseDown, .leftMouseUp].contains($0.type) ? $0.eventNumber : nil }
-    }
+    private var click: Int? { NSApp.currentEvent.flatMap { [.leftMouseDown, .leftMouseUp].contains($0.type) ? $0.eventNumber : nil } }
 
     init(app: AppModel, project: ProjectModel) {
         self.app = app
@@ -40,14 +38,12 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) { popover.contentViewController = nil }
 }
 
-/// Bold, Italic and Underline, evenly spaced, lit when the selection is in their command; then the
-/// levels the document's class has (the core's `heading_styles`), each at its weight and shape
-/// there and its size scaled into Notes', at an even pitch, after its number as the class prints
-/// it. A style toggles and the popover stays, as Notes' does; a level is chosen and it closes, as
-/// a menu. It opens with the caret's level checked and nothing highlighted; the arrow keys start
-/// from the checked level, and the pointer highlights a level without taking the keyboard's focus
-/// to it. The highlight is also the keyboard's focus, which draws no ring: Tab shows where it is,
-/// and Return and Space act only on a highlighted level. Levels go by their commands.
+/// Bold, Italic and Underline, evenly spaced, lit when the selection is in their command; then the levels the document's class has
+/// (the core's `heading_styles`), each at its weight and shape there and its size scaled into Notes', at an even pitch, after its
+/// number as the class prints it. A style toggles and the popover stays, as Notes' does; a level is chosen and it closes, as a
+/// menu. It opens with the caret's level checked and nothing highlighted; the arrow keys start from the checked level, and the
+/// pointer highlights a level without taking the keyboard's focus to it. The highlight is also the keyboard's focus, which draws no
+/// ring: Tab shows where it is, and Return and Space act only on a highlighted level. Levels go by their commands.
 struct FormatPanel: View {
     let app: AppModel
     let project: ProjectModel
@@ -123,9 +119,7 @@ struct FormatPanel: View {
         .onChange(of: focused) { _, level in
             if seeding { seeding = false } else { highlighted = level }
         }
-        .onChange(of: project.editor.changes.count, initial: true) {
-            styles = project.editor.textStyles
-        }
+        .onChange(of: project.editor.changes.count, initial: true) { styles = project.editor.textStyles }
     }
 
     /// Notes' popover separator: half a point, where SwiftUI's `Divider` takes a point here.
@@ -240,9 +234,7 @@ struct FormatPanel: View {
             }.max().map { $0.rounded(.up) } ?? 0
         }
 
-        func font(_ style: HeadingStyle) -> Font {
-            Font(fonts[style.command] ?? .systemFont(ofSize: NSFont.systemFontSize))
-        }
+        func font(_ style: HeadingStyle) -> Font { Font(fonts[style.command] ?? .systemFont(ofSize: NSFont.systemFontSize)) }
 
         /// A level at its weight and shape, its size LaTeX's scaled into Notes' range: \Huge's 2.5 times the text comes
         /// out at Notes' Title, 22 points, and \large and \Large near its Subheading and Heading.

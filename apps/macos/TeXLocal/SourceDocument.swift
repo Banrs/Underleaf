@@ -2,9 +2,8 @@ import Foundation
 import os
 import TeXLocalCore
 
-/// The editor's text as the core's syntax module's `SourceDocument` mirrors it, and what it answers about it:
-/// highlighting, completion, the editing commands, and typing's brackets, indentation and snippet fields, kept between
-/// keys.
+/// The editor's text as the core's syntax module's `SourceDocument` mirrors it, and what it answers about it: highlighting,
+/// completion, the editing commands, and typing's brackets, indentation and snippet fields, kept between keys.
 final class SourceDocument {
     private let raw: OpaquePointer
 
@@ -20,9 +19,7 @@ final class SourceDocument {
         self.raw = raw
     }
 
-    isolated deinit {
-        tl_source_free(raw)
-    }
+    isolated deinit { tl_source_free(raw) }
 
     /// The storage replaced `range` with `text`; `changing` is what the view said it would change. The closers typing put
     /// in and a snippet's fields move with it. Unless the edit is a mirror edit going in (`mirroring`), what's typed in a
@@ -68,8 +65,7 @@ final class SourceDocument {
     /// What spelling or Writing Tools leave alone where `range` is: code, and what isn't prose, each from its start,
     /// however far before the range.
     func codeRanges(in range: NSRange, for checker: Checker) -> [NSRange] {
-        let ranges: [SourceRange] = call("code_ranges", ["selection": range.json, "for": checker.rawValue]) ?? []
-        return ranges.map(\.range)
+        (call("code_ranges", ["selection": range.json, "for": checker.rawValue]) as [SourceRange]?)?.map(\.range) ?? []
     }
 
     nonisolated enum Checker: String { case spelling, writingTools }
@@ -111,8 +107,7 @@ final class SourceDocument {
     /// A completion's or block's fields, put in at `at`: the first field's range, to select.
     func startSnippet(_ fields: [SnippetField], at: Int) -> NSRange? {
         let fields = fields.map { ["start": $0.start, "length": $0.length, "index": $0.index] }
-        let first: SourceRange? = call("start_snippet", ["fields": fields, "at": at])
-        return first?.range
+        return (call("start_snippet", ["fields": fields, "at": at]) as SourceRange?)?.range
     }
 
     /// Whether there was a snippet to end.
@@ -203,9 +198,7 @@ nonisolated struct TextEdit: Decodable, Equatable {
     var start, length: Int
     var text: String
 
-    init(_ range: NSRange, _ text: String) {
-        (start, length, self.text) = (range.location, range.length, text)
-    }
+    init(_ range: NSRange, _ text: String) { (start, length, self.text) = (range.location, range.length, text) }
 
     var range: NSRange { NSRange(location: start, length: length) }
 }
@@ -237,9 +230,7 @@ nonisolated struct Tabbing: Decodable {
 
 nonisolated enum TextStyle: String { case bold, italic, underline }
 
-nonisolated struct TextStyles: Decodable, Equatable {
-    var bold, italic, underline: [TextEdit]?
-}
+nonisolated struct TextStyles: Decodable, Equatable { var bold, italic, underline: [TextEdit]? }
 
 nonisolated struct Insertion: Decodable {
     var edit: TextEdit
@@ -264,6 +255,4 @@ nonisolated struct MathPreview: Decodable, Equatable {
     var display: Bool
 }
 
-nonisolated struct SnippetField: Decodable {
-    var start, length, index: Int
-}
+nonisolated struct SnippetField: Decodable { var start, length, index: Int }

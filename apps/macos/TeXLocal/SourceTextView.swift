@@ -40,10 +40,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var text: NSString { textStorage?.mutableString ?? "" }
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
 
-    enum FileDrop {
-        case open(() -> Void)
-        case insert(String)
-    }
+    enum FileDrop { case open(() -> Void), insert(String) }
     var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
 
     private(set) var loading = false
@@ -128,17 +125,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// One undo step, from the last edit.
     private func apply(_ edits: [TextEdit], named name: String, selecting selections: [NSRange]) {
         undoManager?.beginUndoGrouping()
-        for edit in edits.reversed() {
-            if shouldChangeText(in: edit.range, replacementString: edit.text) {
-                textStorage?.replaceCharacters(in: edit.range, with: edit.text)
-                didChangeText()
-            }
+        for edit in edits.reversed() where shouldChangeText(in: edit.range, replacementString: edit.text) {
+            textStorage?.replaceCharacters(in: edit.range, with: edit.text)
+            didChangeText()
         }
         undoManager?.setActionName(name)
         undoManager?.endUndoGrouping()
-        if !selections.isEmpty {
-            setSelectedRanges(selections.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false)
-        }
+        if !selections.isEmpty { setSelectedRanges(selections.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false) }
         scrollRangeToVisible(selectedRange())
     }
 
@@ -243,9 +236,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         needsDisplay = true
     }
 
-    override var textContainerOrigin: NSPoint {
-        NSPoint(x: gutterWidth, y: textContainerInset.height)
-    }
+    override var textContainerOrigin: NSPoint { NSPoint(x: gutterWidth, y: textContainerInset.height) }
 
     // 27.2: the top paragraph stays put: TextKit 2 keeps the offset, over heights a new width re-estimates.
     override func setFrameSize(_ size: NSSize) {
@@ -274,11 +265,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// What of the text shows: the clip view's bounds less the scroll view's insets for the bars over it.
     var shownRect: NSRect {
         guard let scroll = enclosingScrollView else { return visibleRect }
-        let insets = scroll.contentInsets
-        var shown = convert(scroll.contentView.bounds, from: scroll.contentView)
-        shown.origin.y += insets.top
-        shown.size.height -= insets.top + insets.bottom
-        return shown
+        let clip = convert(scroll.contentView.bounds, from: scroll.contentView), insets = scroll.contentInsets
+        return NSRect(x: clip.minX, y: clip.minY + insets.top, width: clip.width, height: clip.height - insets.top - insets.bottom)
     }
 
     /// From the fragments last laid out: asked by point, TextKit answers from its new estimates.
@@ -603,9 +591,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private func updateIssueTips() {
         var tips: [(rect: NSRect, text: String)] = []
-        for issue in issueRows {
-            if let tip = issue.tip, let message = issue.message { tips.append((message.rect, tip)) }
-        }
+        for issue in issueRows { if let tip = issue.tip, let message = issue.message { tips.append((message.rect, tip)) } }
         guard !tips.elementsEqual(issueTips, by: { $0.rect == $1.rect && $1.text.isEqual(to: $0.text) }) else { return }
         for tip in issueTips { removeToolTip(tip.tag) }
         // The string is the tag's owner, which AppKit asks for its description and doesn't keep.
@@ -783,16 +769,15 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var reducesMotion = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     private var partnerMarked = false
 
-    override func moveRight(_ sender: Any?) {
-        let before = selectedRange()
-        super.moveRight(sender)
-        if before.length == 0, selectedRange() == .caret(before.location + 1) { showPartner(of: before.location) }
-    }
+    override func moveRight(_ sender: Any?) { stepCaret(1) { super.moveRight(sender) } }
+    override func moveLeft(_ sender: Any?) { stepCaret(-1) { super.moveLeft(sender) } }
 
-    override func moveLeft(_ sender: Any?) {
+    /// A caret that steps over a bracket shows its partner.
+    private func stepCaret(_ step: Int, by move: () -> Void) {
         let before = selectedRange()
-        super.moveLeft(sender)
-        if before.length == 0, selectedRange() == .caret(before.location - 1) { showPartner(of: before.location - 1) }
+        move()
+        guard before.length == 0, selectedRange() == .caret(before.location + step) else { return }
+        showPartner(of: min(before.location, before.location + step))
     }
 
     // MARK: typing: the core's brackets, indentation and snippet fields
@@ -922,9 +907,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private func complete(explicit: Bool) {
         guard selectedRange().length == 0, selectedRanges.count == 1, !hasMarkedText(),
-              let found = document.completions(caret: caret, explicit: explicit) else {
-            return closeCompletions()
-        }
+              let found = document.completions(caret: caret, explicit: explicit) else { return closeCompletions() }
         offered = found
         showCompletions(reload: true)
     }

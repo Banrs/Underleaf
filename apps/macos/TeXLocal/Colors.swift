@@ -1,9 +1,7 @@
 import AppKit
 import SwiftUI
 
-extension ShapeStyle where Self == Color {
-    static var textSurface: Color { Color(nsColor: .textBackgroundColor) }
-}
+extension ShapeStyle where Self == Color { static var textSurface: Color { Color(nsColor: .textBackgroundColor) } }
 
 extension NSColor {
     /// The appearances text colours are made legible in. An Increase Contrast appearance asked for by name is the plain

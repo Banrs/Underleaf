@@ -9,9 +9,7 @@ extension UndoManager {
                                               work: @escaping @MainActor () async -> Bool) {
         registerUndo(withTarget: target) { [weak self] _ in
             reversal()
-            Task {
-                if await !work() { self?.removeAllActions(withTarget: target) }
-            }
+            Task { if await !work() { self?.removeAllActions(withTarget: target) } }
         }
         setActionName(actionName)
     }
@@ -34,12 +32,8 @@ final class UndoableTrash {
          trash: @escaping (UndoableTrash) async -> Bool,
          changed: @escaping () async -> Void,
          failed: @escaping (String, any Error) -> Void) {
-        self.original = original
-        self.name = name
-        self.undoManager = undoManager
-        self.trash = trash
-        self.changed = changed
-        self.failed = failed
+        (self.original, self.name, self.undoManager) = (original, name, undoManager)
+        (self.trash, self.changed, self.failed) = (trash, changed, failed)
     }
 
     func recycle() throws {

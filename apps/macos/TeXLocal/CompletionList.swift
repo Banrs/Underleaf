@@ -38,9 +38,7 @@ final class CompletionList {
     }()
 
     /// A click chooses a row and leaves the keyboard in the document.
-    private final class Surface: NSHostingView<CompletionRowsView> {
-        override var acceptsFirstResponder: Bool { false }
-    }
+    private final class Surface: NSHostingView<CompletionRowsView> { override var acceptsFirstResponder: Bool { false } }
 
     private static let shownRows = 8
     private static let leastWidth: CGFloat = 160
@@ -49,10 +47,7 @@ final class CompletionList {
               of host: NSScrollView?) {
         guard !labels.isEmpty else { return close() }
         let count = rows.labels.count
-        rows.labels = labels
-        rows.typed = typed
-        rows.kind = kind
-        rows.font = font
+        (rows.labels, rows.typed, rows.kind, rows.font) = (labels, typed, kind, font)
         rows.boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         rows.height = (font.ascender - font.descender + font.leading).rounded(.up) + 8
         rows.selection = 0
@@ -123,9 +118,7 @@ final class CompletionList {
         if shorter { rows.reveal() }
     }
 
-    func contains(_ point: NSPoint) -> Bool {
-        surface.superview != nil && surface.bounds.contains(surface.convert(point, from: nil))
-    }
+    func contains(_ point: NSPoint) -> Bool { surface.superview != nil && surface.bounds.contains(surface.convert(point, from: nil)) }
 
     func close() {
         surface.removeFromSuperview()

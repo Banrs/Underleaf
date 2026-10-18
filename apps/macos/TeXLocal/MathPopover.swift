@@ -30,10 +30,7 @@ final class MathPopover {
     private var isRendered: Bool { rendered?.maths == wanted?.maths && rendered?.size == wanted?.size }
 
     /// Unconditionally: `isShown` stays true while a closed popover animates out, and a show then brings it back.
-    private func present() {
-        guard let wanted else { return }
-        popover.show(relativeTo: wanted.rect, of: wanted.view, preferredEdge: wanted.edge)
-    }
+    private func present() { if let wanted { popover.show(relativeTo: wanted.rect, of: wanted.view, preferredEdge: wanted.edge) } }
 
     var isWanted: Bool { wanted != nil }
 

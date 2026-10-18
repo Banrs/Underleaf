@@ -9,9 +9,7 @@ nonisolated struct Menus: Decodable, Sendable {
         let references: [Template]
     }
 
-    nonisolated struct Symbol: Decodable, Sendable {
-        let glyph, command: String
-    }
+    nonisolated struct Symbol: Decodable, Sendable { let glyph, command: String }
 
     nonisolated struct SymbolGroup: Decodable, Sendable {
         let title: String
