@@ -623,9 +623,14 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     // MARK: the colours
 
-    var syntaxTheme = SyntaxTheme.overleaf { didSet { if syntaxTheme != oldValue { colour(from: 0) } } }
+    var syntaxTheme = SyntaxTheme.overleaf {
+        didSet { if syntaxTheme != oldValue { fragmentColours.removeAllObjects(); colour(from: 0) } }
+    }
 
     private var staleColours: Int?
+    /// The runs each fragment was last coloured with, by kind and place in the fragment: a pass redraws only the
+    /// fragments whose runs changed.
+    private let fragmentColours = NSMapTable<NSTextLayoutFragment, NSArray>.weakToStrongObjects()
 
     /// TextKit validates colours when it lays a fragment out anew, without editing the document's attributes;
     /// the fragments already shown keep none until validated here.
@@ -638,29 +643,45 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
                 let range = fragment.rangeInElement
                 let start = offset(range.location), end = offset(range.endLocation)
                 manager.setRenderingAttributes([.foregroundColor: NSColor.textColor], for: range)
+                var runs: [Int] = []
                 for run in document.highlights(in: NSRange(location: start, length: end - start)) {
                     let clipped = NSIntersectionRange(run.range, NSRange(location: start, length: end - start))
                     if clipped.length > 0, let range = textRange(clipped) {
                         manager.setRenderingAttributes([.foregroundColor: syntaxTheme.color(run.kind)], for: range)
+                        runs += [clipped.location - start, clipped.length, Int(run.kind.rawValue)]
                     }
                 }
+                fragmentColours.setObject(runs as NSArray, forKey: fragment)
             }
         }
         let line = document.lineStart(document.line(at: start))
         let stale = textRange(NSRange(location: line, length: 0)).flatMap { NSTextRange(location: $0.location, end: manager.documentRange.endLocation) }
         manager.invalidateRenderingAttributes(for: stale ?? manager.documentRange)
-        for (_, fragment) in fragments[(fragments.lastIndex { $0.offset <= line } ?? 0)...] {
+        let first = fragments.lastIndex { $0.offset <= line } ?? 0
+        var changed: [CGRect] = []
+        for (index, (_, fragment)) in fragments.enumerated().dropFirst(first) {
+            let before = fragmentColours.object(forKey: fragment)
             manager.renderingAttributesValidator?(manager, fragment)
+            // The edited fragment always: TextKit may have coloured it anew while laying it out.
+            if index == first || before == nil || before != fragmentColours.object(forKey: fragment) {
+                changed.append(fragment.layoutFragmentFrame.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y))
+            }
         }
-        redrawFragments()
+        redrawFragments(in: changed)
     }
 
     /// 27.2: each shown fragment draws in a view of its own, which new rendering attributes don't redraw, nor does the text view's own display.
-    private func redrawFragments() {
+    /// With `rects`, only the views over them.
+    private func redrawFragments(in rects: [CGRect]? = nil) {
         func redraw(_ view: NSView) {
+            if let rects {
+                let frame = view.convert(view.bounds, to: self)
+                guard rects.contains(where: { $0.intersects(frame) }) else { return }
+            }
             view.needsDisplay = true
             view.subviews.forEach(redraw)
         }
+        if rects?.isEmpty == true { return }
         subviews.forEach(redraw)
     }
 
