@@ -6,11 +6,12 @@ import Testing
 /// One at a time: AppKit keeps toolbars of one identifier alike, so a tool taken out of one window's is out of every window's.
 @Suite(.serialized)
 struct ShellTests {
-    private func workspace(showPDF: Bool, sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
+    /// A workspace with the PDF shown, in a window at its widest.
+    private func workspace(sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
         let app = AppModel()
         app.sidebarVisible = sidebar
         app.inspectorVisible = false
-        app.showPDF = showPDF
+        app.showPDF = true
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1300, height: 600),
                               styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -29,9 +30,7 @@ struct ShellTests {
 
     /// Waits, a turn at a time, until no view in the window has moved for a few.
     private func resize(_ window: NSWindow, to width: CGFloat) async throws {
-        func frames(_ view: NSView) -> String {
-            "\(view.frame)" + view.subviews.map(frames).joined()
-        }
+        func frames(_ view: NSView) -> String { "\(view.frame)" + view.subviews.map(frames).joined() }
         let root = try #require(window.contentView?.superview)
         window.setContentSize(NSSize(width: width, height: 600))
         var last = "", quiet = 0
@@ -52,7 +51,7 @@ struct ShellTests {
     /// A wide window has Compile as its word. At its narrowest the panes are at their least or wider, Compile is its
     /// symbol, and nothing has left the toolbar but for its overflow menu, where each tool that can go has a menu form.
     @Test func aNarrowWindowKeepsEveryToolOrItsMenuForm() async throws {
-        let (window, workspace) = try await workspace(showPDF: true)
+        let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
         #expect(!workspace.toolbar.compactCompile)
         let compile = try item(.compile, in: workspace)
@@ -84,7 +83,7 @@ struct ShellTests {
     /// Stop, with the build's spinner, is as wide as Compile was, as its word and as its symbol: the tools beside it stay
     /// where they are as a build starts and ends. The overflow menu and VoiceOver have Stop by name.
     @Test func stopIsAsWideAsCompile() async throws {
-        let (window, workspace) = try await workspace(showPDF: true)
+        let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
         let compile = try item(.compile, in: workspace)
         let button = try #require(compile.view)
@@ -106,7 +105,7 @@ struct ShellTests {
     /// where the default one has it as its symbol, until the window is too narrow for the word beside the tools that
     /// never leave. With the default tools back, it is its symbol again.
     @Test func aCustomisedToolbarKeepsCompilesWord() async throws {
-        let (window, workspace) = try await workspace(showPDF: true)
+        let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
         let toolbar = workspace.toolbar.toolbar
         let defaults = workspace.toolbar.toolbarDefaultItemIdentifiers(toolbar)
@@ -114,9 +113,7 @@ struct ShellTests {
         // Too narrow for the default tools and Compile's word, wide enough for the word alone.
         try await resize(window, to: 700)
         #expect(workspace.toolbar.compactCompile)
-        for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {
-            toolbar.removeItem(identifier: id)
-        }
+        for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] { toolbar.removeItem(identifier: id) }
         // The toolbar tells the workspace a turn later.
         try await waitUntil { !workspace.toolbar.holdsDefaultItems && !workspace.toolbar.compactCompile }
         try await resize(window, to: ColumnMetrics.contentMinimum.width)
@@ -136,7 +133,7 @@ struct ShellTests {
     /// or shut: where a section's tools stop the separator, the divider goes to it (`joinDivider`).
     @Test(arguments: [false, true])
     func theDividerStaysUnderTheToolbarsSeparator(sidebar: Bool) async throws {
-        let (window, workspace) = try await workspace(showPDF: true, sidebar: sidebar)
+        let (window, workspace) = try await workspace(sidebar: sidebar)
         defer { workspace.close(); window.close() }
         let split = workspace.columns.splitView
         let frame = try #require(window.contentView?.superview)
@@ -153,7 +150,7 @@ struct ShellTests {
     /// Aa opens Notes' popover; its overflow form is a menu of the styles and the class's levels by name, as the menu
     /// bar's Section Level, while the popover numbers them as the class does ("1.1" for a subsection).
     @Test func formatIsAPopoverWithAMenuForm() async throws {
-        let (window, workspace) = try await workspace(showPDF: true)
+        let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
         let format = try item(.format, in: workspace)
         #expect(!(format is NSMenuToolbarItem) && format.action != nil)
@@ -172,7 +169,7 @@ struct ShellTests {
     /// The File Outline's header is at the files' foot from the first, over an outline folded for a file that has none, and
     /// away only while search results have the sidebar.
     @Test func theOutlineHeaderGoesOnlyForSearchResults() async throws {
-        let (window, workspace) = try await workspace(showPDF: true, sidebar: true)
+        let (window, workspace) = try await workspace(sidebar: true)
         defer { workspace.close(); window.close() }
         let sidebar = try #require(workspace.sidebarItem.viewController as? NSSplitViewController)
         let files = sidebar.splitViewItems[0]
@@ -188,7 +185,7 @@ struct ShellTests {
     /// A sidebar the window folded is still the user's shown sidebar: it isn't saved as hidden, View offers to show it, and
     /// showing it unfolds it.
     @Test func aFoldedSidebarIsNotAHiddenOne() async throws {
-        let (window, workspace) = try await workspace(showPDF: true, sidebar: true)
+        let (window, workspace) = try await workspace(sidebar: true)
         defer { workspace.close(); window.close(); workspace.app.sidebarVisible = true }
         let app = workspace.app, project = workspace.project
         #expect(app.title(.viewToggleSidebar, on: project) == "Hide Sidebar")
