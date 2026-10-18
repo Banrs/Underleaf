@@ -71,18 +71,13 @@ nonisolated struct ClosedEvent: Decodable { let path, reason: String }
 nonisolated struct RenamedEvent: Decodable { let from, to: String }
 nonisolated struct ConflictEvent: Decodable {
     nonisolated enum Kind: String, Decodable { case changed, gone }
-
-    let path: String
-    let kind: Kind
+    let path: String, kind: Kind
 }
 nonisolated struct TreeEvent: Decodable { let tree: [TreeNode] }
 nonisolated struct PathsEvent: Decodable { let paths: [String] }
 nonisolated struct BuildState: Decodable { let compiling, auto, outdated: Bool }
 
-nonisolated struct BuildFinished: Decodable {
-    let auto, announce, outdated: Bool
-    let result: CompileResult
-}
+nonisolated struct BuildFinished: Decodable { let auto, announce, outdated: Bool, result: CompileResult }
 
 nonisolated struct IssuesEvent: Decodable {
     nonisolated struct Line: Decodable {

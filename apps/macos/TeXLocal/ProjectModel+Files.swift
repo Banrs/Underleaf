@@ -120,8 +120,7 @@ extension ProjectModel {
         for url in urls {
             guard let path = projectPath(url) else { outside.append(url); continue }
             guard path.parentFolder != dir, dir != path, !dir.hasPrefix(path + "/") else { continue }
-            await renameEntry(path, to: dir.isEmpty ? path.fileName : "\(dir)/\(path.fileName)",
-                               action: String(localized: "Move"))
+            await renameEntry(path, to: dir.isEmpty ? path.fileName : "\(dir)/\(path.fileName)", action: String(localized: "Move"))
         }
         if !outside.isEmpty { await importFiles(outside, into: dir) }
     }
@@ -169,10 +168,8 @@ struct ImportClash {
     let names: [String]
 
     var title: String {
-        guard names.count == 1, let name = names.first else {
-            return "\(names.count) items with these names already exist in this location."
-        }
-        return "An item named “\(name.fileName)” already exists in this location."
+        if names.count == 1, let name = names.first { "An item named “\(name.fileName)” already exists in this location." }
+        else { "\(names.count) items with these names already exist in this location." }
     }
 
     var message: String {

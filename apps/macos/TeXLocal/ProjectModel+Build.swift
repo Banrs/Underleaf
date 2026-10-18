@@ -1,6 +1,4 @@
-import Accessibility
 import AppKit
-import PDFKit
 
 /// Builds, their PDF and their issues: the session builds, and its `build`, `build_finished` and `build_cleaned` events
 /// say how it went (docs/core-api.md).
@@ -81,9 +79,7 @@ extension ProjectModel {
             }
         }
         guard !closed else { return }
-        self.result = result
-        outdated = finished.outdated
-        chosenIssue = nil
+        (self.result, outdated, chosenIssue) = (result, finished.outdated, nil)
         finishedBuilds += 1
         if !finished.auto {
             finishedManualBuild(result)
@@ -100,9 +96,7 @@ extension ProjectModel {
             shown = .none
             pdf.clear()
         }
-        result = nil
-        chosenIssue = nil
-        outdated = false
+        (result, chosenIssue, outdated) = (nil, nil, false)
     }
 
     private func finishedManualBuild(_ result: CompileResult) {

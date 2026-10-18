@@ -8,15 +8,12 @@ nonisolated struct OutlineNode: Identifiable, Decodable, Sendable {
     var id: Int { item.id }
     var descendants: [OutlineNode] { (children ?? []).flatMap { [$0] + $0.descendants } }
 
-    private enum CodingKeys: String, CodingKey {
-        case index, foldKey, children
-    }
+    private enum CodingKeys: String, CodingKey { case foldKey, children }
 
+    /// The heading's fields sit beside its fold key and children.
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        var item = try OutlineItem(from: decoder)
-        item.id = try container.decode(Int.self, forKey: .index)
-        self.item = item
+        item = try OutlineItem(from: decoder)
         foldKey = try container.decode(String.self, forKey: .foldKey)
         children = try container.decodeIfPresent([OutlineNode].self, forKey: .children)
     }
@@ -25,17 +22,13 @@ nonisolated struct OutlineNode: Identifiable, Decodable, Sendable {
 /// A heading, by its place in the outline read in order: its sectioning command without the backslash, its level's name
 /// ("Section"), and its title, its level's for one that has none (`untitled`): "Untitled Section".
 nonisolated struct OutlineItem: Identifiable, Hashable, Decodable, Sendable {
-    var id = 0
-    let command: String
-    let level: String
-    let title: String
+    let id: Int
+    let command, level, title: String
     let untitled: Bool
     let line: Int
     let file: String
 
-    private enum CodingKeys: String, CodingKey {
-        case command, level, title, untitled, line, file
-    }
+    private enum CodingKeys: String, CodingKey { case id = "index", command, level, title, untitled, line, file }
 }
 
 nonisolated struct Analysis: Decodable, Sendable {

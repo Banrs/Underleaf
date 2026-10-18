@@ -19,9 +19,7 @@ final class ProjectSearch {
 
     var hitCount: Int { groups?.reduce(0) { $0 + $1.hits.count } ?? 0 }
 
-    init(id: String) {
-        self.id = id
-    }
+    init(id: String) { self.id = id }
 
     func run() async {
         let query = query

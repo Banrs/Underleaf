@@ -1,5 +1,4 @@
 import AppKit
-import Observation
 
 /// A project's window state over the core's session for it (docs/core-api.md), which owns its documents' text, saves,
 /// builds, conflicts with other apps, the folder's watcher and Live Preview, and says what changed in events.
@@ -116,16 +115,11 @@ final class ProjectModel {
     var isLaTeX: Bool { openKind == .tex }
 
     /// The level of the caret's line, as its sectioning command: empty for Normal Text.
-    var headingCommand: String {
-        outline.first { $0.file == openPath && $0.line == cursorLine }?.command ?? ""
-    }
+    var headingCommand: String { outline.first { $0.file == openPath && $0.line == cursorLine }?.command ?? "" }
     var editsText: Bool { openKind?.isText == true }
 
     private func openKindChanged() {
-        guard let openPath else {
-            openKind = nil
-            return
-        }
+        guard let openPath else { openKind = nil; return }
         if let kind = tree.node(at: openPath)?.kind, kind != openKind { openKind = kind }
     }
 
@@ -146,9 +140,7 @@ final class ProjectModel {
     var showsLastSuccessfulBuild: Bool { hasPDF && result?.failed == true && result?.pdf == nil }
     var texAvailable: Bool { app?.tex?.available ?? false }
 
-    func report(_ error: any Error, _ title: String) {
-        app?.alert = AppAlert(title, error)
-    }
+    func report(_ error: any Error, _ title: String) { app?.alert = AppAlert(title, error) }
 
     let notices = ProjectNotices()
 
@@ -162,11 +154,7 @@ final class ProjectModel {
     /// Stops if the project is left meanwhile, so it never writes to the editor after the next one.
     func load(restoring saved: SavedWorkspace?) async {
         connectEditor()
-        if let saved {
-            panel.shown = saved.buildPanel
-            pdf.restorePage = saved.pdfPage
-            pdf.restoreZoom = saved.pdfZoom
-        }
+        if let saved { (panel.shown, pdf.restorePage, pdf.restoreZoom) = (saved.buildPanel, saved.pdfPage, saved.pdfZoom) }
         // Its events come to `handle` from here on: the app numbers the session, so none comes before its observer.
         let session = core.observe { [weak self] event in self?.handle(event) }
         // The last build's PDF loads beside the session's open, the file's reading and its analysis, and is shown before the
@@ -353,9 +341,7 @@ final class ProjectModel {
                     // A file made a moment ago may not be in the tree yet.
                     if tree.node(at: path) == nil { await tree.reload() }
                     // Read first and closed last, with nothing awaited between the close and the switch.
-                    if isText(path) {
-                        try await core.call("session_open_document", ["session": session, "path": path])
-                    }
+                    if isText(path) { try await core.call("session_open_document", ["session": session, "path": path]) }
                     guard !Task.isCancelled, !closed else { return }
                     if let was = openPath, editsText {
                         guard await closeDocument(was), !closed else { return }
@@ -376,10 +362,7 @@ final class ProjectModel {
         openKind = tree.node(at: path)?.kind
         analyze()
         guard editsText else { return }
-        guard let session, let source = SourceDocument(session: session, path: path) else {
-            openPath = nil
-            return
-        }
+        guard let session, let source = SourceDocument(session: session, path: path) else { openPath = nil; return }
         editor.open(path: path, text: source.text, source: source, focus: focus)
         editor.textView.issueLines = lineIssues[path] ?? [:]
     }
@@ -401,9 +384,7 @@ final class ProjectModel {
         core.send("session_composing", ["session": session, "path": path, "composing": composing])
     }
 
-    func url(_ path: String) -> URL? {
-        root.map { $0.appending(path: path) }
-    }
+    func url(_ path: String) -> URL? { root.map { $0.appending(path: path) } }
 
     /// Where a file dropped on the window is in this project, as the disk spells it; asked as the drag moves, so at once.
     func projectPath(_ url: URL) -> String? {
@@ -439,19 +420,14 @@ final class ProjectModel {
     func analyze() {
         analysis?.cancel()
         guard isLaTeX, let path = openPath, let session else {
-            outline = []
-            outlineTree = []
-            words = nil
+            (outline, outlineTree, words) = ([], [], nil)
             findHeadings()
             return
         }
         analysis = Task {
             guard let doc = try? await core.call("session_analyze", ["session": session, "path": path], as: Analysis.self),
                   !Task.isCancelled else { return }
-            outline = doc.outline
-            outlineTree = doc.tree
-            headingStyles = doc.headingStyles
-            words = doc.words
+            (outline, outlineTree, headingStyles, words) = (doc.outline, doc.tree, doc.headingStyles, doc.words)
             findHeadings()
         }
     }
@@ -551,9 +527,7 @@ final class ProjectModel {
     }
 
     /// Once the session has stopped its build and Live Preview, so another model can't race it for the project's.
-    func waitUntilClosed() async {
-        await closing?.value
-    }
+    func waitUntilClosed() async { await closing?.value }
 
     // MARK: - Settings
 
