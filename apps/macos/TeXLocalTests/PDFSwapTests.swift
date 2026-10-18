@@ -4,22 +4,21 @@ import Testing
 @testable import TeXLocal
 
 /// The pane never flashes empty, as a new document would, and nothing on the pages leads back to the old ones.
-@MainActor
 struct PDFSwapTests {
     private func document(_ pages: [String]) throws -> PDFDocument {
         try textPDF(pages.map { String(repeating: $0 + " ", count: 200) })
     }
 
+    private func page(_ text: String) throws -> PDFPage {
+        try #require(try document([text]).page(at: 0))
+    }
+
     private func paper(_ view: NSView) -> Int {
         guard let image = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return 0 }
         view.cacheDisplay(in: view.bounds, to: image)
-        var count = 0
-        for y in stride(from: 0, to: image.pixelsHigh, by: 8) {
-            for x in stride(from: 0, to: image.pixelsWide, by: 8) where (image.colorAt(x: x, y: y)?.brightnessComponent ?? 0) > 0.92 {
-                count += 1
-            }
+        return stride(from: 0, to: image.pixelsHigh, by: 8).reduce(0) { count, y in
+            count + stride(from: 0, to: image.pixelsWide, by: 8).count { (image.colorAt(x: $0, y: y)?.brightnessComponent ?? 0) > 0.92 }
         }
-        return count
     }
 
     /// In an on-screen window, unseen: PDFKit draws pages only there.
@@ -63,9 +62,7 @@ struct PDFSwapTests {
     }
 
     @Test func aRebuildChangesThePageCount() throws {
-        let controller = PDFController(), view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(try document(["a", "b", "c"]))
+        let controller = showing(try document(["a", "b", "c"])), view = controller.view
         controller.go(toPage: 2)
         controller.show(try document(["a2", "b2", "c2", "d2"]))
         #expect(text(view) == ["a2", "b2", "c2", "d2"])
@@ -76,9 +73,7 @@ struct PDFSwapTests {
     }
 
     @Test func aLiveDocumentTakesOnlyThePagesThatChanged() throws {
-        let controller = PDFController(), view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(try document(["a", "b", "c", "d"]))
+        let controller = showing(try document(["a", "b", "c", "d"])), view = controller.view
         controller.go(toPage: 3)
         let shown = try #require(view.document), first = shown.page(at: 0), version = controller.shownVersion
         controller.showLive(try document(["a2", "b2"]), changed: [1], complete: false)
@@ -95,9 +90,7 @@ struct PDFSwapTests {
     }
 
     @Test func aLiveDocumentAfterOneNotReadTakesEveryPage() throws {
-        let controller = PDFController(), view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(try document(["a", "b"]))
+        let controller = showing(try document(["a", "b"])), view = controller.view
         let shown = try #require(view.document)
         controller.showLive(.document(nil))
         controller.showLive(try live(["a2", "b2"], changed: [1]))
@@ -105,27 +98,23 @@ struct PDFSwapTests {
         controller.showLive(try live(["a3", "b3"], changed: [1]))
         #expect(text(view) == ["a2", "b3"])
         // A page past the document showing goes: the next document has it.
-        controller.showLive(.page(LivePage(index: 2, page: try #require(try document(["c"]).page(at: 0)))))
+        controller.showLive(.page(LivePage(index: 2, page: try page("c"))))
         #expect(text(view) == ["a2", "b3"] && controller.pageCount == 2)
     }
 
     @Test func aLivePageWaitsForItsOwnRunsDocument() throws {
-        let controller = PDFController(), view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(try document(["a", "b"]))
-        func page(_ text: String) throws -> LiveRead {
-            .page(LivePage(index: 0, page: try #require(try document([text]).page(at: 0))))
-        }
+        let controller = showing(try document(["a", "b"])), view = controller.view
+        func first(_ text: String) throws -> LiveRead { .page(LivePage(index: 0, page: try page(text))) }
         // Not over the build's PDF. Out of a window, a page PDFKit's document takes at once.
-        controller.showLive(try page("a1"))
+        controller.showLive(try first("a1"))
         #expect(text(view) == ["a", "b"])
         controller.showLive(try live(["a2", "b2"], changed: [1]))
-        controller.showLive(try page("a3"))
+        controller.showLive(try first("a3"))
         #expect(text(view) == ["a3", "b2"])
         // Nor over the last run's; and that run's unread document leaves the next run's first its own changes.
         controller.showLive(.document(nil))
         controller.endLiveRun()
-        controller.showLive(try page("a4"))
+        controller.showLive(try first("a4"))
         #expect(text(view) == ["a3", "b2"])
         controller.showLive(try live(["a5", "b5"], changed: [1]))
         #expect(text(view) == ["a3", "b5"])
@@ -140,13 +129,11 @@ struct PDFSwapTests {
         controller.show(try document(["alpha", "beta", "alpha"]))
         if inView { try await waitUntil(timeout: .seconds(5)) { paper(view) > 0 } }
         let shown = try #require(view.document)
-        controller.find.isOpen = true
-        controller.find.text = "alpha"
-        controller.find.search("alpha")
+        openFind("alpha", in: controller)
         try await waitUntil(timeout: .seconds(5)) { controller.find.matches.count == 400 }
         let selection = try #require(shown.page(at: 1)?.selection(for: NSRange(location: 0, length: 4)))
         view.setCurrentSelection(selection, animate: false)
-        controller.showLive(try #require(try document(["gamma"]).page(at: 0)), at: inView ? 0 : 2)
+        controller.showLive(try page("gamma"), at: inView ? 0 : 2)
         if inView {
             // Over the page, which PDFKit's document still has as it was.
             #expect(view.hasLive(at: 0) && text(view) == ["alpha", "beta", "alpha"])
@@ -164,7 +151,7 @@ struct PDFSwapTests {
             // The layer goes once PDFKit's own page has drawn beneath it.
             try await waitUntil(timeout: .seconds(5)) { !view.hasLive(at: 0) }
         } else {
-            controller.showLive(try #require(try document(["alpha"]).page(at: 0)), at: 1)
+            controller.showLive(try page("alpha"), at: 1)
             #expect(view.currentSelection == nil)
             try await waitUntil(timeout: .seconds(5)) { controller.find.matches.count == 400 }
         }
@@ -206,9 +193,7 @@ struct PDFSwapTests {
             let data = try #require(source.dataRepresentation())
             return try #require(PDFDocument(data: data))
         }
-        let controller = PDFController(), view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(try linked())
+        let controller = showing(try linked()), view = controller.view
         controller.show(try linked())
         let shown = try #require(view.document)
         let link = try #require(shown.page(at: 0)?.annotations.first { $0.type == "Link" })
@@ -219,8 +204,7 @@ struct PDFSwapTests {
     @Test func clearingThePDFClosesItsFind() throws {
         let controller = PDFController()
         controller.show(try document(["one"]))
-        controller.find.isOpen = true
-        controller.find.text = "one"
+        (controller.find.isOpen, controller.find.text) = (true, "one")
         controller.clear()
         #expect(!controller.find.isOpen && controller.find.text.isEmpty && controller.pageCount == 0)
     }
