@@ -3,17 +3,14 @@ import Testing
 @testable import TeXLocal
 
 struct MenuCommandTests {
+    private let app = AppModel()
+
     @Test func noTwoCommandsShareAMacChord() {
-        var seen: [KeyboardShortcut: MenuCommand] = [:]
-        for command in MenuCommand.allCases {
-            guard let shortcut = command.shortcut else { continue }
-            #expect(seen[shortcut] == nil, "\(command) and \(seen[shortcut].map { "\($0)" } ?? "")")
-            seen[shortcut] = command
-        }
+        let chords = Dictionary(grouping: MenuCommand.allCases.filter { $0.shortcut != nil }) { $0.shortcut! }
+        #expect(chords.values.allSatisfy { $0.count == 1 }, "\(chords.values.filter { $0.count > 1 })")
     }
 
     @Test func findInProjectSearchesTheProjectsOnHome() {
-        let app = AppModel()
         app.mainWindowIsKey = true
         #expect(app.isEnabled(.projectSearch, on: nil) && app.title(.projectSearch, on: nil) == "Find Project…")
         app.mainWindowIsKey = false
@@ -21,7 +18,6 @@ struct MenuCommandTests {
     }
 
     @Test func theFormatCommandsAreLaTeXs() {
-        let app = AppModel()
         let project = ProjectModel(id: "MenuCommandTests", app: app)
         let latex = [MenuCommand.editBold, .editItalic, .editUnderline, .editMath]
         #expect(!(latex + [.editComment, .syncInverse]).contains { app.isEnabled($0, on: project) })
@@ -37,7 +33,6 @@ struct MenuCommandTests {
 
     /// The one reckoning the pane, its header and View's command share: open for LaTeX unless folded, hidden for search results.
     @Test func theFileOutlineIsOpenForLaTeXUnlessFoldedOrSearched() {
-        let app = AppModel()
         let collapsed = app.outlineCollapsed
         defer { app.outlineCollapsed = collapsed }
         let project = ProjectModel(id: "MenuCommandTests", app: app)
@@ -67,10 +62,6 @@ struct MenuStructureTests {
         return menu
     }
 
-    private func item(_ title: String, in menu: NSMenu) throws -> NSMenuItem {
-        try #require(all(menu).first { $0.title == title }, "\(title)")
-    }
-
     /// macOS 27 shows the images the app asks for and hides the system's, which the Edit menu leaves out of this.
     @Test func theMenuBarFollowsTheGuidelines() throws {
         let titles = try #require(NSApp.mainMenu).items.map(\.title)
@@ -82,8 +73,7 @@ struct MenuStructureTests {
         #expect(file.contains("Export as PDF…") && !file.contains("Page Setup…"))
         #expect(try all(menu("Compile")).contains { $0.title == "Clean Build Folder" })
         for name in ["File", "Format", "View", "Go", "Compile"] {
-            let groups = try menu(name).items.split(whereSeparator: \.isSeparatorItem)
-            for group in groups {
+            for group in try menu(name).items.split(whereSeparator: \.isSeparatorItem) {
                 #expect(Set(group.map { $0.image != nil && $0.preferredImageVisibility == .visible }).count == 1,
                         "\(name): \(group.map(\.title)) \(group.map(\.preferredImageVisibility.rawValue))")
             }
@@ -96,7 +86,7 @@ struct MenuStructureTests {
         let groups = Menus.shared.symbolGroups
         #expect(!groups.isEmpty)
         for group in groups {
-            let grid = try #require(try item(group.title, in: insert).submenu)
+            let grid = try #require(all(insert).first { $0.title == group.title }?.submenu, "\(group.title)")
             let rows = grid.items.compactMap(\.submenu)
             #expect(rows.allSatisfy { $0.presentationStyle == .palette })
             // Widened past AppKit's own size for its palettes (`MathGlyphs.centre`).

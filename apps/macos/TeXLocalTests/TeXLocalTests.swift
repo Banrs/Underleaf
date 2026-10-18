@@ -2,9 +2,7 @@ import Foundation
 @testable import TeXLocal
 
 /// What a timed-out wait last saw, so a failure on a machine we can't watch says why.
-struct TimedOut: Error {
-    var state = ""
-}
+struct TimedOut: Error { var state = "" }
 
 func waitUntil(timeout: Duration = .seconds(2), _ condition: () -> Bool,
                state: () -> String = { "" }) async throws {
@@ -20,9 +18,7 @@ func settle() async {
     for _ in 0..<50 { await Task.yield() }
 }
 
-func isClose(_ a: CGFloat, _ b: CGFloat, within tolerance: CGFloat = 0.5) -> Bool {
-    abs(a - b) <= tolerance
-}
+func isClose(_ a: CGFloat, _ b: CGFloat, within tolerance: CGFloat = 0.5) -> Bool { abs(a - b) <= tolerance }
 
 extension [TreeNode] {
     /// A main file and a bibliography, as the core lists them.
