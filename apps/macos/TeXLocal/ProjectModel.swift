@@ -204,7 +204,9 @@ final class ProjectModel {
     private func connectEditor() {
         editor.onCursor = { [weak self] line, column in
             guard let self, line != cursorLine || column != cursorColumn else { return }
-            (cursorLine, cursorColumn, currentLine, caretMoved) = (line, column, line, true)
+            cursorLine = line
+            cursorColumn = column
+            (currentLine, caretMoved) = (line, true)
             findHeadings()
             liveCaret()
         }

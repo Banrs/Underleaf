@@ -304,11 +304,14 @@ final class AppModel {
         let item = UndoableTrash(
             original: root, name: project.name, undoManager: undoManager,
             trash: { [weak self] item in
-                let trashed: Void? = await self?.alerting(failure) {
+                do {
                     try item.recycle()
                     self?.recentProjects.removeAll { $0 == project.id }
+                    return true
+                } catch {
+                    self?.alert = AppAlert(failure, error)
+                    return false
                 }
-                return trashed != nil
             },
             changed: { [weak self] in await self?.refresh() },
             failed: { [weak self] title, error in self?.alert = AppAlert(title, error) })

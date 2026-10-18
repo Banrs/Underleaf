@@ -50,9 +50,11 @@ extension ProjectModel {
     }
 
     func cleanBuildFolder() async {
-        guard let session, !closed,
-              await alerting("Couldn’t Clean the Build Folder", { try await core.call("session_clean", ["session": session]) }) != nil
-        else { return }
+        guard let session, !closed else { return }
+        let cleaned: Void? = await alerting("Couldn’t Clean the Build Folder") {
+            try await core.call("session_clean", ["session": session])
+        }
+        guard cleaned != nil else { return }
         await inOrder { self.buildCleaned() }.value
     }
 
