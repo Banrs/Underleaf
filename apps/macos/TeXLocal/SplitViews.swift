@@ -28,10 +28,7 @@ extension NSView {
             return true
         }
         // Crossing the overlap need not enter a new pane tracking area: return a lingering resize cursor to the real hit view.
-        if NSCursor.isResizingColumn {
-            if hit is NSTextView || hit is NSTextField { NSCursor.iBeam.set() }
-            else { NSCursor.arrow.set() }
-        }
+        if NSCursor.isResizingColumn { (hit is NSTextView || hit is NSTextField ? NSCursor.iBeam : .arrow).set() }
         return false
     }
 }
@@ -110,9 +107,7 @@ final class SidebarSplitViewController: DetentSplitViewController {
         override func drawDivider(in rect: NSRect) {}
     }
 
-    init() {
-        super.init(splitView: SplitView())
-    }
+    init() { super.init(splitView: SplitView()) }
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -146,9 +141,7 @@ final class ColumnsSplitView: DraggedSplitView {
         setPosition(openingPosition, ofDividerAt: 0)
     }
 
-    var openingPosition: CGFloat {
-        ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded()
-    }
+    var openingPosition: CGFloat { ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded() }
 }
 
 /// The status bar's ground, as Xcode's editor bar: the text's background, with a separator's device pixel along its top, a
@@ -186,6 +179,12 @@ extension NSView {
     /// Every view of the type under this one, and this one if it is.
     func descendants<View: NSView>(of type: View.Type) -> [View] {
         [self as? View].compactMap(\.self) + subviews.flatMap { $0.descendants(of: type) }
+    }
+
+    /// Constraints that hold these edges of the view to the same edges of another.
+    func pinned(to other: NSView, edges: [NSLayoutConstraint.Attribute]) -> [NSLayoutConstraint] {
+        edges.map { NSLayoutConstraint(item: self, attribute: $0, relatedBy: .equal, toItem: other, attribute: $0,
+                                       multiplier: 1, constant: 0) }
     }
 }
 

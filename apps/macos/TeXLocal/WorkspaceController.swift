@@ -20,6 +20,8 @@ final class WorkspaceController: DetentSplitViewController {
     private var mounts: [ObjectIdentifier: Mount] = [:]
     private let searchField = FieldHandle()
 
+    private var appeared = false
+    private var joining = false
     private var panelHeight: CGFloat = 0
     private var paneAnimations = 0
     private var paneFrames: CADisplayLink?
@@ -44,9 +46,7 @@ final class WorkspaceController: DetentSplitViewController {
         buildInspector()
         buildArea(size: size)
         addSplitViewItem(inspectorItem)
-        for item in panes {
-            item.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
-        }
+        for item in panes { item.collapseBehavior = .preferResizingSiblingsWithFixedSplitView }
         // The opening sizes: the sidebar's width, and the split a double-click on its divider restores.
         detent = { [unowned self] divider in
             divider == 0 && !sidebarItem.isCollapsed ? ColumnMetrics.sidebarIdeal : nil
@@ -55,9 +55,7 @@ final class WorkspaceController: DetentSplitViewController {
         fixed = { [unowned self] divider in splitViewItems.firstIndex(of: inspectorItem) == divider + 1 }
         columns.detent = { [unowned columns] _ in (columns.splitView as? ColumnsSplitView)?.openingPosition }
         // A drag resizes the panes live, which would show their overlay scrollers, though nothing scrolls.
-        for split in [self, columns, area, sidebar] as [DetentSplitViewController] {
-            split.dragging = { [unowned self] in quiet($0) }
-        }
+        for split in [self, columns, area, sidebar] as [DetentSplitViewController] { split.dragging = { [unowned self] in quiet($0) } }
         watch()
     }
 
@@ -72,9 +70,7 @@ final class WorkspaceController: DetentSplitViewController {
         sidebarItem.isCollapsed = !app.sidebarVisible
         inspectorItem.isCollapsed = !app.inspectorVisible
         collapses = [
-            follow(sidebarItem) { [unowned self] visible in
-                fold(visible, shown: \.sidebarVisible, folded: \.sidebarFolded)
-            },
+            follow(sidebarItem) { [unowned self] in fold($0, shown: \.sidebarVisible, folded: \.sidebarFolded) },
             follow(inspectorItem) { [unowned self] visible in
                 if visible { mount(inspectorItem.viewController, true) }
                 fold(visible, shown: \.inspectorVisible, folded: \.inspectorFolded)
@@ -111,8 +107,6 @@ final class WorkspaceController: DetentSplitViewController {
         fitColumns()
     }
 
-    private var appeared = false
-
     /// AppKit folds the side columns on the way to the toolbar's least width, by the area's own minimum.
     private func fitColumns() {
         let pdf = pdfItem.isCollapsed ? 0 : columns.splitView.dividerThickness + ColumnMetrics.pdfRoom
@@ -123,13 +117,11 @@ final class WorkspaceController: DetentSplitViewController {
         joinDividerSoon()
     }
 
-    private var joining = false
-
     /// A turn on, once the toolbar has laid its sections out for the panes as they now are.
     private func joinDividerSoon() {
         guard appeared, !joining else { return }
         joining = true
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             self?.joining = false
             self?.joinDivider()
         }
@@ -154,9 +146,7 @@ final class WorkspaceController: DetentSplitViewController {
 
     /// Customize Toolbar has put a tool in or taken one out, and Compile's form goes by which are there. Until the
     /// workspace appears its panes have no frames to reckon from.
-    func toolbarItemsChanged() {
-        if appeared { fitToolbar() }
-    }
+    func toolbarItemsChanged() { if appeared { fitToolbar() } }
 
     /// Compile gives up its word where that is the first tool without room: over a PDF narrower than Zoom and Compile,
     /// or once the source's tools have outgrown their pane and take the PDF's room. It takes the word back once no pane
@@ -173,13 +163,10 @@ final class WorkspaceController: DetentSplitViewController {
         // Short of the window controls with the sidebar's toggle, and of the PDF and Inspector toggles.
         let leading = max(source.minX, ColumnMetrics.windowControls)
         let trailing = min(area.maxX, splitView.bounds.maxX - ColumnMetrics.toggles)
-        var room = trailing - leading - ColumnMetrics.sourceTools
-        if pdfItem.isCollapsed {
-            room -= ColumnMetrics.separator
-        } else {
-            // A PDF sliding in is already at its width.
-            room = min(room, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
-        }
+        let tools = trailing - leading - ColumnMetrics.sourceTools
+        // A PDF sliding in is already at its width.
+        let room = pdfItem.isCollapsed ? tools - ColumnMetrics.separator
+            : min(tools, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
         let fixed = ColumnMetrics.toolbarMinimum - ColumnMetrics.windowControls - ColumnMetrics.toggles
         let compact = toolbar.holdsDefaultItems ? room < ColumnMetrics.compile
             : trailing - leading < fixed + ColumnMetrics.compileWord
@@ -263,11 +250,10 @@ final class WorkspaceController: DetentSplitViewController {
     }
 
     /// The editors' own bar, across both panes at the columns' foot: their text and the PDF's pages scroll on beneath it, and
-    /// it rides up with them as the panel opens. Under it, AppKit's own scroll edge, its automatic style, as Xcode's editor bar
-    /// has: the bar draws no ground of its own, only its line (`StatusBar`). 27.2: AppKit gives an accessory's edge to the
-    /// scroll view of one toolbar section, and the columns span two, so one accessory across them left the other pane's text
-    /// sharp under the bar (about half the launches). Each pane has an empty accessory of the bar's height instead, for its own
-    /// edge, safe area and scrollers, and the bar lies over both.
+    /// it rides up with them as the panel opens. 27.2: AppKit gives an accessory's edge to the scroll view of one toolbar
+    /// section, and the columns span two, so one accessory across them left the other pane's text sharp under the bar (about
+    /// half the launches). Each pane has an empty accessory of the bar's height instead, for its own edge, safe area and
+    /// scrollers, and the bar lies over both.
     private func buildStatusBar() {
         for item in [sourceItem!, pdfItem!] {
             let space = NSSplitViewItemAccessoryViewController()
@@ -288,16 +274,9 @@ final class WorkspaceController: DetentSplitViewController {
         ground.translatesAutoresizingMaskIntoConstraints = false
         columns.view.addSubview(ground)
         columns.view.addSubview(bar)
-        NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
-            bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
-            bar.heightAnchor.constraint(equalToConstant: BarMetrics.height),
-            ground.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-            ground.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
-            ground.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
-            ground.height,
-        ])
+        NSLayoutConstraint.activate(bar.pinned(to: columns.view, edges: [.leading, .trailing, .bottom])
+            + ground.pinned(to: bar, edges: [.leading, .trailing, .bottom])
+            + [bar.heightAnchor.constraint(equalToConstant: BarMetrics.height), ground.height])
     }
 
     private func buildInspector() {
@@ -310,13 +289,8 @@ final class WorkspaceController: DetentSplitViewController {
     private var panes: [NSSplitViewItem] { [sidebarItem, outlineItem, pdfItem, panelItem, inspectorItem] }
 
     /// The toolbar's toggles go through the model, as the menu's do.
-    override func toggleSidebar(_ sender: Any?) {
-        app.sidebarShown.toggle()
-    }
-
-    override func toggleInspector(_ sender: Any?) {
-        app.inspectorShown.toggle()
-    }
+    override func toggleSidebar(_ sender: Any?) { app.sidebarShown.toggle() }
+    override func toggleInspector(_ sender: Any?) { app.inspectorShown.toggle() }
 
     /// SwiftUI whose sizes stay out of Auto Layout, so the split item's limits size it and its content never sets the window's minimum.
     private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0, mounted: Bool? = nil) -> NSViewController {
@@ -344,12 +318,7 @@ final class WorkspaceController: DetentSplitViewController {
         header.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(header)
         outlineBarHeight = bar.heightAnchor.constraint(equalToConstant: outlineBarHeight(folded: app.outlineState(of: project) != .open))
-        NSLayoutConstraint.activate([
-            outlineBarHeight,
-            header.topAnchor.constraint(equalTo: bar.topAnchor),
-            header.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-            header.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
-        ])
+        NSLayoutConstraint.activate([outlineBarHeight] + header.pinned(to: bar, edges: [.top, .leading, .trailing]))
         outlineBar = NSSplitViewItemAccessoryViewController()
         outlineBar.view = bar
         outlineBar.automaticallyAppliesContentInsets = false
@@ -357,9 +326,7 @@ final class WorkspaceController: DetentSplitViewController {
         outlineBar.preferredScrollEdgeEffectStyle = .soft
     }
 
-    private func outlineBarHeight(folded: Bool) -> CGFloat {
-        folded ? BarMetrics.height : OutlineHeader.openHeight
-    }
+    private func outlineBarHeight(folded: Bool) -> CGFloat { folded ? BarMetrics.height : OutlineHeader.openHeight }
 
     private func accessory(_ content: some View, hidden: Bool = false) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
@@ -407,9 +374,9 @@ final class WorkspaceController: DetentSplitViewController {
         guard animates || item !== panelItem else {
             item.isCollapsed = collapsed
             view.layoutSubtreeIfNeeded()
-            done()
-            return
+            return done()
         }
+        // An item isn't Sendable: the completion finds it again by its identity.
         let id = ObjectIdentifier(item)
         if !collapsed { mount(item.viewController, true) }
         paneAnimation(true)
@@ -450,9 +417,7 @@ final class WorkspaceController: DetentSplitViewController {
         }
     }
 
-    @objc private func paneFrame(_ link: CADisplayLink) {
-        for split in splitViews { split.needsLayout = true }
-    }
+    @objc private func paneFrame(_ link: CADisplayLink) { for split in splitViews { split.needsLayout = true } }
 
     private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
 
@@ -533,9 +498,7 @@ final class WorkspaceController: DetentSplitViewController {
         focusField(searchField, in: sidebarSearch)
     }
 
-    func hostsFindField(_ field: NSTextField) -> Bool {
-        field.isDescendant(of: pdfFind.view)
-    }
+    func hostsFindField(_ field: NSTextField) -> Bool { field.isDescendant(of: pdfFind.view) }
 
     /// A split animation still running finishes after its window has gone and would save its frames over the next window's.
     func close() {
@@ -587,9 +550,7 @@ final class WorkspaceController: DetentSplitViewController {
         return first.isDescendant(of: pdfItem.viewController.view) || first.isDescendant(of: pdfFind.view)
     }
 
-    var pdfPagesHaveKeyboard: Bool {
-        (view.window?.firstResponder as? NSView)?.isDescendant(of: pdf.view) == true
-    }
+    var pdfPagesHaveKeyboard: Bool { (view.window?.firstResponder as? NSView)?.isDescendant(of: pdf.view) == true }
 
     private func showPDFFind() {
         pdf.find.isOpen = true
@@ -630,7 +591,5 @@ private struct Mounted<Content: View>: View {
     let mount: Mount?
     let content: Content
 
-    var body: some View {
-        if mount?.shown ?? true { content }
-    }
+    var body: some View { if mount?.shown ?? true { content } }
 }
