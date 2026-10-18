@@ -1,4 +1,4 @@
-# Underleaf handoff
+# Underleaf: notes for agents
 
 Status and decisions for the next agent. `README.md` is the overview and `docs/core-api.md`
 the hosts' contract with the core.
@@ -44,7 +44,10 @@ the hosts' contract with the core.
   `NSScrollView` of its own (`EditorView`), at Xcode's metrics for font, gutter and current
   line. The completion list (`CompletionList`) is Liquid Glass in a system menu's measures,
   a view of the editor's scroll view and not a window, since glass in a borderless
-  non-key panel draws flat.
+  non-key panel draws flat. Syntax colours are rendering attributes, which 27.2 doesn't redraw
+  on fragments already shown: each fragment keeps the runs it was last coloured with, and a
+  recolouring redraws the edited fragment and those whose runs changed, not every line on
+  screen (typing in a long document costs about 40% less CPU for it).
 - **Issues** are on their lines as in Xcode: a gutter of numbers only, a band over the whole
   paragraph (`tertiarySystemFill`), and at the end of its first line a SwiftUI box
   (`IssueBox`, hosted above the text's views by `IssueMessageView`) holding the symbol and
@@ -165,3 +168,16 @@ its signature, and compare the installed and built binaries.
   and a quick Stop and Start.
 - The Windows app is not finished (no live preview yet); it follows `docs/core-api.md` and is
   ported to its "Changes for hosts (October 2026)".
+- Measured on the 400-page test document (2026-10-18), not yet improved: a build's PDF shown in
+  place costs the main thread about 0.7 s, mostly PDFKit relaying out its view per inserted and
+  removed page (quadratic in the page count; a 20-page document is a few milliseconds); a SyncTeX
+  query runs the `synctex` program, which reads the whole 14 MB file each time (about 80 ms).
+  Keeping unchanged pages would need a comparison that also sees changed images and fonts, and an
+  in-core SyncTeX index would have to match the program's box choice exactly.
+- Profiling without the screen: `xcrun xctrace record --template 'Time Profiler' --attach <pid>`,
+  with typing posted through Accessibility (`AXSelectedText`); a driver that walks the window's
+  tree per key measures PDFKit building accessibility nodes (it runs text recognition on pages),
+  not typing. The per-key core work is about 0.1 ms; AppKit's text checking and drawing are the rest.
+- TeX on macOS 27 (MacTeX 2026, March package): biber's universal launcher calls
+  `lipo -extract_family`, which macOS 27's `lipo` refuses, so biber exits with lipo's usage until
+  `tlmgr update biber` (or its arm64 slice) replaces it. ConTeXt and arara are not in that package.

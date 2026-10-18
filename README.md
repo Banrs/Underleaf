@@ -16,7 +16,7 @@ One Rust core, thin native hosts:
 
 macOS and Windows only: there is no Linux build.
 
-[HANDOFF.md](HANDOFF.md) has the current status and architecture.
+[AGENTS.md](AGENTS.md) has the current status and architecture.
 
 ## Quick start
 
@@ -117,7 +117,7 @@ xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal test   # Swif
 
 These are full regression commands. For an individual change, select the affected
 test files or Xcode methods; keep cursor, menu tracking and visual-material checks
-in native UI verification. `HANDOFF.md` records the current evidence and limits.
+in native UI verification. `AGENTS.md` records the current evidence and limits.
 
 CI (`.github/workflows/ci.yml`) runs Rust (fmt, clippy, tests) on macOS and Windows and the
 Mac app's `xcodebuild test` on the `xcode-27` runner, each only when a path it builds from

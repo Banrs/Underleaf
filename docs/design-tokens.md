@@ -2,7 +2,7 @@
 
 Hosts use their platform's own controls, semantic colours and metrics: the Mac app is
 SwiftUI with AppKit for the window, toolbar, splits, text and PDF, and its design
-decisions are in `HANDOFF.md`. What is shared is the editor's appearance, which
+decisions are in `AGENTS.md`. What is shared is the editor's appearance, which
 the core's syntax module defines once (`crates/texlocal-core/src/syntax/theme.rs`) and
 hosts map to their own colour type.
 
