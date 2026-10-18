@@ -217,10 +217,11 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         }
     }
 
+    /// The first page's top shows, give or take a device pixel: scrolled to the start, it is at the shown area's top.
     private var atDocumentStart: Bool {
         guard let page = document?.page(at: 0) else { return false }
         let top = convert(CGPoint(x: 0, y: page.bounds(for: displayBox).maxY), from: page).y
-        return top <= bounds.maxY - safeAreaInsets.top + pageBreakMargins.top * scaleFactor
+        return top <= bounds.maxY - safeAreaInsets.top + pageBreakMargins.top * scaleFactor + 1 / (window?.backingScaleFactor ?? 1)
     }
 
     /// Between the bars, which PDFKit's pages scroll beneath.
@@ -231,7 +232,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     /// The page's index and the point in it at the top between the bars: `currentDestination` lies behind them.
     var shownPlace: (index: Int, point: CGPoint)? {
         let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
-        guard let page = page(for: top, nearest: true), let document else { return nil }
+        // Pages have no top margin: one whose top edge is at the top is under it, not the page above, whose gap meets it there.
+        let under = CGPoint(x: top.x, y: top.y - 1 / (window?.backingScaleFactor ?? 1))
+        guard let page = page(for: under, nearest: true), let document else { return nil }
         return (index: document.index(for: page), point: convert(top, to: page))
     }
 

@@ -63,13 +63,12 @@ the hosts' contract with the core.
   and pages ghost through it, about 11% of their contrast, evenly over its height, under AppKit's
   own line. Until a scroll prepares content, TextKit's content view ends at the scroll view's
   insets, so the source prepares its visible rect after each viewport layout or the lines under the
-  bar wouldn't draw after a launch or a resize (27.2). A fitted page meets the pane's sides. The
-  splits keep AppKit's weights, as Mail's and Xcode's: a point between the columns and over the
-  build panel, half a point for the sidebar and inspector. The build panel resizes from the bar's
-  line and is dragged open and shut there, as Xcode's debug area (`area.grip`, an additional
-  effective rect, which the split hit-tests before the bar; the panel's `canCollapse`). After a
-  failed save, or a Cancel in an alert about the file on disk, it says Not Saved and that
-  button saves.
+  bar wouldn't draw after a launch or a resize (27.2). The splits keep AppKit's weights, as Mail's
+  and Xcode's: a point between the columns and over the build panel, half a point for the sidebar
+  and inspector. The build panel resizes from the bar's line and is dragged open and shut there, as
+  Xcode's debug area (`area.grip`, an additional effective rect, which the split hit-tests before
+  the bar; the panel's `canCollapse`). After a failed save, or a Cancel in an alert about the file
+  on disk, it says Not Saved and that button saves.
 - **Build panel**: below the columns, so the status bar rides up as it opens. A bar at its
   foot, as Xcode's console bar: a pop-up for Issues, Build Log and Live Preview Log, then
   Warnings or Copy Log, then a filter. The bar is a SwiftUI safe-area bar, where the filter
@@ -87,7 +86,12 @@ the hosts' contract with the core.
   shown whole, the next one is shown whole (`PDFController.memoryAtWhole`). Print prints the
   document showing; during Live Preview it reads the last build's file (`buildBehindLive`).
   The PDF view sits directly in its pane: SwiftUI's scroll edge needs a SwiftUI scroll view,
-  and one around PDFKit's view takes its rubber-banding and insets (27.2).
+  and one around PDFKit's view takes its rubber-banding and insets (27.2). A fitted page keeps
+  PDFKit's side margins, which scale with it, as Preview's do. Pages have no top margin, so the
+  first meets the toolbar's edge, and at the document's start it stays there as the pane resizes
+  (`atDocumentStart` allows a device pixel for the clip view's rounding). AppKit draws the
+  toolbar's line over the page at its top while the page is magnified past 1 and not below 1
+  (27.2); no public setting changes it.
 - **Sessions**: the open project is a core session, numbered by the app before it opens
   (`Core.observe`), so none of its events can come before the app listens. Commands go
   through `tl_call_async` and are awaited, so no thread waits on the core; a session takes

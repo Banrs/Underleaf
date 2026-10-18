@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import SwiftUI
 import Testing
 @testable import TeXLocal
@@ -142,8 +143,6 @@ struct ShellTests {
         }
     }
 
-    /// Aa opens Notes' popover; its overflow form is a menu of the styles and the class's levels by name, as the menu
-    /// bar's Section Level, while the popover numbers them as the class does ("1.1" for a subsection).
     /// As Xcode's debug area, the build panel is dragged open, resized and dragged shut from the status bar's line: the area's
     /// split takes a press there before the bar does, with the panel shut and open.
     @Test func theStatusBarsLineTakesThePanelsDrag() async throws {
@@ -160,6 +159,28 @@ struct ShellTests {
         #expect(pressed() === area)
     }
 
+    /// At the document's start the first page meets the toolbar's edge, and it stays there as the window's width changes.
+    /// Pages have no top margin, so the page at the edge, a fraction of a point above it as the clip view rounds, is at the start.
+    @Test func theFirstPageStaysAtTheToolbarsEdge() async throws {
+        let (window, workspace) = try await workspace()
+        defer { workspace.close(); window.close() }
+        workspace.project.shown = .build(URL(filePath: "/dev/null"))
+        workspace.pdf.show(try textPDF(["a", "b", "c"]))
+        let view = workspace.pdf.view
+        func under() throws -> CGFloat {
+            let page = try #require(view.document?.page(at: 0))
+            let top = view.convert(CGPoint(x: 0, y: page.bounds(for: view.displayBox).maxY), from: page).y
+            return view.bounds.maxY - view.safeAreaInsets.top - top
+        }
+        for width: CGFloat in [1300, 1000, 760, 1100, 900, 1240, 820, 1300] {
+            try await resize(window, to: width)
+            let gap = try under()
+            #expect(isClose(gap, 0), "\(gap) pt under the edge at width \(width)")
+        }
+    }
+
+    /// Aa opens Notes' popover; its overflow form is a menu of the styles and the class's levels by name, as the menu
+    /// bar's Section Level, while the popover numbers them as the class does ("1.1" for a subsection).
     @Test func formatIsAPopoverWithAMenuForm() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }

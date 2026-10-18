@@ -48,10 +48,11 @@ final class PDFController: NSObject {
         find = PDFFind(view: view)
         super.init()
         view.backgroundColor = .untintedTextBackground
-        // A fitted page meets the pane's sides: PDFKit's 4 pt there drew a second edge just inside the window's own and the
-        // divider. Pages keep their gaps between them.
+        // As Preview's: a page keeps PDFKit's margin at its sides, which scales with it, and the first meets the toolbar's edge,
+        // where its top margin showed as a strip under the toolbar's line at some widths and scrolls and not others. Pages
+        // keep their bottom margins' gap between them.
         let margins = view.pageBreakMargins
-        view.pageBreakMargins = NSEdgeInsets(top: margins.top, left: 0, bottom: margins.bottom, right: 0)
+        view.pageBreakMargins = NSEdgeInsets(top: 0, left: margins.left, bottom: margins.bottom, right: margins.right)
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
