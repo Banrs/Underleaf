@@ -23,8 +23,10 @@ struct PDFSwapTests {
 
     /// In an on-screen window, unseen: PDFKit draws pages only there.
     private func onScreen(_ controller: PDFController) -> NSWindow {
-        let window = unseenWindow(NSRect(x: 100, y: 100, width: 500, height: 600))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 500, height: 600), styleMask: [.titled],
+                              backing: .buffered, defer: false)
         window.contentView = controller.view
+        window.orderFrontUnseen()
         return window
     }
 

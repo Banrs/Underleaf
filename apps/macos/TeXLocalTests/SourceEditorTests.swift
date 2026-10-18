@@ -396,11 +396,9 @@ struct SourceEditorTests {
         #expect(kept.map(\.resultType) == prose.flatMap { _ in [.spelling, .correction, .replacement] })
     }
 
-    /// Ordered in, unseen, where `onScreen`.
     @discardableResult
-    private func inWindow(onScreen: Bool = false) -> NSWindow {
-        let rect = NSRect(x: 0, y: 0, width: 600, height: 400)
-        let window = onScreen ? unseenWindow(rect) : NSWindow(contentRect: rect, styleMask: [.titled], backing: .buffered, defer: false)
+    private func inWindow() -> NSWindow {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         editor.scrollView.frame = window.contentView!.bounds
         window.contentView!.addSubview(editor.scrollView)
         editor.shown = true
@@ -491,7 +489,8 @@ struct SourceEditorTests {
     }
 
     @Test func aThemeRecoloursTheText() async throws {
-        let window = inWindow(onScreen: true)
+        let window = inWindow()
+        window.orderFrontUnseen()
         defer { window.close() }
         open("\\section{A} % note")
         #expect(SyntaxTheme.all.map(\.id) == ["overleaf", "texstudio", "system"] && SyntaxTheme(rawValue: "gone") == nil)

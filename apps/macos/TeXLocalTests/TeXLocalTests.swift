@@ -48,13 +48,13 @@ extension UndoManager {
     }
 }
 
-/// A window that is on screen but unseen, kept until it is closed.
-func unseenWindow(_ rect: NSRect, style: NSWindow.StyleMask = [.titled]) -> NSWindow {
-    let window = NSWindow(contentRect: rect, styleMask: style, backing: .buffered, defer: false)
-    window.isReleasedWhenClosed = false
-    window.alphaValue = 0
-    window.orderFront(nil)
-    return window
+extension NSWindow {
+    /// On screen but unseen, and kept until it is closed.
+    func orderFrontUnseen() {
+        isReleasedWhenClosed = false
+        alphaValue = 0
+        orderFront(nil)
+    }
 }
 
 /// A controller at 600 by 500.

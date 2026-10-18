@@ -223,6 +223,11 @@ final class ProjectFlowTests {
         try await waitUntil { notices.current == nil }
     }
 
+    @Test func aProjectThatCannotLoadStaysClosed() async throws {
+        await app.open("No Such Project \(UUID().uuidString.prefix(8))")
+        #expect(app.project == nil && app.alert != nil && !app.isOpening)
+    }
+
     @Test func aProjectOpensOnItsBuiltPDF() async throws {
         let (info, folder) = try await project()
         try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
@@ -235,10 +240,7 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A project that can't load stays closed; an import or rename the core refuses names what it was about.
-    @Test func aRefusalOnHomeIsAnAlert() async throws {
-        await app.open("No Such Project \(UUID().uuidString.prefix(8))")
-        #expect(app.project == nil && app.alert != nil && !app.isOpening)
+    @Test func aRefusalOnHomeIsAnAlertThatNamesIt() async throws {
         let missing = files.temporaryDirectory.appending(path: "\(UUID().uuidString).zip")
         await app.importProject(from: missing)
         #expect(app.alert?.title == "Couldn’t Open “\(missing.lastPathComponent)”" && app.project == nil && !app.isOpening)
