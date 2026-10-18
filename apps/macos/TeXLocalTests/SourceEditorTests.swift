@@ -3,24 +3,36 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-@MainActor
 struct SourceEditorTests {
     private let editor = SourceEditor()
     private var text: SourceTextView { editor.textView }
     private let typed = NSRange(location: NSNotFound, length: 0)
+    /// The window the text lays out in, held to the test's end.
+    private let held = Held()
+    private final class Held { var window: NSWindow? }
 
     private func open(_ string: String, caret: Int? = nil, path: String = "main.tex") {
         editor.open(path: path, text: string, focus: false)
         text.setSelectedRange(NSRange(location: caret ?? (string as NSString).length, length: 0))
     }
 
-    @Test func eachFileKeepsItsUndo() throws {
+    /// Each key as the keyboard types it.
+    private func type(_ keys: String...) {
+        for key in keys { text.insertText(key, replacementRange: typed) }
+    }
+
+    /// An "x" typed in a.tex's "one", then b.tex's "two" opened: a.tex's undo.
+    private func typedInA() throws -> UndoManager {
         open("one", caret: 0, path: "a.tex")
-        text.insertText("x", replacementRange: typed)
-        let a = try #require(text.undoManager)
+        type("x")
+        let undo = try #require(text.undoManager)
         open("two", path: "b.tex")
-        #expect(text.undoManager !== a)
-        #expect(text.undoManager?.canUndo == false)
+        return undo
+    }
+
+    @Test func eachFileKeepsItsUndo() throws {
+        let a = try typedInA()
+        #expect(text.undoManager !== a && text.undoManager?.canUndo == false)
         open("xone", path: "a.tex")
         #expect(text.undoManager === a)
         text.undoManager?.undo()
@@ -31,10 +43,7 @@ struct SourceEditorTests {
     }
 
     @Test func aRenameOntoAFileGoneElsewhereKeepsItsUndo() throws {
-        open("one", caret: 0, path: "a.tex")
-        text.insertText("x", replacementRange: typed)
-        let a = try #require(text.undoManager)
-        open("two", path: "b.tex")
+        let a = try typedInA()
         open("main", path: "main.tex")
         // b.tex deleted in the Finder, so its kept state stays; a.tex takes its name.
         editor.rename(from: "a.tex", to: "b.tex")
@@ -47,9 +56,7 @@ struct SourceEditorTests {
         let document = SourceDocument(text: "a\u{0}\nb")
         #expect(document.lineCount == 2)
         #expect(document.edit(NSRange(location: 4, length: 0), with: "\u{0}\nc", changing: nil, mirroring: false).isEmpty)
-        #expect(document.lineCount == 3)
-        #expect(document.lineStart(3) == 6)
-        #expect(document.text == "a\u{0}\nb\u{0}\nc")
+        #expect(document.lineCount == 3 && document.lineStart(3) == 6 && document.text == "a\u{0}\nb\u{0}\nc")
     }
 
     @Test func aTextViewOnItsOwnMirrorsItsEdits() {
@@ -62,21 +69,21 @@ struct SourceEditorTests {
     /// Each key goes through the core, which closes brackets and steps over them, keeps the indentation and indents by Tab.
     @Test func typingIsTheCores() {
         open("")
-        text.insertText("{", replacementRange: typed)
+        type("{")
         #expect(text.string == "{}" && text.selectedRange() == NSRange(location: 1, length: 0))
-        text.insertText("}", replacementRange: typed)
+        type("}")
         #expect(text.string == "{}" && text.selectedRange() == NSRange(location: 2, length: 0))
         open("ab")
         text.setSelectedRange(NSRange(location: 0, length: 2))
-        text.insertText("[", replacementRange: typed)
+        type("[")
         #expect(text.string == "[ab]" && text.selectedRange() == NSRange(location: 1, length: 2))
         open("")
-        text.insertText("{", replacementRange: typed)
+        type("{")
         text.deleteBackward(nil)
         #expect(text.string == "")
         // A closer put in as \]: its bracket steps over both, and the backslash typed for it goes.
         open("\\")
-        for key in ["[", "x", "\\", "]"] { text.insertText(key, replacementRange: typed) }
+        type("[", "x", "\\", "]")
         #expect(text.string == "\\[x\\]" && text.selectedRange() == NSRange(location: 5, length: 0))
         open("  a{}", caret: 4)
         text.insertNewline(nil)
@@ -107,23 +114,22 @@ struct SourceEditorTests {
         text.autoPair = false
         text.autoComplete = false
         open("")
-        text.insertText("{", replacementRange: typed)
+        type("{")
         #expect(text.string == "{")
         open("{}", caret: 1)
         text.deleteBackward(nil)
         #expect(text.string == "}")
         open("\\")
-        text.insertText("b", replacementRange: typed)
+        type("b")
         #expect(text.offered == nil)
         text.complete(nil)
         let all = try #require(text.offered).items.count
-        text.insertText("e", replacementRange: typed)
+        type("e")
         #expect(try #require(text.offered).items.count < all)
     }
 
     struct Step: Sendable {
-        enum Command: Sendable { case comment, bold }
-        let text: String, selection: NSRange, command: Command, result: String, selected: NSRange
+        let text: String, selection: NSRange, command: EditorCommand, result: String, selected: NSRange
     }
 
     @Test(arguments: [
@@ -137,16 +143,12 @@ struct SourceEditorTests {
     func aCommandIsOneUndoStepThatKeepsTheSelection(_ step: Step) {
         open(step.text)
         text.setSelectedRange(step.selection)
-        let command: EditorCommand = step.command == .comment ? .comment : .bold
-        #expect(editor.perform(command))
-        #expect(text.string == step.result && text.selectedRange() == step.selected)
-        #expect(editor.document?.text == text.string)
+        #expect(editor.perform(step.command))
+        #expect(text.string == step.result && text.selectedRange() == step.selected && editor.document?.text == text.string)
         text.undoManager?.undo()
-        #expect(text.string == step.text)
-        #expect(editor.document?.text == text.string)
+        #expect(text.string == step.text && editor.document?.text == text.string)
         text.undoManager?.redo()
-        #expect(text.string == step.result)
-        #expect(editor.document?.text == text.string)
+        #expect(text.string == step.result && editor.document?.text == text.string)
     }
 
     @Test func blocksTabThroughTheirFields() {
@@ -157,8 +159,7 @@ struct SourceEditorTests {
         text.insertTab(nil)
         #expect(text.selectedRange().location == NSMaxRange(string.range(of: "\\caption{")))
         text.insertTab(nil)
-        #expect(text.selectedRange().location == NSMaxRange(string.range(of: "fig:")))
-        #expect(text.undoManager?.undoActionName == "Insert")
+        #expect(text.selectedRange().location == NSMaxRange(string.range(of: "fig:")) && text.undoManager?.undoActionName == "Insert")
         open("")
         #expect(editor.perform(.block(id: "figure", title: "Figure")))
         #expect(text.undoManager?.undoActionName == "Insert Figure")
@@ -198,9 +199,7 @@ struct SourceEditorTests {
 
     /// TextKit 2 estimates what's above a revealed line, and a new width changes that; lines wrap at once, at the width AppKit's tracking gives as a live resize ends.
     @Test func aRevealedLineStaysAtTheTop() {
-        // Held to the end: the text lays out in it.
-        let window = inWindow()
-        defer { withExtendedLifetime(window) {} }
+        inWindow()
         open((1...2000).map { "\\section{Line \($0)} " + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
         func top(_ line: Int) -> CGFloat? {
             let clip = editor.textView.enclosingScrollView!.contentView
@@ -216,9 +215,7 @@ struct SourceEditorTests {
     }
 
     @Test func aFileShownAgainIsWhereItWasLeft() throws {
-        // Held to the end: the text lays out in it.
-        let window = inWindow()
-        defer { withExtendedLifetime(window) {} }
+        inWindow()
         let long = (1...2000).map { "Line \($0)" }.joined(separator: "\n")
         open(long, caret: 0, path: "a.tex")
         editor.reveal(line: 1200, atTop: true, focus: false)
@@ -232,28 +229,33 @@ struct SourceEditorTests {
         #expect(clip.bounds.minY == -clip.contentInsets.top)
     }
 
+    /// From here each `event` is a top-level undo group of its own, as AppKit groups an event's changes.
+    private func groupingByEvent() throws -> UndoManager {
+        let undo = try #require(text.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.groupsByEvent = false
+        return undo
+    }
+
+    private func event(_ action: () -> Void) {
+        text.undoManager?.beginUndoGrouping()
+        action()
+        text.undoManager?.endUndoGrouping()
+    }
+
     @Test func aCommandIsItsOwnUndoStep() throws {
         open("", caret: 0)
-        let undo = try #require(text.undoManager)
-        // Each step an event of its own, in its own top-level undo group, as AppKit gives it.
-        undo.groupsByEvent = false
-        func step(_ action: () -> Void) {
-            undo.beginUndoGrouping()
-            action()
-            undo.endUndoGrouping()
-        }
-        step { text.insertText("a", replacementRange: typed) }
-        step { text.insertText("b", replacementRange: typed) }
-        step { editor.perform(.bold) }
+        let undo = try groupingByEvent()
+        event { type("a") }
+        event { type("b") }
+        event { editor.perform(.bold) }
         #expect(undo.undoActionName == "Bold")
-        step { text.insertText("c", replacementRange: typed) }
+        event { type("c") }
         #expect(text.string == "ab\\textbf{c}")
         undo.undo()
-        #expect(text.string == "ab\\textbf{}")
-        #expect(undo.undoActionName == "Bold")
+        #expect(text.string == "ab\\textbf{}" && undo.undoActionName == "Bold")
         undo.undo()
-        #expect(text.string == "ab")
-        #expect(text.document.text == text.string)
+        #expect(text.string == "ab" && text.document.text == text.string)
     }
 
     @Test func linesMoveUpAndDown() throws {
@@ -266,17 +268,12 @@ struct SourceEditorTests {
         #expect(editor.perform(.moveLineDown))
         #expect(text.string == "b\na\nd\nc" && text.selectedRange() == NSRange(location: 6, length: 1))
         #expect(!editor.perform(.moveLineDown))
-        let undo = try #require(text.undoManager)
-        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
-        undo.groupsByEvent = false
-        undo.beginUndoGrouping()
-        #expect(editor.perform(.moveLineUp))
-        undo.endUndoGrouping()
+        let undo = try groupingByEvent()
+        event { #expect(editor.perform(.moveLineUp)) }
         #expect(text.string == "b\na\nc\nd" && text.selectedRange() == NSRange(location: 4, length: 1))
-        #expect(text.undoManager?.undoActionName == "Move Line Up")
-        text.undoManager?.undo()
-        #expect(text.string == "b\na\nd\nc")
-        #expect(text.document.text == text.string)
+        #expect(undo.undoActionName == "Move Line Up")
+        undo.undo()
+        #expect(text.string == "b\na\nd\nc" && text.document.text == text.string)
     }
 
     @Test func syncTeXGoesToTheWordAndTellsAUTF16Column() {
@@ -295,22 +292,20 @@ struct SourceEditorTests {
         #expect(offered.start == 2 && offered.items.first?.label == "\\begin")
         text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         #expect(text.offered == nil && text.undoManager?.undoActionName == "Completion")
-        #expect(text.string == "  \\begin{env}\n    \n  \\end{env}")
-        #expect(text.selectedRange() == NSRange(location: 9, length: 3))
-        text.insertText("itemize", replacementRange: typed)
+        #expect(text.string == "  \\begin{env}\n    \n  \\end{env}" && text.selectedRange() == NSRange(location: 9, length: 3))
+        type("itemize")
         #expect(text.string == "  \\begin{itemize}\n    \n  \\end{itemize}")
         text.insertTab(nil)
         #expect(text.selectedRange() == NSRange(location: 22, length: 0))
         text.insertTab(nil)
-        #expect(text.string == "  \\begin{itemize}\n      \n  \\end{itemize}")
-        #expect(text.document.text == text.string)
+        #expect(text.string == "  \\begin{itemize}\n      \n  \\end{itemize}" && text.document.text == text.string)
     }
 
     @Test func theCompletionListTakesOnlyItsKeys() throws {
         open("\\")
-        text.insertText("b", replacementRange: typed)
+        type("b")
         let all = try #require(text.offered).items.count
-        text.insertText("e", replacementRange: typed)
+        type("e")
         #expect(try #require(text.offered).items.count < all)
         text.deleteBackward(nil)
         #expect(text.offered?.items.count == all)
@@ -323,7 +318,7 @@ struct SourceEditorTests {
         #expect(text.string == second.text)
         open("\\be")
         text.complete(nil)
-        text.insertText(" ", replacementRange: typed)
+        type(" ")
         #expect(text.offered == nil && text.string == "\\be ")
         open("\\be")
         text.complete(nil)
@@ -335,10 +330,9 @@ struct SourceEditorTests {
     /// The list is a view over the editor's text, and nothing in it takes the keyboard: a click chooses a row, and the
     /// text view goes on typing and moving through the rows.
     @Test func theCompletionListNeverTakesTheKeyboard() throws {
-        let window = inWindow()
-        defer { withExtendedLifetime(window) {} }
+        inWindow()
         open("\\")
-        text.insertText("b", replacementRange: typed)
+        type("b")
         _ = try #require(text.offered)
         let list = try #require(editor.scrollView.subviews.first { $0 is NSHostingView<CompletionRowsView> })
         list.layoutSubtreeIfNeeded()
@@ -357,9 +351,8 @@ struct SourceEditorTests {
         text.unmarkText()
         #expect(told == [true, false] && !text.hasMarkedText())
         text.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
-        text.insertText("亜", replacementRange: typed)
-        #expect(told == [true, false, true, false] && !text.hasMarkedText())
-        #expect(text.string == "startあい亜" && text.document.text == text.string)
+        type("亜")
+        #expect(told == [true, false, true, false] && !text.hasMarkedText() && text.string == "startあい亜" && text.document.text == text.string)
     }
 
     @Test func switchingFilesDuringCompositionKeepsUndoWithItsOwnText() {
@@ -367,9 +360,7 @@ struct SourceEditorTests {
         text.setMarkedText("仮", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
 
         open("second", path: "b.tex")
-        #expect(!text.hasMarkedText())
-        #expect(editor.document?.text == "second" && text.document.text == "second")
-        #expect(text.undoManager?.canUndo == false)
+        #expect(!text.hasMarkedText() && editor.document?.text == "second" && text.document.text == "second" && text.undoManager?.canUndo == false)
         // The old undo referred to provisional text that wasn't saved to a.tex.
         open("first", path: "a.tex")
         text.undoManager?.undo()
@@ -411,11 +402,13 @@ struct SourceEditorTests {
         #expect(kept.map(\.resultType) == prose.flatMap { _ in [.spelling, .correction, .replacement] })
     }
 
+    @discardableResult
     private func inWindow() -> NSWindow {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         editor.scrollView.frame = window.contentView!.bounds
         window.contentView!.addSubview(editor.scrollView)
         editor.shown = true
+        held.window = window
         return window
     }
 
@@ -432,12 +425,18 @@ struct SourceEditorTests {
         text.mouseDown(with: try mouse(.leftMouseDown, at: point, in: window, clicks: clicks, modifiers))
     }
 
+    /// The shown text as drawn, which validates the shown fragments' colours.
+    private func drawn() throws -> NSBitmapImageRep {
+        let bitmap = try #require(text.bitmapImageRepForCachingDisplay(in: text.visibleRect))
+        text.cacheDisplay(in: text.visibleRect, to: bitmap)
+        return bitmap
+    }
+
     private func colour(of word: String) throws -> NSColor? {
         let manager = try #require(text.textLayoutManager)
         text.layoutSubtreeIfNeeded()
         manager.textViewportLayoutController.layoutViewport()
-        let bitmap = try #require(text.bitmapImageRepForCachingDisplay(in: text.visibleRect))
-        text.cacheDisplay(in: text.visibleRect, to: bitmap)
+        _ = try drawn()
         let range = try #require(text.textRange((text.string as NSString).range(of: word)))
         var colour: NSColor?
         manager.enumerateRenderingAttributes(from: range.location, reverse: false) { _, attributes, _ in
@@ -449,35 +448,34 @@ struct SourceEditorTests {
 
     private func renderedText() throws -> Data {
         text.layoutSubtreeIfNeeded()
-        let bitmap = try #require(text.bitmapImageRepForCachingDisplay(in: text.visibleRect))
-        text.cacheDisplay(in: text.visibleRect, to: bitmap)
-        return try #require(bitmap.tiffRepresentation)
+        return try #require(drawn().tiffRepresentation)
+    }
+
+    /// Until `word` is drawn in `expected`; a timeout says what it was.
+    private func waitUntilColoured(_ word: String, _ expected: NSColor) async throws {
+        try await waitUntil { (try? self.colour(of: word)) == expected } state: { "\(word): \(String(describing: try? self.colour(of: word)))" }
     }
 
     @Test func newLinesAreColoured() async throws {
-        // Held to the end: the text lays out in it.
-        let window = inWindow()
-        defer { withExtendedLifetime(window) {} }
+        inWindow()
         open("x")
-        text.insertText("\n\\section", replacementRange: typed)
-        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.color(.command) }
+        type("\n\\section")
+        try await waitUntilColoured("\\section", SyntaxTheme.overleaf.color(.command))
     }
 
     @Test func anEditRecoloursTheLinesBelowIt() async throws {
-        let window = inWindow()
-        defer { withExtendedLifetime(window) {} }
+        inWindow()
         open("a\nb\nxyz\n\\]", caret: 0)
         let theme = SyntaxTheme.overleaf
-        try await waitUntil { (try? self.colour(of: "]")) == theme.color(.invalid) }
+        try await waitUntilColoured("]", theme.color(.invalid))
         text.insertText("\\[\n", replacementRange: NSRange(location: 2, length: 0))
-        try await waitUntil { (try? self.colour(of: "]")) == theme.color(.mathDelimiter) }
+        try await waitUntilColoured("]", theme.color(.mathDelimiter))
         text.undoManager?.undo()
-        try await waitUntil { (try? self.colour(of: "]")) == theme.color(.invalid) }
+        try await waitUntilColoured("]", theme.color(.invalid))
     }
 
     @Test func reduceMotionMarksABracketsPartnerInPlace() throws {
-        let window = inWindow()
-        defer { withExtendedLifetime(window) {} }
+        inWindow()
         open("(a)", caret: 0)
         text.reducesMotion = { true }
         _ = try colour(of: "a")
@@ -497,7 +495,6 @@ struct SourceEditorTests {
     }
 
     @Test func aThemeRecoloursTheText() async throws {
-        // Held to the end: the text lays out in it.
         let window = inWindow()
         window.isReleasedWhenClosed = false
         window.alphaValue = 0
@@ -507,18 +504,14 @@ struct SourceEditorTests {
         #expect(SyntaxTheme.all.map(\.id) == ["overleaf", "texstudio", "system"] && SyntaxTheme(rawValue: "gone") == nil)
         let texstudio = try #require(SyntaxTheme(rawValue: "texstudio")), system = try #require(SyntaxTheme(rawValue: "system"))
         text.syntaxTheme = texstudio
-        try await waitUntil { (try? self.colour(of: "\\section")) == texstudio.color(.command) } state: {
-            "TeXstudio: \(String(describing: try? self.colour(of: "\\section")))"
-        }
+        try await waitUntilColoured("\\section", texstudio.color(.command))
         #expect(try colour(of: "% note") == texstudio.color(.comment))
         let before = try renderedText()
         text.syntaxTheme = system
-        try await waitUntil { (try? self.colour(of: "\\section")) == system.color(.command) } state: {
-            "System: \(String(describing: try? self.colour(of: "\\section")))"
-        }
+        try await waitUntilColoured("\\section", system.color(.command))
         #expect(try renderedText() != before, "A theme change must repaint the already-visible text.")
         text.syntaxTheme = .overleaf
-        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.color(.command) }
+        try await waitUntilColoured("\\section", SyntaxTheme.overleaf.color(.command))
     }
 
     @Test func aDoubleClickGoesToThePDF() throws {
@@ -589,7 +582,6 @@ struct SourceEditorTests {
     /// words for what isn't shown. An undefined command is underlined where it stands.
     @Test func anIssuesMessageIsAtItsLinesEnd() throws {
         let window = inWindow()
-        defer { withExtendedLifetime(window) {} }
         // The core's: where the line has the command (crates/texlocal-core's `command_ranges`).
         let undefined = SourceTextView.LineIssue(isError: true, message: "Undefined control sequence: \\foo",
                                                  short: "Undefined control sequence: \\foo", compact: "Undefined: \\foo",
@@ -600,6 +592,7 @@ struct SourceEditorTests {
         try layOut()
         let padding = try #require(text.textContainer).lineFragmentPadding
         let digit = ("0" as NSString).size(withAttributes: [.font: try #require(text.font)]).width
+        let font = NSFont.systemFont(ofSize: 13)
         var rows = text.issueRows
         // The last line is the document's empty one, laid out with the paragraph before it.
         #expect(rows.map(\.line) == [1, 2, 4] && rows.map(\.isError) == [false, true, true])
@@ -612,13 +605,12 @@ struct SourceEditorTests {
         }
         #expect(rows[0].tip == nil && rows[1].tip == nil && rows[2].tip == "Emergency stop\nMissing \\begin{document}")
         // Two issues on a line: Xcode's count before the symbol, in a wider segment.
-        let stop = ("Emergency stop" as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13)]).width
-        #expect(abs(try #require(rows[2].message).rect.width - IssueBox.Metrics.width(ofText: stop, font: .systemFont(ofSize: 13), issues: 2)) < 0.01)
+        let stop = ("Emergency stop" as NSString).size(withAttributes: [.font: font]).width
+        #expect(abs(try #require(rows[2].message).rect.width - IssueBox.Metrics.width(ofText: stop, font: font, issues: 2)) < 0.01)
         // Xcode 27's boxes at 13 pt for its message "Cannot convert value of type 'String' to specified type 'Int'"
         // (353.74 pt), as measured: 406 pt alone, 418 with a count.
         let xcode = 353.7421875 as CGFloat
-        #expect(IssueBox.Metrics.width(ofText: xcode, font: .systemFont(ofSize: 13), issues: 1) == 406)
-        #expect(IssueBox.Metrics.width(ofText: xcode, font: .systemFont(ofSize: 13), issues: 2) == 418)
+        #expect(IssueBox.Metrics.width(ofText: xcode, font: font, issues: 1) == 406 && IssueBox.Metrics.width(ofText: xcode, font: font, issues: 2) == 418)
         // Both places the command stands, each four characters wide to the pixel, and none for the other lines.
         let pixel = 1 / window.backingScaleFactor
         #expect(rows.map(\.tokens.count) == [0, 2, 0] && rows[1].tokens.allSatisfy { abs($0.width - 4 * digit) <= pixel })
@@ -632,7 +624,6 @@ struct SourceEditorTests {
         let cut = try #require(rows[1].message)
         #expect(cut.cut && cut.rect.maxX == rows[1].band.maxX - 1 && cut.rect.width == cut.rect.width.rounded())
         #expect(cut.rect.minX >= start + 31 * digit && cut.rect.minX < start + 31 * digit + 1 && cut.view === views[1])
-        let font = NSFont.systemFont(ofSize: 13)
         #expect(rows[1].tip == "Undefined control sequence: \\foo" && rows[0].message?.cut == false)
         // Room for the symbol and not for words: the symbol alone, and the help tag's words.
         open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
