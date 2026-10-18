@@ -139,6 +139,11 @@ Platform quirks met on the way (27.2) are in the code's comments where they're h
   (Swift Testing). The tests run a host app that shares the app's defaults unless built
   with another bundle identifier: pass `TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev`, as CI
   does with its own, or quit the installed app first.
+- Quicker than a build: `zsh tools/qa/typecheck.sh` type-checks the app and its tests in about
+  20 s; `tools/qa/xctest.sh <repo> <derived data> [-only-testing:…]` runs the native tests one
+  at a time per session. Worktree agents use these rather than parallel `xcodebuild`s.
+- On screen: the QA driver in `tools/qa` (its README has the setup and the rules), on a QA copy
+  (`com.texlocal.mac.qa`, data in a scratchpad), never the installed app or `~/TeXLocal`.
 - The live preview's end-to-end check needs the patched engine:
   `cargo test -p texlocal-core --test texpresso_live -- --ignored` (`docs/texpresso.md`).
 - Physical trackpad gestures, the dividers' haptic, interactive IME and visual-material
@@ -146,16 +151,10 @@ Platform quirks met on the way (27.2) are in the code's comments where they're h
 
 ## Build and install the Mac app
 
-Requires Xcode 27 and Rust stable.
-
-```sh
-xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Release \
-  -destination 'platform=macOS' -derivedDataPath /private/tmp/underleaf-release \
-  CODE_SIGNING_ALLOWED=NO build
-```
-
-Quit TeXLocal, ad-hoc sign the Release product, replace `/Applications/TeXLocal.app`, verify
-its signature, and compare the installed and built binaries.
+Requires Xcode 27 and Rust stable. `zsh tools/install-mac.sh` builds the checkout it is in
+(Release, derived data in `/private/tmp/underleaf-release`), quits TeXLocal, ad-hoc signs and
+installs `/Applications/TeXLocal.app`, verifies its signature, compares the installed and built
+binaries, and reopens it.
 
 ## Open
 
