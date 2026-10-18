@@ -458,43 +458,31 @@ final class ProjectModel {
 
     // MARK: - Changes on disk
 
-    func keepEdits(_ path: String) {
-        diskConflict = nil
-        resolve(path, "save")
-    }
+    /// Changed on Disk's answers are `keep` and `revert`, Moved or Deleted's `saveMissing` and `closeMissing`. Cancel in
+    /// either, `leave`: the edits stay unsaved, and the autosave quiet, until a save is asked for, which asks again.
+    enum ConflictAnswer { case keep, revert, saveMissing, closeMissing, leave(reason: String) }
 
-    func revertToDisk(_ path: String) {
-        diskConflict = nil
-        resolve(path, "revert")
-    }
-
-    func saveMissingFile(_ path: String) {
-        missingFile = nil
-        resolve(path, "save")
-    }
-
-    func closeMissingFile(_ path: String) {
-        missingFile = nil
-        resolve(path, "close")
-        if openPath == path { clearOpenFile() }
-    }
-
-    /// Cancel: the edits stay unsaved, and the autosave quiet, until a save is asked for, which asks again.
-    func leaveUnsaved(_ path: String, _ reason: String) {
-        (diskConflict, missingFile) = (nil, nil)
-        heldReasons[path] = reason
-        resolve(path, "cancel")
-    }
-
-    private func resolve(_ path: String, _ answer: String) {
-        guard let session else { return }
-        Task {
-            do {
-                try await core.call("session_resolve", ["session": session, "path": path, "answer": answer])
-            } catch {
-                if !closed { report(error, String(localized: "“\(path.fileName)” Wasn’t Saved")) }
+    func resolve(_ path: String, _ answer: ConflictAnswer) {
+        let sent: String
+        switch answer {
+        case .keep: (diskConflict, sent) = (nil, "save")
+        case .revert: (diskConflict, sent) = (nil, "revert")
+        case .saveMissing: (missingFile, sent) = (nil, "save")
+        case .closeMissing: (missingFile, sent) = (nil, "close")
+        case .leave(let reason):
+            (diskConflict, missingFile, sent) = (nil, nil, "cancel")
+            heldReasons[path] = reason
+        }
+        if let session {
+            Task {
+                do {
+                    try await core.call("session_resolve", ["session": session, "path": path, "answer": sent])
+                } catch {
+                    if !closed { report(error, String(localized: "“\(path.fileName)” Wasn’t Saved")) }
+                }
             }
         }
+        if case .closeMissing = answer, openPath == path { clearOpenFile() }
     }
 
     // MARK: - Closing

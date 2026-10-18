@@ -427,7 +427,7 @@ final class ProjectFlowTests {
         try "theirs again".write(to: main, atomically: false, encoding: .utf8)
         #expect(project.editor.perform(.italic))
         try await waitUntil(timeout: .seconds(5)) { project.diskConflict == "main.tex" }
-        project.revertToDisk("main.tex")
+        project.resolve("main.tex", .revert)
         try await waitUntil(timeout: .seconds(5)) { text.string == "theirs again" }
         #expect(project.diskConflict == nil && onDisk() == "theirs again" && app.alert == nil)
         await app.close()
