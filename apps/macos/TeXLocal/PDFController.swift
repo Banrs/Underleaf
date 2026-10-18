@@ -412,8 +412,11 @@ final class PDFController: NSObject {
     /// The source's word is looked for in the text of the pages round SyncTeX's boxes (`synctex_match`) and selected; where
     /// it isn't found once, SyncTeX's box flashes.
     func reveal(_ loc: ForwardLoc, from source: SyncSource? = nil) {
-        pendingReveal = view.hasShownArea ? nil : (loc, source)
-        guard pendingReveal == nil else { return }
+        guard view.hasShownArea else {
+            pendingReveal = (loc, source)
+            return
+        }
+        pendingReveal = nil
         revealing?.cancel()
         guard let document = view.document, let located = document.page(ifAt: Int(loc.page) - 1) else { return }
         guard let source else { return showFound(loc, on: located, hit: nil) }

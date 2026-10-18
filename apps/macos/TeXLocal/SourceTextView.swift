@@ -265,8 +265,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// What of the text shows: the clip view's bounds less the scroll view's insets for the bars over it.
     var shownRect: NSRect {
         guard let scroll = enclosingScrollView else { return visibleRect }
-        let clip = convert(scroll.contentView.bounds, from: scroll.contentView), insets = scroll.contentInsets
-        return NSRect(x: clip.minX, y: clip.minY + insets.top, width: clip.width, height: clip.height - insets.top - insets.bottom)
+        let insets = scroll.contentInsets
+        var shown = convert(scroll.contentView.bounds, from: scroll.contentView)
+        shown.origin.y += insets.top
+        shown.size.height -= insets.top + insets.bottom
+        return shown
     }
 
     /// From the fragments last laid out: asked by point, TextKit answers from its new estimates.
@@ -591,7 +594,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private func updateIssueTips() {
         var tips: [(rect: NSRect, text: String)] = []
-        for issue in issueRows { if let tip = issue.tip, let message = issue.message { tips.append((message.rect, tip)) } }
+        for issue in issueRows {
+            if let tip = issue.tip, let message = issue.message { tips.append((message.rect, tip)) }
+        }
         guard !tips.elementsEqual(issueTips, by: { $0.rect == $1.rect && $1.text.isEqual(to: $0.text) }) else { return }
         for tip in issueTips { removeToolTip(tip.tag) }
         // The string is the tag's owner, which AppKit asks for its description and doesn't keep.
@@ -772,7 +777,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func moveRight(_ sender: Any?) { stepCaret(1) { super.moveRight(sender) } }
     override func moveLeft(_ sender: Any?) { stepCaret(-1) { super.moveLeft(sender) } }
 
-    /// A caret that steps over a bracket shows its partner.
+    /// A caret that steps over a bracket shows its partner; the character stepped over is at the lesser of the two carets.
     private func stepCaret(_ step: Int, by move: () -> Void) {
         let before = selectedRange()
         move()
