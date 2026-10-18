@@ -1,9 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum SettingsPane: String {
-    case general, editor, compiling, pdf, livePreview
-}
+enum SettingsPane: String { case general, editor, compiling, pdf, livePreview }
 
 /// In a Settings scene a TabView is the window's toolbar of panes, titles the window after the pane shown and sizes it to that pane (HIG, Settings).
 struct SettingsView: View {
@@ -55,13 +53,10 @@ private struct GeneralSettings: View {
                         .textSelection(.enabled)
                 }
             } footer: {
-                Text("New and imported projects are kept here.")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("New and imported projects are kept here.").frame(maxWidth: .infinity, alignment: .leading)
             }
             Section("New Projects") {
-                Picker("Template", selection: $template) {
-                    ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) }
-                }
+                Picker("Template", selection: $template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }
                 Picker("Engine", detail: "Each project can change its engine in the inspector.", selection: $engine) {
                     ForEach(TeXEngine.allCases) { Text($0.title).tag($0) }
                 }
@@ -128,8 +123,7 @@ private struct CompilingSettings: View {
             Section {
                 ProgramFolder(program: .tex)
             } footer: {
-                HelpLink(destination: Links.requirements)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                HelpLink(destination: Links.requirements).frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
     }
@@ -232,9 +226,7 @@ private struct ProgramFolder: View {
                         }
                     })) {
                         Text("Automatic").tag(Choice.automatic)
-                        if let chosen {
-                            Text(URL(filePath: chosen).lastPathComponent).tag(Choice.chosen)
-                        }
+                        if let chosen { Text(URL(filePath: chosen).lastPathComponent).tag(Choice.chosen) }
                         Divider()
                         Text("Other…").tag(Choice.other)
                     }

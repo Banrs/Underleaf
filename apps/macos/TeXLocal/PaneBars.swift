@@ -171,9 +171,7 @@ final class InPlaceRename<ID: Hashable> {
     }
 }
 
-struct ItemActions {
-    let rename, showInFinder, moveToTrash: () -> Void
-}
+struct ItemActions { let rename, showInFinder, moveToTrash: () -> Void }
 
 /// All three have an icon, as a group has icons for all its items or none (HIG, Menus); "folder" stands for Show in Finder's file-system location.
 struct ItemMenuItems: View {

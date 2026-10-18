@@ -163,9 +163,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private static let workspaceKey = "workspace"
 }
 
-private nonisolated struct OpenFile: Equatable {
-    let path: String?, url: URL?
-}
+private nonisolated struct OpenFile: Equatable { let path: String?, url: URL? }
 
 struct HomeRoot: View {
     let app: AppModel

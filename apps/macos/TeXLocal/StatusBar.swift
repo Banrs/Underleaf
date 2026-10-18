@@ -43,9 +43,7 @@ struct StatusBar: View {
             let showingIssues = project.panel.shown && project.panel.tab == .issues
             Button {
                 if showingIssues { project.panel.shown = false } else { project.panel.show(.issues) }
-            } label: {
-                buildStatus.fixedSize(horizontal: detail != .short, vertical: true).hitTarget()
-            }
+            } label: { buildStatus.fixedSize(horizontal: detail != .short, vertical: true).hitTarget() }
             .help(showingIssues ? "Hide issues" : "Show issues")
             if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
                 Button { project.panel.show(.texpresso) } label: {
@@ -106,9 +104,7 @@ struct StatusBar: View {
     }
 
     private func place(_ detail: Detail, _ full: LocalizedStringKey, short: String, spoken: LocalizedStringKey) -> some View {
-        Group {
-            if detail == .short { Text(verbatim: short).accessibilityLabel(spoken) } else { Text(full) }
-        }
+        Group { if detail == .short { Text(verbatim: short).accessibilityLabel(spoken) } else { Text(full) } }
         .hitTarget()
     }
 

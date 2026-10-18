@@ -217,9 +217,7 @@ struct FilesList: View {
                         .accessibilityHidden(true)
                 }
             }
-        } icon: {
-            Image(systemName: node.symbol)
-        }
+        } icon: { Image(systemName: node.symbol) }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
         // The star's name too: the row's label replaces its children's.
@@ -381,9 +379,7 @@ private struct OutlineRows: View {
             .clipped()
             // A step under the files' rows: a table of contents under a list.
             .environment(\.sidebarRowSize, rowSize == .large ? .medium : .small)
-            .overlay {
-                if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") }
-            }
+            .overlay { if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") } }
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
                 guard let id = ids.first, outline.indices.contains(id) else { return }
                 let item = outline[id]

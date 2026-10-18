@@ -13,12 +13,8 @@ struct HomeView: View {
     @State private var slowImports: [URL] = []
 
     var body: some View {
-        Group {
-            if let problem = app.libraryProblem { unavailable(problem) } else { list }
-        }
-        .safeAreaBar(edge: .top) {
-            if app.tex?.available == false, !dismissedTeXTip { texMissing }
-        }
+        Group { if let problem = app.libraryProblem { unavailable(problem) } else { list } }
+        .safeAreaBar(edge: .top) { if app.tex?.available == false, !dismissedTeXTip { texMissing } }
         .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in Task { await app.importProjects(urls) } }
         .navigationTitle("Projects")
         .toolbar {
@@ -77,9 +73,7 @@ struct HomeView: View {
                                rename: rename, ended: { listFocused = true }) { commitRename(project) }
                 }
                 if app.projectsLoaded, shown.isEmpty { empty.frame(maxWidth: .infinity).selectionDisabled() }
-            } header: {
-                Text("All Projects")
-            }
+            } header: { Text("All Projects") }
             .listSectionSeparator(.hidden)
         }
         .listStyle(.inset)
@@ -356,9 +350,7 @@ struct NewProjectSheet: View {
                         .focused($nameFocused)
                 }
             }
-            Picker("Template", selection: $template) {
-                ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) }
-            }
+            Picker("Template", selection: $template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }
         }
         .defaultFocus($nameFocused, true)
     }
@@ -377,9 +369,7 @@ private struct NameWidth: Layout {
 }
 
 #Preview("Template cards") {
-    HStack(alignment: .top) {
-        ForEach(ProjectTemplate.allCases) { TemplateCard(template: $0) }
-    }
+    HStack(alignment: .top) { ForEach(ProjectTemplate.allCases) { TemplateCard(template: $0) } }
     .padding()
 }
 

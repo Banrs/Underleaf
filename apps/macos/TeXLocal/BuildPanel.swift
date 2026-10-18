@@ -1,8 +1,6 @@
 import SwiftUI
 
-enum PanelTab: String, CaseIterable {
-    case issues = "Issues", log = "Build Log", texpresso = "Live Preview Log"
-}
+enum PanelTab: String, CaseIterable { case issues = "Issues", log = "Build Log", texpresso = "Live Preview Log" }
 
 @Observable
 final class BuildPanelModel {
@@ -110,9 +108,7 @@ struct BuildPanelBar: View {
             .layoutPriority(1)
             Spacer(minLength: 0)
             if panel.tab == .issues {
-                Toggle(isOn: $panel.showsWarnings) {
-                    Label("Warnings", systemImage: "exclamationmark.triangle")
-                }
+                Toggle(isOn: $panel.showsWarnings) { Label("Warnings", systemImage: "exclamationmark.triangle") }
                 .toggleStyle(.button)
                 .help(panel.showsWarnings ? "Hide warnings" : "Show warnings")
                 .disabled(project.warningCount == 0)
@@ -155,9 +151,7 @@ private struct IssueList: View {
                 .accessibilityLabel("Issues")
                 .contextMenu(forSelectionType: Int.self) { rows in
                     if let item = rows.first.flatMap(item) {
-                        if item.file != nil {
-                            Button(item.line == nil ? "Open File" : "Go to Line") { open(item) }
-                        }
+                        if item.file != nil { Button(item.line == nil ? "Open File" : "Go to Line") { open(item) } }
                         Button("Copy") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(item.message, forType: .string)
@@ -233,9 +227,7 @@ private struct LogPane: View {
                 }
             }
         }
-        .task(id: [text, filter]) {
-            filtered = filter.isEmpty ? nil : (filter, await Self.lines(of: text, with: filter))
-        }
+        .task(id: [text, filter]) { filtered = filter.isEmpty ? nil : (filter, await Self.lines(of: text, with: filter)) }
     }
 
     @concurrent private static func lines(of text: String, with filter: String) async -> String {

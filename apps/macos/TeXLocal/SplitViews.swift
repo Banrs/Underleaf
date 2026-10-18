@@ -103,9 +103,7 @@ class DetentSplitViewController: NSSplitViewController {
 final class SidebarSplitViewController: DetentSplitViewController {
     weak var header: NSSplitViewItemAccessoryViewController?
 
-    private final class SplitView: DraggedSplitView {
-        override func drawDivider(in rect: NSRect) {}
-    }
+    private final class SplitView: DraggedSplitView { override func drawDivider(in rect: NSRect) {} }
 
     init() { super.init(splitView: SplitView()) }
 
