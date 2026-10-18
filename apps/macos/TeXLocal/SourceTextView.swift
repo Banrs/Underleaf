@@ -306,7 +306,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// 27.2: AppKit's Jump to Selection lands lines off where TextKit 2 has only estimated the heights above.
     override func centerSelectionInVisibleArea(_ sender: Any?) {
         guard let clip = enclosingScrollView?.contentView, let manager = textLayoutManager,
-              let location = textRange(NSRange(location: selectedRange().location, length: 0))?.location
+              let location = textRange(.caret(selectedRange().location))?.location
         else { return super.centerSelectionInVisibleArea(sender) }
         // The shown text's middle, under the clip view's top.
         let middle = shownRect.midY - clip.bounds.minY
@@ -336,7 +336,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     func scroll(toShownTop top: (offset: Int, below: CGFloat)) {
-        guard let location = textRange(NSRange(location: min(top.offset, text.length), length: 0))?.location else { return }
+        guard let location = textRange(.caret(min(top.offset, text.length)))?.location else { return }
         scroll(location) { $0.minY - top.below }
     }
 
@@ -655,7 +655,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             }
         }
         let line = document.lineStart(document.line(at: start))
-        let stale = textRange(NSRange(location: line, length: 0)).flatMap { NSTextRange(location: $0.location, end: manager.documentRange.endLocation) }
+        let stale = textRange(.caret(line)).flatMap { NSTextRange(location: $0.location, end: manager.documentRange.endLocation) }
         manager.invalidateRenderingAttributes(for: stale ?? manager.documentRange)
         let first = fragments.lastIndex { $0.offset <= line } ?? 0
         var changed: [CGRect] = []
@@ -756,7 +756,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             mathPopover?.close()
             return
         }
-        let screen = firstRect(forCharacterRange: NSRange(location: selectedRange().location, length: 0), actualRange: nil)
+        let screen = firstRect(forCharacterRange: .caret(selectedRange().location), actualRange: nil)
         // A point wide: NSPopover takes an empty rect for the whole view.
         var rect = convert(window.convertFromScreen(screen), from: nil)
         rect.size.width = max(rect.width, 1)
@@ -786,13 +786,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func moveRight(_ sender: Any?) {
         let before = selectedRange()
         super.moveRight(sender)
-        if before.length == 0, selectedRange() == NSRange(location: before.location + 1, length: 0) { showPartner(of: before.location) }
+        if before.length == 0, selectedRange() == .caret(before.location + 1) { showPartner(of: before.location) }
     }
 
     override func moveLeft(_ sender: Any?) {
         let before = selectedRange()
         super.moveLeft(sender)
-        if before.length == 0, selectedRange() == NSRange(location: before.location - 1, length: 0) { showPartner(of: before.location - 1) }
+        if before.length == 0, selectedRange() == .caret(before.location - 1) { showPartner(of: before.location - 1) }
     }
 
     // MARK: typing: the core's brackets, indentation and snippet fields
@@ -941,8 +941,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         var start = NSRect.zero, shown = NSRect.zero, host: NSScrollView?
         if let window, let scroll = enclosingScrollView {
             host = scroll
-            start = scroll.convert(window.convertFromScreen(
-                firstRect(forCharacterRange: NSRange(location: offered.start, length: 0), actualRange: nil)), from: nil)
+            start = scroll.convert(window.convertFromScreen(firstRect(forCharacterRange: .caret(offered.start), actualRange: nil)), from: nil)
             shown = scroll.convert(shownRect, from: self)
             guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return closeCompletions() }
             guard reload else { return completionList.place(under: start, in: shown) }
@@ -970,7 +969,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let item = offered.items[index]
         closeCompletions()
         apply([TextEdit(NSRange(location: offered.start, length: caret - offered.start), item.text)], named: String(localized: "Completion"),
-              select: NSRange(location: offered.start + (item.text as NSString).length, length: 0))
+              select: .caret(offered.start + (item.text as NSString).length))
         startSnippet(item.fields, at: offered.start)
     }
 
@@ -1027,7 +1026,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private func selectLines(with event: NSEvent) {
         func line(at event: NSEvent) -> NSRange {
             let point = NSPoint(x: textContainerOrigin.x, y: convert(event.locationInWindow, from: nil).y)
-            return text.lineRange(for: NSRange(location: characterIndexForInsertion(at: point), length: 0))
+            return text.lineRange(for: .caret(characterIndexForInsertion(at: point)))
         }
         let first = line(at: event)
         let anchor = event.modifierFlags.contains(.shift) ? selectedRange() : first
@@ -1068,7 +1067,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         case .insert(let text):
             guard isEditable else { return false }
             let at = characterIndexForInsertion(at: convert(info.draggingLocation, from: nil))
-            apply([TextEdit(NSRange(location: at, length: 0), text)], named: String(localized: "Insert Figure"),
+            apply([TextEdit(.caret(at), text)], named: String(localized: "Insert Figure"),
                   select: NSRange(location: at, length: (text as NSString).length))
             window?.makeFirstResponder(self)
         }
@@ -1096,7 +1095,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         else { return nil }
         let result = NSAccessibilityCustomRotor.ItemResult(targetElement: self)
         // The outline and the issues are a moment behind the text: within what there is of it.
-        result.targetRange = text.lineRange(for: NSRange(location: min(document.lineStart(found.line), text.length), length: 0))
+        result.targetRange = text.lineRange(for: .caret(min(document.lineStart(found.line), text.length)))
         result.customLabel = found.title
         return result
     }

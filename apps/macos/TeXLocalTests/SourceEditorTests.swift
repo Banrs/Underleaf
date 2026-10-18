@@ -13,7 +13,7 @@ struct SourceEditorTests {
 
     private func open(_ string: String, caret: Int? = nil, path: String = "main.tex") {
         editor.open(path: path, text: string, focus: false)
-        text.setSelectedRange(NSRange(location: caret ?? (string as NSString).length, length: 0))
+        text.setSelectedRange(.caret(caret ?? (string as NSString).length))
     }
 
     /// Each key as the keyboard types it.
@@ -55,14 +55,14 @@ struct SourceEditorTests {
     @Test func aNulCharacterKeepsTheMirrorInStep() {
         let document = SourceDocument(text: "a\u{0}\nb")
         #expect(document.lineCount == 2)
-        #expect(document.edit(NSRange(location: 4, length: 0), with: "\u{0}\nc", changing: nil, mirroring: false).isEmpty)
+        #expect(document.edit(.caret(4), with: "\u{0}\nc", changing: nil, mirroring: false).isEmpty)
         #expect(document.lineCount == 3 && document.lineStart(3) == 6 && document.text == "a\u{0}\nb\u{0}\nc")
     }
 
     @Test func aTextViewOnItsOwnMirrorsItsEdits() {
         let view = SourceTextView.plainDocument()
         view.load("one")
-        view.insertText("x", replacementRange: NSRange(location: 0, length: 0))
+        view.insertText("x", replacementRange: .caret(0))
         #expect(view.string == "xone" && view.document.text == "xone")
     }
 
@@ -70,9 +70,9 @@ struct SourceEditorTests {
     @Test func typingIsTheCores() {
         open("")
         type("{")
-        #expect(text.string == "{}" && text.selectedRange() == NSRange(location: 1, length: 0))
+        #expect(text.string == "{}" && text.selectedRange() == .caret(1))
         type("}")
-        #expect(text.string == "{}" && text.selectedRange() == NSRange(location: 2, length: 0))
+        #expect(text.string == "{}" && text.selectedRange() == .caret(2))
         open("ab")
         text.setSelectedRange(NSRange(location: 0, length: 2))
         type("[")
@@ -84,7 +84,7 @@ struct SourceEditorTests {
         // A closer put in as \]: its bracket steps over both, and the backslash typed for it goes.
         open("\\")
         type("[", "x", "\\", "]")
-        #expect(text.string == "\\[x\\]" && text.selectedRange() == NSRange(location: 5, length: 0))
+        #expect(text.string == "\\[x\\]" && text.selectedRange() == .caret(5))
         open("  a{}", caret: 4)
         text.insertNewline(nil)
         #expect(text.string == "  a{\n  \n  }" && text.selectedRange().location == 7)
@@ -155,7 +155,7 @@ struct SourceEditorTests {
         open("")
         #expect(editor.perform(.block(id: "figure")))
         let string = text.string as NSString
-        #expect(text.selectedRange() == NSRange(location: string.range(of: "]{}").location + 2, length: 0))
+        #expect(text.selectedRange() == .caret(string.range(of: "]{}").location + 2))
         text.insertTab(nil)
         #expect(text.selectedRange().location == NSMaxRange(string.range(of: "\\caption{")))
         text.insertTab(nil)
@@ -203,7 +203,7 @@ struct SourceEditorTests {
         open((1...2000).map { "\\section{Line \($0)} " + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
         func top(_ line: Int) -> CGFloat? {
             let clip = editor.textView.enclosingScrollView!.contentView
-            return text.textRange(NSRange(location: text.document.lineStart(line), length: 0))
+            return text.textRange(.caret(text.document.lineStart(line)))
                 .flatMap { text.textLayoutManager?.textLayoutFragment(for: $0.location) }
                 .map { $0.layoutFragmentFrame.minY + text.textContainerOrigin.y - clip.bounds.minY - clip.contentInsets.top }
         }
@@ -261,7 +261,7 @@ struct SourceEditorTests {
     @Test func linesMoveUpAndDown() throws {
         open("a\nb\nc\nd", caret: 2)
         #expect(editor.perform(.moveLineUp))
-        #expect(text.string == "b\na\nc\nd" && text.selectedRange() == NSRange(location: 0, length: 0))
+        #expect(text.string == "b\na\nc\nd" && text.selectedRange() == .caret(0))
         #expect(!editor.perform(.moveLineUp))
         #expect(text.string == "b\na\nc\nd")
         text.setSelectedRange(NSRange(location: 4, length: 1))
@@ -296,7 +296,7 @@ struct SourceEditorTests {
         type("itemize")
         #expect(text.string == "  \\begin{itemize}\n    \n  \\end{itemize}")
         text.insertTab(nil)
-        #expect(text.selectedRange() == NSRange(location: 22, length: 0))
+        #expect(text.selectedRange() == .caret(22))
         text.insertTab(nil)
         #expect(text.string == "  \\begin{itemize}\n      \n  \\end{itemize}" && text.document.text == text.string)
     }
@@ -323,7 +323,7 @@ struct SourceEditorTests {
         open("\\be")
         text.complete(nil)
         #expect(text.offered != nil)
-        text.setSelectedRange(NSRange(location: 0, length: 0))
+        text.setSelectedRange(.caret(0))
         #expect(text.offered == nil)
     }
 
@@ -345,19 +345,19 @@ struct SourceEditorTests {
         open("start")
         var told: [Bool] = []
         text.composing = { told.append($0) }
-        text.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
-        text.setMarkedText("あい", selectedRange: NSRange(location: 2, length: 0), replacementRange: typed)
+        text.setMarkedText("あ", selectedRange: .caret(1), replacementRange: typed)
+        text.setMarkedText("あい", selectedRange: .caret(2), replacementRange: typed)
         #expect(told == [true] && text.string == "startあい" && text.document.text == text.string)
         text.unmarkText()
         #expect(told == [true, false] && !text.hasMarkedText())
-        text.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
+        text.setMarkedText("あ", selectedRange: .caret(1), replacementRange: typed)
         type("亜")
         #expect(told == [true, false, true, false] && !text.hasMarkedText() && text.string == "startあい亜" && text.document.text == text.string)
     }
 
     @Test func switchingFilesDuringCompositionKeepsUndoWithItsOwnText() {
         open("first", path: "a.tex")
-        text.setMarkedText("仮", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
+        text.setMarkedText("仮", selectedRange: .caret(1), replacementRange: typed)
 
         open("second", path: "b.tex")
         #expect(!text.hasMarkedText() && editor.document?.text == "second" && text.document.text == "second" && text.undoManager?.canUndo == false)
@@ -468,7 +468,7 @@ struct SourceEditorTests {
         open("a\nb\nxyz\n\\]", caret: 0)
         let theme = SyntaxTheme.overleaf
         try await waitUntilColoured("]", theme.color(.invalid))
-        text.insertText("\\[\n", replacementRange: NSRange(location: 2, length: 0))
+        text.insertText("\\[\n", replacementRange: .caret(2))
         try await waitUntilColoured("]", theme.color(.mathDelimiter))
         text.undoManager?.undo()
         try await waitUntilColoured("]", theme.color(.invalid))
@@ -523,7 +523,7 @@ struct SourceEditorTests {
         let glyph = text.firstRect(forCharacterRange: NSRange(location: 4, length: 1), actualRange: nil)
         let point = window.convertPoint(fromScreen: NSPoint(x: glyph.minX + 1, y: glyph.midY))
         try click(at: point, in: window)
-        #expect(went.isEmpty && text.selectedRange() == NSRange(location: 4, length: 0))
+        #expect(went.isEmpty && text.selectedRange() == .caret(4))
         try click(at: point, in: window, clicks: 2)
         #expect(went == [true] && text.selectedRange() == NSRange(location: 4, length: 3))
     }
@@ -654,10 +654,10 @@ struct SourceEditorTests {
         try click(at: inside, releasedAt: point(message.minX - 20, message.midY), in: window)
         #expect(asked.isEmpty)
         try click(at: inside, in: window)
-        #expect(asked == [2] && text.selectedRange() == NSRange(location: 5, length: 0))
+        #expect(asked == [2] && text.selectedRange() == .caret(5))
         try click(at: inside, in: window, .shift)
         #expect(asked == [2] && text.selectedRange() == NSRange(location: 5, length: 2))
-        text.setSelectedRange(NSRange(location: 5, length: 0))
+        text.setSelectedRange(.caret(5))
         let above = point(text.textContainerOrigin.x + 20, message.midY - message.height)
         NSApp.postEvent(try mouse(.leftMouseDragged, at: above, in: window), atStart: false)
         try click(at: inside, releasedAt: above, in: window)

@@ -81,7 +81,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         self.path = path
         textView.load(text, source: source)
         undo = prior?.undo ?? UndoManager()
-        textView.setSelectedRange(prior?.selection ?? NSRange(location: 0, length: 0))
+        textView.setSelectedRange(prior?.selection ?? .caret(0))
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
         scrollView.reflectScrolledClipView(scrollView.contentView)
         if let top = prior?.top { textView.scroll(toShownTop: top) }
@@ -124,9 +124,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let start = document.lineStart(line)
         let end = line < document.lineCount ? document.lineStart(line + 1) - 1 : textView.text.length
         let word = column.map {
-            textView.selectionRange(forProposedRange: NSRange(location: min(start + $0, end), length: 0), granularity: .selectByWord)
+            textView.selectionRange(forProposedRange: .caret(min(start + $0, end)), granularity: .selectByWord)
         }
-        textView.setSelectedRange(word ?? NSRange(location: start, length: 0))
+        textView.setSelectedRange(word ?? .caret(start))
         scroll(to: start, atTop: atTop)
         if focus { self.focus() }
         let shown = word ?? NSRange(location: start, length: end - start)
@@ -137,7 +137,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     private func scroll(to offset: Int, atTop: Bool) {
-        guard let target = textView.textRange(NSRange(location: offset, length: 0)) else { return }
+        guard let target = textView.textRange(.caret(offset)) else { return }
         // Under the clip view's top: the shown text's top and middle.
         let shown = textView.shownRect, clipTop = scrollView.contentView.bounds.minY
         textView.scroll(target.location) { atTop ? $0.minY - (shown.minY - clipTop) : $0.midY - (shown.midY - clipTop) }
@@ -207,7 +207,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let document = textView.document, selection = textView.selectedRange(), selections = textView.selectedRanges.map(\.rangeValue)
         let insert = { (insertion: Insertion?, name: String) in
             guard let insertion else { return false }
-            self.textView.apply([insertion.edit], named: name, select: NSRange(location: insertion.caret, length: 0))
+            self.textView.apply([insertion.edit], named: name, select: .caret(insertion.caret))
             self.textView.startSnippet(insertion.fields, at: insertion.edit.start)
             return true
         }

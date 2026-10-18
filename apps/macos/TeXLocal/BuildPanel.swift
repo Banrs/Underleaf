@@ -299,8 +299,7 @@ struct LogTextView: NSViewRepresentable {
         // Append without invalidating the entire log's layout; a new build or bounded log rollover can replace it.
         let previousLength = (shown as NSString).length, new = text as NSString
         if previousLength > 0, text.utf16.starts(with: shown.utf16) {
-            view.textStorage?.replaceCharacters(in: NSRange(location: previousLength, length: 0),
-                                                with: new.substring(from: previousLength))
+            view.textStorage?.replaceCharacters(in: .caret(previousLength), with: new.substring(from: previousLength))
         } else {
             view.string = text
         }
