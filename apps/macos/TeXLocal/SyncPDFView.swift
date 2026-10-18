@@ -59,7 +59,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     // MARK: - Live preview
 
     /// A page given to PDFKit fades in over an eighth of a second (27.2), and a layer's contents change in one frame.
-    private let liveCanvas = LiveCanvas()
+    private let liveCanvas = FilterView()
     private var liveLayers: [Int: CALayer] = [:]
     private var liveScale: CGFloat = 0
     private var shownScale: CGFloat { pageScrollView?.magnification ?? scaleFactor }
@@ -78,7 +78,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         }
         // PDFKit's scale is its scroll view's magnification: the size on screen is the one in the window.
         let onScreen = overlay.convert(overlay.bounds, to: nil).size, pixel = window.backingScaleFactor
-        let box = page.bounds(for: .cropBox), scale = scaleFactor * pixel
         let whole = CGSize(width: (onScreen.width * pixel).rounded(), height: (onScreen.height * pixel).rounded())
         let unit = CGSize(width: overlay.bounds.width / (onScreen.width * pixel), height: overlay.bounds.height / (onScreen.height * pixel))
         let part = CGRect(x: (visible.minX - overlay.bounds.minX) / unit.width, y: (visible.minY - overlay.bounds.minY) / unit.height,
@@ -90,7 +89,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
               let surface = IOSurface(properties: [.width: width, .height: height, .bytesPerElement: 4,
                                                    .pixelFormat: kCVPixelFormatType_32BGRA]),
               surface.lock(options: [], seed: nil) == KERN_SUCCESS else { return false }
-        Self.drawLive(page, to: surface, box: box, scale: scale, from: part.origin)
+        Self.drawLive(page, to: surface, box: page.bounds(for: .cropBox), scale: scaleFactor * pixel, from: part.origin)
         surface.unlock(options: [], seed: nil)
         if let name = Self.liveSpace.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, name) }
         let layer = liveLayers[index] ?? {
@@ -135,9 +134,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     func hasLive(at index: Int) -> Bool { liveLayers[index] != nil }
 
-    func removeLive(at index: Int) {
-        liveLayers.removeValue(forKey: index)?.removeFromSuperlayer()
-    }
+    func removeLive(at index: Int) { liveLayers.removeValue(forKey: index)?.removeFromSuperlayer() }
 
     func removeLive() {
         for layer in liveLayers.values { layer.removeFromSuperlayer() }
@@ -151,6 +148,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     override init(frame: NSRect) {
         super.init(frame: frame)
         pageOverlayViewProvider = self
+        liveCanvas.autoresizingMask = [.width, .height]
+        // Over the page views PDFKit adds after it.
+        liveCanvas.layer?.zPosition = 1
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -235,16 +235,11 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     var hasShownArea: Bool { bounds.width > 0 && shownHeight > 0 }
 
-    /// `currentDestination` lies behind the bars.
-    var shownDestination: PDFDestination? {
-        let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
-        return page(for: top, nearest: true).map { PDFDestination(page: $0, at: convert(top, to: $0)) }
-    }
-
-    /// `shownDestination` as its page's index and its point.
+    /// The page's index and the point in it at the top between the bars: `currentDestination` lies behind them.
     var shownPlace: (index: Int, point: CGPoint)? {
-        guard let destination = shownDestination, let page = destination.page, let document else { return nil }
-        return (index: document.index(for: page), point: destination.point)
+        let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
+        guard let page = page(for: top, nearest: true), let document else { return nil }
+        return (index: document.index(for: page), point: convert(top, to: page))
     }
 
     /// A double-click whose pointer has moved by the time PDFKit's handling returns was dragged on to select by words.
@@ -284,14 +279,12 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 }
 
-private final class LiveCanvas: NSView {
+/// A layer for dark paper's filters over the pages, which clicks go through.
+private class FilterView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layerUsesCoreImageFilters = true
-        autoresizingMask = [.width, .height]
-        // Over the page views PDFKit adds after it.
-        layer?.zPosition = 1
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -299,21 +292,11 @@ private final class LiveCanvas: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-private final class PageOverlay: NSView {
+private final class PageOverlay: FilterView {
     /// Over the page and everything PDFKit lays under its tiles, so no white is left at its edges.
     var dark = false {
         didSet { layer?.backgroundFilters = dark ? SyncPDFView.invert : nil }
     }
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        layerUsesCoreImageFilters = true
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 private final class MarkView: NSView {

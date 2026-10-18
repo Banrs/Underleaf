@@ -1,4 +1,3 @@
-import Foundation
 import Observation
 import PDFKit
 
@@ -36,8 +35,7 @@ nonisolated enum LiveRead: Sendable {
     /// MuPDF's PDF device, which carries no annotations.
     init(_ event: LiveDocumentEvent) {
         let url = URL(filePath: event.path)
-        guard let data = try? Data(contentsOf: url, options: .alwaysMapped), let document = PDFDocument(data: data),
-              document.pageCount > 0 else {
+        guard let document = Self.mapped(url), document.pageCount > 0 else {
             self = .document(nil)
             return
         }
@@ -51,12 +49,11 @@ nonisolated enum LiveRead: Sendable {
 
     /// None for a file already gone: TeXpresso keeps a page's last two, and a newer one is coming.
     init(_ event: LivePageEvent) {
-        guard let data = try? Data(contentsOf: URL(filePath: event.path), options: .alwaysMapped),
-              let page = PDFDocument(data: data)?.page(at: 0) else {
-            self = .page(nil)
-            return
-        }
-        self = .page(LivePage(index: event.page, page: page))
+        self = .page(Self.mapped(URL(filePath: event.path))?.page(at: 0).map { LivePage(index: event.page, page: $0) })
+    }
+
+    private static func mapped(_ url: URL) -> PDFDocument? {
+        (try? Data(contentsOf: url, options: .alwaysMapped)).flatMap(PDFDocument.init(data:))
     }
 }
 
@@ -126,8 +123,7 @@ final class TeXpressoSession {
     }
 
     func stopping() {
-        guard active else { return }
-        phase = .stopping
+        if active { phase = .stopping }
     }
 
     /// Stop's answer, for a preview that had ended already, which sends no event.
@@ -149,8 +145,7 @@ final class TeXpressoSession {
     }
 }
 
-/// Where live preview shows the document: the PDF pane, or TeXpresso's own window. Read as a
-/// session starts.
+/// Where live preview shows the document: the PDF pane, or TeXpresso's own window. Read as a session starts.
 nonisolated enum LiveViewer: String, CaseIterable, Identifiable {
     case pane, window
 

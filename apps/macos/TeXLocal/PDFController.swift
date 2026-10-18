@@ -4,7 +4,7 @@ import SwiftUI
 @Observable
 final class PDFController: NSObject {
     /// Read whole: the next build rewrites the file in place.
-    @concurrent nonisolated static func loadDocument(_ url: URL) async -> sending PDFDocument? {
+    @concurrent static func loadDocument(_ url: URL) async -> sending PDFDocument? {
         guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
         for index in 0..<document.pageCount { document.page(at: index)?.hideLinkBorders() }
         return document
@@ -28,9 +28,7 @@ final class PDFController: NSObject {
     /// PDFKit would go to 10,000%; the toolbar's scale reserves a three-digit label's width.
     private static let minScale: CGFloat = 0.1
     private static let maxScale: CGFloat = 8
-    private static func label(_ scale: CGFloat) -> String {
-        Double(scale).formatted(.percent.precision(.fractionLength(0)))
-    }
+    private static func label(_ scale: CGFloat) -> String { Double(scale).formatted(.percent.precision(.fractionLength(0))) }
     enum Fit { case width, page }
     private(set) var fit: Fit? = .width
 
@@ -134,8 +132,7 @@ final class PDFController: NSObject {
     }
 
     func go(toPage number: Int) {
-        guard let document = view.document, let page = document.page(ifAt: min(max(number, 1), document.pageCount) - 1) else { return }
-        view.go(to: page)
+        if let document = view.document, let page = document.page(ifAt: min(max(number, 1), document.pageCount) - 1) { view.go(to: page) }
     }
 
     @ObservationIgnored var buildBehindLive: () -> URL? = { nil }
@@ -146,8 +143,7 @@ final class PDFController: NSObject {
             let document = if let url = buildBehindLive() { await Self.loadDocument(url) } else { view.document }
             // The build's file can be half-written while the next build runs.
             guard let operation = document?.printOperation(for: .shared, scalingMode: .pageScaleDownToFit, autoRotate: true) else {
-                NSSound.beep()
-                return
+                return NSSound.beep()
             }
             operation.jobTitle = title
             if let window = view.window ?? NSApp.mainWindow {
@@ -201,8 +197,7 @@ final class PDFController: NSObject {
         clearLiveLater()
         // Read before the swap: a page keeps its document only weakly.
         let place = restorePage == nil ? view.shownPlace : nil
-        let autoScales = view.autoScales
-        let scale = view.scaleFactor
+        let (autoScales, scale) = (view.autoScales, view.scaleFactor)
         view.removeMark()
         if view.document != nil {
             find.cancel()
@@ -224,11 +219,7 @@ final class PDFController: NSObject {
         view.matchScroller()
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         restoreZoomIfReady()
-        if let place {
-            go(to: place)
-        } else {
-            restorePageIfReady()
-        }
+        if let place { go(to: place) } else { restorePageIfReady() }
         pageChanged()
         find.rerun()
     }
@@ -248,11 +239,9 @@ final class PDFController: NSObject {
 
     func clear() {
         shownVersion += 1
-        liveSettling?.cancel()
-        liveClearing?.cancel()
         liveWaiting.removeAll()
+        dropLive()
         (liveBacklog, liveMissed, liveShown) = (nil, false, false)
-        view.removeLive()
         view.removeMark()
         find.reset()
         view.document = nil
@@ -267,8 +256,7 @@ final class PDFController: NSObject {
     @ObservationIgnored private var liveTaking: Task<Void, Never>?
     @ObservationIgnored private var liveBacklog: (document: PDFDocument, pages: IndexSet, complete: Bool)?
     @ObservationIgnored private var liveMissed = false
-    /// Whether the run's first document shows: a page before it goes, as it would be drawn over the build's PDF or the
-    /// last run's.
+    /// Whether the run's first document shows: a page before it goes, as it would be drawn over the build's PDF or the last run's.
     @ObservationIgnored private var liveShown = false
 
     /// How long a page drawn over PDFKit's waits for its whole document, which comes 300 ms after the last key and brings
@@ -319,10 +307,7 @@ final class PDFController: NSObject {
         // Not a page a whole document is still bringing (`takeLive`), which would go in twice.
         for (index, page) in liveWaiting where liveBacklog?.pages.contains(index) != true {
             liveWaiting[index] = nil
-            guard let old = document.page(ifAt: index) else { continue }
-            document.insert(page, at: index)
-            document.removePage(at: index + 1)
-            gone.insert(old)
+            if let old = document.replacePage(at: index, with: page) { gone.insert(old) }
         }
         replaced(gone)
     }
@@ -363,16 +348,11 @@ final class PDFController: NSObject {
         while let index = backlog.pages.first, index <= shown.pageCount, ContinuousClock.now - start < .milliseconds(4) {
             backlog.pages.remove(index)
             guard let page = backlog.document.page(at: index)?.copy() as? PDFPage else { continue }
-            let old = shown.page(ifAt: index)
             // A page in view goes in beneath a layer that shows it already, as PDFKit fades a new one in.
-            if let old, liveWaiting.removeValue(forKey: index) == nil, !view.hasLive(at: index) {
+            if let old = shown.page(ifAt: index), liveWaiting.removeValue(forKey: index) == nil, !view.hasLive(at: index) {
                 _ = view.showLive(page, over: old, at: index)
             }
-            shown.insert(page, at: index)
-            if let old {
-                shown.removePage(at: index + 1)
-                gone.insert(old)
-            }
+            if let old = shown.replacePage(at: index, with: page) { gone.insert(old) } else { shown.insert(page, at: index) }
             came = true
         }
         if backlog.pages.first.map({ $0 <= shown.pageCount }) == true {
@@ -547,13 +527,19 @@ extension PDFDocument {
         return index == NSNotFound ? nil : index + 1
     }
 
-    /// Each put in before the one it replaces is taken out, so the document is never shorter than the place being read.
+    /// Puts `new` in at `index` before taking out the page it replaces, which it answers, so the document is never shorter
+    /// than the place being read. Past the end, nothing is put in.
+    func replacePage(at index: Int, with new: PDFPage) -> PDFPage? {
+        guard let old = page(ifAt: index) else { return nil }
+        insert(new, at: index)
+        removePage(at: index + 1)
+        return old
+    }
+
     func replacePages(with other: PDFDocument) {
         let pages = (0..<other.pageCount).compactMap { other.page(at: $0)?.copy() as? PDFPage }
-        let old = pageCount
         for (index, page) in pages.enumerated() {
-            insert(page, at: index)
-            if index < old { removePage(at: index + 1) }
+            if replacePage(at: index, with: page) == nil { insert(page, at: index) }
         }
         while pageCount > pages.count { removePage(at: pageCount - 1) }
         func here(_ destination: PDFDestination?) -> PDFDestination? {
