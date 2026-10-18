@@ -74,9 +74,7 @@ struct SyntaxTheme: RawRepresentable, Hashable, Identifiable {
         self.rawValue = rawValue
     }
 
-    private init(_ id: String) {
-        rawValue = id
-    }
+    private init(_ id: String) { rawValue = id }
 
     /// Settings' default.
     static let overleaf = SyntaxTheme("overleaf")
@@ -84,14 +82,9 @@ struct SyntaxTheme: RawRepresentable, Hashable, Identifiable {
     /// The core's, in its order, as Settings lists them.
     static let all = listed.map { SyntaxTheme($0.id) }
 
-    var title: String {
-        Self.listed.first { $0.id == rawValue }?.title ?? rawValue
-    }
+    var title: String { Self.listed.first { $0.id == rawValue }?.title ?? rawValue }
 
-    private nonisolated struct Listed: Decodable {
-        let id: String
-        let title: String
-    }
+    private nonisolated struct Listed: Decodable { let id, title: String }
 
     private static let listed: [Listed] = Syntax.call("themes", [:]) ?? []
 

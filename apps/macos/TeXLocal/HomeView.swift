@@ -19,11 +19,7 @@ struct HomeView: View {
         .safeAreaBar(edge: .top) {
             if app.tex?.available == false, !dismissedTeXTip { texMissing }
         }
-        .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in
-            Task {
-                for url in urls { await app.importProject(from: url, open: urls.count == 1) }
-            }
-        }
+        .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in Task { await app.importProjects(urls) } }
         .navigationTitle("Projects")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -118,9 +114,7 @@ struct HomeView: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: TemplateCard.width, maximum: TemplateCard.width), spacing: 4, alignment: .top)],
                   alignment: .leading, spacing: 4) {
             ForEach(ProjectTemplate.allCases) { template in
-                Button { app.newProject(template) } label: {
-                    TemplateCard(template: template)
-                }
+                Button { app.newProject(template) } label: { TemplateCard(template: template) }
                 .buttonStyle(TemplateButtonStyle())
                 .help("Start a project from the \(template.title) template")
             }
@@ -147,14 +141,10 @@ struct HomeView: View {
         Task { await app.rename(project, to: name) }
     }
 
-    private var copying: [URL] {
-        query.isEmpty ? slowImports.filter(app.importing.contains) : []
-    }
+    private var copying: [URL] { query.isEmpty ? slowImports.filter(app.importing.contains) : [] }
 
     /// A copy shown has ended: the project opening is its own, at work in its own row from then on.
-    private var copied: Bool {
-        slowImports.contains { !app.importing.contains($0) }
-    }
+    private var copied: Bool { slowImports.contains { !app.importing.contains($0) } }
 
     private var shown: [ProjectInfo] {
         query.isEmpty ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
@@ -223,17 +213,13 @@ private struct ProjectLabel<Name: View>: View {
 struct GetMacTeXButton: View {
     @Environment(\.openURL) private var openURL
 
-    var body: some View {
-        Button("Get MacTeX") { openURL(Links.mactex) }
-    }
+    var body: some View { Button("Get MacTeX") { openURL(Links.mactex) } }
 }
 
 struct TeXpressoGuideButton: View {
     @Environment(\.openURL) private var openURL
 
-    var body: some View {
-        Button("Install Guide") { openURL(Links.texpressoGuide) }
-    }
+    var body: some View { Button("Install Guide") { openURL(Links.texpressoGuide) } }
 }
 
 enum ProjectTemplate: String, CaseIterable, Identifiable {
@@ -350,9 +336,7 @@ private struct PagePreview: View {
         }
     }
 
-    private func bar(_ width: CGFloat, _ height: CGFloat) -> some View {
-        Capsule().fill(.tertiary).frame(width: width, height: height)
-    }
+    private func bar(_ width: CGFloat, _ height: CGFloat) -> some View { Capsule().fill(.tertiary).frame(width: width, height: height) }
 }
 
 struct NewProjectSheet: View {

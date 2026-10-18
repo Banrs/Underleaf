@@ -9,7 +9,7 @@ import Observation
 /// that frame once, not twice.
 func track<Value: Sendable & Equatable>(_ value: @escaping @MainActor @Sendable () -> Value, initial: Bool = true,
                                           _ apply: @escaping @MainActor (Value) -> Void) -> Task<Void, Never> {
-    Task { @MainActor in
+    Task {
         var last: Value?
         for await next in Observations(value) where next != last {
             if last != nil || initial { apply(next) }

@@ -45,9 +45,7 @@ struct AppAlert: Sendable {
         self.message = message
     }
 
-    init(_ title: String, _ error: any Error) {
-        self.init(title, error.localizedDescription)
-    }
+    init(_ title: String, _ error: any Error) { self.init(title, error.localizedDescription) }
 }
 
 struct ExportFile: Transferable {
@@ -99,12 +97,8 @@ final class AppModel {
     @ObservationIgnored var performPDF: ((PDFAction) -> Void)?
 
     // Stored here rather than as @AppStorage so the menus and models observe them.
-    var sidebarVisible: Bool {
-        didSet { UserDefaults.standard.set(sidebarVisible, forKey: DefaultsKey.sidebarVisible) }
-    }
-    var inspectorVisible: Bool {
-        didSet { UserDefaults.standard.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) }
-    }
+    var sidebarVisible: Bool { didSet { UserDefaults.standard.set(sidebarVisible, forKey: DefaultsKey.sidebarVisible) } }
+    var inspectorVisible: Bool { didSet { UserDefaults.standard.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) } }
     /// Folded by a window too narrow for them, which brings them back as it widens: not hidden,
     /// and not saved (`sidebarShown`, `inspectorShown`).
     var sidebarFolded = false
@@ -124,25 +118,17 @@ final class AppModel {
             project?.autoCompileChanged()
         }
     }
-    var showWordCount: Bool {
-        didSet { UserDefaults.standard.set(showWordCount, forKey: DefaultsKey.showWordCount) }
-    }
+    var showWordCount: Bool { didSet { UserDefaults.standard.set(showWordCount, forKey: DefaultsKey.showWordCount) } }
     /// View › Show PDF and the toolbar keep the choice for later launches; a PDF command or Go to PDF Position shows it for now.
     var showPDF: Bool
-    var outlineCollapsed: Bool {
-        didSet { UserDefaults.standard.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) }
-    }
+    var outlineCollapsed: Bool { didSet { UserDefaults.standard.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) } }
     /// The menus act on the project only while its window is key, not behind Settings or a sheet.
     var mainWindowIsKey = false
     var commandProject: ProjectModel? { mainWindowIsKey && project?.closed != true ? project : nil }
     var chosenItem: ItemActions?
-    var recentProjects: [String] {
-        didSet { UserDefaults.standard.set(recentProjects, forKey: DefaultsKey.recentProjects) }
-    }
+    var recentProjects: [String] { didSet { UserDefaults.standard.set(recentProjects, forKey: DefaultsKey.recentProjects) } }
     /// Filtered, not pruned on refresh: a library that lists empty (another TEXLOCAL_DATA, a missing folder) would wipe them.
-    var recents: [ProjectInfo] {
-        recentProjects.compactMap { id in projects.first { $0.id == id } }
-    }
+    var recents: [ProjectInfo] { recentProjects.compactMap { id in projects.first { $0.id == id } } }
 
     init() {
         let defaults = UserDefaults.standard
@@ -172,9 +158,7 @@ final class AppModel {
 
     /// A file that isn't LaTeX has no outline to open: the header stays, folded and dim (`OutlineHeader`), and the sidebar keeps
     /// its foot from one file to the next.
-    func outlineOpen(of project: ProjectModel?) -> Bool {
-        project?.isLaTeX == true && !outlineCollapsed
-    }
+    func outlineOpen(of project: ProjectModel?) -> Bool { project?.isLaTeX == true && !outlineCollapsed }
 
     func outlineState(of project: ProjectModel) -> OutlineState {
         project.search.isSearching ? .hidden : outlineOpen(of: project) ? .open : .folded
@@ -254,6 +238,11 @@ final class AppModel {
                                    && directory.boolValue) { return true }
         guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
         return openableTypes.contains { type.conforms(to: $0) }
+    }
+
+    /// Several at once are only copied in; one alone opens.
+    func importProjects(_ urls: [URL]) async {
+        for url in urls { await importProject(from: url, open: urls.count == 1) }
     }
 
     /// Without asking, as the copy goes to the Trash like any project. The core removes a project it couldn't finish, so a bad zip leaves none.
@@ -367,10 +356,7 @@ final class AppModel {
 
     @ObservationIgnored private var launchProject: String?
 
-    func takeLaunchProject() -> String? {
-        defer { launchProject = nil }
-        return launchProject
-    }
+    func takeLaunchProject() -> String? { launchProject.take() }
 
     /// `project` goes straight from one to the next, never nil between, so the window keeps the workspace.
     func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {

@@ -40,19 +40,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
     }
 
-    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
-        true
-    }
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         if app.tex?.available == false { Task { await app.refreshTeXStatus() } }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        let urls = urls.filter(AppModel.canOpen)
-        Task {
-            for url in urls { await app.importProject(from: url, open: urls.count == 1) }
-        }
+        Task { await app.importProjects(urls.filter(AppModel.canOpen)) }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -65,9 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindow.showWindow(nil)
     }
 
-    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
-        dockMenu.menu
-    }
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { dockMenu.menu }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // A clean editor can still have a settings change or rename in flight.
@@ -86,9 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Core.shared.killAll()
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
-    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 
 final class DockMenu: NSObject {
@@ -125,9 +116,7 @@ final class DockMenu: NSObject {
 }
 
 extension View {
-    func windowModals() -> some View {
-        modifier(WindowModals())
-    }
+    func windowModals() -> some View { modifier(WindowModals()) }
 
     func alert(_ alert: Binding<AppAlert?>) -> some View {
         // No actions: the system adds its own OK.

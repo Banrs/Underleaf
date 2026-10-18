@@ -11,11 +11,11 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $pane) {
-            Tab("General", systemImage: "gearshape", value: .general) { GeneralSettings() }
-            Tab("Editor", systemImage: "character.cursor.ibeam", value: .editor) { EditorSettings() }
-            Tab("Compiling", systemImage: "hammer", value: .compiling) { CompilingSettings() }
-            Tab("PDF", systemImage: "richtext.page", value: .pdf) { PDFSettings() }
-            Tab("Live Preview", systemImage: "bolt", value: .livePreview) { LivePreviewSettings() }
+            Tab("General", systemImage: "gearshape", value: .general) { GeneralSettings().settingsPane() }
+            Tab("Editor", systemImage: "character.cursor.ibeam", value: .editor) { EditorSettings().settingsPane() }
+            Tab("Compiling", systemImage: "hammer", value: .compiling) { CompilingSettings().settingsPane() }
+            Tab("PDF", systemImage: "richtext.page", value: .pdf) { PDFSettings().settingsPane() }
+            Tab("Live Preview", systemImage: "bolt", value: .livePreview) { LivePreviewSettings().settingsPane() }
         }
         .frame(width: 500)
     }
@@ -57,7 +57,6 @@ private struct GeneralSettings: View {
                 }
             }
         }
-        .settingsPane()
     }
 }
 
@@ -103,7 +102,6 @@ private struct EditorSettings: View {
                 }
             }
         }
-        .settingsPane()
     }
 
     /// Double: the stepper's formatted value takes only floating point, and the editor reads a whole number.
@@ -138,7 +136,6 @@ private struct CompilingSettings: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
-        .settingsPane()
     }
 }
 
@@ -154,7 +151,6 @@ private struct PDFSettings: View {
                 Text("Dark inverts the PDF’s pages for reading at night, keeping their colours’ hues. Printing and saving are unaffected.")
             }
         }
-        .settingsPane()
     }
 }
 
@@ -188,7 +184,6 @@ private struct LivePreviewSettings: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .settingsPane()
     }
 }
 
@@ -204,9 +199,7 @@ private struct ProgramFolder: View {
                 : "Choose the folder the texpresso program is in."
         }
 
-        var automaticFailure: String {
-            self == .tex ? "Couldn’t Find TeX Automatically" : "Couldn’t Find TeXpresso Automatically"
-        }
+        var automaticFailure: String { self == .tex ? "Couldn’t Find TeX Automatically" : "Couldn’t Find TeXpresso Automatically" }
 
         func chosen(in tex: TexStatus) -> String? { self == .tex ? tex.texDir : tex.texpressoDir }
 

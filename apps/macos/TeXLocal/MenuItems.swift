@@ -21,9 +21,7 @@ struct SectionLevelItems: View {
 struct SymbolItems: View {
     let project: ProjectModel?
 
-    static func columns(_ count: Int) -> Int {
-        [6, 5, 7].first { count % $0 == 0 } ?? 6
-    }
+    static func columns(_ count: Int) -> Int { [6, 5, 7].first { count % $0 == 0 } ?? 6 }
 
     var body: some View {
         ForEach(Menus.shared.symbolGroups, id: \.title) { group in
