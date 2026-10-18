@@ -287,9 +287,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     /// An unchanged segment label still lays the toolbar out again.
     private func configure(_ item: NSToolbarItem, _ state: State, from old: State? = nil) {
-        func changed<Value: Equatable>(_ field: KeyPath<State, Value>) -> Bool {
-            old?[keyPath: field] != state[keyPath: field]
-        }
+        func changed<Value: Equatable>(_ field: KeyPath<State, Value>) -> Bool { old?[keyPath: field] != state[keyPath: field] }
         switch item.itemIdentifier {
         case .format, .math, .insert:
             if changed(\.isLaTeX) { item.isEnabled = state.isLaTeX }

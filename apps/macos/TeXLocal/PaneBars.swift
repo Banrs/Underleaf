@@ -28,9 +28,7 @@ struct SearchField: NSViewRepresentable {
 
         init(_ field: SearchField) { self.field = field }
 
-        @objc func changed(_ sender: NSSearchField) {
-            if field.text != sender.stringValue { field.text = sender.stringValue }
-        }
+        @objc func changed(_ sender: NSSearchField) { if field.text != sender.stringValue { field.text = sender.stringValue } }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             // Let the input method commit or cancel marked text before the find bar treats Return and Escape as navigation commands.

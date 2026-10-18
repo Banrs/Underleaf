@@ -477,9 +477,7 @@ final class WorkspaceController: DetentSplitViewController {
         setCollapsed(panelItem, !shown)
     }
 
-    private var animates: Bool {
-        view.window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-    }
+    private var animates: Bool { view.window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     private func focusField(_ field: FieldHandle, in accessory: NSSplitViewItemAccessoryViewController) {
         if field.field == nil { accessory.view.layoutSubtreeIfNeeded() }

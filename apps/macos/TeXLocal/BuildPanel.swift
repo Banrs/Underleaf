@@ -157,9 +157,7 @@ private struct IssueList: View {
                             NSPasteboard.general.setString(item.message, forType: .string)
                         }
                     }
-                } primaryAction: { rows in
-                    if let item = rows.first.flatMap(item) { open(item) }
-                }
+                } primaryAction: { rows in if let item = rows.first.flatMap(item) { open(item) } }
                 .copyable(project.chosenIssue.flatMap(item).map { [$0.message] } ?? [])
                 // The menus' choice may be out of sight, and the panel closed: a hidden list scrolls by its rows' estimated heights, so again as it comes up.
                 .onChange(of: project.chosenIssue) { _, place in if let place { proxy.scrollTo(place) } }
@@ -199,9 +197,7 @@ private struct IssueRow: View {
         .accessibilityValue(location(line: ", line ") ?? "")
     }
 
-    private func location(line: String) -> String? {
-        item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file }
-    }
+    private func location(line: String) -> String? { item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file } }
 }
 
 /// The text view is inset by the bar's height: the bar's safe area reaches SwiftUI but not an AppKit scroll view, which takes the inset itself.

@@ -108,9 +108,7 @@ struct FilesList: View {
                 return .handled
             }
             .focused($listFocused)
-            .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in
-                project.tree.node(at: path).map(actions)
-            }
+            .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in project.tree.node(at: path).map(actions) }
             // A row named in place comes into view first: the list makes only the rows it shows.
             .onChange(of: rename.id) { _, id in if let id { Task { proxy.scrollTo(id) } } }
         }

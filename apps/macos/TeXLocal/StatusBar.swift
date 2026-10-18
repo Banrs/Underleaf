@@ -30,9 +30,7 @@ struct StatusBar: View {
         .contentShape(.rect)
         .monospacedDigit()
         .buttonStyle(.borderless)
-        .contextMenu {
-            Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
-        }
+        .contextMenu { Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) } }
     }
 
     private enum Detail { case full, symbols, short }
@@ -174,7 +172,5 @@ extension View {
             .padding(.leading, leading).padding(.trailing, trailing).frame(height: BarMetrics.height)
     }
 
-    fileprivate func hitTarget() -> some View {
-        frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect)
-    }
+    fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect) }
 }
