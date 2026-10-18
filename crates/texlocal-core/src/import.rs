@@ -835,7 +835,9 @@ mod tests {
 
     #[test]
     fn a_folder_brings_its_visible_files_and_its_name() {
-        let (dir, service) = library();
+        // Into a library folder that doesn't exist yet, as on a first import.
+        let dir = tempfile::tempdir().unwrap();
+        let service = Service::new(dir.path().join("data"));
         let src = dir.path().join("Thesis");
         for (path, text) in [
             ("main.tex", "\\documentclass{book}"),

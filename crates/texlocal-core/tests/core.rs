@@ -49,11 +49,12 @@ fn zip_names(path: &Path) -> Vec<String> {
 fn a_settings_patch_changes_only_its_keys_and_returns_what_a_later_read_sees() {
     let (data, root) = project("settings-echo");
     let file = root.join(".texlocal.json");
-    let saved = r#"{ "engine": "xelatex", "stopOnFirstError": 3, "custom": "kept" }"#;
+    let saved =
+        r#"{ "mainFile": 7, "engine": "xelatex", "stopOnFirstError": 3, "custom": "kept" }"#;
     fs::write(&file, saved).unwrap();
     let written = write_settings(&root, &json!({ "shellEscape": true, "unknown": 1 })).unwrap();
-    // The file's engine stays, its mistyped flag reads as the default, and
-    // its unknown key survives.
+    // The file's engine stays, its mistyped main file and flag read as the
+    // defaults, and its unknown key survives.
     let expected = json!({
         "mainFile": "main.tex", "engine": "xelatex", "shellEscape": true, "stopOnFirstError": false
     });
@@ -80,7 +81,9 @@ fn a_settings_patch_changes_only_its_keys_and_returns_what_a_later_read_sees() {
         ),
         (json!([1]), "Invalid settings"),
     ] {
-        fails_with(write_settings(&root, &bad), why);
+        let err = write_settings(&root, &bad).unwrap_err();
+        assert_eq!(err.status, 400, "{}", err.message);
+        assert!(err.message.contains(why), "{:?} lacks {why:?}", err.message);
     }
     assert_eq!(fs::read(&file).unwrap(), before);
 
