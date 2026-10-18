@@ -151,32 +151,6 @@ struct PDFFitTests {
     private func pages(_ count: Int) throws -> PDFDocument { try textPDF(Array(repeating: "", count: count)) }
 }
 
-/// A controller at 600 by 500 showing `document`.
-func showing(_ document: PDFDocument) -> PDFController {
-    let controller = PDFController()
-    controller.view.setFrameSize(NSSize(width: 600, height: 500))
-    controller.show(document)
-    return controller
-}
-
-/// The find bar open on `query`, and its search started.
-func openFind(_ query: String, in controller: PDFController) {
-    controller.find.isOpen = true
-    controller.find.text = query
-    controller.find.search(query)
-}
-
-func textPDF(_ pages: [String], width: CGFloat = 612) throws -> PDFDocument {
-    let document = PDFDocument()
-    for text in pages {
-        let view = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 792))
-        view.string = text
-        let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
-        document.insert(page, at: document.pageCount)
-    }
-    return document
-}
-
 @Suite(.serialized)
 struct PDFFindTests {
     init() {

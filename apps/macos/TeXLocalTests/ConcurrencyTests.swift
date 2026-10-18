@@ -43,9 +43,7 @@ struct ConcurrencyTests {
         let target = Target(), undo = UndoManager()
         undo.groupsByEvent = false
         var reversed = 0
-        undo.beginUndoGrouping()
-        undo.registerAsyncUndo(withTarget: target, actionName: "Thing", reversal: { reversed += 1 }, work: { false })
-        undo.endUndoGrouping()
+        await undo.grouping { undo.registerAsyncUndo(withTarget: target, actionName: "Thing", reversal: { reversed += 1 }, work: { false }) }
         #expect(undo.canUndo && undo.undoActionName == "Thing")
         undo.undo()
         #expect(reversed == 1)

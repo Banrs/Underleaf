@@ -4,15 +4,6 @@ import PDFKit
 import Testing
 @testable import TeXLocal
 
-private extension UndoManager {
-    /// What `work` registers, as one action.
-    func grouping(_ work: () async -> Void) async {
-        beginUndoGrouping()
-        await work()
-        endUndoGrouping()
-    }
-}
-
 private extension SourceTextView.FileDrop {
     var inserted: String? { if case .insert(let text) = self { text } else { nil } }
     var opens: (() -> Void)? { if case .open(let open) = self { open } else { nil } }
