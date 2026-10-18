@@ -4,16 +4,11 @@ import Foundation
 extension ProjectModel {
     func createEntry(in folder: String, directory: Bool) async -> String? {
         let name = directory ? "untitled folder" : "untitled.tex"
-        let made: String
-        do {
-            // A taken name is numbered on ("untitled 2.tex").
-            made = try await core.call("create_entry", ["id": id, "path": folder.isEmpty ? name : "\(folder)/\(name)", "dir": directory,
-                                                        "free": true], as: PathEvent.self).path
-        } catch {
-            if !closed { report(error, "Couldn’t Create “\(name)”") }
-            return nil
-        }
-        guard !closed else { return nil }
+        // A taken name is numbered on ("untitled 2.tex").
+        guard let made = await alerting("Couldn’t Create “\(name)”", {
+            try await core.call("create_entry", ["id": id, "path": folder.isEmpty ? name : "\(folder)/\(name)", "dir": directory,
+                                                "free": true], as: PathEvent.self).path
+        }), !closed else { return nil }
         await tree.reload()
         if !directory { await open(made, focus: false) }
         return made
@@ -37,14 +32,9 @@ extension ProjectModel {
         guard to != from, let session, !closed else { return nil }
         let (before, wasText) = (openPath, editsText)
         await uiStateWrites?.value
-        let renamed: RenameResult?
-        do {
-            renamed = try await core.call("session_rename", ["session": session, "from": from, "to": to], as: RenameResult?.self)
-        } catch {
-            if !closed { report(error, "Couldn’t Rename “\(from.fileName)”") }
-            return nil
-        }
-        guard let result = renamed, !closed else { return nil }
+        guard let renamed = await alerting("Couldn’t Rename “\(from.fileName)”", {
+            try await core.call("session_rename", ["session": session, "from": from, "to": to], as: RenameResult?.self)
+        }), let result = renamed, !closed else { return nil }
         editor.rename(from: result.from, to: result.to)
         let now = before.map { remapPath($0, from: result.from, to: result.to) }
         let moved = now != before && (openPath == before || openPath == now)

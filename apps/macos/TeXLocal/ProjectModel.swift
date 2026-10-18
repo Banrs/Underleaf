@@ -141,6 +141,17 @@ final class ProjectModel {
 
     func report(_ error: any Error, _ title: String) { app?.alert = AppAlert(title, error) }
 
+    /// What `work` answers, or nil once its failure is reported under `title`, which a closed project doesn't report.
+    @discardableResult
+    func alerting<T>(_ title: @autoclosure () -> String, _ work: () async throws -> T) async -> T? {
+        do {
+            return try await work()
+        } catch {
+            if !closed { report(error, title()) }
+            return nil
+        }
+    }
+
     let notices = ProjectNotices()
 
     var saved: SavedWorkspace {
@@ -193,9 +204,7 @@ final class ProjectModel {
     private func connectEditor() {
         editor.onCursor = { [weak self] line, column in
             guard let self, line != cursorLine || column != cursorColumn else { return }
-            cursorLine = line
-            cursorColumn = column
-            (currentLine, caretMoved) = (line, true)
+            (cursorLine, cursorColumn, currentLine, caretMoved) = (line, column, line, true)
             findHeadings()
             liveCaret()
         }
@@ -369,12 +378,9 @@ final class ProjectModel {
     /// Saved first; false, staying open, if that failed or asks about the disk.
     func closeDocument(_ path: String) async -> Bool {
         guard let session else { return true }
-        do {
-            return try await core.call("session_close_document", ["session": session, "path": path], as: Closed.self).closed
-        } catch {
-            if !closed { report(error, String(localized: "“\(path.fileName)” Wasn’t Saved")) }
-            return false
-        }
+        return await alerting(String(localized: "“\(path.fileName)” Wasn’t Saved")) {
+            try await core.call("session_close_document", ["session": session, "path": path], as: Closed.self).closed
+        } ?? false
     }
 
     private func composing(_ composing: Bool) {
@@ -474,10 +480,8 @@ final class ProjectModel {
         }
         if let session {
             Task {
-                do {
+                await alerting(String(localized: "“\(path.fileName)” Wasn’t Saved")) {
                     try await core.call("session_resolve", ["session": session, "path": path, "answer": sent])
-                } catch {
-                    if !closed { report(error, String(localized: "“\(path.fileName)” Wasn’t Saved")) }
                 }
             }
         }
@@ -523,19 +527,16 @@ final class ProjectModel {
         guard let session, !closed else { return false }
         let before = settings
         settings?.apply(change)
-        do {
-            let updated = try await core.call("session_set_settings", ["session": session, "patch": change.patch], as: ProjectSettings.self)
-            guard !closed else { return false }
-            settings = updated
-            if updated.mainFile != before?.mainFile { mainFileChanged() }
-            return true
-        } catch {
-            if !closed {
-                settings = before
-                report(error, "Couldn’t Change the Project’s Settings")
-            }
+        guard let updated = await alerting("Couldn’t Change the Project’s Settings", {
+            try await core.call("session_set_settings", ["session": session, "patch": change.patch], as: ProjectSettings.self)
+        }) else {
+            if !closed { settings = before }
             return false
         }
+        guard !closed else { return false }
+        settings = updated
+        if updated.mainFile != before?.mainFile { mainFileChanged() }
+        return true
     }
 
     /// The session stops the build, restarts Live Preview and builds the new one; the PDF is the new main file's.
@@ -565,6 +566,4 @@ nonisolated struct SavedWorkspace: Codable, Equatable {
 }
 
 /// What a file dropped on the open one inserts there (`drop_text`); none means it opens.
-private nonisolated struct DropText: Decodable {
-    let insert: String?
-}
+private nonisolated struct DropText: Decodable { let insert: String? }

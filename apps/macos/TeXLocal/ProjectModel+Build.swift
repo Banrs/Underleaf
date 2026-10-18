@@ -37,13 +37,11 @@ extension ProjectModel {
             compiling = true
             AccessibilityNotification.Announcement(String(localized: "Compiling")).post()
         }
-        do {
+        let sent: Void? = await alerting(String(localized: "“\((openPath ?? id).fileName)” Wasn’t Saved")) {
             try await core.call("session_compile", ["session": session, "auto": auto])
-        } catch {
-            // The core has ended a build whose save failed, and with no core none started.
-            compiling = false
-            if !closed { report(error, String(localized: "“\((openPath ?? id).fileName)” Wasn’t Saved")) }
         }
+        // The core has ended a build whose save failed, and with no core none started.
+        if sent == nil { compiling = false }
     }
 
     func stopCompile() {
@@ -52,13 +50,9 @@ extension ProjectModel {
     }
 
     func cleanBuildFolder() async {
-        guard let session, !closed else { return }
-        do {
-            try await core.call("session_clean", ["session": session])
-        } catch {
-            if !closed { report(error, "Couldn’t Clean the Build Folder") }
-            return
-        }
+        guard let session, !closed,
+              await alerting("Couldn’t Clean the Build Folder", { try await core.call("session_clean", ["session": session]) }) != nil
+        else { return }
         await inOrder { self.buildCleaned() }.value
     }
 
