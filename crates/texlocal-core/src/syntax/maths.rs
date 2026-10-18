@@ -428,8 +428,8 @@ static NUMBERING: LazyLock<Regex> =
 pub fn math_at(text: &Text, caret: u32) -> Option<MathPreview> {
     let pos = caret as usize;
     let from = pos.saturating_sub(20_000);
-    let before = String::from_utf16_lossy(&text.units[from..pos]);
-    let after = String::from_utf16_lossy(&text.units[pos..(pos + 20_000).min(text.units.len())]);
+    let before = crate::utf16_lossy(&text.units[from..pos]);
+    let after = crate::utf16_lossy(&text.units[pos..(pos + 20_000).min(text.units.len())]);
     let at = before.len();
     let window = before + &after;
     let preview = |start: usize, tex: String, display| {

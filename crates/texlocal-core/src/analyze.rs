@@ -38,8 +38,6 @@ static TITLE_STYLE: LazyLock<Regex> = LazyLock::new(|| {
 // Grouping braces go; an escaped special shows as itself.
 static TITLE_BRACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([{}&%$#_])|[{}]").unwrap());
 static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
-// What separates words: spaces and TeX's special characters.
-static WORD_BREAK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\s{}$&_^~\\%]").unwrap());
 
 /// A sectioning command: its depth (0 for \part to 5 for \paragraph),
 /// command and level, its title as plain text, its 1-based line and, in a
@@ -301,11 +299,21 @@ fn plain_title(title: &str) -> Option<String> {
 /// Rough word count of a line's code: drop commands and TeX's special
 /// characters, and count the runs left that contain a letter.
 fn words(line: &str) -> usize {
-    let code = COMMENT
-        .captures(line)
-        .map_or(line, |m| &line[..m.get(1).unwrap().end()]);
-    WORD_BREAK
-        .split(&COMMAND.replace_all(code, " "))
+    // Without a % there is no comment to drop.
+    let code = if line.contains('%') {
+        COMMENT
+            .captures(line)
+            .map_or(line, |m| &line[..m.get(1).unwrap().end()])
+    } else {
+        line
+    };
+    // What separates words: spaces and TeX's special characters.
+    let word_break = |c: char| {
+        c.is_whitespace() || matches!(c, '{' | '}' | '$' | '&' | '_' | '^' | '~' | '\\' | '%')
+    };
+    COMMAND
+        .replace_all(code, " ")
+        .split(word_break)
         .filter(|w| w.chars().any(char::is_alphabetic))
         .count()
 }
@@ -320,6 +328,29 @@ mod tests {
     fn heading(depth: usize, title: &str, file: &str, line: usize) -> Heading {
         let title = (!title.is_empty()).then(|| title.into());
         Heading::new(depth, title, line, Some(file.into()))
+    }
+
+    /// Words part at every Unicode space and at TeX's special characters,
+    /// and nowhere else; a letter of any script makes a word.
+    #[test]
+    fn words_part_at_unicode_spaces_and_tex_specials() {
+        let cases = [
+            ("", 0),
+            ("plain ascii words", 3),
+            ("a\u{a0}b\u{2003}c\u{3000}d\u{1680}e\tf", 6),
+            ("one\u{85}two\u{2028}three\u{2029}four", 4),
+            // Neither is a space, so each joins its neighbours.
+            ("x\u{feff}y z\u{200b}w", 2),
+            ("Ελληνικά слова 漢字です עברית", 4),
+            ("a{b}c$d$e&f_g^h~i", 9),
+            ("\\textbf{bold} \\cite[p. 3]{key} 42 -- ...", 2),
+            ("kept % dropped words", 1),
+            ("50\\% off % gone", 1),
+            ("%all comment", 0),
+        ];
+        for (line, expected) in cases {
+            assert_eq!(words(line), expected, "{line:?}");
+        }
     }
 
     /// Headings and words, of one file's text.

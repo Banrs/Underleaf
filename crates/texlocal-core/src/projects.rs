@@ -738,6 +738,10 @@ fn parse_symbols(bytes: &[u8], ext: &str) -> Symbols {
         found(&BIB_KEY, &text, &mut citations);
     } else {
         for line in text.lines().map(uncommented) {
+            // Both start with a backslash.
+            if !line.contains('\\') {
+                continue;
+            }
             found(&LABEL, line, &mut labels);
             found(&BIBITEM, line, &mut citations);
         }
