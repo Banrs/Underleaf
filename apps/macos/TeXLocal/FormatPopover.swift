@@ -25,10 +25,7 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     }
 
     func toggle(relativeTo item: NSToolbarItem) {
-        if popover.isShown {
-            popover.close()
-            return
-        }
+        if popover.isShown { return popover.close() }
         if let click, click == closingClick { return }
         // Made anew, so it opens at the caret's level.
         let content = NSHostingController(rootView: FormatPanel(app: app, project: project) { [weak self] in
@@ -39,13 +36,8 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
         popover.show(relativeTo: item)
     }
 
-    func popoverWillClose(_ notification: Notification) {
-        closingClick = click
-    }
-
-    func popoverDidClose(_ notification: Notification) {
-        popover.contentViewController = nil
-    }
+    func popoverWillClose(_ notification: Notification) { closingClick = click }
+    func popoverDidClose(_ notification: Notification) { popover.contentViewController = nil }
 }
 
 /// Bold, Italic and Underline, evenly spaced, lit when the selection is in their command; then the
@@ -129,11 +121,7 @@ struct FormatPanel: View {
             focused = current
         }
         .onChange(of: focused) { _, level in
-            if seeding {
-                seeding = false
-            } else {
-                highlighted = level
-            }
+            if seeding { seeding = false } else { highlighted = level }
         }
         .onChange(of: project.editor.changes.count, initial: true) {
             styles = project.editor.textStyles
@@ -141,9 +129,7 @@ struct FormatPanel: View {
     }
 
     /// Notes' popover separator: half a point, where SwiftUI's `Divider` takes a point here.
-    private var separator: some View {
-        Divider().frame(height: 0.5)
-    }
+    private var separator: some View { Divider().frame(height: 0.5) }
 
     private func toggle(_ command: MenuCommand, symbol: String, on: Bool, help: LocalizedStringKey) -> some View {
         Toggle(command.title, systemImage: symbol, isOn: Binding(get: { on }, set: { _ in
@@ -209,11 +195,7 @@ struct FormatPanel: View {
         .focused($focused, equals: style.command)
         .focusEffectDisabled()
         .onHover { inside in
-            if inside {
-                highlighted = style.command
-            } else if highlighted == style.command {
-                highlighted = nil
-            }
+            if inside { highlighted = style.command } else if highlighted == style.command { highlighted = nil }
         }
         // The level alone: the marker is the document's numbering, not the level's name.
         .accessibilityLabel(style.title)

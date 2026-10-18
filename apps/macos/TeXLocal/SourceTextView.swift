@@ -30,17 +30,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return visibleRect.contains(point) && point.x < textContainerOrigin.x
     }
 
-    override func mouseMoved(with event: NSEvent) {
-        if !setsCursor(with: event) { super.mouseMoved(with: event) }
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        if !setsCursor(with: event) { super.mouseEntered(with: event) }
-    }
-
-    override func cursorUpdate(with event: NSEvent) {
-        if !setsCursor(with: event) { super.cursorUpdate(with: event) }
-    }
+    override func mouseMoved(with event: NSEvent) { if !setsCursor(with: event) { super.mouseMoved(with: event) } }
+    override func mouseEntered(with event: NSEvent) { if !setsCursor(with: event) { super.mouseEntered(with: event) } }
+    override func cursorUpdate(with event: NSEvent) { if !setsCursor(with: event) { super.cursorUpdate(with: event) } }
 
     /// The text's mirror: a project session's document, whose edits it saves and previews, or the view's own.
     private(set) var document = SourceDocument(text: "")
@@ -152,12 +144,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     // MARK: the font
 
-    var fontSize = NSFont.systemFontSize {
-        didSet { applyFont() }
-    }
-    var fontName = "" {
-        didSet { if fontName != oldValue { applyFont() } }
-    }
+    var fontSize = NSFont.systemFontSize { didSet { applyFont() } }
+    var fontName = "" { didSet { if fontName != oldValue { applyFont() } } }
     private var rowShift: CGFloat = 0
     private var applied: NSFont?
 
@@ -212,9 +200,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private var gutterWidth: CGFloat = 0
     private var lineCountDigits = 0
-    private var numberFont = NSFont.systemFont(ofSize: NSFont.systemFontSize) {
-        didSet { numberLines.removeAll() }
-    }
+    private var numberFont = NSFont.systemFont(ofSize: NSFont.systemFontSize) { didSet { numberLines.removeAll() } }
     private var digitWidth: CGFloat { ("0" as NSString).size(withAttributes: [.font: numberFont]).width }
     private var numbersEnd: CGFloat = 0
     private var fragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
@@ -230,14 +216,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         var others: [String] = []
     }
 
-    var issueLines: [Int: LineIssue] = [:] {
-        didSet { if issueLines != oldValue { issuesChanged() } }
-    }
+    var issueLines: [Int: LineIssue] = [:] { didSet { if issueLines != oldValue { issuesChanged() } } }
     var issueClicked: (Int) -> Void = { _ in }
 
-    var showsLineNumbers = true {
-        didSet { if showsLineNumbers != oldValue { updateGutterWidth() } }
-    }
+    var showsLineNumbers = true { didSet { if showsLineNumbers != oldValue { updateGutterWidth() } } }
 
     private func digits(_ n: Int) -> Int { max(4, String(n).count) }
 
@@ -507,9 +489,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var issuesStale = false
     /// The messages as measured, by line: for these issues and this font.
     private var issueLabels: [Int: IssueLabel] = [:]
-    private var issueFont = NSFont.systemFont(ofSize: NSFont.systemFontSize - 1) {
-        didSet { issueLabels.removeAll() }
-    }
+    private var issueFont = NSFont.systemFont(ofSize: NSFont.systemFontSize - 1) { didSet { issueLabels.removeAll() } }
     private var issueGap: CGFloat = 0
     private var issueTips: [(tag: NSView.ToolTipTag, rect: NSRect, text: NSString)] = []
 
@@ -563,8 +543,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             setNeedsDisplay(former.band)
             former.message?.view.removeFromSuperview()
         }
-        guard changed else { return }
-        updateIssueTips()
+        if changed { updateIssueTips() }
     }
 
     private func row(_ number: Int, _ reported: LineIssue, on lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment,
@@ -637,17 +616,14 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     private func issueMessage(at event: NSEvent) -> IssueRow? {
-        guard !issueRows.isEmpty else { return nil }
         let point = convert(event.locationInWindow, from: nil)
-        guard visibleRect.contains(point) else { return nil }
+        guard !issueRows.isEmpty, visibleRect.contains(point) else { return nil }
         return issueRows.first { $0.message?.rect.contains(point) == true }
     }
 
     // MARK: the colours
 
-    var syntaxTheme = SyntaxTheme.overleaf {
-        didSet { if syntaxTheme != oldValue { colour(from: 0) } }
-    }
+    var syntaxTheme = SyntaxTheme.overleaf { didSet { if syntaxTheme != oldValue { colour(from: 0) } } }
 
     private var staleColours: Int?
 
@@ -876,7 +852,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     override func insertTab(_ sender: Any?) { tab(1) }
-
     override func insertBacktab(_ sender: Any?) { tab(-1) }
 
     /// A snippet's next field, or the lines indented.
@@ -920,9 +895,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private var caret: Int { selectedRange().location }
 
-    private func offerCompletions() {
-        if autoComplete || offered != nil { complete(explicit: false) }
-    }
+    private func offerCompletions() { if autoComplete || offered != nil { complete(explicit: false) } }
 
     override func complete(_ sender: Any?) { complete(explicit: true) }
 
@@ -988,8 +961,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var mirrorEdits: [TextEdit] = []
 
     func startSnippet(_ fields: [SnippetField], at location: Int) {
-        guard let first = document.startSnippet(fields, at: location) else { return }
-        setSelectedRange(first)
+        if let first = document.startSnippet(fields, at: location) { setSelectedRange(first) }
     }
 
     /// What's typed in a field goes in its other places.
@@ -1063,13 +1035,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return info.draggingSourceOperationMask.contains(.generic) ? .generic : .copy
     }
 
-    override func draggingEntered(_ info: any NSDraggingInfo) -> NSDragOperation {
-        fileOperation(info) ?? super.draggingEntered(info)
-    }
-
-    override func draggingUpdated(_ info: any NSDraggingInfo) -> NSDragOperation {
-        fileOperation(info) ?? super.draggingUpdated(info)
-    }
+    override func draggingEntered(_ info: any NSDraggingInfo) -> NSDragOperation { fileOperation(info) ?? super.draggingEntered(info) }
+    override func draggingUpdated(_ info: any NSDraggingInfo) -> NSDragOperation { fileOperation(info) ?? super.draggingUpdated(info) }
 
     override func performDragOperation(_ info: any NSDraggingInfo) -> Bool {
         let files = files(info)

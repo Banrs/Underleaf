@@ -152,9 +152,7 @@ final class CompletionList {
     /// Counts the times the chosen row is to be scrolled into view.
     private(set) var revealed = 0
 
-    func reveal() {
-        revealed += 1
-    }
+    func reveal() { revealed += 1 }
 }
 
 /// An NSMenu's measures on 27.2: 13 pt corners, rows 5 pt in, the chosen one in the accent with 8 pt corners and white text.

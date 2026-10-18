@@ -97,13 +97,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         reportCursor()
     }
 
-    var document: (path: String, text: String)? {
-        path.map { ($0, textView.string) }
-    }
+    var document: (path: String, text: String)? { path.map { ($0, textView.string) } }
 
-    func forget(path: String) {
-        kept = kept.filter { $0.key != path && !$0.key.hasPrefix(path + "/") }
-    }
+    func forget(path: String) { kept = kept.filter { $0.key != path && !$0.key.hasPrefix(path + "/") } }
 
     /// Whatever is kept at the new name is stale, a file gone outside the app: the name was free.
     func rename(from: String, to: String) {
@@ -119,10 +115,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     // MARK: - Where it is
 
-    var currentLine: Int {
-        textView.document.line(at: textView.selectedRange().location)
-    }
-
+    var currentLine: Int { textView.document.line(at: textView.selectedRange().location) }
     var currentColumn: Int { textView.selectedRange().location - textView.document.lineStart(currentLine) }
 
     /// Shows the system find indicator after the scroll completes; it bounces, so not with Reduce Motion, where the selected word or the caret's line is the mark.
@@ -150,17 +143,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         textView.scroll(target.location) { atTop ? $0.minY - (shown.minY - clipTop) : $0.midY - (shown.midY - clipTop) }
     }
 
-    private func reportTop() {
-        if let line = textView.topLine { onScroll(line) }
-    }
+    private func reportTop() { if let line = textView.topLine { onScroll(line) } }
+    private func reportCursor() { onCursor(currentLine, currentColumn) }
 
-    private func reportCursor() {
-        onCursor(currentLine, currentColumn)
-    }
-
-    func textDidChange(_ notification: Notification) {
-        changes.count += 1
-    }
+    func textDidChange(_ notification: Notification) { changes.count += 1 }
 
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
@@ -257,9 +243,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         title.map { String(localized: "Insert \($0)") } ?? String(localized: "Insert")
     }
 
-    var textStyles: TextStyles {
-        path == nil ? TextStyles() : textView.document.textStyles(textView.selectedRange())
-    }
+    var textStyles: TextStyles { path == nil ? TextStyles() : textView.document.textStyles(textView.selectedRange()) }
 }
 
 struct EditorView: NSViewRepresentable {
@@ -312,6 +296,4 @@ enum EditorPrefs {
     }
 }
 
-@Observable final class EditorChanges {
-    var count = 0
-}
+@Observable final class EditorChanges { var count = 0 }

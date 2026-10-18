@@ -28,15 +28,10 @@ private struct FilePreview: NSViewRepresentable {
     let url: URL
     let version: Int
 
-    final class Shown {
-        var version = 0
-    }
+    final class Shown { var version = 0 }
 
     func makeCoordinator() -> Shown { Shown() }
-
-    func makeNSView(context: Context) -> QLPreviewView {
-        QLPreviewView(frame: .zero, style: .normal)
-    }
+    func makeNSView(context: Context) -> QLPreviewView { QLPreviewView(frame: .zero, style: .normal) }
 
     func updateNSView(_ view: QLPreviewView, context: Context) {
         if view.previewItem?.previewItemURL != url {
@@ -47,7 +42,5 @@ private struct FilePreview: NSViewRepresentable {
         context.coordinator.version = version
     }
 
-    static func dismantleNSView(_ view: QLPreviewView, coordinator: Shown) {
-        view.close()
-    }
+    static func dismantleNSView(_ view: QLPreviewView, coordinator: Shown) { view.close() }
 }

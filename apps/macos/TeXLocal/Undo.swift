@@ -49,17 +49,10 @@ final class UndoableTrash {
         trashed = result as URL?
     }
 
-    func moveToTrash() async {
-        if await trash(self) { registerPutBack() }
-    }
+    func moveToTrash() async { if await trash(self) { registerPutBack() } }
 
-    private func registerPutBack() {
-        register(reversal: registerTrashAgain, step: putBack)
-    }
-
-    private func registerTrashAgain() {
-        register(reversal: registerPutBack) { [self] in await trash(self) }
-    }
+    private func registerPutBack() { register(reversal: registerTrashAgain, step: putBack) }
+    private func registerTrashAgain() { register(reversal: registerPutBack) { [self] in await trash(self) } }
 
     private func register(reversal: @escaping @MainActor () -> Void, step: @escaping @MainActor () async -> Bool) {
         undoManager?.registerAsyncUndo(withTarget: self, actionName: String(localized: "Move to Trash"), reversal: reversal) { [self] in
