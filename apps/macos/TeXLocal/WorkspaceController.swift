@@ -43,10 +43,7 @@ final class WorkspaceController: DetentSplitViewController {
         splitView.autosaveName = "Workspace 2"
         buildSidebar(height: size.height)
         // Before the area, which opens in the room the side columns leave; added after it.
-        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project), mounted: app.inspectorVisible))
-        inspectorItem.isCollapsed = !app.inspectorVisible
-        // As the sidebar: a window too narrow for it folds it, and brings it back.
-        inspectorItem.canCollapseFromWindowResize = true
+        buildInspector()
         buildArea(size: size)
         addSplitViewItem(inspectorItem)
         for item in panes { item.collapseBehavior = .preferResizingSiblingsWithFixedSplitView }
@@ -277,6 +274,13 @@ final class WorkspaceController: DetentSplitViewController {
         NSLayoutConstraint.activate(bar.pinned(to: columns.view, edges: [.leading, .trailing, .bottom])
             + ground.pinned(to: bar, edges: [.leading, .trailing, .bottom])
             + [bar.heightAnchor.constraint(equalToConstant: BarMetrics.height), ground.height])
+    }
+
+    private func buildInspector() {
+        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project), mounted: app.inspectorVisible))
+        inspectorItem.isCollapsed = !app.inspectorVisible
+        // As the sidebar: a window too narrow for it folds it, and brings it back.
+        inspectorItem.canCollapseFromWindowResize = true
     }
 
     private var panes: [NSSplitViewItem] { [sidebarItem, outlineItem, pdfItem, panelItem, inspectorItem] }
