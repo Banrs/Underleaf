@@ -10,50 +10,10 @@ enum MenuCommand: CaseIterable {
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage, viewTextBigger, viewTextSmaller
     case compileRun, compileStop, compileClean, syncForward, syncInverse, issueNext, issuePrevious
 
-    var title: String {
-        switch self {
-        case .projectNew: "New Project…"
-        case .projectOpen: "Open…"
-        case .projectClose: "Close Project"
-        case .projectExport: "Export Project as ZIP…"
-        case .projectSearch: "Find in Project…"
-        case .fileNew: "New File"
-        case .fileNewFolder: "New Folder"
-        case .fileUpload: "Add Files…"
-        case .fileSave: "Save"
-        case .pdfSave: "Export as PDF…"
-        case .filePrint: "Print…"
-        case .editBold: "Bold"
-        case .editItalic: "Italic"
-        case .editUnderline: "Underline"
-        case .editMath: "Inline Math"
-        case .editComment: "Comment Selection"
-        case .editMoveLineUp: "Move Line Up"
-        case .editMoveLineDown: "Move Line Down"
-        case .editGotoLine: "Go to Line…"
-        case .pdfFind: "Find in PDF…"
-        case .pdfGotoPage: "Go to Page…"
-        case .viewToggleSidebar: "Sidebar"
-        case .viewTogglePDF: "PDF"
-        case .viewToggleInspector: "Inspector"
-        case .viewToggleLogs: "Build Panel"
-        case .viewToggleWordCount: "Word Count"
-        case .viewZoomIn: "Zoom In"
-        case .viewZoomOut: "Zoom Out"
-        case .viewActualSize: "Actual Size"
-        case .viewFitWidth: "Fit Width"
-        case .viewFitPage: "Fit Page"
-        case .viewTextBigger: "Make Text Bigger"
-        case .viewTextSmaller: "Make Text Smaller"
-        case .compileRun: "Compile"
-        case .compileStop: "Stop"
-        case .compileClean: "Clean Build Folder"
-        case .syncForward: "Go to PDF Position"
-        case .syncInverse: "Go to Source Position"
-        case .issueNext: "Go to Next Issue"
-        case .issuePrevious: "Go to Previous Issue"
-        }
-    }
+    var title: String { entry.title }
+
+    /// ⌥⌘G is Go to Page, as in the Mac's PDF readers; Find in PDF… has none, as ⌘F finds in the PDF while it has the keyboard.
+    var shortcut: KeyboardShortcut? { entry.shortcut }
 
     var symbol: String? {
         switch self {
@@ -64,44 +24,50 @@ enum MenuCommand: CaseIterable {
         }
     }
 
-    /// ⌥⌘G is Go to Page, as in the Mac's PDF readers; Find in PDF… has none, as ⌘F finds in the PDF while it has the keyboard.
-    var shortcut: KeyboardShortcut? {
+    /// What the menus show for each command: its title and shortcut.
+    private var entry: (title: String, shortcut: KeyboardShortcut?) {
         switch self {
-        case .projectNew: KeyboardShortcut("n", modifiers: [.command, .shift])
-        case .projectOpen: KeyboardShortcut("o")
-        case .projectClose: KeyboardShortcut("w", modifiers: [.command, .shift])
-        case .projectSearch: KeyboardShortcut("f", modifiers: [.command, .shift])
-        case .fileNew: KeyboardShortcut("n")
-        case .fileNewFolder: KeyboardShortcut("n", modifiers: [.command, .shift, .option])
-        case .fileSave: KeyboardShortcut("s")
-        case .filePrint: KeyboardShortcut("p")
-        case .editBold: KeyboardShortcut("b")
-        case .editItalic: KeyboardShortcut("i")
-        case .editUnderline: KeyboardShortcut("u")
-        case .editMath: KeyboardShortcut("e", modifiers: [.command, .option])
-        case .editComment: KeyboardShortcut("/")
-        case .editMoveLineUp: KeyboardShortcut(.upArrow, modifiers: [.command, .control])
-        case .editMoveLineDown: KeyboardShortcut(.downArrow, modifiers: [.command, .control])
-        case .editGotoLine: KeyboardShortcut("l")
-        case .pdfGotoPage: KeyboardShortcut("g", modifiers: [.command, .option])
-        case .viewToggleSidebar: KeyboardShortcut("s", modifiers: [.command, .control])
-        case .viewTogglePDF: KeyboardShortcut("p", modifiers: [.command, .option])
-        case .viewToggleInspector: KeyboardShortcut("i", modifiers: [.command, .option])
-        case .viewToggleLogs: KeyboardShortcut("y", modifiers: [.command, .shift])
-        case .viewZoomIn: KeyboardShortcut("=")
-        case .viewZoomOut: KeyboardShortcut("-")
-        case .viewActualSize: KeyboardShortcut("0")
-        case .viewFitWidth: KeyboardShortcut("9")
-        case .viewFitPage: KeyboardShortcut("9", modifiers: [.command, .option])
-        case .compileRun: KeyboardShortcut(.return)
-        case .compileStop: KeyboardShortcut(".")
-        case .compileClean: KeyboardShortcut("k", modifiers: [.command, .shift])
-        case .syncForward: KeyboardShortcut("j", modifiers: [.command, .option])
-        case .issueNext: KeyboardShortcut("'")
-        case .issuePrevious: KeyboardShortcut("\"")
+        case .projectNew: ("New Project…", KeyboardShortcut("n", modifiers: [.command, .shift]))
+        case .projectOpen: ("Open…", KeyboardShortcut("o"))
+        case .projectClose: ("Close Project", KeyboardShortcut("w", modifiers: [.command, .shift]))
+        case .projectExport: ("Export Project as ZIP…", nil)
+        case .projectSearch: ("Find in Project…", KeyboardShortcut("f", modifiers: [.command, .shift]))
+        case .fileNew: ("New File", KeyboardShortcut("n"))
+        case .fileNewFolder: ("New Folder", KeyboardShortcut("n", modifiers: [.command, .shift, .option]))
+        case .fileUpload: ("Add Files…", nil)
+        case .fileSave: ("Save", KeyboardShortcut("s"))
+        case .pdfSave: ("Export as PDF…", nil)
+        case .filePrint: ("Print…", KeyboardShortcut("p"))
+        case .editBold: ("Bold", KeyboardShortcut("b"))
+        case .editItalic: ("Italic", KeyboardShortcut("i"))
+        case .editUnderline: ("Underline", KeyboardShortcut("u"))
+        case .editMath: ("Inline Math", KeyboardShortcut("e", modifiers: [.command, .option]))
+        case .editComment: ("Comment Selection", KeyboardShortcut("/"))
+        case .editMoveLineUp: ("Move Line Up", KeyboardShortcut(.upArrow, modifiers: [.command, .control]))
+        case .editMoveLineDown: ("Move Line Down", KeyboardShortcut(.downArrow, modifiers: [.command, .control]))
+        case .editGotoLine: ("Go to Line…", KeyboardShortcut("l"))
+        case .pdfFind: ("Find in PDF…", nil)
+        case .pdfGotoPage: ("Go to Page…", KeyboardShortcut("g", modifiers: [.command, .option]))
+        case .viewToggleSidebar: ("Sidebar", KeyboardShortcut("s", modifiers: [.command, .control]))
+        case .viewTogglePDF: ("PDF", KeyboardShortcut("p", modifiers: [.command, .option]))
+        case .viewToggleInspector: ("Inspector", KeyboardShortcut("i", modifiers: [.command, .option]))
+        case .viewToggleLogs: ("Build Panel", KeyboardShortcut("y", modifiers: [.command, .shift]))
+        case .viewToggleWordCount: ("Word Count", nil)
+        case .viewZoomIn: ("Zoom In", KeyboardShortcut("="))
+        case .viewZoomOut: ("Zoom Out", KeyboardShortcut("-"))
+        case .viewActualSize: ("Actual Size", KeyboardShortcut("0"))
+        case .viewFitWidth: ("Fit Width", KeyboardShortcut("9"))
+        case .viewFitPage: ("Fit Page", KeyboardShortcut("9", modifiers: [.command, .option]))
         // ⌥⌘= and ⌥⌘− are the system's own screen zoom.
-        case .pdfSave, .projectExport, .fileUpload, .pdfFind, .viewToggleWordCount, .viewTextBigger, .viewTextSmaller,
-             .syncInverse: nil
+        case .viewTextBigger: ("Make Text Bigger", nil)
+        case .viewTextSmaller: ("Make Text Smaller", nil)
+        case .compileRun: ("Compile", KeyboardShortcut(.return))
+        case .compileStop: ("Stop", KeyboardShortcut("."))
+        case .compileClean: ("Clean Build Folder", KeyboardShortcut("k", modifiers: [.command, .shift]))
+        case .syncForward: ("Go to PDF Position", KeyboardShortcut("j", modifiers: [.command, .option]))
+        case .syncInverse: ("Go to Source Position", nil)
+        case .issueNext: ("Go to Next Issue", KeyboardShortcut("'"))
+        case .issuePrevious: ("Go to Previous Issue", KeyboardShortcut("\""))
         }
     }
 }
@@ -170,8 +136,7 @@ extension AppModel {
         case .projectNew: newProject()
         case .projectOpen: openingProject = true
         case .projectClose: Task { await close() }
-        case .projectExport:
-            if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
+        case .projectExport: if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
         case .projectSearch:
             if project != nil { sidebarShown = true }
             searchFocusToken += 1
@@ -180,13 +145,9 @@ extension AppModel {
             newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.save() }
-        case .pdfSave:
-            if let project, let url = project.buildPDF {
-                exporting = ExportFile(name: "\(project.id).pdf", type: .pdf) { url }
-            }
+        case .pdfSave: if let project, let url = project.buildPDF { exporting = ExportFile(name: "\(project.id).pdf", type: .pdf) { url } }
         // The PDF, not the first responder (usually the source), and whether or not its pane shows.
-        case .filePrint:
-            if let project { project.pdf.print(title: project.id) }
+        case .filePrint: if let project { project.pdf.print(title: project.id) }
         case .editBold: project?.editor.perform(.bold)
         case .editItalic: project?.editor.perform(.italic)
         case .editUnderline: project?.editor.perform(.underline)
@@ -226,24 +187,16 @@ struct AppCommands: Commands {
     let app: AppModel
     private var project: ProjectModel? { app.commandProject }
 
-    private func item(_ command: MenuCommand) -> some View {
-        CommandItem(app: app, command: command)
-    }
-
-    private func items(_ commands: [MenuCommand]) -> some View {
-        ForEach(commands, id: \.self) { item($0) }
+    private func items(_ commands: MenuCommand...) -> some View {
+        ForEach(commands, id: \.self) { CommandItem(app: app, command: $0) }
     }
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            items([.projectNew, .fileNew, .fileNewFolder, .projectOpen])
+            items(.projectNew, .fileNew, .fileNewFolder, .projectOpen)
             Menu("Open Recent") {
                 ForEach(app.recents) { recent in
-                    Button {
-                        Task { await app.open(recent.id) }
-                    } label: {
-                        Label(recent.name, systemImage: "text.document")
-                    }
+                    Button(recent.name, systemImage: "text.document") { Task { await app.open(recent.id) } }
                     // macOS 27 hides a menu item's image unless the label style shows it.
                     .labelStyle(.titleAndIcon)
                 }
@@ -252,72 +205,68 @@ struct AppCommands: Commands {
                     .disabled(app.recents.isEmpty)
             }
             Divider()
-            item(.fileUpload)
+            items(.fileUpload)
         }
         CommandGroup(after: .saveItem) {
-            item(.fileSave)
+            items(.fileSave)
             Divider()
-            item(.projectClose)
+            items(.projectClose)
             Divider()
             ItemMenuItems(actions: app.mainWindowIsKey ? app.chosenItem : nil, trashShortcut: KeyboardShortcut(.delete))
                 .labelStyle(.titleAndIcon)
         }
         CommandGroup(replacing: .importExport) {
-            items([.pdfSave, .projectExport])
+            items(.pdfSave, .projectExport)
             Divider()
             if let project, let url = project.buildPDF {
                 ShareLink(item: url)
             } else {
-                Button {} label: { Label("Share…", systemImage: "square.and.arrow.up") }.labelStyle(.titleAndIcon).disabled(true)
+                Button("Share…", systemImage: "square.and.arrow.up") {}.labelStyle(.titleAndIcon).disabled(true)
             }
         }
-        CommandGroup(replacing: .printItem) { item(.filePrint) }
+        CommandGroup(replacing: .printItem) { items(.filePrint) }
         // A replacement group would lose the spelling and substitution checkmarks.
         TextEditingCommands()
         CommandGroup(before: .textEditing) {
-            items([.projectSearch, .pdfFind])
+            items(.projectSearch, .pdfFind)
         }
         CommandGroup(after: .pasteboard) {
             Divider()
-            items([.editComment, .editMoveLineUp, .editMoveLineDown])
+            items(.editComment, .editMoveLineUp, .editMoveLineDown)
         }
         CommandGroup(replacing: .textFormatting) {
-            items([.editBold, .editItalic, .editUnderline])
+            items(.editBold, .editItalic, .editUnderline)
             Divider()
             Menu("Section Level") { SectionLevelItems(project: project) }
                 .disabled(project?.isLaTeX != true)
         }
         CommandGroup(replacing: .sidebar) {
-            item(.viewToggleSidebar)
-            Button(app.outlineOpen(of: project) ? "Hide File Outline" : "Show File Outline") {
-                app.outlineCollapsed.toggle()
-            }
+            items(.viewToggleSidebar)
+            Button(app.outlineOpen(of: project) ? "Hide File Outline" : "Show File Outline") { app.outlineCollapsed.toggle() }
                 .disabled(project?.isLaTeX != true || project?.search.isSearching == true || !app.sidebarShown)
-            items([.viewTogglePDF, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
+            items(.viewTogglePDF, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount)
             Divider()
-            items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage])
+            items(.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage)
             Divider()
-            items([.viewTextBigger, .viewTextSmaller])
+            items(.viewTextBigger, .viewTextSmaller)
         }
         CommandMenu("Go") {
-            items([.editGotoLine, .pdfGotoPage])
+            items(.editGotoLine, .pdfGotoPage)
             Divider()
-            items([.syncForward, .syncInverse])
+            items(.syncForward, .syncInverse)
             Divider()
-            items([.issueNext, .issuePrevious])
+            items(.issueNext, .issuePrevious)
         }
         CommandMenu("Insert") {
             Group {
-                MathMenuItems(project: project, shortcut: MenuCommand.editMath.shortcut) {
-                    app.perform(.editMath, on: project)
-                }
+                MathMenuItems(project: project, shortcut: MenuCommand.editMath.shortcut) { app.perform(.editMath, on: project) }
                 Divider()
                 InsertMenuItems(project: project)
             }
             .disabled(project?.isLaTeX != true)
         }
         CommandMenu("Compile") {
-            items([.compileRun, .compileStop, .compileClean])
+            items(.compileRun, .compileStop, .compileClean)
             Divider()
             Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
             LivePreviewItem(app: app)
