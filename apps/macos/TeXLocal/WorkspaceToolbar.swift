@@ -27,9 +27,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     /// Renamed as the defaults change: a layout saved under an earlier name would bring back or lack items.
     let toolbar = NSToolbar(identifier: "Workspace 5")
     /// Compile as its symbol, which the workspace sets where its word would be the first tool without room.
-    var compactCompile = false {
-        didSet { if compactCompile != oldValue { apply(state) } }
-    }
+    var compactCompile = false { didSet { if compactCompile != oldValue { apply(state) } } }
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
@@ -93,9 +91,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     /// Whether the toolbar holds its default tools, spaces aside: the ones whose widths the workspace reckons Compile's
     /// room from (`fitToolbar`).
     var holdsDefaultItems: Bool {
-        func tools(_ ids: [NSToolbarItem.Identifier]) -> [NSToolbarItem.Identifier] {
-            ids.filter { $0 != .space && $0 != .flexibleSpace }
-        }
+        let tools = { (ids: [NSToolbarItem.Identifier]) in ids.filter { $0 != .space && $0 != .flexibleSpace } }
         return tools(toolbar.itemIdentifiers) == tools(toolbarDefaultItemIdentifiers(toolbar))
     }
 
@@ -153,11 +149,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             // custom views without their style.
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.compileRun.title
-            if flag {
-                item.view = NSHostingView(rootView: compileButton(state))
-            } else {
-                item.title = MenuCommand.compileRun.title
-            }
+            if flag { item.view = NSHostingView(rootView: compileButton(state)) } else { item.title = MenuCommand.compileRun.title }
             item.style = .prominent
             // Enabled by `validateMenuItem`, as the button by the models (`configure`).
             let form = NSMenuItem(title: MenuCommand.compileRun.title, action: #selector(compile), keyEquivalent: "")
@@ -265,7 +257,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     // MARK: - State
 
-    private nonisolated struct State: Equatable {
+    private struct State: Equatable {
         let isLaTeX, hasPDF, canShare, showsPDF: Bool
         let zoomLabel: String
         let canZoomIn, canZoomOut, compiling, canCompile, compactCompile: Bool
@@ -343,24 +335,18 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
     }
 
-    private var canCompile: Bool {
-        project.compiling || app.isEnabled(.compileRun, on: project)
-    }
+    private var canCompile: Bool { project.compiling || app.isEnabled(.compileRun, on: project) }
 
     // MARK: - Actions
 
     @objc private func back() { app.perform(.projectClose, on: project) }
 
     /// A toolbar button's action comes from its item, as `insertTemplate`'s does (27.2).
-    @objc private func showFormat(_ item: NSToolbarItem) {
-        format.toggle(relativeTo: item)
-    }
-
+    @objc private func showFormat(_ item: NSToolbarItem) { format.toggle(relativeTo: item) }
     @objc private func bold() { app.perform(.editBold, on: project) }
-
     @objc private func italic() { app.perform(.editItalic, on: project) }
-
     @objc private func underline() { app.perform(.editUnderline, on: project) }
+    @objc private func togglePDF() { app.perform(.viewTogglePDF, on: project) }
 
     @objc private func insertTemplate(_ item: NSToolbarItem) {
         guard let template = Self.buttonTemplates.first(where: { .template($0) == item.itemIdentifier }) else { return }
@@ -372,14 +358,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         pdf.zoom(in: control.selectedSegment == 2)
     }
 
-    @objc private func compile() {
-        app.perform(project.compiling ? .compileStop : .compileRun, on: project)
-    }
+    @objc private func compile() { app.perform(project.compiling ? .compileStop : .compileRun, on: project) }
 
     /// The overflow menu's Compile, which the item's own view doesn't enable.
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        menuItem.action != #selector(compile) || canCompile
-    }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { menuItem.action != #selector(compile) || canCompile }
 
     private func compileButton(_ state: State) -> CompileButton {
         CompileButton(compiling: state.compiling, compact: state.compactCompile, enabled: state.canCompile) { [weak self] in
@@ -387,18 +369,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
     }
 
-    @objc private func togglePDF() { app.perform(.viewTogglePDF, on: project) }
-
-    func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
-        project.buildPDF.map { [$0] } ?? []
-    }
+    func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
 }
 
 /// The menu asks the item, and AppKit's answer for it ignores `isEnabled` (27.2).
 private final class ShareItem: NSSharingServicePickerToolbarItem {
-    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        isEnabled && super.validateMenuItem(menuItem)
-    }
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { isEnabled && super.validateMenuItem(menuItem) }
 }
 
 /// The segments keep one width as the scale changes, and the percentage tabular digits: otherwise the capsule, and the items after it, move.
@@ -411,19 +387,13 @@ private final class ZoomControl: NSSegmentedControl {
         set { super.font = newValue.map { .monospacedDigitSystemFont(ofSize: $0.pointSize, weight: .regular) } }
     }
 
-    override var controlSize: NSControl.ControlSize {
-        didSet { font = font }
-    }
+    override var controlSize: NSControl.ControlSize { didSet { font = font } }
 
     /// Inside the toolbar's own update the control's size lags each font change by one (27.2).
     override func layout() {
         super.layout()
         guard let size = font?.pointSize, size != measuredSize else { return }
         measuredSize = size
-        measure()
-    }
-
-    private func measure() {
         guard !widestLabel.isEmpty, segmentCount == 3 else { return }
         let label = label(forSegment: 1) ?? ""
         setLabel(widestLabel, forSegment: 1)
@@ -499,7 +469,5 @@ private struct ToolbarMenuItems<Content: View>: View {
     let isEnabled: () -> Bool
     @ViewBuilder let content: () -> Content
 
-    var body: some View {
-        content().disabled(!isEnabled())
-    }
+    var body: some View { content().disabled(!isEnabled()) }
 }

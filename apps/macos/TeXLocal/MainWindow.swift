@@ -112,22 +112,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     // MARK: - Window
 
-    func windowDidBecomeKey(_ notification: Notification) {
-        app.mainWindowIsKey = true
-    }
-
-    func windowDidResignKey(_ notification: Notification) {
-        app.mainWindowIsKey = false
-    }
+    func windowDidBecomeKey(_ notification: Notification) { app.mainWindowIsKey = true }
+    func windowDidResignKey(_ notification: Notification) { app.mainWindowIsKey = false }
 
     func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
         guard let field = client as? NSTextField, workspace?.hostsFindField(field) == true else { return nil }
         return findEditor
     }
 
-    @objc func performFindPanelAction(_ sender: Any?) {
-        findAction(for: sender)?()
-    }
+    @objc func performFindPanelAction(_ sender: Any?) { findAction(for: sender)?() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
@@ -141,9 +134,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         (sender as? any NSValidatedUserInterfaceItem).flatMap { workspace?.findAction($0) }
     }
 
-    override func centerSelectionInVisibleArea(_ sender: Any?) {
-        workspace?.pdf.view.jumpToSelection()
-    }
+    override func centerSelectionInVisibleArea(_ sender: Any?) { workspace?.pdf.view.jumpToSelection() }
 
     /// Answered here only while the PDF's pages have the keyboard. Elsewhere it stays unanswered: its menu item is off, and its key
     /// binding (⌃L) falls off the responder chain, where NSResponder beeps (27.2) and a controller that always answered would take it in silence.
@@ -176,8 +167,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 }
 
 private nonisolated struct OpenFile: Equatable {
-    let path: String?
-    let url: URL?
+    let path: String?, url: URL?
 }
 
 struct HomeRoot: View {

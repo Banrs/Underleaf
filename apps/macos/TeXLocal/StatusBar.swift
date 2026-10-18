@@ -36,7 +36,7 @@ struct StatusBar: View {
         }
     }
 
-    private nonisolated enum Detail { case full, symbols, short }
+    private enum Detail { case full, symbols, short }
 
     private func content(_ detail: Detail) -> some View {
         HStack(spacing: BarMetrics.spacing) {
@@ -50,8 +50,7 @@ struct StatusBar: View {
             .help(showingIssues ? "Hide issues" : "Show issues")
             if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
                 Button { project.panel.show(.texpresso) } label: {
-                    Label(project.texpresso.title,
-                          systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
+                    Label(project.texpresso.title, systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
                         .hitTarget()
                 }
                 .help("Show the Live Preview log")
@@ -64,9 +63,7 @@ struct StatusBar: View {
                 }
                 .help("\(reason.hasSuffix(".") ? String(reason.dropLast()) : reason); save again")
             }
-            if let notice = project.notices.current {
-                Text(notice).foregroundStyle(.secondary)
-            }
+            if let notice = project.notices.current { Text(notice).foregroundStyle(.secondary) }
             Spacer(minLength: 0)
             let words = detail == .full && project.editsText && app.showWordCount ? project.words : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
@@ -95,9 +92,7 @@ struct StatusBar: View {
                 }
             }
             .fixedSize()
-            if project.editsText || pages {
-                Divider().frame(height: BarMetrics.dividerHeight)
-            }
+            if project.editsText || pages { Divider().frame(height: BarMetrics.dividerHeight) }
             Toggle(isOn: Bindable(project.panel).shown) {
                 // Its state is the accent colour alone: with Differentiate Without Colour the off state is the plain square, without the panel's filled third.
                 Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
@@ -123,14 +118,12 @@ struct StatusBar: View {
     private var freshness: some View {
         if project.showsLastSuccessfulBuild {
             Button { project.panel.show(.issues) } label: {
-                Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill")
-                    .hitTarget()
+                Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill").hitTarget()
             }
             .help("The latest build failed, so this is the last PDF that built")
         } else if project.outdated, !project.livePDF {
             Button { app.perform(.compileRun, on: project) } label: {
-                Label("PDF Out of Date", systemImage: "arrow.clockwise")
-                    .hitTarget()
+                Label("PDF Out of Date", systemImage: "arrow.clockwise").hitTarget()
             }
             .help(project.texpresso.active
                 ? "Live Preview updates its own window; compile to refresh this PDF"

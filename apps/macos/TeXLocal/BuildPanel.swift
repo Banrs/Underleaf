@@ -6,9 +6,7 @@ enum PanelTab: String, CaseIterable {
 
 @Observable
 final class BuildPanelModel {
-    var shown = false {
-        didSet { if !shown { openedByBuild = false } }
-    }
+    var shown = false { didSet { if !shown { openedByBuild = false } } }
     @ObservationIgnored private var openedByBuild = false
     var tab: PanelTab = .issues
     var issueFilter = ""
@@ -28,9 +26,7 @@ final class BuildPanelModel {
         show(.issues)
     }
 
-    func closeAfterCleanBuild() {
-        if openedByBuild, tab == .issues { shown = false }
-    }
+    func closeAfterCleanBuild() { if openedByBuild, tab == .issues { shown = false } }
 }
 
 struct BuildPanel: View {
@@ -177,22 +173,16 @@ private struct IssueList: View {
                 }
                 .copyable(project.chosenIssue.flatMap(item).map { [$0.message] } ?? [])
                 // The menus' choice may be out of sight, and the panel closed: a hidden list scrolls by its rows' estimated heights, so again as it comes up.
-                .onChange(of: project.chosenIssue) { _, place in
-                    if let place { proxy.scrollTo(place) }
-                }
+                .onChange(of: project.chosenIssue) { _, place in if let place { proxy.scrollTo(place) } }
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { _ in
                     if let place = project.chosenIssue { proxy.scrollTo(place) }
                 }
         }
     }
 
-    private func item(_ id: Int) -> LogItem? {
-        items.first { $0.offset == id }?.element
-    }
+    private func item(_ id: Int) -> LogItem? { items.first { $0.offset == id }?.element }
 
-    private func open(_ item: LogItem) {
-        if let file = item.file { Task { await project.open(file, line: item.line) } }
-    }
+    private func open(_ item: LogItem) { if let file = item.file { Task { await project.open(file, line: item.line) } } }
 }
 
 private struct IssueRow: View {
@@ -253,7 +243,7 @@ private struct LogPane: View {
         }
     }
 
-    @concurrent private nonisolated static func lines(of text: String, with filter: String) async -> String {
+    @concurrent private static func lines(of text: String, with filter: String) async -> String {
         text.split(separator: "\n", omittingEmptySubsequences: false)
             .filter { $0.localizedCaseInsensitiveContains(filter) }.joined(separator: "\n")
     }
@@ -278,9 +268,7 @@ struct LogTextView: NSViewRepresentable {
     }
 
     /// An update that leaves the log as it was compares the same storage, without passes over a megabyte log.
-    final class Coordinator {
-        var shown: String?
-    }
+    final class Coordinator { var shown: String? }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 

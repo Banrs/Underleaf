@@ -112,9 +112,7 @@ struct FilesList: View {
                 project.tree.node(at: path).map(actions)
             }
             // A row named in place comes into view first: the list makes only the rows it shows.
-            .onChange(of: rename.id) { _, id in
-                if let id { Task { proxy.scrollTo(id) } }
-            }
+            .onChange(of: rename.id) { _, id in if let id { Task { proxy.scrollTo(id) } } }
         }
     }
 
