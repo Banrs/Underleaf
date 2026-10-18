@@ -63,10 +63,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     private func showProject() {
         // Wait for the first outline so the workspace does not animate it in.
-        guard let project = app.project, project.initialLoadComplete else {
-            showHome()
-            return
-        }
+        guard let project = app.project, project.initialLoadComplete else { return showHome() }
         guard workspace?.project !== project, let window else { return }
         workspace?.close()
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)

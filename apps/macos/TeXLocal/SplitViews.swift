@@ -125,10 +125,8 @@ final class SidebarSplitViewController: DetentSplitViewController {
 
 final class ColumnsSplitView: DraggedSplitView {
     override func drawDivider(in rect: NSRect) {
-        var shown = rect
         // Short of the bar, at its foot: a split view is flipped.
-        shown.size.height -= BarMetrics.height
-        super.drawDivider(in: shown)
+        super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
     }
 
     /// 27.2: the items' preferred fractions, AppKit's own way, land the divider somewhere else each time.

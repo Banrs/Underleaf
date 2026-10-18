@@ -325,8 +325,7 @@ extension View {
         }
     }
 
-    @ViewBuilder
-    func draggable(file url: URL?) -> some View {
+    @ViewBuilder func draggable(file url: URL?) -> some View {
         if let url {
             draggable(url).dragConfiguration(DragConfiguration(operationsWithinApp: .init(allowMove: true)))
         } else {

@@ -228,14 +228,7 @@ enum ProjectTemplate: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
-        switch self {
-        case .blank: "Blank"
-        case .article: "Article"
-        case .report: "Report"
-        case .beamer: "Presentation"
-        }
-    }
+    var title: String { self == .beamer ? "Presentation" : rawValue.capitalized }
 }
 
 /// An image button (HIG, Buttons): no border at rest, 10 pt from the content to the clickable edge,
@@ -267,16 +260,13 @@ private struct TemplateCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let paper = RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
         VStack(spacing: 8) {
             PagePreview(template: template)
                 .frame(width: Self.page.width, height: Self.page.height)
                 // White paper in either appearance, dimmed a little in dark mode; the drawing in light colours, made for paper.
-                .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1),
-                            in: .rect(cornerRadius: Self.corner, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
-                        .strokeBorder(.separator)
-                }
+                .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1), in: paper)
+                .overlay(paper.strokeBorder(.separator))
                 .environment(\.colorScheme, .light)
                 // The card reads as its name ("Blank", not "Add, Blank").
                 .accessibilityHidden(true)
