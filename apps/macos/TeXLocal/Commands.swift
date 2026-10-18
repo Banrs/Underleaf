@@ -24,7 +24,6 @@ enum MenuCommand: CaseIterable {
         }
     }
 
-    /// What the menus show for each command: its title and shortcut.
     private var entry: (title: String, shortcut: KeyboardShortcut?) {
         switch self {
         case .projectNew: ("New Project…", KeyboardShortcut("n", modifiers: [.command, .shift]))

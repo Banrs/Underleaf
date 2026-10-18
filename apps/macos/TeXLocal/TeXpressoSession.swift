@@ -58,12 +58,7 @@ nonisolated enum LiveRead: Sendable {
 }
 
 /// Made off the main actor and handed to it, which alone uses it from then on.
-nonisolated struct LiveDocument: @unchecked Sendable {
-    let url: URL
-    let document: PDFDocument
-    let changed: IndexSet?
-    let complete: Bool
-}
+nonisolated struct LiveDocument: @unchecked Sendable { let url: URL, document: PDFDocument, changed: IndexSet?, complete: Bool }
 
 nonisolated struct LivePage: @unchecked Sendable { let index: Int, page: PDFPage }
 

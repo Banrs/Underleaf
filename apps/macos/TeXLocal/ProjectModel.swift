@@ -333,10 +333,7 @@ final class ProjectModel {
     }
 
     /// `work` on the build's lane, after the build's events before it.
-    @discardableResult
-    func inOrder(_ work: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
-        enqueue(&buildLane, work)
-    }
+    @discardableResult func inOrder(_ work: @escaping @MainActor () async -> Void) -> Task<Void, Never> { enqueue(&buildLane, work) }
 
     // MARK: - Editing
 

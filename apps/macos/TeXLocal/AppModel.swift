@@ -59,9 +59,7 @@ struct ExportFile: Transferable {
 }
 
 /// The File Outline: open in its pane, folded to its header, or hidden with its header while the sidebar shows search results.
-nonisolated enum OutlineState {
-    case open, folded, hidden
-}
+nonisolated enum OutlineState { case open, folded, hidden }
 
 /// What the New Project sheet opens with: the template, and the first of "Untitled", "Untitled 2", and so on that no project has.
 struct NewProjectDraft: Identifiable {
@@ -306,14 +304,11 @@ final class AppModel {
         let item = UndoableTrash(
             original: root, name: project.name, undoManager: undoManager,
             trash: { [weak self] item in
-                do {
+                let trashed: Void? = await self?.alerting(failure) {
                     try item.recycle()
                     self?.recentProjects.removeAll { $0 == project.id }
-                    return true
-                } catch {
-                    self?.alert = AppAlert(failure, error)
-                    return false
                 }
+                return trashed != nil
             },
             changed: { [weak self] in await self?.refresh() },
             failed: { [weak self] title, error in self?.alert = AppAlert(title, error) })
