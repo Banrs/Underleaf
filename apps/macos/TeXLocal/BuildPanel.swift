@@ -16,10 +16,7 @@ final class BuildPanelModel {
     /// Whether it shows the Live Preview Log, which the session sends only then.
     var showsLiveLog: Bool { shown && tab == .texpresso }
 
-    func show(_ tab: PanelTab) {
-        self.tab = tab
-        shown = true
-    }
+    func show(_ tab: PanelTab) { (self.tab, shown) = (tab, true) }
 
     func openForFailedBuild() {
         if !shown { openedByBuild = true }
@@ -67,8 +64,7 @@ struct BuildPanel: View {
     }
 
     /// "No Issues" before any build too: the status bar says whether one has run.
-    @ViewBuilder
-    private var issues: some View {
+    @ViewBuilder private var issues: some View {
         // Enumerate before filtering: duplicate messages keep distinct, stable row IDs.
         let items = project.issues.enumerated().filter { (project.panel.showsWarnings || $0.element.isError) && matches($0.element) }
         if !items.isEmpty {
@@ -86,8 +82,7 @@ struct BuildPanel: View {
         }
     }
 
-    @ViewBuilder
-    private var log: some View {
+    @ViewBuilder private var log: some View {
         if let text = project.result?.log, !text.isEmpty {
             LogPane(text: text, filter: project.panel.logFilter)
         } else {

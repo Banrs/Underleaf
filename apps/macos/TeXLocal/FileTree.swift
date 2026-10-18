@@ -30,28 +30,24 @@ final class FileTree {
         let files = try await core.call("file_tree", ["id": id], as: [TreeNode].self)
         guard read > taken else { return }
         taken = read
-        // A change in a folder can leave its files as they were.
-        if files != nodes, !closed, !Task.isCancelled {
-            nodes = files
-            onChange()
-        }
+        if !Task.isCancelled { take(files) }
     }
 
     /// A failed read keeps the tree as it was, and the folder's next change reads again.
-    func reload() async {
-        try? await read()
-    }
+    func reload() async { try? await read() }
 
     /// The tree as the session's watcher read it: a read started before is older.
     func show(_ files: [TreeNode]) {
         taken = reads
-        if files != nodes, !closed {
-            nodes = files
-            onChange()
-        }
+        take(files)
     }
 
-    func close() {
-        closed = true
+    /// A change in a folder can leave its files as they were.
+    private func take(_ files: [TreeNode]) {
+        guard files != nodes, !closed else { return }
+        nodes = files
+        onChange()
     }
+
+    func close() { closed = true }
 }

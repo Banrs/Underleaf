@@ -159,10 +159,7 @@ final class InPlaceRename<ID: Hashable> {
     private(set) var id: ID?
     var name = ""
 
-    func begin(_ id: ID, name: String) {
-        self.name = name
-        self.id = id
-    }
+    func begin(_ id: ID, name: String) { (self.name, self.id) = (name, id) }
 
     func cancel() { id = nil }
 

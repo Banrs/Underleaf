@@ -28,7 +28,5 @@ final class ProjectNotices {
         AccessibilityNotification.Announcement(speech).post()
     }
 
-    func cancel() {
-        clearing?.cancel()
-    }
+    func cancel() { clearing?.cancel() }
 }
