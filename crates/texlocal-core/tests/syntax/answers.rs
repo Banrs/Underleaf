@@ -8,6 +8,8 @@ use std::fmt::Debug;
 
 use texlocal_core::syntax::{SourceDocument, TextRange, math_mode_at};
 
+use super::range;
+
 /// How many of a random test's documents or rounds: fewer in a debug build, where
 /// each takes about ten times as long, and still every kind of each.
 const fn runs(release: usize, debug: usize) -> usize {
@@ -64,10 +66,6 @@ impl Seeded {
         self.0 = self.0.wrapping_mul(1_103_515_245).wrapping_add(12_345);
         (self.0 >> 8) as usize % n
     }
-}
-
-fn range(start: u32, length: u32) -> TextRange {
-    TextRange { start, length }
 }
 
 /// A document of a few kept points' length from the pieces above, without

@@ -3,7 +3,7 @@
 
 use std::cmp::Reverse;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -62,7 +62,7 @@ pub struct PdfHit {
 }
 
 /// The PDF to sync with: `live`, TeXpresso's (with its live.synctex beside it), or the build's.
-fn pdf_for(root: &Path, live: Option<&Path>) -> Result<std::path::PathBuf, CoreError> {
+fn pdf_for(root: &Path, live: Option<&Path>) -> Result<PathBuf, CoreError> {
     if let Some(live) = live {
         return Ok(live.to_path_buf());
     }

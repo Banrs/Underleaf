@@ -392,7 +392,8 @@ fn folder_files(
     dir: &Path,
     mut allowance: Allowance,
 ) -> Result<Vec<(Incoming, Source)>, CoreError> {
-    let (meta, mut found) = (fs::metadata(dir)?, Vec::new());
+    let meta = fs::metadata(dir)?;
+    let mut found = Vec::new();
     collect(dir, String::new(), &meta, &mut found, &mut allowance)?;
     Ok(found
         .into_iter()

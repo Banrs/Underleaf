@@ -381,7 +381,11 @@ pub async fn tex_available(path_env: &str) -> TexStatus {
         found: available
             .then(|| find_tool("latexmk", path_env))
             .flatten()
-            .and_then(|latexmk| Some(latexmk.parent()?.to_string_lossy().into_owned())),
+            .and_then(|latexmk| {
+                latexmk
+                    .parent()
+                    .map(|dir| dir.to_string_lossy().into_owned())
+            }),
         ..TexStatus::default()
     }
 }

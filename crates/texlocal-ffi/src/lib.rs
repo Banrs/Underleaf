@@ -431,8 +431,7 @@ pub unsafe extern "C" fn tl_source_text(source: *mut TlSource, len: *mut usize) 
     let Some(len) = (unsafe { len.as_mut() }) else {
         return std::ptr::null_mut();
     };
-    let text = |source: &mut TlSource| source.with(|doc| doc.text());
-    let text = unsafe { on_source(source, String::new(), text) };
+    let text = unsafe { on_source(source, String::new(), |s| s.with(|doc| doc.text())) };
     let bytes = text.into_bytes().into_boxed_slice();
     *len = bytes.len();
     Box::into_raw(bytes).cast()
@@ -502,13 +501,13 @@ pub unsafe extern "C" fn tl_source_highlights(
     let Some(count) = (unsafe { count.as_mut() }) else {
         return std::ptr::null_mut();
     };
-    let runs = |source: &mut TlSource| {
+    let highlights = |source: &mut TlSource| {
         let runs = source.with(|doc| doc.highlights(start, length));
         let runs = runs.into_iter();
         runs.flat_map(|h| [h.start, h.length, h.kind as u32])
             .collect()
     };
-    let runs: Box<[u32]> = unsafe { on_source(source, Box::default(), runs) };
+    let runs: Box<[u32]> = unsafe { on_source(source, Box::default(), highlights) };
     *count = runs.len();
     Box::into_raw(runs).cast()
 }

@@ -469,17 +469,18 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
 
     // A rename refused leaves the build running; one that goes ahead stops it.
     create_project(tmp.path(), "taken", "blank").unwrap();
-    let rename = |name: &str| {
-        let service = Arc::clone(&service);
-        let args = json!({ "id": "two", "name": name });
-        async move { service.call("rename_project", &args).await }
-    };
-    assert_eq!(rename("taken").await.unwrap_err().status, 409);
+    let refused = service
+        .call("rename_project", &json!({ "id": "two", "name": "taken" }))
+        .await;
+    assert_eq!(refused.unwrap_err().status, 409);
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!two.is_finished());
 
     let started = Instant::now();
-    rename("uno").await.unwrap();
+    service
+        .call("rename_project", &json!({ "id": "two", "name": "uno" }))
+        .await
+        .unwrap();
     assert!(two.await.unwrap().stopped);
     promptly(started);
     assert!(!three.is_finished());

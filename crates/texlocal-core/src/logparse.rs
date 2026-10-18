@@ -181,14 +181,15 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
             let error = named.is_some() || line.starts_with("! ");
             let mut message = m["message"].to_string();
             // Find the source echo without borrowing the next error's.
-            let echo = error.then(|| {
-                lines[i + 1..(i + 12).min(lines.len())]
-                    .iter()
-                    .take_while(|next| !next.starts_with('!') && !ERROR.is_match(next))
-                    .position(|next| L_NO.is_match(next))
-                    .map(|k| i + 1 + k)
-            });
-            let echo = echo.flatten();
+            let echo = error
+                .then(|| {
+                    lines[i + 1..(i + 12).min(lines.len())]
+                        .iter()
+                        .take_while(|next| !next.starts_with('!') && !ERROR.is_match(next))
+                        .position(|next| L_NO.is_match(next))
+                        .map(|k| i + 1 + k)
+                })
+                .flatten();
             if error {
                 quiet_until = echo.map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
             }

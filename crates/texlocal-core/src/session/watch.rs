@@ -227,7 +227,11 @@ mod tests {
         let moved = classify(root, &[change(root, "ch", true)], &index, &docs);
         assert!(moved.tree);
         assert_eq!(moved.docs, BTreeSet::from(["ch/one.tex".to_string()]));
-        let lost = classify(root, &[change(root, "", true)], &index, &docs);
+        let rescan = Change {
+            path: root.to_path_buf(),
+            structural: true,
+        };
+        let lost = classify(root, &[rescan], &index, &docs);
         assert!(lost.tree && lost.docs.len() == 2);
         // A file that only starts like the folder's name isn't in it.
         let near = classify(root, &[change(root, "c", true)], &index, &docs);

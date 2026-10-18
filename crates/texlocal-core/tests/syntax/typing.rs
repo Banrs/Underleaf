@@ -8,9 +8,7 @@ use texlocal_core::syntax::{
     map_selections,
 };
 
-fn range(start: u32, length: u32) -> TextRange {
-    TextRange { start, length }
-}
+use super::{range, units};
 
 fn caret(at: u32) -> TextRange {
     range(at, 0)
@@ -22,10 +20,6 @@ fn edit(start: u32, length: u32, text: &str) -> TextEdit {
         length,
         text: text.into(),
     }
-}
-
-fn units(s: &str) -> u32 {
-    s.encode_utf16().count() as u32
 }
 
 /// An empty field at `start`, `index`th in Tab's order.
