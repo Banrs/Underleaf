@@ -68,6 +68,17 @@ public sealed partial class PdfView : UserControl
 
     public new bool Focus(FocusState state) => Scroller.Focus(state);
     public bool Compiling { set => Progress.Visibility = value ? Visibility.Visible : Visibility.Collapsed; }
+
+    /// With no PDF, says why Compile is off, as Home's tip does.
+    public bool TexMissing
+    {
+        set
+        {
+            EmptyTitle.Text = value ? "TeX isn't installed" : "No PDF yet";
+            EmptyText.Text = value ? "TeXLocal compiles with TeX Live." : "Compile to see the PDF here.";
+            GetTex.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
     public int PageCount => pages.Length;
     public double Zoom => Scroller.ZoomFactor;
     public MenuFlyout ZoomMenu => Menu;

@@ -430,6 +430,7 @@ public sealed partial class WorkspacePage : Page
         if (texAvailable) return;
         texAvailable = (await Core.CallAsync<TexStatus>("status")).Available;
         CompileButton.IsEnabled = CompileItem.IsEnabled = texAvailable;
+        Pdf.TexMissing = !texAvailable;
     }
 
     void OnCompile(object sender, RoutedEventArgs e) => Run("Can't compile", () => Core.CallAsync("session_compile", new { session }));

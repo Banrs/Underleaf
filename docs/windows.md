@@ -227,7 +227,8 @@ again when its scale changes), where everything still shows; default 1280 × 800
 **Empty states.** One pattern: a centred `StackPanel` with Spacing 12, holding a 48 glyph in
 `TextFillColorTertiaryBrush`, a Subtitle headline, one Body line in secondary text, and optionally
 a button. Editor: E8A5, "No file open", "Choose a file in the navigation pane." PDF: EA90, "No
-PDF yet", "Compile to see the PDF here." Under Home's Recent, inside the navigation pane and in
+PDF yet", "Compile to see the PDF here.", or while TeX is missing "TeX isn't installed", "TeXLocal
+compiles with TeX Live." and Get TeX Live, Home's tip, since Compile is off. Under Home's Recent, inside the navigation pane and in
 the issues panel, a Body note in secondary text is enough ("No projects yet. Choose a template
 above, or open a folder or a .zip.").
 
