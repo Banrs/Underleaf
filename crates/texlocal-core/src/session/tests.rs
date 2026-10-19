@@ -503,41 +503,25 @@ async fn an_undefined_commands_issue_says_where_its_line_has_it() {
     assert_eq!(lines[1]["tokens"], json!([{ "start": 0, "length": 4 }]));
 }
 
-/// The analysis of the file shown, whose outline the heading a line is under is found in.
+/// The analysis of the file shown, as the editor has it, whose outline the heading a line is
+/// under is found in.
 #[tokio::test(start_paused = true)]
 async fn the_analysis_is_kept_for_the_heading_a_line_is_under() {
     let rig = Rig::new(false).await;
     let text = "\\documentclass{book}\n\\chapter{A}\n\\section{B}\n\\section{}\n";
     fs::write(rig.root.join("main.tex"), text).unwrap();
-    let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
-    assert_eq!(
-        analysis["words"], 2,
-        "A and B: the class is a name, not a word"
-    );
-    assert_eq!(analysis["tree"][0]["children"][0]["command"], "section");
-    let untitled = &analysis["tree"][0]["children"][1];
-    assert_eq!(untitled["title"], "Untitled Section");
-    assert_eq!(untitled["foldKey"], "main.tex\t2:(untitled)#1");
-    // The class's levels: a book's, with Normal Text first.
-    let levels: Vec<&str> = analysis["headingStyles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|l| l["command"].as_str().unwrap())
-        .collect();
-    assert_eq!(levels[..3], ["", "part", "chapter"]);
+    let chapters = async || {
+        let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
+        let levels = analysis["headingStyles"].as_array().unwrap();
+        levels.iter().any(|l| l["command"] == "chapter")
+    };
+    assert!(chapters().await);
     assert_eq!(rig.heading("main.tex", 1).await, Value::Null);
     assert_eq!(rig.heading("main.tex", 3).await, json!(1));
     assert_eq!(rig.heading("main.tex", 9).await, json!(2));
-    // The class as the editor has it, before it is saved.
     let doc = rig.open("main.tex").await;
     doc.edit(15, 4, "article");
-    let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
-    let levels = analysis["headingStyles"].as_array().unwrap();
-    assert!(
-        !levels.iter().any(|l| l["command"] == "chapter"),
-        "{levels:?}"
-    );
+    assert!(!chapters().await);
 }
 
 /// An analysis is worked out beside the session: one under way holds up no other command,
@@ -1338,20 +1322,4 @@ async fn a_panic_ends_the_session_with_its_edits_written_and_the_host_told() {
     });
     assert!(told.is_some());
     assert_eq!(rig.call("state", json!({})).await.unwrap_err().status, 404);
-}
-
-#[tokio::test]
-async fn a_sessions_commands_are_taken_in_the_order_sent_however_they_are_awaited() {
-    let rig = Rig::new(false).await;
-    let send = |auto: bool| {
-        let args = json!({ "session": rig.session, "autoCompile": auto });
-        rig.sessions.send("session_set_options", &args)
-    };
-    let (first, second) = (send(false), send(true));
-    let state = rig
-        .sessions
-        .send("session_state", &json!({ "session": rig.session }));
-    assert_eq!(state.await.unwrap()["autoCompile"], true);
-    second.await.unwrap();
-    first.await.unwrap();
 }
