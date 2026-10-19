@@ -97,10 +97,10 @@ final class WorkspaceController: DetentSplitViewController {
         }
     }
 
-    /// Folded by the split for want of room: during a live resize, or with no click or drag behind it.
+    /// Folded by the split for want of room unless a divider was dragged shut. The toolbar's and menus' toggles reach the
+    /// panes through the models, and a column AppKit folds as a toggle opens the other still has the click as its event.
     private var foldedByWindow: Bool {
-        let pointer: Set<NSEvent.EventType> = [.leftMouseDown, .leftMouseUp, .leftMouseDragged]
-        return view.window?.inLiveResize == true || NSApp.currentEvent.map { !pointer.contains($0.type) } ?? true
+        NSApp.currentEvent?.type != .leftMouseDragged || view.window?.inLiveResize == true
     }
 
     override func viewDidAppear() {
