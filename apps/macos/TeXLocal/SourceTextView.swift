@@ -1,9 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The source editor's text view: TextKit 2 only, with the core's document as the text's mirror. Its gutter
-/// (EditorGutter.swift), its scrolling (+Viewport), its colours (+Colours), its issues (IssueOverlay) and its completion
-/// list (CompletionList) are each in a file of their own.
+/// The source editor's text view: TextKit 2 only, with the core's document as the text's mirror.
 final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCustomRotorItemSearchDelegate {
     static func plainDocument() -> SourceTextView {
         let view = SourceTextView(usingTextLayoutManager: true)
@@ -56,7 +54,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         show(text)
     }
 
-    /// The storage takes the document's text, as no edit, and what belonged to the text before goes.
     private func show(_ text: String) {
         loading = true
         // Else typing coalesced into the last file's undo would go on in this one's.
@@ -89,11 +86,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
                      range edited: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters), !loading else { return }
-        let old = NSRange(location: edited.location, length: edited.length - delta)
-        let text = textStorage.mutableString.substring(with: edited)
         // The closers typing put in and a snippet's fields move with the text; what's typed in a field goes in its other
         // places once the change is done (`didChangeText`).
-        mirrorEdits = document.edit(old, with: text, changing: changing, mirroring: mirroring)
+        mirrorEdits = document.edit(NSRange(location: edited.location, length: edited.length - delta),
+                                    with: textStorage.mutableString.substring(with: edited), changing: changing, mirroring: mirroring)
         lastMath = nil
         staleColours = min(staleColours ?? edited.location, edited.location)
         changing = nil
@@ -239,7 +235,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func resignFirstResponder() -> Bool {
         defer {
-            mathPopover?.close()
+            mathPopover.close()
             completions.close()
         }
         guard super.resignFirstResponder() else { return false }
@@ -268,7 +264,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     // MARK: the maths preview
 
-    private var mathPopover: MathPopover?
+    private lazy var mathPopover = MathPopover()
     /// Until the next edit.
     private var lastMath: (caret: Int, value: MathPreview?)?
     private var dismissedMath: Int?
@@ -285,20 +281,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let maths = loading ? nil : math(at: caret)
         if maths?.start != dismissedMath { dismissedMath = nil }
         guard let window, hasKeyboard, let maths, dismissedMath == nil, enclosingScrollView != nil else {
-            mathPopover?.close()
+            mathPopover.close()
             return
         }
-        let screen = firstRect(forCharacterRange: .caret(caret), actualRange: nil)
         // A point wide: NSPopover takes an empty rect for the whole view.
-        var rect = convert(window.convertFromScreen(screen), from: nil)
+        var rect = convert(window.convertFromScreen(firstRect(forCharacterRange: .caret(caret), actualRange: nil)), from: nil)
         rect.size.width = max(rect.width, 1)
         guard shownRect.contains(NSPoint(x: rect.minX, y: rect.midY)) else {
-            mathPopover?.close()
+            mathPopover.close()
             return
         }
-        if mathPopover == nil { mathPopover = MathPopover() }
-        mathPopover?.show(maths, size: fontSize, at: rect, of: self,
-                          edge: completions.offered != nil && completions.isAbove ? .maxY : .minY)
+        mathPopover.show(maths, size: fontSize, at: rect, of: self, edge: completions.offered != nil && completions.isAbove ? .maxY : .minY)
     }
 
     override func moveRight(_ sender: Any?) { stepCaret(1) { super.moveRight(sender) } }
@@ -356,19 +349,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
         let stroke = document.type(typed, replacing: selectedRange(), autoPair: autoPair)
         if let edit = stroke.edit {
-            replace(edit)
+            super.insertText(edit.text, replacementRange: edit.range)
         } else if stroke.selection == nil {
             super.insertText(string, replacementRange: replacementRange)
         }
         finish(stroke)
     }
 
-    /// A key's edit from the core, typed as a key types, past this view's own `insertText`, which would close the list.
-    private func replace(_ edit: TextEdit) {
-        super.insertText(edit.text, replacementRange: edit.range)
-    }
-
-    /// What follows a key's edit: the selection, the bracket's partner and the completion list.
     private func finish(_ stroke: Keystroke) {
         if let selection = stroke.selection { setSelectedRange(selection.range) }
         if let partner = stroke.partner { showPartner(of: partner) }
@@ -389,14 +376,15 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
         guard selectedRanges.count == 1, let edit = document.deleteBackward(selectedRange(), autoPair: autoPair).edit
         else { return super.deleteBackward(sender) }
-        replace(edit)
+        // Typed as a key types, past this view's own `insertText`, which would close the list.
+        super.insertText(edit.text, replacementRange: edit.range)
     }
 
     override func insertNewline(_ sender: Any?) {
         guard isEditable, selectedRanges.count == 1 else { return super.insertNewline(sender) }
         let stroke = document.insertNewline(selectedRange())
         guard let edit = stroke.edit else { return super.insertNewline(sender) }
-        replace(edit)
+        super.insertText(edit.text, replacementRange: edit.range)
         finish(stroke)
     }
 
@@ -430,9 +418,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             completions.close()
         } else if document.endSnippet() {
             // Escape leaves the snippet's fields.
-        } else if mathPopover?.isWanted == true, let maths = math(at: caret) {
+        } else if mathPopover.isWanted, let maths = math(at: caret) {
             dismissedMath = maths.start
-            mathPopover?.close()
+            mathPopover.close()
         } else {
             completions.complete(explicit: true)
         }

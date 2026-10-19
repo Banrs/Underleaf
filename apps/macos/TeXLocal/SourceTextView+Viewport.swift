@@ -74,13 +74,7 @@ extension SourceTextView {
         else { return super.scrollRangeToVisible(range) }
         for _ in 0..<2 {
             manager.ensureLayout(for: target)
-            var rect = NSRect.null
-            manager.enumerateTextSegments(in: target, type: .standard, options: .rangeNotRequired) { _, frame, _, _ in
-                rect = rect.union(frame)
-                return true
-            }
-            guard !rect.isNull else { return }
-            guard scrollToVisible(rect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)) else { return }
+            guard let rect = segments(range), scrollToVisible(rect) else { return }
             manager.textViewportLayoutController.layoutViewport()
         }
     }
@@ -128,7 +122,6 @@ extension SourceTextView {
         fragments.append((offset(fragment.rangeInElement.location), fragment))
     }
 
-    /// Each time TextKit lays out the viewport: a scroll past what it had laid out, an edit, a new width.
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
         // 27.2: until a scroll prepares content, as after a launch or a resize, TextKit's content view ends where the scroll

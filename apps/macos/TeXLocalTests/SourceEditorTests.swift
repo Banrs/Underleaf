@@ -680,7 +680,7 @@ struct SourceEditorTests {
         let font = NSFont.systemFont(ofSize: 13)
         var rows = text.issues.rows
         // The last line is the document's empty one, laid out with the paragraph before it.
-        #expect(rows.map(\.line) == [1, 2, 4] && rows.map(\.isError) == [false, true, true])
+        #expect(rows.map(\.line) == [1, 2, 4] && rows.map { $0.message?.view.rootView.isError } == [false, true, true])
         for row in rows {
             let message = try #require(row.message)
             #expect(!message.cut && message.rect.maxX == row.band.maxX - 1 && message.rect.minY == row.band.minY)

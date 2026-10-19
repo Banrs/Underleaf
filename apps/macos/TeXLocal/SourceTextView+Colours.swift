@@ -76,7 +76,7 @@ extension SourceTextView {
 
     private var partnerRect: NSRect? { partnerMark.flatMap(segments) }
 
-    private func segments(_ marked: NSRange) -> NSRect? {
+    func segments(_ marked: NSRange) -> NSRect? {
         guard NSMaxRange(marked) <= text.length, let manager = textLayoutManager, let range = textRange(marked) else { return nil }
         var rect = NSRect.null
         manager.enumerateTextSegments(in: range, type: .standard, options: .rangeNotRequired) { _, frame, _, _ in
