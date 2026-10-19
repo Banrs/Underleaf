@@ -23,8 +23,6 @@ pub struct MathSvg {
     pub svg: String,
     pub width: f64,
     pub height: f64,
-    /// From the top: where the maths' baseline is, to set it on a line of text.
-    pub baseline: f64,
 }
 
 /// The drawing is no larger than this, in ems: `\rule{1e9pt}{1pt}` would
@@ -115,7 +113,6 @@ pub fn math_svg(tex: &str, display: bool, size: f64, color: Rgba) -> Result<Math
         svg: svg(&list, size)?,
         width: list.width * size,
         height: (list.height + list.depth) * size,
-        baseline: list.height * size,
     })
 }
 
@@ -220,7 +217,6 @@ pub fn glyph_svg(command: &str, size: f64, side: f64, color: Rgba) -> Result<Mat
         svg,
         width: side,
         height: side,
-        baseline: list.height * size + dy,
     })
 }
 
@@ -247,7 +243,6 @@ mod tests {
         names.dedup();
         assert_eq!(names, ["path", "rect", "svg"], "{}", fraction.svg);
         assert!(fraction.width > 20.0 && fraction.height > 20.0);
-        assert!(0.0 < fraction.baseline && fraction.baseline < fraction.height);
         assert!(fraction.svg.contains(r#"fill="rgb(0,0,0)""#));
         // Displayed is larger than inline, and twice the size twice as large.
         let inline = math_svg(r"\sum_{i=1}^n i", false, 10.0, BLACK).unwrap();

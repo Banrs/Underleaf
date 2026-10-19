@@ -138,15 +138,14 @@ fn tex_reads(path: &str) -> bool {
     depth == 0
 }
 
-/// The commands that need no document: "themes", the themes' colours;
+/// The commands that need no document: "themes", each theme's id and title;
 /// "theme_colors", a theme's (`theme`, its id) legible in an appearance
 /// (`theme::Appearance`'s fields), by highlight kind; "legible" (`color`,
 /// `background`, `fill`, `increaseContrast`, `ratio`), one colour raised to
 /// `ratio` (default 4.5, or 7 with `increaseContrast`). "menus", the
-/// catalogue's templates and symbol groups; "heading_styles" (`class`,
-/// `pointSize`, 10 when left out, `hasChapters`), the levels the class has,
-/// as it sets and numbers them, every level without a class (a session's
-/// analysis answers the main file's). "drop_text" (`path`, `kind`, `into`,
+/// catalogue's templates and symbol groups; "heading_styles", every level as
+/// the standard classes set and number them (a session's analysis answers
+/// the main file's class's). "drop_text" (`path`, `kind`, `into`,
 /// "tex" when left out), what a project file dropped on the editor does:
 /// {"insert": text} or {"open": true}, or null for a folder. "math_svg"
 /// (`tex`, `display`, `size`, 13 points, `color`, black) and "glyph_svg"
@@ -161,7 +160,7 @@ pub fn call(command: &str, args_json: &str) -> Option<String> {
             let (kind, into) = (string("kind", "")?, string("into", "tex")?);
             json(dropped(&get::<String>(a, "path")?, &kind, &into))
         }
-        "themes" => json(theme::THEMES),
+        "themes" => json(theme::THEMES.map(|t| json!({ "id": t.id, "title": t.title }))),
         "math_svg" => {
             let (tex, display) = (string("tex", "")?, optional(a, "display", false)?);
             rendered(render::math_svg(
@@ -184,13 +183,7 @@ pub fn call(command: &str, args_json: &str) -> Option<String> {
             let catalog = &*catalog::CATALOG;
             json(json!({ "templates": catalog.templates, "symbolGroups": catalog.symbol_groups }))
         }
-        "heading_styles" => {
-            let class: Option<String> = optional(a, "class", None)?;
-            let point_size = optional(a, "pointSize", 10)?;
-            let class = class.map(|name| headings::DocumentClass { name, point_size });
-            let has_chapters = optional(a, "hasChapters", false)?;
-            json(headings::heading_styles(class.as_ref(), has_chapters))
-        }
+        "heading_styles" => json(headings::heading_styles(None, false)),
         "theme_colors" => {
             let theme = theme::theme(&get::<String>(a, "theme")?)?;
             json(theme::theme_colors(
@@ -270,9 +263,7 @@ mod tests {
     #[test]
     fn the_free_commands_answer_by_name() {
         let themes = call("themes", "{}").unwrap();
-        assert!(themes.starts_with(
-            r#"[{"id":"overleaf","title":"Overleaf","command":{"light":[0.0,0.0,1.0,1.0]"#
-        ));
+        assert!(themes.starts_with(r#"[{"id":"overleaf","title":"Overleaf"},{"id":"#));
         let light = r#"{"theme": "texstudio", "dark": false, "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0.08]}"#;
         let colors: Vec<[f64; 4]> =
             serde_json::from_str(&call("theme_colors", light).unwrap()).unwrap();
@@ -301,11 +292,11 @@ mod tests {
                 .contains(&alpha)
         );
         assert!(menus["templates"]["math"].is_array());
-        let levels = call("heading_styles", r#"{"class": "letter"}"#).unwrap();
+        let levels = call("heading_styles", "{}").unwrap();
         assert!(levels.starts_with(r#"[{"title":"Normal Text","command":"""#));
         let maths = call("math_svg", r#"{"tex": "x^2", "size": 10}"#);
         let maths: serde_json::Value = serde_json::from_str(&maths.unwrap()).unwrap();
-        for key in ["svg", "width", "height", "baseline"] {
+        for key in ["svg", "width", "height"] {
             assert!(maths.get(key).is_some(), "{key}");
         }
         let error = call("math_svg", r#"{"tex": "x^"}"#).unwrap();

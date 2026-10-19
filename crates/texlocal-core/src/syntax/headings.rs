@@ -15,8 +15,7 @@ use super::scan::strip_comment;
 
 /// The class a main file's `\documentclass` names, and the type size its
 /// options set.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentClass {
     pub name: String,
     /// 10, 11 or 12 (points): LaTeX's size options.
