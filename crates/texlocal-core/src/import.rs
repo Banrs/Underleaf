@@ -75,9 +75,8 @@ struct Allowance {
 const TOO_MANY: &str = "There are too many files to import.";
 const TOO_BIG: &str = "The files to import are too large.";
 
-/// What a drop or File › Open takes. A project may hold a data set or a
-/// video, so one file may be as large as the whole; and the whole is far past
-/// any real project, so only a dropped home folder or a zip bomb meets it,
+/// What a drop or File › Open takes: far past any real project, data sets
+/// and videos included, so only a dropped home folder or a zip bomb meets it,
 /// before it has filled the disk.
 const IMPORT: Allowance = Allowance {
     entries: 100_000,
@@ -202,17 +201,11 @@ fn import_files_within(
         } else {
             file.path
         };
+        let rel = in_folder(dir, &path);
         let Source::File(source) = file.source else {
             unreachable!("a drop is of files");
         };
-        save(
-            service,
-            id,
-            &in_folder(dir, &path),
-            &source,
-            replace,
-            &mut allowance,
-        )?;
+        save(service, id, &rel, &source, replace, &mut allowance)?;
     }
     Ok(Imported { existing })
 }
@@ -810,18 +803,15 @@ mod tests {
             ("Thesis/.latexmkrc", "$pdf_mode = 1;"),
             ("Thesis/.texlocal.json", "{\"mainFile\": \"elsewhere.tex\"}"),
             ("Thesis/build/main.pdf", "old output"),
+            // What macOS adds to a zip of it.
+            ("__MACOSX/Thesis/._doc.tex", "fork"),
         ];
         for (path, text) in files {
             let file = dir.path().join(path);
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(file, text).unwrap();
         }
-        // The folder zipped, with what macOS adds.
-        let macos = [("__MACOSX/Thesis/._doc.tex", "fork")];
-        zip_of(
-            &dir.path().join("Thesis.zip"),
-            &[&files[..], &macos].concat(),
-        );
+        zip_of(&dir.path().join("Thesis.zip"), &files);
 
         // A taken name gets a number, as Finder's copies do.
         for (src, id) in [("Thesis", "Thesis"), ("Thesis.zip", "Thesis 2")] {
@@ -934,15 +924,10 @@ mod tests {
 
         let paths = [drop.join("figs"), drop.join("notes.tex")];
         import_files(&service, "P", "in", &paths, None).unwrap();
-        let root = service.data_dir.join("P");
-        let files = [
-            "in/figs/a.png",
-            "in/figs/sub/b.png",
-            "in/notes.tex",
-            "main.tex",
-        ];
+        let root = service.data_dir.join("P/in");
+        let files = ["figs/a.png", "figs/sub/b.png", "notes.tex"];
         assert_eq!(files_in(&root), files);
-        assert_eq!(fs::read(root.join("in/figs/sub/b.png")).unwrap(), b"b");
+        assert_eq!(fs::read(root.join("figs/sub/b.png")).unwrap(), b"b");
 
         // A path that isn't there is named.
         let gone = [drop.join("gone.png")];
@@ -963,12 +948,9 @@ mod tests {
         let paths = [drop.join("figs"), drop.join("main.tex")];
 
         // Without an answer nothing is written; the clash is reported.
-        let asked = import_files(&service, "P", "", &paths, None).unwrap();
+        let asked = json!(import_files(&service, "P", "", &paths, None).unwrap());
         let clash = json!({ "path": "main.tex", "keepBoth": "main 2.tex" });
-        assert_eq!(
-            serde_json::to_value(&asked).unwrap(),
-            json!({ "existing": [clash] })
-        );
+        assert_eq!(asked, json!({ "existing": [clash] }));
         let root = service.data_dir.join("P");
         assert_eq!(files_in(&root), ["main.tex"]);
         let original = fs::read(root.join("main.tex")).unwrap();

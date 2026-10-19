@@ -126,7 +126,7 @@ impl Export<'_> {
 /// project: `is_litter` at any depth, and the compile output and the project's
 /// own settings at the top, in any case.
 pub(crate) fn left_out(rel: &str) -> bool {
-    let top = rel.split('/').next().unwrap_or(rel);
+    let top = rel.split_once('/').map_or(rel, |(top, _)| top);
     top.eq_ignore_ascii_case(BUILD_DIR)
         || rel.eq_ignore_ascii_case(SETTINGS_FILE)
         || rel.split('/').any(is_litter)
