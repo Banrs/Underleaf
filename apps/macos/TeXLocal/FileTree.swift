@@ -23,9 +23,8 @@ final class FileTree {
         return nil
     }
 
-    /// A read that started before the last one taken is dropped: a folder change's read ending after a new file's would
-    /// take away the row its name is being typed in. A failed read keeps the tree as it was, and the folder's next change
-    /// reads again.
+    /// A read that started before the last one taken is dropped: it would take away a new file's row as its name is typed.
+    /// A failed read keeps the tree, and the folder's next change reads again.
     func reload() async {
         reads += 1
         let read = reads
