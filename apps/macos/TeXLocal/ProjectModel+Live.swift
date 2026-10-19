@@ -5,7 +5,7 @@ extension ProjectModel {
     // MARK: - Live preview
 
     func startTeXpresso() {
-        guard !closed, let session, texpresso.canStart else { return }
+        guard !closed, let session, texpresso.phase == .stopped else { return }
         texpresso.starting()
         if let pages = pdf.visiblePages { liveView(pages) }
         liveCaret()

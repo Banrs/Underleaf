@@ -147,7 +147,7 @@ final class PDFController: NSObject {
         switch zoom {
         case .fitWidth: fitWidth()
         case .fitPage: fitPage()
-        case .scale(let scale): setScale(min(max(CGFloat(scale), Self.minScale), Self.maxScale))
+        case .scale(let scale): setScale(CGFloat(scale))
         }
     }
 

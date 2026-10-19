@@ -102,9 +102,7 @@ private struct EditorSettings: View {
 
     /// Double: the stepper's formatted value takes only floating point, and the editor reads a whole number.
     private var size: Binding<Double> {
-        Binding(get: { Double(fontSize) }, set: {
-            fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
-        })
+        Binding(get: { Double(fontSize) }, set: { fontSize = Int($0.rounded()) })
     }
 }
 
@@ -129,22 +127,11 @@ private struct CompilingSettings: View {
 }
 
 private struct LivePreviewSettings: View {
-    @Environment(AppModel.self) private var app
     @AppStorage(DefaultsKey.liveViewer) private var viewer = LiveViewer.pane
 
     var body: some View {
         Form {
             Section {
-                if let tex = app.tex {
-                    LabeledContent("TeXpresso") {
-                        if tex.texpresso != nil {
-                            Text("Installed")
-                        } else {
-                            Text("Not Installed")
-                            LinkButton(title: "Install Guide", url: Links.texpressoGuide)
-                        }
-                    }
-                }
                 // An app opened from the Finder sees no shell PATH.
                 ProgramFolder(program: .texpresso)
                 Picker("Show Live Preview In", detail: "Takes effect the next time Live Preview starts.", selection: $viewer) {
@@ -170,10 +157,6 @@ private struct ProgramFolder: View {
                 : "Choose the folder the texpresso program is in."
         }
 
-        var automaticFailure: String { self == .tex ? "Couldn’t Find TeX Automatically" : "Couldn’t Find TeXpresso Automatically" }
-
-        func chosen(in tex: TexStatus) -> String? { self == .tex ? tex.texDir : tex.texpressoDir }
-
         func folder(in tex: TexStatus) -> String? {
             switch self {
             case .tex: tex.available ? tex.found ?? tex.texDir : nil
@@ -198,10 +181,12 @@ private struct ProgramFolder: View {
     var body: some View {
         // A spinner until the status is in, rather than a flash of "Not Found" at launch.
         if let tex = app.tex {
-            let chosen = program.chosen(in: tex)
+            let chosen = program == .tex ? tex.texDir : tex.texpressoDir
             LabeledContent {
                 HStack {
-                    if program == .tex, !tex.available { LinkButton(title: "Get MacTeX", url: Links.mactex) }
+                    if program.folder(in: tex) == nil {
+                        LinkButton(title: program == .tex ? "Get MacTeX" : "Install Guide", url: program == .tex ? Links.mactex : Links.texpressoGuide)
+                    }
                     if app.settingTeX { ProgressView().controlSize(.small).accessibilityLabel("Checking \(program.title)") }
                     Picker(program.title, selection: Binding<Choice>(get: { chosen == nil ? .automatic : .chosen }, set: {
                         switch $0 {
@@ -244,7 +229,7 @@ private struct ProgramFolder: View {
             do {
                 try await app.setTeXFolder(path, texpresso: program == .texpresso)
             } catch {
-                alert = AppAlert(path.map { "Couldn’t Use “\(URL(filePath: $0).lastPathComponent)”" } ?? program.automaticFailure, error)
+                alert = AppAlert(path.map { "Couldn’t Use “\(URL(filePath: $0).lastPathComponent)”" } ?? "Couldn’t Find \(program == .tex ? "TeX" : "TeXpresso") Automatically", error)
             }
         }
     }

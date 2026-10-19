@@ -45,8 +45,7 @@ extension NSColor {
     }
 
     static func srgb(_ rgba: [Double]) -> NSColor {
-        guard rgba.count == 4 else { return .textColor }
-        return NSColor(srgbRed: CGFloat(rgba[0]), green: CGFloat(rgba[1]), blue: CGFloat(rgba[2]), alpha: CGFloat(rgba[3]))
+        NSColor(srgbRed: CGFloat(rgba[0]), green: CGFloat(rgba[1]), blue: CGFloat(rgba[2]), alpha: CGFloat(rgba[3]))
     }
 }
 
