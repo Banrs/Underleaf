@@ -19,8 +19,7 @@ nonisolated struct Menus: Decodable, Sendable {
     let templates: Templates
     let symbolGroups: [SymbolGroup]
 
-    static let shared: Menus = Syntax.call("menus", [:])
-        ?? Menus(templates: Templates(math: [], insert: [], list: [], references: []), symbolGroups: [])
+    static let shared: Menus = Syntax.call("menus", [:])!
 }
 
 /// A block of the core's by its id, or with `inline` a command whose "$0" is where the selection goes.
@@ -63,8 +62,7 @@ nonisolated struct HeadingStyle: Equatable, Decodable, Sendable {
     var isRunIn: Bool { command == "paragraph" }
 
     /// Without a class: every level, set as the standard classes set them (`heading_styles`).
-    static let standard: [HeadingStyle] = Syntax.call("heading_styles", [:])
-        ?? [HeadingStyle(title: "Normal Text", command: "", font: Font(scale: 1, bold: false, shape: .upright), marker: nil)]
+    static let standard: [HeadingStyle] = Syntax.call("heading_styles", [:])!
 }
 
 enum TeXEngine: String, CaseIterable, Identifiable {
