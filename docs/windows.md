@@ -241,8 +241,8 @@ above, or open a folder or a .zip.").
   holds the icon and "TeXLocal". In the 1064 column: "Home" (`TitleTextBlockStyle`, heading level
   1) with **Open** at its right (`DropDownButton`, E8E5: Folder… Ctrl+O, ZIP or TeX file…
   Ctrl+Shift+O). Under it, when they apply: an `InfoBar` (Error, "Can't open the projects folder",
-  the core's reason, Try again) and one (Warning, "TeX isn't installed", "Get TeX Live"). **New**:
-  the templates as Word's gallery, each its first page in outline on white paper (Blank, Article
+  the core's reason, Try again) and one (Warning, "TeX isn't installed", "Get TeX Live"), both
+  asked again whenever the window comes to the front. **New**: the templates as Word's gallery, each its first page in outline on white paper (Blank, Article
   and Report 120 × 156, Presentation 160 × 90) with its name under it; a click asks the name
   ("New article project") and creates it from that template (`create_project`'s `template`);
   Ctrl+Shift+N is Article. **Recent**: Name, Main file and Date modified headings over a
@@ -258,7 +258,8 @@ above, or open a folder or a .zip.").
   Display maths and the catalogue's maths), Symbol (Ω: the palette) and Insert (the catalogue's
   blocks, List ▸, References and links ▸). These are enabled in a `.tex` file only, and go to the
   bar's overflow (…) as it narrows. At its end: PDF (EA90, a toggle) and Compile (accent, 112 wide;
-  Compile ↔ Stop; disabled with "TeX isn't installed" while TeX is missing). Then the navigation
+  Compile ↔ Stop; disabled while TeX is missing, which is asked again as the window comes to the
+  front or the page back from Settings, as the Mac asks when it becomes active). Then the navigation
   pane (280 by default, 200–480; inline from 1008 wide, overlaid on acrylic below) beside the
   layers: editor | `Sizer` | PDF, and below them the issues panel (toggled, 200 tall, a `Sizer`
   above it); then the 32 status bar.

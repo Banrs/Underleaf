@@ -138,6 +138,7 @@ public sealed partial class WorkspacePage : Page
         App.Window.SetMenu(MainMenu);
         App.Window.SetTitle(id, Editor.Path);
         Search.PlaceholderText = $"Search {id}";
+        CheckTex();
         if (session != 0) return;
         Core.Event += OnEvent;
         try { await OpenSession(); }
@@ -168,8 +169,6 @@ public sealed partial class WorkspacePage : Page
     /// or a build among them is newer than the answer's.
     async Task OpenSession()
     {
-        texAvailable = (await Core.CallAsync<TexStatus>("status")).Available;
-        CompileButton.IsEnabled = CompileItem.IsEnabled = texAvailable;
         session = ++sessions;
         var opened = await Core.CallAsync<SessionOpened>("session_open", new { id, session, autoCompile = Prefs.AutoCompile });
         root = opened.Root;
@@ -337,7 +336,7 @@ public sealed partial class WorkspacePage : Page
         CompileIcon.Glyph = compiling ? "\uE71A" : "\uE768";
         CompileLabel.Text = compiling ? "Stop" : "Compile";
         AutomationProperties.SetName(CompileButton, CompileLabel.Text);
-        ToolTipService.SetToolTip(CompileButton, !texAvailable ? "TeX isn't installed" : compiling ? "Stop (Shift+F5)" : "Compile (Ctrl+Enter)");
+        ToolTipService.SetToolTip(CompileButton, compiling ? "Stop (Shift+F5)" : "Compile (Ctrl+Enter)");
         StopItem.IsEnabled = Pdf.Compiling = compiling;
         var state = compiling ? "Compiling…"
             : result is null ? (Pdf.PageCount > 0 ? "" : "No build yet")
@@ -417,7 +416,15 @@ public sealed partial class WorkspacePage : Page
 
     void OnCompileButton(object sender, RoutedEventArgs e) => (compiling ? (RoutedEventHandler)OnStop : OnCompile)(sender, e);
 
-    /// Compile and its keys are disabled while TeX is missing.
+    /// TeX installed while the app runs is found as the window comes to the front or the page back from Settings, as on
+    /// the Mac.
+    public async void CheckTex()
+    {
+        if (texAvailable) return;
+        texAvailable = (await Core.CallAsync<TexStatus>("status")).Available;
+        CompileButton.IsEnabled = CompileItem.IsEnabled = texAvailable;
+    }
+
     void OnCompile(object sender, RoutedEventArgs e) => Run("Can't compile", () => Core.CallAsync("session_compile", new { session }));
     void OnStop(object sender, RoutedEventArgs e) => Run("Can't stop the build", () => Core.CallAsync("session_stop_compile", new { session }));
     void OnClean(object sender, RoutedEventArgs e) => Run("Can't clean the build folder", () => Core.CallAsync("session_clean", new { session }));

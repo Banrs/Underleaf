@@ -56,6 +56,7 @@ public sealed partial class MainWindow : Window
             var active = e.WindowActivationState != WindowActivationState.Deactivated;
             TitleText.Opacity = active ? 1 : 0.5;
             if (active) (Pages.Content as HomePage)?.Refresh();
+            if (active) (Pages.Content as WorkspacePage)?.CheckTex();
         };
         Closed += (_, _) =>
         {
