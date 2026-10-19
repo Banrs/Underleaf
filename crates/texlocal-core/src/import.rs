@@ -227,14 +227,12 @@ fn validate<'a>(
         let rel = rel_key(file)?;
         let key = fold_case(&rel);
         let parents = || key.match_indices('/').map(|(i, _)| &key[..i]);
-        if !seen.insert(key.clone()) {
+        if !seen.insert(key.clone())
+            || folders.contains(&key)
+            || parents().any(|parent| seen.contains(parent))
+        {
             return Err(CoreError::bad_request(
-                "The upload contains duplicate paths",
-            ));
-        }
-        if folders.contains(&key) || parents().any(|parent| seen.contains(parent)) {
-            return Err(CoreError::bad_request(
-                "The upload contains conflicting paths",
+                "Two of the files to import would take the same place.",
             ));
         }
         folders.extend(parents().map(str::to_string));
