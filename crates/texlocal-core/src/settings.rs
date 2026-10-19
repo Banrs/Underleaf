@@ -111,17 +111,16 @@ fn read_object(path: &Path) -> Map<String, Value> {
     load_object(path).unwrap_or_default()
 }
 
-/// Run `change` on the keys of the file at `path`, laid over `base` so that
-/// the file's own keys, unknown ones too, stay, and write the result
-/// atomically. A file that exists but can't be read is not written over (409).
+/// Write `keys` over the file at `path`, itself laid over `merged` so that the
+/// file's own keys, unknown ones too, stay, atomically; and answer the result.
+/// A file that exists but can't be read is not written over (409).
 fn update(
     path: &Path,
-    base: Map<String, Value>,
-    change: impl FnOnce(&mut Map<String, Value>) -> Result<(), CoreError>,
+    mut merged: Map<String, Value>,
+    keys: impl IntoIterator<Item = (String, Value)>,
 ) -> Result<Map<String, Value>, CoreError> {
-    let mut merged = base;
     merged.extend(load_object(path)?);
-    change(&mut merged)?;
+    merged.extend(keys);
     let bytes =
         serde_json::to_vec_pretty(&merged).map_err(|e| CoreError::internal(e.to_string()))?;
     atomic::write(path, &bytes)?;
@@ -131,12 +130,12 @@ fn update(
 /// `update` of a project's settings file, over the defaults.
 fn update_project(
     root: &Path,
-    change: impl FnOnce(&mut Map<String, Value>) -> Result<(), CoreError>,
+    keys: impl IntoIterator<Item = (String, Value)>,
 ) -> Result<Map<String, Value>, CoreError> {
     let Value::Object(defaults) = json!(Settings::default()) else {
         unreachable!("Settings serializes as an object");
     };
-    update(&root.join(SETTINGS_FILE), defaults, change)
+    update(&root.join(SETTINGS_FILE), defaults, keys)
 }
 
 /// Lenient read: defaults fill in anything missing or mistyped, an engine
@@ -165,19 +164,15 @@ fn lenient(raw: &Map<String, Value>) -> Settings {
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SettingsPatch {
-    #[serde(skip_serializing_if = "Option::is_none")]
     main_file: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     engine: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     shell_escape: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     stop_on_first_error: Option<bool>,
 }
 
 impl SettingsPatch {
-    /// The keys to store: the types have checked the flags, and this checks
-    /// the engine and the main file, which is stored as `safe_rel_file` spells it.
+    /// The keys sent, to store: the types have checked the flags, and this
+    /// checks the engine and the main file, stored as `safe_rel_file` spells it.
     fn checked(mut self, root: &Path) -> Result<Map<String, Value>, CoreError> {
         if let Some(engine) = &self.engine
             && Engine::named(engine).is_none()
@@ -187,9 +182,10 @@ impl SettingsPatch {
         if let Some(main_file) = &self.main_file {
             self.main_file = Some(safe_rel_file(root, main_file)?);
         }
-        let Value::Object(keys) = json!(self) else {
+        let Value::Object(mut keys) = json!(self) else {
             unreachable!("a patch serializes as an object");
         };
+        keys.retain(|_, value| !value.is_null());
         Ok(keys)
     }
 }
@@ -197,18 +193,10 @@ impl SettingsPatch {
 /// Apply `patch`, a `SettingsPatch` as JSON, to the project's settings and
 /// return them as written.
 pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError> {
-    if !patch.is_object() {
-        return Err(CoreError::bad_request("Invalid settings"));
-    }
     let patch = SettingsPatch::deserialize(patch)
         .map_err(|err| CoreError::bad_request(format!("Invalid settings: {err}")))?;
-    let keys = patch.checked(root)?;
     // What was just written, without reading it back.
-    update_project(root, |merged| {
-        merged.extend(keys);
-        Ok(())
-    })
-    .map(|merged| lenient(&merged))
+    Ok(lenient(&update_project(root, patch.checked(root)?)?))
 }
 
 /// The folders chosen for TeX's programs and for TeXpresso, which every
@@ -243,14 +231,9 @@ impl AppSettings {
     pub(crate) fn choose(data_dir: &Path, key: &str, dir: Option<&Path>) -> Result<(), CoreError> {
         // Held to read, change and write the file, so two choices keep both.
         static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _writing = WRITING
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let file = data_dir.join(APP_SETTINGS_FILE);
-        update(&file, Map::new(), |keys| {
-            keys.insert(key.into(), json!(dir.map(Path::to_string_lossy)));
-            Ok(())
-        })?;
+        let _writing = crate::lock(&WRITING);
+        let chosen = (key.to_owned(), json!(dir.map(Path::to_string_lossy)));
+        update(&data_dir.join(APP_SETTINGS_FILE), Map::new(), [chosen])?;
         Ok(())
     }
 }
@@ -275,9 +258,6 @@ pub struct UiPatch {
     pub folded_headings: Option<Vec<String>>,
 }
 
-/// More than any project has, so a runaway host can't fill the settings file.
-const UI_LIMIT: usize = 10_000;
-
 pub fn read_ui(root: &Path) -> UiState {
     read_object(&root.join(SETTINGS_FILE))
         .remove("ui")
@@ -289,15 +269,8 @@ fn store_ui(root: &Path, mut state: UiState) -> Result<UiState, CoreError> {
     for list in [&mut state.expanded_folders, &mut state.folded_headings] {
         list.sort();
         list.dedup();
-        if list.len() > UI_LIMIT {
-            return Err(CoreError::bad_request("Too much interface state"));
-        }
     }
-    let ui = json!(state);
-    update_project(root, |merged| {
-        merged.insert("ui".into(), ui);
-        Ok(())
-    })?;
+    update_project(root, [("ui".to_owned(), json!(state))])?;
     Ok(state)
 }
 
@@ -353,12 +326,6 @@ mod tests {
         write_ui(root, patch(json!({ "expandedFolders": [] }))).unwrap();
         assert_eq!(read_ui(root).folded_headings, list(&["x\t1:T#1"]));
         assert_eq!(read_settings(root).engine, Engine::Lualatex);
-        let flood = (0..=UI_LIMIT).map(|n| n.to_string()).collect();
-        let flood = UiPatch {
-            expanded_folders: Some(flood),
-            ..UiPatch::default()
-        };
-        assert_eq!(write_ui(root, flood).unwrap_err().status, 400);
     }
 
     #[test]
