@@ -74,6 +74,8 @@ public sealed partial class WorkspacePage : Page
             ShowEdge();
         });
         Split.PaneOpened += (_, _) => Remeasure(SideTabs);
+        // An overlaid pane open as the window widens is light-dismissed after it has become inline; it stays.
+        Split.PaneClosing += (_, e) => e.Cancel = Inline;
         PaneSizer.Delta += d => Split.OpenPaneLength = Math.Clamp(Split.OpenPaneLength + d, 200, 480);
         PaneSizer.Released += () => Prefs.SidebarWidth = Split.OpenPaneLength;
         SplitSizer.Delta += d =>
