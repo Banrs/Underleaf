@@ -162,11 +162,10 @@ private struct IssueList: View {
                     }
                 } primaryAction: { rows in if let item = rows.first.flatMap(item) { open(item) } }
                 .copyable(project.chosenIssue.flatMap(item).map { [$0.message] } ?? [])
-                // The menus' choice may be out of sight, and the panel closed: a hidden list scrolls by its rows' estimated heights,
-                // so again as it comes up. Where the person scrolled to is theirs: nothing else moves the list back.
-                .onChange(of: project.chosenIssue, initial: true) { _, place in if let place { proxy.scrollTo(place) } }
-                .onChange(of: project.panel.shown) { _, shown in
-                    if shown, let place = project.chosenIssue { proxy.scrollTo(place) }
+                // The menus' choice may be out of sight, and the panel closed: a hidden list scrolls by its rows' estimated heights, so again as it comes up.
+                .onChange(of: project.chosenIssue) { _, place in if let place { proxy.scrollTo(place) } }
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { _ in
+                    if let place = project.chosenIssue { proxy.scrollTo(place) }
                 }
         }
     }
@@ -209,11 +208,14 @@ private struct LogPane: View {
     let text: String
     let filter: String
     var title = "Build Log"
-    /// Found off the main actor, not on every redraw of a log that can be megabytes; until the next are in, the last stay.
-    @State private var found: String?
+    /// Found off the main actor, not on every redraw of a log that can be megabytes, and written only by a search that was
+    /// not cancelled. Until the next are in, the last non-empty ones stay, and an empty result is no answer to another filter.
+    @State private var filtered: (filter: String, lines: String)?
 
     var body: some View {
-        let shown = filter.isEmpty ? text : found ?? text
+        let current = filtered?.filter == filter ? filtered?.lines : nil
+        let previous = filtered.flatMap { $0.lines.isEmpty ? nil : $0.lines }
+        let shown = filter.isEmpty ? text : current ?? previous ?? text
         Group {
             if shown.isEmpty {
                 ContentUnavailableView.search(text: filter)
@@ -225,8 +227,8 @@ private struct LogPane: View {
             }
         }
         .task(id: [text, filter]) {
-            guard !filter.isEmpty else { return found = nil }
-            if let lines = await Self.lines(of: text, with: filter), !Task.isCancelled { found = lines }
+            guard !filter.isEmpty else { return filtered = nil }
+            if let lines = await Self.lines(of: text, with: filter), !Task.isCancelled { filtered = (filter, lines) }
         }
     }
 
