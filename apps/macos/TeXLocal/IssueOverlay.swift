@@ -82,7 +82,7 @@ final class IssueOverlay {
         let label = labels[number] ?? IssueLabel(reported.short, compact: reported.compact, font: font)
         labels[number] = label
         typealias Metrics = IssueBox.Metrics
-        let end = band.maxX - Metrics.endInset
+        let end = band.maxX - 1
         let room = end - (left + first.typographicBounds.maxX) - gap
         let issues = said.count
         let fitted = label.text(in: room - Metrics.width(ofText: 0, font: font, issues: issues))
@@ -100,7 +100,7 @@ final class IssueOverlay {
             if message.superview !== view { view.addSubview(message) }
             issue.message = (message, rect, fitted?.cut ?? true)
         }
-        if issue.message?.cut != false || said.count > 1 { issue.tip = said.joined(separator: "\n") }
+        if issue.message?.cut != false || issues > 1 { issue.tip = said.joined(separator: "\n") }
         // Underlined in the system's red, as Xcode does an issue's token, under the text: TextKit 2 draws no underline
         // given as a rendering attribute (27.2).
         if !reported.tokens.isEmpty, let textFont = view.font {

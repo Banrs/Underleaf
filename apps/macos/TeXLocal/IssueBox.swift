@@ -28,11 +28,7 @@ struct IssueBox: View, Equatable {
         static let trailing: CGFloat = 20
         /// What the symbol's segment gains for the count of a line's issues before the symbol, as Xcode's.
         static let count: CGFloat = 12
-        /// How far the count reaches into the symbol's segment, as Xcode's.
-        static let countOverlap: CGFloat = 1
         static let divider: CGFloat = 1
-        /// From the band's end.
-        static let endInset: CGFloat = 1
 
         /// The size of the symbol and of the line numbers: Xcode's 12.35 pt at 13 pt.
         static func small(_ size: CGFloat) -> CGFloat { size * 0.95 }
@@ -63,7 +59,8 @@ struct IssueBox: View, Equatable {
             if issues > 1 {
                 onBaseline(Text(verbatim: "\(issues)"))
                     .frame(width: Metrics.count, alignment: .trailing)
-                    .offset(x: Metrics.countOverlap)
+                    // Into the symbol's segment, as Xcode's.
+                    .offset(x: 1)
             }
             Image(systemName: isError ? "exclamationmark.octagon" : "exclamationmark.triangle")
                 .font(.system(size: Metrics.small(font.pointSize)))
