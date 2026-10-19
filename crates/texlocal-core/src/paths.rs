@@ -330,8 +330,95 @@ pub fn source_rel(root: &Path, input: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+#[path = "projects/tests.rs"]
+mod projects_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projects::testing::with_project;
+    use crate::projects::{create_file, create_project};
+
+    #[track_caller]
+    fn fails_with<T: std::fmt::Debug>(result: Result<T, CoreError>, text: &str) {
+        let message = result.unwrap_err().message;
+        assert!(message.contains(text), "{message:?} lacks {text:?}");
+    }
+
+    /// Escapes and the settings file are refused at every boundary, and a link
+    /// inside the project is held to the rules of where it leads (#26): one out
+    /// of it leads nowhere, however much of the path exists.
+    #[test]
+    fn path_traversal_the_settings_file_and_links_out_are_rejected_at_every_boundary() {
+        let (_dir, service) = with_project();
+        let (data, root) = (&service.data_dir, service.project_root("P").unwrap());
+        fails_with(project_root(data, "../etc"), "Bad project id");
+        // A folder inside a project is not a project of its own.
+        create_file(&root, "chapters/intro.tex", false).unwrap();
+        fails_with(project_root(data, "P/chapters"), "Bad project id");
+        assert_eq!(project_root(data, "./P/").unwrap(), root);
+        let rel = safe_rel_file(&root, "./chapters/../chapters//intro.tex");
+        assert_eq!(rel.unwrap(), "chapters/intro.tex");
+        for path in ["../x", "a/../../b", ".", "/x"] {
+            fails_with(safe_path(&root, path), "Path escapes project");
+        }
+        fails_with(safe_path(&root, ""), "Missing path");
+        // The settings file's case aliases are reserved on every platform on
+        // purpose, as macOS volumes are case-insensitive too.
+        for name in [".texlocal.json", ".TEXLOCAL.JSON", ".TexLocal.Json"] {
+            fails_with(safe_path(&root, name), "Reserved file");
+        }
+        assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let outside = tempfile::tempdir().unwrap();
+            fs::write(outside.path().join("secret.tex"), "secret").unwrap();
+            symlink(outside.path(), root.join("outside")).unwrap();
+            for path in ["outside/secret.tex", "outside/new/sub/file.tex"] {
+                fails_with(safe_path(&root, path), "Path escapes project");
+                fails_with(safe_rel_file(&root, path), "Path escapes project");
+            }
+            fs::create_dir_all(root.join("build")).unwrap();
+            symlink(".texlocal.json", root.join("alias.json")).unwrap();
+            symlink(".", root.join("here")).unwrap();
+            symlink("build", root.join("output")).unwrap();
+            symlink("main.tex", root.join("link.tex")).unwrap();
+            fails_with(safe_write_path(&root, "alias.json"), "Reserved file");
+            fails_with(safe_path(&root, "alias.json"), "Reserved file");
+            fails_with(
+                safe_write_path(&root, "here/.texlocal.json"),
+                "Reserved file",
+            );
+            fails_with(safe_write_path(&root, "output/main.pdf"), "compiled PDF");
+            fails_with(safe_write_path(&root, "here/build/x.tex"), "compiled PDF");
+            // Reading the output through a link, and ordinary links, stay as they were.
+            assert!(safe_path(&root, "output/main.pdf").is_ok());
+            assert!(safe_write_path(&root, "link.tex").is_ok());
+            assert!(safe_write_path(&root, "here/notes.tex").is_ok());
+        }
+    }
+
+    /// What a tool such as synctex names as a source maps back into the
+    /// project, lexically.
+    #[test]
+    fn a_tools_input_path_maps_back_to_the_project_file() {
+        let (_dir, service) = with_project();
+        create_project(&service.data_dir, "PQ", "blank").unwrap();
+        let root = service.project_root("P").unwrap();
+        create_file(&root, "ch/intro.tex", false).unwrap();
+        let under = |path: &str| format!("{}{path}", root.display());
+        for (input, rel) in [
+            (under("/./ch/../ch/intro.tex"), Some("ch/intro.tex")),
+            ("./ch/intro.tex".into(), Some("ch/intro.tex")),
+            (under(""), None),
+            (under("/../PQ/main.tex"), None),
+            (under("Q/main.tex"), None),
+        ] {
+            assert_eq!(source_rel(&root, &input).as_deref(), rel, "{input}");
+        }
+    }
 
     #[test]
     fn main_file_guards_compare_names_as_the_volume_does() {

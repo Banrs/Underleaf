@@ -308,7 +308,59 @@ pub(crate) fn move_ui(root: &Path, moved: impl Fn(&str) -> Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::projects::testing::project;
+    use crate::projects::{create_file, list_projects};
+
+    #[test]
+    fn a_settings_patch_changes_only_its_keys_and_returns_what_a_later_read_sees() {
+        let (_dir, root) = project();
+        let file = root.join(SETTINGS_FILE);
+        let saved =
+            r#"{ "mainFile": 7, "engine": "xelatex", "stopOnFirstError": 3, "custom": "kept" }"#;
+        fs::write(&file, saved).unwrap();
+        let written = write_settings(&root, &json!({ "shellEscape": true, "unknown": 1 })).unwrap();
+        // The file's engine stays, its mistyped main file and flag read as the
+        // defaults, and its unknown key survives.
+        let expected = json!({
+            "mainFile": "main.tex", "engine": "xelatex", "shellEscape": true, "stopOnFirstError": false
+        });
+        assert_eq!(json!(written), expected);
+        assert_eq!(json!(read_settings(&root)), expected);
+        let raw: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        assert_eq!(raw["custom"], "kept");
+
+        // A patch that fails writes nothing, its valid keys included.
+        let before = fs::read(&file).unwrap();
+        for (bad, why) in [
+            (
+                json!({ "engine": "word", "shellEscape": false }),
+                "Unknown engine",
+            ),
+            (json!({ "shellEscape": "false" }), "expected a boolean"),
+            (
+                json!({ "mainFile": "-interaction.tex" }),
+                "Path segments cannot start",
+            ),
+            (
+                json!({ "mainFile": "../outside.tex" }),
+                "Path escapes project",
+            ),
+            (json!([1]), "Invalid settings"),
+        ] {
+            let err = write_settings(&root, &bad).unwrap_err();
+            assert_eq!(err.status, 400, "{}", err.message);
+            assert!(err.message.contains(why), "{:?} lacks {why:?}", err.message);
+        }
+        assert_eq!(fs::read(&file).unwrap(), before);
+
+        // A nested main file names the build's output, and the library lists it.
+        create_file(&root, "chapters/paper.tex", false).unwrap();
+        let settings = write_settings(&root, &json!({ "mainFile": "chapters/paper.tex" })).unwrap();
+        let pdf = settings.output(&root, "pdf").unwrap();
+        assert_eq!(pdf, root.join(BUILD_DIR).join("paper.pdf"));
+        let listed = list_projects(root.parent().unwrap()).unwrap().remove(0);
+        assert_eq!([listed.id, listed.main_file], ["P", "chapters/paper.tex"]);
+    }
 
     #[test]
     fn interface_state_replaces_each_list_it_names_and_survives_settings_changes() {

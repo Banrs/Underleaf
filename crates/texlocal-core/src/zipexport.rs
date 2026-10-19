@@ -154,7 +154,10 @@ fn dated(options: SimpleFileOptions, modified: io::Result<SystemTime>) -> Simple
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::import::import_project;
     use crate::projects::testing::{project, zip_names};
+    use crate::service::Service;
+    use crate::settings::{read_settings, write_settings};
 
     #[test]
     fn a_file_that_could_deflate_past_4_gib_is_written_as_zip64() {
@@ -168,28 +171,77 @@ mod tests {
         assert!(needs_zip64(1 << 32));
     }
 
+    /// An export leaves out what an import would, so a project exported and
+    /// opened again keeps every file the author made, and only those.
     #[test]
-    fn litter_and_the_autosaves_temporary_file_stay_out_and_the_authors_dotfiles_go_in() {
+    fn a_project_exported_and_opened_again_keeps_every_file_the_author_made() {
         let (dir, root) = project();
         for (path, text) in [
             (".latexmkrc", "$pdf_mode = 1;"),
+            (".gitignore", "build/"),
+            ("chapters/intro.tex", "intro"),
+            // A nested settings file is the author's.
+            ("sub/.texlocal.json", "{}"),
             (".git/HEAD", "ref"),
             ("figs/.DS_Store", "x"),
             ("figs/._a.png", "fork"),
+            ("figs/a.png", "png"),
             // What atomic::write leaves beside a document mid-save.
             (".texlocal-AbC123", "half"),
-            ("figs/a.png", "png"),
+            ("Build/main.pdf", "output"),
         ] {
             let file = root.join(path);
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(file, text).unwrap();
         }
+        // The settings file spelt in another case, as the volume still finds it.
+        write_settings(&root, &serde_json::json!({ "engine": "lualatex" })).unwrap();
+        fs::rename(root.join(SETTINGS_FILE), root.join(".TeXLocal.json")).unwrap();
         let dest = dir.path().join("out.zip");
         export_zip(&root, &dest).unwrap();
-        assert_eq!(
-            zip_names(&dest),
-            [".latexmkrc", "figs/", "figs/a.png", "main.tex"]
-        );
+        let kept = [
+            ".gitignore",
+            ".latexmkrc",
+            "chapters/",
+            "chapters/intro.tex",
+            "figs/",
+            "figs/a.png",
+            "main.tex",
+            "sub/",
+            "sub/.texlocal.json",
+        ];
+        assert_eq!(zip_names(&dest), kept);
+        // A destination inside the project can replace an old file there, and
+        // neither it nor its temporary file lands in the archive.
+        let inside = root.join("project.zip");
+        fs::write(&inside, "old incomplete archive").unwrap();
+        export_zip(&root, &inside).unwrap();
+        assert_eq!(zip_names(&inside), kept);
+
+        let service = Service::new(dir.path().join("again"));
+        let copy = service
+            .data_dir
+            .join(import_project(&service, &dest).unwrap().id);
+        export_zip(&copy, &dest).unwrap();
+        assert_eq!(zip_names(&dest), kept);
+        let latexmkrc = fs::read_to_string(copy.join(".latexmkrc")).unwrap();
+        assert_eq!(latexmkrc, "$pdf_mode = 1;");
+        // The settings are the project's own and are not carried in the archive.
+        assert_eq!(read_settings(&copy).engine.as_str(), "pdflatex");
+    }
+
+    #[test]
+    fn zip_export_dates_entries_as_their_files() {
+        let (dir, root) = project();
+        let dest = dir.path().join("out.zip");
+        export_zip(&root, &dest).unwrap();
+        let mut archive = zip::ZipArchive::new(File::open(&dest).unwrap()).unwrap();
+        let dated = archive.by_name("main.tex").unwrap().last_modified();
+        let modified = fs::metadata(root.join("main.tex")).unwrap().modified();
+        let local = chrono::DateTime::<chrono::Local>::from(modified.unwrap());
+        // To the minute, as ZIP dates in steps of two seconds.
+        let minute = local.format("%Y-%m-%d %H:%M").to_string();
+        assert_eq!(dated.unwrap().to_string()[..16], minute);
     }
 
     #[test]
