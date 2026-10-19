@@ -10,18 +10,6 @@ use std::ops::Range;
 use super::stack::Stack;
 use super::{NAME, NEWLINE, ascii, catalog::CATALOG, is, letter};
 
-/// Whether the end of `src` is in maths, read as TeX would: $…$, $$…$$,
-/// \(…\), \[…\] and the maths environments (starred too) open maths; \text{…}
-/// and its kin go back to text inside it; escapes (\$, \%, \\) aren't
-/// delimiters; comments and verbatim are skipped; and a blank line ends an
-/// unclosed $ or \[, as the paragraph it can't span. So `$|$` (an empty
-/// pair, the caret between) is maths.
-pub fn math_mode_at(src: &[u16]) -> bool {
-    let mut scanner = Scanner::default();
-    scanner.run(src, src.len(), &[], &mut ());
-    scanner.in_math()
-}
-
 /// A line without its comment: up to its first `%` that no backslash
 /// escapes, as the scanner reads a comment (though a line alone can't tell
 /// a `%` that \verb or a verbatim environment holds).
@@ -417,7 +405,10 @@ mod tests {
     use super::*;
 
     fn in_math(text: &str) -> bool {
-        math_mode_at(&text.encode_utf16().collect::<Vec<_>>())
+        let units: Vec<u16> = text.encode_utf16().collect();
+        let mut scanner = Scanner::default();
+        scanner.run(&units, units.len(), &[], &mut ());
+        scanner.in_math()
     }
 
     #[test]

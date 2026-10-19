@@ -3,7 +3,7 @@
 
 use serde::Deserialize;
 use serde_json::Value;
-use texlocal_core::syntax::{Insertion, SourceDocument, math_mode_at};
+use texlocal_core::syntax::{Insertion, SourceDocument};
 
 use super::{range, units};
 
@@ -41,16 +41,21 @@ fn marked(source: &str) -> (SourceDocument, u32) {
     (SourceDocument::new(&source.replacen('|', "", 1)), at)
 }
 
+/// Whether a symbol goes in at `at` as it is, in maths, or between dollars.
+fn in_math(doc: &mut SourceDocument, at: u32) -> bool {
+    doc.insert_symbol("\\alpha", range(at, 0)).edit.text == "\\alpha"
+}
+
 #[test]
 fn math_mode_is_known_at_a_place() {
     for (source, expected, note) in fixture().math_mode {
-        let before: Vec<u16> = source[..source.find('|').unwrap()].encode_utf16().collect();
-        assert_eq!(math_mode_at(&before), expected, "{source} {note}");
+        let (mut doc, at) = marked(&source);
+        assert_eq!(in_math(&mut doc, at), expected, "{source} {note}");
     }
     // \verb's delimiter is the fixture's marker, so these are here.
-    let verb: Vec<u16> = "\\verb|$| x".encode_utf16().collect();
-    assert!(!math_mode_at(&verb));
-    assert!(!math_mode_at(&verb[..7]), "inside \\verb");
+    let mut verb = SourceDocument::new("\\verb|$| x");
+    assert!(!in_math(&mut verb, 10));
+    assert!(!in_math(&mut verb, 7), "inside \\verb");
 }
 
 #[test]

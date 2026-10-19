@@ -32,7 +32,6 @@ pub use complete::{Completion, CompletionKind, Completions, SnippetField};
 pub use edit::{Change, Style, map_selections};
 pub use highlight::{Highlight, HighlightKind};
 pub use preview::MathPreview;
-pub use scan::math_mode_at;
 pub use snippet::Tab;
 pub use style::TextStyles;
 pub use typing::{Completing, Keystroke};

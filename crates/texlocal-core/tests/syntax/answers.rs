@@ -6,7 +6,7 @@
 
 use std::fmt::Debug;
 
-use texlocal_core::syntax::{SourceDocument, TextRange, math_mode_at};
+use texlocal_core::syntax::{SourceDocument, TextRange};
 
 use super::range;
 
@@ -214,8 +214,6 @@ fn every_answer_after_every_edit_is_a_fresh_reading() {
                 answers(&mut fresh, selection),
                 "{at}"
             );
-            let symbol = doc.insert_symbol("\\alpha", selection).edit.text;
-            assert_eq!(symbol == "\\alpha", math_mode_at(&units[..start]), "{at}");
             // And the styles of a few units just inside a brace group, which
             // the document's are nested in.
             let from = seed.next(len + 1);
