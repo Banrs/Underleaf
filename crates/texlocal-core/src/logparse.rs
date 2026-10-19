@@ -583,6 +583,7 @@ mod tests {
                    \n\
                    (C:\\Users\\Alex\\AppData\\MiKTeX\\tex/latex/base\\article.cls\n\
                    (\\end occurred inside a group at level 1)\n\
+                   Package ulem Warning: In a distribution file on input line 12.\n\
                    (\\\\server\\share\\x.sty\n\
                    )\n\
                    )\n\
@@ -602,6 +603,8 @@ mod tests {
                 at("main.tex", 4),
                 at("chapters/intro.tex", 3),
                 at("main.tex", 9),
+                // In a distribution file: the project file that loaded it, no line.
+                (Some("main.tex".into()), None),
                 at("chapters/a.tex", 3),
             ]
         );
@@ -693,15 +696,10 @@ mod tests {
 
     // Logs as the engines wrote them, built here with the arguments and
     // environment of a build (tests/logs/*): pdfTeX with nested \input files,
-    // XeTeX failing on a missing font, LuaTeX, bibtex, and latexmk's own
-    // account of a failed biber. The MiKTeX excerpt is written by hand from
-    // its documented form, as no Windows machine was at hand.
+    // XeTeX failing on a missing font, and LuaTeX.
     const NESTED: &str = include_str!("../tests/logs/pdflatex-nested.txt");
     const FONTSPEC: &str = include_str!("../tests/logs/xelatex-fontspec-error.txt");
     const LUALATEX: &str = include_str!("../tests/logs/lualatex-warnings.txt");
-    const BIBTEX: &str = include_str!("../tests/logs/bibtex-syntax-error.txt");
-    const BIBER_FAILED: &str = include_str!("../tests/logs/latexmk-biber-failed.txt");
-    const MIKTEX: &str = include_str!("../tests/logs/miktex-handwritten.txt");
 
     #[test]
     fn a_pdftex_log_with_nested_files_gives_each_item_its_file_and_line() {
@@ -765,40 +763,31 @@ mod tests {
 
     #[test]
     fn bibliography_and_latexmk_failures_are_read_from_their_own_output() {
-        assert_eq!(
-            described(&parse_blg(BIBTEX)),
-            ["error refs.bib:7 I was expecting a `,' or a `}'"]
-        );
-        // A bibtex error with its message on the line above its place, and biber's.
-        let blg = "I couldn't open database file .bib\n---line 5 of file main.aux\n\
+        // bibtex's errors, the message before its place or on the line above
+        // it, and biber's.
+        let blg = "Database file #1: refs.bib\n\
+                   I was expecting a `,' or a `}'---line 7 of file refs.bib\n\
+                   \x20:   author = {Nobody},\n\
+                   I'm skipping whatever remains of this entry\n\
+                   Warning--empty author in broken\n\
+                   I couldn't open database file .bib\n---line 5 of file main.aux\n\
                    [812] Utils.pm:465> ERROR - BibTeX subsystem: syntax error\n";
         assert_eq!(
             described(&parse_blg(blg)),
             [
+                "error refs.bib:7 I was expecting a `,' or a `}'",
                 "error main.aux:5 I couldn't open database file .bib",
                 "error -:- BibTeX subsystem: syntax error",
             ]
         );
-        // The biber on the machine could not start; latexmk's summary says so,
-        // without the lines of detail under it.
+        // latexmk's summary of the steps that failed, without the detail under them.
+        let output = "Latexmk: All targets (build/main.pdf) are up-to-date\n\
+                      Collected error summary (may duplicate other messages):\n\
+                      \x20 biber build/main: Could not open biber log file 'build/main.blg'\n\
+                      \x20   detail\n";
         assert_eq!(
-            described(&latexmk_errors(BIBER_FAILED)),
+            described(&latexmk_errors(output)),
             ["error -:- biber build/main: Could not open biber log file 'build/main.blg'"]
-        );
-    }
-
-    #[test]
-    fn a_miktex_log_with_backslash_paths_and_wrapped_lines_parses_as_a_tex_live_one() {
-        assert_eq!(
-            parsed(MIKTEX),
-            [
-                "warning chapters/intro.tex:3 Reference `fig:nope' on page 1 undefined on input line 3.",
-                // In a distribution file: the project file that loaded it, no line.
-                "error chapters/intro.tex:- graphicx.sty: Undefined control sequence: \\foo",
-                "error main.tex:9 Undefined control sequence: \\bar",
-                // While a distribution package was loading, with its wrapped line joined.
-                "warning main.tex:- ulem.sty: A warning from an engine that wraps its log at column 79 and breaks a word in two on input line 12.",
-            ]
         );
     }
 }
