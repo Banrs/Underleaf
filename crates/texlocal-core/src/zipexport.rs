@@ -22,8 +22,7 @@ use crate::{BUILD_DIR, SETTINGS_FILE};
 
 pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let root_canonical = dunce::canonicalize(root)?;
-    let parent = dest.parent().filter(|p| !p.as_os_str().is_empty());
-    let parent = parent.unwrap_or(Path::new("."));
+    let parent = dest.parent().expect("a file is in a folder");
     let (file, temp_path) = create_temp(parent).map_err(CoreError::at(dest))?;
 
     // Resolve the archive folder as the walk resolves the project, so a
@@ -52,7 +51,8 @@ struct Export<'a> {
 }
 
 impl Export<'_> {
-    /// `dir_canonical` is `dir` resolved, for excluding the archive itself.
+    /// `dir_canonical` is `dir` resolved, for excluding the archive itself, and
+    /// `prefix` its path in the archive, "" or ending in '/'.
     fn add_dir(&mut self, dir: &Path, dir_canonical: &Path, prefix: &str) -> Result<(), CoreError> {
         let mut entries = fs::read_dir(dir)?.collect::<io::Result<Vec<_>>>()?;
         entries.sort_by_key(DirEntry::file_name);
@@ -74,12 +74,7 @@ impl Export<'_> {
     }
 
     fn add_entry(&mut self, entry: &DirEntry, prefix: &str) -> Result<(), CoreError> {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let rel = if prefix.is_empty() {
-            name
-        } else {
-            format!("{prefix}/{name}")
-        };
+        let rel = format!("{prefix}{}", entry.file_name().to_string_lossy());
         if left_out(&rel) {
             return Ok(());
         }
@@ -101,8 +96,9 @@ impl Export<'_> {
             let canonical = dunce::canonicalize(&path)?;
             if canonical.starts_with(self.root_canonical) {
                 let options = dated(self.options, entry.metadata().and_then(|m| m.modified()));
-                self.writer.add_directory(format!("{rel}/"), options)?;
-                self.add_dir(&path, &canonical, &rel)?;
+                let dir = format!("{rel}/");
+                self.writer.add_directory(dir.clone(), options)?;
+                self.add_dir(&path, &canonical, &dir)?;
             }
         } else if entry_type.is_file() {
             self.add_file(&rel, &path)?;
