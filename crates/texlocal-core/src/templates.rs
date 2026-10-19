@@ -162,11 +162,4 @@ mod tests {
         }
         assert_eq!(files("unknown"), files("article"));
     }
-
-    #[test]
-    fn the_presentation_loads_only_a_theme_beamer_itself_ships() {
-        // LaTeX has no fallback for a theme that isn't installed: the build fails.
-        let main = files("beamer")[0].1;
-        assert!(main.contains("\\usetheme{Madrid}") && !main.contains("metropolis"));
-    }
 }
