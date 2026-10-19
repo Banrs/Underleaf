@@ -88,9 +88,8 @@ fn ensure_existing_ancestor_within(
     }
 
     let resolved = dunce::canonicalize(existing).map_err(|_| CoreError::bad_request(escape_err))?;
-    let Ok(inside) = resolved.strip_prefix(&canonical_root) else {
-        return Err(CoreError::bad_request(escape_err));
-    };
+    let inside =
+        (resolved.strip_prefix(&canonical_root)).map_err(|_| CoreError::bad_request(escape_err))?;
     let suffix = target.strip_prefix(existing).unwrap_or(Path::new(""));
     // Collected, so a whole existing path keeps no trailing slash.
     Ok(inside.join(suffix).components().collect())
@@ -137,7 +136,7 @@ fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
 }
 
 fn is_settings_file(segments: &[&str]) -> bool {
-    segments.len() == 1 && segments[0].eq_ignore_ascii_case(SETTINGS_FILE)
+    matches!(segments, [name] if name.eq_ignore_ascii_case(SETTINGS_FILE))
 }
 
 fn is_in_build_dir(segments: &[&str]) -> bool {
@@ -240,10 +239,8 @@ pub(crate) fn within(path: &str, entry: &str) -> bool {
 #[cfg(unix)]
 pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
-    match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
-        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
-        _ => false,
-    }
+    matches!((fs::symlink_metadata(a), fs::symlink_metadata(b)),
+        (Ok(a), Ok(b)) if a.dev() == b.dev() && a.ino() == b.ino())
 }
 
 /// Whether two paths name one entry. Windows' file identity is had only by
