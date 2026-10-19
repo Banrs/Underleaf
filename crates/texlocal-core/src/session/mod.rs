@@ -35,7 +35,7 @@ use crate::texpresso::{LiveEvent, Preview};
 use crate::{CoreError, lock, paths};
 
 pub use document::Document;
-pub(crate) use engine::{Engine, ServiceEngine};
+pub(crate) use engine::Engine;
 use watch::Change;
 
 /// What reaches a session's task.
@@ -121,7 +121,7 @@ pub struct Sessions {
 
 impl Sessions {
     pub fn new(service: Arc<Service>) -> Self {
-        let engine = Arc::new(ServiceEngine(Arc::clone(&service)));
+        let engine = Arc::new(Arc::clone(&service));
         let preview = Arc::clone(&service.texpresso);
         Self::with_engine(service, engine, preview, true)
     }

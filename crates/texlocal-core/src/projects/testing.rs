@@ -20,7 +20,7 @@ pub(crate) fn library() -> (TempDir, Service) {
 /// A library with one blank project, "P".
 pub(crate) fn with_project() -> (TempDir, Service) {
     let (dir, service) = library();
-    create_project(&service.data_dir, "P", "blank").unwrap();
+    create_project(&service.data_dir, "P", "blank", None).unwrap();
     (dir, service)
 }
 

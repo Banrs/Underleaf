@@ -158,7 +158,7 @@ impl Service {
             "create_project" => {
                 let template = arg::<Option<String>>(args, "template")?;
                 let engine = arg::<Option<String>>(args, "engine")?;
-                out(projects::create_project_with_engine(
+                out(projects::create_project(
                     &self.data_dir,
                     s("name")?,
                     template.as_deref().unwrap_or("article"),

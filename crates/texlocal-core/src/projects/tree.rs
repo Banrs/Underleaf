@@ -182,7 +182,7 @@ pub fn file_kind(name: &str) -> &'static str {
 }
 
 /// Whether a file is one the editor edits, and a search reads.
-pub(super) fn is_text(name: &str) -> bool {
+pub(crate) fn is_text(name: &str) -> bool {
     matches!(file_kind(name), "tex" | "bib" | "text")
 }
 

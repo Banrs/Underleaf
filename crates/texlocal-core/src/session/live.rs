@@ -12,7 +12,7 @@ use tokio::time::Instant;
 use super::Msg;
 use super::actor::{Actor, Later, Timer};
 use crate::CoreError;
-use crate::projects::file_kind;
+use crate::projects::is_text;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 
 const DIDNT_START: &str =
@@ -564,8 +564,8 @@ impl Actor {
 }
 
 /// The files the editor opens as text, as the Mac app's `isTextFile` has them: those
-/// `file_kind` gives as text, but for hidden ones.
+/// `is_text` has them, but for hidden ones.
 fn is_text_file(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
-    !name.starts_with('.') && matches!(file_kind(name), "tex" | "bib" | "text")
+    !name.starts_with('.') && is_text(name)
 }

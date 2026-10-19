@@ -223,7 +223,7 @@ impl Rig {
     /// Project "P"'s session, its main.tex "Hello"; with `watch`, the folder's watcher runs.
     async fn watching(auto_compile: bool, watch: bool) -> Self {
         let data = tempfile::tempdir().unwrap();
-        crate::projects::create_project(data.path(), "P", "blank").unwrap();
+        crate::projects::create_project(data.path(), "P", "blank", None).unwrap();
         let root = dunce::canonicalize(data.path().join("P")).unwrap();
         fs::write(root.join("main.tex"), "Hello").unwrap();
         let service = Arc::new(Service::new(data.path().to_path_buf()));

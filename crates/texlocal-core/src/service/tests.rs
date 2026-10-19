@@ -327,7 +327,7 @@ async fn ui_state_patches_and_main_file_renames_preserve_both_changes() {
 fn an_edit_waits_for_its_own_project_only() {
     let (_dir, service) = with_project();
     let data = &service.data_dir;
-    projects::create_project(data, "Q", "blank").unwrap();
+    projects::create_project(data, "Q", "blank", None).unwrap();
     std::thread::scope(|scope| {
         let edit = service.with_project("P", |_| {
             // Another project's edit goes ahead.
