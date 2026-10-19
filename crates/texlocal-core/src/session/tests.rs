@@ -13,7 +13,7 @@ use tokio::sync::oneshot;
 use super::actor::Newline;
 use super::engine::Fut;
 use super::watch::Change;
-use super::{Document, Engine, Msg, Preview, Sessions, Timings};
+use super::{Document, Engine, Msg, Preview, Sessions};
 use crate::compile::CompileResult;
 use crate::logparse::LogItem;
 use crate::service::Service;
@@ -234,12 +234,8 @@ impl Rig {
             log: Mutex::new("TeX's log".into()),
             ..Fake::default()
         });
-        let timings = Timings {
-            watch,
-            ..Timings::default()
-        };
         let (engine, preview) = (Arc::clone(&fake), Arc::clone(&fake));
-        let sessions = Sessions::with_engine(service, engine, preview, timings);
+        let sessions = Sessions::with_engine(service, engine, preview, watch);
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
         sessions.set_listener(Some(Box::new(move |event| {

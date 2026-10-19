@@ -18,7 +18,7 @@ use tokio::time::Instant;
 use super::build::Builds;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
-use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions, Timings};
+use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze;
 use crate::events::Emitter;
 use crate::paths::{self, within};
@@ -125,6 +125,24 @@ pub(crate) enum Timer {
     Log,
 }
 
+impl Timer {
+    /// How long after it is set the timer is due.
+    fn wait(self) -> Duration {
+        Duration::from_millis(match self {
+            Self::Autosave => 700,
+            Self::Symbols | Self::Caret => 150,
+            // FSEvents' latency: changes this close together are taken together.
+            Self::Fs => 250,
+            Self::Halting => 1000,
+            Self::Retry => 750,
+            Self::Restart | Self::Disk => 180,
+            // The log's whole text is copied, sent and laid out again each time, beside
+            // pages that must land within a frame.
+            Self::Log => 200,
+        })
+    }
+}
+
 /// What woke the session's task.
 enum Wake {
     Message(Msg),
@@ -142,7 +160,6 @@ pub(crate) struct Actor {
     events: Emitter,
     pub tx: mpsc::UnboundedSender<Msg>,
     pub shared: Arc<Mutex<HashMap<String, Document>>>,
-    pub t: Timings,
     pub docs: BTreeMap<String, Doc>,
     by_id: HashMap<u64, String>,
     next_doc: u64,
@@ -185,7 +202,6 @@ impl Actor {
     ) -> Result<(Self, Value), CoreError> {
         let tree = projects::file_tree(&root)?;
         let watcher = sessions
-            .timings
             .watch
             .then(|| watch::watch(&root, tx.clone()))
             .flatten();
@@ -215,7 +231,6 @@ impl Actor {
             events: sessions.hub.emitter(),
             tx,
             shared: Arc::default(),
-            t: sessions.timings.clone(),
             docs: BTreeMap::new(),
             by_id: HashMap::new(),
             next_doc: 1,
@@ -345,8 +360,7 @@ impl Actor {
             Msg::Live(generation, event) => self.live_event(generation, event),
             Msg::Fs(changes) => {
                 self.fs_pending.extend(changes);
-                let at = Instant::now() + self.t.settle;
-                self.timers.entry(Timer::Fs).or_insert(at);
+                self.soon(Timer::Fs);
             }
         }
     }
@@ -370,9 +384,16 @@ impl Actor {
         }
     }
 
-    /// `timer` is due `wait` from now, in place of when it was.
-    pub fn after(&mut self, timer: Timer, wait: Duration) {
-        self.timers.insert(timer, Instant::now() + wait);
+    /// `timer` is due its wait from now, in place of when it was.
+    pub fn after(&mut self, timer: Timer) {
+        self.timers.insert(timer, Instant::now() + timer.wait());
+    }
+
+    /// `timer` is due its wait from now, unless it is due already.
+    pub fn soon(&mut self, timer: Timer) {
+        self.timers
+            .entry(timer)
+            .or_insert(Instant::now() + timer.wait());
     }
 
     fn run_later(&mut self) {
@@ -429,7 +450,7 @@ impl Actor {
                 if let Some(doc) = self.docs.get_mut(&path) {
                     doc.composing = composing;
                     if !composing && doc.dirty() {
-                        self.after(Timer::Autosave, self.t.autosave);
+                        self.after(Timer::Autosave);
                     }
                 }
             }
@@ -579,7 +600,7 @@ impl Actor {
             self.took_edit();
         }
         self.publish_doc(&path);
-        self.after(Timer::Autosave, self.t.autosave);
+        self.after(Timer::Autosave);
         self.live_edited(&path, version, start, length, text);
     }
 
@@ -589,7 +610,7 @@ impl Actor {
         };
         self.text_changed(&path);
         // Its labels and citations may have changed with it.
-        self.after(Timer::Symbols, self.t.symbols);
+        self.after(Timer::Symbols);
         let Some(doc) = self.docs.get_mut(&path) else {
             return;
         };
@@ -706,7 +727,7 @@ impl Actor {
                 Ok(Some(stamp)) => {
                     (doc.disk_text, doc.disk_stamp) = (Some(lf(text)), Some(stamp));
                     (doc.saved, doc.force, doc.held, doc.error) = (version, false, false, None);
-                    self.after(Timer::Symbols, self.t.symbols);
+                    self.after(Timer::Symbols);
                     self.emit("saved", json!({ "path": path }));
                     Ok(true)
                 }
@@ -848,7 +869,7 @@ impl Actor {
         // document's are scanned as it reloads.
         let scan = |path: &&String| matches!(file_kind(path), "tex" | "bib");
         if meaning.tree || others.iter().any(scan) {
-            self.after(Timer::Symbols, self.t.symbols);
+            self.after(Timer::Symbols);
         }
         if !others.is_empty() {
             self.emit("files_changed", json!({ "paths": others }));
@@ -860,7 +881,7 @@ impl Actor {
             self.reload_tree();
         }
         if self.live.active() && !self.live.disk_paths.is_empty() {
-            self.after(Timer::Disk, self.t.live_follow);
+            self.after(Timer::Disk);
         }
     }
 

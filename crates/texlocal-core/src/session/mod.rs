@@ -22,7 +22,6 @@ mod watch;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
@@ -38,45 +37,6 @@ use crate::{CoreError, lock, paths};
 pub use document::Document;
 pub(crate) use engine::{Engine, ServiceEngine};
 use watch::Change;
-
-/// The session's waits.
-#[derive(Debug, Clone)]
-pub(crate) struct Timings {
-    /// From the last edit to the autosave.
-    pub autosave: Duration,
-    /// From a save to the scan of labels and citations.
-    pub symbols: Duration,
-    /// FSEvents' latency: changes this close together are taken together.
-    pub settle: Duration,
-    /// A stopped run is shown as halted only once it has lasted this long.
-    pub halts_after: Duration,
-    /// From a caret's move to telling TeXpresso where it settled.
-    pub caret: Duration,
-    /// From a rename, a new main file or a changed file to the preview catching up.
-    pub live_follow: Duration,
-    /// From a failed whole text to sending it again.
-    pub retry: Duration,
-    /// A preview that ends by itself after this long is started again.
-    pub restartable_after: Duration,
-    /// Whether the folder is watched; tests send the changes themselves.
-    pub watch: bool,
-}
-
-impl Default for Timings {
-    fn default() -> Self {
-        Self {
-            autosave: Duration::from_millis(700),
-            symbols: Duration::from_millis(150),
-            settle: Duration::from_millis(250),
-            halts_after: Duration::from_secs(1),
-            caret: Duration::from_millis(150),
-            live_follow: Duration::from_millis(180),
-            retry: Duration::from_millis(750),
-            restartable_after: Duration::from_secs(10),
-            watch: true,
-        }
-    }
-}
 
 /// What reaches a session's task.
 pub(crate) enum Msg {
@@ -154,7 +114,8 @@ pub struct Sessions {
     hub: Hub,
     engine: Arc<dyn Engine>,
     preview: Arc<dyn Preview>,
-    timings: Timings,
+    /// Whether each session watches its folder; tests send the changes themselves.
+    watch: bool,
     open: Arc<Mutex<HashMap<u64, Open>>>,
 }
 
@@ -162,21 +123,21 @@ impl Sessions {
     pub fn new(service: Arc<Service>) -> Self {
         let engine = Arc::new(ServiceEngine(Arc::clone(&service)));
         let preview = Arc::clone(&service.texpresso);
-        Self::with_engine(service, engine, preview, Timings::default())
+        Self::with_engine(service, engine, preview, true)
     }
 
     pub(crate) fn with_engine(
         service: Arc<Service>,
         engine: Arc<dyn Engine>,
         preview: Arc<dyn Preview>,
-        timings: Timings,
+        watch: bool,
     ) -> Self {
         Self {
             service,
             hub: Hub::default(),
             engine,
             preview,
-            timings,
+            watch,
             open: Arc::default(),
         }
     }

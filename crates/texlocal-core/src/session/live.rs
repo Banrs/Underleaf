@@ -17,9 +17,8 @@ use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 
 const DIDNT_START: &str =
     "TeXpresso didn’t start. Check its location in Settings and the log below.";
-/// The Live Preview Log follows TeX's at most this often: its whole text is copied, sent and
-/// laid out again each time, beside pages that must land within a frame.
-const LOG_EVERY: Duration = Duration::from_millis(200);
+/// A preview that ends by itself after running this long is started again.
+const RESTARTABLE_AFTER: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -336,7 +335,7 @@ impl Actor {
     /// again once the change has settled.
     pub fn live_follow(&mut self) {
         if self.live.active() && !self.closed {
-            self.after(Timer::Restart, self.t.live_follow);
+            self.after(Timer::Restart);
         }
     }
 
@@ -418,7 +417,7 @@ impl Actor {
                     self.fail(error);
                     if self.live.phase == Phase::Running {
                         self.live.pending.entry(path).or_insert(Some(text));
-                        self.after(Timer::Retry, self.t.retry);
+                        self.after(Timer::Retry);
                     }
                     return;
                 }
@@ -451,7 +450,7 @@ impl Actor {
         self.live.wanted = Some(moved.clone());
         if self.live.phase == Phase::Running && self.live.caret.as_ref() != Some(&moved) {
             self.live.settling = Some(moved);
-            self.after(Timer::Caret, self.t.caret);
+            self.after(Timer::Caret);
         }
     }
 
@@ -549,17 +548,14 @@ impl Actor {
             }
             LiveEvent::Done(run) => self.run_ended(&run),
             // Sent with the next `live` event, while the host shows the log.
-            LiveEvent::Log if live.log_shown => {
-                let at = Instant::now() + LOG_EVERY;
-                self.timers.entry(Timer::Log).or_insert(at);
-            }
+            LiveEvent::Log if live.log_shown => self.soon(Timer::Log),
             LiveEvent::Log => {}
             LiveEvent::Ended(error) => {
                 let restartable = error.is_some()
                     && live.owns
                     && live
                         .started
-                        .is_some_and(|at| at.elapsed() > self.t.restartable_after);
+                        .is_some_and(|at| at.elapsed() > RESTARTABLE_AFTER);
                 // A rename, a new main file or a file gone stopped it, to start again after.
                 let planned = self.timers.contains_key(&Timer::Restart);
                 if restartable || planned {
@@ -581,8 +577,7 @@ impl Actor {
             "partial" => {}
             "stopped" => {
                 if !self.live.halted {
-                    let at = Instant::now() + self.t.halts_after;
-                    self.timers.entry(Timer::Halting).or_insert(at);
+                    self.soon(Timer::Halting);
                 }
             }
             _ => {

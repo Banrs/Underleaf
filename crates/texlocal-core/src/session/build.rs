@@ -195,7 +195,7 @@ impl Actor {
         // The preview reads the build folder: one live as the clean began starts again,
         // unless stopped or started meanwhile.
         if result.is_ok() && live && intent == self.live.intent && !self.closed {
-            self.after(Timer::Restart, self.t.live_follow);
+            self.after(Timer::Restart);
         }
         if result.is_ok() && !self.closed {
             let builds = &mut self.builds;
