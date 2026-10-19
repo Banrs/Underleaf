@@ -148,14 +148,11 @@ pub fn read_settings(root: &Path) -> Settings {
 fn lenient(raw: &Map<String, Value>) -> Settings {
     let text = |key: &str| raw.get(key).and_then(Value::as_str);
     let flag = |key: &str| raw.get(key).and_then(Value::as_bool);
-    let defaults = Settings::default();
     Settings {
-        main_file: text("mainFile").map_or(defaults.main_file, str::to_string),
-        engine: text("engine")
-            .and_then(Engine::named)
-            .unwrap_or(defaults.engine),
-        shell_escape: flag("shellEscape").unwrap_or(defaults.shell_escape),
-        stop_on_first_error: flag("stopOnFirstError").unwrap_or(defaults.stop_on_first_error),
+        main_file: text("mainFile").map_or(Settings::default().main_file, str::to_string),
+        engine: text("engine").and_then(Engine::named).unwrap_or_default(),
+        shell_escape: flag("shellEscape").unwrap_or_default(),
+        stop_on_first_error: flag("stopOnFirstError").unwrap_or_default(),
     }
 }
 
@@ -233,8 +230,7 @@ impl AppSettings {
         static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _writing = crate::lock(&WRITING);
         let chosen = (key.to_owned(), json!(dir.map(Path::to_string_lossy)));
-        update(&data_dir.join(APP_SETTINGS_FILE), Map::new(), [chosen])?;
-        Ok(())
+        update(&data_dir.join(APP_SETTINGS_FILE), Map::new(), [chosen]).map(drop)
     }
 }
 
@@ -285,22 +281,21 @@ pub fn write_ui(root: &Path, patch: UiPatch) -> Result<UiState, CoreError> {
 /// project path's new one (None: unmoved): folders by their path, folds by the
 /// file their key starts with. Best effort: the state is a convenience.
 pub(crate) fn move_ui(root: &Path, moved: impl Fn(&str) -> Option<String>) {
-    let mut state = read_ui(root);
-    let mut changed = false;
+    let before = read_ui(root);
+    let mut state = before.clone();
     for folder in &mut state.expanded_folders {
         if let Some(new) = moved(folder) {
-            (*folder, changed) = (new, true);
+            *folder = new;
         }
     }
     for key in &mut state.folded_headings {
-        let new = key
-            .split_once('\t')
-            .and_then(|(file, rest)| Some(format!("{}\t{rest}", moved(file)?)));
-        if let Some(new) = new {
-            (*key, changed) = (new, true);
+        if let Some((file, rest)) = key.split_once('\t')
+            && let Some(new) = moved(file)
+        {
+            *key = format!("{new}\t{rest}");
         }
     }
-    if changed {
+    if state != before {
         let _ = store_ui(root, state);
     }
 }
