@@ -85,10 +85,10 @@
                 Opacity="0" />
         </Canvas>
 
-        <!-- Notepad's find bar over the text, with VS Code's find widget's behaviour. -->
+        <!-- Notepad's find bar over the text, with VS Code's find widget's behaviour; narrow, it may cover the gutter. -->
         <Border
             x:Name="FindBar"
-            Grid.Column="1"
+            Grid.ColumnSpan="2"
             Margin="0,8,24,0"
             Padding="4"
             HorizontalAlignment="Right"
@@ -106,7 +106,7 @@
                 </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="32" />
-                    <ColumnDefinition Width="*" MinWidth="120" />
+                    <ColumnDefinition Width="*" MinWidth="64" />
                     <ColumnDefinition Width="88" />
                     <ColumnDefinition Width="32" />
                     <ColumnDefinition Width="32" />
@@ -200,6 +200,11 @@
 
         <!-- VS Code's hover: the maths the caret is in, drawn by RaTeX, above its line. -->
         <Popup x:Name="MathPopup" Grid.Column="1">
+            <Popup.ChildTransitions>
+                <TransitionCollection>
+                    <PopupThemeTransition />
+                </TransitionCollection>
+            </Popup.ChildTransitions>
             <Border
                 x:Name="MathSurface"
                 Padding="12,8"
@@ -225,6 +230,11 @@
 
         <!-- IntelliSense on the flyout surface: the list never takes the keyboard from the text. -->
         <Popup x:Name="CompletionPopup" Grid.Column="1">
+            <Popup.ChildTransitions>
+                <TransitionCollection>
+                    <PopupThemeTransition />
+                </TransitionCollection>
+            </Popup.ChildTransitions>
             <Border
                 MinWidth="240"
                 MaxWidth="480"

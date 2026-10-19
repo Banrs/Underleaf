@@ -8,9 +8,6 @@
     xmlns:local="using:TeXLocal.Pages"
     Background="Transparent">
     <Page.Resources>
-        <x:Double x:Key="PageMaxWidth">1064</x:Double>
-        <x:Double x:Key="PageColumnWidth">992</x:Double>
-
         <!-- One menu for a row's right-click or context key and for its More button; F2 and Del are the list's. -->
         <MenuFlyout x:Key="ProjectMenu" Opening="OnMenuOpening" Placement="BottomEdgeAlignedRight">
             <MenuFlyoutItem Click="OnOpenItem" Text="Open">
@@ -31,160 +28,194 @@
             </MenuFlyoutItem>
         </MenuFlyout>
 
-        <!-- Installed apps' rows on the stock item, whose fill, hover and press sit 4,2 inside its bounds: the item reaches
-             4 past the column, and its padding lays the card's stroke on that fill. Rows are 2 + 2 apart. -->
+        <!-- File Explorer's Details rows: the stock item, its menu, rows the column's width. -->
         <Style x:Key="ProjectItemStyle" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
-            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
-            <Setter Property="Margin" Value="-4,0" />
-            <Setter Property="Padding" Value="4,2" />
-            <Setter Property="FocusVisualMargin" Value="2,0" />
+            <Setter Property="Padding" Value="12,0,4,0" />
+            <Setter Property="MinHeight" Value="52" />
             <Setter Property="ContextFlyout" Value="{StaticResource ProjectMenu}" />
         </Style>
     </Page.Resources>
 
-    <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
+    <!-- Word's Home: the templates under New, then the projects under Recent, in File Explorer's Details view. -->
+    <!-- A Grid between: the scroller would place a column narrower than its maximum by its desired width. -->
+    <ScrollViewer x:Name="Scroller">
+        <Grid>
+            <StackPanel MaxWidth="1064" Padding="36,0,36,36">
+                <StackPanel.ChildrenTransitions>
+                    <TransitionCollection>
+                        <EntranceThemeTransition IsStaggeringEnabled="True" />
+                    </TransitionCollection>
+                </StackPanel.ChildrenTransitions>
+                <Grid Margin="0,24,0,0">
+                    <TextBlock AutomationProperties.HeadingLevel="Level1" Style="{StaticResource TitleTextBlockStyle}" Text="Home" />
+                    <DropDownButton HorizontalAlignment="Right" VerticalAlignment="Center" AutomationProperties.Name="Open">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon FontSize="16" Glyph="&#xE8E5;" />
+                            <TextBlock Text="Open" />
+                        </StackPanel>
+                        <DropDownButton.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+O" Click="{x:Bind app:App.Window.OpenFolder}" Text="Folder…">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8B7;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+O" Click="{x:Bind app:App.Window.OpenFile}" Text="ZIP or TeX file…">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8A5;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </DropDownButton.Flyout>
+                    </DropDownButton>
+                </Grid>
 
-        <StackPanel MaxWidth="{StaticResource PageMaxWidth}" Padding="36,0">
-            <TextBlock Margin="0,24,0,0" AutomationProperties.HeadingLevel="Level1" Style="{StaticResource TitleTextBlockStyle}" Text="Projects" />
-            <StackPanel Margin="0,16,0,0" Orientation="Horizontal" Spacing="8">
-                <Button
-                    x:Name="NewButton"
-                    controls:Shortcut.Keys="Ctrl+Shift+N"
-                    AutomationProperties.Name="New project"
-                    Click="OnNew"
-                    Style="{StaticResource AccentButtonStyle}">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon FontSize="16" Glyph="&#xE710;" />
-                        <TextBlock Text="New project" />
-                    </StackPanel>
-                </Button>
-                <DropDownButton Content="Open">
-                    <DropDownButton.Flyout>
-                        <MenuFlyout Placement="BottomEdgeAlignedLeft">
-                            <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+O" Click="{x:Bind app:App.Window.OpenFolder}" Text="Folder…">
-                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8B7;" /></MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                            <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+O" Click="{x:Bind app:App.Window.OpenFile}" Text="ZIP or TeX file…">
-                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8A5;" /></MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                        </MenuFlyout>
-                    </DropDownButton.Flyout>
-                </DropDownButton>
-            </StackPanel>
+                <!-- Collapsed while closed, so a closed bar leaves no gap. -->
+                <InfoBar
+                    x:Name="LibraryError"
+                    Title="Can't open the projects folder"
+                    Margin="0,16,0,0"
+                    IsClosable="False"
+                    Severity="Error"
+                    Visibility="{x:Bind LibraryError.IsOpen, Mode=OneWay}">
+                    <InfoBar.ActionButton>
+                        <Button Click="OnRetry" Content="Try again" />
+                    </InfoBar.ActionButton>
+                </InfoBar>
+                <InfoBar
+                    x:Name="TexMissing"
+                    Title="TeX isn't installed"
+                    Margin="0,16,0,0"
+                    IsClosable="False"
+                    Message="TeXLocal compiles with TeX Live."
+                    Severity="Warning"
+                    Visibility="{x:Bind TexMissing.IsOpen, Mode=OneWay}">
+                    <InfoBar.ActionButton>
+                        <HyperlinkButton Content="Get TeX Live" NavigateUri="https://tug.org/texlive/windows.html" />
+                    </InfoBar.ActionButton>
+                </InfoBar>
 
-            <!-- Collapsed while closed, so a closed bar leaves no gap. -->
-            <InfoBar
-                x:Name="LibraryError"
-                Title="Can't open the projects folder"
-                Margin="0,12,0,0"
-                IsClosable="False"
-                Severity="Error"
-                Visibility="{x:Bind LibraryError.IsOpen, Mode=OneWay}">
-                <InfoBar.ActionButton>
-                    <Button Click="OnRetry" Content="Try again" />
-                </InfoBar.ActionButton>
-            </InfoBar>
-            <InfoBar
-                x:Name="TexMissing"
-                Title="TeX isn't installed"
-                Margin="0,12,0,0"
-                IsClosable="False"
-                Message="TeXLocal compiles with TeX Live."
-                Severity="Warning"
-                Visibility="{x:Bind TexMissing.IsOpen, Mode=OneWay}">
-                <InfoBar.ActionButton>
-                    <HyperlinkButton Content="Get TeX Live" NavigateUri="https://tug.org/texlive/windows.html" />
-                </InfoBar.ActionButton>
-            </InfoBar>
-        </StackPanel>
+                <TextBlock Style="{StaticResource GroupHeaderStyle}" Text="New" />
+                <!-- Word's template gallery: each a page drawn as its first page lies, its name under it. -->
+                <ItemsControl x:Name="Templates" Margin="-8,0" IsTabStop="False">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="4" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="local:ProjectTemplate">
+                            <Button
+                                Padding="8"
+                                AutomationProperties.Name="{x:Bind Spoken}"
+                                Click="OnTemplate"
+                                Style="{StaticResource SubtleButtonStyle}"
+                                ToolTipService.ToolTip="{x:Bind Tip}">
+                                <Grid RowSpacing="8">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="156" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <!-- White paper in either theme, as the PDF's. -->
+                                    <Border
+                                        Width="{x:Bind Width}"
+                                        Height="{x:Bind Height}"
+                                        Background="{ThemeResource SolidBackgroundFillColorQuarternaryBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="{ThemeResource ControlCornerRadius}"
+                                        RequestedTheme="Light">
+                                        <controls:PagePreview Kind="{x:Bind Id}" />
+                                    </Border>
+                                    <TextBlock Grid.Row="1" HorizontalAlignment="Center" Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Title}" />
+                                </Grid>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
 
-        <!-- Full width so the scroll bar sits at the page's edge; the rows keep to the header's column. -->
-        <ListView
-            x:Name="List"
-            Grid.Row="1"
-            Padding="36,12,36,36"
-            AutomationProperties.Name="Projects"
-            IsItemClickEnabled="True"
-            ItemClick="OnItemClick"
-            ItemContainerStyle="{StaticResource ProjectItemStyle}"
-            KeyboardAcceleratorPlacementMode="Hidden"
-            SelectionMode="None">
-            <ListView.Resources>
-                <ResourceDictionary>
-                    <ResourceDictionary.ThemeDictionaries>
-                        <ResourceDictionary x:Key="Default">
-                            <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="ControlFillColorSecondaryBrush" />
-                            <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="ControlFillColorTertiaryBrush" />
-                        </ResourceDictionary>
-                        <ResourceDictionary x:Key="Light">
-                            <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="ControlFillColorSecondaryBrush" />
-                            <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="ControlFillColorTertiaryBrush" />
-                        </ResourceDictionary>
-                        <ResourceDictionary x:Key="HighContrast" />
-                    </ResourceDictionary.ThemeDictionaries>
-                </ResourceDictionary>
-            </ListView.Resources>
-            <ListView.KeyboardAccelerators>
-                <KeyboardAccelerator Key="F2" Invoked="OnKey" ScopeOwner="{x:Bind List}" />
-                <KeyboardAccelerator Key="Delete" Invoked="OnKey" ScopeOwner="{x:Bind List}" />
-            </ListView.KeyboardAccelerators>
-            <ListView.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <ItemsStackPanel MaxWidth="{StaticResource PageColumnWidth}" />
-                </ItemsPanelTemplate>
-            </ListView.ItemsPanel>
-            <ListView.ItemTemplate>
-                <DataTemplate x:DataType="bridge:ProjectInfo">
-                    <Border Padding="16" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="{ThemeResource ControlCornerRadius}">
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="32" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <FontIcon FontSize="32" Glyph="&#xE8B7;" />
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Style="{StaticResource GroupHeaderStyle}" Text="Recent" />
+                <!-- Details view's column headings, over the rows' columns. -->
+                <Grid x:Name="Columns" Padding="12,0,48,8" ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="160" />
+                        <ColumnDefinition Width="176" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Margin="48,0,0,0" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="Name" />
+                    <TextBlock Grid.Column="1" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="Main file" />
+                    <TextBlock Grid.Column="2" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="Date modified" />
+                </Grid>
+                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                <ListView
+                    x:Name="List"
+                    Margin="0,4,0,0"
+                    AutomationProperties.Name="Projects"
+                    IsItemClickEnabled="True"
+                    ItemClick="OnItemClick"
+                    ItemContainerStyle="{StaticResource ProjectItemStyle}"
+                    KeyboardAcceleratorPlacementMode="Hidden"
+                    ScrollViewer.VerticalScrollMode="Disabled"
+                    SelectionMode="None">
+                    <ListView.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="F2" Invoked="OnKey" ScopeOwner="{x:Bind List}" />
+                        <KeyboardAccelerator Key="Delete" Invoked="OnKey" ScopeOwner="{x:Bind List}" />
+                    </ListView.KeyboardAccelerators>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="bridge:ProjectInfo">
+                            <Grid ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="32" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="160" />
+                                    <ColumnDefinition Width="176" />
+                                    <ColumnDefinition Width="32" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon FontSize="24" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" Glyph="&#xE8B7;" />
                                 <TextBlock
                                     x:Name="NameText"
+                                    Grid.Column="1"
+                                    VerticalAlignment="Center"
                                     Style="{StaticResource BodyTextBlockStyle}"
                                     Text="{x:Bind Name}"
+                                    TextTrimming="CharacterEllipsis"
                                     TextWrapping="NoWrap"
                                     ToolTipService.ToolTip="{x:Bind Name}" />
                                 <TextBlock
+                                    Grid.Column="2"
+                                    VerticalAlignment="Center"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="{x:Bind local:HomePage.Caption(MainFile, Mtime)}"
+                                    Style="{StaticResource BodyTextBlockStyle}"
+                                    Text="{x:Bind MainFile}"
+                                    TextTrimming="CharacterEllipsis"
                                     TextWrapping="NoWrap" />
-                            </StackPanel>
-                            <Button
-                                Grid.Column="2"
-                                AutomationProperties.Name="{x:Bind local:HomePage.MoreName(Name)}"
-                                Flyout="{StaticResource ProjectMenu}"
-                                Style="{StaticResource SubtleButtonStyle}"
-                                ToolTipService.ToolTip="More options">
-                                <FontIcon FontSize="16" Glyph="&#xE712;" />
-                            </Button>
-                        </Grid>
-                    </Border>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
-
-        <StackPanel
-            x:Name="Empty"
-            Grid.Row="1"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Spacing="12"
-            Visibility="Collapsed">
-            <FontIcon HorizontalAlignment="Center" FontSize="48" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Glyph="&#xE8B7;" />
-            <TextBlock HorizontalAlignment="Center" Style="{StaticResource SubtitleTextBlockStyle}" Text="No projects yet" />
-            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource BodyTextBlockStyle}" Text="Create a project, or open a folder or a .zip." />
-            <Button HorizontalAlignment="Center" Click="OnNew" Content="New project" Style="{StaticResource AccentButtonStyle}" />
-        </StackPanel>
-    </Grid>
+                                <TextBlock
+                                    Grid.Column="3"
+                                    VerticalAlignment="Center"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Style="{StaticResource BodyTextBlockStyle}"
+                                    Text="{x:Bind local:HomePage.Modified(Mtime)}"
+                                    TextWrapping="NoWrap"
+                                    Typography.NumeralAlignment="Tabular" />
+                                <Button
+                                    Grid.Column="4"
+                                    Width="32"
+                                    Height="32"
+                                    Padding="0"
+                                    AutomationProperties.Name="{x:Bind local:HomePage.MoreName(Name)}"
+                                    Flyout="{StaticResource ProjectMenu}"
+                                    Style="{StaticResource SubtleButtonStyle}"
+                                    ToolTipService.ToolTip="More options">
+                                    <FontIcon FontSize="16" Glyph="&#xE712;" />
+                                </Button>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+                <TextBlock
+                    x:Name="Empty"
+                    Margin="12,16"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource BodyTextBlockStyle}"
+                    Text="No projects yet. Choose a template above, or open a folder or a .zip."
+                    Visibility="Collapsed" />
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
 </Page>

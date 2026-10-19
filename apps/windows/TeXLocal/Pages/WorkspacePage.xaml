@@ -19,7 +19,7 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <FontIcon Margin="0,0,12,0" FontSize="16" Glyph="{x:Bind Glyph}" Visibility="{x:Bind HasGlyph}" />
-                    <TextBlock Grid.Column="1" VerticalAlignment="Center" MaxLines="{x:Bind Lines}" Style="{StaticResource BodyTextBlockStyle}">
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" MaxLines="{x:Bind Lines}" Style="{StaticResource BodyTextBlockStyle}" TextTrimming="CharacterEllipsis">
                         <Run Text="{x:Bind Lead}" /><Run FontWeight="SemiBold" Text="{x:Bind Strong}" /><Run Text="{x:Bind Tail}" />
                     </TextBlock>
                     <TextBlock
@@ -30,7 +30,7 @@
                         Style="{StaticResource CaptionTextBlockStyle}"
                         Text="{x:Bind Trailing}"
                         Typography.NumeralAlignment="Tabular" />
-                    <FontIcon Grid.Column="2" Margin="12,0,0,0" FontSize="16" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE735;" Visibility="{x:Bind IsMain}" />
+                    <FontIcon Grid.Column="2" Margin="12,0,0,0" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE735;" Visibility="{x:Bind IsMain}" />
                 </Grid>
             </TreeViewItem>
         </DataTemplate>
@@ -38,6 +38,20 @@
             <Setter Property="CanDragItems" Value="False" />
             <Setter Property="CanReorderItems" Value="False" />
             <Setter Property="ItemTemplate" Value="{StaticResource NavTemplate}" />
+        </Style>
+        <!-- Word's Equation (π) and Symbol (Ω) buttons draw their letters in the maths font. -->
+        <Style x:Key="MathsIconStyle" TargetType="FontIcon">
+            <Setter Property="FontFamily" Value="Cambria Math" />
+            <Setter Property="FontSize" Value="18" />
+        </Style>
+        <!-- The status bar's zoom, as Word's: a slider between out and in, 100% at its middle. -->
+        <Style x:Key="ZoomStepStyle" TargetType="RepeatButton" BasedOn="{StaticResource DefaultRepeatButtonStyle}">
+            <Setter Property="Width" Value="24" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
         </Style>
     </Page.Resources>
 
@@ -48,29 +62,32 @@
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="40" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="32" />
         </Grid.RowDefinitions>
 
-        <!-- Narrow, the sidebar overlays the content on acrylic; wide, it sits beside it on Mica. -->
+        <!-- Narrow, the navigation pane overlays the layers on acrylic; wide (1008 and up, the Fluent breakpoint), it sits
+             beside them on Mica, and the status bar has room for the zoom slider. The page's width sets the trigger:
+             an AdaptiveTrigger misjudges a page first shown in a narrow window. -->
         <VisualStateManager.VisualStateGroups>
             <VisualStateGroup>
                 <VisualState x:Name="Wide">
                     <VisualState.StateTriggers>
-                        <AdaptiveTrigger MinWindowWidth="1008" />
+                        <StateTrigger x:Name="WideTrigger" />
                     </VisualState.StateTriggers>
                     <VisualState.Setters>
                         <Setter Target="Split.DisplayMode" Value="Inline" />
                         <Setter Target="Split.PaneBackground" Value="Transparent" />
+                        <Setter Target="ZoomSlider.Visibility" Value="Visible" />
                     </VisualState.Setters>
                 </VisualState>
             </VisualStateGroup>
         </VisualStateManager.VisualStateGroups>
 
-        <!-- Notepad's menu bar, and Compile at its end as Visual Studio's Start. -->
-        <Grid Padding="4,0,12,0">
-            <MenuBar x:Name="MainMenu" VerticalAlignment="Center">
+        <!-- The title bar holds these while the project is open (MainWindow.SetMenu), as Paint's and Visual Studio's do. -->
+        <Border x:Name="MenuSlot" Visibility="Collapsed">
+            <MenuBar x:Name="MainMenu">
                 <MenuBarItem AccessKey="F" Title="File">
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+N" AccessKey="N" Click="OnNewFile" Text="New file" />
                     <MenuFlyoutItem AccessKey="F" Click="OnNewFolder" Text="New folder" />
@@ -135,7 +152,7 @@
                     <MenuFlyoutSubItem x:Name="ReferencesMenu" AccessKey="R" Text="References and links" />
                 </MenuBarItem>
                 <MenuBarItem AccessKey="V" Title="View">
-                    <ToggleMenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+E" AccessKey="S" IsChecked="{x:Bind Split.IsPaneOpen, Mode=TwoWay}" Text="Sidebar" />
+                    <ToggleMenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+E" AccessKey="N" IsChecked="{x:Bind Split.IsPaneOpen, Mode=TwoWay}" Text="Navigation pane" />
                     <MenuFlyoutItem AccessKey="O" Click="OnShowOutline" Text="Outline" />
                     <ToggleMenuFlyoutItem x:Name="PdfItem" controls:Shortcut.Keys="Ctrl+Alt+P" AccessKey="P" Click="OnPdfPane" IsChecked="True" Text="PDF" />
                     <ToggleMenuFlyoutItem x:Name="IssuesItem" controls:Shortcut.Keys="Ctrl+Shift+M" AccessKey="I" Click="OnIssuesPane" Text="Issues" />
@@ -160,20 +177,138 @@
                     <ToggleMenuFlyoutItem x:Name="StopOnErrorItem" AccessKey="F" Click="OnBuildSetting" Text="Stop on first error" />
                 </MenuBarItem>
             </MenuBar>
-            <Button
-                x:Name="CompileButton"
-                Width="112"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Center"
-                AutomationProperties.Name="Compile"
-                Click="OnCompileButton"
-                Style="{StaticResource AccentButtonStyle}"
-                ToolTipService.ToolTip="Compile (Ctrl+Enter)">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon x:Name="CompileIcon" FontSize="16" Glyph="&#xE768;" />
-                    <TextBlock x:Name="CompileLabel" Text="Compile" />
-                </StackPanel>
-            </Button>
+        </Border>
+
+        <!-- The command bar, as File Explorer's and Notepad's formatting bar: the pane, the text's style, Word's Equation,
+             Symbol and Insert; the PDF and Compile at its end, as Visual Studio's Start. Commands without room go to its
+             overflow. -->
+        <Grid Padding="4,0,8,0">
+            <!-- Word's ribbon toggles: a checked one sits on a subtle fill, so Compile stays the one accent. -->
+            <Grid.Resources>
+                <ResourceDictionary>
+                    <ResourceDictionary.ThemeDictionaries>
+                        <ResourceDictionary x:Key="Default">
+                            <StaticResource x:Key="AppBarToggleButtonBackgroundChecked" ResourceKey="SubtleFillColorSecondaryBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPointerOver" ResourceKey="SubtleFillColorTertiaryBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPressed" ResourceKey="SubtleFillColorSecondaryBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonForegroundChecked" ResourceKey="TextFillColorPrimaryBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPressed" ResourceKey="TextFillColorSecondaryBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonBorderBrushChecked" ResourceKey="ControlFillColorTransparentBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonBorderBrushCheckedPointerOver" ResourceKey="ControlFillColorTransparentBrush" />
+                        </ResourceDictionary>
+                        <ResourceDictionary x:Key="Light">
+                            <StaticResource x:Key="AppBarToggleButtonBackgroundChecked" ResourceKey="SubtleFillColorSecondaryBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPointerOver" ResourceKey="SubtleFillColorTertiaryBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPressed" ResourceKey="SubtleFillColorSecondaryBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonForegroundChecked" ResourceKey="TextFillColorPrimaryBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPressed" ResourceKey="TextFillColorSecondaryBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonBorderBrushChecked" ResourceKey="ControlFillColorTransparentBrush" />
+                            <StaticResource x:Key="AppBarToggleButtonBorderBrushCheckedPointerOver" ResourceKey="ControlFillColorTransparentBrush" />
+                        </ResourceDictionary>
+                        <ResourceDictionary x:Key="HighContrast" />
+                    </ResourceDictionary.ThemeDictionaries>
+                </ResourceDictionary>
+            </Grid.Resources>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <CommandBar
+                x:Name="Tools"
+                HorizontalAlignment="Left"
+                Background="Transparent"
+                DefaultLabelPosition="Right"
+                IsDynamicOverflowEnabled="True">
+                <AppBarToggleButton
+                    x:Name="PaneButton"
+                    Width="40"
+                    IsChecked="{x:Bind Split.IsPaneOpen, Mode=TwoWay}"
+                    Label="Navigation pane"
+                    LabelPosition="Collapsed"
+                    ToolTipService.ToolTip="Navigation pane (Ctrl+Shift+E)">
+                    <AppBarToggleButton.Icon><FontIcon Glyph="&#xE700;" /></AppBarToggleButton.Icon>
+                </AppBarToggleButton>
+                <AppBarSeparator />
+                <AppBarElementContainer VerticalAlignment="Center" AutomationProperties.Name="Text style">
+                    <DropDownButton
+                        x:Name="StyleButton"
+                        Width="168"
+                        Margin="4,0"
+                        HorizontalContentAlignment="Left"
+                        AutomationProperties.Name="Text style"
+                        ToolTipService.ToolTip="Text style">
+                        <TextBlock x:Name="StyleText" Text="Normal text" TextTrimming="CharacterEllipsis" />
+                        <DropDownButton.Flyout>
+                            <MenuFlyout x:Name="StyleMenu" Placement="BottomEdgeAlignedLeft" />
+                        </DropDownButton.Flyout>
+                    </DropDownButton>
+                </AppBarElementContainer>
+                <AppBarToggleButton x:Name="BoldButton"
+                    Width="40" Click="OnStyle" Label="Bold" LabelPosition="Collapsed" Tag="bold" ToolTipService.ToolTip="Bold (Ctrl+B)">
+                    <AppBarToggleButton.Icon><FontIcon Glyph="&#xE8DD;" /></AppBarToggleButton.Icon>
+                </AppBarToggleButton>
+                <AppBarToggleButton x:Name="ItalicButton"
+                    Width="40" Click="OnStyle" Label="Italic" LabelPosition="Collapsed" Tag="italic" ToolTipService.ToolTip="Italic (Ctrl+I)">
+                    <AppBarToggleButton.Icon><FontIcon Glyph="&#xE8DB;" /></AppBarToggleButton.Icon>
+                </AppBarToggleButton>
+                <AppBarToggleButton x:Name="UnderlineButton"
+                    Width="40" Click="OnStyle" Label="Underline" LabelPosition="Collapsed" Tag="underline" ToolTipService.ToolTip="Underline (Ctrl+U)">
+                    <AppBarToggleButton.Icon><FontIcon Glyph="&#xE8DC;" /></AppBarToggleButton.Icon>
+                </AppBarToggleButton>
+                <AppBarSeparator />
+                <AppBarButton x:Name="EquationButton" Label="Equation" ToolTipService.ToolTip="Equation">
+                    <AppBarButton.Icon><FontIcon Glyph="π" Style="{StaticResource MathsIconStyle}" /></AppBarButton.Icon>
+                    <AppBarButton.Flyout>
+                        <MenuFlyout x:Name="EquationMenu" Placement="BottomEdgeAlignedLeft">
+                            <MenuFlyoutItem Click="OnInlineMaths" KeyboardAcceleratorTextOverride="Alt+=" Text="Inline maths" />
+                            <MenuFlyoutItem x:Name="EquationAnchor" Click="OnDisplayMaths" Text="Display maths" />
+                        </MenuFlyout>
+                    </AppBarButton.Flyout>
+                </AppBarButton>
+                <AppBarButton x:Name="SymbolButton" Click="OnSymbols" Label="Symbol" ToolTipService.ToolTip="Symbol (Alt+Shift+=)">
+                    <AppBarButton.Icon><FontIcon Glyph="Ω" Style="{StaticResource MathsIconStyle}" /></AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarButton x:Name="InsertButton" Label="Insert" ToolTipService.ToolTip="Insert">
+                    <AppBarButton.Icon><FontIcon Glyph="&#xE710;" /></AppBarButton.Icon>
+                    <AppBarButton.Flyout>
+                        <MenuFlyout x:Name="InsertFlyout" Placement="BottomEdgeAlignedLeft" />
+                    </AppBarButton.Flyout>
+                </AppBarButton>
+            </CommandBar>
+            <CommandBar
+                Grid.Column="1"
+                Background="Transparent"
+                DefaultLabelPosition="Right"
+                OverflowButtonVisibility="Collapsed">
+                <AppBarToggleButton
+                    x:Name="PdfButton"
+                    Width="40"
+                    Click="OnPdfButton"
+                    IsChecked="True"
+                    Label="PDF"
+                    LabelPosition="Collapsed"
+                    ToolTipService.ToolTip="PDF (Ctrl+Alt+P)">
+                    <AppBarToggleButton.Icon><FontIcon Glyph="&#xEA90;" /></AppBarToggleButton.Icon>
+                </AppBarToggleButton>
+                <AppBarSeparator />
+                <AppBarElementContainer VerticalAlignment="Center">
+                    <Button
+                        x:Name="CompileButton"
+                        Width="112"
+                        Margin="4,0,0,0"
+                        AutomationProperties.Name="Compile"
+                        Click="OnCompileButton"
+                        Style="{StaticResource AccentButtonStyle}"
+                        ToolTipService.ToolTip="Compile (Ctrl+Enter)">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon x:Name="CompileIcon" FontSize="16" Glyph="&#xE768;" />
+                            <TextBlock x:Name="CompileLabel" Text="Compile" />
+                        </StackPanel>
+                    </Button>
+                </AppBarElementContainer>
+            </CommandBar>
         </Grid>
 
         <SplitView
@@ -181,10 +316,11 @@
             Grid.Row="1"
             OpenPaneLength="{x:Bind app:Prefs.SidebarWidth, Mode=OneTime}"
             PaneBackground="{ThemeResource AcrylicInAppFillColorDefaultBrush}">
-            <!-- Word's navigation pane: Files, the Outline of the shown file's document, and project search's Results. -->
+            <!-- Word's navigation pane: its search box over Files, the Outline of the shown file's document, and Results. -->
             <SplitView.Pane>
-                <Grid x:Name="SidePane">
+                <Grid x:Name="SidePane" Padding="8,4,0,8">
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
@@ -192,14 +328,26 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <SelectorBar x:Name="SideTabs" Margin="8,0,4,4" SelectionChanged="OnSideTab">
+                    <AutoSuggestBox
+                        x:Name="Search"
+                        Margin="4,0,4,4"
+                        AutomationProperties.Name="Search in project"
+                        KeyDown="OnSearchKey"
+                        QuerySubmitted="OnSearchSubmitted"
+                        TextChanged="OnSearchChanged">
+                        <AutoSuggestBox.QueryIcon>
+                            <FontIcon FontSize="12" Glyph="&#xE721;" />
+                        </AutoSuggestBox.QueryIcon>
+                    </AutoSuggestBox>
+                    <SelectorBar x:Name="SideTabs" Grid.Row="1" Margin="0,0,0,4" SelectionChanged="OnSideTab">
                         <SelectorBarItem x:Name="FilesTab" IsSelected="True" Text="Files" />
                         <SelectorBarItem x:Name="OutlineTab" Text="Outline" />
                         <SelectorBarItem x:Name="ResultsTab" Text="Results" />
                     </SelectorBar>
                     <TreeView
                         x:Name="FilesTree"
-                        Grid.Row="1"
+                        Grid.Row="2"
+                        AllowDrop="True"
                         AutomationProperties.Name="Files"
                         Collapsed="OnCollapsed"
                         ContextRequested="OnFilesContext"
@@ -235,7 +383,7 @@
                     </TreeView>
                     <TreeView
                         x:Name="OutlineTree"
-                        Grid.Row="1"
+                        Grid.Row="2"
                         AutomationProperties.Name="Outline"
                         Collapsed="OnCollapsed"
                         Expanding="OnExpanding"
@@ -243,23 +391,23 @@
                         Visibility="Collapsed" />
                     <TreeView
                         x:Name="ResultsTree"
-                        Grid.Row="1"
+                        Grid.Row="2"
                         AutomationProperties.Name="Search results"
                         ItemInvoked="OnInvoked"
                         Visibility="Collapsed" />
                     <TextBlock
                         x:Name="SideNote"
-                        Grid.Row="1"
-                        Margin="16,12"
+                        Grid.Row="2"
+                        Margin="12,8"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Style="{StaticResource BodyTextBlockStyle}"
                         Visibility="Collapsed" />
-                    <!-- No line of its own: the content card's edge is the line. -->
-                    <controls:Sizer x:Name="PaneSizer" Grid.RowSpan="2" Grid.Column="1" AutomationProperties.Name="Sidebar width" />
+                    <!-- The gap between the pane and the layers is its splitter. -->
+                    <controls:Sizer x:Name="PaneSizer" Grid.RowSpan="3" Grid.Column="1" AutomationProperties.Name="Navigation pane width" />
                 </Grid>
             </SplitView.Pane>
 
-            <Grid x:Name="ContentCard" Style="{StaticResource ContentCardStyle}">
+            <Grid x:Name="Body" Margin="0,0,8,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
@@ -272,166 +420,231 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition x:Name="PdfColumn" Width="*" MinWidth="240" />
                     </Grid.ColumnDefinitions>
-                    <controls:SourceView x:Name="Editor" Visibility="Collapsed">
-                        <!-- The emoji panel's way: a search box over the symbols by kind, never over the caret's line. Seven
-                             44 cells across (48 with their gap), in a size that holds while the search narrows them. -->
-                        <FlyoutBase.AttachedFlyout>
-                            <Flyout x:Name="Palette">
-                                <StackPanel Spacing="8">
-                                    <TextBox x:Name="SymbolFilter" AutomationProperties.Name="Search symbols" PlaceholderText="Search symbols" TextChanged="OnSymbolFilter" />
-                                    <GridView
-                                        x:Name="Symbols"
-                                        Width="336"
-                                        Height="360"
-                                        AutomationProperties.Name="Symbols"
-                                        IsItemClickEnabled="True"
-                                        ItemClick="OnSymbol"
-                                        SelectionMode="None">
-                                        <GridView.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <ItemsWrapGrid MaximumRowsOrColumns="7" Orientation="Horizontal" />
-                                            </ItemsPanelTemplate>
-                                        </GridView.ItemsPanel>
-                                        <GridView.GroupStyle>
-                                            <GroupStyle>
-                                                <GroupStyle.HeaderTemplate>
-                                                    <DataTemplate x:DataType="local:PaletteGroup">
-                                                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Title}" />
+                    <Border x:Name="EditorLayer" Style="{StaticResource LayerStyle}">
+                        <Grid x:Name="EditorClip">
+                            <controls:SourceView x:Name="Editor" Visibility="Collapsed">
+                                <!-- The emoji panel's way: a search box over the symbols by kind, never over the caret's line. Seven
+                                     44 cells across (48 with their gap), in a size that holds while the search narrows them. -->
+                                <FlyoutBase.AttachedFlyout>
+                                    <Flyout x:Name="Palette">
+                                        <StackPanel Spacing="8">
+                                            <TextBox x:Name="SymbolFilter" AutomationProperties.Name="Search symbols" PlaceholderText="Search symbols" TextChanged="OnSymbolFilter" />
+                                            <GridView
+                                                x:Name="Symbols"
+                                                Width="336"
+                                                Height="360"
+                                                AutomationProperties.Name="Symbols"
+                                                IsItemClickEnabled="True"
+                                                ItemClick="OnSymbol"
+                                                SelectionMode="None">
+                                                <GridView.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <ItemsWrapGrid MaximumRowsOrColumns="7" Orientation="Horizontal" />
+                                                    </ItemsPanelTemplate>
+                                                </GridView.ItemsPanel>
+                                                <GridView.GroupStyle>
+                                                    <GroupStyle>
+                                                        <GroupStyle.HeaderTemplate>
+                                                            <DataTemplate x:DataType="local:PaletteGroup">
+                                                                <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Title}" />
+                                                            </DataTemplate>
+                                                        </GroupStyle.HeaderTemplate>
+                                                    </GroupStyle>
+                                                </GridView.GroupStyle>
+                                                <GridView.ItemTemplate>
+                                                    <DataTemplate x:DataType="local:PaletteItem">
+                                                        <Image Width="24" Height="24" Source="{x:Bind Image}" ToolTipService.ToolTip="{x:Bind Command}" />
                                                     </DataTemplate>
-                                                </GroupStyle.HeaderTemplate>
-                                            </GroupStyle>
-                                        </GridView.GroupStyle>
-                                        <GridView.ItemTemplate>
-                                            <DataTemplate x:DataType="local:PaletteItem">
-                                                <Image Width="24" Height="24" Source="{x:Bind Image}" ToolTipService.ToolTip="{x:Bind Command}" />
-                                            </DataTemplate>
-                                        </GridView.ItemTemplate>
-                                    </GridView>
+                                                </GridView.ItemTemplate>
+                                            </GridView>
+                                        </StackPanel>
+                                    </Flyout>
+                                </FlyoutBase.AttachedFlyout>
+                            </controls:SourceView>
+                            <StackPanel x:Name="NoFile" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+                                <FontIcon HorizontalAlignment="Center" FontSize="48" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Glyph="&#xE8A5;" />
+                                <TextBlock HorizontalAlignment="Center" Style="{StaticResource SubtitleTextBlockStyle}" Text="No file open" />
+                                <TextBlock HorizontalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource BodyTextBlockStyle}" Text="Choose a file in the navigation pane." />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <controls:Sizer x:Name="SplitSizer" Grid.Column="1" AutomationProperties.Name="Editor and PDF" DoubleTapped="OnSplitReset" />
+                    <Border x:Name="PdfLayer" Grid.Column="2" Style="{StaticResource LayerStyle}">
+                        <Grid x:Name="PdfClip">
+                            <controls:PdfView x:Name="Pdf" />
+                            <!-- Over the PDF, so it never covers the text or the find bar. -->
+                            <InfoBar x:Name="BuildFailed" Margin="12" VerticalAlignment="Top" Severity="Error" Title="Build failed">
+                                <InfoBar.ActionButton>
+                                    <Button Click="OnShowIssues" Content="Show issues" />
+                                </InfoBar.ActionButton>
+                            </InfoBar>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <controls:Sizer x:Name="IssuesSizer" Grid.Row="1" AutomationProperties.Name="Issues height" Orientation="Horizontal" Visibility="Collapsed" />
+
+                <!-- Visual Studio's Error List: the build's issues, or its log. -->
+                <Border x:Name="IssuesPanel" Grid.Row="2" Style="{StaticResource LayerStyle}" Visibility="Collapsed">
+                    <Grid x:Name="IssuesClip">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="44" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Grid Padding="4,0,4,0" ColumnSpacing="4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <SelectorBar x:Name="IssueTabs" VerticalAlignment="Center" SelectionChanged="OnIssueTab">
+                                <SelectorBarItem x:Name="IssuesTab" IsSelected="True" Text="Issues" />
+                                <SelectorBarItem x:Name="LogTab" Text="Build log" />
+                            </SelectorBar>
+                            <!-- The Error List's filter: warnings shown or not, with their count. -->
+                            <ToggleButton
+                                x:Name="WarningsToggle"
+                                Grid.Column="1"
+                                AutomationProperties.Name="Warnings"
+                                Checked="OnWarnings"
+                                IsChecked="True"
+                                IsEnabled="False"
+                                Unchecked="OnWarnings">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon FontSize="14" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" />
+                                    <TextBlock x:Name="WarningsLabel" Text="0 warnings" Typography.NumeralAlignment="Tabular" />
                                 </StackPanel>
-                            </Flyout>
-                        </FlyoutBase.AttachedFlyout>
-                    </controls:SourceView>
-                    <StackPanel x:Name="NoFile" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
-                        <FontIcon HorizontalAlignment="Center" FontSize="48" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Glyph="&#xE8A5;" />
-                        <TextBlock HorizontalAlignment="Center" Style="{StaticResource SubtitleTextBlockStyle}" Text="No file open" />
-                        <TextBlock HorizontalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource BodyTextBlockStyle}" Text="Choose a file in the sidebar." />
-                    </StackPanel>
-                    <controls:Sizer x:Name="SplitSizer" Grid.Column="1" AutomationProperties.Name="Editor and PDF" DoubleTapped="OnSplitReset">
-                        <Rectangle Width="1" HorizontalAlignment="Center" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
-                    </controls:Sizer>
-                    <controls:PdfView x:Name="Pdf" Grid.Column="2" />
-                    <!-- Over the PDF, so it never covers the text or the find bar. -->
-                    <InfoBar x:Name="BuildFailed" Grid.Column="2" Margin="12" VerticalAlignment="Top" Severity="Error" Title="Build failed">
-                        <InfoBar.ActionButton>
-                            <Button Click="OnShowIssues" Content="Show issues" />
-                        </InfoBar.ActionButton>
-                    </InfoBar>
-                </Grid>
-
-                <controls:Sizer x:Name="IssuesSizer" Grid.Row="1" AutomationProperties.Name="Issues height" Orientation="Horizontal" Visibility="Collapsed">
-                    <Rectangle Height="1" VerticalAlignment="Center" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
-                </controls:Sizer>
-
-                <!-- VS Code's panel: the build's issues, or its log. -->
-                <Grid x:Name="IssuesPanel" Grid.Row="2" Visibility="Collapsed">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="48" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <Grid Padding="8,0,12,0">
-                        <SelectorBar x:Name="IssueTabs" VerticalAlignment="Center" SelectionChanged="OnIssueTab">
-                            <SelectorBarItem x:Name="IssuesTab" IsSelected="True" Text="Issues" />
-                            <SelectorBarItem x:Name="LogTab" Text="Build log" />
-                        </SelectorBar>
-                        <CheckBox
-                            x:Name="WarningsToggle"
-                            MinWidth="0"
-                            HorizontalAlignment="Right"
-                            Checked="OnWarnings"
-                            Content="Warnings"
-                            IsChecked="True"
-                            IsEnabled="False"
-                            Unchecked="OnWarnings" />
-                        <Button x:Name="CopyLog" HorizontalAlignment="Right" Click="OnCopyLog" Content="Copy log" Visibility="Collapsed" />
+                            </ToggleButton>
+                            <Button x:Name="CopyLog" Grid.Column="1" Click="OnCopyLog" Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon FontSize="14" Glyph="&#xE8C8;" />
+                                    <TextBlock Text="Copy log" />
+                                </StackPanel>
+                            </Button>
+                            <Button
+                                Grid.Column="2"
+                                Width="32"
+                                Height="32"
+                                Padding="0"
+                                AutomationProperties.Name="Close issues"
+                                Click="OnCloseIssues"
+                                Style="{StaticResource SubtleButtonStyle}"
+                                ToolTipService.ToolTip="Close (Ctrl+Shift+M)">
+                                <FontIcon FontSize="12" Glyph="&#xE711;" />
+                            </Button>
+                        </Grid>
+                        <ListView x:Name="IssueList" Grid.Row="1" Padding="0,0,0,4" AutomationProperties.Name="Issues" IsItemClickEnabled="True" ItemClick="OnIssueClick" Visibility="Collapsed">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="local:IssueItem">
+                                    <Grid Padding="0,6" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="16" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon VerticalAlignment="Top" FontSize="16" Foreground="{ThemeResource SystemFillColorCriticalBrush}" Glyph="&#xEB90;" Visibility="{x:Bind IsError}" />
+                                        <FontIcon VerticalAlignment="Top" FontSize="16" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" Visibility="{x:Bind IsWarning}" />
+                                        <TextBlock Grid.Column="1" MaxLines="2" Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Message}" />
+                                        <TextBlock
+                                            Grid.Column="2"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="{x:Bind Place}"
+                                            Typography.NumeralAlignment="Tabular"
+                                            Visibility="{x:Bind HasPlace}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <TextBlock
+                            x:Name="NoIssues"
+                            Grid.Row="1"
+                            Margin="16,4"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Style="{StaticResource BodyTextBlockStyle}"
+                            Text="Compile to check for issues." />
+                        <TextBox
+                            x:Name="Log"
+                            Grid.Row="1"
+                            Margin="8,0,8,8"
+                            AcceptsReturn="True"
+                            AutomationProperties.Name="Build log"
+                            FontFamily="Cascadia Mono, Consolas"
+                            FontSize="12"
+                            IsReadOnly="True"
+                            ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                            ScrollViewer.VerticalScrollBarVisibility="Auto"
+                            Visibility="Collapsed" />
                     </Grid>
-                    <ListView x:Name="IssueList" Grid.Row="1" AutomationProperties.Name="Issues" IsItemClickEnabled="True" ItemClick="OnIssueClick" Visibility="Collapsed">
-                        <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="local:IssueItem">
-                                <Grid Padding="0,8" ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="16" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <FontIcon VerticalAlignment="Top" FontSize="16" Foreground="{ThemeResource SystemFillColorCriticalBrush}" Glyph="&#xE783;" Visibility="{x:Bind IsError}" />
-                                    <FontIcon VerticalAlignment="Top" FontSize="16" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" Visibility="{x:Bind IsWarning}" />
-                                    <StackPanel Grid.Column="1">
-                                        <TextBlock MaxLines="2" Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Message}" />
-                                        <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind Place}" Visibility="{x:Bind HasPlace}" />
-                                    </StackPanel>
-                                </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
-                    <TextBlock
-                        x:Name="NoIssues"
-                        Grid.Row="1"
-                        Margin="16,12"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Style="{StaticResource BodyTextBlockStyle}"
-                        Text="Compile to check for issues." />
-                    <TextBox
-                        x:Name="Log"
-                        Grid.Row="1"
-                        Margin="12,0,12,12"
-                        AcceptsReturn="True"
-                        AutomationProperties.Name="Build log"
-                        FontFamily="Cascadia Mono, Consolas"
-                        FontSize="12"
-                        IsReadOnly="True"
-                        ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                        ScrollViewer.VerticalScrollBarVisibility="Auto"
-                        Visibility="Collapsed" />
-                </Grid>
+                </Border>
             </Grid>
         </SplitView>
 
-        <!-- Notepad's status bar with VS Code's left side: segments grouped by spacing, in slots that keep their size. -->
-        <Grid Grid.Row="2" Padding="4,0,8,0">
+        <!-- Word's and Notepad's status bar: the build at the left; the file's place, words, page and zoom at the right,
+             in slots that keep their size, a line between groups. Narrow, the build's words trim and the slider goes, as
+             Word's status bar gives way. -->
+        <Grid Grid.Row="2" Padding="4,0,8,0" ColumnSpacing="4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" Spacing="4">
-                <Button AutomationProperties.Name="Issues" Click="OnIssueCounts" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Issues (Ctrl+Shift+M)">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <FontIcon FontSize="12" Glyph="&#xE783;" />
-                        <TextBlock x:Name="ErrorCount" MinWidth="16" Style="{StaticResource CaptionTextBlockStyle}" Text="0" Typography.NumeralAlignment="Tabular" />
-                        <FontIcon FontSize="12" Glyph="&#xE7BA;" />
-                        <TextBlock x:Name="WarningCount" MinWidth="16" Style="{StaticResource CaptionTextBlockStyle}" Text="0" Typography.NumeralAlignment="Tabular" />
-                    </StackPanel>
-                </Button>
-                <TextBlock x:Name="BuildState" MinWidth="240" Style="{StaticResource StatusTextStyle}" Text="No build yet" TextAlignment="Left" />
-            </StackPanel>
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
+            <Button AutomationProperties.Name="Issues" Click="OnIssueCounts" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Issues (Ctrl+Shift+M)">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon FontSize="12" Glyph="&#xE783;" />
+                    <TextBlock x:Name="ErrorCount" MinWidth="12" Style="{StaticResource CaptionTextBlockStyle}" Text="0" Typography.NumeralAlignment="Tabular" />
+                    <FontIcon Margin="4,0,0,0" FontSize="12" Glyph="&#xE7BA;" />
+                    <TextBlock x:Name="WarningCount" MinWidth="12" Style="{StaticResource CaptionTextBlockStyle}" Text="0" Typography.NumeralAlignment="Tabular" />
+                </StackPanel>
+            </Button>
+            <TextBlock
+                x:Name="BuildState"
+                Grid.Column="1"
+                Style="{StaticResource StatusTextStyle}"
+                Text="No build yet"
+                TextTrimming="CharacterEllipsis"
+                ToolTipService.ToolTip="{x:Bind BuildState.Text, Mode=OneWay}" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal">
                 <Grid Width="96">
                     <Button x:Name="NotSaved" AutomationProperties.Name="Not saved" Click="OnSave" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Save (Ctrl+S)" Visibility="Collapsed">
-                        <StackPanel Orientation="Horizontal" Spacing="4">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon FontSize="12" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" />
                             <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="Not saved" />
                         </StackPanel>
                     </Button>
                 </Grid>
-                <TextBlock x:Name="Words" MinWidth="88" Style="{StaticResource StatusTextStyle}" />
-                <Button MinWidth="104" Click="OnGoToLine" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Go to line (Ctrl+G)">
+                <Button MinWidth="96" Click="OnGoToLine" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Go to line (Ctrl+G)">
                     <TextBlock x:Name="CaretText" Style="{StaticResource CaptionTextBlockStyle}" Text="Ln 1, Col 1" Typography.NumeralAlignment="Tabular" />
                 </Button>
+                <Rectangle Style="{StaticResource StatusDividerStyle}" />
+                <TextBlock x:Name="Words" MinWidth="88" Style="{StaticResource StatusTextStyle}" TextAlignment="Center" />
+                <Rectangle Style="{StaticResource StatusDividerStyle}" />
                 <Button MinWidth="96" Click="OnGoToPage" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Go to page (Ctrl+Alt+G)">
                     <TextBlock x:Name="PageText" Style="{StaticResource CaptionTextBlockStyle}" Text="No PDF" Typography.NumeralAlignment="Tabular" />
                 </Button>
-                <Button MinWidth="64" Flyout="{x:Bind Pdf.ZoomMenu}" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Zoom">
-                    <TextBlock x:Name="ZoomText" Style="{StaticResource CaptionTextBlockStyle}" Text="100%" Typography.NumeralAlignment="Tabular" />
-                </Button>
+                <Rectangle Style="{StaticResource StatusDividerStyle}" />
+                <StackPanel x:Name="ZoomBar" Margin="4,0,0,0" Orientation="Horizontal" Spacing="2">
+                    <RepeatButton AutomationProperties.Name="Zoom out" Click="OnZoomOut" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom out (Ctrl+-)">
+                        <FontIcon FontSize="12" Glyph="&#xE738;" />
+                    </RepeatButton>
+                    <Slider
+                        x:Name="ZoomSlider"
+                        Width="112"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Zoom"
+                        IsThumbToolTipEnabled="False"
+                        Maximum="2"
+                        Minimum="-2"
+                        StepFrequency="0.01"
+                        ValueChanged="OnZoomSlider"
+                        Visibility="Collapsed" />
+                    <RepeatButton AutomationProperties.Name="Zoom in" Click="OnZoomIn" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom in (Ctrl+=)">
+                        <FontIcon FontSize="12" Glyph="&#xE710;" />
+                    </RepeatButton>
+                    <Button MinWidth="56" Flyout="{x:Bind Pdf.ZoomMenu}" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Zoom">
+                        <TextBlock x:Name="ZoomText" Style="{StaticResource CaptionTextBlockStyle}" Text="100%" Typography.NumeralAlignment="Tabular" />
+                    </Button>
+                </StackPanel>
             </StackPanel>
         </Grid>
     </Grid>
