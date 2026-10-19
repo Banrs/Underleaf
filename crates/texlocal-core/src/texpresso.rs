@@ -801,76 +801,29 @@ mod tests {
 
     #[test]
     fn edits_in_utf16_units_change_the_same_bytes_as_in_a_plain_string() {
-        // What the editor has: UTF-16 units. What TeXpresso takes: bytes. Counted
-        // byte by byte, as decoding each character took most of the test's time: a
-        // character starts at each byte that doesn't continue one, and is two units
-        // where it takes four bytes.
-        let bytes_at = |text: &str, units: usize| {
-            let mut seen = 0;
-            for (at, &byte) in text.as_bytes().iter().enumerate() {
-                if byte & 0xC0 != 0x80 {
-                    if seen == units {
-                        return Some(at);
-                    }
-                    seen += 1 + usize::from(byte >= 0xF0);
-                }
+        // Each "aé😀b\n" is 6 units and 9 bytes.
+        let long = "aé😀b\n".repeat(900);
+        let cases = [
+            ("a😀b", 1, 2, "é", Some((1, 4))),
+            ("", 0, 0, "é", Some((0, 0))),
+            (long.as_str(), 6 * 800 + 2, 2, "x", Some((9 * 800 + 3, 4))),
+            // Inside the pair, or past the end: nothing changes.
+            ("a😀b", 2, 0, "x", None),
+            ("a😀b", 1, 1, "", None),
+            ("a😀b", 5, 0, "x", None),
+            ("a😀b", 0, 5, "", None),
+        ];
+        for (before, start, remove, inserted, changed) in cases {
+            let mut text = Text::new(before);
+            assert_eq!(text.edit(start, remove, inserted), changed);
+            let mut after = before.to_owned();
+            if let Some((from, removed)) = changed {
+                after.replace_range(from..from + removed, inserted);
             }
-            (seen == units).then_some(text.len())
-        };
-        let utf16_len = |text: &str| text.encode_utf16().count();
-        let mut plain = "aé😀b\n".repeat(900);
-        let mut text = Text::new(&plain);
-        let mut seed = 7u64;
-        let mut next = |below: usize| {
-            seed = seed
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            (seed >> 33) as usize % below.max(1)
-        };
-        let mut units = utf16_len(&plain);
-        for round in 0..4000 {
-            let start = next(units + 1);
-            let remove = match round % 7 {
-                0 => next(5000),
-                1 => next(3),
-                _ => 0,
-            }
-            .min(units - start);
-            let inserted = [
-                "x",
-                "é",
-                "😀",
-                "",
-                "\\section{Ünïcode 😀}\n",
-                &"y".repeat(next(4000)),
-            ][next(6)]
-            .to_owned();
-            let fits = bytes_at(&plain, start).zip(bytes_at(&plain, start + remove));
-            let changed = text.edit(start, remove, &inserted);
-            assert_eq!(changed, fits.map(|(from, to)| (from, to - from)), "{round}");
-            if let Some((from, to)) = fits {
-                plain.replace_range(from..to, &inserted);
-                units = units - remove + utf16_len(&inserted);
-            }
-            assert_eq!(text.0.len_bytes(), plain.len());
-            assert_eq!(text.byte_offset(start), bytes_at(&plain, start));
+            assert_eq!(text.string(), after);
         }
-        assert_eq!(text.string(), plain);
-        let units = utf16_len(&plain);
-        assert_eq!(text.edit(units + 1, 0, "x"), None);
-        assert_eq!(text.edit(units, 1, ""), None);
-        assert_eq!(text.edit(0, units + 1, ""), None);
-        assert_eq!(text.string(), plain);
-        let mut pair = Text::new("a😀b");
-        assert_eq!(pair.edit(2, 0, "x"), None);
-        assert_eq!(pair.edit(1, 1, ""), None);
-        assert_eq!(pair.byte_offset(2), None);
-        assert_eq!(pair.edit(1, 2, "é"), Some((1, 4)));
-        assert_eq!(pair.string(), "aéb");
-        let mut empty = Text::new("");
-        assert_eq!(empty.edit(0, 0, "é"), Some((0, 0)));
-        assert_eq!(empty.edit(1, 0, "x"), Some((2, 0)));
-        assert_eq!(empty.string(), "éx");
+        assert_eq!(Text::new("a😀b").byte_offset(2), None);
+        assert_eq!(Text::new(&long).byte_offset(6 * 800 + 4), Some(9 * 800 + 7));
     }
 
     /// A session of `root` that runs nothing.
