@@ -7,7 +7,14 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use super::{create_project, file_tree};
+use crate::CoreError;
 use crate::service::Service;
+
+#[track_caller]
+pub(crate) fn fails_with<T: std::fmt::Debug>(result: Result<T, CoreError>, text: &str) {
+    let message = result.unwrap_err().message;
+    assert!(message.contains(text), "{message:?} lacks {text:?}");
+}
 
 /// An empty library, and the service over it.
 pub(crate) fn library() -> (TempDir, Service) {

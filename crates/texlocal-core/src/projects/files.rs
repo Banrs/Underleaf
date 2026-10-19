@@ -36,16 +36,8 @@ fn make(root: &Path, rel: &str, dir: bool) -> Result<bool, CoreError> {
     Ok(true)
 }
 
-pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
-    if make(root, rel, dir)? {
-        Ok(())
-    } else {
-        Err(CoreError::conflict("Already exists"))
-    }
-}
-
-/// `create_file`, numbered past the names taken as Finder numbers copies
-/// ("untitled.tex", "untitled 2.tex"); the path made.
+/// Make the file or folder `rel`, numbered past the names taken as Finder
+/// numbers copies ("untitled.tex", "untitled 2.tex"); the path made.
 pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {
     for path in copy_paths(rel) {
         if make(root, &path, dir)? {
@@ -261,7 +253,7 @@ mod tests {
     #[test]
     fn a_renamed_entry_takes_its_saved_interface_state_along() {
         let (_dir, root) = project();
-        create_file(&root, "chapters/a.tex", false).unwrap();
+        create_free(&root, "chapters/a.tex", false).unwrap();
         let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
         write_ui(
             &root,

@@ -304,7 +304,7 @@ pub(crate) fn move_ui(root: &Path, moved: impl Fn(&str) -> Option<String>) {
 mod tests {
     use super::*;
     use crate::projects::testing::project;
-    use crate::projects::{create_file, list_projects};
+    use crate::projects::{create_free, list_projects};
 
     #[test]
     fn a_settings_patch_changes_only_its_keys_and_returns_what_a_later_read_sees() {
@@ -349,7 +349,7 @@ mod tests {
         assert_eq!(fs::read(&file).unwrap(), before);
 
         // A nested main file names the build's output, and the library lists it.
-        create_file(&root, "chapters/paper.tex", false).unwrap();
+        create_free(&root, "chapters/paper.tex", false).unwrap();
         let settings = write_settings(&root, &json!({ "mainFile": "chapters/paper.tex" })).unwrap();
         let pdf = settings.output(&root, "pdf").unwrap();
         assert_eq!(pdf, root.join(BUILD_DIR).join("paper.pdf"));

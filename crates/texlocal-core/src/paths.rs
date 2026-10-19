@@ -327,20 +327,10 @@ pub fn source_rel(root: &Path, input: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[path = "projects/tests.rs"]
-mod projects_tests;
-
-#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projects::testing::with_project;
-    use crate::projects::{create_file, create_project};
-
-    #[track_caller]
-    pub(super) fn fails_with<T: std::fmt::Debug>(result: Result<T, CoreError>, text: &str) {
-        let message = result.unwrap_err().message;
-        assert!(message.contains(text), "{message:?} lacks {text:?}");
-    }
+    use crate::projects::testing::{fails_with, with_project};
+    use crate::projects::{create_free, create_project};
 
     /// Escapes and the settings file are refused at every boundary, and a link
     /// inside the project is held to the rules of where it leads (#26): one out
@@ -351,7 +341,7 @@ mod tests {
         let (data, root) = (&service.data_dir, service.project_root("P").unwrap());
         fails_with(project_root(data, "../etc"), "Bad project id");
         // A folder inside a project is not a project of its own.
-        create_file(&root, "chapters/intro.tex", false).unwrap();
+        create_free(&root, "chapters/intro.tex", false).unwrap();
         fails_with(project_root(data, "P/chapters"), "Bad project id");
         assert_eq!(project_root(data, "./P/").unwrap(), root);
         let rel = safe_rel_file(&root, "./chapters/../chapters//intro.tex");
@@ -405,7 +395,7 @@ mod tests {
         let (_dir, service) = with_project();
         create_project(&service.data_dir, "PQ", "blank", None).unwrap();
         let root = service.project_root("P").unwrap();
-        create_file(&root, "ch/intro.tex", false).unwrap();
+        create_free(&root, "ch/intro.tex", false).unwrap();
         fs::create_dir(root.join("build")).unwrap();
         fs::write(root.join("build/generated.tex"), "").unwrap();
         #[cfg(unix)]

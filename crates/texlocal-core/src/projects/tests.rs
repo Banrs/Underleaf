@@ -6,11 +6,10 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::tests::fails_with;
 use crate::CoreError;
-use crate::projects::testing::{library, names_in, project};
+use crate::projects::testing::{fails_with, library, names_in, project};
 use crate::projects::{
-    SymbolScan, Symbols, create_file, create_project, file_tree, list_projects, rename_entry,
+    SymbolScan, Symbols, create_free, create_project, file_tree, list_projects, rename_entry,
     rename_project, search_project,
 };
 use crate::settings::{read_settings, write_settings};
@@ -33,7 +32,7 @@ fn a_rename_that_cannot_write_the_settings_is_undone_and_leaves_them_as_they_wer
     );
     assert!(root.join("main.tex").is_file() && !root.join("a.tex").exists());
     // One that leaves it alone goes through, and the file is as it was.
-    create_file(&root, "b.tex", false).unwrap();
+    create_free(&root, "b.tex", false).unwrap();
     rename_entry(&root, "b.tex", "c.tex").unwrap();
     assert_eq!(fs::read_to_string(&file).unwrap(), broken);
 }
@@ -41,15 +40,15 @@ fn a_rename_that_cannot_write_the_settings_is_undone_and_leaves_them_as_they_wer
 #[test]
 fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rules() {
     let (_dir, root) = project();
-    create_file(&root, "chapters/main.tex", false).unwrap();
-    create_file(&root, "chapters2/other.tex", false).unwrap();
+    create_free(&root, "chapters/main.tex", false).unwrap();
+    create_free(&root, "chapters2/other.tex", false).unwrap();
     // A folder holding the main file takes it along.
     write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
     let result = rename_entry(&root, "chapters", "content").unwrap();
     assert_eq!(result.main_file, "content/main.tex");
     assert_eq!(read_settings(&root).main_file, "content/main.tex");
     // One that merely shares a name's start with the main file's folder does not.
-    create_file(&root, "chapters/x.tex", false).unwrap();
+    create_free(&root, "chapters/x.tex", false).unwrap();
     write_settings(&root, &json!({ "mainFile": "chapters2/other.tex" })).unwrap();
     rename_entry(&root, "chapters", "moved").unwrap();
     assert_eq!(read_settings(&root).main_file, "chapters2/other.tex");
@@ -59,7 +58,7 @@ fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rul
     assert_eq!(names_in(&root.join("moved")), ["x.tex"]);
     // create_entry and uploads accept a leading "-"; only the main file, which
     // reaches latexmk's command line, may not start with one.
-    create_file(&root, "-draft.tex", false).unwrap();
+    create_free(&root, "-draft.tex", false).unwrap();
     let result = rename_entry(&root, "-draft.tex", "-notes/-draft.tex").unwrap();
     assert_eq!(result.to, "-notes/-draft.tex");
     assert!(root.join("-notes/-draft.tex").is_file());
@@ -69,7 +68,7 @@ fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rul
 fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
     let (_dir, root) = project();
     let data = root.parent().unwrap();
-    create_file(&root, "Figures/plot.tex", false).unwrap();
+    create_free(&root, "Figures/plot.tex", false).unwrap();
 
     let result = rename_entry(&root, "main.tex", "Main.tex").unwrap();
     assert_eq!(result.main_file, "Main.tex");
@@ -78,7 +77,7 @@ fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
     assert_eq!(names_in(&root), [".texlocal.json", "Main.tex", "figures"]);
 
     // A different entry in the way is still a conflict.
-    create_file(&root, "other.tex", false).unwrap();
+    create_free(&root, "other.tex", false).unwrap();
     let err = rename_entry(&root, "other.tex", "Main.tex").unwrap_err();
     assert_eq!(err.status, 409);
 
@@ -118,7 +117,7 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
     use std::os::unix::fs::PermissionsExt;
     let (_dir, root) = project();
     fs::write(root.join("main.tex"), "\\label{sec:open} needle\n").unwrap();
-    create_file(&root, "locked/inside.tex", false).unwrap();
+    create_free(&root, "locked/inside.tex", false).unwrap();
     fs::write(root.join("secret.tex"), "needle").unwrap();
     let lock = |path: &Path, mode| fs::set_permissions(path, fs::Permissions::from_mode(mode));
     lock(&root.join("locked"), 0o000).unwrap();
@@ -219,15 +218,15 @@ fn a_hit_places_its_match_in_utf16_units_of_the_line() {
 #[test]
 fn only_the_top_level_build_folder_is_the_compile_outputs() {
     let (_dir, root) = project();
-    fails_with(create_file(&root, "build", true), "compiled PDF");
-    fails_with(create_file(&root, "BUILD/x.tex", false), "compiled PDF");
-    create_file(&root, "figs/a.png", false).unwrap();
+    fails_with(create_free(&root, "build", true), "compiled PDF");
+    fails_with(create_free(&root, "BUILD/x.tex", false), "compiled PDF");
+    create_free(&root, "figs/a.png", false).unwrap();
     fails_with(rename_entry(&root, "figs", "Build"), "compiled PDF");
     // One made elsewhere, as a build makes it.
     fs::create_dir(root.join("Build")).unwrap();
     fs::write(root.join("Build/main.tex"), "needle \\label{gen:one}\n").unwrap();
     fs::write(root.join("Build/main.log"), "needle in the build dir").unwrap();
-    create_file(&root, "chapters/build/notes.tex", false).unwrap();
+    create_free(&root, "chapters/build/notes.tex", false).unwrap();
     let notes = "a needle and \\label{deep:one}\n";
     fs::write(root.join("chapters/build/notes.tex"), notes).unwrap();
 

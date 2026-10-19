@@ -331,14 +331,14 @@ pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projects::create_file;
+    use crate::projects::create_free;
     use crate::projects::testing::{names_in, project};
 
     #[test]
     fn a_path_in_the_library_is_found_in_its_project() {
         let (_dir, root) = project();
         let data = root.parent().unwrap();
-        create_file(&root, "a/b.tex", false).unwrap();
+        create_free(&root, "a/b.tex", false).unwrap();
         let at = |path: &Path| locate(data, path).unwrap();
         let found = |path: &str| {
             Some(Located {

@@ -189,7 +189,7 @@ pub(crate) fn is_text(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projects::create_file;
+    use crate::projects::create_free;
     use crate::projects::testing::project;
 
     #[test]
@@ -205,7 +205,7 @@ mod tests {
             ]
         );
         let (_dir, root) = project();
-        create_file(&root, "figs/a.png", false).unwrap();
+        create_free(&root, "figs/a.png", false).unwrap();
         let tree = serde_json::to_value(file_tree(&root).unwrap()).unwrap();
         // Folders first.
         let folder = &tree[0];
@@ -247,7 +247,7 @@ mod tests {
     fn the_file_tree_lists_folders_first_then_names_ignoring_case() {
         let (_dir, root) = project();
         for file in ["c.tex", "B.tex", "Zeta/z.tex", "beta/y.tex", ".hidden.tex"] {
-            create_file(&root, file, false).unwrap();
+            create_free(&root, file, false).unwrap();
         }
         let tree = file_tree(&root).unwrap();
         let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();

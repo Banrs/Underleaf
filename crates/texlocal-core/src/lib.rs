@@ -5,32 +5,32 @@
 // Path convention: every project-relative path this crate RETURNS or STORES
 // uses forward slashes — the hosts and SyncTeX both expect '/'.
 
-pub mod analyze;
+mod analyze;
 mod atomic;
-pub mod compile;
-pub mod error;
+mod compile;
+mod error;
 pub mod events;
-pub mod import;
-pub mod logparse;
-pub mod paths;
+mod import;
+mod logparse;
+mod paths;
 mod process;
-pub mod projects;
+mod projects;
 pub mod service;
 pub mod session;
-pub mod settings;
+mod settings;
 mod stamp;
-pub mod synctex;
+mod synctex;
 pub mod syntax;
-pub mod templates;
-pub mod tex;
-pub mod texpresso;
+mod templates;
+mod tex;
+mod texpresso;
 mod wordmatch;
-pub mod zipexport;
+mod zipexport;
 
 pub use error::CoreError;
 
-pub const BUILD_DIR: &str = "build";
-pub const SETTINGS_FILE: &str = ".texlocal.json";
+pub(crate) const BUILD_DIR: &str = "build";
+pub(crate) const SETTINGS_FILE: &str = ".texlocal.json";
 
 /// The crate's mutexes guard bookkeeping that no panic leaves half-written,
 /// or nothing at all, so a poisoned one is still good: it must not fail
