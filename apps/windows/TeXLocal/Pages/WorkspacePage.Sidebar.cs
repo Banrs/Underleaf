@@ -285,7 +285,7 @@ public sealed partial class WorkspacePage
     void Create(string name, bool dir) => Run("Can't create this", async () =>
     {
         var parent = TargetDir(FilesTree.SelectedItem as NavItem);
-        var made = (await Core.CallAsync("create_entry", new { id, path = Join(parent, name), dir, free = true })).GetProperty("path").GetString()!;
+        var made = (await Core.CallAsync("create_entry", new { id, path = Join(parent, name), dir })).GetProperty("path").GetString()!;
         if (parent.Length > 0 && expanded.Add(parent)) SaveFolds();
         await RefreshTree();
         DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
