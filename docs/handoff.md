@@ -1,26 +1,8 @@
 # Hand-over: what the October concise pass left (2026-10-19)
 
 The audit branch (`claude/audit-cuts`, PR #53) gave the repo a pass under AGENTS.md's "Writing
-code" rules; `docs/audit-2026-10.md` says what it cut. These parts it didn't cut, and why.
-
-## Windows files the redesign rewrites
-
-`claude/windows-fluent` (unmerged, 3 ahead and about 80 behind `main`) rewrites these, so a
-pass here would only conflict with it. Give them the pass on that branch, after rebasing it
-onto `main`:
-
-| File | Lines |
-|---|---:|
-| `Pages/WorkspacePage.xaml.cs` | 590 |
-| `Pages/WorkspacePage.xaml` | 438 |
-| `Pages/WorkspacePage.Sidebar.cs` | 389 |
-| `Pages/HomePage.xaml`, `.xaml.cs` | 378 |
-| `MainWindow.xaml`, `.xaml.cs` | 217 |
-| `Pages/WorkspacePage.Insert.cs` | 151 |
-| `Themes/Generic.xaml` | 75 |
-| `Controls/Sizer.cs` | 58 |
-| `install.ps1` | 20 |
-| `docs/windows.md` | 486 |
+code" rules, the Windows shell's redesign included; `docs/audit-2026-10.md` says what it cut.
+These parts it didn't cut, and why.
 
 ## Needs a Mac on screen
 
@@ -67,7 +49,9 @@ Native replacements that need a look on screen:
   - Folding `theOutlineReadsTheInputs` into `theLevelsAreTheMainFilesClasses`.
 - **Windows:** the source checks in `Command`, `ShowFind`, `OnReplace` and `OnPaste` (the menus
   and find bar work after a file closes); `Reload`'s check after its `await`; `ShowPartner`'s range
-  check; `PdfView.Load`'s catch, which keeps the last good PDF.
+  check; `PdfView.Load`'s catch, which keeps the last good PDF. `WorkspacePage.xaml`'s Light and
+  Default colour sets for the command bar's checked toggles look alike but resolve against the
+  theme; merge them only after checking light, dark and high contrast on screen.
 - **Core:**
   - `tests/texpresso_live.rs` stays an integration test, as `texpresso.rs` is a single file.
   - `watch::relative` and `tree`'s `Entry::rel` stay apart: one drops names that aren't UTF-8 and
