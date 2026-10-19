@@ -6,8 +6,8 @@ extension ProjectModel {
         let name = directory ? "untitled folder" : "untitled.tex"
         // A taken name is numbered on ("untitled 2.tex").
         guard let made = await alerting("Couldn’t Create “\(name)”", {
-            try await core.call("create_entry", ["id": id, "path": folder.isEmpty ? name : "\(folder)/\(name)", "dir": directory,
-                                                "free": true], as: PathEvent.self).path
+            try await core.call("create_entry", ["id": id, "path": folder.isEmpty ? name : "\(folder)/\(name)", "dir": directory],
+                                as: PathEvent.self).path
         }), !closed else { return nil }
         // For the sidebar's rename that follows: the open below can be overtaken by a later one, which reads no tree for it.
         await tree.reload()
