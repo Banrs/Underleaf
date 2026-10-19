@@ -10,18 +10,6 @@ use std::ops::Range;
 use super::stack::Stack;
 use super::{NAME, NEWLINE, ascii, catalog::CATALOG, is, letter};
 
-/// Whether the end of `src` is in maths, read as TeX would: $…$, $$…$$,
-/// \(…\), \[…\] and the maths environments (starred too) open maths; \text{…}
-/// and its kin go back to text inside it; escapes (\$, \%, \\) aren't
-/// delimiters; comments and verbatim are skipped; and a blank line ends an
-/// unclosed $ or \[, as the paragraph it can't span. So `$|$` (an empty
-/// pair, the caret between) is maths.
-pub fn math_mode_at(src: &[u16]) -> bool {
-    let mut scanner = Scanner::default();
-    scanner.run(src, src.len(), &[], &mut ());
-    scanner.in_math()
-}
-
 /// A line without its comment: up to its first `%` that no backslash
 /// escapes, as the scanner reads a comment (though a line alone can't tell
 /// a `%` that \verb or a verbatim environment holds).
@@ -72,12 +60,59 @@ fn spaces_end(src: &[u16], from: usize) -> usize {
 
 /// Whether the line feed at `at` ends a paragraph: the line after it is
 /// blank, and ends in a line feed too.
-pub(crate) fn paragraph_end(src: &[u16], at: usize) -> bool {
+fn paragraph_end(src: &[u16], at: usize) -> bool {
     src.get(spaces_end(src, at + 1)) == Some(&NEWLINE)
 }
 
 fn find(src: &[u16], from: usize, needle: &[u16]) -> Option<usize> {
     (from..=src.len().checked_sub(needle.len())?).find(|&i| src[i..].starts_with(needle))
+}
+
+/// A command's arguments as TeX reads them from where its name ends: past
+/// spaces, line breaks and comments, a star, options in brackets and one
+/// braced argument, none of it past a blank line. Each argument's text
+/// between its comments goes to `piece`, with whether it's the braced
+/// argument's; the answer is where the reading stopped, and whether it
+/// stopped past the braced argument's close.
+pub(crate) fn arguments(
+    src: &[u16],
+    mut i: usize,
+    mut piece: impl FnMut(Range<usize>, bool),
+) -> (usize, bool) {
+    let at = |i: usize| char::from_u32(src[i] as u32).unwrap_or_default();
+    let (mut close, mut from, mut depth) = (None, i, 0);
+    while i < src.len() && !(at(i) == '\n' && paragraph_end(src, i)) {
+        match (at(i), close) {
+            ('%', _) => {
+                if let Some(c) = close {
+                    piece(from..i, c == '}');
+                }
+                i = find(src, i, &[NEWLINE]).unwrap_or(src.len());
+                from = i;
+                continue;
+            }
+            // An escape, but not of a line feed: that may end the paragraph.
+            ('\\', Some(_)) if i + 1 < src.len() && at(i + 1) != '\n' => i += 1,
+            ('{', Some(_)) => depth += 1,
+            ('}', Some(_)) if depth > 0 => depth -= 1,
+            (c, Some(delimiter)) if c == delimiter && depth == 0 => {
+                piece(from..i, c == '}');
+                if c == '}' {
+                    return (i + 1, true);
+                }
+                close = None;
+            }
+            (_, Some(_)) | ('*' | ' ' | '\t' | '\r' | '\n', None) => {}
+            ('[', None) => (close, from) = (Some(']'), i + 1),
+            ('{', None) => (close, from) = (Some('}'), i + 1),
+            _ => break,
+        }
+        i += 1;
+    }
+    if let Some(c) = close {
+        piece(from..i, c == '}');
+    }
+    (i, false)
 }
 
 /// How far after \begin or \end its environment's name is looked for.
@@ -328,9 +363,7 @@ impl Scanner {
             return (false, self.i + 1);
         }
         let name_start = self.i;
-        while self.i < src.len() && letter(src[self.i]) {
-            self.i += 1;
-        }
+        self.i += src[name_start..].iter().take_while(|&&u| letter(u)).count();
         let name_end = self.i;
         let mut buf = [0; NAME];
         let name = ascii(&src[name_start..name_end], &mut buf);
@@ -415,32 +448,6 @@ impl Scanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn in_math(text: &str) -> bool {
-        math_mode_at(&text.encode_utf16().collect::<Vec<_>>())
-    }
-
-    #[test]
-    fn an_unclosed_verb_ends_with_its_line() {
-        // \verb can't cross a line, so what follows is read as ever.
-        assert!(in_math("a \\verb|x\n$y"));
-        assert!(!in_math("a \\verb|x\n$y$ z"));
-        assert!(in_math("$ \\verb|x\ny"), "the maths it was in goes on");
-        // A line feed straight after \verb ends it too.
-        assert!(in_math("\\verb\n$y"));
-        // Still on its line, the position is in the code, not maths.
-        assert!(!in_math("$ \\verb|x"));
-        // Closed, it's skipped as before, delimiters and all.
-        assert!(!in_math("\\verb|$| a"));
-        assert!(in_math("\\verb*+x+ $a"));
-    }
-
-    #[test]
-    fn a_blank_line_may_end_in_a_carriage_return() {
-        assert!(!in_math("$x\r\n\r\ny"));
-        assert!(!in_math("$x\n \t\ny"));
-        assert!(in_math("$x\r\ny"));
-    }
 
     /// How far a scan probed twice at " b}" in `source` reads.
     fn probed_read(source: &str) -> usize {

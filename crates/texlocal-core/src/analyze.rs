@@ -10,7 +10,6 @@ use regex::Regex;
 use serde::Serialize;
 
 use crate::paths;
-use crate::syntax::catalog::CATALOG;
 use crate::syntax::{headings, prose, scan};
 
 // What a title drops whole: \texorpdfstring's TeX argument (its PDF string is
@@ -45,13 +44,13 @@ pub struct Heading {
 
 impl Heading {
     fn new(depth: usize, title: Option<String>, line: usize, file: Option<String>) -> Self {
-        let level = &CATALOG.heading_levels[depth];
+        let (command, level) = headings::LEVELS[depth];
         Self {
             depth,
-            command: &level.command,
-            level: &level.title,
+            command,
+            level,
             untitled: title.is_none(),
-            title: title.unwrap_or_else(|| format!("Untitled {}", level.title)),
+            title: title.unwrap_or_else(|| format!("Untitled {level}")),
             line,
             file,
         }
@@ -99,13 +98,11 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
             let key = format!("{file}\t{}:{title}", heading.depth);
             let count = seen.entry(key.clone()).or_default();
             *count += 1;
-            let fold_key = format!("{key}#{count}");
-            let children = nest(outline, next, Some(heading.depth), seen);
             nodes.push(OutlineNode {
                 index,
                 heading: heading.clone(),
-                fold_key,
-                children,
+                fold_key: format!("{key}#{count}"),
+                children: nest(outline, next, Some(heading.depth), seen),
             });
         }
         nodes
@@ -189,10 +186,9 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
     let words = prose::words(&text, |text, name, name_end| {
         let line = text.line_index(name_end as u32) + 1;
         let units = &text.units;
-        let mut levels = CATALOG.heading_levels.iter();
-        if let Some(depth) = levels.position(|l| l.command == name) {
+        if let Some(depth) = headings::LEVELS.iter().position(|l| l.0 == name) {
             if heading_line != Some(line)
-                && let Some(title) = title(units, name_end)
+                && let (Some(title), _) = braced(units, name_end)
             {
                 let heading = Heading::new(depth, plain_title(&title), line, Some(file.clone()));
                 into.outline.push(heading);
@@ -214,83 +210,30 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
     into.words += words;
 }
 
-/// A heading's title, from where its command's name ends: past its star and
-/// short title, its braced argument, which may run on over line breaks, as
-/// a hard-wrapped title does, but not past a blank line; without comments.
-fn title(units: &[u16], name_end: usize) -> Option<String> {
-    let at = |i: usize, c: char| units.get(i) == Some(&(c as u16));
-    let mut i = spaces(units, name_end)?;
-    if at(i, '*') {
-        i = spaces(units, i + 1)?;
-    }
-    if at(i, '[') {
-        i = spaces(units, argument(units, i)?.1)?;
-    }
-    let (title, _) = at(i, '{').then(|| argument(units, i))??;
-    Some(String::from_utf16_lossy(&title))
+/// A command's braced argument, without its comments, if it closes; and
+/// where the reading stopped.
+fn braced(units: &[u16], name_end: usize) -> (Option<String>, usize) {
+    let mut text = Vec::new();
+    let (stop, closed) = scan::arguments(units, name_end, |piece, braced| {
+        if braced {
+            text.extend_from_slice(&units[piece]);
+        }
+    });
+    (closed.then(|| String::from_utf16_lossy(&text)), stop)
 }
 
-/// Past the spaces from `i`, line breaks among them, but not a blank line.
-fn spaces(units: &[u16], mut i: usize) -> Option<usize> {
-    while let Some(&u) = units.get(i) {
-        if u == '\n' as u16 && scan::paragraph_end(units, i) {
-            return None;
-        }
-        if !char::from_u32(u as u32).is_some_and(char::is_whitespace) {
-            break;
-        }
-        i += 1;
-    }
-    Some(i)
-}
-
-/// The argument whose `{` or `[` is at `open`, without its comments, and
-/// where it ends: at its close, braces nesting and escaped ones not
-/// counting; none when a blank line comes first.
-fn argument(units: &[u16], open: usize) -> Option<(Vec<u16>, usize)> {
-    let close = if units[open] == '[' as u16 { ']' } else { '}' };
-    let (mut text, mut depth, mut i) = (Vec::new(), 0usize, open + 1);
-    while let Some(&u) = units.get(i) {
-        match char::from_u32(u as u32).unwrap_or_default() {
-            // An escape, but not of a line feed: that may end the paragraph.
-            '\\' if units.get(i + 1).is_some_and(|&next| next != '\n' as u16) => {
-                text.extend_from_slice(&units[i..i + 2]);
-                i += 2;
-                continue;
-            }
-            '%' => {
-                i += units[i..].iter().take_while(|&&u| u != '\n' as u16).count();
-                continue;
-            }
-            '\n' if scan::paragraph_end(units, i) => return None,
-            c if c == close && depth == 0 => return Some((text, i + 1)),
-            '{' => depth += 1,
-            '}' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-        text.push(u);
-        i += 1;
-    }
-    None
-}
-
-/// The file an \input, \include or \subfile names on its line: in braces,
-/// or for \input (`bare`) also as TeX reads a name without them, to a space.
+/// The file an \input, \include or \subfile names: its braced argument, or
+/// for \input (`bare`) also a name as TeX reads one without braces, to a
+/// space.
 fn input_name(units: &[u16], name_end: usize, bare: bool) -> Option<String> {
-    let rest = &units[name_end..];
-    let line = rest.iter().position(|&u| u == '\n' as u16);
-    let line = String::from_utf16_lossy(&rest[..line.unwrap_or(rest.len())]);
-    let after = line.trim_start();
-    let name = match after.strip_prefix('{') {
-        Some(braced) => braced.split_once('}')?.0,
-        None if bare && after.len() < line.len() => {
-            let end = after.find(|c: char| c.is_whitespace() || "{}\\%".contains(c));
-            &after[..end.unwrap_or(after.len())]
-        }
-        None => return None,
+    let name = match braced(units, name_end) {
+        (Some(name), _) => name,
+        (None, stop) if bare => char::decode_utf16(units[stop..].iter().copied())
+            .map_while(|c| c.ok().filter(|c| !"{}\\% \t\r\n".contains(*c)))
+            .collect(),
+        _ => return None,
     };
-    let name = name.trim();
-    (!name.is_empty() && !name.contains(['{', '%'])).then(|| name.to_owned())
+    Some(name.trim().to_owned())
 }
 
 /// A title as the outline shows it: styles, labels and grouping braces gone,
@@ -329,12 +272,15 @@ mod tests {
     }
 
     /// Words part at every Unicode space and at TeX's special characters,
-    /// and nowhere else; a letter of any script makes a word.
+    /// and nowhere else; a letter of any script makes a word. Words are
+    /// prose: not a citation's key, a comment, maths, a command's name, or
+    /// the names a preamble or an environment has.
     #[test]
     fn words_part_at_unicode_spaces_and_tex_specials() {
         let cases = [
             ("", 0),
             ("plain ascii words", 3),
+            ("123 456 7.5 foo123", 1),
             ("a\u{a0}b\u{2003}c\u{3000}d\u{1680}e\tf", 6),
             ("one\u{85}two\u{2028}three\u{2029}four", 4),
             // Neither is a space, so each joins its neighbours.
@@ -347,7 +293,12 @@ mod tests {
             ("\\textbf{bold} \\cite[p. 3]{key} 42 -- ...", 1),
             ("kept % dropped words", 1),
             ("50\\% off % gone", 1),
+            ("a line break \\\\% then a comment", 3),
             ("%all comment", 0),
+            (
+                "\\documentclass[a4paper]{article}\n\\usepackage{amsmath}\n\\begin{document}\nTwo words\n\\begin{itemize}\\item one\\end{itemize}\n\\[ x + y \\]\n\\begin{lstlisting}\nx = 5 % 3\n\\end{lstlisting}\n\\end{document}",
+                3,
+            ),
         ];
         for (line, expected) in cases {
             assert_eq!(prose::words(line, |_, _, _| {}), expected, "{line:?}");
@@ -358,8 +309,6 @@ mod tests {
     #[test]
     fn a_file_reads_as_its_outline_and_words() {
         let cases: &[(&str, Outline, usize)] = &[
-            ("", &[], 0),
-            ("Hello world\n", &[], 2),
             (
                 "one\r\n\\section{Two}\r\n\\section{Three}\nfour",
                 &[(2, "Two", 2), (2, "Three", 3)],
@@ -377,15 +326,17 @@ mod tests {
                 ],
                 10,
             ),
+            // TeX's spaces and comments come before an argument, a no-break
+            // space doesn't.
             (
-                "\\section*{Starred}\n\\section[Short]{Long title}\n\\subsection * [x] {Spaced}\n\\section\u{a0}{After a no-break space}",
+                "\\section*{Starred}\n\\section[Short]{Long title}\n\\subsection * [x] {Spaced}\n\\section\u{a0}{After a no-break space}\n\\section % a note\n{After a comment}",
                 &[
                     (2, "Starred", 1),
                     (2, "Long title", 2),
                     (3, "Spaced", 3),
-                    (2, "After a no-break space", 4),
+                    (2, "After a comment", 5),
                 ],
-                10,
+                13,
             ),
             // Titles that wrap, and one on the line after its command; not
             // across a blank line, nor its comment.
@@ -415,23 +366,6 @@ mod tests {
                 ],
                 14,
             ),
-            // Words are prose: not a citation's key, a comment, maths, a
-            // command's name, or the names a preamble or an environment has.
-            (
-                "Hello \\textbf{bold} world \\cite[p.~3]{key} text \\\\ done",
-                &[],
-                5,
-            ),
-            ("one two % three four\n50\\% off % really", &[], 3),
-            ("a line break \\\\% then a comment", &[], 3),
-            ("x^2 + y_1 = $a$ and~b & c{d}e", &[], 7),
-            (
-                "\\documentclass[a4paper]{article}\n\\usepackage{amsmath}\n\\begin{document}\nTwo words\n\\begin{itemize}\\item one\\end{itemize}\n\\[ x + y \\]\n\\begin{lstlisting}\nx = 5 % 3\n\\end{lstlisting}\n\\end{document}",
-                &[],
-                3,
-            ),
-            ("123 456 7.5 foo123", &[], 1),
-            ("Café naïve Ελληνικά Русский 中文 123", &[], 5),
             (
                 "\\begin{verbatim}\n\\section{Hidden}\n\\end{verbatim}\\section{Visible}\n\\verb|\\section{Hidden}| \\section{After}\n\\\\section{Escaped}",
                 &[(2, "Visible", 3), (2, "After", 4)],

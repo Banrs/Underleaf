@@ -6,8 +6,7 @@ use std::ops::Range;
 use serde::Serialize;
 
 use super::scan::{Group, Visit};
-use super::scans::Scans;
-use super::{NAME, Text, TextEdit, TextRange, ascii, edit};
+use super::{NAME, SourceDocument, TextEdit, TextRange, ascii, clamp, splice};
 
 /// The styles the whole selection has, each as the edits that unwrap the
 /// innermost command giving it: its name and opening brace, then its closing
@@ -58,77 +57,80 @@ impl Visit for Found {
     }
 }
 
-/// The scan resumes from a kept point before the selection, and stops once
-/// the groups open at its end have closed, or at its paragraph's end.
-pub(crate) fn text_styles(text: &Text, scans: &mut Scans, selection: TextRange) -> TextStyles {
-    let src = &text.units;
-    let start = selection.start as usize;
-    let end = start + selection.length as usize;
-    let mut found = Found {
-        start,
-        end,
-        open: Vec::new(),
-        closes: Vec::new(),
-        whole: None,
-    };
-    let mut scanner = scans.resume(text, start, src.len()).scanner;
-    scanner.run(src, src.len(), &[start, end], &mut found);
-    let [at_start, at_end] = [&found.open[0], &found.open[1]];
-    let mut groups: Vec<&Group> = at_start
-        .iter()
-        .zip(at_end)
-        .take_while(|(a, b)| a.open == b.open)
-        .map(|(a, _)| a)
-        .collect();
-    groups.extend(found.whole.as_ref());
-    // Only text styles: maths has its own (\mathbf).
-    let text_from = groups.iter().rposition(|g| g.math).map_or(0, |k| k + 1);
-    let (mut bold, mut shape, mut underline) = (None, Shape::Upright, None);
-    for (k, group) in groups.iter().enumerate().skip(text_from) {
-        let Some((backslash, name_end)) = group.command else {
-            continue;
+impl SourceDocument {
+    /// The bold, italic and underline the whole selection is in, each as the
+    /// edits that unwrap the command giving it, in order. The scan resumes
+    /// from a kept point before the selection, and stops once the groups open
+    /// at its end have closed, or at its paragraph's end.
+    pub fn text_styles(&mut self, selection: TextRange) -> TextStyles {
+        let (start, end) = clamp(selection, self.text.len()).bounds();
+        let src = &self.text.units;
+        let mut found = Found {
+            start,
+            end,
+            open: Vec::new(),
+            closes: Vec::new(),
+            whole: None,
         };
-        match ascii(&src[backslash + 1..name_end], &mut [0; NAME]) {
-            "textbf" => bold = Some(k),
-            "textmd" => bold = None,
-            "textnormal" => (bold, shape) = (None, Shape::Upright),
-            "textit" => shape = Shape::Italic(k),
-            "textsl" => shape = Shape::Slanted,
-            "textup" => shape = Shape::Upright,
-            "emph" => {
-                shape = match shape {
-                    Shape::Upright => Shape::Italic(k),
-                    _ => Shape::Upright,
+        let mut scanner = self.scans.resume(&self.text, start, src.len()).scanner;
+        scanner.run(src, src.len(), &[start, end], &mut found);
+        let [at_start, at_end] = [&found.open[0], &found.open[1]];
+        let mut groups: Vec<&Group> = at_start
+            .iter()
+            .zip(at_end)
+            .take_while(|(a, b)| a.open == b.open)
+            .map(|(a, _)| a)
+            .collect();
+        groups.extend(found.whole.as_ref());
+        // Only text styles: maths has its own (\mathbf).
+        let text_from = groups.iter().rposition(|g| g.math).map_or(0, |k| k + 1);
+        let (mut bold, mut shape, mut underline) = (None, Shape::Upright, None);
+        for (k, group) in groups.iter().enumerate().skip(text_from) {
+            let Some((backslash, name_end)) = group.command else {
+                continue;
+            };
+            match ascii(&src[backslash + 1..name_end], &mut [0; NAME]) {
+                "textbf" => bold = Some(k),
+                "textmd" => bold = None,
+                "textnormal" => (bold, shape) = (None, Shape::Upright),
+                "textit" => shape = Shape::Italic(k),
+                "textsl" => shape = Shape::Slanted,
+                "textup" => shape = Shape::Upright,
+                "emph" => {
+                    shape = match shape {
+                        Shape::Upright => Shape::Italic(k),
+                        _ => Shape::Upright,
+                    }
                 }
+                "underline" => underline = Some(k),
+                _ => {}
             }
-            "underline" => underline = Some(k),
-            _ => {}
         }
-    }
-    let italic = match shape {
-        Shape::Italic(k) => Some(k),
-        _ => None,
-    };
-    let unwrap = |k: Option<usize>| {
-        let group = groups[k?];
-        let (backslash, _) = group.command?;
-        let close = found.closes.iter().find(|c| c.0 == group.open)?.1;
-        Some(vec![
-            edit(backslash as u32, (group.open + 1 - backslash) as u32, ""),
-            edit(close as u32, 1, ""),
-        ])
-    };
-    TextStyles {
-        bold: unwrap(bold),
-        italic: unwrap(italic),
-        underline: unwrap(underline),
+        let italic = match shape {
+            Shape::Italic(k) => Some(k),
+            _ => None,
+        };
+        let unwrap = |k: Option<usize>| {
+            let group = groups[k?];
+            let (backslash, _) = group.command?;
+            let close = found.closes.iter().find(|c| c.0 == group.open)?.1;
+            Some(vec![
+                splice(backslash, group.open + 1 - backslash, ""),
+                splice(close, 1, ""),
+            ])
+        };
+        TextStyles {
+            bold: unwrap(bold),
+            italic: unwrap(italic),
+            underline: unwrap(underline),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::syntax::utf16;
+    use crate::syntax::{range, utf16};
 
     /// The styles at the selection marked by "«" and "»" (or the caret, "‸"):
     /// bold, italic and underline, each as its command's name, "?" for one
@@ -144,11 +146,7 @@ mod tests {
         let source: String = marked.chars().filter(|c| !"‸«»".contains(*c)).collect();
         let units: Vec<u16> = source.encode_utf16().collect();
         let (start, end) = (utf16(&source[..start]) as u32, utf16(&source[..end]) as u32);
-        let selection = TextRange {
-            start,
-            length: end - start,
-        };
-        let found = text_styles(&Text::new(&source), &mut Scans::default(), selection);
+        let found = SourceDocument::new(&source).text_styles(range(start, end - start));
         [found.bold, found.italic, found.underline].map(|edits| {
             let Some(edits) = edits else {
                 return String::new();
@@ -192,14 +190,7 @@ mod tests {
     #[test]
     fn the_innermost_command_is_the_one_to_unwrap() {
         let nested = r"\textbf{a \textbf{b‸} c}";
-        let found = text_styles(
-            &Text::new(&nested.replace('‸', "")),
-            &mut Scans::default(),
-            TextRange {
-                start: 19,
-                length: 0,
-            },
-        );
+        let found = SourceDocument::new(&nested.replace('‸', "")).text_styles(range(19, 0));
         assert_eq!(found.bold.unwrap()[0].start, 10);
         assert_eq!(styles(nested), BOLD);
     }

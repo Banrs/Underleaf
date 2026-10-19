@@ -50,42 +50,31 @@ pub(crate) struct Typing {
     pending: Option<(usize, usize)>,
 }
 
-const PAIRS: [(&str, &str); 3] = [("(", ")"), ("[", "]"), ("{", "}")];
-
 /// An opening bracket is closed for the user before these, or space, or the end.
 const CLOSE_BEFORE: [&str; 6] = [")", "]", "}", ":", ";", ">"];
 
 /// How far a bracket's partner is looked for, either way.
 const PARTNER_WITHIN: usize = 10_000;
 
-fn closing_of(c: &str) -> Option<&'static str> {
-    PAIRS
-        .iter()
-        .find(|(open, _)| *open == c)
-        .map(|&(_, close)| close)
-}
-
-fn is_closing(c: &str) -> bool {
-    PAIRS.iter().any(|&(_, close)| close == c)
-}
-
-/// Whether a unit is a closing bracket.
-pub(super) fn closing_unit(u: u16) -> bool {
-    bracket(u).is_some_and(|(_, opens)| !opens)
-}
-
-/// If the unit is a bracket, its partner and whether it opens.
-fn bracket(u: u16) -> Option<(u16, bool)> {
-    let (partner, opens) = match u8::try_from(u).ok()? {
-        b'(' => (b')', true),
-        b'[' => (b']', true),
-        b'{' => (b'}', true),
-        b')' => (b'(', false),
-        b']' => (b'[', false),
-        b'}' => (b'{', false),
+/// If a character is a bracket, its partner and whether it opens.
+fn bracket(c: &str) -> Option<(&'static str, bool)> {
+    Some(match c {
+        "(" => (")", true),
+        "[" => ("]", true),
+        "{" => ("}", true),
+        ")" => ("(", false),
+        "]" => ("[", false),
+        "}" => ("{", false),
         _ => return None,
-    };
-    Some((partner.into(), opens))
+    })
+}
+
+fn closing_of(c: &str) -> Option<&'static str> {
+    bracket(c).and_then(|(close, opens)| opens.then_some(close))
+}
+
+pub(super) fn is_closing(c: &str) -> bool {
+    bracket(c).is_some_and(|(_, opens)| !opens)
 }
 
 /// The character (grapheme cluster) a unit is in, as NSString's composed
@@ -341,7 +330,8 @@ impl SourceDocument {
         let at = at as usize;
         let units = &self.text.units[..];
         let start = *units.get(at)?;
-        let (partner, opens) = bracket(start)?;
+        let (partner, opens) = bracket(&String::from_utf16_lossy(&[start]))?;
+        let partner = u16::from(partner.as_bytes()[0]);
         let near = at.saturating_sub(PARTNER_WITHIN)..(at + PARTNER_WITHIN + 1).min(units.len());
         // The brackets outside comments and whether each is escaped, in the
         // range; a comment is known from its line's start, so reading starts there.
@@ -378,12 +368,10 @@ fn matched<'a>(
     brackets: impl Iterator<Item = &'a (usize, u16, bool)>,
     start: u16,
 ) -> Option<usize> {
-    let mut depth = 0;
-    for &(i, u, _) in brackets {
-        depth = if u == start { depth + 1 } else { depth - 1 };
-        if depth == 0 {
-            return Some(i);
-        }
-    }
-    None
+    brackets
+        .scan(0, |depth, &(i, u, _)| {
+            *depth += if u == start { 1 } else { -1 };
+            Some((i, *depth))
+        })
+        .find_map(|(i, depth)| (depth == 0).then_some(i))
 }

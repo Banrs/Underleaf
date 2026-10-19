@@ -16,7 +16,7 @@
 
 use serde::Serialize;
 
-use super::typing::closing_unit;
+use super::typing::is_closing;
 use super::{SnippetField, SourceDocument, TextEdit, TextRange, span, splice};
 
 /// Tab: a snippet's next field, or the lines indented.
@@ -103,7 +103,6 @@ impl Snippet {
         true
     }
 
-    /// Whether a selection is within a field.
     pub(super) fn contains(&self, start: usize, end: usize) -> bool {
         self.fields.iter().any(|f| f.holds(start, end))
     }
@@ -145,12 +144,8 @@ impl SourceDocument {
         // A bracket closing an empty field is the snippet's own, put in for
         // the user like one auto-closed: typing it steps over.
         for field in snippet.fields.iter().filter(|f| f.length == 0) {
-            if self
-                .text
-                .units
-                .get(field.start)
-                .is_some_and(|&u| closing_unit(u))
-            {
+            let next = self.text.units.get(field.start..field.start + 1);
+            if next.is_some_and(|u| is_closing(&String::from_utf16_lossy(u))) {
                 self.typing.closers.insert(field.start);
             }
         }

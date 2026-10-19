@@ -27,9 +27,6 @@ pub struct Catalog {
     /// (name, snippet); "#{…}" marks a snippet field.
     pub commands: Vec<(String, String)>,
     pub templates: Templates,
-    /// The levels a line's style can be, outermost first: indexed by the
-    /// outline's depth.
-    pub heading_levels: Vec<HeadingLevel>,
     /// The maths symbols by kind, each inserted as its command.
     pub symbol_groups: Vec<SymbolGroup>,
 }
@@ -58,13 +55,6 @@ pub struct Template {
     pub inline: bool,
 }
 
-/// A sectioning command (without its backslash) and its name.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct HeadingLevel {
-    pub title: String,
-    pub command: String,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SymbolGroup {
     pub title: String,
@@ -79,5 +69,16 @@ pub struct Symbol {
 }
 
 pub static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("catalog.json")).expect("catalog.json is valid")
+    let mut catalog: Catalog =
+        serde_json::from_str(include_str!("catalog.json")).expect("catalog.json is valid");
+    // The palette's symbols complete as themselves, after the commands, but
+    // for those with a snippet there or an argument (\sqrt{}).
+    let symbols = catalog.symbol_groups.iter().flat_map(|g| &g.symbols);
+    let more: Vec<_> = symbols
+        .map(|s| s.command.clone())
+        .filter(|c| !c.contains('{') && !catalog.commands.iter().any(|(name, _)| name == c))
+        .map(|c| (c.clone(), c))
+        .collect();
+    catalog.commands.extend(more);
+    catalog
 });

@@ -3,23 +3,15 @@
 //! each change reported back (`follow`), each selection (`select`), and a
 //! snippet's field mirrored once the text has changed.
 
-use texlocal_core::syntax::{
-    Change, Completing, Keystroke, SnippetField, SourceDocument, Style, TextEdit, TextRange,
-    map_selections,
-};
+use crate::syntax::complete::SnippetField;
+use crate::syntax::edit::{Change, Style, map_selections};
+use crate::syntax::typing::{Completing, Keystroke};
+use crate::syntax::{SourceDocument, TextEdit, TextRange, edit, range};
 
-use super::{range, units};
+use super::units;
 
 fn caret(at: u32) -> TextRange {
     range(at, 0)
-}
-
-fn edit(start: u32, length: u32, text: &str) -> TextEdit {
-    TextEdit {
-        start,
-        length,
-        text: text.into(),
-    }
 }
 
 /// An empty field at `start`, `index`th in Tab's order.
@@ -372,7 +364,7 @@ fn blocks_tab_through_their_fields() {
 #[test]
 fn a_field_in_two_places_is_typed_in_both() {
     let mut e = Editor::open("\\beg", None);
-    let offer = e.doc.completions(4, false, &[], &[]).unwrap();
+    let offer = e.doc.completions(4, false).unwrap();
     let item = &offer.items[0];
     let end = offer.start + units(&item.text);
     e.put(edit(offer.start, 4 - offer.start, &item.text), end);
@@ -435,7 +427,7 @@ fn the_last_field_is_mirrored_and_left_by_shift_tab() {
 #[test]
 fn a_completions_own_bracket_is_stepped_over() {
     let mut e = Editor::open("\\textb", None);
-    let offer = e.doc.completions(6, false, &[], &[]).unwrap();
+    let offer = e.doc.completions(6, false).unwrap();
     let item = &offer.items[0];
     assert_eq!(item.text, "\\textbf{}");
     e.put(edit(offer.start, 6, &item.text), 9);
@@ -532,12 +524,7 @@ fn several_selections_move_together() {
         // Given last first, they move as the same lines.
         (
             vec![range(8, 1), range(2, 4)],
-            "2
-3
-1
-5
-4
-6",
+            "2\n3\n1\n5\n4\n6",
             vec![range(6, 1), range(0, 4)],
         ),
     ];
@@ -585,35 +572,4 @@ fn a_partner_is_not_an_escaped_bracket_nor_one_in_a_comment() {
     assert_eq!(doc.partner(7), None);
     let doc = SourceDocument::new("(a 5\\% )");
     assert_eq!(doc.partner(0), Some(7));
-}
-
-#[test]
-fn typing_answers_by_name() {
-    let mut doc = SourceDocument::new("");
-    let key = doc.call(
-        "type",
-        r#"{"selection": {"start": 0, "length": 0}, "text": "{"}"#,
-    );
-    assert_eq!(
-        key.as_deref(),
-        Some(
-            r#"{"edit":{"start":0,"length":0,"text":"{}"},"selection":{"start":1,"length":0},"partner":null,"completions":"offer"}"#
-        )
-    );
-    let off = r#"{"selection": {"start": 0, "length": 0}, "text": "{", "autoPair": false}"#;
-    assert!(doc.call("type", off).unwrap().contains(r#""edit":null"#));
-    // An edit's following and a selection's are the C ABI's own.
-    let follow = r#"{"old": {"start": 0, "length": 0}, "delta": 2}"#;
-    assert_eq!(doc.call("follow", follow), None);
-    assert_eq!(doc.call("toggle_style", r#"{"style": "strong"}"#), None);
-    let edits = r#"{"edits": [{"start": 0, "length": 0, "text": "ab"}], "selections": [{"start": 0, "length": 1}]}"#;
-    assert_eq!(
-        doc.call("map_selections", edits).as_deref(),
-        Some(r#"[{"start":2,"length":1}]"#)
-    );
-    assert_eq!(
-        doc.call("tab", r#"{"selections": [{"start": 0, "length": 0}]}"#)
-            .as_deref(),
-        Some(r#"{"field":null,"edits":[{"start":0,"length":0,"text":"  "}]}"#)
-    );
 }

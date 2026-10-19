@@ -51,13 +51,8 @@ fn touched_lines(text: &Text, selections: &[TextRange]) -> BTreeSet<usize> {
 
 /// A sectioning command, to its title's opening brace: its star and short title.
 static HEADING: LazyLock<Regex> = LazyLock::new(|| {
-    // The levels the menus offer, then the one they don't.
-    let levels = catalog::CATALOG.heading_levels.iter();
-    let names = levels
-        .map(|level| level.command.as_str())
-        .chain(["subparagraph"]);
-    let names = names.map(regex::escape).collect::<Vec<_>>().join("|");
-    Regex::new(&format!(r"\\({names})(\*?)\s*(\[[^\]]*\])?\s*\{{")).unwrap()
+    Regex::new(r"\\(part|chapter|(?:sub){0,2}section|(?:sub)?paragraph)(\*?)\s*(\[[^\]]*\])?\s*\{")
+        .unwrap()
 });
 
 impl SourceDocument {
@@ -136,8 +131,6 @@ impl SourceDocument {
         let caret = caret.min(text.len());
         let index = text.line_index(caret);
         let (line, start) = (text.line(index), text.lines[index]);
-        // A CRLF line's CR is its end, not its text.
-        let line = line.strip_suffix(&[0x0d]).unwrap_or(line);
         let length = line.len() as u32;
         let line = String::from_utf16_lossy(line);
         let (code, comment) = line.split_at(strip_comment(&line).len());
@@ -179,8 +172,7 @@ impl SourceDocument {
             (format!("{head}{title}{close}{rest}{comment}"), cursor)
         } else if closed {
             let plain = format!("{before}{title}{rest}");
-            let cursor = utf16(&plain);
-            (format!("{plain}{comment}"), cursor)
+            (format!("{plain}{comment}"), utf16(&plain))
         } else {
             (line.clone(), (caret - start) as usize)
         };
@@ -282,10 +274,9 @@ impl SourceDocument {
             } else {
                 whole.start + moved[0].len() + (lines[0].next - lines[0].end)
             };
-            let length = whole.end - whole.start;
             edits.push(splice(
                 whole.start,
-                length,
+                whole.len(),
                 String::from_utf16_lossy(&joined),
             ));
             moves.push((start, end, at));
@@ -298,7 +289,7 @@ impl SourceDocument {
                     (start <= at && at < end) || (at == end && at == to && end == len)
                 });
                 let at = found.map_or(at, |&(start, _, first)| at - start + first);
-                span(at, (selection.length) as usize)
+                span(at, selection.length as usize)
             })
             .collect();
         Some(Change { edits, selections })

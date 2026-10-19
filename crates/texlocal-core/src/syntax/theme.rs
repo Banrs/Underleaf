@@ -4,8 +4,6 @@
 //! background and on its current line. Hosts resolve their backgrounds and
 //! system colours and map the sRGB answers to their own colour type.
 
-use serde::Serialize;
-
 use super::HighlightKind;
 
 /// sRGB components and alpha, 0 to 1.
@@ -15,16 +13,15 @@ pub type Rgba = [f64; 4];
 /// by its AppKit name (`systemPink`), which each host resolves in its own
 /// appearance; `light` and `dark` are then Apple's published values, for a
 /// host without such a colour.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug)]
 pub struct ThemeColor {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<&'static str>,
     pub light: Rgba,
     pub dark: Rgba,
 }
 
 /// Text, braces and brackets are plain in every theme.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug)]
 pub struct Theme {
     pub id: &'static str,
     pub title: &'static str,
@@ -117,7 +114,6 @@ pub fn theme(id: &str) -> Option<&'static Theme> {
 }
 
 impl Theme {
-    /// The colour of a highlight kind.
     pub fn color(&self, kind: HighlightKind) -> &ThemeColor {
         use HighlightKind::*;
         match kind {
@@ -156,11 +152,7 @@ pub fn blend(a: Rgba, b: Rgba, fraction: f64) -> Rgba {
 /// A translucent colour as it shows on an opaque background, mixed by sRGB's
 /// components, as the window server mixes them.
 pub fn over(color: Rgba, background: Rgba) -> Rgba {
-    let alpha = color[3];
-    if alpha >= 1.0 {
-        return color;
-    }
-    let mut shown = blend(background, color, alpha);
+    let mut shown = blend(background, color, color[3]);
     shown[3] = 1.0;
     shown
 }
@@ -305,12 +297,5 @@ mod tests {
         a.system.insert("systemPink".into(), [0.0, 0.0, 0.0, 1.0]);
         let colors = theme_colors(theme("system").unwrap(), &a);
         assert_eq!(colors[Command as usize], [0.0, 0.0, 0.0, 1.0]);
-        let json = serde_json::to_string(&THEMES[2].command).unwrap();
-        assert!(
-            json.starts_with(r#"{"system":"systemPink","light":[1.0,"#),
-            "{json}"
-        );
-        let json = serde_json::to_string(&THEMES[0].command).unwrap();
-        assert!(!json.contains("system"), "{json}");
     }
 }

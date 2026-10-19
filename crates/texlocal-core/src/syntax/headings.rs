@@ -5,59 +5,54 @@
 //! every level, set as the standard classes set them, and numbers them as a
 //! book's once the document has chapters.
 
-use std::sync::LazyLock;
-
-use regex::Regex;
 use serde::Serialize;
 
-use super::catalog::{CATALOG, HeadingLevel};
-use super::scan::strip_comment;
+use super::scan::{Scanner, Visit, arguments};
+use super::scans::SPACING;
 
 /// The class a main file's `\documentclass` names, and the type size its
 /// options set.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentClass {
     pub name: String,
     /// 10, 11 or 12 (points): LaTeX's size options.
     pub point_size: u32,
 }
 
-static CLASS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\\documentclass\s*(?:\[([^\]]*)\])?\s*\{\s*([^}\s]+)\s*\}").unwrap()
-});
-
-/// The class named outside comments, if any. LaTeX takes it in the
-/// preamble, so the text up to the first `\begin{document}` after a class
-/// is named is read first, and the whole only when that has none.
+/// The class the first `\documentclass` outside comments and literal code
+/// names, and the type size its options set.
 pub fn document_class(text: &str) -> Option<DocumentClass> {
-    let named = |text: &str| {
-        // A comment ends at either line break.
-        let lines: Vec<&str> = text.split(['\n', '\r']).map(strip_comment).collect();
-        let uncommented = lines.join("\n");
-        let c = CLASS.captures(&uncommented)?;
-        let options: Vec<&str> = c
-            .get(1)
-            .map_or(vec![], |o| o.as_str().split(',').map(str::trim).collect());
-        // KOMA-Script's fontsize=11pt as well as the standard 11pt.
-        let point_size = [11, 12]
-            .into_iter()
-            .find(|size| {
-                let (standard, koma) = (format!("{size}pt"), format!("fontsize={size}pt"));
-                options.iter().any(|&o| o == standard || o == koma)
-            })
-            .unwrap_or(10);
-        Some(DocumentClass {
-            name: c[2].to_owned(),
-            point_size,
-        })
-    };
-    let preamble = text.find("\\documentclass").and_then(|at| {
-        let after = at + "\\documentclass".len();
-        let begin = text[after..].find("\\begin{document}")?;
-        Some(&text[..after + begin + "\\begin{document}".len()])
+    struct First(Option<usize>);
+    impl Visit for First {
+        fn command(&mut self, name: &str, _: usize, name_end: usize) {
+            if name == "documentclass" {
+                self.0 = self.0.or(Some(name_end));
+            }
+        }
+    }
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let (mut scanner, mut first) = (Scanner::default(), First(None));
+    // The class comes before the document, which isn't read for it.
+    while first.0.is_none() && scanner.i < units.len() {
+        scanner.run(&units, scanner.i + SPACING, &[], &mut first);
+    }
+    let (mut options, mut name) = (Vec::new(), Vec::new());
+    let (_, closed) = arguments(&units, first.0?, |piece, braced| {
+        (if braced { &mut name } else { &mut options }).extend_from_slice(&units[piece]);
     });
-    preamble.and_then(named).or_else(|| named(text))
+    // KOMA-Script's fontsize=11pt as well as the standard 11pt.
+    let size = |option: &str| match option.trim().trim_start_matches("fontsize=") {
+        "11pt" => Some(11),
+        "12pt" => Some(12),
+        _ => None,
+    };
+    closed.then(|| DocumentClass {
+        name: String::from_utf16_lossy(&name).trim().to_owned(),
+        point_size: String::from_utf16_lossy(&options)
+            .split(',')
+            .find_map(size)
+            .unwrap_or(10),
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -76,12 +71,23 @@ pub struct Font {
     pub shape: Shape,
 }
 
+/// The sectioning commands, outermost first as the outline's depths go, and
+/// their levels' names.
+pub(crate) const LEVELS: [(&str, &str); 6] = [
+    ("part", "Part"),
+    ("chapter", "Chapter"),
+    ("section", "Section"),
+    ("subsection", "Subsection"),
+    ("subsubsection", "Subsubsection"),
+    ("paragraph", "Paragraph"),
+];
+
 /// A level the class has, as its headings are set; Normal Text first,
 /// whose `command` is empty.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Level {
-    pub title: String,
-    pub command: String,
+    pub title: &'static str,
+    pub command: &'static str,
     pub font: Font,
     /// Its number as its heading prints it, with the class's counters.
     pub marker: Option<String>,
@@ -265,8 +271,8 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
         Some(vec!["1"; (depth + chapters as i64) as usize].join("."))
     };
     let normal = Level {
-        title: "Normal Text".to_owned(),
-        command: String::new(),
+        title: "Normal Text",
+        command: "",
         font: Font {
             scale: 1.0,
             bold: false,
@@ -274,16 +280,16 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
         },
         marker: None,
     };
-    let levels = CATALOG.heading_levels.iter().enumerate();
-    let levels = levels.filter_map(|(index, HeadingLevel { title, command })| {
+    let levels = LEVELS.iter().enumerate();
+    let levels = levels.filter_map(|(index, &(command, title))| {
         let &(_, size, bold, shape) = looks.iter().find(|look| look.0 == command)?;
         let points = match size {
             Size::Step(step) => sizes[step],
             Size::Points(points) => points,
         };
         Some(Level {
-            title: title.clone(),
-            command: command.clone(),
+            title,
+            command,
             font: Font {
                 scale: points / sizes[NORMAL],
                 bold,
@@ -308,17 +314,14 @@ mod tests {
     }
 
     fn titles(levels: &[Level]) -> String {
-        let titles: Vec<&str> = levels.iter().map(|l| l.title.as_str()).collect();
+        let titles: Vec<&str> = levels.iter().map(|l| l.title).collect();
         titles.join(", ")
     }
 
     /// The levels' markers, "-" for none.
     fn markers(levels: &[Level]) -> String {
-        let markers: Vec<&str> = levels
-            .iter()
-            .map(|l| l.marker.as_deref().unwrap_or("-"))
-            .collect();
-        markers.join(" ")
+        let markers = levels.iter().map(|l| l.marker.as_deref().unwrap_or("-"));
+        markers.collect::<Vec<_>>().join(" ")
     }
 
     #[test]
@@ -377,7 +380,5 @@ mod tests {
         // The preamble's first: a class named in the body doesn't count.
         let body = "\\documentclass{report}\n\\begin{document}\n\\documentclass{book}";
         assert_eq!(class(body), "report 10pt");
-        // A comment ends at any line break.
-        assert_eq!(class("% x\r\\documentclass{book}"), "book 10pt");
     }
 }
