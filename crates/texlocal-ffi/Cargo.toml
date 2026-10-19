@@ -7,9 +7,8 @@ license.workspace = true
 
 [lib]
 name = "texlocal_ffi"
-# staticlib links into the macOS app. The Windows app loads a DLL (P/Invoke)
-# that its build asks for itself, with `cargo rustc --crate-type cdylib`, so
-# the Mac's builds link no dylib they never use.
+# The Windows app builds its DLL itself (`cargo rustc --crate-type cdylib`),
+# so the Mac's builds link no dylib they never use.
 crate-type = ["staticlib"]
 
 [dependencies]
