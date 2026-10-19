@@ -27,7 +27,8 @@ struct FilesList: View {
                     : String(AttributedString(localized: "^[\(count) match](inflect: true)").characters), queued: true)
             }
             .onChange(of: app.newEntry, initial: true) { _, entry in
-                guard let entry else { return }
+                // A project left for another still shows while the next loads: that one's list takes the entry as it appears.
+                guard let entry, !project.closed else { return }
                 app.newEntry = nil
                 create(entry)
             }

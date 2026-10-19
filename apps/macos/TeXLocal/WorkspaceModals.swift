@@ -12,7 +12,9 @@ struct WorkspaceModals: ViewModifier {
             // Separate hosts keep each file dialog's labels with its own panel.
             .background {
                 Color.clear
-                    .fileImporter(isPresented: $app.addingFiles, allowedContentTypes: [.item, .folder],
+                    // Not from a project left for another, which still shows while the next loads.
+                    .fileImporter(isPresented: Binding(get: { app.addingFiles && !project.closed }, set: { app.addingFiles = $0 }),
+                                  allowedContentTypes: [.item, .folder],
                                   allowsMultipleSelection: true) { result in
                         switch result {
                         case .success(let urls): Task { await project.importFiles(urls) }
