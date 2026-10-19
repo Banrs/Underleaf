@@ -504,7 +504,9 @@ fn import_project_within(
         }
         dest.flush()?;
     }
-    let main = if let Some(main) = main {
+    // latexmk would read a name starting with "-" as an option, so settings refuse it as
+    // the main file and the import takes the likeliest other.
+    let main = if let Some(main) = main.filter(|main| !main.starts_with('-')) {
         main
     } else if let Some(main) = projects::guess_main_file(staged)? {
         main
@@ -846,6 +848,13 @@ mod tests {
         let info = import_project(&service, &src.join("paper.tex")).unwrap();
         assert_eq!(info.main_file, "paper.tex");
         assert_eq!(files_in(&service.data_dir.join(&info.id)), ["paper.tex"]);
+
+        // One whose name latexmk would read as an option comes but isn't the main file.
+        fs::write(src.join("-draft.tex"), "\\documentclass{article}").unwrap();
+        let info = import_project(&service, &src.join("-draft.tex")).unwrap();
+        assert_eq!(info.main_file, "main.tex");
+        let files = ["-draft.tex", "main.tex"];
+        assert_eq!(files_in(&service.data_dir.join(&info.id)), files);
 
         // Any other file comes alone; without TeX, the blank template's main
         // file joins it.
