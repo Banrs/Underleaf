@@ -30,8 +30,14 @@ Done on this branch:
 - Once, after a slow then quick divider drags in Test Long, a blurred band about 115 pt tall showed
   over the source's last lines in this build; three later tries didn't show it, nor main's build.
 
-**The review (2026-10-20)** found 29 issues a skeptic confirmed. Being fixed on three local branches
-from ae4116ab (`worktree-agent-*` in `.claude/worktrees/`), not yet merged:
+**The review (2026-10-20)** found 29 issues a skeptic confirmed. Fixes are on three branches from
+ae4116ab, pushed and not yet merged: `claude/fix-core` (done: the case-only rename, Return in tab
+indentation; left: the `-` import, the 8 MB guard, the sleeping tests, the docs), `claude/fix-mac` (done:
+the overtaken open, New File and Add Files during a switch; left: the fold classification, the
+detent in `joinDivider`, Aa's highlight, the undo test, a failed-save test, `SessionOpened.pdf`, `free`),
+`claude/fix-windows` (done, uncompiled: reloads of unshown documents, the TitleBar inset; left: a
+reporting save before leaving a project, waiting for `set_ui_state` before a rename, `free`). The
+findings:
 - Core: a case-only rename of an open file or folder closes it and loses later edits (`paths::within`
   folds case; `session::rename`); Return in tab indentation adds tabs; File › Open of a `-name.tex`
   fails; Live Preview reads any changed text file whole (main's 8 MB guard); two tests sleep 100 ms;
