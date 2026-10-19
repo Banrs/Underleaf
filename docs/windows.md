@@ -42,7 +42,7 @@ The owner's, 2026-10-16:
 ```
 apps/windows/
   TeXLocal.slnx
-  Directory.Build.props        net10.0, nullable, LangVersion latest, TreatWarningsAsErrors
+  Directory.Build.props        net10.0, nullable, TreatWarningsAsErrors
   TeXLocal.Core/               class library, no WinUI, namespace TeXLocal.Bridge: the bridge, and the cargo/DLL target
     Native.cs                  [LibraryImport("texlocal_ffi")] declarations
     Core.cs                    Core: open, CallAsync, events, close
