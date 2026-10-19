@@ -49,18 +49,10 @@ impl Tree {
                 .expect("a child just spawned has its handle");
             // Joined as it starts, long before it has loaded, let alone run a
             // program of its own.
-            match job::Job::of(handle) {
-                Ok(job) => Ok((
-                    child,
-                    Self {
-                        job: std::sync::Arc::new(job),
-                    },
-                )),
-                Err(err) => {
-                    let _ = child.start_kill();
-                    Err(err)
-                }
-            }
+            let job = job::Job::of(handle).inspect_err(|_| {
+                let _ = child.start_kill();
+            })?;
+            Ok((child, Self { job: job.into() }))
         }
     }
 
@@ -235,6 +227,8 @@ pub(crate) async fn drive(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[tokio::test]
     async fn killing_a_tree_ends_the_tool() {
         let mut command = tokio::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
@@ -243,38 +237,22 @@ mod tests {
         } else {
             command.args(["-c", "sleep 30; true"]);
         }
-        let (mut child, tree) = super::Tree::spawn(&mut command).unwrap();
+        let (mut child, tree) = Tree::spawn(&mut command).unwrap();
         tree.kill();
-        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait());
+        let ended = tokio::time::timeout(PROBE_TIMEOUT, child.wait());
         assert!(!ended.await.unwrap().unwrap().success());
     }
 
     #[tokio::test]
     async fn a_program_off_the_path_is_not_found_and_one_that_fails_has_its_code() {
-        use std::time::Duration;
-        let missing = super::run(
-            "no-such-tool",
-            &[],
-            None,
-            Duration::from_secs(5),
-            "/nonexistent",
-        );
-        assert_eq!(
-            missing.await.unwrap_err().kind(),
-            std::io::ErrorKind::NotFound
-        );
+        let missing = run("no-such-tool", &[], None, PROBE_TIMEOUT, "/nonexistent")
+            .await
+            .unwrap_err();
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
         if cfg!(unix) {
             let path = std::env::var("PATH").unwrap();
-            let (code, stdout) = super::run(
-                "sh",
-                &["-c", "echo hi; exit 3"],
-                None,
-                Duration::from_secs(5),
-                &path,
-            )
-            .await
-            .unwrap();
-            assert_eq!((code, stdout.trim()), (3, "hi"));
+            let sh = run("sh", &["-c", "echo 3; exit 3"], None, PROBE_TIMEOUT, &path);
+            assert_eq!(sh.await.unwrap(), (3, "3\n".to_string()));
         }
     }
 }
