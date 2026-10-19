@@ -94,79 +94,42 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
 #[cfg(test)]
 mod tests {
     use super::{Stamp, write};
+    use crate::projects::testing::names_in;
     use std::fs;
 
-    fn names(dir: &std::path::Path) -> Vec<String> {
-        let mut names: Vec<_> = fs::read_dir(dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        names
-    }
-
     #[test]
-    fn a_save_creates_and_replaces_leaving_no_temporary_file() {
+    fn a_save_creates_and_replaces_leaving_no_temporary_file_and_answers_the_files_stamp() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("main.tex");
         write(&file, b"one").unwrap();
-        write(&file, b"two").unwrap();
+        let written = write(&file, b"two").unwrap();
         assert_eq!(fs::read(&file).unwrap(), b"two");
-        assert_eq!(names(dir.path()), ["main.tex"]);
-    }
-
-    #[test]
-    fn a_save_answers_the_stamp_the_file_then_has() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("main.tex");
-        let written = write(&file, b"one").unwrap();
+        assert_eq!(names_in(dir.path()), ["main.tex"]);
         assert_eq!(written, Stamp::of(&fs::metadata(&file).unwrap()));
         // Another app's write in place keeps the file but not the stamp, once
         // the clock has moved: Windows dates writes in steps of up to 16 ms.
         std::thread::sleep(std::time::Duration::from_millis(20));
-        fs::write(&file, b"two").unwrap();
+        fs::write(&file, b"three").unwrap();
         assert_ne!(written, Stamp::of(&fs::metadata(&file).unwrap()));
     }
 
     #[cfg(target_os = "macos")]
     #[test]
     fn a_save_keeps_the_extended_attributes_of_the_file_it_replaces() {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("tagged.tex");
         fs::write(&file, "one").unwrap();
-        let path = CString::new(file.as_os_str().as_bytes()).unwrap();
+        let xattr = |args: &[&str]| {
+            let mut command = std::process::Command::new("/usr/bin/xattr");
+            let out = command.args(args).arg(&file).output().unwrap();
+            assert!(out.status.success(), "{out:?}");
+            out.stdout
+        };
         // A Finder tag is one of these; any name stands for it.
-        let (name, value) = (c"com.example.texlocal-test", b"Red");
-        // SAFETY: a NUL-terminated path and name, and a value of the length given.
-        let set = unsafe {
-            libc::setxattr(
-                path.as_ptr(),
-                name.as_ptr(),
-                value.as_ptr().cast(),
-                value.len(),
-                0,
-                0,
-            )
-        };
-        assert_eq!(set, 0);
-
+        let name = "com.example.texlocal-test";
+        xattr(&["-w", name, "Red"]);
         write(&file, b"two").unwrap();
-
-        let mut got = [0u8; 16];
-        // SAFETY: as above, into a buffer of the length given.
-        let len = unsafe {
-            libc::getxattr(
-                path.as_ptr(),
-                name.as_ptr(),
-                got.as_mut_ptr().cast(),
-                got.len(),
-                0,
-                0,
-            )
-        };
-        assert_eq!(&got[..len.max(0) as usize], value);
+        assert_eq!(xattr(&["-p", name]).trim_ascii(), b"Red");
         assert_eq!(fs::read(&file).unwrap(), b"two");
     }
 
@@ -194,7 +157,7 @@ mod tests {
             fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
             assert!(result.is_err());
             assert_eq!(fs::read_to_string(&file).unwrap(), "keep");
-            assert_eq!(names(dir.path()), ["locked.tex"]);
+            assert_eq!(names_in(dir.path()), ["locked.tex"]);
         }
     }
 
