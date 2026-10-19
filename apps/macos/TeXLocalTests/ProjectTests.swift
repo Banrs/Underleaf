@@ -347,6 +347,28 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// A failed autosave is told once in an alert, and Not Saved stays in the status bar until a save succeeds.
+    @Test func aFailedAutosaveIsToldOnceAndNotSavedStaysUntilASave() async throws {
+        let (project, folder) = try await opened()
+        let path = folder.path(percentEncoded: false)
+        // The write replaces the file, so its folder refuses it.
+        try files.setAttributes([.posixPermissions: 0o555], ofItemAtPath: path)
+        defer { try? files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path) }
+        #expect(project.editor.perform(.bold))
+        #expect(await !project.save(reporting: false))
+        try await waitUntil { project.saveFailure != nil }
+        #expect(app.alert?.title == "“main.tex” Wasn’t Saved")
+        app.alert = nil
+        #expect(await !project.save(reporting: false))
+        await settle()
+        #expect(app.alert == nil && project.saveFailure != nil)
+        try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+        #expect(await project.save())
+        try await waitUntil { project.saveFailure == nil }
+        #expect(app.alert == nil)
+        await app.close()
+    }
+
     /// An answer clears only its own file's alert: another file's question still waits.
     @Test func anAnswerLeavesAnotherFilesQuestion() async throws {
         let project = try await opened().project
