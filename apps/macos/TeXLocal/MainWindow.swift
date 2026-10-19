@@ -2,8 +2,7 @@ import AppKit
 import PDFKit
 import SwiftUI
 
-/// The one main window: Home, or the open project's workspace, with Back between them. Opening a project is a cut, once
-/// it has loaded; a project opened over another keeps the other's workspace until then (`AppModel.workspaceProject`).
+/// The one main window: Home, or the open project's workspace once it has loaded (`AppModel.workspaceProject`).
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindowRestoration, NSMenuItemValidation {
     static let identifier = NSUserInterfaceItemIdentifier("main")
 
@@ -61,7 +60,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
             await tex
             let saved = restored.flatMap { saved in app.projects.contains { $0.id == saved.project } ? saved : nil }
             restored = nil
-            if let id = app.takeLaunchProject() ?? saved?.project, app.project == nil, !app.isOpening {
+            if let id = app.launchProject.take() ?? saved?.project, app.project == nil, !app.isOpening {
                 await app.open(id, restoring: saved)
             }
         }
@@ -79,11 +78,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         self.workspace = workspace
         home = nil
         titleWatch?.cancel()
-        titleWatch = track({ [project] in OpenFile(path: project.openPath, url: project.openURL) }) { [weak self, project] file in
+        titleWatch = track({ [project] in project.openPath }) { [weak self, project] path in
             guard let window = self?.window else { return }
-            window.title = file.path?.fileName ?? project.id
-            window.subtitle = file.path == nil ? "" : project.id
-            window.representedURL = file.url
+            window.title = path?.fileName ?? project.id
+            window.subtitle = path == nil ? "" : project.id
+            window.representedURL = path.flatMap { project.url($0) }
         }
     }
 
@@ -201,8 +200,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     private static let workspaceKey = "workspace"
 }
-
-private nonisolated struct OpenFile: Equatable { let path: String?, url: URL? }
 
 /// The Open panel, the New Project sheet and the app's alerts, and while a workspace shows, its project's sheets and alerts.
 private struct WindowModals: View {

@@ -8,9 +8,9 @@ nonisolated struct CoreError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-/// The Rust core (docs/core-api.md). A command runs on a core thread and answers there (`tl_call_async`), so nothing waits on
-/// the main actor or the cooperative pool, and a session takes its commands in the order they were sent. Events come in on
-/// the core's own thread, are decoded there, and reach their session's observer on the main actor in the order sent.
+/// The Rust core (docs/core-api.md). Commands answer on a core thread (`tl_call_async`), so nothing waits on the main actor,
+/// and a session takes them in the order sent. Events are decoded on the core's thread and reach their session's observer
+/// on the main actor in order.
 final class Core {
     static let shared = Core()
 
@@ -28,12 +28,7 @@ final class Core {
     static let libraryAdvice = "Make sure you can create and write to \(libraryPath), then try again."
     private static let unavailable = CoreError(message: "TeXLocal can’t open its projects folder. \(libraryAdvice)")
 
-    private init() {
-        // For the app's life: each event goes to its session's observer, one at a time, in the order the core sent them.
-        Task {
-            for await (session, event) in Self.events.stream { observers[session]?(event) }
-        }
-    }
+    private init() { Task { for await (session, event) in Self.events.stream { observers[session]?(event) } } }
 
     private static func open() -> OpaquePointer? {
         guard let handle = libraryFolder.withUnsafeFileSystemRepresentation({ tl_open($0) }) else { return nil }
@@ -45,15 +40,13 @@ final class Core {
 
     // MARK: - Commands
 
-    /// The handle and the arguments' JSON for `command`. A value JSON hasn't (a NaN) is a fault: JSONSerialization would
-    /// raise an exception that `try` can't catch.
+    /// A value JSON can't hold (a NaN) is a fault: JSONSerialization would raise an exception `try` can't catch.
     private func prepared(_ command: String, _ args: [String: any Sendable]) throws -> (OpaquePointer, String) {
         guard let handle else { throw Self.unavailable }
         guard JSONSerialization.isValidJSONObject(args) else { throw Self.fault(command, "Arguments that aren't JSON") }
         return (handle, String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self))
     }
 
-    /// What a call's `done` gets back: the answer's envelope, read on the core's thread.
     private nonisolated final class Answer: Sendable {
         let take: @Sendable (Data) -> Void
         init(_ take: @escaping @Sendable (Data) -> Void) { self.take = take }
@@ -74,7 +67,7 @@ final class Core {
         }
     }
 
-    /// The answer, or the error, a command's envelope holds; an optional `T` takes a null answer.
+    /// An optional `T` takes a null answer.
     private nonisolated struct Envelope<T: Decodable>: Decodable {
         let answer: Result<T, CoreError>
 
@@ -109,8 +102,7 @@ final class Core {
         return CoreError(message: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
     }
 
-    /// The command's answer. It is sent before this first suspends, so a session takes it in the order called, beside
-    /// `send`'s; the answer is decoded on the core's thread.
+    /// Sent before this first suspends, so a session takes it in the order called, beside `send`'s.
     func call<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable] = [:], as: T.Type) async throws -> T {
         let (handle, json) = try prepared(command, args)
         return try await withCheckedThrowingContinuation { done in
@@ -120,7 +112,6 @@ final class Core {
         }
     }
 
-    /// For a command whose answer says nothing but that it was done.
     func call(_ command: String, _ args: [String: any Sendable]) async throws {
         _ = try await call(command, args, as: Ignored?.self)
     }
@@ -153,12 +144,11 @@ final class Core {
         _ = try? now("kill_all", [:], as: Ignored?.self)
     }
 
-    /// The session's open document at `path`, for the editor: its edits are the session's. Nil if it isn't open.
+    /// The session's open document at `path`, for the editor; nil if it isn't open.
     func source(session: UInt64, path: String) -> OpaquePointer? { handle.flatMap { tl_session_source($0, session, path) } }
 
     // MARK: - Events
 
-    /// What the listener reads, in the order the core sent it.
     private nonisolated static let events = AsyncStream.makeStream(of: (UInt64, SessionEvent).self)
 
     /// The text, valid only during the call, is decoded on the core's thread, and Live Preview's PDF read there, so its
@@ -178,8 +168,7 @@ final class Core {
     private var observers: [UInt64: (SessionEvent) -> Void] = [:]
     private var numbered: UInt64 = 0
 
-    /// A number for a session about to open, whose events go to `observer` from now on. The app numbers its sessions, so
-    /// it listens for one before it opens: a session's first events can come before `session_open` has answered.
+    /// A number for a session about to open: its first events can come before `session_open` has answered.
     func observe(_ observer: @escaping (SessionEvent) -> Void) -> UInt64 {
         numbered += 1
         observers[numbered] = observer
@@ -189,7 +178,6 @@ final class Core {
     func forget(_ session: UInt64) { observers[session] = nil }
 }
 
-/// An event as the listener reads it: the session it names, and what it says, or nil for one the app has no use for.
 private nonisolated struct EventRead: Decodable {
     let session: UInt64
     let event: SessionEvent?

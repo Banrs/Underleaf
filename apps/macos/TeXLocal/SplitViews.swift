@@ -39,8 +39,7 @@ extension NSCursor {
     }
 }
 
-/// A split with thin dividers that says when it has loaded: the autosave restores which panes were collapsed as it loads,
-/// and `loaded` puts back what the models say.
+/// Thin dividers; `loaded` puts back what the models say over the collapses the autosave restores as it loads.
 class SplitViewController: NSSplitViewController {
     var loaded: () -> Void = {}
     /// Where a divider also takes drags, over the panes' own views: the split hit-tests it before them.

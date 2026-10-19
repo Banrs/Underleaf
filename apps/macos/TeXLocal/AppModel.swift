@@ -27,7 +27,6 @@ nonisolated enum DefaultsKey {
     static let liveViewer = "liveViewer"
 }
 
-/// The pages the app points to; each is a constant that parses.
 enum Links {
     static let repository = URL(string: "https://github.com/Banrs/Underleaf")!
     static let issues = repository.appending(path: "issues")
@@ -62,8 +61,8 @@ nonisolated enum OutlineState { case open, folded, hidden }
 
 /// What the New Project sheet opens with: the template, and the first of "Untitled", "Untitled 2", and so on that no project has.
 struct NewProjectDraft: Identifiable {
-    let template: ProjectTemplate
-    let name: String
+    var template: ProjectTemplate
+    var name: String
 
     var id: ProjectTemplate { template }
 }
@@ -97,8 +96,7 @@ final class AppModel {
     // Stored here rather than as @AppStorage so the menus and models observe them.
     var sidebarVisible: Bool { didSet { defaults.set(sidebarVisible, forKey: DefaultsKey.sidebarVisible) } }
     var inspectorVisible: Bool { didSet { defaults.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) } }
-    /// Folded by a window too narrow for them, which brings them back as it widens: not hidden,
-    /// and not saved (`sidebarShown`, `inspectorShown`).
+    /// Folded by a window too narrow for them, which brings them back as it widens: neither hidden nor saved.
     var sidebarFolded = false
     var inspectorFolded = false
     /// The side columns as the window has them: the user's choice, unless the window folded one. Showing a folded one unfolds it.
@@ -128,8 +126,7 @@ final class AppModel {
     /// Filtered, not pruned on refresh: a library that lists empty (another TEXLOCAL_DATA, a missing folder) would wipe them.
     var recents: [ProjectInfo] { recentProjects.compactMap { id in projects.first { $0.id == id } } }
 
-    /// The launch arguments the QA scripts pass (-openProject, -sidebarVisible, -showPDF and the like) are read from the
-    /// standard defaults' argument domain.
+    /// QA's launch arguments (-openProject, -showPDF and the like) come in through the standard defaults' argument domain.
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         defaults.register(defaults: [DefaultsKey.sidebarVisible: true, DefaultsKey.autoCompile: true,
@@ -144,8 +141,7 @@ final class AppModel {
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
     }
 
-    /// Without a template, the one Settings names for new projects. The sheet opens once the core has named the project,
-    /// a moment later: not awaited, as the menus and buttons that ask don't wait.
+    /// The sheet opens once the core has named the project: not awaited, as the menus and buttons that ask don't wait.
     func newProject(_ template: ProjectTemplate? = nil) {
         guard libraryProblem == nil else { return }
         let template = template ?? defaults.string(forKey: DefaultsKey.newProjectTemplate)
@@ -156,8 +152,7 @@ final class AppModel {
         }
     }
 
-    /// A file that isn't LaTeX has no outline to open: the header stays, folded and dim (`OutlineHeader`), and the sidebar keeps
-    /// its foot from one file to the next.
+    /// A file that isn't LaTeX has no outline: its header stays, folded and dim (`OutlineHeader`).
     func outlineOpen(of project: ProjectModel?) -> Bool { project?.isLaTeX == true && !outlineCollapsed }
 
     func outlineState(of project: ProjectModel) -> OutlineState {
@@ -176,9 +171,8 @@ final class AppModel {
 
     nonisolated enum SideColumn { case sidebar, inspector }
 
-    /// A side column the split opened or shut. Shut by the window, for want of room, it stays the user's shown column,
-    /// unsaved, and the split brings it back as the window widens. Shut by the user, with its toggle or on its divider,
-    /// it is hidden, and saved so.
+    /// Shut by the window, for want of room, a column stays shown, unsaved, and comes back as the window widens; shut by
+    /// the user, with its toggle or on its divider, it is hidden, and saved so.
     func sideColumn(_ column: SideColumn, shown: Bool, byWindow: Bool) {
         let (visible, folded): (ReferenceWritableKeyPath<AppModel, Bool>, ReferenceWritableKeyPath<AppModel, Bool>) =
             column == .sidebar ? (\.sidebarVisible, \.sidebarFolded) : (\.inspectorVisible, \.inspectorFolded)
@@ -190,8 +184,7 @@ final class AppModel {
         }
     }
 
-    /// The project the window's workspace shows: the open one once it has loaded, and until then the one it showed, so a
-    /// switch from one project to the next never passes through Home. None, Home.
+    /// The open project once it has loaded, until then the one shown, so a switch never passes through Home.
     func workspaceProject(after shown: ProjectModel?) -> ProjectModel? {
         guard let project else { return nil }
         return project.initialLoadComplete ? project : shown
@@ -202,7 +195,6 @@ final class AppModel {
 
     func retryLibrary() async {
         core.reopen()
-        if core.isOpen { libraryProblem = nil }
         await refresh()
         await refreshTeXStatus()
     }
@@ -242,7 +234,6 @@ final class AppModel {
         }
     }
 
-    /// With the engine Settings names for new projects: the core makes the project with it or not at all.
     func create(name: String, template: ProjectTemplate) async throws {
         let engine = defaults.string(forKey: DefaultsKey.newProjectEngine).flatMap(TeXEngine.init(rawValue:))
         let info = try await core.call("create_project", ["name": name, "template": template.rawValue, "engine": engine?.rawValue],
@@ -367,22 +358,15 @@ final class AppModel {
         }
     }
 
-    /// Bumped by each open and close, so only the latest carries on: the restored project and an Open With import can
-    /// overlap at launch.
+    /// Bumped by each open and close, so only the latest carries on: a restored project and an Open With import can overlap.
     @ObservationIgnored private var openGeneration = 0
-    /// The id of the project loading, for Home to show at work, before `project` may name it. A superseded open lets go
-    /// of it as it gives up, unless a later one has taken it.
+    /// The project loading and what is being copied into the library, for Home to show at work.
     private(set) var opening: String?
-    /// What is being copied into the library, for Home to show at work.
     private(set) var importing: [URL] = []
     var isOpening: Bool { opening != nil || !importing.isEmpty }
+    @ObservationIgnored var launchProject: String?
 
-    @ObservationIgnored private var launchProject: String?
-
-    func takeLaunchProject() -> String? { launchProject.take() }
-
-    /// `project` goes straight from one to the next, never nil between, so the window keeps the workspace
-    /// (`workspaceProject`).
+    /// `project` goes from one to the next, never nil between, so the window keeps the workspace (`workspaceProject`).
     func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {
         openGeneration += 1
         let generation = openGeneration

@@ -106,8 +106,7 @@ final class DockMenu: NSObject {
     }
 
     @objc private func open(_ item: NSMenuItem) {
-        guard let id = item.representedObject as? String else { return }
         show()
-        Task { await app.open(id) }
+        Task { await app.open(item.representedObject as! String) }
     }
 }

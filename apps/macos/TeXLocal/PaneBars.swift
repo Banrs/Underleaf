@@ -80,20 +80,15 @@ struct SearchField: NSViewRepresentable {
 }
 
 final class FindPassingTextView: NSTextView {
-    override func performFindPanelAction(_ sender: Any?) {
-        nextResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: sender)
-    }
+    private static let find = #selector(NSTextView.performFindPanelAction(_:))
+
+    override func performFindPanelAction(_ sender: Any?) { nextResponder?.tryToPerform(Self.find, with: sender) }
 
     override func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        guard let action = item.action, action == #selector(NSTextView.performFindPanelAction(_:)) else {
-            return super.validateMenuItem(item)
-        }
+        guard item.action == Self.find else { return super.validateMenuItem(item) }
         // The chain from the next responder; NSApp.target(forAction:) starts at the first responder, which is this editor.
-        let target = nextResponder.flatMap { first in
-            sequence(first: first, next: \.nextResponder).first { $0.responds(to: action) }
-        }
-        guard let target else { return false }
-        return (target as? any NSMenuItemValidation)?.validateMenuItem(item) ?? true
+        let target = nextResponder.flatMap { first in sequence(first: first, next: \.nextResponder).first { $0.responds(to: Self.find) } }
+        return target.map { ($0 as? any NSMenuItemValidation)?.validateMenuItem(item) ?? true } ?? false
     }
 }
 

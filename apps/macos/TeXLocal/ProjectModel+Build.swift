@@ -2,8 +2,7 @@ import Accessibility
 import AppKit
 import PDFKit
 
-/// Builds, their PDF and their issues: the session builds, and its `build`, `build_finished` and `build_cleaned` events
-/// say how it went (docs/core-api.md).
+/// Builds, their PDF and their issues, as the session's build events tell them (docs/core-api.md).
 extension ProjectModel {
     // MARK: - The build's PDF
 
@@ -32,10 +31,8 @@ extension ProjectModel {
 
     // MARK: - Compile
 
-    /// The session queues one more during a build, and leaves an automatic one while Live Preview runs.
-    /// A build asked for shows as one at once, so the toolbar has Stop from the click on and a Stop reaches the session
-    /// behind it, where it ends the build however soon it comes; the core's `build` events then confirm or end it. An
-    /// automatic one waits for them, as the core may leave it.
+    /// A build asked for shows at once, so the toolbar has Stop from the click on; the session's `build` events then confirm
+    /// or end it. An automatic one waits for them, as the session leaves one while Live Preview runs.
     func compile(auto: Bool = false) async {
         guard let session, !closed, app?.tex?.available == true else { return }
         if !auto, !compiling {
@@ -64,8 +61,7 @@ extension ProjectModel {
     }
 
     func buildChanged(_ state: BuildState) {
-        // Not through `notices.announce`: the result of a short build isn't held back for it. A build asked for here
-        // has been announced already (`compile`).
+        // Not through `notices.announce`, which would hold back a short build's result; `compile` announced one asked for.
         if state.compiling, !compiling, !state.auto { AccessibilityNotification.Announcement(String(localized: "Compiling")).post() }
         (compiling, outdated) = (state.compiling, state.outdated)
     }

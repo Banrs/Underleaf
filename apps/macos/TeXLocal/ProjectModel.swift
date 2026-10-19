@@ -1,23 +1,19 @@
 import AppKit
 import Observation
 
-/// A project's window state over the core's session for it (docs/core-api.md), which owns its documents' text, saves,
-/// builds, conflicts with other apps, the folder's watcher and Live Preview, and says what changed in events.
+/// A project's window state over its core session (docs/core-api.md), which owns its text, saves, builds and Live Preview.
 @Observable
 final class ProjectModel {
     let id: String
     var settings: ProjectSettings?
     let tree: FileTree
     private(set) var initialLoadComplete = false
-    var openPath: String? {
-        didSet { if openPath != oldValue { openKindChanged() } }
-    }
+    var openPath: String? { didSet { if openPath != oldValue { openKindChanged() } } }
     /// The open file's, from the tree; kept while the tree hasn't the file yet (a rename) or has it no longer (gone).
     private(set) var openKind: FileKind?
     /// The outline's headings in order: `outlineTree`'s, each at its `id`.
     private(set) var outline: [OutlineItem] = []
     private(set) var outlineTree: [OutlineNode] = []
-    /// The levels the main file's class has, as the last analysis found them.
     private(set) var headingStyles = HeadingStyle.standard
     var words: Int?
     var cursorLine = 1
@@ -26,14 +22,12 @@ final class ProjectModel {
     @ObservationIgnored private(set) var topHeading: Int?
     /// The outline's row for where the writer is: the caret's heading, or the top line's once a scroll passes a heading.
     private(set) var currentHeading: Int?
-    /// The line `currentHeading` is for: the caret's, or the top line's once a scroll passed a heading.
     @ObservationIgnored private var currentLine = 1
     /// For the rest of the turn the caret moved in, so a scroll that move made leaves the caret's heading current.
     @ObservationIgnored private var caretMoved = false
 
     @ObservationIgnored private(set) var session: UInt64?
     @ObservationIgnored private var root: URL?
-    /// Each open document's state, as the session's `document` events give it.
     private var documents: [String: DocumentState] = [:]
     /// Why a document held after Cancel in an alert isn't saved, for the status bar.
     private var heldReasons: [String: String] = [:]
@@ -65,8 +59,7 @@ final class ProjectModel {
 
     var importClash: ImportClash?
 
-    /// The sidebar's, which the core keeps in the project's settings and moves with a rename (`set_ui_state`; `session_open`
-    /// and `session_rename` answer it).
+    /// The sidebar's, kept in the project's settings (`set_ui_state`) and moved with a rename by the core.
     var expandedFolders: Set<String> = [] {
         didSet { if expandedFolders != oldValue { saveUIState(["expandedFolders": expandedFolders.sorted()]) } }
     }
@@ -74,23 +67,19 @@ final class ProjectModel {
         didSet { if foldedHeadings != oldValue { saveUIState(["foldedHeadings": foldedHeadings.sorted()]) } }
     }
     @ObservationIgnored private var showingUIState = false
-    /// The sidebar's state is written in the order it changes, and a rename waits for the last write before it moves it:
-    /// these are the service's commands, not the session's, which the core takes in the order sent.
+    /// Service commands, which the session doesn't order: written in turn, and a rename waits for the last.
     @ObservationIgnored var uiStateWrites: Task<Void, Never>?
 
     let search: ProjectSearch
 
     let editor = SourceEditor()
-    /// The menu bar's text commands follow it (`isEnabledInMenuBar`).
     private(set) var sourceHasKeyboard = false
     @ObservationIgnored weak var app: AppModel?
     let core = Core.shared
     @ObservationIgnored private var analysis: Task<Void, Never>?
-    /// Files open one at a time, and only the latest asked for carries on: the editor never shows one file while
-    /// `openPath` names another, and no open leaves the session a document it doesn't show.
+    /// Files open one at a time, and only the latest asked for carries on.
     @ObservationIgnored private var opens: Task<Void, Never>?
     @ObservationIgnored private var openRequests = 0
-    // Each of these is cancelled by the next request of its kind, which then has the editor or viewer.
     @ObservationIgnored var syncTask: Task<Void, Never>?
     @ObservationIgnored var pdfLoad: Task<Bool, Never>?
     /// The build's events in turn: a finished build's PDF is shown before the next event says what follows it.
@@ -175,10 +164,8 @@ final class ProjectModel {
     func load(restoring saved: SavedWorkspace?) async {
         connectEditor()
         if let saved { (panel.shown, pdf.restorePage, pdf.restoreZoom) = (saved.buildPanel, saved.pdfPage, saved.pdfZoom) }
-        // Its events come to `handle` from here on: the app numbers the session, so none comes before its observer.
         let session = core.observe { [weak self] event in self?.handle(event) }
-        // The last build's PDF loads beside the session's open, the file's reading and its analysis, and is shown before the
-        // workspace appears, so the pane doesn't open on its empty state.
+        // Beside the open, and shown before the workspace appears, so the pane doesn't open on its empty state.
         async let pdfShown = showBuildPDF(try? await core.call("pdf_path", ["id": id], as: String.self))
         do {
             // With automatic builds and no PDF, the session starts one.
@@ -208,7 +195,6 @@ final class ProjectModel {
         initialLoadComplete = true
     }
 
-    /// The editor tells the model where the caret and the top line are, and asks it about drops, issues, headings and SyncTeX.
     private func connectEditor() {
         editor.onCursor = { [weak self] line, column in
             guard let self, line != cursorLine || column != cursorColumn else { return }
@@ -252,8 +238,7 @@ final class ProjectModel {
 
     private func saveUIState(_ patch: [String: any Sendable]) {
         guard !showingUIState, !closed else { return }
-        let args: [String: any Sendable] = ["id": id, "patch": patch]
-        _ = enqueue(&uiStateWrites) { [core] in try? await core.call("set_ui_state", args) }
+        _ = enqueue(&uiStateWrites) { [core, id] in try? await core.call("set_ui_state", ["id": id, "patch": patch]) }
     }
 
     func showUIState(_ state: UIState) {
@@ -296,8 +281,7 @@ final class ProjectModel {
         }
     }
 
-    /// Another app's text, or the disk's after Revert: shown without an edit, which the session waits for before it saves
-    /// the file again.
+    /// Another app's text, or the disk's after Revert, shown without an edit.
     private func reload(_ event: ReloadEvent) {
         if editor.path == event.path {
             editor.reload(text: event.text)
@@ -347,7 +331,6 @@ final class ProjectModel {
         if event.paths.contains(where: { tree.node(at: $0)?.kind == .tex }) { analyze() }
     }
 
-    /// `work` on the build's lane, after the build's events before it.
     @discardableResult func inOrder(_ work: @escaping @MainActor () async -> Void) -> Task<Void, Never> { enqueue(&buildLane, work) }
 
     // MARK: - Editing
@@ -477,9 +460,8 @@ final class ProjectModel {
 
     // MARK: - Changes on disk
 
-    /// The question about `path` is answered (`save`, `revert`, `close`, or `cancel` with the reason it is held: the edits
-    /// stay unsaved, and the autosave quiet, until a save is asked for, which asks again); one about another file still
-    /// waits for its alert.
+    /// `save`, `revert`, `close`, or `cancel` with the reason it is held: unsaved, the autosave quiet, until a save asks
+    /// again. A question about another file still waits for its alert.
     func answer(_ path: String, _ answer: String, holding reason: String? = nil) {
         if diskConflict == path { diskConflict = nil }
         if missingFile == path { missingFile = nil }
@@ -551,9 +533,7 @@ final class ProjectModel {
     /// The session stops the build, restarts Live Preview and builds the new one; the PDF is the new main file's.
     func mainFileChanged() {
         analyze()
-        Task {
-            if let path = try? await core.call("pdf_path", ["id": id], as: String.self) { await showBuildPDF(path) }
-        }
+        Task { if let path = try? await core.call("pdf_path", ["id": id], as: String.self) { await showBuildPDF(path) } }
     }
 
     // MARK: - Editor commands

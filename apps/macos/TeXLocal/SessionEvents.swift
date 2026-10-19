@@ -1,8 +1,6 @@
 import Foundation
 
-// The session's answers and events (docs/core-api.md).
-
-/// What a session's event says, decoded once, on the core's event thread (`Core`).
+/// A session's event (docs/core-api.md), decoded on the core's event thread (`Core`).
 nonisolated enum SessionEvent: Sendable {
     case document(DocumentState)
     case saved
@@ -21,7 +19,7 @@ nonisolated enum SessionEvent: Sendable {
     case livePDF(LiveRead)
     case liveRestarted
 
-    /// The event of `type`, its fields read from `decoder`; nil for a type the app has no use for.
+    /// Nil for a type the app has no use for.
     init?(_ type: String, _ decoder: any Decoder) throws {
         func fields<T: Decodable>(_: T.Type = T.self) throws -> T { try T(from: decoder) }
         switch type {

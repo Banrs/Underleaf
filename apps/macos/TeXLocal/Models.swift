@@ -37,7 +37,6 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
 nonisolated enum FileKind: String, Decodable, Sendable {
     case tex, bib, image, pdf, text, other
 
-    /// Edited as text, not previewed.
     var isText: Bool { self == .tex || self == .bib || self == .text }
 
     init(from decoder: any Decoder) throws {
@@ -55,13 +54,11 @@ nonisolated extension String {
 }
 
 nonisolated extension NSRange {
-    /// An empty range: a caret, or where text goes in.
     static func caret(_ location: Int) -> NSRange { NSRange(location: location, length: 0) }
 }
 
 nonisolated struct TexStatus: Decodable {
     let available: Bool
-    var version: String?
     /// The number latexmk's version line names: "4.86".
     var latexmkVersion: String?
     var texDir, found, texpresso, texpressoDir: String?
@@ -128,7 +125,6 @@ nonisolated struct SearchHit: Decodable, Identifiable {
     var id: String { "\(file):\(line):\(before.count)" }
 }
 
-/// A file's hits, as `search_project` answers them.
 nonisolated struct SearchGroup: Decodable, Identifiable {
     let file: String
     let hits: [SearchHit]
