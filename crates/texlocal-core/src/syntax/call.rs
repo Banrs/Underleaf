@@ -15,19 +15,15 @@ fn json(value: impl Serialize) -> Option<String> {
     serde_json::to_string(&value).ok()
 }
 
-/// The argument `key`: none when it is left out or isn't of its type, as a
-/// command is sent what it needs, never given the text's start for it.
+/// The argument `key`, one left out read as null: none when it isn't of its
+/// type, as a command is sent what it needs, never given the text's start for it.
 fn get<T: DeserializeOwned>(args: &Value, key: &str) -> Option<T> {
-    T::deserialize(args.get(key)?).ok()
+    T::deserialize(args.get(key).unwrap_or(&Value::Null)).ok()
 }
 
-/// An optional argument: `default` when it is left out or null, none when
-/// it isn't of its type.
+/// An optional argument: `default` when it is left out or null.
 fn optional<T: DeserializeOwned>(args: &Value, key: &str, default: T) -> Option<T> {
-    match args.get(key) {
-        None | Some(Value::Null) => Some(default),
-        Some(value) => T::deserialize(value).ok(),
-    }
+    get::<Option<T>>(args, key).map(|value| value.unwrap_or(default))
 }
 
 /// `args_json`, if it is a JSON object.
@@ -38,23 +34,8 @@ fn object(args_json: &str) -> Option<Value> {
 }
 
 impl SourceDocument {
-    /// The commands on the document's text: "completions" (`caret`,
-    /// `explicit`), "toggle_comment" (`selections`), "set_heading" (`caret`,
-    /// `command`), "insert_block" (`id`, `selection`), "insert_symbol"
-    /// (`command`, `selection`), "math_at" (`caret`), "text_styles"
-    /// (`selection`) and "code_ranges" (`selection`, `for`: "spelling" or
-    /// "writingTools"). Typing's (typing.rs), each the method of its name:
-    /// "type" (`selection`, `text`, `autoPair`), "delete_backward"
-    /// (`selection`, `autoPair`) and "insert_newline" (`selection`), each a
-    /// `Keystroke`; "partner" (`at`); "start_snippet" (`fields`, `at`),
-    /// "end_snippet", "tab" (`selections`, `step`); "move_lines"
-    /// (`selections`, `up`), "toggle_style" (`selections`, `style`: "bold",
-    /// "italic" or "underline"), "wrap" (`selections`, `template`) and
-    /// "map_selections" (`edits`, `selections`). `explicit` is false when
-    /// left out, `autoPair` true and `step` 1 (forwards). An edit's
-    /// following and a selection's are the C ABI's own (`tl_source_edit`,
-    /// `tl_source_select`), as is the text; those that need no document are
-    /// `call`'s.
+    /// The commands on the document's text, `tl_source_call`'s, as
+    /// docs/core-api.md lists them; those that need no document are `call`'s.
     pub fn call(&mut self, command: &str, args_json: &str) -> Option<String> {
         let a = &object(args_json)?;
         let caret = || get::<u32>(a, "caret");
@@ -83,10 +64,10 @@ impl SourceDocument {
             "move_lines" => json(self.move_lines(&selections()?, get(a, "up")?)),
             "toggle_style" => json(self.toggle_style(&selections()?, get(a, "style")?)),
             "wrap" => json(self.wrap(&selections()?, &string("template")?)),
-            "map_selections" => {
-                let edits: Vec<TextEdit> = get(a, "edits")?;
-                json(map_selections(&edits, &selections()?))
-            }
+            "map_selections" => json(map_selections(
+                &get::<Vec<TextEdit>>(a, "edits")?,
+                &selections()?,
+            )),
             _ => None,
         }
     }
