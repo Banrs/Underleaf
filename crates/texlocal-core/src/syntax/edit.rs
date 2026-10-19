@@ -51,13 +51,8 @@ fn touched_lines(text: &Text, selections: &[TextRange]) -> BTreeSet<usize> {
 
 /// A sectioning command, to its title's opening brace: its star and short title.
 static HEADING: LazyLock<Regex> = LazyLock::new(|| {
-    // The levels the menus offer, then the one they don't.
-    let levels = catalog::CATALOG.heading_levels.iter();
-    let names = levels
-        .map(|level| level.command.as_str())
-        .chain(["subparagraph"]);
-    let names = names.map(regex::escape).collect::<Vec<_>>().join("|");
-    Regex::new(&format!(r"\\({names})(\*?)\s*(\[[^\]]*\])?\s*\{{")).unwrap()
+    Regex::new(r"\\(part|chapter|(?:sub){0,2}section|(?:sub)?paragraph)(\*?)\s*(\[[^\]]*\])?\s*\{")
+        .unwrap()
 });
 
 impl SourceDocument {

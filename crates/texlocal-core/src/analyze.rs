@@ -10,7 +10,6 @@ use regex::Regex;
 use serde::Serialize;
 
 use crate::paths;
-use crate::syntax::catalog::CATALOG;
 use crate::syntax::{headings, prose, scan};
 
 // What a title drops whole: \texorpdfstring's TeX argument (its PDF string is
@@ -45,13 +44,13 @@ pub struct Heading {
 
 impl Heading {
     fn new(depth: usize, title: Option<String>, line: usize, file: Option<String>) -> Self {
-        let level = &CATALOG.heading_levels[depth];
+        let (command, level) = headings::LEVELS[depth];
         Self {
             depth,
-            command: &level.command,
-            level: &level.title,
+            command,
+            level,
             untitled: title.is_none(),
-            title: title.unwrap_or_else(|| format!("Untitled {}", level.title)),
+            title: title.unwrap_or_else(|| format!("Untitled {level}")),
             line,
             file,
         }
@@ -189,8 +188,7 @@ fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis
     let words = prose::words(&text, |text, name, name_end| {
         let line = text.line_index(name_end as u32) + 1;
         let units = &text.units;
-        let mut levels = CATALOG.heading_levels.iter();
-        if let Some(depth) = levels.position(|l| l.command == name) {
+        if let Some(depth) = headings::LEVELS.iter().position(|l| l.0 == name) {
             if heading_line != Some(line)
                 && let (Some(title), _) = braced(units, name_end)
             {

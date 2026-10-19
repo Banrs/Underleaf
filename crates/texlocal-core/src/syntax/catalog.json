@@ -42,14 +42,6 @@
       {"title":"URL","body":"\\url{$0}","inline":true}
     ]
   },
-  "headingLevels": [
-    {"title":"Part","command":"part"},
-    {"title":"Chapter","command":"chapter"},
-    {"title":"Section","command":"section"},
-    {"title":"Subsection","command":"subsection"},
-    {"title":"Subsubsection","command":"subsubsection"},
-    {"title":"Paragraph","command":"paragraph"}
-  ],
   "symbolGroups": [
     {"title":"Greek","symbols":[
       {"glyph":"α","command":"\\alpha"},

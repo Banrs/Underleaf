@@ -27,9 +27,6 @@ pub struct Catalog {
     /// (name, snippet); "#{…}" marks a snippet field.
     pub commands: Vec<(String, String)>,
     pub templates: Templates,
-    /// The levels a line's style can be, outermost first: indexed by the
-    /// outline's depth.
-    pub heading_levels: Vec<HeadingLevel>,
     /// The maths symbols by kind, each inserted as its command.
     pub symbol_groups: Vec<SymbolGroup>,
 }
@@ -56,13 +53,6 @@ pub struct Template {
     pub symbol: Option<String>,
     #[serde(default)]
     pub inline: bool,
-}
-
-/// A sectioning command (without its backslash) and its name.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct HeadingLevel {
-    pub title: String,
-    pub command: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -7,7 +7,6 @@
 
 use serde::Serialize;
 
-use super::catalog::{CATALOG, HeadingLevel};
 use super::scan::{Scanner, Visit, arguments};
 use super::scans::SPACING;
 
@@ -72,12 +71,23 @@ pub struct Font {
     pub shape: Shape,
 }
 
+/// The sectioning commands, outermost first as the outline's depths go, and
+/// their levels' names.
+pub(crate) const LEVELS: [(&str, &str); 6] = [
+    ("part", "Part"),
+    ("chapter", "Chapter"),
+    ("section", "Section"),
+    ("subsection", "Subsection"),
+    ("subsubsection", "Subsubsection"),
+    ("paragraph", "Paragraph"),
+];
+
 /// A level the class has, as its headings are set; Normal Text first,
 /// whose `command` is empty.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Level {
-    pub title: String,
-    pub command: String,
+    pub title: &'static str,
+    pub command: &'static str,
     pub font: Font,
     /// Its number as its heading prints it, with the class's counters.
     pub marker: Option<String>,
@@ -261,8 +271,8 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
         Some(vec!["1"; (depth + chapters as i64) as usize].join("."))
     };
     let normal = Level {
-        title: "Normal Text".to_owned(),
-        command: String::new(),
+        title: "Normal Text",
+        command: "",
         font: Font {
             scale: 1.0,
             bold: false,
@@ -270,16 +280,16 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
         },
         marker: None,
     };
-    let levels = CATALOG.heading_levels.iter().enumerate();
-    let levels = levels.filter_map(|(index, HeadingLevel { title, command })| {
+    let levels = LEVELS.iter().enumerate();
+    let levels = levels.filter_map(|(index, &(command, title))| {
         let &(_, size, bold, shape) = looks.iter().find(|look| look.0 == command)?;
         let points = match size {
             Size::Step(step) => sizes[step],
             Size::Points(points) => points,
         };
         Some(Level {
-            title: title.clone(),
-            command: command.clone(),
+            title,
+            command,
             font: Font {
                 scale: points / sizes[NORMAL],
                 bold,
@@ -304,7 +314,7 @@ mod tests {
     }
 
     fn titles(levels: &[Level]) -> String {
-        let titles: Vec<&str> = levels.iter().map(|l| l.title.as_str()).collect();
+        let titles: Vec<&str> = levels.iter().map(|l| l.title).collect();
         titles.join(", ")
     }
 
