@@ -957,17 +957,23 @@ fn phases(events: &[Value]) -> Vec<&str> {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_file_changed_on_disk_goes_to_texpresso_and_a_rescan_follows() {
+async fn a_file_changed_on_disk_goes_to_texpresso_unless_too_large_to_send() {
     let rig = Rig::new(false).await;
-    fs::write(rig.root.join("ch.tex"), "x").unwrap();
-    rig.changed("ch.tex", true);
+    for file in ["ch.tex", "big.tex"] {
+        fs::write(rig.root.join(file), "x").unwrap();
+        rig.changed(file, true);
+    }
     wait(300).await;
     live(&rig).await;
-    rig.write_elsewhere("ch.tex", "chapter");
+    let big = "x".repeat(super::live::MAX_FILE as usize + 1);
+    for (file, text) in [("ch.tex", "chapter"), ("big.tex", big.as_str())] {
+        rig.write_elsewhere(file, text);
+    }
     wait(1000).await;
     rig.state().await;
     let updates = rig.fake.updates.lock().unwrap().clone();
     assert_eq!(updates, [("ch.tex".to_string(), "chapter".to_string())]);
+    // TeXpresso reads the large one from the disk itself.
     assert!(rig.fake.called("live_rescan") > 0);
 }
 

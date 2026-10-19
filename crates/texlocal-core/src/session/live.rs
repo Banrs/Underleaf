@@ -15,6 +15,8 @@ use crate::CoreError;
 use crate::projects::is_text;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 
+/// TeXpresso's own limit on a file sent to it; one larger it reads from the disk at the rescan.
+pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
 const DIDNT_START: &str =
     "TeXpresso didn’t start. Check its location in Settings and the log below.";
 /// A preview that ends by itself after running this long is started again.
@@ -466,8 +468,10 @@ impl Actor {
                 continue;
             }
             others = true;
+            let file = self.root.join(&path);
             if is_text_file(&path)
-                && let Ok(bytes) = std::fs::read(self.root.join(&path))
+                && std::fs::metadata(&file).is_ok_and(|meta| meta.len() <= MAX_FILE)
+                && let Ok(bytes) = std::fs::read(&file)
             {
                 let text = crate::lossy_string(bytes);
                 self.live.pending.insert(path, Some(text));
