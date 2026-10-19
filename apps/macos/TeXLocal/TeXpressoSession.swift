@@ -83,7 +83,6 @@ final class TeXpressoSession {
     @ObservationIgnored private var logWatch: Task<Void, Never>?
 
     var active: Bool { phase == .starting || phase == .running }
-    var canStart: Bool { phase == .stopped }
     var needsAttention: Bool { halted || !acknowledged && (failure != nil || error != nil) }
     var title: LocalizedStringResource {
         switch phase {
@@ -110,7 +109,6 @@ final class TeXpressoSession {
 
     /// Shown at once, not when the session says so: the toggle that asked follows the click.
     func starting() {
-        guard phase == .stopped else { return }
         phase = .starting
         acknowledged = false
     }
