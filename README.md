@@ -109,7 +109,8 @@ apps/macos/              AppKit and SwiftUI app, UI only.
 apps/windows/            WinUI 3 app, UI only.
 docs/                    core-api.md (the hosts' contract) · windows.md (the Windows app's
                          design and the core gaps it waits on) · texpresso.md (live preview) ·
-                         design-tokens.md (editor themes and surfaces)
+                         design-tokens.md (editor themes and surfaces) · agent-code.md (why
+                         agent-written code runs long) · audit-2026-10.md · handoff.md
 tools/texpresso/         Builds and installs TeXpresso with Underleaf's patch.
 tools/qa/                The Mac app's on-screen QA driver, type-check and test runners.
 tools/install-mac.sh     Builds the Release app and installs it in /Applications.
