@@ -86,7 +86,8 @@ char *_Nullable tl_source_edit(TlSource *source, uint32_t start, uint32_t length
                                const TlRange *_Nullable changing, bool mirroring);
 
 /* The editor's (first) selection moved: a snippet ends once it leaves the
- * fields, unless mirroring. */
+ * fields, unless mirroring, and the closers before its line are no longer
+ * stepped over. */
 void tl_source_select(TlSource *source, uint32_t start, uint32_t length, bool mirroring);
 
 /* The whole text as *len bytes of UTF-8, with no NUL after them (the text

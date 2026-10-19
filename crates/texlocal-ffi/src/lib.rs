@@ -1,17 +1,6 @@
-//! The C ABI the Mac app links and the Windows app loads: one JSON-in,
-//! JSON-out call over `texlocal_core::service`. See `include/texlocal.h`.
-//!
-//! `tl_call` blocks until the command finishes, so hosts call it off their UI
-//! thread, or use `tl_call_async`. Concurrent calls from several threads are
-//! fine: each drives the handle's runtime on its own thread. `session_*`
-//! commands go to `texlocal_core::session`, whose events reach the listener
-//! `tl_set_listener` sets; `tl_call_async` queues a session's commands for it
-//! as they are sent, so it takes them in that order.
-//!
-//! `tl_source_*` are the editor's: `texlocal_core::syntax`'s view of a file's text,
-//! answering in UTF-16 offsets, on the editor's thread. A source from
-//! `tl_session_source` is a session's document: its edits are saved and
-//! previewed from there too.
+//! The C ABI the Mac app links and the Windows app loads; `include/texlocal.h` is its
+//! contract. A blocking call drives the handle's runtime on its caller's thread, so calls
+//! from several threads at once are fine.
 
 use std::borrow::Cow;
 use std::ffi::{CStr, CString, c_char, c_void};
@@ -69,8 +58,7 @@ unsafe impl Sync for Callback {}
 
 impl Callback {
     fn send(self, value: &Value) {
-        let text = CString::new(value.to_string()).expect("JSON has no interior NUL");
-        (self.call)(self.ctx, text.as_ptr());
+        (self.call)(self.ctx, c_json(value.to_string()).as_ptr());
     }
 }
 
@@ -80,17 +68,18 @@ impl Callback {
 /// `source` is null or came from `tl_source_new` and is not freed, and no
 /// two calls on it overlap: one thread at a time, queries included.
 unsafe fn on_source<T>(source: *mut TlSource, none: T, body: impl FnOnce(&mut TlSource) -> T) -> T {
-    match unsafe { source.as_mut() } {
-        Some(source) => caught(|| body(source)).unwrap_or(none),
-        None => none,
-    }
+    unsafe { source.as_mut() }
+        .and_then(|source| caught(|| body(source)))
+        .unwrap_or(none)
+}
+
+/// JSON text for C: JSON escapes a NUL inside a string, so it holds none.
+fn c_json(text: String) -> CString {
+    CString::new(text).expect("JSON has no interior NUL")
 }
 
 fn json_string(value: impl Serialize) -> *mut c_char {
-    // JSON escapes NUL inside strings, so serialized output never contains one.
-    CString::new(serde_json::to_string(&value).expect("command results serialize"))
-        .expect("JSON has no interior NUL")
-        .into_raw()
+    c_json(serde_json::to_string(&value).expect("command results serialize")).into_raw()
 }
 
 /// # Safety
@@ -99,13 +88,6 @@ unsafe fn str_arg<'a>(ptr: *const c_char) -> Option<&'a str> {
     (!ptr.is_null()).then(|| unsafe { CStr::from_ptr(ptr) }.to_str().ok())?
 }
 
-/// Open the service over the library folder `data_dir`, which the host
-/// chooses: both apps take `TEXLOCAL_DATA` when set, else ~/TeXLocal, which
-/// is visible in the file manager, syncable, and (unlike ~/Documents on
-/// macOS) not behind a privacy gate, so no host hangs waiting on a
-/// folder-permission prompt. Returns null if `data_dir` is null or not UTF-8,
-/// the directory cannot be created or the runtime cannot start.
-///
 /// # Safety
 /// `data_dir` is null or a NUL-terminated string.
 #[unsafe(no_mangle)]
@@ -129,10 +111,6 @@ pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
     .map_or(std::ptr::null_mut(), Box::into_raw)
 }
 
-/// Run `command` with a JSON object of arguments (null means `{}`). Returns
-/// `{"ok": value}` or `{"error": message, "status": code}`, never null; free
-/// it with `tl_free`.
-///
 /// # Safety
 /// `handle` came from `tl_open` and is not closed; the strings are null or
 /// NUL-terminated.
@@ -200,12 +178,6 @@ impl Drop for Done {
     }
 }
 
-/// `tl_call` without waiting: the command runs on a core thread, which then
-/// calls `done` with the envelope `tl_call` would answer, valid only during
-/// the call. A null `done` runs the command for its effect alone. A session's
-/// commands (all `session_*` but `session_open`) are queued for it before
-/// this returns, so it takes them in the order they were sent.
-///
 /// # Safety
 /// As `tl_call`; `done`, if not null, may be called from any thread with
 /// `ctx`, until the handle is closed.
@@ -238,10 +210,6 @@ pub unsafe extern "C" fn tl_call_async(
     }
 }
 
-/// Sets the function the core's events go to, one JSON object at a time
-/// (`{"type": …, "session": …, …}`), in order, on a thread of the core's
-/// own; null removes it. Returns once no call to the previous one is running.
-///
 /// # Safety
 /// `handle` came from `tl_open` and is not closed; `listener`, if not null,
 /// may be called from that thread with `ctx` until it is replaced or the
@@ -262,10 +230,8 @@ pub unsafe extern "C" fn tl_set_listener(
     caught(|| handle.host.sessions.set_listener(listener));
 }
 
-/// Free a string `tl_call` returned. Null is ignored.
-///
 /// # Safety
-/// `text` came from `tl_call` and is freed once.
+/// `text` is null or a string this library answered, freed once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_free(text: *mut c_char) {
     if !text.is_null() {
@@ -273,12 +239,9 @@ pub unsafe extern "C" fn tl_free(text: *mut c_char) {
     }
 }
 
-/// Stop every running compile and live preview and release the handle. Null
-/// is ignored.
-///
 /// # Safety
-/// `handle` came from `tl_open`, no call on it is in flight, and it is closed
-/// once.
+/// `handle` is null or came from `tl_open`, with no call on it in flight, and is
+/// closed once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
     if handle.is_null() {
@@ -295,13 +258,6 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
     });
 }
 
-/// The document session `session` has open at `path` (`session_open_document`),
-/// as a source the editor edits and highlights: each edit is the session's
-/// too. Null if the session hasn't it open. Free it with `tl_source_free`,
-/// which leaves the document open. The document's typing state (the brackets
-/// closed for the user, a snippet's fields) starts empty for each source
-/// handed out, so one shown again keeps nothing from an earlier visit.
-///
 /// # Safety
 /// `handle` came from `tl_open` and is not closed; `path` is null or NUL-terminated.
 #[unsafe(no_mangle)]
@@ -350,8 +306,6 @@ unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
     String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) })
 }
 
-/// Never null: reading the text into lines can't fail.
-///
 /// # Safety
 /// `text` is null (empty) or `len` bytes of UTF-8.
 #[unsafe(no_mangle)]
@@ -361,15 +315,6 @@ pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSo
     )))))
 }
 
-/// The editor replaced `length` units at `start` with `text`: the source
-/// takes the edit, and the closers typing put in and a snippet's fields move
-/// with it. `changing` is the range the editor said it would change, if it
-/// said one (null). Unless the edit is a mirror edit going in (`mirroring`),
-/// answers what's typed in a snippet's field for its other places, as a JSON
-/// array of edits from the last (free it with `tl_free`), or null for none,
-/// as nearly always. Each call on a source answers as for a null source if
-/// it fails: nothing, 0, no runs.
-///
 /// # Safety
 /// `source` came from `tl_source_new` and is not freed, and no other call
 /// on it (queries included) overlaps this one; `text` is null (nothing) or
@@ -391,10 +336,9 @@ pub unsafe extern "C" fn tl_source_edit(
             Source::Own(doc) => doc.edit(start, length, &text),
             Source::Session(document) => document.edit(start, length, &text),
         }
-        let old = TextRange { start, length };
         let delta = text.encode_utf16().count() as i64 - length as i64;
         source.with(|doc| {
-            doc.follow(old, delta, changing, mirroring);
+            doc.follow(TextRange { start, length }, delta, changing, mirroring);
             let mirror = (!mirroring).then(|| doc.mirror_snippet());
             mirror.filter(|edits| !edits.is_empty()).map(json_string)
         })
@@ -402,10 +346,6 @@ pub unsafe extern "C" fn tl_source_edit(
     unsafe { on_source(source, None, followed) }.unwrap_or(std::ptr::null_mut())
 }
 
-/// The editor's selection (its first) moved: a snippet ends once it leaves
-/// the snippet's fields, unless `mirroring` edits are going in, and the
-/// closers before its line are no longer stepped over.
-///
 /// # Safety
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
@@ -420,10 +360,6 @@ pub unsafe extern "C" fn tl_source_select(
     unsafe { on_source(source, (), select) }
 }
 
-/// The source's whole text as UTF-8, `*len` bytes with no NUL after them
-/// (a U+0000 in the text is one of them). Free it with `tl_source_free_text`.
-/// A null `len` gets null, as the text could not be freed without its length.
-///
 /// # Safety
 /// As `tl_source_edit`; `len` is null or valid for a write.
 #[unsafe(no_mangle)]
@@ -447,9 +383,6 @@ pub unsafe extern "C" fn tl_source_free_text(text: *mut u8, len: usize) {
     }
 }
 
-/// The editor now shows `text` whole, as a `document_reload` event gave it:
-/// for a session's document, its text from disk, not an edit to save.
-///
 /// # Safety
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
@@ -484,11 +417,6 @@ pub unsafe extern "C" fn tl_source_line_count(source: *mut TlSource) -> u32 {
     unsafe { on_source(source, 0, |source| source.with(|doc| doc.line_count())) }
 }
 
-/// The highlighted runs of the lines a range touches, as start, length and
-/// kind (`HighlightKind`'s order) for each; `count` is the number of values.
-/// Free them with `tl_source_free_runs`. A null `count` gets null, as runs
-/// could not be freed without their count.
-///
 /// # Safety
 /// As `tl_source_edit`; `count` is null or valid for a write.
 #[unsafe(no_mangle)]
@@ -522,9 +450,6 @@ pub unsafe extern "C" fn tl_source_free_runs(runs: *mut u32, count: usize) {
     }
 }
 
-/// `syntax::SourceDocument::call`'s commands. Returns the result's JSON
-/// (free it with `tl_free`), or null for an unknown command or arguments.
-///
 /// # Safety
 /// As `tl_source_edit`; the strings are null or NUL-terminated.
 #[unsafe(no_mangle)]
@@ -538,19 +463,9 @@ pub unsafe extern "C" fn tl_source_call(
         source.with(|doc| doc.call(command, args))
     };
     let answer = unsafe { on_source(source, None, call) };
-    answer.map_or(std::ptr::null_mut(), owned_string)
+    answer.map_or(std::ptr::null_mut(), |json| c_json(json).into_raw())
 }
 
-/// JSON never holds a NUL: it escapes one inside a string.
-fn owned_string(text: String) -> *mut c_char {
-    CString::new(text).map_or(std::ptr::null_mut(), CString::into_raw)
-}
-
-/// `syntax::call`'s commands, which need no source: the themes,
-/// the menus' catalogue, a class's headings, and maths and symbols as SVG
-/// ("math_svg", "glyph_svg"). Any thread. Returns the result's JSON (free it
-/// with `tl_free`), or null for an unknown command or arguments.
-///
 /// # Safety
 /// The strings are null or NUL-terminated.
 #[unsafe(no_mangle)]
@@ -564,13 +479,11 @@ pub unsafe extern "C" fn tl_syntax_call(
     };
     caught(call)
         .flatten()
-        .map_or(std::ptr::null_mut(), owned_string)
+        .map_or(std::ptr::null_mut(), |json| c_json(json).into_raw())
 }
 
-/// Null is ignored.
-///
 /// # Safety
-/// `source` came from `tl_source_new` and is freed once.
+/// `source` is null or came from `tl_source_new`, and is freed once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_free(source: *mut TlSource) {
     if !source.is_null() {
