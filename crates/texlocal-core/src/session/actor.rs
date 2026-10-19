@@ -336,10 +336,8 @@ impl Actor {
     }
 
     pub fn emit(&self, kind: &str, mut fields: Value) {
-        if let Value::Object(map) = &mut fields {
-            map.insert("type".into(), kind.into());
-            map.insert("session".into(), self.id.into());
-        }
+        fields["type"] = kind.into();
+        fields["session"] = self.id.into();
         self.events.send(fields);
     }
 
@@ -542,8 +540,7 @@ impl Actor {
         let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(NOT_UTF8))?;
         let id = self.next_doc;
         self.next_doc += 1;
-        let symbols = Arc::clone(&self.symbols);
-        let document = Document::new(id, &text, self.tx.clone(), symbols);
+        let document = Document::new(id, &text, self.tx.clone(), Arc::clone(&self.symbols));
         let doc = Doc {
             doc: document.clone(),
             path: path.to_owned(),
@@ -571,14 +568,11 @@ impl Actor {
     }
 
     fn close_document(&mut self, path: &str) -> Result<Value, CoreError> {
-        if !self.docs.contains_key(path) {
-            return Ok(json!({ "closed": true }));
+        let closed = self.flush(Some(path), true)?;
+        if closed {
+            self.close_doc(path, "closed");
         }
-        if !self.flush(Some(path), true)? {
-            return Ok(json!({ "closed": false }));
-        }
-        self.close_doc(path, "closed");
-        Ok(json!({ "closed": true }))
+        Ok(json!({ "closed": closed }))
     }
 
     fn close_doc(&mut self, path: &str, reason: &str) {
@@ -1117,7 +1111,7 @@ fn as_left(abs: &Path, stamp: Option<Stamp>, text: Option<&str>) -> bool {
     let now = fs::metadata(abs).ok().map(|meta| Stamp::of(&meta));
     match (stamp, now) {
         (Some(stamp), Some(now)) if stamp == now => {
-            stamp.nanoseconds != 0
+            stamp.modified % 1_000_000_000 != 0
                 || fs::read(abs)
                     .is_ok_and(|bytes| String::from_utf8(bytes).ok().map(lf).as_deref() == text)
         }

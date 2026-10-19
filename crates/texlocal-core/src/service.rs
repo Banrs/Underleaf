@@ -104,11 +104,6 @@ impl Service {
         found
     }
 
-    /// Whether the last `status` found TeX.
-    pub(crate) fn tex_found(&self) -> bool {
-        *self.tex_found.borrow()
-    }
-
     // ---------- TeX folder ----------
 
     /// The PATH for TeX's tools, and for TeXpresso's, with the folders chosen.
@@ -244,10 +239,7 @@ impl Service {
                 Ok(json!(pdf.to_string_lossy()))
             }
             "project_root" => Ok(json!(root()?.to_string_lossy())),
-            "export_zip" => {
-                zipexport::export_zip(&root()?, Path::new(s("dest")?))?;
-                Ok(Value::Null)
-            }
+            "export_zip" => out(zipexport::export_zip(&root()?, Path::new(s("dest")?))?),
             // On quit, while a compile call may still be in flight — which rules
             // out tl_close — stop the latexmk trees that would otherwise outlive
             // the app.

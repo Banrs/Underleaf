@@ -702,8 +702,6 @@ fn apply_message(session: &Session, message: &Value) {
         session.send(&messages);
         return;
     }
-    let mut guard = lock(&session.state);
-    let state = &mut *guard;
     let verb = message[0].as_str().unwrap_or_default();
     let number = |index: usize| message[index].as_u64();
     let event = match verb {
@@ -745,6 +743,7 @@ fn apply_message(session: &Session, message: &Value) {
         },
         // Upstream sends [truncate, buffer, end] and [append, buffer, byte-offset, text].
         "truncate" | "append" => {
+            let mut state = lock(&session.state);
             let output = match message[1].as_str() {
                 Some("out") => &mut state.output,
                 Some("log") => &mut state.log,

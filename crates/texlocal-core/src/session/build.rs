@@ -53,7 +53,7 @@ impl Actor {
         if self.closed || auto && self.live_previewing() {
             return Ok(());
         }
-        if auto && !self.service.tex_found() {
+        if auto && !*self.service.tex_found.borrow() {
             self.builds.waiting_for_tex = true;
             return Ok(());
         }
@@ -192,12 +192,12 @@ impl Actor {
         let Some((live, intent)) = self.builds.cleaning.take() else {
             return;
         };
-        // The preview reads the build folder: one live as the clean began starts again,
-        // unless stopped or started meanwhile.
-        if result.is_ok() && live && intent == self.live.intent && !self.closed {
-            self.after(Timer::Restart);
-        }
         if result.is_ok() && !self.closed {
+            // The preview reads the build folder: one live as the clean began starts again,
+            // unless stopped or started meanwhile.
+            if live && intent == self.live.intent {
+                self.after(Timer::Restart);
+            }
             let builds = &mut self.builds;
             (builds.pdf, builds.outdated) = (false, false);
             (builds.issues, builds.error_count, builds.chosen) = (Vec::new(), 0, None);
@@ -249,12 +249,8 @@ impl Actor {
 
     pub fn choose_issue(&mut self, index: Option<usize>) -> Value {
         self.builds.chosen = index;
-        self.chosen_issue()
-    }
-
-    fn chosen_issue(&self) -> Value {
         let issues = &self.builds.issues;
-        let Some(index) = self.builds.chosen.filter(|i| *i < issues.len()) else {
+        let Some(index) = index.filter(|i| *i < issues.len()) else {
             return Value::Null;
         };
         json!({ "index": index, "issue": issues[index] })
@@ -291,21 +287,22 @@ fn issue_lines(
     tokens: impl Fn(u32, &str) -> Vec<TextRange>,
 ) -> Vec<Value> {
     let mut lines: BTreeMap<u32, (&LogItem, Vec<String>)> = BTreeMap::new();
-    for item in issues.iter().rev() {
-        let (Some(file), Some(line)) = (&item.file, item.line) else {
+    for item in issues
+        .iter()
+        .rev()
+        .filter(|item| item.file.as_deref() == Some(path))
+    {
+        let Some(line) = item.line else {
             continue;
         };
-        if file != path {
-            continue;
-        }
         let others = lines.remove(&line).map(|(later, mut others)| {
             others.insert(0, later.message.clone());
             others
         });
         lines.insert(line, (item, others.unwrap_or_default()));
     }
-    let lines = lines.into_iter();
     lines
+        .into_iter()
         .map(|(line, (item, others))| {
             let command = item.command.as_deref();
             json!({
