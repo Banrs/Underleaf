@@ -98,13 +98,11 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
             let key = format!("{file}\t{}:{title}", heading.depth);
             let count = seen.entry(key.clone()).or_default();
             *count += 1;
-            let fold_key = format!("{key}#{count}");
-            let children = nest(outline, next, Some(heading.depth), seen);
             nodes.push(OutlineNode {
                 index,
                 heading: heading.clone(),
-                fold_key,
-                children,
+                fold_key: format!("{key}#{count}"),
+                children: nest(outline, next, Some(heading.depth), seen),
             });
         }
         nodes

@@ -368,12 +368,10 @@ fn matched<'a>(
     brackets: impl Iterator<Item = &'a (usize, u16, bool)>,
     start: u16,
 ) -> Option<usize> {
-    let mut depth = 0;
-    for &(i, u, _) in brackets {
-        depth = if u == start { depth + 1 } else { depth - 1 };
-        if depth == 0 {
-            return Some(i);
-        }
-    }
-    None
+    brackets
+        .scan(0, |depth, &(i, u, _)| {
+            *depth += if u == start { 1 } else { -1 };
+            Some((i, *depth))
+        })
+        .find_map(|(i, depth)| (depth == 0).then_some(i))
 }

@@ -153,11 +153,7 @@ pub fn blend(a: Rgba, b: Rgba, fraction: f64) -> Rgba {
 /// A translucent colour as it shows on an opaque background, mixed by sRGB's
 /// components, as the window server mixes them.
 pub fn over(color: Rgba, background: Rgba) -> Rgba {
-    let alpha = color[3];
-    if alpha >= 1.0 {
-        return color;
-    }
-    let mut shown = blend(background, color, alpha);
+    let mut shown = blend(background, color, color[3]);
     shown[3] = 1.0;
     shown
 }

@@ -363,9 +363,7 @@ impl Scanner {
             return (false, self.i + 1);
         }
         let name_start = self.i;
-        while self.i < src.len() && letter(src[self.i]) {
-            self.i += 1;
-        }
+        self.i += src[name_start..].iter().take_while(|&&u| letter(u)).count();
         let name_end = self.i;
         let mut buf = [0; NAME];
         let name = ascii(&src[name_start..name_end], &mut buf);

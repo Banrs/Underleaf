@@ -102,19 +102,12 @@ const BLACK: Rgba = [0.0, 0.0, 0.0, 1.0];
 /// alike: `%`, `#` and `\` mean something else to TeX there, and its braces must
 /// pair. The rest (spaces, `_`, `&`, `$`, `^`, `~`) it takes as they are.
 fn tex_reads(path: &str) -> bool {
-    let mut depth = 0i32;
-    for c in path.chars() {
-        depth += match c {
-            '%' | '#' | '\\' => return false,
-            '{' => 1,
-            '}' => -1,
-            _ => 0,
-        };
-        if depth < 0 {
-            return false;
-        }
-    }
-    depth == 0
+    path.chars().try_fold(0u32, |depth, c| match c {
+        '%' | '#' | '\\' => None,
+        '{' => Some(depth + 1),
+        '}' => depth.checked_sub(1),
+        _ => Some(depth),
+    }) == Some(0)
 }
 
 /// The commands that need no document: "themes", each theme's id and title;
@@ -140,24 +133,18 @@ pub fn call(command: &str, args_json: &str) -> Option<String> {
             json(dropped(&get::<String>(a, "path")?, &kind, &into))
         }
         "themes" => json(theme::THEMES.map(|t| json!({ "id": t.id, "title": t.title }))),
-        "math_svg" => {
-            let (tex, display) = (string("tex", "")?, optional(a, "display", false)?);
-            rendered(render::math_svg(
-                &tex,
-                display,
-                optional(a, "size", 13.0)?,
-                color()?,
-            ))
-        }
-        "glyph_svg" => {
-            let (size, side) = (optional(a, "size", 19.0)?, optional(a, "side", 24.0)?);
-            rendered(render::glyph_svg(
-                &string("command", "")?,
-                size,
-                side,
-                color()?,
-            ))
-        }
+        "math_svg" => rendered(render::math_svg(
+            &string("tex", "")?,
+            optional(a, "display", false)?,
+            optional(a, "size", 13.0)?,
+            color()?,
+        )),
+        "glyph_svg" => rendered(render::glyph_svg(
+            &string("command", "")?,
+            optional(a, "size", 19.0)?,
+            optional(a, "side", 24.0)?,
+            color()?,
+        )),
         "menus" => {
             let catalog = &*catalog::CATALOG;
             json(json!({ "templates": catalog.templates, "symbolGroups": catalog.symbol_groups }))

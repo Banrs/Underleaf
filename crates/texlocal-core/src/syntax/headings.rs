@@ -320,11 +320,8 @@ mod tests {
 
     /// The levels' markers, "-" for none.
     fn markers(levels: &[Level]) -> String {
-        let markers: Vec<&str> = levels
-            .iter()
-            .map(|l| l.marker.as_deref().unwrap_or("-"))
-            .collect();
-        markers.join(" ")
+        let markers = levels.iter().map(|l| l.marker.as_deref().unwrap_or("-"));
+        markers.collect::<Vec<_>>().join(" ")
     }
 
     #[test]

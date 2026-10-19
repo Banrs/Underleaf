@@ -123,8 +123,7 @@ fn the_maths_to_preview_is_found_around_a_place() {
     ];
     let found = |source: &str| {
         let (mut doc, at) = marked(source);
-        let maths = doc.math_at(at);
-        maths.map(|m| (m.start, m.tex, m.display))
+        doc.math_at(at).map(|m| (m.start, m.tex, m.display))
     };
     for (source, expected) in cases {
         let expected = expected.map(|(start, tex, display)| (start, tex.to_owned(), display));

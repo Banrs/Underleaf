@@ -41,14 +41,13 @@ impl LogItem {
             .strip_prefix("LaTeX Error: ")
             .unwrap_or(&flat)
             .to_owned();
-        let command = undefined_command(&short);
         Self {
             kind,
             file,
             line,
             message,
+            command: undefined_command(&short),
             short,
-            command,
         }
     }
 
@@ -326,10 +325,8 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     }
 
     // Reruns duplicate messages; keep the first in order.
-    let mut seen = HashSet::with_capacity(items.len());
-    let keep: Vec<bool> = items.iter().map(|item| seen.insert(item)).collect();
-    let mut keep = keep.into_iter();
-    items.retain(|_| keep.next().unwrap());
+    let mut seen = HashSet::new();
+    items.retain(|item| seen.insert(item.clone()));
     items
 }
 

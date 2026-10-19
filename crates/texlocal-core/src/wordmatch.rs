@@ -258,13 +258,8 @@ pub(crate) fn find_in_source(
         .map(|k| {
             let (before, after, edges) = evidence(&pdf, &word, &src, k);
             let n = src.spans[k].group;
-            let rank = (
-                Reverse(before + after),
-                Reverse(edges),
-                n.abs_diff(line),
-                n > line,
-            );
-            (rank, k)
+            let near = (n.abs_diff(line), n > line);
+            ((Reverse(before + after), Reverse(edges), near), k)
         })
         .collect();
     let found = src.spans[unique(ranked)? + clicked - word.start];

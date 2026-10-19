@@ -172,8 +172,7 @@ impl SourceDocument {
             (format!("{head}{title}{close}{rest}{comment}"), cursor)
         } else if closed {
             let plain = format!("{before}{title}{rest}");
-            let cursor = utf16(&plain);
-            (format!("{plain}{comment}"), cursor)
+            (format!("{plain}{comment}"), utf16(&plain))
         } else {
             (line.clone(), (caret - start) as usize)
         };
@@ -275,10 +274,9 @@ impl SourceDocument {
             } else {
                 whole.start + moved[0].len() + (lines[0].next - lines[0].end)
             };
-            let length = whole.end - whole.start;
             edits.push(splice(
                 whole.start,
-                length,
+                whole.len(),
                 String::from_utf16_lossy(&joined),
             ));
             moves.push((start, end, at));
@@ -291,7 +289,7 @@ impl SourceDocument {
                     (start <= at && at < end) || (at == end && at == to && end == len)
                 });
                 let at = found.map_or(at, |&(start, _, first)| at - start + first);
-                span(at, (selection.length) as usize)
+                span(at, selection.length as usize)
             })
             .collect();
         Some(Change { edits, selections })
