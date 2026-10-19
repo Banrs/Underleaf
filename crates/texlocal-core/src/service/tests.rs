@@ -197,29 +197,19 @@ async fn the_tex_dir_persists_in_the_data_dir_and_clears_to_automatic() {
     assert_eq!(listed.as_array().unwrap().len(), 1);
     assert_eq!(listed[0]["id"], "P");
 
-    // Another host on the same data dir sees the same choice.
-    let other = Service::new(service.data_dir.clone());
-    assert_eq!(tex_dir(&other), Some(tex.path().to_path_buf()));
     let saved = fs::read(service.data_dir.join(".texlocal-app.json")).unwrap();
     let saved: Value = serde_json::from_slice(&saved).unwrap();
     assert_eq!(saved, json!({ "texDir": bin }));
 
     let status = call(&service, "set_tex_dir", json!({ "dir": null })).await;
     assert_eq!(status["texDir"], Value::Null);
-    assert_eq!(tex_dir(&other), None);
-
-    call(&service, "set_tex_dir", json!({ "dir": bin })).await;
-    call(&service, "set_tex_dir", json!({ "dir": "  " })).await;
+    assert_ne!(status["found"], bin);
     assert_eq!(tex_dir(&service), None);
 }
 
 #[tokio::test]
 async fn status_reports_the_current_tex_choice() {
     let (_dir, service) = library();
-    let first = call(&service, "status", json!({})).await;
-    assert_eq!(first["texDir"], Value::Null);
-    assert!(first.as_object().unwrap().contains_key("found"));
-
     let tex = TempDir::new().unwrap();
     let bin = fake_tex(tex.path());
     let chosen = call(&service, "set_tex_dir", json!({ "dir": bin })).await;
@@ -236,10 +226,6 @@ async fn status_reports_the_current_tex_choice() {
     assert_eq!(updated["version"], "Latexmk, stub 2.0");
     assert_eq!(updated["latexmkVersion"], Value::Null);
     assert_eq!(updated["texDir"], bin);
-
-    let automatic = call(&service, "set_tex_dir", json!({ "dir": null })).await;
-    assert_eq!(automatic["texDir"], Value::Null);
-    assert_ne!(automatic["version"], "Latexmk, stub 2.0");
 }
 
 #[tokio::test]

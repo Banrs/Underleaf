@@ -116,9 +116,9 @@ impl Service {
         tex::tool_paths(&AppSettings::read(&self.data_dir))
     }
 
-    /// Choose TeXpresso's folder; None or empty goes back to the TeX path.
+    /// Choose TeXpresso's folder; None goes back to the TeX path.
     pub async fn set_texpresso_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
-        let chosen = dir.map(str::trim).filter(|d| !d.is_empty()).map(Path::new);
+        let chosen = dir.map(Path::new);
         if let Some(dir) = chosen
             && tex::program_at(&dir.join("texpresso")).is_none()
         {
@@ -128,19 +128,14 @@ impl Service {
         Ok(self.status().await)
     }
 
-    /// Choose the TeX folder; None or empty goes back to automatic. A TeX Live
-    /// root is accepted and saved as its bin folder.
+    /// Choose the TeX folder; None goes back to automatic. A TeX Live root is
+    /// accepted and saved as its bin folder.
     pub async fn set_tex_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
-        let chosen = match dir.map(str::trim).filter(|d| !d.is_empty()) {
-            None => None,
-            Some(dir) => {
-                let dir = Path::new(dir);
-                if !dir.is_absolute() {
-                    return Err(CoreError::bad_request(NO_LATEXMK));
-                }
-                Some(tex::tex_bin_dir(dir).ok_or_else(|| CoreError::bad_request(NO_LATEXMK))?)
-            }
-        };
+        let chosen = dir
+            .map(|dir| {
+                tex::tex_bin_dir(Path::new(dir)).ok_or_else(|| CoreError::bad_request(NO_LATEXMK))
+            })
+            .transpose()?;
         AppSettings::choose(&self.data_dir, "texDir", chosen.as_deref())?;
         Ok(self.status().await)
     }

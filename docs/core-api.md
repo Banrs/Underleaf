@@ -343,4 +343,6 @@ Every change a host follows since commit d6bee12, in the order made.
   whose Live Preview has been stopped is 404.
 - `create_entry` always numbers past a taken name, as both hosts asked with `free: true`, which
   it no longer reads.
+- `set_tex_dir` and `set_texpresso_dir` take `dir` as given, as both hosts send a folder chosen
+  or null: a blank one is 400, where it cleared the choice.
 
