@@ -115,8 +115,7 @@ public sealed partial class WorkspacePage : Page
             await Reveal(at.File, at.Line, at.Column ?? 0);
         });
         foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem]) Shortcut.SetScope(item, Editor);
-        Shortcut.SetScope(RenameItem, FilesTree);
-        Shortcut.SetScope(DeleteItem, FilesTree);
+        foreach (var item in (UIElement[])[RenameItem, DeleteItem]) Shortcut.SetScope(item, FilesTree);
         DeleteItem.KeyboardAcceleratorTextOverride = "Del";
         SetUpInsert();
         SetUpMenuFocus();
