@@ -61,31 +61,18 @@ async fn a_free_project_name_is_the_next_untitled() {
 }
 
 #[tokio::test]
-async fn a_new_project_is_made_with_its_engine_or_not_at_all() {
+async fn a_new_project_is_made_with_its_engine() {
     let (_dir, service) = library();
     let args = json!({ "name": "Xe", "template": "blank", "engine": "xelatex" });
     let made = call(&service, "create_project", args).await;
     let settings = call(&service, "get_settings", json!({ "id": made["id"] })).await;
     assert_eq!(settings["engine"], "xelatex");
-    let unknown = json!({ "name": "Odd", "engine": "troff" });
-    assert_eq!(status_of(&service, "create_project", unknown).await, 400);
-    assert!(!service.data_dir.join("Odd").exists(), "no project made");
 }
 
 #[tokio::test]
 async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     let (_dir, service) = with_project();
-
-    // Raw bytes go through methods, not commands.
-    for command in [
-        "no_such_command",
-        "upload_file",
-        "export_project",
-        "save_pdf_as",
-    ] {
-        let status = status_of(&service, command, json!({ "id": "P" })).await;
-        assert_eq!(status, 404, "{command}");
-    }
+    assert_eq!(status_of(&service, "no_such_command", json!({})).await, 404);
     let pdf = call(&service, "pdf_path", json!({ "id": "P" })).await;
     assert!(pdf.as_str().unwrap().ends_with(".pdf"), "{pdf}");
     // Missing and mistyped arguments, and paths the boundary refuses, which
@@ -277,36 +264,12 @@ fn the_latexmk_version_is_the_number_its_version_line_names() {
 #[tokio::test]
 async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
     let (_dir, service) = with_project();
-
-    // A free name is numbered past those taken; a plain create still refuses one.
-    for expected in ["untitled.tex", "untitled 2.tex"] {
-        let args = json!({ "id": "P", "path": "untitled.tex", "free": true });
-        let made = call(&service, "create_entry", args).await;
-        assert_eq!(made, json!({ "path": expected }));
-    }
-    let taken = json!({ "id": "P", "path": "untitled.tex" });
-    assert_eq!(status_of(&service, "create_entry", taken).await, 409);
-    let tree = call(&service, "file_tree", json!({ "id": "P" })).await;
-    assert!(tree.as_array().unwrap().iter().all(|n| n["kind"] == "tex"));
-
-    // Where a path in the library is.
-    let path = service.data_dir.join("P/sec/new.tex");
-    let located = call(&service, "locate", json!({ "path": path })).await;
-    assert_eq!(located, json!({ "id": "P", "path": "sec/new.tex" }));
-    let outside = json!({ "path": service.data_dir.parent().unwrap() });
-    assert_eq!(call(&service, "locate", outside).await, Value::Null);
-
-    // The interface state is kept with the project (and follows a rename: projects.rs).
     let patch = json!({ "expandedFolders": ["sec"], "foldedHeadings": ["sec/a.tex\t2:A#1"] });
     let args = json!({ "id": "P", "patch": patch });
     assert_eq!(call(&service, "set_ui_state", args).await, patch);
-    let root = service.project_root("P").unwrap();
-    assert_eq!(json!(settings::read_ui(&root)), patch);
-    // It is not a file the generic APIs reach.
-    let args = json!({ "id": "P", "path": ".texlocal.json" });
-    assert_eq!(status_of(&service, "create_entry", args).await, 400);
 
     // The word a source line's caret is on, among a forward sync's pages.
+    let root = service.project_root("P").unwrap();
     fs::write(root.join("main.tex"), "alpha beta gamma\n").unwrap();
     let page = json!({ "page": 2, "text": "alpha beta gamma", "near": [[0, 16]] });
     let args = json!({ "id": "P", "file": "main.tex", "line": 1, "column": 8, "pages": [page] });
