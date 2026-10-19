@@ -3,9 +3,8 @@
 //! inside the project cannot archive itself and failures never leave a partial
 //! ZIP at the requested path.
 //!
-//! What goes in is what an import takes back: everything but the compile
-//! output, the project's own settings and `projects::is_litter`. Dotfiles the
-//! file tree hides (.latexmkrc) are the author's and are archived.
+//! What goes in is what an import takes back: all but what `left_out` names.
+//! Dotfiles the file tree hides (.latexmkrc) are the author's and are archived.
 
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
@@ -76,19 +75,14 @@ impl Export<'_> {
 
     fn add_entry(&mut self, entry: &DirEntry, prefix: &str) -> Result<(), CoreError> {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if is_litter(&name) {
-            return Ok(());
-        }
-        if prefix.is_empty()
-            && (name.eq_ignore_ascii_case(BUILD_DIR) || name.eq_ignore_ascii_case(SETTINGS_FILE))
-        {
-            return Ok(());
-        }
         let rel = if prefix.is_empty() {
             name
         } else {
             format!("{prefix}/{name}")
         };
+        if left_out(&rel) {
+            return Ok(());
+        }
         let path = entry.path();
 
         let entry_type = entry.file_type()?;
@@ -126,6 +120,16 @@ impl Export<'_> {
         io::copy(&mut file, &mut self.writer)?;
         Ok(())
     }
+}
+
+/// What an export leaves out and an import leaves behind, by its path in the
+/// project: `is_litter` at any depth, and the compile output and the project's
+/// own settings at the top, in any case.
+pub(crate) fn left_out(rel: &str) -> bool {
+    let top = rel.split('/').next().unwrap_or(rel);
+    top.eq_ignore_ascii_case(BUILD_DIR)
+        || rel.eq_ignore_ascii_case(SETTINGS_FILE)
+        || rel.split('/').any(is_litter)
 }
 
 /// Past 4 GiB (a video, a data set), sizes need ZIP64's fields; and from

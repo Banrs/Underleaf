@@ -17,7 +17,8 @@ use crate::paths::{self, after_entry, fold_case, normalize_segments, rel_key};
 use crate::projects::{self, ProjectInfo, Staging, Trash};
 use crate::service::Service;
 use crate::settings::write_settings;
-use crate::{BUILD_DIR, CoreError, SETTINGS_FILE, atomic, templates};
+use crate::zipexport::left_out;
+use crate::{BUILD_DIR, CoreError, atomic, templates};
 
 /// What to do with incoming files that land on existing entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -31,7 +32,6 @@ pub enum Conflict {
 
 #[derive(Debug, Serialize)]
 pub struct Imported {
-    pub saved: Vec<String>,
     pub existing: Vec<Clash>,
 }
 
@@ -70,73 +70,45 @@ struct Incoming {
 struct Allowance {
     entries: u64,
     bytes: u64,
-    /// The most any one file may be.
-    per_file: u64,
 }
 
 const TOO_MANY: &str = "There are too many files to import.";
 const TOO_BIG: &str = "The files to import are too large.";
 
-/// The largest file a drop takes.
-const UPLOAD_MAX_BYTES: u64 = 100 * 1024 * 1024;
-const IMPORT_MAX_BYTES: u64 = 4 << 30;
-
-/// Far past any real project, so only a dropped home folder or a zip bomb
-/// meets it, before it has filled the disk.
-const DROP: Allowance = Allowance {
+/// What a drop or File › Open takes. A project may hold a data set or a
+/// video, so one file may be as large as the whole; and the whole is far past
+/// any real project, so only a dropped home folder or a zip bomb meets it,
+/// before it has filled the disk.
+const IMPORT: Allowance = Allowance {
     entries: 100_000,
-    bytes: IMPORT_MAX_BYTES,
-    per_file: UPLOAD_MAX_BYTES,
-};
-
-/// What File › Open takes: a folder chosen to be a project may hold a data
-/// set or a video, so one file may be as large as the whole.
-const OPEN: Allowance = Allowance {
-    per_file: IMPORT_MAX_BYTES,
-    ..DROP
+    bytes: 4 << 30,
 };
 
 /// A .tex brings its folder only while that is no larger than a project:
-/// Overleaf's limit on a project's files, and one upload's bytes.
+/// Overleaf's limit on a project's files, and 100 MB.
 const TEX_FOLDER: Allowance = Allowance {
     entries: 2000,
-    bytes: UPLOAD_MAX_BYTES,
-    per_file: UPLOAD_MAX_BYTES,
+    bytes: 100 << 20,
 };
 
 impl Allowance {
-    fn entry(&mut self) -> Result<(), CoreError> {
-        self.entries = self
-            .entries
-            .checked_sub(1)
-            .ok_or_else(|| CoreError::bad_request(TOO_MANY))?;
+    fn take_entries(&mut self, count: usize) -> Result<(), CoreError> {
+        let left = self.entries.checked_sub(count as u64);
+        self.entries = left.ok_or_else(|| CoreError::bad_request(TOO_MANY))?;
         Ok(())
     }
 
-    /// Take `size` bytes, as declared or as read, of the file `name`.
-    fn file(&mut self, name: &str, size: u64) -> Result<(), CoreError> {
-        if size > self.per_file {
-            let megabytes = self.per_file / 1024 / 1024;
-            return Err(CoreError::bad_request(format!(
-                "“{name}” is larger than the {megabytes} MB one file may be."
-            )));
-        }
-        self.bytes =
-            (self.bytes.checked_sub(size)).ok_or_else(|| CoreError::bad_request(TOO_BIG))?;
+    /// Take `size` bytes, as declared or as read.
+    fn take_bytes(&mut self, size: u64) -> Result<(), CoreError> {
+        let left = self.bytes.checked_sub(size);
+        self.bytes = left.ok_or_else(|| CoreError::bad_request(TOO_BIG))?;
         Ok(())
     }
 
-    /// Copy `source`, the file `name`, to `sink`, taking the bytes actually
-    /// read, and never more than one file may be.
-    fn copy(
-        &mut self,
-        name: &str,
-        source: impl Read,
-        sink: &mut impl Write,
-    ) -> Result<(), CoreError> {
-        let cap = self.bytes.min(self.per_file);
-        let copied = io::copy(&mut source.take(cap + 1), sink)?;
-        self.file(name, copied)
+    /// Copy `source` to `sink`, taking the bytes actually read.
+    fn copy(&mut self, source: impl Read, sink: &mut impl Write) -> Result<(), CoreError> {
+        let copied = io::copy(&mut source.take(self.bytes + 1), sink)?;
+        self.take_bytes(copied)
     }
 }
 
@@ -162,12 +134,12 @@ fn collect(
     allowance: &mut Allowance,
 ) -> Result<(), CoreError> {
     if meta.is_file() {
-        allowance.file(&rel, meta.len())?;
+        allowance.take_bytes(meta.len())?;
         let source = Source::File(abs.to_path_buf());
         files.push(Incoming { path: rel, source });
     } else if meta.is_dir() {
         for entry in fs::read_dir(abs).map_err(CoreError::at(abs))? {
-            allowance.entry()?;
+            allowance.take_entries(1)?;
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if !projects::is_litter(&name)
@@ -184,9 +156,9 @@ fn collect(
 }
 
 /// Import dropped files and folders into the project folder `dir`: a bad
-/// path or oversize file fails the drop before anything lands. Without
-/// `conflict`, a drop that would land on existing entries writes nothing and
-/// reports them, for the host to ask about.
+/// path, or more than an import takes, fails the drop before anything lands.
+/// Without `conflict`, a drop that would land on existing entries writes
+/// nothing and reports them, for the host to ask about.
 pub fn import_files(
     service: &Service,
     id: &str,
@@ -194,7 +166,7 @@ pub fn import_files(
     paths: &[PathBuf],
     conflict: Option<Conflict>,
 ) -> Result<Imported, CoreError> {
-    import_files_within(service, id, dir, paths, conflict, DROP, projects::discard)
+    import_files_within(service, id, dir, paths, conflict, IMPORT, projects::discard)
 }
 
 /// `import_files` under `allowance`, with `trash` to discard what Replace
@@ -221,27 +193,28 @@ fn import_files_within(
     let base = root.join(rel_key(dir).unwrap_or_default());
     let existing = clashes(&base, &rels);
     if conflict.is_none() && !existing.is_empty() {
-        return Ok(Imported {
-            saved: Vec::new(),
-            existing,
-        });
+        return Ok(Imported { existing });
     }
     let replace = (conflict == Some(Conflict::Replace)).then_some(trash);
-    let mut saved = Vec::new();
     for file in files {
         let path = if conflict == Some(Conflict::KeepBoth) {
             keep_both(&file.path, &existing)
         } else {
             file.path
         };
-        let rel = in_folder(dir, &path);
         let Source::File(source) = file.source else {
             unreachable!("a drop is of files");
         };
-        save(service, id, &rel, &source, replace, &mut allowance)?;
-        saved.push(rel);
+        save(
+            service,
+            id,
+            &in_folder(dir, &path),
+            &source,
+            replace,
+            &mut allowance,
+        )?;
     }
-    Ok(Imported { saved, existing })
+    Ok(Imported { existing })
 }
 
 /// Checks the whole batch before anything is written, so a late unsafe entry
@@ -354,7 +327,7 @@ fn save(
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
     let (temp, mut file) = atomic::create_temp(folder.unwrap_or(&root))?;
     let origin = File::open(source).map_err(CoreError::at(source))?;
-    allowance.copy(rel, origin, &mut file)?;
+    allowance.copy(origin, &mut file)?;
     file.sync_all()?;
     drop(file);
     service.with_project(id, |root| {
@@ -378,9 +351,7 @@ fn zip_files(
     archive: &mut ZipArchive<File>,
     mut allowance: Allowance,
 ) -> Result<Vec<Incoming>, CoreError> {
-    for _ in 0..archive.len() {
-        allowance.entry()?;
-    }
+    allowance.take_entries(archive.len())?;
     let mut files = Vec::new();
     for i in 0..archive.len() {
         // Its name and size only: nothing is decompressed yet.
@@ -394,7 +365,7 @@ fn zip_files(
             _ => continue,
         };
         if !segments.iter().any(|s| projects::is_litter(s)) {
-            allowance.file(&name, entry.size())?;
+            allowance.take_bytes(entry.size())?;
             files.push(Incoming {
                 path: segments.join("/"),
                 source: Source::Zip(i),
@@ -509,13 +480,13 @@ fn file_name(path: &Path) -> String {
 /// File › Open: a folder, a .zip or a single file from anywhere, copied into
 /// a new project named after it ("Name 2" when that is taken). A .tex brings its folder,
 /// for what it inputs, includes and cites, unless that folder can't be read, is larger
-/// than a project (more than 2000 entries or one upload's bytes) or has no name a project
-/// can take: then the .tex comes alone. Version-control folders and OS litter stay behind,
+/// than a project (more than 2000 entries or 100 MB) or has no name a project can take:
+/// then the .tex comes alone. Version-control folders and OS litter stay behind,
 /// as does a top-level `build`; every other file comes, though the file tree hides dotfiles.
 /// The main file is the chosen .tex, else the likeliest top-level one, else the blank
 /// template's main.tex.
 pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
-    import_project_within(service, src, OPEN)
+    import_project_within(service, src, IMPORT)
 }
 
 fn import_project_within(
@@ -529,11 +500,8 @@ fn import_project_within(
         mut files,
         main,
     } = open(src, allowance)?;
-    // The compile output and the project's own settings are not brought.
-    files.retain(|file| {
-        let top = file.path.split('/').next().unwrap_or_default();
-        !top.eq_ignore_ascii_case(BUILD_DIR) && !file.path.eq_ignore_ascii_case(SETTINGS_FILE)
-    });
+    // What an export leaves out stays behind: the project makes its own settings.
+    files.retain(|file| !left_out(&file.path));
 
     let staging = Staging::new(&service.data_dir, &base)?;
     let staged = staging.path();
@@ -548,11 +516,11 @@ fn import_project_within(
         match &file.source {
             Source::File(path) => {
                 let origin = File::open(path).map_err(CoreError::at(path))?;
-                allowance.copy(&file.path, origin, &mut dest)?;
+                allowance.copy(origin, &mut dest)?;
             }
             Source::Zip(i) => {
                 let entry = zip.as_mut().expect("a zip source").by_index(*i)?;
-                allowance.copy(&file.path, entry, &mut dest)?;
+                allowance.copy(entry, &mut dest)?;
             }
         }
         dest.flush()?;
@@ -579,12 +547,6 @@ mod tests {
         fs::read_dir(&service.data_dir).unwrap().count()
     }
 
-    fn saved(imported: &Imported) -> Vec<String> {
-        let mut saved = imported.saved.clone();
-        saved.sort();
-        saved
-    }
-
     /// Stands in for the platform's Trash, which a test can't look into.
     fn remove(path: &Path) -> Result<(), CoreError> {
         if path.is_dir() {
@@ -600,13 +562,12 @@ mod tests {
         let source = tempfile::NamedTempFile::new().unwrap();
         fs::write(source.path(), bytes).unwrap();
         let replace = replace.then_some(remove as Trash);
-        save(service, "P", rel, source.path(), replace, &mut { DROP })
+        save(service, "P", rel, source.path(), replace, &mut { IMPORT })
     }
 
     const SMALL: Allowance = Allowance {
         entries: 3,
         bytes: 25,
-        per_file: 30,
     };
 
     #[test]
@@ -698,8 +659,8 @@ mod tests {
         let paths = [drop.join("figs")];
 
         let replaced = Some(Conflict::Replace);
-        let out = import_files_within(&service, "P", "", &paths, replaced, DROP, remove).unwrap();
-        assert_eq!(saved(&out), ["figs/a.png", "figs/b.png"]);
+        let out = import_files_within(&service, "P", "", &paths, replaced, IMPORT, remove).unwrap();
+        assert_eq!(files_in(&root), ["figs/a.png", "figs/b.png", "main.tex"]);
         assert_eq!(fs::read(root.join("figs/a.png")).unwrap(), b"new");
         // The clash is reported all the same, for the host to say what it replaced.
         assert_eq!(out.existing.len(), 1);
@@ -707,7 +668,7 @@ mod tests {
         // A mover that fails leaves the old file and takes nothing in.
         fs::write(drop.join("figs/a.png"), "newer").unwrap();
         let refuse: Trash = |_| Err(CoreError::internal("no Trash"));
-        let result = import_files_within(&service, "P", "", &paths, replaced, DROP, refuse);
+        let result = import_files_within(&service, "P", "", &paths, replaced, IMPORT, refuse);
         assert!(result.is_err());
         assert_eq!(fs::read(root.join("figs/a.png")).unwrap(), b"new");
     }
@@ -781,37 +742,6 @@ mod tests {
     }
 
     #[test]
-    fn a_file_over_the_limit_is_named_and_a_drop_takes_less_than_an_open() {
-        let (dir, service) = with_project();
-        let src = dir.path().join("Thesis");
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("main.tex"), "\\documentclass{article}").unwrap();
-        // Sparse: past a drop's largest file without writing it.
-        let video = fs::File::create(src.join("talk.mov")).unwrap();
-        video.set_len(UPLOAD_MAX_BYTES + 1).unwrap();
-
-        let drop = [src.join("talk.mov")];
-        let err = import_files(&service, "P", "", &drop, None).unwrap_err();
-        assert_eq!(err.status, 400);
-        assert!(err.message.contains("talk.mov"), "{}", err.message);
-        assert!(
-            !err.message.to_lowercase().contains("upload"),
-            "{}",
-            err.message
-        );
-        assert!(!service.data_dir.join("P/talk.mov").exists());
-
-        // Opened as a project, the same file comes with the rest.
-        let info = import_project(&service, &src).unwrap();
-        let root = service.data_dir.join(&info.id);
-        assert_eq!(files_in(&root), ["main.tex", "talk.mov"]);
-        assert_eq!(
-            fs::metadata(root.join("talk.mov")).unwrap().len(),
-            UPLOAD_MAX_BYTES + 1
-        );
-    }
-
-    #[test]
     fn a_zip_that_understates_its_sizes_stops_at_the_bytes_read() {
         let (dir, service) = library();
         let src = dir.path().join("lying.zip");
@@ -845,7 +775,7 @@ mod tests {
         ]);
         let files: Vec<_> = names.iter().map(|name| (*name, "x")).collect();
         zip_of(&src, &files);
-        let info = import_project_within(&service, &src, OPEN).unwrap();
+        let info = import_project(&service, &src).unwrap();
         let root = service.data_dir.join(&info.id);
         // Made hidden, it has a new folder's usual mode all the same.
         #[cfg(unix)]
@@ -867,66 +797,50 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_brings_its_files_but_not_litter_build_output_or_another_projects_settings() {
+    fn a_folder_or_a_zip_of_one_brings_all_but_what_an_export_leaves_out() {
         // Into a library folder that doesn't exist yet, as on a first import.
         let dir = tempfile::tempdir().unwrap();
         let service = Service::new(dir.path().join("data"));
-        let src = dir.path().join("Thesis");
-        for (path, text) in [
-            ("main.tex", "\\documentclass{book}"),
-            ("figs/a.png", "png"),
-            ("figs/.DS_Store", "x"),
-            (".git/HEAD", "ref"),
-            (".latexmkrc", "$pdf_mode = 1;"),
-            (".texlocal.json", "{\"mainFile\": \"elsewhere.tex\"}"),
-            ("build/main.pdf", "old output"),
-        ] {
-            fs::create_dir_all(src.join(path).parent().unwrap()).unwrap();
-            fs::write(src.join(path), text).unwrap();
+        let files = [
+            ("Thesis/aaa.tex", "\\section{Intro}"),
+            ("Thesis/doc.tex", "\\documentclass{book}"),
+            ("Thesis/figs/a.png", "png"),
+            ("Thesis/figs/.DS_Store", "x"),
+            ("Thesis/.git/HEAD", "ref"),
+            ("Thesis/.latexmkrc", "$pdf_mode = 1;"),
+            ("Thesis/.texlocal.json", "{\"mainFile\": \"elsewhere.tex\"}"),
+            ("Thesis/build/main.pdf", "old output"),
+        ];
+        for (path, text) in files {
+            let file = dir.path().join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, text).unwrap();
         }
-
-        let info = import_project(&service, &src).unwrap();
-        assert_eq!([info.id, info.main_file], ["Thesis", "main.tex"]);
-        let root = service.data_dir.join("Thesis");
-        assert_eq!(files_in(&root), ["figs/a.png", "main.tex"]);
-        assert!(!root.join(".git").exists() && !root.join("build").exists());
-        assert!(!root.join("figs/.DS_Store").exists());
-        // The author's own dotfile comes; the project's settings are made fresh.
-        assert_eq!(
-            fs::read_to_string(root.join(".latexmkrc")).unwrap(),
-            "$pdf_mode = 1;"
+        // The folder zipped, with what macOS adds.
+        let macos = [("__MACOSX/Thesis/._doc.tex", "fork")];
+        zip_of(
+            &dir.path().join("Thesis.zip"),
+            &[&files[..], &macos].concat(),
         );
-        assert_eq!(crate::settings::read_settings(&root).main_file, "main.tex");
 
         // A taken name gets a number, as Finder's copies do.
-        assert_eq!(import_project(&service, &src).unwrap().id, "Thesis 2");
+        for (src, id) in [("Thesis", "Thesis"), ("Thesis.zip", "Thesis 2")] {
+            let info = import_project(&service, &dir.path().join(src)).unwrap();
+            // No main.tex: the first file that starts a document, in settings of its own.
+            assert_eq!([info.id, info.main_file], [id, "doc.tex"]);
+            let root = service.data_dir.join(id);
+            assert_eq!(files_in(&root), ["aaa.tex", "doc.tex", "figs/a.png"]);
+            // The author's own dotfile comes, though the tree hides it.
+            let latexmkrc = fs::read_to_string(root.join(".latexmkrc")).unwrap();
+            assert_eq!(latexmkrc, "$pdf_mode = 1;");
+            for left in [".git", "build", "figs/.DS_Store"] {
+                assert!(!root.join(left).exists(), "{left}");
+            }
+        }
     }
 
     #[test]
-    fn a_zip_of_one_folder_brings_that_folders_contents() {
-        let (dir, service) = library();
-        let src = dir.path().join("paper.zip");
-        let files = [
-            ("paper/aaa.tex", "\\section{Intro}"),
-            ("paper/doc.tex", "\\documentclass{article}"),
-            ("paper/figs/b.png", "png"),
-            ("paper/.latexmkrc", "$pdf_mode = 1;"),
-            ("paper/.git/HEAD", "ref"),
-            ("__MACOSX/paper/._doc.tex", "fork"),
-        ];
-        zip_of(&src, &files);
-
-        let info = import_project(&service, &src).unwrap();
-        // No main.tex: the first file that starts a document.
-        assert_eq!([info.id, info.main_file], ["paper", "doc.tex"]);
-        let root = service.data_dir.join("paper");
-        assert_eq!(files_in(&root), ["aaa.tex", "doc.tex", "figs/b.png"]);
-        assert_eq!(fs::read_to_string(root.join("figs/b.png")).unwrap(), "png");
-        assert!(root.join(".latexmkrc").is_file() && !root.join(".git").exists());
-    }
-
-    #[test]
-    fn a_tex_brings_its_folder_and_is_its_main_file() {
+    fn a_tex_brings_its_folder_while_that_is_no_larger_than_a_project() {
         let (dir, service) = library();
         let src = dir.path().join("Paper");
         for (path, text) in [
@@ -938,90 +852,35 @@ mod tests {
             fs::create_dir_all(src.join(path).parent().unwrap()).unwrap();
             fs::write(src.join(path), text).unwrap();
         }
+        // Sparse: past a project's bytes without writing them.
+        let past_a_project = |path: &str| {
+            let file = File::create(src.join(path)).unwrap();
+            file.set_len(TEX_FOLDER.bytes + 1).unwrap();
+        };
+        // Build output stays behind, and so doesn't count.
+        fs::create_dir(src.join("Build")).unwrap();
+        past_a_project("Build/main.pdf");
         let info = import_project(&service, &src.join("paper.tex")).unwrap();
         assert_eq!([info.id, info.main_file], ["Paper", "paper.tex"]);
         let files = ["chapters/a.tex", "main.tex", "paper.tex", "refs.bib"];
         assert_eq!(files_in(&service.data_dir.join("Paper")), files);
+
+        // In a folder larger than a project, the .tex comes alone.
+        past_a_project("big.dmg");
+        let info = import_project(&service, &src.join("paper.tex")).unwrap();
+        assert_eq!(info.main_file, "paper.tex");
+        assert_eq!(files_in(&service.data_dir.join(&info.id)), ["paper.tex"]);
 
         // Any other file comes alone; without TeX, the blank template's main
         // file joins it.
         let info = import_project(&service, &src.join("refs.bib")).unwrap();
         assert_eq!(info.main_file, "main.tex");
         let files = ["main.tex", "refs.bib"];
-        assert_eq!(files_in(&service.data_dir.join("refs")), files);
-    }
-
-    #[test]
-    fn a_tex_in_a_folder_larger_than_a_project_comes_alone() {
-        let (dir, service) = library();
-        let downloads = dir.path().join("Downloads");
-        fs::create_dir_all(&downloads).unwrap();
-        fs::write(downloads.join("notes.tex"), "\\documentclass{article}").unwrap();
-        // Sparse: past one upload's bytes without writing them.
-        let big = File::create(downloads.join("big.dmg")).unwrap();
-        big.set_len(UPLOAD_MAX_BYTES + 1).unwrap();
-        let info = import_project(&service, &downloads.join("notes.tex")).unwrap();
-        assert_eq!([info.id, info.main_file], ["notes", "notes.tex"]);
-        assert_eq!(files_in(&service.data_dir.join("notes")), ["notes.tex"]);
-
-        // As is more than 2000 files.
-        fs::remove_file(downloads.join("big.dmg")).unwrap();
-        for i in 0..2000 {
-            fs::write(downloads.join(format!("{i}.txt")), "").unwrap();
-        }
-        let info = import_project(&service, &downloads.join("notes.tex")).unwrap();
-        assert_eq!(files_in(&service.data_dir.join(&info.id)), ["notes.tex"]);
-    }
-
-    #[test]
-    fn excluded_build_output_does_not_count_towards_the_tex_folder_limit() {
-        let (dir, service) = library();
-        let src = dir.path().join("Paper");
-        fs::create_dir_all(src.join("Build")).unwrap();
-        fs::write(src.join("main.tex"), "\\input{chapter}").unwrap();
-        fs::write(src.join("chapter.tex"), "\\section{Chapter}").unwrap();
-        let pdf = File::create(src.join("Build/main.pdf")).unwrap();
-        pdf.set_len(UPLOAD_MAX_BYTES + 1).unwrap();
-        let info = import_project(&service, &src.join("main.tex")).unwrap();
-        let files = ["chapter.tex", "main.tex"];
         assert_eq!(files_in(&service.data_dir.join(&info.id)), files);
     }
 
     #[test]
-    fn a_failed_import_leaves_no_half_made_project() {
-        let (dir, service) = library();
-        // A zip whose second file's bytes no longer match its checksum.
-        let src = dir.path().join("broken.zip");
-        let files = [("a.tex", "fine"), ("b.tex", "CORRUPTED-LATER")];
-        zip_with(&src, &files, zip::CompressionMethod::Stored);
-        let mut bytes = fs::read(&src).unwrap();
-        let at = bytes.windows(15).position(|w| w == b"CORRUPTED-LATER");
-        bytes[at.unwrap()] = b'X';
-        fs::write(&src, bytes).unwrap();
-        assert!(import_project(&service, &src).is_err());
-        assert_eq!(projects(&service), 0);
-
-        // A folder holding a file that can't be read.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let src = dir.path().join("Locked");
-            fs::create_dir_all(&src).unwrap();
-            fs::write(src.join("a.tex"), "fine").unwrap();
-            fs::write(src.join("b.tex"), "unreadable").unwrap();
-            fs::set_permissions(src.join("b.tex"), fs::Permissions::from_mode(0o000)).unwrap();
-            let err = import_project(&service, &src).unwrap_err();
-            assert_eq!(projects(&service), 0);
-            // Not a bug of the core's, and it says which file.
-            if File::open(src.join("b.tex")).is_err() {
-                assert_eq!(err.status, 403, "{}", err.message);
-                assert!(err.message.contains("b.tex"), "{}", err.message);
-            }
-        }
-    }
-
-    #[test]
-    fn what_cannot_be_opened_is_named_and_says_why() {
+    fn a_failed_import_makes_no_project_and_names_what_failed() {
         let (dir, service) = library();
         let err = import_project(&service, &dir.path().join("gone.zip")).unwrap_err();
         assert_eq!(err.status, 404);
@@ -1034,6 +893,33 @@ mod tests {
         let err = import_project(&service, &src).unwrap_err();
         assert_eq!(err.status, 400);
         assert!(err.message.contains("not.zip"), "{}", err.message);
+
+        // A zip whose second file's bytes no longer match its checksum.
+        let src = dir.path().join("broken.zip");
+        let files = [("a.tex", "fine"), ("b.tex", "CORRUPTED-LATER")];
+        zip_with(&src, &files, zip::CompressionMethod::Stored);
+        let mut bytes = fs::read(&src).unwrap();
+        let at = bytes.windows(15).position(|w| w == b"CORRUPTED-LATER");
+        bytes[at.unwrap()] = b'X';
+        fs::write(&src, bytes).unwrap();
+        assert!(import_project(&service, &src).is_err());
+
+        // A folder holding a file that can't be read.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let src = dir.path().join("Locked");
+            fs::create_dir_all(&src).unwrap();
+            fs::write(src.join("a.tex"), "fine").unwrap();
+            fs::write(src.join("b.tex"), "unreadable").unwrap();
+            fs::set_permissions(src.join("b.tex"), fs::Permissions::from_mode(0o000)).unwrap();
+            let err = import_project(&service, &src).unwrap_err();
+            // Not a bug of the core's, and it says which file.
+            if File::open(src.join("b.tex")).is_err() {
+                assert_eq!(err.status, 403, "{}", err.message);
+                assert!(err.message.contains("b.tex"), "{}", err.message);
+            }
+        }
         assert_eq!(projects(&service), 0);
     }
 
@@ -1047,17 +933,16 @@ mod tests {
         fs::write(drop.join("notes.tex"), b"n").unwrap();
 
         let paths = [drop.join("figs"), drop.join("notes.tex")];
-        let out = import_files(&service, "P", "in", &paths, None).unwrap();
-        let files = ["in/figs/a.png", "in/figs/sub/b.png", "in/notes.tex"];
-        assert_eq!(saved(&out), files);
+        import_files(&service, "P", "in", &paths, None).unwrap();
         let root = service.data_dir.join("P");
+        let files = [
+            "in/figs/a.png",
+            "in/figs/sub/b.png",
+            "in/notes.tex",
+            "main.tex",
+        ];
+        assert_eq!(files_in(&root), files);
         assert_eq!(fs::read(root.join("in/figs/sub/b.png")).unwrap(), b"b");
-
-        // A batch that would collide fails before anything is written.
-        let twice = [drop.join("notes.tex"), drop.join("notes.tex")];
-        let refused = import_files(&service, "P", "again", &twice, None);
-        assert_eq!(refused.unwrap_err().status, 400);
-        assert!(!root.join("again").exists());
 
         // A path that isn't there is named.
         let gone = [drop.join("gone.png")];
@@ -1079,18 +964,21 @@ mod tests {
 
         // Without an answer nothing is written; the clash is reported.
         let asked = import_files(&service, "P", "", &paths, None).unwrap();
+        let clash = json!({ "path": "main.tex", "keepBoth": "main 2.tex" });
         assert_eq!(
             serde_json::to_value(&asked).unwrap(),
-            json!({ "saved": [], "existing": [{ "path": "main.tex", "keepBoth": "main 2.tex" }] })
+            json!({ "existing": [clash] })
         );
         let root = service.data_dir.join("P");
+        assert_eq!(files_in(&root), ["main.tex"]);
         let original = fs::read(root.join("main.tex")).unwrap();
 
-        let kept = import_files(&service, "P", "", &paths, Some(Conflict::KeepBoth)).unwrap();
-        // Litter inside a dropped folder stays behind.
-        assert_eq!(saved(&kept), ["figs/a.png", "main 2.tex"]);
+        import_files(&service, "P", "", &paths, Some(Conflict::KeepBoth)).unwrap();
+        assert_eq!(files_in(&root), ["figs/a.png", "main 2.tex", "main.tex"]);
         assert_eq!(fs::read(root.join("main.tex")).unwrap(), original);
         assert_eq!(fs::read(root.join("main 2.tex")).unwrap(), b"new");
+        // Litter inside a dropped folder stays behind.
+        assert!(!root.join("figs/.git").exists() && !root.join("figs/.DS_Store").exists());
 
         // A dropped link names what it points at; links inside a folder are left.
         #[cfg(unix)]
@@ -1105,8 +993,8 @@ mod tests {
             std::os::unix::fs::symlink(&plot, drop.join("pics/inner.png")).unwrap();
             fs::write(drop.join("pics/real.png"), b"r").unwrap();
             let paths = [drop.join("plot-link.png"), drop.join("pics")];
-            let out = import_files(&service, "P", "", &paths, None).unwrap();
-            assert_eq!(saved(&out), ["pics/real.png", "plot-link.png"]);
+            import_files(&service, "P", "", &paths, None).unwrap();
+            assert!(root.join("pics/real.png").is_file() && !root.join("pics/inner.png").exists());
             assert_eq!(fs::read(root.join("plot-link.png")).unwrap(), b"p");
         }
     }
