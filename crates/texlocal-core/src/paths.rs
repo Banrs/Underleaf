@@ -337,7 +337,7 @@ mod tests {
     use crate::projects::{create_file, create_project};
 
     #[track_caller]
-    fn fails_with<T: std::fmt::Debug>(result: Result<T, CoreError>, text: &str) {
+    pub(super) fn fails_with<T: std::fmt::Debug>(result: Result<T, CoreError>, text: &str) {
         let message = result.unwrap_err().message;
         assert!(message.contains(text), "{message:?} lacks {text:?}");
     }

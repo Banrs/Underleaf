@@ -6,6 +6,7 @@ use std::path::Path;
 
 use serde_json::json;
 
+use super::tests::fails_with;
 use crate::CoreError;
 use crate::projects::testing::{library, names_in, project};
 use crate::projects::{
@@ -17,12 +18,6 @@ use crate::settings::{read_settings, write_settings};
 /// A project's labels and citations, read afresh.
 fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
     SymbolScan::default().scan(root)
-}
-
-#[track_caller]
-fn fails_with<T: std::fmt::Debug>(result: Result<T, CoreError>, text: &str) {
-    let message = result.unwrap_err().message;
-    assert!(message.contains(text), "{message:?} lacks {text:?}");
 }
 
 #[test]
