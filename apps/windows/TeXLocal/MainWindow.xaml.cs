@@ -90,7 +90,6 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    /// From Home, a project drills in.
     public void OpenProject(string id)
     {
         GoHome();
@@ -126,10 +125,7 @@ public sealed partial class MainWindow : Window
         while (Pages.CanGoBack && Pages.Content is not HomePage) Pages.GoBack();
     }
 
-    void OnBack(object sender, RoutedEventArgs e)
-    {
-        if (Pages.CanGoBack) Pages.GoBack();
-    }
+    void OnBack(object sender, RoutedEventArgs e) => Pages.GoBack();
 
     void OnNavigated(object sender, NavigationEventArgs e)
     {
@@ -143,8 +139,7 @@ public sealed partial class MainWindow : Window
     /// The title bar's controls take the pointer; the rest of the row drags the window. Set again whenever they move.
     void OnBarLayout(object? sender, object e)
     {
-        if (Root.XamlRoot is not { } root) return;
-        var s = root.RasterizationScale;
+        var s = Root.XamlRoot.RasterizationScale;
         RectInt32[] rects = [.. new FrameworkElement[] { BackButton, MenuHost, SettingsButton }
             .Where(e => e.Visibility == Visibility.Visible && e.ActualWidth > 0)
             .Select(e => e.TransformToVisual(null).TransformBounds(new(0, 0, e.ActualWidth, e.ActualHeight)))
