@@ -56,7 +56,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     // MARK: - Live preview
 
-    /// A page given to PDFKit fades in over an eighth of a second (27.2), and a layer's contents change in one frame.
+    /// A page given to PDFKit fades in over a quarter of a second (27.2), and a layer's contents change in one frame.
     private let liveCanvas: NSView = {
         let canvas = FilterView()
         canvas.autoresizingMask = [.width, .height]
