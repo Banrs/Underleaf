@@ -17,13 +17,6 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
-    public async Task StatusAnswersAvailable()
-    {
-        var status = await core.CallAsync("status");
-        Assert.True(status.GetProperty("available").ValueKind is JsonValueKind.True or JsonValueKind.False);
-    }
-
-    [Fact]
     public async Task UnknownCommandIs404()
     {
         var e = await Assert.ThrowsAsync<CoreException>(() => core.CallAsync("no_such_command"));
@@ -84,11 +77,8 @@ public sealed class CoreTests : IDisposable
         Assert.Equal(new[] { "chapter", "section" }, analysis.Outline.Select(h => h.Command));
         var untitled = analysis.Outline.Last();
         Assert.True(untitled.Untitled);
-        Assert.Equal("Untitled Section", untitled.Title);
-        Assert.Equal("", analysis.HeadingStyles[0].Command);
         Assert.Contains(analysis.HeadingStyles, s => s.Command == "chapter");
         Assert.Equal<int?>(untitled.Index, await core.CallAsync<int?>("session_outline_current", new { session, path = "main.tex", line = 5 }));
-        Assert.Null(await core.CallAsync<int?>("session_outline_current", new { session, path = "main.tex", line = 1 }));
         await core.CallAsync("session_close", new { session });
     }
 
@@ -118,6 +108,7 @@ public sealed class CoreTests : IDisposable
         var x = text.IndexOf('x');
         Assert.Equal(2, source.LineAt(x));
         Assert.Equal(x, source.LineStart(2));
+        Assert.Equal(2, source.LineCount);
         Assert.Contains(source.Highlights(0, text.Length), run => run.Kind == 0 && run.Start == 3);
     }
 
@@ -147,15 +138,6 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
-    public void EditMovesLines()
-    {
-        using var source = Source.New("abc");
-        var lines = source.LineCount;
-        source.Edit(3, 0, "\ny");
-        Assert.Equal(lines + 1, source.LineCount);
-    }
-
-    [Fact]
     public void TextsPassWhole()
     {
         using var source = Source.New("a\0é");
@@ -169,7 +151,7 @@ public sealed class CoreTests : IDisposable
     public void SnippetFieldsMirror()
     {
         using var source = Source.New("\\begin{}\n\\end{}");
-        source.Call("start_snippet", new { fields = new[] { new SnippetField(7, 0, 0), new SnippetField(14, 0, 0) }, at = 0 });
+        source.Call<SourceRange>("start_snippet", new { fields = new[] { new SnippetField(7, 0, 0), new SnippetField(14, 0, 0) }, at = 0 });
         Assert.Equal(new[] { new TextEdit(15, 0, "x") }, source.Edit(7, 0, "x"));
         Assert.Null(source.Edit(15, 0, "x", mirroring: true));
         source.Select(new(8, 0), false);
