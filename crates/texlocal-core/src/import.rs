@@ -44,7 +44,6 @@ pub struct Clash {
     pub keep_both: String,
 }
 
-/// Where an incoming file is read from.
 enum Source {
     File(PathBuf),
     /// An entry of the chosen zip, by index.
@@ -228,7 +227,7 @@ fn validate<'a>(
         let rel = rel_key(file)?;
         let key = fold_case(&rel);
         let parents = || key.match_indices('/').map(|(i, _)| &key[..i]);
-        if seen.contains(&key) {
+        if !seen.insert(key.clone()) {
             return Err(CoreError::bad_request(
                 "The upload contains duplicate paths",
             ));
@@ -239,7 +238,6 @@ fn validate<'a>(
             ));
         }
         folders.extend(parents().map(str::to_string));
-        seen.insert(key.clone());
         rels.push(rel);
     }
     Ok(rels)
@@ -249,27 +247,23 @@ fn validate<'a>(
 /// Keep Both names, for the host's Replace, Keep Both or Stop choice.
 fn clashes(base: &Path, rels: &[String]) -> Vec<Clash> {
     // Names a Keep Both may not take: every path the import creates.
-    let mut taken: HashSet<String> = HashSet::new();
+    let mut taken = HashSet::new();
     for rel in rels {
         let key = fold_case(rel);
         taken.extend(key.match_indices('/').map(|(i, _)| key[..i].to_string()));
         taken.insert(key);
     }
-    let mut existing: Vec<Clash> = Vec::new();
-    for rel in rels {
-        let Some(path) = occupant(base, rel) else {
-            continue;
-        };
-        if existing.iter().any(|c| c.path == path) {
-            continue;
+    let mut existing = Vec::new();
+    for path in rels.iter().filter_map(|rel| occupant(base, rel)) {
+        if existing.iter().all(|c: &Clash| c.path != path) {
+            let keep_both = projects::copy_paths(&path)
+                .skip(1)
+                .find(|free| {
+                    fs::symlink_metadata(base.join(free)).is_err() && taken.insert(fold_case(free))
+                })
+                .expect("a free name");
+            existing.push(Clash { path, keep_both });
         }
-        let keep_both = projects::copy_paths(&path)
-            .skip(1)
-            .find(|free| {
-                fs::symlink_metadata(base.join(free)).is_err() && taken.insert(fold_case(free))
-            })
-            .expect("a free name");
-        existing.push(Clash { path, keep_both });
     }
     existing
 }
@@ -331,9 +325,7 @@ fn save(
             };
             projects::discard_replaced(root, &taken, trash)?;
         }
-        if let Some(parent) = abs.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        fs::create_dir_all(abs.parent().unwrap_or(root))?;
         Ok(atomic::persist(temp, &abs)?)
     })
 }
@@ -376,7 +368,6 @@ fn zip_files(
     Ok(files)
 }
 
-/// A folder's files, unless they are more than `allowance`.
 fn folder_files(dir: &Path, mut allowance: Allowance) -> Result<Vec<Incoming>, CoreError> {
     let meta = fs::metadata(dir).map_err(CoreError::at(dir))?;
     let mut found = Vec::new();
@@ -384,8 +375,6 @@ fn folder_files(dir: &Path, mut allowance: Allowance) -> Result<Vec<Incoming>, C
     Ok(found)
 }
 
-/// What File › Open brings: the new project's name, its files, the zip they
-/// are in (if they are), and the main file chosen (if one is).
 struct Opened {
     base: String,
     zip: Option<ZipArchive<File>>,
@@ -409,7 +398,6 @@ fn tex_folder(tex: &Path) -> Option<Opened> {
     })
 }
 
-/// Find the files File › Open brings from `src`, within `allowance`.
 fn open(src: &Path, allowance: Allowance) -> Result<Opened, CoreError> {
     let meta = fs::metadata(src).map_err(CoreError::at(src))?;
     let ext = src
