@@ -198,7 +198,7 @@ public sealed partial class WorkspacePage : Page
         {
             case "tree": ShowTree(ev.Tree!); break;
             case "saved": _ = Analyze(); break;
-            case "document_reload" when ev.Path == Editor.Path: Editor.Reload(ev.Text ?? ""); break;
+            case "document_reload": Reload(ev.Path!, ev.Text ?? ""); break;
             case "document_closed" when ev.Path == Editor.Path: CloseEditor(); break;
             case "document_renamed" when ev.From == Editor.Path:
                 Editor.Rename(ev.To!);
@@ -246,7 +246,11 @@ public sealed partial class WorkspacePage : Page
             // Opened first and the shown one closed after, so a file that won't open leaves the editor as it was.
             await Core.CallAsync("session_open_document", new { session, path });
             if (Editor.Path is { } shown && !(await Core.CallAsync("session_close_document", new { session, path = shown })).GetProperty("closed").GetBoolean())
+            {
+                // The session keeps no document the editor doesn't show; a later open of it opens it again.
+                Run(null, () => Core.CallAsync("session_close_document", new { session, path }));
                 return false;
+            }
             if (Core.SessionSource(session, path) is not { } source) return false;
             (Editor.Visibility, NoFile.Visibility) = (Visibility.Visible, Visibility.Collapsed);
             await Editor.Show(path, source);
@@ -269,6 +273,19 @@ public sealed partial class WorkspacePage : Page
     async Task Reveal(string path, int line, int column = 0, int length = 0)
     {
         if (await OpenDocument(path)) Editor.GoTo(line, column, length);
+    }
+
+    /// Another app's text, or the disk's after Revert, shown without an edit. The session holds the document's saves until
+    /// its source has it, so one open but not shown takes it too.
+    void Reload(string path, string text)
+    {
+        if (path == Editor.Path)
+        {
+            Editor.Reload(text);
+            return;
+        }
+        using var source = Core.SessionSource(session, path);
+        source?.Reload(text);
     }
 
     void CloseEditor()
