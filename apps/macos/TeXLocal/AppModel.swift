@@ -24,6 +24,7 @@ nonisolated enum DefaultsKey {
     static let editorAutoPair = "editorAutoPair"
     static let editorAutoComplete = "editorAutoComplete"
     static let editorSpellCheck = "editorSpellCheck"
+    static let pdfPaper = "pdfPaper"
     static let liveViewer = "liveViewer"
 }
 

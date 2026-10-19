@@ -13,7 +13,15 @@ struct PDFSwapTests {
         try #require(try document([text]).page(at: 0))
     }
 
-    /// In an on-screen window, unseen: PDFKit gives a page its overlay, which a live page is drawn over, only there.
+    private func paper(_ view: NSView) -> Int {
+        guard let image = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return 0 }
+        view.cacheDisplay(in: view.bounds, to: image)
+        return stride(from: 0, to: image.pixelsHigh, by: 8).reduce(0) { count, y in
+            count + stride(from: 0, to: image.pixelsWide, by: 8).count { (image.colorAt(x: $0, y: y)?.brightnessComponent ?? 0) > 0.92 }
+        }
+    }
+
+    /// In an on-screen window, unseen: PDFKit draws pages, and gives a page its overlay, which a live page is drawn over, only there.
     private func onScreen(_ controller: PDFController) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 500, height: 600), styleMask: [.titled],
                               backing: .buffered, defer: false)
@@ -31,18 +39,26 @@ struct PDFSwapTests {
         return (0..<document.pageCount).map { document.page(at: $0)?.string?.components(separatedBy: " ").first ?? "" }
     }
 
-    /// A new document would show only PDFKit's background until its pages draw; the pages go into the one showing
-    /// instead. What reaches the screen is the on-screen checks' to see: a view's cached display has none of PDFKit's tiles.
-    @Test func aRebuildKeepsTheDocumentShowing() throws {
+    /// A new document would show only PDFKit's background until its pages draw; the pages go into the one showing instead.
+    @Test func aRebuildNeverShowsAnEmptyPane() async throws {
         let controller = PDFController(), view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
+        let window = onScreen(controller)
+        defer { window.close() }
         controller.show(try document(["first"]))
+        try await waitUntil(timeout: .seconds(5)) { paper(view) > 0 }
         let shown = try #require(view.document)
         // Back to back, as live preview writes them while typing.
         for index in 0..<3 {
             controller.show(try document(["rebuild\(index)"]))
             #expect(view.document === shown && text(view) == ["rebuild\(index)"] && controller.pageCount == 1)
         }
+        let start = ContinuousClock.now
+        var samples: [Int] = []
+        while ContinuousClock.now - start < .milliseconds(400) {
+            samples.append(paper(view))
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!samples.contains(0), "samples \(samples)")
     }
 
     @Test func aRebuildChangesThePageCount() throws {

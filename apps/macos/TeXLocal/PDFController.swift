@@ -69,6 +69,7 @@ final class PDFController: NSObject {
     override init() {
         find = PDFFind(view: view)
         super.init()
+        view.backgroundColor = .untintedTextBackground
         // As Preview's: a page keeps PDFKit's margin at its sides, which scales with it, and the first meets the toolbar's edge,
         // where its top margin showed as a strip under the toolbar's line at some widths and scrolls and not others. Pages
         // keep their bottom margins' gap between them.
@@ -247,8 +248,7 @@ final class PDFController: NSObject {
         view.minScaleFactor = Self.minScale
         view.maxScaleFactor = Self.maxScale
         view.pageScrollView?.setAccessibilityLabel("PDF")
-        // The knob is over white paper, whatever the window's appearance.
-        view.pageScrollView?.scrollerKnobStyle = .dark
+        view.matchScroller()
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         restoreZoomIfReady()
         if let place { go(to: place) } else { restorePageIfReady() }

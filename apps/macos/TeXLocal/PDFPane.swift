@@ -4,18 +4,19 @@ import SwiftUI
 struct PDFPane: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
+    @AppStorage(DefaultsKey.pdfPaper) private var paper = PDFPaper.white
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if project.hasPDF {
             // Directly in the pane, not in another scroll view: PDFKit insets its own scrolling from the pane's safe area and rubber-bands
             // at its ends, which a scroll view around it takes over (27.2).
-            PDFRepresentable(project: project)
+            PDFRepresentable(project: project, darkPaper: paper == .dark || (paper == .auto && colorScheme == .dark))
                 .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
         } else {
             emptyState
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // The canvas PDFView itself draws on, so the pane keeps its colour when the first build shows.
-                .background(Color(nsColor: .underPageBackgroundColor))
+                .background(.textSurface)
         }
     }
 
@@ -63,6 +64,7 @@ struct PDFPane: View {
 
 struct PDFRepresentable: NSViewRepresentable {
     let project: ProjectModel
+    let darkPaper: Bool
 
     func makeNSView(context: Context) -> SyncPDFView {
         let view = project.pdf.view
@@ -72,7 +74,7 @@ struct PDFRepresentable: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: SyncPDFView, context: Context) {}
+    func updateNSView(_ view: SyncPDFView, context: Context) { view.darkPaper = darkPaper }
 }
 
 struct PDFFindBar: View {
@@ -136,6 +138,20 @@ struct ScaleMenuItems: View {
     private var shown: PDFController.Zoom {
         guard case .scale(let scale) = pdf.zoom else { return pdf.zoom }
         return .scale((scale * 100).rounded() / 100)
+    }
+}
+
+enum PDFPaper: String, CaseIterable, Identifiable {
+    case white, dark, auto
+
+    var id: Self { self }
+
+    var title: LocalizedStringResource {
+        switch self {
+        case .white: "White"
+        case .dark: "Dark"
+        case .auto: "Match Appearance"
+        }
     }
 }
 

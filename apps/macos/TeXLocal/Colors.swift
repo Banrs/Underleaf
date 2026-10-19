@@ -47,6 +47,15 @@ extension NSColor {
     static func srgb(_ rgba: [Double]) -> NSColor {
         NSColor(srgbRed: CGFloat(rgba[0]), green: CGFloat(rgba[1]), blue: CGFloat(rgba[2]), alpha: CGFloat(rgba[3]))
     }
+
+    nonisolated func resolved(in appearance: NSAppearance) -> NSColor {
+        var color = self
+        appearance.performAsCurrentDrawingAppearance { color = usingColorSpace(.sRGB) ?? self }
+        return color
+    }
+
+    /// PDFKit tints a system colour it's given with the wallpaper, which would set it a shade apart from the editor's.
+    static let untintedTextBackground = NSColor(name: nil) { NSColor.textBackgroundColor.resolved(in: $0) }
 }
 
 /// A theme of the core's (texlocal-syntax's theme.rs) by its id, each kind's colour raised to the HIG's 4.5:1 on the

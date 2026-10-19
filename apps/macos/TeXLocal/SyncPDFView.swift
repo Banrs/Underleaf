@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage.CIFilterBuiltins
 import PDFKit
 
 final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
@@ -7,6 +8,26 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     /// PDFKit's scroll view isn't in its interface: its document view leads to it.
     var pageScrollView: NSScrollView? { documentView?.enclosingScrollView }
+
+    /// Each page inverted with its hues turned back, as Smart Invert shows it: Core Image over what PDFKit has drawn, so its tiles,
+    /// selection and highlights stay its own and a change redraws nothing.
+    var darkPaper = false {
+        didSet {
+            guard darkPaper != oldValue else { return }
+            for case let overlay as PageOverlay in overlays.objectEnumerator()?.allObjects ?? [] { overlay.dark = darkPaper }
+            liveCanvas.layer?.filters = darkPaper ? Self.invert : nil
+            matchScroller()
+        }
+    }
+
+    static var invert: [CIFilter] {
+        let hue = CIFilter.hueAdjust()
+        hue.angle = .pi
+        return [CIFilter.colorInvert(), hue]
+    }
+
+    /// The knob is over the paper, whatever the window's appearance.
+    func matchScroller() { pageScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark }
 
     override func zoomIn(_ sender: Any?) {
         autoScales = false
@@ -37,8 +58,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     /// A page given to PDFKit fades in over an eighth of a second (27.2), and a layer's contents change in one frame.
     private let liveCanvas: NSView = {
-        let canvas = PassThroughView()
-        canvas.wantsLayer = true
+        let canvas = FilterView()
         canvas.autoresizingMask = [.width, .height]
         // Over the page views PDFKit adds after it.
         canvas.layer?.zPosition = 1
@@ -139,7 +159,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     /// A fade is what the HIG puts in motion's place, so Reduce Motion keeps it.
     func flash(_ rect: CGRect, on page: PDFPage) {
         removeMark()
-        let view = MarkView()
+        let view = MarkView(onDarkPaper: darkPaper)
         let fading = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(2.2)) } catch { return }
             await NSAnimationContext.runAnimationGroup { _ in view.animator().alphaValue = 0 }
@@ -162,7 +182,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
-        let overlay = PassThroughView()
+        let overlay = PageOverlay()
+        overlay.dark = darkPaper
         overlays.setObject(overlay, forKey: page)
         return overlay
     }
@@ -260,13 +281,29 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 }
 
-/// Clicks go through to the pages beneath.
-private final class PassThroughView: NSView {
+/// A layer for dark paper's filters over the pages, which clicks go through.
+private class FilterView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layerUsesCoreImageFilters = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
+private final class PageOverlay: FilterView {
+    /// Over the page and everything PDFKit lays under its tiles, so no white is left at its edges.
+    var dark = false { didSet { layer?.backgroundFilters = dark ? SyncPDFView.invert : nil } }
+}
+
 private final class MarkView: NSView {
-    init() {
+    private let paper: NSAppearance.Name
+
+    init(onDarkPaper dark: Bool) {
+        paper = dark ? .darkAqua : .aqua
         super.init(frame: .zero)
         wantsLayer = true
         setAccessibilityElement(false)
@@ -280,7 +317,7 @@ private final class MarkView: NSView {
         let find = NSColor.findHighlightColor
         layer?.backgroundColor = find.withAlphaComponent(0.4).cgColor
         layer?.borderColor = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-            ? find.legibleAsText(in: .aqua, ratio: 3).cgColor : find.withAlphaComponent(0.2).cgColor
+            ? find.legibleAsText(in: paper, ratio: 3).cgColor : find.withAlphaComponent(0.2).cgColor
         layer?.borderWidth = 1
     }
 }

@@ -53,6 +53,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.allowedWritingToolsResultOptions = .plainText
         text.setAccessibilityLabel(String(localized: "Source"))
         text.delegate = self
+        text.backgroundColor = .untintedTextBackground
         text.isHidden = true
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
