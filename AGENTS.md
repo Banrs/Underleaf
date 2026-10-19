@@ -26,55 +26,82 @@ Status and decisions for agents working here. `README.md` is the overview and
 
 ## The Mac app
 
-**Direction (2026-10-17):** native default behaviour first. The app is to be built as Apple
-recommends for a new app: SwiftUI scenes and views, with AppKit only behind representables
-where SwiftUI has nothing (the TextKit 2 editor and PDFKit's `PDFView`). No measured or tuned
-numbers, no custom colours, no platform workaround without a capture of the bug it fixes;
-what Apple's own apps do (Preview, TextEdit, Xcode, Notes) settles a question before taste
-does. The few custom pieces kept on purpose: the File Outline at the sidebar's foot, opening
-upward; Home's template cards; Compile as a word; one status bar across source and PDF; the
-completion list as a SwiftUI glass list. Since then (2026-10-18) the status bar takes
-Xcode's editor bar and Aa's popover Notes' measures.
-
-**Where main is now:** the window, toolbar and splits are AppKit (`WorkspaceController`,
-`WorkspaceToolbar`, `SplitViews`), because SwiftUI's split can't give the AppKit editor and
-`PDFView` the system's scroll edge under one bar (a probe on 27.2); they take the system's widths
-and minimums, with no detents and none of the old 27.2 split workarounds. Panes, bars, sheets,
-popovers, Settings and Home are SwiftUI.
-
-- **Toolbar**: Compile is the window's one prominent item, its word, or its symbol's circle
-  where the toolbar has no room for the word (`CompileHost`); while building it is Stop, with
-  progress. Aa (text styles, Notes' popover with standard toggle buttons for Bold, Italic and
-  Underline), Math and Insert (its symbol a plus) sit over the source; Zoom (minus, percentage, plus),
-  Compile and the PDF and Inspector toggles over the PDF. Tools without room go to the system's
-  overflow by `visibilityPriority`.
-- **Source**: one TextKit 2 `NSTextView` (`SourceTextView`) shared across files, never
-  touching `layoutManager`. Issues sit on their lines as in Xcode (numbers-only gutter, a box
-  at the line's end); the measures come from the system font's metrics. Syntax colours are
-  rendering attributes, and a recolouring redraws only the fragments whose runs changed.
-- **Status bar and build panel**: one bar across source and PDF at the system's spacing, as
-  Xcode's editor bar: each pane has an empty bottom accessory of the bar's height
-  (`BarMetrics.height`) with AppKit's hard scroll edge, whose ground and line are the bar's and
-  which text and pages scroll through; the File Outline's header is level with its line. Not
-  Saved after a failed save, and a failed autosave is told once in an alert, as NSDocument's are. The build panel opens below
-  the columns with a console-style bar (Issues, Build Log, Live Preview Log, Warnings, a
-  filter); it resizes from the status bar's line and is dragged open and shut there, as Xcode's
-  debug area (`area.grip`, an additional effective rect; the panel's `canCollapse`).
-- **PDF**: PDFKit as Preview has it, on PDFKit's own canvas colour and always white paper. A
-  rebuilt document's pages replace those showing in the same `PDFDocument` (a new document
-  flashes the background); PDFKit keeps replaced pages' objects, so once the app has grown 512
-  MB since a document was last shown whole, the next one is shown whole
-  (`PDFController.memoryAtWhole`). A fitted page keeps PDFKit's side margins, as Preview's;
-  pages have no top margin, so the first meets the toolbar's edge and, at the document's start,
-  stays there as the pane resizes.
+- **Window, toolbar and splits are AppKit**: only `NSToolbar`'s tracking separators follow
+  the source|PDF divider, and a three-column `NavigationSplitView` can't hide its detail
+  column. Panes, bars, sheets, popovers, Settings and Home are SwiftUI, hosting AppKit's
+  text and PDF views where SwiftUI has none.
+- **Narrow windows**: the window stops at 542 pt, the toolbar's least (`ColumnMetrics`).
+  Source and PDF keep minimums of 260 and 188 pt; the sidebar's is 222 and it opens at 270.
+  Tools without room go to `NSToolbar`'s own overflow menu by `visibilityPriority`, and
+  nowhere else. Sidebar and inspector fold for a narrow window and are not saved as hidden
+  for it. The window's title is AppKit's, which keeps 160 pt for it (27.2); the system's
+  title and overflow were chosen over a custom one.
+- **Toolbar**: Compile is the window's one prominent item, as a word, changing to its symbol
+  only where the word has no room (as AppKit's search item changes form); while building it
+  is Stop, with its spinner. Aa opens Notes' popover of text styles (`FormatPopover`); Math
+  and Insert are menus beside it.
+- **Source**: one TextKit 2 `NSTextView` (`SourceTextView`) shared across files, in an
+  `NSScrollView` of its own (`EditorView`), at Xcode's metrics for font, gutter and current
+  line. The completion list (`CompletionList`) is Liquid Glass in a system menu's measures,
+  a view of the editor's scroll view and not a window, since glass in a borderless
+  non-key panel draws flat. Syntax colours are rendering attributes, which 27.2 doesn't redraw
+  on fragments already shown: each fragment keeps the runs it was last coloured with, and a
+  recolouring redraws the edited fragment and those whose runs changed, not every line on
+  screen (typing in a long document costs about 40% less CPU for it).
+- **Issues** are on their lines as in Xcode: a gutter of numbers only, a band over the whole
+  paragraph (`tertiarySystemFill`), and at the end of its first line a SwiftUI box
+  (`IssueBox`, hosted above the text's views by `IssueMessageView`) holding the symbol and
+  the core's one-line message (its `compact` form where the line is short of room), or the
+  symbol alone. A help tag and a click open
+  the build panel on it. Its measures follow the text's size. Underline styles set as
+  rendering attributes aren't drawn (27.2), so an undefined command's underline is drawn
+  under the text.
+- **Status bar**: across the source and PDF columns as Xcode's editor bar: a 36 pt bar
+  (`BarMetrics`) over AppKit's hard scroll edge, which is Xcode's: each pane has an empty bottom
+  accessory of the bar's height with the hard style, for its edge, safe area and scrollers, and the
+  bar lies over both (one accessory across the columns gave its edge to one pane only, 27.2). Text
+  and pages ghost through it, about 11% of their contrast, evenly over its height, under AppKit's
+  own line. Until a scroll prepares content, TextKit's content view ends at the scroll view's
+  insets, so the source prepares its visible rect after each viewport layout or the lines under the
+  bar wouldn't draw after a launch or a resize (27.2). The splits keep AppKit's weights, as Mail's
+  and Xcode's: a point between the columns and over the build panel, half a point for the sidebar
+  and inspector. The build panel resizes from the bar's line and is dragged open and shut there, as
+  Xcode's debug area (`area.grip`, an additional effective rect, which the split hit-tests before
+  the bar; the panel's `canCollapse`). After a failed save, or a Cancel in an alert about the file
+  on disk, it says Not Saved and that button saves; a failed autosave is also told once in an
+  alert, as NSDocument's are.
+- **Build panel**: below the columns, so the status bar rides up as it opens. A bar at its
+  foot, as Xcode's console bar: a pop-up for Issues, Build Log and Live Preview Log, then
+  Warnings or Copy Log, then a filter. The bar is a SwiftUI safe-area bar, where the filter
+  draws as a toolbar's capsule; the filter is a regular 24 pt control among small ones.
+- **Splits**: AppKit's thin dividers. The source|PDF divider stops above the status bar
+  (`ColumnsSplitView`) and a double-click restores the even split; a drag stops at the
+  sidebar's opening width and the even split, with the alignment haptic
+  (`DetentSplitViewController.detent`). A display link lays the splits out during pane
+  animations, which otherwise don't always reach the screen (27.2).
+- **File Outline** sits at the sidebar's foot. On a file that isn't LaTeX it stays, folded
+  and dim; it hides only for search results.
+- **PDF**: a rebuilt document's pages replace those showing in the same `PDFDocument`, since
+  a new document flashes the pane's background. PDFKit keeps every replaced page's objects
+  for the document's life, so once the app has grown by 512 MB since a document was last
+  shown whole, the next one is shown whole (`PDFController.memoryAtWhole`). Print prints the
+  document showing; during Live Preview it reads the last build's file (`buildBehindLive`).
+  The PDF view sits directly in its pane: SwiftUI's scroll edge needs a SwiftUI scroll view,
+  and one around PDFKit's view takes its rubber-banding and insets (27.2). A fitted page keeps
+  PDFKit's side margins, which scale with it, as Preview's do. Pages have no top margin, so the
+  first meets the toolbar's edge, and at the document's start it stays there as the pane resizes
+  (`atDocumentStart` allows a device pixel for the clip view's rounding). AppKit draws the
+  toolbar's line over the page at its top while the page is magnified past 1 and not below 1
+  (27.2); no public setting changes it.
 - **Sessions**: the open project is a core session, numbered by the app before it opens
   (`Core.observe`), so none of its events can come before the app listens. Commands go
   through `tl_call_async` and are awaited, so no thread waits on the core; a session takes
   them in the order sent. Events are decoded on the core's thread and reach their session's
-  `ProjectModel` on the main actor in order. `ProjectModel` is split by concern (`+Build`,
-  `+Live`, `+Files`, `SessionEvents.swift`). The sidebar's open folders and folded headings are
-  the project's settings (`session_open`'s `ui`, `set_ui_state`, a rename's answer), not
-  UserDefaults.
+  `ProjectModel` on the main actor in order. `ProjectModel` is split by concern:
+  `ProjectModel.swift` (state, events, editing, outline, conflicts, settings),
+  `+Build`, `+Live` (live preview and SyncTeX), `+Files`, and `SessionEvents.swift`. The
+  sidebar's open folders and folded headings are the project's settings (`session_open`'s
+  `ui`, `set_ui_state`, and a rename's answer), not UserDefaults.
 - **Editor logic is the core's**: each key asks the source (`tl_source_call`: `type`,
   `delete_backward`, `insert_newline`) for the edit to type instead; each storage edit is
   told back once (`tl_source_edit`, which also answers a snippet's mirror edits) and each
@@ -102,8 +129,8 @@ popovers, Settings and Home are SwiftUI.
 - **Dim, not hidden**, where hiding would make things jump: the File Outline, the panel's
   Warnings toggle with no warnings, Live Preview Log before Live Preview has run, and
   Format items in files the toolbar's are dim in.
-- **Settings** is a multi-pane window per the HIG: General, Editor, Compiling and Live
-  Preview.
+- **Settings** has five panes: General, Editor, Compiling, PDF (white, dark or automatic
+  paper), Live Preview.
 - **Words**: the feature is Live Preview; TeXpresso is named only where the program is the
   subject. The verb is Compile, and a run and its result are a build. Interface spelling is
   British (Colours) except LaTeX's own terms (Math).
@@ -113,8 +140,7 @@ popovers, Settings and Home are SwiftUI.
 - **Builds** follow Overleaf and IDEs: they run past errors with every issue listed, a
   project can Stop on First Error, and a pause in typing saves and compiles.
 
-Platform quirks met on the way (27.2) are in the code's comments where they're handled; one
-without a capture of its bug on the current OS is a candidate for removal.
+Platform quirks met on the way (27.2) are in the code's comments where they're handled.
 
 ## Writing code
 
@@ -131,9 +157,10 @@ Commits and agents:
 - A commit's subject is a sentence saying what is now true, with no closing full stop and no AI
   attribution trailer.
 - Follow-on work goes on the open PR's branch; ask the owner before opening another PR.
-- Pick a subagent's model by its task: Haiku for mechanical work, Sonnet at medium for ordinary
-  work, Opus at medium or high for refactors across files and for Swift edited where it can't be
-  compiled.
+- Pick a subagent's model by its task, all of the 5.5 series: Haiku at medium for mechanical work,
+  Sonnet at medium for ordinary work, Opus at medium or high (xhigh rarely) for refactors across
+  files and for Swift edited where it can't be compiled; Fable only for a special planning agent.
+  Use a few agents, not a fan-out of many.
 
 ## Testing
 
@@ -186,9 +213,6 @@ what is there, and points the Start menu's TeXLocal shortcut at it.
   or with a real pointer over the sizers' grips.
 - `docs/handoff.md` lists what the October concise pass left, the Mac's unchecked 27.2
   workarounds among it.
-- The Mac still calls the core on the main thread (`Core.now`) for `locate` while files are
-  dragged over the editor or the tree, and for `kill_all` at quit; core-api.md allows only
-  `session_outline_current` there.
 - Measured on the 400-page test document (2026-10-18), not yet improved: a build's PDF shown in
   place costs the main thread about 0.7 s, mostly PDFKit relaying out its view per inserted and
   removed page (quadratic in the page count; a 20-page document is a few milliseconds); a SyncTeX

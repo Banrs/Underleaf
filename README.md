@@ -71,10 +71,11 @@ You also need a TeX distribution — see [Requirements](#requirements).
   build folder, ⇧⌘F find in the project, ⌘L go to line, ⌥⌘G go to page, ⌥⌘J go to PDF
   position, ⌘' and ⌘" next and previous issue, ⌃⌘S sidebar, ⌥⌘P PDF, ⌥⌘I inspector, ⇧⌘Y
   build panel
-- **Settings** (`⌘,`): four panes. General has the projects folder and the template and
+- **Settings** (`⌘,`): five panes. General has the projects folder and the template and
   engine for new projects; Editor has the font, syntax colours, line numbers, closing
   brackets and completions; Compiling has Compile Automatically, jumping to the cursor's
-  place after compiling and the TeX folder; Live Preview has the TeXpresso folder and where
+  place after compiling and the TeX folder; PDF has the page colour (white, dark, or
+  matching the appearance); Live Preview has the TeXpresso folder and where
   the live document shows. Per project (the Mac's inspector): the main file, the TeX engine,
   shell escape and Stop on first error
 

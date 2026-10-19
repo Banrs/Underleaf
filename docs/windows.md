@@ -396,7 +396,7 @@ above, or open a folder or a .zip.").
 | Status bar accessory | Mica status row with Word's zoom |
 | Build panel pop-up | `SelectorBar` tabs |
 | `NSAlert` / SwiftUI alert | `ContentDialog` |
-| Settings window, four panes | Settings page from the title bar's gear (Notepad), grouped cards |
+| Settings window, five panes | Settings page from the title bar's gear (Notepad), grouped cards |
 | PDFKit | `Windows.Data.Pdf` in a zooming `ScrollViewer` → PDFium in the core |
 | NSTextFinder | Find bar over the editor (Notepad), `RichEditTextRange.FindText` |
 | Outline docked under the files | Outline as a tab of the navigation pane (Word) |
