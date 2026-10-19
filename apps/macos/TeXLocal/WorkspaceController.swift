@@ -3,14 +3,14 @@ import SwiftUI
 
 /// A project's workspace in AppKit's splits, with SwiftUI in the panes: only AppKit's give the editor and PDFKit's view the
 /// system's scroll edges under one status bar.
-final class WorkspaceController: SplitViewController {
+final class WorkspaceController: DetentSplitViewController {
     let app: AppModel
     let project: ProjectModel
     var pdf: PDFController { project.pdf }
     let toolbar: WorkspaceToolbar
 
-    let columns = SplitViewController(splitView: ColumnsSplitView())
-    private let area = SplitViewController(isVertical: false)
+    let columns = DetentSplitViewController(splitView: ColumnsSplitView())
+    private let area = DetentSplitViewController(isVertical: false)
     private let sidebar = SidebarSplitViewController()
     private(set) var sidebarItem: NSSplitViewItem!
     private var outlineItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
@@ -18,11 +18,21 @@ final class WorkspaceController: SplitViewController {
     /// The File Outline's header at the files' foot, as high as the status bar when folded.
     private var outlineBar: NSSplitViewItemAccessoryViewController!
     private var outlineBarHeight: NSLayoutConstraint!
+    private var mounts: [ObjectIdentifier: Mount] = [:]
     private let searchField = FieldHandle()
 
+    private var appeared = false
+    private var joining = false
     private var panelHeight: CGFloat = 0
+    private var paneAnimations = 0
+    private var paneFrames: CADisplayLink?
+    /// Pane animations and divider drags under way, which keep the panes' overlay scrollers out of sight (`quiet`).
+    private var quieting = 0
+    private var quietScrollViews: [NSScrollView] = []
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
+    /// The panes' frames (`fitColumns`), watched for as long as their tokens are held.
+    private var resizes: [NotificationCenter.ObservationToken] = []
 
     init(app: AppModel, project: ProjectModel, size: CGSize) {
         self.app = app
@@ -37,36 +47,54 @@ final class WorkspaceController: SplitViewController {
                 split.autosaveName = name
             }
         }
-        buildSidebar(size: size)
+        buildSidebar(height: size.height)
         // Before the area, which opens in the room the side columns leave; added after it.
         buildInspector()
         buildArea(size: size)
         addSplitViewItem(inspectorItem)
-        for item in [sidebarItem, outlineItem, pdfItem, panelItem, inspectorItem] as [NSSplitViewItem] {
-            item.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
-        }
+        for item in panes { item.collapseBehavior = .preferResizingSiblingsWithFixedSplitView }
+        // The opening sizes: the sidebar's width, and the split a double-click on its divider restores.
+        detent = { [unowned self] divider in divider == 0 && !sidebarItem.isCollapsed ? ColumnMetrics.sidebarIdeal : nil }
+        // AppKit's fixed inspector takes no drag.
+        fixed = { [unowned self] divider in splitViewItems.firstIndex(of: inspectorItem) == divider + 1 }
+        columns.detent = { [unowned columns] _ in (columns.splitView as? ColumnsSplitView)?.openingPosition }
+        // A drag resizes the panes live, which would show their overlay scrollers, though nothing scrolls.
+        for split in [self, columns, area, sidebar] as [DetentSplitViewController] { split.dragging = { [unowned self] in quiet($0) } }
         watch()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     /// The models, not the autosave, say which side columns show, and at once: left to the tracks, one the autosave had
-    /// shut would open with AppKit's animation as the project appears. The models follow the columns from here on.
+    /// shut would open with AppKit's animation as the project appears, and `joinDivider` waits out pane animations. The
+    /// models follow the columns from here on.
     override func viewDidLoad() {
         super.viewDidLoad()
         sidebarItem.isCollapsed = !app.sidebarVisible
         inspectorItem.isCollapsed = !app.inspectorVisible
         collapses = [
-            follow(sidebarItem) { [unowned self] in app.sideColumn(.sidebar, shown: $0, byWindow: foldedByWindow) },
-            follow(inspectorItem) { [unowned self] in app.sideColumn(.inspector, shown: $0, byWindow: foldedByWindow) },
-            follow(pdfItem) { [unowned self] _ in fitArea() },
+            follow(sidebarItem) { [unowned self] in
+                app.sideColumn(.sidebar, shown: $0, byWindow: foldedByWindow)
+                fitColumns()
+            },
+            follow(inspectorItem) { [unowned self] visible in
+                if visible { mount(inspectorItem.viewController, true) }
+                app.sideColumn(.inspector, shown: visible, byWindow: foldedByWindow)
+                fitColumns()
+            },
+            follow(pdfItem) { [unowned self] _ in fitColumns() },
             // A drag on the status bar's line, not the autosave's restore at load.
             follow(panelItem) { [unowned self] shown in
                 guard [.leftMouseDragged, .leftMouseUp].contains(NSApp.currentEvent?.type), project.panel.shown != shown else { return }
                 project.panel.shown = shown
             },
         ]
-        fitArea()
+        // The panes' own frames: the splits tell of a resize before the nested panes have theirs.
+        resizes = [sourceItem, pdfItem].map { pane in
+            let view = pane!.viewController.view
+            view.postsFrameChangedNotifications = true
+            return NotificationCenter.default.addObserver(of: view, for: .frameDidChange) { [weak self] _ in self?.fitColumns() }
+        }
     }
 
     /// Folded by the split for want of room: during a live resize, or with no click or drag behind it.
@@ -75,17 +103,84 @@ final class WorkspaceController: SplitViewController {
         return view.window?.inLiveResize == true || NSApp.currentEvent.map { !pointer.contains($0.type) } ?? true
     }
 
-    /// AppKit folds the side columns by the area's minimum, not by those of the panes inside it.
-    private func fitArea() {
-        let pdf = pdfItem.isCollapsed ? 0 : columns.splitView.dividerThickness + pdfItem.minimumThickness
-        areaItem.minimumThickness = sourceItem.minimumThickness + pdf
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        guard !appeared else { return }
+        appeared = true
+        if !app.showPDF { pdfItem.isCollapsed = true }
+        fitColumns()
+    }
+
+    /// AppKit folds the side columns on the way to the toolbar's least width, by the area's own minimum.
+    private func fitColumns() {
+        let pdf = pdfItem.isCollapsed ? 0 : columns.splitView.dividerThickness + ColumnMetrics.pdfRoom
+        let panes = sourceItem.minimumThickness + pdf + ColumnMetrics.toolbarInset
+        let area = max(panes, ColumnMetrics.toolbarMinimum - ColumnMetrics.windowControls)
+        if areaItem.minimumThickness != area { areaItem.minimumThickness = area }
+        fitToolbar()
+        joinDividerSoon()
+    }
+
+    /// A turn on, once the toolbar has laid its sections out for the panes as they now are.
+    private func joinDividerSoon() {
+        guard appeared, !joining else { return }
+        joining = true
+        Task { [weak self] in
+            self?.joining = false
+            self?.joinDivider()
+        }
+    }
+
+    /// The source|PDF divider goes to the toolbar's separator where the two have parted. AppKit's separator follows the
+    /// divider only as far as each section's tools leave it room: under a source narrower than Back, the title and its
+    /// tools, or a PDF narrower than its own, it stops and the tools stand over the neighbouring pane (27.2), and it
+    /// sends tools to its overflow menu by the room between the side columns' separators, not a section's. So the
+    /// divider keeps to where the separator can be, which the toolbar alone knows: its line is found by its class, and
+    /// without it nothing moves. It is among the toolbar's views beside the content view, under the window's frame view
+    /// (27.2), so the search runs at each layout without the panes' views.
+    private func joinDivider() {
+        guard paneAnimations == 0, !pdfItem.isCollapsed, let content = view.window?.contentView,
+              let frame = content.superview else { return }
+        let split = columns.splitView, divider = split.arrangedSubviews[0].frame.maxX
+        let lines = frame.subviews.filter { $0 !== content }.flatMap { $0.descendants(named: "NSSeparatorToolbarItemView") }
+            .map { split.convert($0.bounds, from: $0).minX }
+        guard let line = lines.min(by: { abs($0 - divider) < abs($1 - divider) }), abs(line - divider) >= 0.5 else { return }
+        split.setPosition(line, ofDividerAt: 0)
+    }
+
+    /// Customize Toolbar has put a tool in or taken one out, and Compile's form goes by which are there. Until the
+    /// workspace appears its panes have no frames to reckon from.
+    func toolbarItemsChanged() { if appeared { fitToolbar() } }
+
+    /// Compile gives up its word where that is the first tool without room: over a PDF narrower than Zoom and Compile,
+    /// or once the source's tools have outgrown their pane and take the PDF's room. It takes the word back once no pane
+    /// is moving, as a pane's animation can widen the room on its way to less. The room is reckoned from the default
+    /// tools' widths (`ColumnMetrics`). In a toolbar customised to others their widths aren't known and AppKit's
+    /// overflow menu alone takes what has no room, so there Compile keeps its word until the tools that never leave have
+    /// no room for it: AppKit would take Compile itself next (27.2).
+    private func fitToolbar() {
+        func edges(_ item: NSSplitViewItem) -> NSRect {
+            let view = item.viewController.view
+            return view.convert(view.bounds, to: splitView)
+        }
+        let source = edges(sourceItem), area = edges(areaItem)
+        // Short of the window controls with the sidebar's toggle, and of the PDF and Inspector toggles.
+        let leading = max(source.minX, ColumnMetrics.windowControls)
+        let trailing = min(area.maxX, splitView.bounds.maxX - ColumnMetrics.toggles)
+        let tools = trailing - leading - ColumnMetrics.sourceTools
+        // A PDF sliding in is already at its width.
+        let room = pdfItem.isCollapsed ? tools - ColumnMetrics.separator
+            : min(tools, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
+        let fixed = ColumnMetrics.toolbarMinimum - ColumnMetrics.windowControls - ColumnMetrics.toggles
+        let compact = toolbar.holdsDefaultItems ? room < ColumnMetrics.compile
+            : trailing - leading < fixed + ColumnMetrics.compileWord
+        if compact || paneAnimations == 0 { toolbar.compactCompile = compact }
     }
 
     // MARK: - Layout
 
     /// A pane's size is its view's frame as it's added: the split opens it there, and a collapsed one shows there first.
-    /// The sidebar opens at AppKit's standard share of the window; the autosave keeps its width afterwards.
-    private func buildSidebar(size: CGSize) {
+    private func buildSidebar(height: CGFloat) {
         let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
         filesItem.minimumThickness = ColumnMetrics.filesMinimum
         // One header, which the outline's collapse carries down and back. Only search results hide it, and a workspace opens
@@ -93,17 +188,18 @@ final class WorkspaceController: SplitViewController {
         buildOutlineBar()
         filesItem.addBottomAlignedAccessoryViewController(outlineBar)
         outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project),
-                                                            height: (size.height * ColumnMetrics.outlineShare).rounded()))
+                                                            height: (height * ColumnMetrics.outlineShare).rounded()))
         outlineItem.minimumThickness = ColumnMetrics.outlineMinimum
         // It keeps its height as the window resizes; the files take the change.
         outlineItem.holdingPriority = .defaultLow + 1
         sidebar.addSplitViewItem(filesItem)
         sidebar.addSplitViewItem(outlineItem)
         sidebar.loaded = { [unowned self] in if app.outlineState(of: project) != .open { outlineItem.isCollapsed = true } }
+        sidebar.view.frame.size.width = ColumnMetrics.sidebarIdeal
         sidebar.header = outlineBar
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
-        sidebar.view.frame.size.width = (size.width * sidebarItem.preferredThicknessFraction).rounded()
+        sidebarItem.minimumThickness = ColumnMetrics.sidebarMinimum
         sidebarItem.isCollapsed = !app.sidebarVisible
         sidebarSearch = accessory(SearchField(text: Bindable(project.search).query, prompt: "Search Project", handle: searchField))
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
@@ -111,23 +207,28 @@ final class WorkspaceController: SplitViewController {
     }
 
     private func buildArea(size: CGSize) {
-        // As a first launch opens, the source and the PDF alike: the autosave puts the columns as they were afterwards.
-        let sidebarWidth = app.sidebarVisible ? sidebar.view.frame.width : 0
+        // As a first launch opens: the autosave puts the columns as they were afterwards.
+        let sidebarWidth = app.sidebarVisible ? ColumnMetrics.sidebarIdeal : 0
         let inspectorWidth = app.inspectorVisible ? inspectorItem.minimumThickness : 0
         let panes = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
+        let pdfWidth = min((panes * ColumnMetrics.pdfShare).rounded(), panes - ColumnMetrics.sourceMinimum)
         panelHeight = max(ColumnMetrics.panelMinimum, (size.height * ColumnMetrics.panelShare).rounded())
 
-        sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: (panes / 2).rounded()))
+        sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
         sourceItem.minimumThickness = ColumnMetrics.sourceMinimum
 
-        pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project), width: panes - (panes / 2).rounded()))
+        pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project), width: pdfWidth))
         pdfItem.minimumThickness = ColumnMetrics.pdfMinimum
         pdfFind = accessory(PDFFindBar(find: pdf.find), hidden: true)
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
 
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
-        columns.loaded = { [unowned self] in pdfItem.isCollapsed = !app.showPDF }
+        // 27.2: shown, even if the autosave hid it, until the workspace appears: with the PDF collapsed as the window first lays
+        // out the columns, the source never gets the toolbar's scroll edge, and its text stays sharp under the toolbar.
+        columns.loaded = { [unowned self] in pdfItem.isCollapsed = false }
+        // The last toolbar section's edge effect needs a safe area ending where the section does (27.2).
+        columns.view.additionalSafeAreaInsets.right = ColumnMetrics.toolbarInset
 
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: panelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
@@ -168,6 +269,8 @@ final class WorkspaceController: SplitViewController {
         }
         let bar = NSHostingView(rootView: root(StatusBar(project: project)))
         bar.sizingOptions = []
+        // Not the toolbar's inset the columns take for its last section (`buildArea`).
+        bar.safeAreaRegions = []
         bar.translatesAutoresizingMaskIntoConstraints = false
         columns.view.addSubview(bar)
         NSLayoutConstraint.activate([
@@ -179,26 +282,36 @@ final class WorkspaceController: SplitViewController {
     }
 
     private func buildInspector() {
-        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project)))
+        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project), mounted: app.inspectorVisible))
         inspectorItem.isCollapsed = !app.inspectorVisible
         // As the sidebar: a window too narrow for it folds it, and brings it back.
         inspectorItem.canCollapseFromWindowResize = true
     }
+
+    private var panes: [NSSplitViewItem] { [sidebarItem, outlineItem, pdfItem, panelItem, inspectorItem] }
 
     /// The toolbar's toggles go through the model, as the menu's do.
     override func toggleSidebar(_ sender: Any?) { app.sidebarShown.toggle() }
     override func toggleInspector(_ sender: Any?) { app.inspectorShown.toggle() }
 
     /// Sized by the split item's limits: its content never sets the window's minimum.
-    private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0) -> NSViewController {
-        let host = NSHostingController(rootView: root(content))
+    private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0, mounted: Bool? = nil) -> NSViewController {
+        let mount = mounted.map(Mount.init)
+        let host = NSHostingController(rootView: Mounted(mount: mount, content: root(content)))
         host.sizingOptions = []
         host.view.frame.size = CGSize(width: width, height: height)
+        if let mount { mounts[ObjectIdentifier(host)] = mount }
         return host
     }
 
     private func root(_ content: some View) -> some View {
         WorkspaceContent(project: project, content: content).environment(app)
+    }
+
+    private func mount(_ controller: NSViewController, _ shown: Bool) {
+        guard let mount = mounts[ObjectIdentifier(controller)], mount.shown != shown else { return }
+        mount.shown = shown
+        if shown { controller.view.layoutSubtreeIfNeeded() }
     }
 
     /// Under the files' scroll edge, whose hairline stands for the divider (`SidebarSplitViewController`). Its content keeps
@@ -227,7 +340,9 @@ final class WorkspaceController: SplitViewController {
 
     private func accessory(_ content: some View, hidden: Bool = false) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
-        let host = NSHostingView(rootView: root(content))
+        let mount = hidden ? Mount(false) : nil
+        if let mount { mounts[ObjectIdentifier(accessory)] = mount }
+        let host = NSHostingView(rootView: Mounted(mount: mount, content: root(content)))
         host.sizingOptions = [.intrinsicContentSize]
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -244,7 +359,8 @@ final class WorkspaceController: SplitViewController {
         watches = [
             track({ app.sidebarShown }) { [weak self] visible in if let self { setCollapsed(sidebarItem, !visible) } },
             track({ app.inspectorShown }) { [weak self] visible in if let self { setCollapsed(inspectorItem, !visible) } },
-            track({ app.showPDF }) { [weak self] visible in if let self { setCollapsed(pdfItem, !visible) } },
+            // Until the workspace appears, `viewDidAppear` has it.
+            track({ app.showPDF }) { [weak self] visible in if let self, appeared { setCollapsed(pdfItem, !visible) } },
             track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
             track({ app.outlineState(of: project) }) { [weak self] in self?.setOutline($0) },
             track({ pdf.find.isOpen }) { [weak self] finding in if let self { setHidden(pdfFind, !finding) } },
@@ -266,13 +382,18 @@ final class WorkspaceController: SplitViewController {
     private func setCollapsed(_ item: NSSplitViewItem, _ collapsed: Bool, done: @escaping @MainActor () -> Void = {}) {
         // Repeated model notifications must not snap an animation already heading here.
         guard item.isCollapsed != collapsed else { return done() }
-        guard animates else {
+        // Unanimated, the build panel changes layout without the live resize AppKit's animation starts even when instant (`setPanelShown` keeps its height).
+        guard animates || item !== panelItem else {
             item.isCollapsed = collapsed
-            if item === outlineItem { outlineBarHeight.constant = outlineBarHeight(folded: collapsed) }
             view.layoutSubtreeIfNeeded()
             return done()
         }
+        // An item isn't Sendable: the completion finds it again by its identity.
+        let id = ObjectIdentifier(item)
+        if !collapsed { mount(item.viewController, true) }
+        paneAnimation(true)
         NSAnimationContext.runAnimationGroup { context in
+            if !animates { context.duration = 0 }
             // One animation carries the outline's pane and its header's height.
             if item === outlineItem {
                 context.allowsImplicitAnimation = true
@@ -280,9 +401,46 @@ final class WorkspaceController: SplitViewController {
             }
             item.animator().isCollapsed = collapsed
             if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
-        } completionHandler: {
-            MainActor.assumeIsolated(done)
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return done() }
+                if let item = self.panes.first(where: { ObjectIdentifier($0) == id }), item.isCollapsed {
+                    self.mount(item.viewController, false)
+                }
+                self.paneAnimation(false)
+                done()
+            }
         }
+    }
+
+    /// 27.2: AppKit's split animation doesn't always reach the screen: with nothing else waking the run loop, a pane would hold still, then jump to its end.
+    private func paneAnimation(_ running: Bool) {
+        // AppKit's split animation puts every pane in live resize, which shows their overlay scrollers too.
+        quiet(running)
+        paneAnimations += running ? 1 : -1
+        guard paneAnimations == (running ? 1 : 0) else { return }
+        if running {
+            paneFrames = view.displayLink(target: self, selector: #selector(paneFrame))
+            paneFrames?.add(to: .main, forMode: .common)
+        } else {
+            paneFrames?.invalidate()
+            paneFrames = nil
+            fitColumns()
+        }
+    }
+
+    @objc private func paneFrame(_ link: CADisplayLink) { for split in splitViews { split.needsLayout = true } }
+
+    private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
+
+    /// Scroll bars come with scrolling (HIG, Scroll views): panes resized by a drag or an animation keep their overlay
+    /// scrollers out of sight until the last ends.
+    private func quiet(_ resizing: Bool) {
+        quieting += resizing ? 1 : -1
+        guard quieting == (resizing ? 1 : 0) else { return }
+        if resizing { quietScrollViews = view.descendants(of: NSScrollView.self) }
+        for scroll in quietScrollViews { scroll.hideOverlayScrollers(resizing) }
+        if !resizing { quietScrollViews = [] }
     }
 
     private func setOutline(_ state: OutlineState) {
@@ -293,17 +451,26 @@ final class WorkspaceController: SplitViewController {
     /// A hidden accessory only folds to no height, and its controls would stay in the key view loop and VoiceOver.
     private func setHidden(_ accessory: NSSplitViewItemAccessoryViewController, _ hidden: Bool) {
         guard accessory.isHidden != hidden else { return }
-        if !hidden { accessory.view.isHidden = false }
+        if !hidden {
+            mount(accessory, true)
+            accessory.view.isHidden = false
+        }
         guard animates else {
             accessory.isHidden = hidden
             accessory.view.isHidden = hidden
+            if hidden { mount(accessory, false) }
             return
         }
+        paneAnimation(true)
         NSAnimationContext.runAnimationGroup { _ in
             accessory.animator().isHidden = hidden
-        } completionHandler: {
+        } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
-                if hidden, accessory.isHidden { accessory.view.isHidden = true }
+                if hidden, accessory.isHidden {
+                    accessory.view.isHidden = true
+                    self?.mount(accessory, false)
+                }
+                self?.paneAnimation(false)
             }
         }
     }
@@ -342,12 +509,15 @@ final class WorkspaceController: SplitViewController {
 
     /// A split animation still running finishes after its window has gone and would save its frames over the next window's.
     func close() {
-        for split in [splitView, sidebar.splitView, columns.splitView, area.splitView] { split.autosaveName = nil }
+        for split in splitViews { split.autosaveName = nil }
+        paneFrames?.invalidate()
+        paneFrames = nil
         watches.forEach { $0.cancel() }
         app.performPDF = nil
         // The next workspace's columns are AppKit's to fold afresh: it brings back only what it folded.
         (app.sidebarFolded, app.inspectorFolded) = (false, false)
         collapses = []
+        resizes = []
         toolbar.close()
     }
 
@@ -383,4 +553,17 @@ private struct WorkspaceContent<Content: View>: View {
     let content: Content
 
     var body: some View { content.disabled(project.closed) }
+}
+
+/// Hidden, a hosting view still updates all of its content for every appearance or environment change (27.2: 20 ms for the folded inspector).
+@Observable final class Mount {
+    var shown: Bool
+    init(_ shown: Bool) { self.shown = shown }
+}
+
+private struct Mounted<Content: View>: View {
+    let mount: Mount?
+    let content: Content
+
+    var body: some View { if mount?.shown ?? true { content } }
 }

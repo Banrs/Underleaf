@@ -74,7 +74,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         workspace?.close()
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
         setContent(workspace, project: project)
+        window.contentMinSize = ColumnMetrics.contentMinimum
+        // AppKit's top scroll edge is a glass that lightens what is under it in Dark (27.2), so the toolbar over the source is the editor's surface at rest only in Light.
+        window.backgroundColor = .untintedTextBackground
         window.toolbar = workspace.toolbar.toolbar
+        // Compile's form goes by the toolbar's tools, which a workspace that appeared as the window took it could not yet read.
+        workspace.toolbarItemsChanged()
         self.workspace = workspace
         home = nil
         titleWatch?.cancel()
@@ -92,9 +97,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         workspace?.close()
         workspace = nil
         window.toolbar = nil
+        window.backgroundColor = .windowBackgroundColor
         window.subtitle = ""
         window.representedURL = nil
-        let home = NSHostingController(rootView: HomeView().environment(app))
+        // SwiftUI sets the window's minimum from its content's: the workspace's narrowest.
+        let home = NSHostingController(rootView: HomeView()
+            .frame(minWidth: ColumnMetrics.contentMinimum.width, minHeight: ColumnMetrics.contentMinimum.height)
+            .environment(app))
         home.sceneBridgingOptions = [.title, .toolbars]
         setContent(home, project: nil)
         self.home = home
