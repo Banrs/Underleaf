@@ -213,11 +213,6 @@ struct State {
     protocol_seen: bool,
     stderr: Output,
     error: Option<String>,
-    /// Whether TeXpresso has said anything.
-    spoken: bool,
-    /// The page protocol it said it speaks: 1 from a build that sends pages as they change,
-    /// None from one that only writes the whole document.
-    live: Option<u32>,
 }
 
 #[derive(Default)]
@@ -285,12 +280,6 @@ impl Session {
         }
         // A writer that has gone has stopped the session, or is about to.
         let _ = self.lines.send(lines);
-    }
-    /// Whether to send what only a build that sends pages knows: it has said it is one,
-    /// or nothing at all yet. Another would only report a command it doesn't know.
-    fn sends_pages(&self) -> bool {
-        let state = lock(&self.state);
-        self.pdf.is_some() && (state.live.is_some() || !state.spoken)
     }
 }
 impl Drop for Session {
@@ -551,7 +540,7 @@ impl Preview for Manager {
     }
     fn view(&self, owner: u64, first: u32, last: u32) -> Result<(), CoreError> {
         let session = self.owned(owner)?;
-        if session.sends_pages() {
+        if session.pdf.is_some() {
             session.send(&[json!(["view", first, last.max(first)])]);
         }
         Ok(())
@@ -563,7 +552,7 @@ impl Preview for Manager {
         let path = files.paths.get(rel).ok_or_else(unfit)?;
         let text = files.texts.get(path).ok_or_else(unfit)?;
         let offset = text.byte_offset(offset).ok_or_else(unfit)?;
-        if session.sends_pages() {
+        if session.pdf.is_some() {
             session.send(&[json!(["caret", path, offset])]);
         }
         Ok(())
@@ -716,14 +705,8 @@ fn apply_message(session: &Session, message: &Value) {
     let mut guard = lock(&session.state);
     let state = &mut *guard;
     let verb = message[0].as_str().unwrap_or_default();
-    // A patched build's first word is that it sends pages.
-    state.spoken = true;
     let number = |index: usize| message[index].as_u64();
     let event = match verb {
-        "live" => {
-            state.live = number(1).map(|version| version as u32);
-            return;
-        }
         // [page, index, path, ..]: one page, complete at a path in the session's folder.
         "page" => {
             let folder = session.pdf.as_deref().and_then(Path::parent);
@@ -1261,9 +1244,7 @@ mod tests {
             let files = main_buffer("abc");
             let (_, mut events) = start(&manager, OWNER, &root, &path_env, &files, pane);
             let session = manager.owned(OWNER).unwrap();
-            // The build says what it speaks, then the first document.
             let first = next(&mut events, document).await;
-            assert_eq!(lock(&session.state).live, Some(1));
             let LiveEvent::Document {
                 path,
                 pages: 3,
@@ -1302,39 +1283,6 @@ mod tests {
             assert_eq!(done, LiveEvent::Done("complete".into()));
             manager.stop(&root).unwrap();
             assert_eq!(next(&mut events, shown).await, LiveEvent::Ended(None));
-        }
-
-        #[tokio::test]
-        async fn a_build_that_only_writes_the_document_is_sent_nothing_it_does_not_know() {
-            let (tmp, root, path_env) = setup();
-            let manager = Manager::default();
-            let pane = Some(&Pane::default());
-            let files = main_buffer("abc");
-            let (_, mut events) = start(&manager, OWNER, &root, &path_env, &files, pane);
-            // No word of pages before the document: the build is an older one.
-            let first = next(&mut events, document).await;
-            let live = lock(&manager.owned(OWNER).unwrap().state).live;
-            assert!(live.is_none());
-            assert!(matches!(
-                first,
-                LiveEvent::Document {
-                    pages: 1,
-                    run: None,
-                    changed: None,
-                    ..
-                }
-            ));
-            manager.edit(OWNER, "main.tex", 3, 0, "d").unwrap();
-            manager.view(OWNER, 0, 1).unwrap();
-            manager.caret(OWNER, "main.tex", 1).unwrap();
-            until(|| commands(&tmp).iter().any(|c| c[0] == "change")).await;
-            manager.rescan(OWNER).unwrap();
-            until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
-            let verbs: Vec<_> = commands(&tmp)
-                .iter()
-                .map(|c| c[0].as_str().unwrap().to_owned())
-                .collect();
-            assert_eq!(verbs, ["open", "change", "rescan"]);
         }
     }
 }
