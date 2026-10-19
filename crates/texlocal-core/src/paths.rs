@@ -401,13 +401,35 @@ mod tests {
     }
 
     /// What a tool such as synctex names as a source maps back into the
-    /// project, lexically.
+    /// project, and generated files, the settings and anything outside are
+    /// no source, however the path reaches them.
     #[test]
     fn a_tools_input_path_maps_back_to_the_project_file() {
         let (_dir, service) = with_project();
         create_project(&service.data_dir, "PQ", "blank").unwrap();
         let root = service.project_root("P").unwrap();
         create_file(&root, "ch/intro.tex", false).unwrap();
+        fs::create_dir(root.join("build")).unwrap();
+        fs::write(root.join("build/generated.tex"), "").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let outside = service.data_dir.with_file_name("outside.tex");
+            fs::write(&outside, "").unwrap();
+            symlink(&outside, root.join("linked.tex")).unwrap();
+            symlink(root.join("build"), root.join("generated")).unwrap();
+            // A build made before the project was renamed or moved names its
+            // old folder; and TeX names inputs by the physical folder, a
+            // library reached through a link resolved.
+            let rel = source_rel(&root, "/old/Paper/./ch/intro.tex");
+            assert_eq!(rel.as_deref(), Some("ch/intro.tex"));
+            let linked = service.data_dir.with_file_name("linked");
+            symlink(&service.data_dir, &linked).unwrap();
+            let real = dunce::canonicalize(&root).unwrap();
+            let input = format!("{}/./ch/intro.tex", real.display());
+            let rel = source_rel(&linked.join("P"), &input);
+            assert_eq!(rel.as_deref(), Some("ch/intro.tex"));
+        }
         let under = |path: &str| format!("{}{path}", root.display());
         for (input, rel) in [
             (under("/./ch/../ch/intro.tex"), Some("ch/intro.tex")),
@@ -415,6 +437,15 @@ mod tests {
             (under(""), None),
             (under("/../PQ/main.tex"), None),
             (under("Q/main.tex"), None),
+            (".texlocal.json".into(), None),
+            ("build/generated.tex".into(), None),
+            ("Build/generated.tex".into(), None),
+            ("linked.tex".into(), None),
+            ("generated/generated.tex".into(), None),
+            ("/old/Paper/./../outside.tex".into(), None),
+            ("/old/Paper/./linked.tex".into(), None),
+            ("/old/Paper/./generated/generated.tex".into(), None),
+            ("/old/Paper/./Build/generated.tex".into(), None),
         ] {
             assert_eq!(source_rel(&root, &input).as_deref(), rel, "{input}");
         }

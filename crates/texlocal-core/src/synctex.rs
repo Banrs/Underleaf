@@ -199,6 +199,19 @@ pub fn match_forward(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projects::testing::project;
+
+    #[tokio::test]
+    async fn sync_without_a_synctex_program_says_it_is_not_available() {
+        let (_dir, root) = project();
+        std::fs::create_dir_all(root.join("build")).unwrap();
+        std::fs::write(root.join("build/main.pdf"), "fake").unwrap();
+        let none = "/nonexistent-dir-for-test";
+        let err = synctex_inverse(&root, 1.0, 10.0, 20.0, None, None, none).await;
+        let err = err.unwrap_err();
+        assert_eq!(err.status, 404);
+        assert!(err.message.contains("not available"), "{err}");
+    }
 
     #[test]
     fn forward_keeps_all_boxes_in_page_order_without_changing_the_legacy_match() {

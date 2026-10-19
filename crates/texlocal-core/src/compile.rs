@@ -491,6 +491,9 @@ fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+#[cfg(all(test, unix))]
+mod stubs;
+
 #[cfg(test)]
 mod tests {
     use super::{LOG_TAIL, joined_log, read_tail, user_latexmkrc};
