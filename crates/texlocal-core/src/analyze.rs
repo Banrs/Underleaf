@@ -274,12 +274,15 @@ mod tests {
     }
 
     /// Words part at every Unicode space and at TeX's special characters,
-    /// and nowhere else; a letter of any script makes a word.
+    /// and nowhere else; a letter of any script makes a word. Words are
+    /// prose: not a citation's key, a comment, maths, a command's name, or
+    /// the names a preamble or an environment has.
     #[test]
     fn words_part_at_unicode_spaces_and_tex_specials() {
         let cases = [
             ("", 0),
             ("plain ascii words", 3),
+            ("123 456 7.5 foo123", 1),
             ("a\u{a0}b\u{2003}c\u{3000}d\u{1680}e\tf", 6),
             ("one\u{85}two\u{2028}three\u{2029}four", 4),
             // Neither is a space, so each joins its neighbours.
@@ -292,7 +295,12 @@ mod tests {
             ("\\textbf{bold} \\cite[p. 3]{key} 42 -- ...", 1),
             ("kept % dropped words", 1),
             ("50\\% off % gone", 1),
+            ("a line break \\\\% then a comment", 3),
             ("%all comment", 0),
+            (
+                "\\documentclass[a4paper]{article}\n\\usepackage{amsmath}\n\\begin{document}\nTwo words\n\\begin{itemize}\\item one\\end{itemize}\n\\[ x + y \\]\n\\begin{lstlisting}\nx = 5 % 3\n\\end{lstlisting}\n\\end{document}",
+                3,
+            ),
         ];
         for (line, expected) in cases {
             assert_eq!(prose::words(line, |_, _, _| {}), expected, "{line:?}");
@@ -303,8 +311,6 @@ mod tests {
     #[test]
     fn a_file_reads_as_its_outline_and_words() {
         let cases: &[(&str, Outline, usize)] = &[
-            ("", &[], 0),
-            ("Hello world\n", &[], 2),
             (
                 "one\r\n\\section{Two}\r\n\\section{Three}\nfour",
                 &[(2, "Two", 2), (2, "Three", 3)],
@@ -362,23 +368,6 @@ mod tests {
                 ],
                 14,
             ),
-            // Words are prose: not a citation's key, a comment, maths, a
-            // command's name, or the names a preamble or an environment has.
-            (
-                "Hello \\textbf{bold} world \\cite[p.~3]{key} text \\\\ done",
-                &[],
-                5,
-            ),
-            ("one two % three four\n50\\% off % really", &[], 3),
-            ("a line break \\\\% then a comment", &[], 3),
-            ("x^2 + y_1 = $a$ and~b & c{d}e", &[], 7),
-            (
-                "\\documentclass[a4paper]{article}\n\\usepackage{amsmath}\n\\begin{document}\nTwo words\n\\begin{itemize}\\item one\\end{itemize}\n\\[ x + y \\]\n\\begin{lstlisting}\nx = 5 % 3\n\\end{lstlisting}\n\\end{document}",
-                &[],
-                3,
-            ),
-            ("123 456 7.5 foo123", &[], 1),
-            ("Café naïve Ελληνικά Русский 中文 123", &[], 5),
             (
                 "\\begin{verbatim}\n\\section{Hidden}\n\\end{verbatim}\\section{Visible}\n\\verb|\\section{Hidden}| \\section{After}\n\\\\section{Escaped}",
                 &[(2, "Visible", 3), (2, "After", 4)],
