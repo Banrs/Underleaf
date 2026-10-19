@@ -64,13 +64,7 @@ impl SourceDocument {
     /// (only once a letter follows unless `explicit`, asked for by the user),
     /// the labels, citations or environments an argument takes, or a
     /// bibliography entry's type after "@".
-    pub fn completions(
-        &self,
-        caret: u32,
-        explicit: bool,
-        labels: &[String],
-        citations: &[String],
-    ) -> Option<Completions> {
+    pub fn completions(&self, caret: u32, explicit: bool) -> Option<Completions> {
         let (text, caret) = (&self.text, caret.min(self.text.len()));
         let line = text.line_index(caret);
         // The caret's line, at most 250 units back.
@@ -86,10 +80,12 @@ impl SourceDocument {
         };
 
         if let Some(c) = ARGUMENT.captures(&before) {
-            let (names, kind) = match &c[1] {
-                c if catalog.cite_commands.contains(c) => (citations, CompletionKind::Citation),
-                c if catalog.ref_commands.contains(c) => (labels, CompletionKind::Label),
-                "begin" | "end" => (&catalog.environments[..], CompletionKind::Environment),
+            let (names, kind): (&[String], _) = match &c[1] {
+                c if catalog.cite_commands.contains(c) => {
+                    (&self.citations, CompletionKind::Citation)
+                }
+                c if catalog.ref_commands.contains(c) => (&self.labels, CompletionKind::Label),
+                "begin" | "end" => (&catalog.environments, CompletionKind::Environment),
                 _ => return None,
             };
             // After the brace or comma, and the blanks that usually follow a comma.
@@ -202,8 +198,9 @@ mod tests {
 
     /// What's offered at the end of `before`, `keys` being the citations.
     fn offered(before: &str, keys: &[String]) -> Vec<Completion> {
-        let caret = before.encode_utf16().count() as u32;
-        let offer = SourceDocument::new(before).completions(caret, false, &[], keys);
+        let mut doc = SourceDocument::new(before);
+        doc.set_symbols(vec![], keys.to_vec());
+        let offer = doc.completions(before.encode_utf16().count() as u32, false);
         offer.map_or(vec![], |offer| offer.items)
     }
 

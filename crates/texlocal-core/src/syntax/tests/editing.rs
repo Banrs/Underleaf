@@ -138,7 +138,6 @@ fn the_maths_to_preview_is_found_around_a_place() {
 
 #[test]
 fn completions_are_offered_for_what_is_typed() {
-    let (labels, citations) = (["sec:intro".to_string()], ["knuth84".to_string()]);
     // The text before the caret, whether asked for, and the offer's start, an
     // item it has and its kind.
     #[rustfmt::skip]
@@ -166,8 +165,9 @@ fn completions_are_offered_for_what_is_typed() {
         ("x\n@art", false, Some((2, "@article", "entryType"))),
     ];
     for (before, explicit, expected) in cases {
-        let doc = SourceDocument::new(before);
-        let found = doc.completions(units(before), explicit, &labels, &citations);
+        let mut doc = SourceDocument::new(before);
+        doc.set_symbols(vec!["sec:intro".into()], vec!["knuth84".into()]);
+        let found = doc.completions(units(before), explicit);
         let place = found
             .as_ref()
             .map(|c| (c.start, serde_json::to_value(c.kind).unwrap()));

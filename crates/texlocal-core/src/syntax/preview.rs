@@ -8,10 +8,9 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use super::Text;
+use super::SourceDocument;
 use super::catalog::CATALOG;
 use super::scan::{Group, Visit, environment_name};
-use super::scans::Scans;
 
 /// Maths to preview: where it starts, its TeX as KaTeX reads it, and
 /// whether it's displayed.
@@ -65,47 +64,49 @@ impl Visit for Close {
     }
 }
 
-/// The maths the caret is in: the outermost display that holds it, else the
-/// innermost inline maths; or the display it is just after. None when its
-/// close isn't within 20,000 units, or it holds no TeX.
-pub(crate) fn math_at(text: &Text, scans: &mut Scans, caret: u32) -> Option<MathPreview> {
-    let (units, caret) = (&text.units, caret as usize);
-    let ahead = (caret + AHEAD).min(units.len());
-    let mut scanner = scans.resume(text, caret, ahead).scanner;
-    let mut close = Close {
-        open: None,
-        at: caret,
-        found: None,
-    };
-    scanner.run(units, caret, &[], &mut close);
-    let groups = scanner.groups();
-    let open = groups.iter().find(|g| display(g));
-    if let Some(group) = open.or_else(|| groups.iter().rev().find(|g| inline(g))) {
-        close = Close {
-            open: Some(group.open),
+impl SourceDocument {
+    /// The maths the caret is in, to preview: the outermost display that
+    /// holds it, else the innermost inline maths; or the display it is just
+    /// after. None when its close isn't within 20,000 units, or it holds no TeX.
+    pub fn math_at(&mut self, caret: u32) -> Option<MathPreview> {
+        let (units, caret) = (&self.text.units, caret.min(self.text.len()) as usize);
+        let ahead = (caret + AHEAD).min(units.len());
+        let mut scanner = self.scans.resume(&self.text, caret, ahead).scanner;
+        let mut close = Close {
+            open: None,
             at: caret,
             found: None,
         };
-        // In steps, to stop at the close.
-        while close.found.is_none() && scanner.i < ahead {
-            scanner.run(units, (scanner.i + 1024).min(ahead), &[], &mut close);
+        scanner.run(units, caret, &[], &mut close);
+        let groups = scanner.groups();
+        let open = groups.iter().find(|g| display(g));
+        if let Some(group) = open.or_else(|| groups.iter().rev().find(|g| inline(g))) {
+            close = Close {
+                open: Some(group.open),
+                at: caret,
+                found: None,
+            };
+            // In steps, to stop at the close.
+            while close.found.is_none() && scanner.i < ahead {
+                scanner.run(units, (scanner.i + 1024).min(ahead), &[], &mut close);
+            }
         }
+        let (group, close) = close.found?;
+        let body = match group.end.as_ref() {
+            "$" => group.open + 1,
+            "$$" | "\\)" | "\\]" => group.open + 2,
+            _ => environment_name(units, group.open + "\\begin".len())?.1,
+        };
+        let tex = preview_tex(
+            environment(&group),
+            &crate::utf16_lossy(&units[body..close.start]),
+        );
+        (!tex.is_empty()).then(|| MathPreview {
+            start: group.open as u32,
+            tex,
+            display: display(&group),
+        })
     }
-    let (group, close) = close.found?;
-    let body = match group.end.as_ref() {
-        "$" => group.open + 1,
-        "$$" | "\\)" | "\\]" => group.open + 2,
-        _ => environment_name(units, group.open + "\\begin".len())?.1,
-    };
-    let tex = preview_tex(
-        environment(&group),
-        &crate::utf16_lossy(&units[body..close.start]),
-    );
-    (!tex.is_empty()).then(|| MathPreview {
-        start: group.open as u32,
-        tex,
-        display: display(&group),
-    })
 }
 
 /// What KaTeX shows of maths: no labels or numbering, and an environment's

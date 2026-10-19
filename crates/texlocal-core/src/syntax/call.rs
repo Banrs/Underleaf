@@ -63,10 +63,7 @@ impl SourceDocument {
         let string = |key| get::<String>(a, key);
         let auto_pair = || optional(a, "autoPair", true);
         match command {
-            "completions" => {
-                let explicit = optional(a, "explicit", false)?;
-                json(self.completions(caret()?, explicit, &self.labels, &self.citations))
-            }
+            "completions" => json(self.completions(caret()?, optional(a, "explicit", false)?)),
             "toggle_comment" => json(self.toggle_comment(&selections()?)),
             "set_heading" => json(self.set_heading(caret()?, &string("command")?)),
             "insert_block" => json(self.insert_block(&string("id")?, selection()?)),

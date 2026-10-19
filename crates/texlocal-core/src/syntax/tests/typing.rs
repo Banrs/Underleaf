@@ -364,7 +364,7 @@ fn blocks_tab_through_their_fields() {
 #[test]
 fn a_field_in_two_places_is_typed_in_both() {
     let mut e = Editor::open("\\beg", None);
-    let offer = e.doc.completions(4, false, &[], &[]).unwrap();
+    let offer = e.doc.completions(4, false).unwrap();
     let item = &offer.items[0];
     let end = offer.start + units(&item.text);
     e.put(edit(offer.start, 4 - offer.start, &item.text), end);
@@ -427,7 +427,7 @@ fn the_last_field_is_mirrored_and_left_by_shift_tab() {
 #[test]
 fn a_completions_own_bracket_is_stepped_over() {
     let mut e = Editor::open("\\textb", None);
-    let offer = e.doc.completions(6, false, &[], &[]).unwrap();
+    let offer = e.doc.completions(6, false).unwrap();
     let item = &offer.items[0];
     assert_eq!(item.text, "\\textbf{}");
     e.put(edit(offer.start, 6, &item.text), 9);

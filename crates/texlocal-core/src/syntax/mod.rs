@@ -33,8 +33,6 @@ use serde::{Deserialize, Serialize};
 pub use call::call;
 use complete::SnippetField;
 use highlight::{Highlight, HighlightKind};
-use preview::MathPreview;
-use style::TextStyles;
 
 /// A range of the text, in UTF-16 units; `TlRange` in the C ABI.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -279,28 +277,16 @@ impl SourceDocument {
             from = at + name.len();
             let longer = word && units.get(from).is_some_and(|&u| tex_letter(u));
             if !escaped(units, at) && !longer {
-                found.push(range(at as u32, name.len() as u32));
+                found.push(span(at, name.len()));
             }
         }
         found
-    }
-
-    /// The bold, italic and underline the whole selection is in, each as the
-    /// edits that unwrap the command giving it, in order.
-    pub fn text_styles(&mut self, selection: TextRange) -> TextStyles {
-        let selection = clamp(selection, self.text.len());
-        style::text_styles(&self.text, &mut self.scans, selection)
     }
 
     /// Forgets the closers and snippet fields typing keeps, as when the
     /// editor shows the document again: they belong to a visit, not to the text.
     pub fn reset_typing(&mut self) {
         self.typing = typing::Typing::default();
-    }
-
-    /// The maths to preview at the caret, if it's in some.
-    pub fn math_at(&mut self, caret: u32) -> Option<MathPreview> {
-        preview::math_at(&self.text, &mut self.scans, caret.min(self.text.len()))
     }
 }
 
