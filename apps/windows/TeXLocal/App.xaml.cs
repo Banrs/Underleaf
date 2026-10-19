@@ -19,11 +19,11 @@ public partial class App : Application
     public App()
     {
         InitializeComponent();
+        // Written to stderr in any run, for a run whose stderr is redirected; a smoke run fails on it.
         UnhandledException += (_, e) =>
         {
-            if (!Smoke) return;
             Console.Error.WriteLine(e.Exception);
-            Environment.Exit(1);
+            if (Smoke) Environment.Exit(1);
         };
     }
 

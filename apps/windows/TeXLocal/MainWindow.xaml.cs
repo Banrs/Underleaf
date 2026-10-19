@@ -5,6 +5,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.Windows.Storage.Pickers;
@@ -19,6 +20,7 @@ namespace TeXLocal;
 public sealed partial class MainWindow : Window
 {
     RectInt32 restored;
+    RectInt32[] passthrough = [];
     double scale;
 
     public MainWindow()
@@ -36,17 +38,28 @@ public sealed partial class MainWindow : Window
         {
             if (e.Key == (VirtualKey)188 && InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(CoreVirtualKeyStates.Down)) OpenSettings();
         }), true);
+        // The mouse's back button, as in File Explorer and Settings.
+        Root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, e) =>
+        {
+            if (e.GetCurrentPoint(Root).Properties.IsXButton1Pressed && Pages.CanGoBack) Pages.GoBack();
+        }), true);
         Root.Loaded += (_, _) =>
         {
             Fit();
             Root.XamlRoot.Changed += (_, _) => Fit();
         };
+        Bar.LayoutUpdated += OnBarLayout;
         Activated += (_, e) =>
         {
-            if (e.WindowActivationState != WindowActivationState.Deactivated) (Pages.Content as HomePage)?.Refresh();
+            // The title dims while another window is active, as every Windows title does: tertiary text is about half
+            // the primary's opacity in both themes.
+            var active = e.WindowActivationState != WindowActivationState.Deactivated;
+            TitleText.Opacity = active ? 1 : 0.5;
+            if (active) (Pages.Content as HomePage)?.Refresh();
         };
         Closed += (_, _) =>
         {
+            Bar.LayoutUpdated -= OnBarLayout;
             Prefs.Bounds = $"{restored.X},{restored.Y},{restored.Width},{restored.Height}";
             Prefs.Maximized = AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized };
             App.Core?.Dispose();
@@ -54,12 +67,16 @@ public sealed partial class MainWindow : Window
         Pages.Navigate(typeof(HomePage));
     }
 
-    /// The project in the caption (taskbar, Alt+Tab) and the search box, as Notepad and VS Code name theirs.
-    public void SetProject(string? name)
+    /// The project's menus in the title bar, beside the icon, as Paint and Visual Studio carry theirs; null takes them away.
+    public void SetMenu(MenuBar? menu) => MenuHost.Child = menu;
+
+    /// The caption (taskbar, Alt+Tab) and the title bar's middle: "main.tex - Thesis", as Word and Notepad name theirs.
+    public void SetTitle(string? project, string? file = null)
     {
-        Title = name is null ? "TeXLocal" : $"{name} - TeXLocal";
-        Search.Visibility = name is null ? Visibility.Collapsed : Visibility.Visible;
-        if (name is not null) Search.PlaceholderText = $"Search {name}";
+        var shown = project is null ? "TeXLocal" : file is null ? project : $"{System.IO.Path.GetFileName(file)} - {project}";
+        Title = project is null ? "TeXLocal" : $"{shown} - TeXLocal";
+        TitleText.Text = shown;
+        TitleText.HorizontalAlignment = MenuHost.Child is null ? HorizontalAlignment.Left : HorizontalAlignment.Center;
     }
 
     public void ApplyTheme(ElementTheme theme)
@@ -73,6 +90,7 @@ public sealed partial class MainWindow : Window
         };
     }
 
+    /// From Home, a project drills in.
     public void OpenProject(string id)
     {
         GoHome();
@@ -108,19 +126,32 @@ public sealed partial class MainWindow : Window
         while (Pages.CanGoBack && Pages.Content is not HomePage) Pages.GoBack();
     }
 
-    void OnBackRequested(TitleBar sender, object args)
+    void OnBack(object sender, RoutedEventArgs e)
     {
         if (Pages.CanGoBack) Pages.GoBack();
     }
 
-    void OnPaneToggleRequested(TitleBar sender, object args) => (Pages.Content as WorkspacePage)?.TogglePane();
-
     void OnNavigated(object sender, NavigationEventArgs e)
     {
-        Bar.IsBackButtonVisible = Pages.CanGoBack;
-        Bar.IsPaneToggleButtonVisible = e.Content is WorkspacePage;
+        BackButton.Visibility = Pages.CanGoBack ? Visibility.Visible : Visibility.Collapsed;
         SettingsButton.Visibility = e.Content is SettingsPage ? Visibility.Collapsed : Visibility.Visible;
-        if (e.Content is not WorkspacePage) SetProject(null);
+        if (e.Content is WorkspacePage) return;
+        SetMenu(null);
+        SetTitle(null);
+    }
+
+    /// The title bar's controls take the pointer; the rest of the row drags the window. Set again whenever they move.
+    void OnBarLayout(object? sender, object e)
+    {
+        if (Root.XamlRoot is not { } root) return;
+        var s = root.RasterizationScale;
+        RectInt32[] rects = [.. new FrameworkElement[] { BackButton, MenuHost, SettingsButton }
+            .Where(e => e.Visibility == Visibility.Visible && e.ActualWidth > 0)
+            .Select(e => e.TransformToVisual(null).TransformBounds(new(0, 0, e.ActualWidth, e.ActualHeight)))
+            .Select(r => new RectInt32((int)(r.X * s), (int)(r.Y * s), (int)Math.Ceiling(r.Width * s), (int)Math.Ceiling(r.Height * s)))];
+        if (rects.SequenceEqual(passthrough)) return;
+        passthrough = rects;
+        InputNonClientPointerSource.GetForWindowId(AppWindow.Id).SetRegionRects(NonClientRegionKind.Passthrough, rects);
     }
 
     /// The saved bounds while they're on a display, else 1280 × 800 centred; they're saved on Closed.
@@ -142,7 +173,8 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    /// The 800 × 500 minimum in the pixels of the window's display, again when it moves to another scale.
+    /// The 800 × 500 minimum in the pixels of the window's display, again when it moves to another scale; the caption
+    /// buttons' room in the title bar.
     void Fit()
     {
         var now = GetDpiForWindow(Win32Interop.GetWindowFromWindowId(AppWindow.Id)) / 96.0;
@@ -153,10 +185,7 @@ public sealed partial class MainWindow : Window
             presenter.PreferredMinimumWidth = (int)(800 * scale);
             presenter.PreferredMinimumHeight = (int)(500 * scale);
         }
-        // WinUI's TitleBar reserves the caption buttons' inset in pixels as if they were DIPs, which above 100% leaves
-        // the gear a caption-width short of them: the bar reaches past the window's edge by the difference.
-        var inset = AppWindow.TitleBar.RightInset;
-        Bar.Margin = new Thickness(0, 0, inset / scale - inset, 0);
+        CaptionColumn.Width = new(AppWindow.TitleBar.RightInset / scale);
     }
 
     [LibraryImport("user32.dll")]

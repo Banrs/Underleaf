@@ -21,6 +21,12 @@
 
         <ScrollViewer Grid.Row="1">
             <StackPanel MaxWidth="1064" Padding="36,0,36,36" Spacing="4">
+                <!-- Windows Settings brings its cards in one after another. -->
+                <StackPanel.ChildrenTransitions>
+                    <TransitionCollection>
+                        <EntranceThemeTransition IsStaggeringEnabled="True" />
+                    </TransitionCollection>
+                </StackPanel.ChildrenTransitions>
                 <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="Appearance" />
                 <controls:Card Glyph="&#xE790;" Header="App theme">
                     <controls:Card.Description>

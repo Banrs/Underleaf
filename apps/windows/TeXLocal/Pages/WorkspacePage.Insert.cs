@@ -21,8 +21,9 @@ public sealed class PaletteGroup(string title, IEnumerable<PaletteItem> items) :
     public string Title => title;
 }
 
-/// The Insert menu and the symbol palette, from the core's catalogue (menus) and the main file's class (session_analyze's
-/// headingStyles); symbols as RaTeX draws them (glyph_svg).
+/// The Insert menu, and the command bar's text style, Equation, Symbol and Insert (Notepad's formatting bar with Word's
+/// Insert commands), from the core's catalogue (menus) and the main file's class (session_analyze's headingStyles);
+/// symbols as RaTeX draws them (glyph_svg).
 public sealed partial class WorkspacePage
 {
     static readonly Menus Catalogue = Source.SyntaxCall<Menus>("menus", new { })!;
@@ -32,17 +33,31 @@ public sealed partial class WorkspacePage
     void SetUpInsert()
     {
         var templates = Catalogue.Templates;
-        After(MathsAnchor, templates.Math);
-        After(InsertAnchor, templates.Insert);
+        After(InsertMenu.Items, MathsAnchor, templates.Math);
+        After(InsertMenu.Items, InsertAnchor, templates.Insert);
         foreach (var t in templates.List) ListMenu.Items.Add(Item(t));
         foreach (var t in templates.References) ReferencesMenu.Items.Add(Item(t));
+        // The command bar's Equation and Insert: the same templates, Insert's lists and references by kind.
+        After(EquationMenu.Items, EquationAnchor, templates.Math, separate: true);
+        foreach (var t in templates.Insert) InsertFlyout.Items.Add(Item(t));
+        InsertFlyout.Items.Add(new MenuFlyoutSeparator());
+        InsertFlyout.Items.Add(Sub("List", templates.List));
+        InsertFlyout.Items.Add(Sub("References and links", templates.References));
         ShowHeadings(Source.SyntaxCall<HeadingStyle[]>("heading_styles", new { }) ?? []);
     }
 
-    void After(MenuFlyoutItemBase anchor, Template[] templates)
+    void After(IList<MenuFlyoutItemBase> items, MenuFlyoutItemBase anchor, Template[] templates, bool separate = false)
     {
-        var at = InsertMenu.Items.IndexOf(anchor);
-        foreach (var t in templates) InsertMenu.Items.Insert(++at, Item(t));
+        var at = items.IndexOf(anchor);
+        if (separate && templates.Length > 0) items.Insert(++at, new MenuFlyoutSeparator());
+        foreach (var t in templates) items.Insert(++at, Item(t));
+    }
+
+    MenuFlyoutSubItem Sub(string text, Template[] templates)
+    {
+        var sub = new MenuFlyoutSubItem { Text = text };
+        foreach (var t in templates) sub.Items.Add(Item(t));
+        return sub;
     }
 
     /// A catalogue block by its id, or an inline command round the selection, whose argument then completes.
@@ -61,24 +76,27 @@ public sealed partial class WorkspacePage
     static string Sentence(string title) => string.Join(' ', title.Split(' ').Select((word, i) =>
         i == 0 || word.Length < 2 || word.Skip(1).Any(char.IsUpper) ? word : char.ToLowerInvariant(word[0]) + word[1..]));
 
-    /// Insert › Heading, as Word's styles gallery: each level in its own size, weight and shape, with its number; until a
-    /// file is analysed, every level.
+    /// Insert › Heading and the command bar's text style, as Word's styles gallery: each level in its own size, weight
+    /// and shape, with its number; until a file is analysed, every level.
     void ShowHeadings(HeadingStyle[] styles)
     {
-        HeadingMenu.Items.Clear();
-        foreach (var style in styles)
+        foreach (var (menu, group) in new[] { (HeadingMenu.Items, "heading"), (StyleMenu.Items, "style") })
         {
-            var item = new RadioMenuFlyoutItem
+            menu.Clear();
+            foreach (var style in styles)
             {
-                Text = style.Marker is { } marker ? $"{marker} {Sentence(style.Title)}" : Sentence(style.Title),
-                GroupName = "heading",
-                Tag = style.Command,
-                FontSize = Math.Round(14 * Math.Pow(Math.Max(style.Font.Scale, 1), 0.58)),
-                FontWeight = style.Font.Bold ? FontWeights.SemiBold : FontWeights.Normal,
-                FontStyle = style.Font.Shape == "italic" ? Windows.UI.Text.FontStyle.Italic : Windows.UI.Text.FontStyle.Normal,
-            };
-            item.Click += (_, _) => Editor.SetHeading(style.Command);
-            HeadingMenu.Items.Add(item);
+                var item = new RadioMenuFlyoutItem
+                {
+                    Text = style.Marker is { } marker ? $"{marker} {Sentence(style.Title)}" : Sentence(style.Title),
+                    GroupName = group,
+                    Tag = style,
+                    FontSize = Math.Round(14 * Math.Pow(Math.Max(style.Font.Scale, 1), 0.58)),
+                    FontWeight = style.Font.Bold ? FontWeights.SemiBold : FontWeights.Normal,
+                    FontStyle = style.Font.Shape == "italic" ? Windows.UI.Text.FontStyle.Italic : Windows.UI.Text.FontStyle.Normal,
+                };
+                item.Click += (_, _) => Editor.SetHeading(style.Command);
+                menu.Add(item);
+            }
         }
     }
 
@@ -87,10 +105,15 @@ public sealed partial class WorkspacePage
     {
         var latex = Editor.Path?.EndsWith(".tex", StringComparison.OrdinalIgnoreCase) == true;
         foreach (var item in InsertMenu.Items) item.IsEnabled = latex;
+        foreach (var control in (Control[])[StyleButton, BoldButton, ItalicButton, UnderlineButton, EquationButton, SymbolButton, InsertButton])
+            control.IsEnabled = latex;
         var command = heading?.Command ?? "";
-        foreach (var item in HeadingMenu.Items.OfType<RadioMenuFlyoutItem>()) item.IsChecked = (string)item.Tag == command;
+        foreach (var item in HeadingMenu.Items.Concat(StyleMenu.Items).OfType<RadioMenuFlyoutItem>())
+            item.IsChecked = ((HeadingStyle)item.Tag).Command == command;
+        StyleText.Text = StyleMenu.Items.OfType<RadioMenuFlyoutItem>().FirstOrDefault(i => i.IsChecked) is { } level ? Sentence(((HeadingStyle)level.Tag).Title) : "Normal text";
         var styles = latex ? Editor.Styles : new TextStyles(null, null, null);
         (BoldItem.IsChecked, ItalicItem.IsChecked, UnderlineItem.IsChecked) = (styles.Bold is not null, styles.Italic is not null, styles.Underline is not null);
+        (BoldButton.IsChecked, ItalicButton.IsChecked, UnderlineButton.IsChecked) = (BoldItem.IsChecked, ItalicItem.IsChecked, UnderlineItem.IsChecked);
     }
 
     void OnStyle(object sender, RoutedEventArgs e) => Editor.ToggleStyle((string)((FrameworkElement)sender).Tag);

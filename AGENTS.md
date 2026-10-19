@@ -182,7 +182,10 @@ what is there, and points the Start menu's TeXLocal shortcut at it.
 - Not watched on screen since the live preview's rewrite: a restart after TeXpresso exits,
   and a quick Stop and Start.
 - The Windows app is not finished (no live preview yet); it follows `docs/core-api.md` and is
-  ported to its "Changes for hosts (October 2026)".
+  ported to its "Changes for hosts (October 2026)". Its shell was redone on 2026-10-19 (menus in
+  the title bar, one command bar, Word's navigation pane and Home, layers on Mica; `docs/windows.md`):
+  seen in light and dark at 1280 × 800 and 800 × 550, not yet in a high-contrast theme, by touch,
+  or with a real pointer over the sizers' grips.
 - Measured on the 400-page test document (2026-10-18), not yet improved: a build's PDF shown in
   place costs the main thread about 0.7 s, mostly PDFKit relaying out its view per inserted and
   removed page (quadratic in the page count; a 20-page document is a few milliseconds); a SyncTeX

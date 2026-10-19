@@ -83,8 +83,9 @@ public sealed partial class SourceView : UserControl
         partnerTimer = DispatcherQueue.CreateTimer();
         partnerTimer.Interval = TimeSpan.FromSeconds(1);
         partnerTimer.Tick += (_, _) => HidePartner();
-        if (new Windows.UI.ViewManagement.UISettings().AnimationsEnabled)
-            PartnerBox.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(250) };
+        if (Motion.Enabled) PartnerBox.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(250) };
+        // VS Code's find widget drops in from the text's top edge.
+        Motion.Reveal(FindBar, y: -12);
         Editor.TextChanging += (_, e) =>
         {
             if (setting || !e.IsContentChanging) return;
@@ -113,7 +114,7 @@ public sealed partial class SourceView : UserControl
         };
         Editor.SizeChanged += (_, e) =>
         {
-            FindBar.Width = Math.Clamp(e.NewSize.Width - 40, 0, 480);
+            FindBar.Width = Math.Clamp(ActualWidth - 40, 0, 480);
             if (scroller is not null && e.NewSize.Width > 0) ready.TrySetResult();
             Invalidate(false);
         };

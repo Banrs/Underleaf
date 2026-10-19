@@ -24,16 +24,21 @@ looks right.
 
 ## Decisions
 
-The owner's, 2026-10-16:
-- **Commands:** a Notepad-style menu bar (File, Edit, Insert, View, Build) with Compile as the one
-  accent button, not an Explorer-style CommandBar.
+The owner's, 2026-10-16, as revised on 2026-10-19 ("the menu bar icons should not descend"; the
+sidebar and toolbar laid out as Windows apps lay theirs out, not as the Mac's):
+- **Commands:** the menus (File, Edit, Insert, View, Build) sit in the title bar beside the icon, as
+  Paint's and Visual Studio's do, not on a row of their own. Under the title bar, one full-width
+  command bar, as Notepad's formatting bar and Word's ribbon row: the navigation pane, the text's
+  style, B I U, Equation, Symbol and Insert at its start; the PDF and Compile, the one accent
+  button, at its end.
 - **Open files:** one shared editor that the file tree switches, as on the Mac; no tabs.
 - **Live preview:** the core's recompile mode first, then a native `texpresso.exe` (see
   [Live preview on Windows](#live-preview-on-windows)).
 - **Distribution:** an unpackaged, self-contained zip and a winget manifest; no MSIX for now.
 - **Windows, not the Mac's layout:** the Mac is the reference for behaviour, not for layout. Where its
-  arrangement isn't how Windows apps do it, the Windows precedent wins (Word's navigation pane,
-  Notepad's find bar and status bar, a search box in the title bar).
+  arrangement isn't how Windows apps do it, the Windows precedent wins (Word's navigation pane with
+  its search box, Notepad's find bar and status bar, Word's Home). No Liquid Glass stand-ins: Mica,
+  layers and acrylic where Windows 11 uses them.
 - Defaults until said otherwise: the library at `%USERPROFILE%\TeXLocal`; TeX Live in the
   missing-TeX tip, since its installer brings the Perl latexmk needs.
 
@@ -57,8 +62,10 @@ apps/windows/
       WorkspacePage.Insert.cs (Insert menu, symbol palette)
     Controls/Card.cs (a settings card), Shortcut.cs (accelerators as one attribute), Sizer.cs, RenameFlyout.xaml(.cs),
       PdfView.xaml(.cs), SourceView.xaml(.cs) (typing through the core, completion, maths preview),
-      SourceView.Find.cs (find and replace)
-    Themes/Generic.xaml        Card's default style, section headers, status bar styles, the content card
+      SourceView.Find.cs (find and replace), Motion.cs (Fluent show and hide motion, rounded layer clips),
+      PagePreview.cs (a template's first page in outline, for Home)
+    Themes/Generic.xaml        Card's default style, section and group headers, the layer, the sizer's grip, status bar
+                               styles, the template previews' bars
   TeXLocal.Tests/              xUnit, against TeXLocal.Core only: the bridge and smoke behaviour
 ```
 
@@ -80,12 +87,13 @@ apps/windows/
 - **Close.** Remove the listener, `kill_all`, wait for calls in flight, `tl_close`.
 - **Data folder.** `TEXLOCAL_DATA`, else `%USERPROFILE%\TeXLocal` (the Mac's `~/TeXLocal`; outside
   OneDrive-redirected Documents, whose sync locks files mid-build).
-- **Host preferences** (theme, window bounds, sidebar width, split, issues height, Compile
+- **Host preferences** (theme, window bounds, navigation pane width, split, issues height, Compile
   automatically, and the editor's font, size, theme and typing switches, which raise
   `EditorChanged`) are `Prefs`' typed properties over
   `ApplicationData.GetForUnpackaged("TeXLocal", "TeXLocal").LocalSettings` (the registry, under
-  `HKCU\Software\Classes\Local Settings\Software\TeXLocal`), as the Mac's in `UserDefaults`;
-  validation of shared preferences is a core gap.
+  `HKCU\Software\Classes\Local Settings\Software\TeXLocal`), as the Mac's in `UserDefaults`; a run
+  with `TEXLOCAL_DATA` set keeps its own, "TeXLocal Dev", so a dev build never moves the installed
+  app's window or theme. Validation of shared preferences is a core gap.
 - **The DLL.** `TeXLocal.Core.csproj` runs `cargo rustc -p texlocal-ffi --lib --release
   --crate-type cdylib` at the repository root (incremental: inputs `crates/**/*.rs`,
   `Cargo.lock`, `Cargo.toml`; output `target/release/texlocal_ffi.dll`; skipped with
@@ -96,21 +104,22 @@ apps/windows/
 
 | Need | Choice | Why not the alternative |
 |---|---|---|
-| Window, chrome | `Window` + `MicaBackdrop` (Base), WinUI `TitleBar` (`Height` 48 with `TitleBarHeightOption.Tall`; the control alone stays 32); Settings (subtle gear) in `TitleBar.RightHeader`; project search in `TitleBar.Content`, 440 wide; no `Subtitle`; the window caption names the project | Mica Alt is for tabs in the title bar; no hand-built caption |
-| Pages | `Frame`: Home, Workspace, Settings; back via `TitleBar.IsBackButtonVisible`. The workspace page stays cached (and its session open) under Settings, and is dropped when it goes anywhere else | `NavigationView` switches top-level sections, which this app hasn't |
-| Commands | `MenuBar` (File, Edit, Insert, View, Build) in a 40 row, Compile at its end. Focus that comes back to the bar from a menu, flyout or dialog goes on to where it was before the bar took it (the editor if that is gone), as a Win32 menu gives it back; MenuBar alone leaves it on its item | Notepad's model; a `CommandBar` can't hold Insert's and Section's depth. One model, not both |
-| Sidebar | `SplitView` (Inline ≥ 1008, Overlay below) holding a `SelectorBar` (Files, Outline, Results, always shown) over three `TreeView`s sharing one item template; width by `Sizer`. The outline's selection is set only while it shows, after `UpdateLayout`: a hidden `TreeView` selects a row in name only, and setting `SelectedItem` on one whose items were just replaced crashed the app | NavigationView is not a file tree; Word's navigation pane is tabs over one pane, not stacked panels |
-| Splitters | `Sizer` (a `Grid`: `Border` is sealed), ~50 lines: pointer capture, `SizeWestEast`/`SizeNorthSouth` cursor, arrow keys; `Released` says when to save the size | Toolkit 8.2 pulls the 1.6 metapackage; 8.3 is preview. Move when 8.3 is stable |
+| Window, chrome | `Window` + `MicaBackdrop` (Base), `ExtendsContentIntoTitleBar` with the app's own 48 row (`TitleBarHeightOption.Tall`): back (`NavigationBackButtonSmallStyle`, Alt+Left, the mouse's back button), the icon, the project's `MenuBar`, the title ("main.tex - Thesis", centred while menus show, dimmed while the window is inactive), Settings (subtle gear) and the caption buttons' inset (`AppWindow.TitleBar.RightInset`). The interactive parts are `NonClientRegionKind.Passthrough` rects, set again only when they move; the rest drags. The window caption reads "main.tex - Thesis - TeXLocal" | WinUI's `TitleBar` control has no slot for a menu bar beside the icon; Mica Alt is for tabs in the title bar |
+| Pages | `Frame`: Home, Workspace, Settings; back via the title bar's button. The workspace page stays cached (and its session open) under Settings, and is dropped when it goes anywhere else | `NavigationView` switches top-level sections, which this app hasn't |
+| Commands | The `MenuBar` (File, Edit, Insert, View, Build) lives in the workspace page and is lent to the title bar while the page shows (`MainWindow.SetMenu`). Focus that comes back to the bar from a menu, flyout or dialog goes on to where it was before the bar took it (the editor if that is gone), as a Win32 menu gives it back; MenuBar alone leaves it on its item. Under the title bar, a `CommandBar` (`DefaultLabelPosition` Right, dynamic overflow) for the frequent commands, and a second one at the row's end for the PDF toggle and Compile (`AppBarElementContainer`, accent, 112 wide). Checked `AppBarToggleButton`s sit on `SubtleFillColorSecondary` through lightweight resources, as Word's ribbon toggles, so Compile stays the one accent | Paint's and Visual Studio's menus in the title bar; a menu row of its own costs 40 and pushes the commands down a row ("the menu bar icons should not descend") |
+| Navigation pane | `SplitView` (Inline at 1008 and wider, Overlay on acrylic below; the page's width sets a `StateTrigger`, since an `AdaptiveTrigger` misjudged a page first shown narrow) holding Word's navigation pane: an `AutoSuggestBox` ("Search Thesis"), a `SelectorBar` (Files, Outline, Results, always shown) and three `TreeView`s sharing one item template; width by `Sizer`. The pane is first laid out off-screen, where it slides in from, so the `SelectorBar`'s repeater realizes only Files; `PaneOpened` measures it again. The outline's selection is set only while it shows, after `UpdateLayout`: a hidden `TreeView` selects a row in name only, and setting `SelectedItem` on one whose items were just replaced crashed the app | NavigationView is not a file tree; Word's navigation pane is tabs over one pane, not stacked panels |
+| Splitters | `Sizer` (a `Grid`: `Border` is sealed), ~70 lines: the 8 gap between layers is the splitter, a 4 × 24 grip (`ControlStrongFillColorDefault`) fading in over 83 ms under the pointer, while dragging and with focus (Outlook's pane gaps); pointer capture, `SizeWestEast`/`SizeNorthSouth` cursor, arrow keys in steps of 12; `Released` says when to save the size | Toolkit 8.2 pulls the 1.6 metapackage; 8.3 is preview. Move when 8.3 is stable |
 | Settings cards | `Card` (Controls/Card.cs), a `ContentControl` with Header, Description and Glyph, its default style in Generic.xaml; the description's presenter is collapsed without one, as SettingsCard's (an empty one fails XAML's measure with E_INVALIDARG) | No Community Toolkit; a `Grid` style can't set columns |
-| Home list | `ListView` with `ProjectItemStyle` based on `DefaultListViewItemStyle`; pointer-over and pressed aliased to `ControlFillColorSecondary`/`Tertiary` | A replaced `ListViewItem` template loses the presenter's focus, keyboard and high-contrast handling |
+| Home | Templates: an `ItemsControl` of subtle `Button`s, each a page in Light resources with a `PagePreview` (a `Canvas` drawing the class's first page in bars) and its name under it. Recent: a `ListView` with `ProjectItemStyle` based on `DefaultListViewItemStyle`, under File Explorer's Details headings | A replaced `ListViewItem` template loses the presenter's focus, keyboard and high-contrast handling; a `GridView` of templates would select, which a gallery of actions shouldn't |
 | Accelerators | `Shortcut.Keys`/`Scope` attached properties on the command; a `Scope` naming an element is set in code, since the XAML compiler fails on an `x:Bind` to it. A menu item shows its keys as text and no accelerator tooltip (`KeyboardAcceleratorPlacementMode` Hidden), as Notepad's. Ctrl+Enter is taken in the editor's `PreviewKeyDown`, before RichEdit puts a line break in as well as the accelerator compiling | OEM keys (= - / ,) have no XAML name; property elements cost five lines each |
 | Dialogs | `ContentDialog` through `App.Show` (XamlRoot, theme, style) | Each dialog setting its own root, theme and style |
-| Subtle buttons | WinUI's own `SubtleButtonStyle`: the title bar's Settings, Home's More, the status bar (`StatusButtonStyle` is based on it) | No restyled `Button` |
+| Subtle buttons | WinUI's own `SubtleButtonStyle`: the title bar's Settings, Home's templates and More, the issues panel's close, the status bar (`StatusButtonStyle` is based on it) | No restyled `Button` |
 | Recycle Bin | `Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile`/`DeleteDirectory` with `SendToRecycleBin` (the shell's file operation) | `StorageFile`/`StorageFolder.DeleteAsync(Default)` deletes outright in an unpackaged app |
 | Source editor | `RichEditBox`; passed the M2 gate (below), so WinUIEdit is not used | Monaco needs WebView2; AvalonEdit is WPF |
 | Maths, palette | `SvgImageSource` for RaTeX's SVG (`math_svg`, `glyph_svg`), rasterised at the display's scale; the palette a grouped `GridView` in a `Flyout`, as the emoji panel | A font's glyphs miss TeX's spacing and the palette's constructions |
 | Completion | A `ListView` in a `Popup` on the flyout surface (in-app acrylic, flyout stroke, overlay corners, `ThemeShadow`), never focused | A `Flyout` takes the keyboard from the text |
-| Find | Notepad's bar over the text's top right; `RichEditTextRange.FindText`; incremental | No `TextBox` find in `RichEditBox` |
+| Find | Notepad's bar over the editor's top right, across the gutter too when narrow; `RichEditTextRange.FindText`; incremental | No `TextBox` find in `RichEditBox` |
+| Motion | `Motion.Reveal`: implicit show and hide animations (`ElementCompositionPreview`) of Translation and Opacity, 250 ms in on Fluent's decelerate curve (0,0 0,1) and 167 ms out on its accelerate curve (0.7,0 1,0.5), for the issues panel, the failed-build `InfoBar` and the find bar; `PopupThemeTransition` on the completion and maths popups; `EntranceThemeTransition` with staggering on Home's and Settings' columns; a rounded geometric clip on each layer's composition visual (`Motion.Round`), so content scrolls under the corners | Storyboards for show and hide need a state machine per element; implicit animations run on `Visibility` |
 | Issues | `ListView` opened by `ItemClick` (click or Enter); line ends: `InfoBadge` plus Caption (Visual Studio's inline diagnostics); one `InfoBar` for a failed build | A list of InfoBars is too heavy |
 | Pickers | `Microsoft.Windows.Storage.Pickers` with `AppWindow.Id` | No HWND interop |
 | Packages | `Microsoft.WindowsAppSDK.WinUI` 2.3.9, `.Foundation` 2.3.12, `.InteractiveExperiences` 2.1.9 (= 2.5.1 Stable) | The metapackage adds ~60 MB of AI/ML/Widgets |
@@ -144,44 +153,49 @@ high-contrast theme.
 
 **Materials and layers.** Mica (Base) on the window, applied once; every element between it and
 the window is `Transparent`.
-- Home and Settings have no content layer: their cards sit on Mica (Windows Settings).
-- The workspace's base (title bar, menu row, sidebar, status bar) is Mica, and its content (editor,
-  PDF, issues) is one card, `LayerFillColorDefaultBrush` with a 1px `CardStrokeColorDefaultBrush`:
-  `BorderThickness` 1,1,0,0 and `CornerRadius` 8,0,0,0 beside an open inline sidebar, and 0,1,0,0
-  with square corners while the sidebar is closed or overlaid (NavigationView's minimal mode), so a
-  rounded corner never lands on the window edge.
-- Cards (Home rows, Settings) use `CardBackgroundFillColorDefaultBrush` with a 1px
-  `CardStrokeColorDefaultBrush`, `ControlCornerRadius`, `MinHeight` 68 and padding 16, 4 apart;
-  hover and pressed are `ControlFillColorSecondaryBrush` and `ControlFillColorTertiaryBrush`.
-- The PDF column is a canvas of `SolidBackgroundFillColorSecondaryBrush` whose pages resolve Light
+- Home and Settings have no content layer: Home's rows and Settings' cards sit on Mica (Word's
+  Home, Windows Settings).
+- The workspace's base (title bar, command bar, navigation pane, status bar) is Mica. Its content
+  is three layers, as Outlook's and Teams' panes: the editor, the PDF and the issues panel each on
+  `LayerStyle` (`LayerFillColorDefaultBrush`, a 1px `CardStrokeColorDefaultBrush`,
+  `OverlayCornerRadius`), 8 apart; the gaps are the splitters. The body keeps 8 from the window's
+  edges, and 0 beside an open inline pane, whose own gap is its splitter.
+- Settings cards use `CardBackgroundFillColorDefaultBrush` with a 1px
+  `CardStrokeColorDefaultBrush`, `ControlCornerRadius`, `MinHeight` 68 and padding 16, 4 apart.
+  Home's rows are the stock `ListViewItem`'s hover and press.
+- The PDF layer is a canvas of `SolidBackgroundFillColorSecondaryBrush` whose pages resolve Light
   resources, so the paper is white in both themes (Edge's PDF viewer, Word's Print Layout).
 - Transient surfaces: menus and flyouts bring their own acrylic. The hand-made popups (completion,
   maths preview, find bar) use the flyout surface: `AcrylicInAppFillColorDefaultBrush`, a 1px
-  `SurfaceStrokeColorFlyoutBrush`, `OverlayCornerRadius` and `ThemeShadow` at Z 32. The overlay
-  sidebar fills with `AcrylicInAppFillColorDefaultBrush`.
-- Lines: `DividerStrokeColorDefaultBrush` on the two content splitters only. The status bar,
-  panels and menus group by spacing.
+  `SurfaceStrokeColorFlyoutBrush`, `OverlayCornerRadius` and `ThemeShadow` at Z 32. The overlaid
+  navigation pane fills with `AcrylicInAppFillColorDefaultBrush`.
+- Lines: `DividerStrokeColorDefaultBrush` between the status bar's groups (Notepad's) and under
+  Home's column headings; `AppBarSeparator`s in the command bar. Layers are parted by their gaps.
 
 **Type.** Segoe UI Variable through the ramp keys only: `CaptionTextBlockStyle` (status bar,
 metadata), `BodyTextBlockStyle` (rows, dialogs), `BodyStrongTextBlockStyle` (section headers),
-`SubtitleTextBlockStyle` (empty-state headline), `TitleTextBlockStyle` (page titles "Projects",
+`SubtitleTextBlockStyle` (empty-state headline), `TitleTextBlockStyle` (page titles "Home",
 "Settings"). Sentence case everywhere; Semibold, never bold or italic; no text under 12. Trim with
 `CharacterEllipsis` and put the full text in a ToolTip. Code: Cascadia Mono 14, Consolas fallback.
 
 **Geometry.** Every size and margin is a multiple of 4: 8 between buttons, 12 between areas, 16
-from a surface edge to its text. Pages: padding `36,0,36,0`, title margin `36,24,36,0`,
-`MaxWidth` 1064, section headers `BodyStrong` at margin `1,30,0,6`, cards 4 apart. The page title
-stays fixed above the scroller (Windows Settings). Home names the column's numbers as resources:
-`PageMaxWidth` 1064 and `PageColumnWidth` 992 (1064 − 2 × 36). Corners come from
-`ControlCornerRadius` (4) and `OverlayCornerRadius` (8); never override them.
+from a surface edge to its text. Pages: padding `36,0,36,0`, `MaxWidth` 1064 in a `Grid` inside
+the `ScrollViewer` (a column narrower than its maximum, straight in a scroller, is placed by its
+desired width and drifts right). Settings: title margin `36,24,36,0`, fixed above the scroller
+(Windows Settings), section headers `BodyStrong` at margin `1,30,0,6`, cards 4 apart. Home: the
+title scrolls with the page (Word's Home), groups headed `BodyStrong` at margin `0,24,0,8`. Corners
+come from `ControlCornerRadius` (4) and `OverlayCornerRadius` (8); never override them.
 
 **Icons.** Segoe Fluent Icons through `SymbolThemeFontFamily` on `FontIcon`, written `&#xE768;` in
-XAML or `"\uE768"` in C#, never raw. Sizes 16 (title bar, menus, tree, find bar, panels), 12
-(inside the 32 status bar), 20 (card icons), 32 (Home's rows), 48 (empty states). Menu-bar menus
+XAML or `"\uE768"` in C#, never raw. Sizes 16 (title bar, command bar, menus, tree, find bar,
+panels), 12 (inside the 32 status bar), 20 (card icons), 24 (Home's rows, in
+`AccentTextFillColorPrimaryBrush` as File Explorer's folders), 48 (empty states). Menu-bar menus
 carry no icons except Bold, Italic and Underline (E8DD, E8DB, E8DC), as WordPad and Word; context
-menus carry File Explorer's. Compile E768, Stop E71A, Save E74E, Folder E8B7, Document E8A5,
-Settings E713, Search E721, ZoomIn E8A3, ZoomOut E71F, Error E783, Warning E7BA, Info E946, Add
-E710, More E712, Colour E790, TeX location E838, Font E8D2, Font size E8E9, Theme E771, Code E943,
+menus carry File Explorer's. Equation and Symbol are \u03C0 and \u03A9 in Cambria Math 18, as Word's. Compile
+E768, Stop E71A, Save E74E, Open E8E5, Folder E8B7, Document E8A5, Navigation pane E700, Settings
+E713, Search E721, ZoomIn E8A3 (menus) and E710 (status bar), ZoomOut E71F (menus) and E738 (status
+bar), Error E783 (counts) and EB90 (issue rows), Warning E7BA, Info E946, Add E710, More E712, Close
+E711, Copy E8C8, Colour E790, TeX location E838, Font E8D2, Font size E8E9, Theme E771, Code E943,
 List E8FD, PDF EA90, Main file E735.
 
 **Colour.** `{ThemeResource}` only; no hex in XAML or C#. Text: `TextFillColorPrimaryBrush`,
@@ -194,57 +208,70 @@ draws every kind in the window text colour. HighContrast otherwise maps to
 `GrayTextColor` (disabled only). No `Foreground` in
 list item templates. Theme follows the system unless Settings says otherwise.
 
-**Accent.** One `AccentButtonStyle` per surface: New project on Home, Compile in a project, the
-`DefaultButton` of a dialog. Never accent as a panel, header or status-bar ground.
+**Accent.** At most one `AccentButtonStyle` per surface: Compile in a project, the
+`DefaultButton` of a dialog; Home has none, as Word's. Checked toggles in the command bar sit on a
+subtle fill, not the accent. Never accent as a panel, header or status-bar ground.
 
 **Focus and keys.** System focus visuals stay. Accelerators sit on the command through
 `Shortcut.Keys` (a scoped one adds `Shortcut.Scope`), so menus and tooltips show them. Every
 icon-only button has `AutomationProperties.Name` and a ToolTip that shows its key. Ctrl+B/I/U are
-formatting only. `AccessKey` on menus, unique within each. F6 / Shift+F6 cycle sidebar, editor,
-PDF, issues list or build log. A menu command, or a flyout or dialog opened from one, gives focus
+formatting only. `AccessKey` on menus, unique within each. F6 / Shift+F6 cycle the navigation
+pane, editor, PDF, issues list or build log. A menu command, or a flyout or dialog opened from one, gives focus
 back to where it was, so typing goes on in the editor.
 
-**Motion.** Built-in only: `DrillInNavigationTransitionInfo` Home → project,
-`SlideNavigationTransitionInfo` (from right) to Settings, theme transitions, `SplitView`'s own
-pane motion. `ProgressRing`/`ProgressBar`, never a custom spinner. Custom motion (the SyncTeX
-flash) checks `UISettings.AnimationsEnabled`.
+**Motion.** Fluent's: `DrillInNavigationTransitionInfo` Home → project,
+`SlideNavigationTransitionInfo` (from right) to Settings, theme transitions (staggered entrance on
+Home and Settings, `PopupThemeTransition` on the hand-made popups), `SplitView`'s own pane motion,
+and `Motion.Reveal` for what appears in place (the issues panel rises 24, the failed-build bar and
+the find bar drop 12, both fading): 250 ms in on the decelerate curve, 167 ms out on the
+accelerate curve, Fluent's "fast" and "faster" durations. The sizer's grip fades in 83 ms.
+`ProgressRing`/`ProgressBar`, never a custom spinner. Custom motion (`Motion`, the SyncTeX flash,
+the bracket partner) checks `UISettings.AnimationsEnabled` and is skipped without it.
 
-**Stability.** Fixed `Width` 112 for the Compile button (Compile ↔ Stop keeps its size), fixed
-`MinWidth` and `Typography.NumeralAlignment="Tabular"` for each status segment; the compile
-`ProgressBar` overlaid at the PDF's top edge and collapsed when idle; the failed-build `InfoBar`
-overlaid at the top of the PDF column; the Not saved slot 96 wide; the find count 88 wide. Window
+**Stability.** Fixed `Width` 112 for the Compile button (Compile ↔ Stop keeps its size) and 168
+for the style box; fixed `MinWidth` and `Typography.NumeralAlignment="Tabular"` for each status
+segment at the right, while the build state takes what's left and trims (its ToolTip has it
+whole); the compile `ProgressBar` overlaid at the PDF's top edge and collapsed when idle; the
+failed-build `InfoBar` overlaid at the top of the PDF layer; the Not saved slot 96 wide; the find
+count 88 wide. Below 1008 the zoom slider goes, leaving its buttons and percentage. Window
 minimum 800 × 500 (`OverlappedPresenter.PreferredMinimum*`, in the pixels of the window's display
-again when its scale changes); default 1280 × 800.
+again when its scale changes), where everything still shows; default 1280 × 800.
 
 **Empty states.** One pattern: a centred `StackPanel` with Spacing 12, holding a 48 glyph in
 `TextFillColorTertiaryBrush`, a Subtitle headline, one Body line in secondary text, and optionally
-a button. Home: E8B7, "No projects yet", "Create a project, or open a folder or a .zip.", New
-project. Editor: E8A5, "No file open", "Choose a file in the sidebar." PDF: EA90, "No PDF yet",
-"Compile to see the PDF here." Inside the narrow sidebar and the issues panel, a Body note in
-secondary text at margin 16,12 is enough.
+a button. Editor: E8A5, "No file open", "Choose a file in the navigation pane." PDF: EA90, "No
+PDF yet", "Compile to see the PDF here." Under Home's Recent, inside the navigation pane and in
+the issues panel, a Body note in secondary text is enough ("No projects yet. Choose a template
+above, or open a folder or a .zip.").
 
 ### Surfaces
 
-- **Home** (Windows Settings › Apps › Installed apps, with Dev Home's action row): on Mica, no
-  content layer. "Projects" (`TitleTextBlockStyle`, heading level 1) stays fixed at the top of the
-  1064 column, with the action row 16 below, 8 apart: **New project** (accent, Ctrl+Shift+N) and
-  **Open** (`DropDownButton`: Folder… Ctrl+O, ZIP or TeX file… Ctrl+Shift+O). Under it, when they
-  apply: an `InfoBar` (Error, "Can't open the projects folder", the core's reason, Try again) and
-  one (Warning, "TeX isn't installed", "Get TeX Live"). Projects are cards in a `ListView`
-  (`ProjectItemStyle`, the 992 column): a 32 folder glyph, the name in Body, "main.tex ·
-  16/10/2026 18:44" in Caption secondary, and a subtle More button (E712). One menu from More,
-  right-click or the context key: Open, Rename (F2), Show in File Explorer, Export as ZIP…, Delete
-  (Del); F2 and Delete act on the focused row too. Rename edits the name where it is, in a
-  `RenameFlyout` at the name. Empty: the empty-state pattern with New project (the action row's
-  turns default meanwhile, so one accent shows). Settings is the title bar's gear; Home has none.
-- **Workspace** (Notepad's menu bar, Visual Studio's Start, VS Code's Command Center): the title
-  bar holds back, the pane toggle, "TeXLocal" (no subtitle) and the project's search box ("Search
-  Thesis", 440 wide) in its middle; the window caption reads "Thesis - TeXLocal". Under it the 40
-  menu row: the `MenuBar` and Compile (accent, 112 wide; Compile ↔ Stop; disabled with "TeX isn't
-  installed" while TeX is missing) at its end. Then the `SplitView` sidebar (280 by default,
-  200–480; inline from 1008 wide, overlaid on acrylic below) beside the content card: editor |
-  `Sizer` | PDF, and below them the issues panel (toggled, 200 tall, a `Sizer` above it); then the
-  32 status bar.
+- **Home** (Word's Home, File Explorer's Details view): on Mica, no content layer; the title bar
+  holds the icon and "TeXLocal". In the 1064 column: "Home" (`TitleTextBlockStyle`, heading level
+  1) with **Open** at its right (`DropDownButton`, E8E5: Folder… Ctrl+O, ZIP or TeX file…
+  Ctrl+Shift+O). Under it, when they apply: an `InfoBar` (Error, "Can't open the projects folder",
+  the core's reason, Try again) and one (Warning, "TeX isn't installed", "Get TeX Live"). **New**:
+  the templates as Word's gallery, each its first page in outline on white paper (Blank, Article
+  and Report 120 × 156, Presentation 160 × 90) with its name under it; a click asks the name
+  ("New article project") and creates it from that template (`create_project`'s `template`);
+  Ctrl+Shift+N is Article. **Recent**: Name, Main file and Date modified headings over a
+  `ListView` (`ProjectItemStyle`, rows 52 tall): a 24 accent folder glyph, the name in Body, the
+  main file and "16/10/2026 18:44" in Body secondary, and a subtle More button (E712). One menu
+  from More, right-click or the context key: Open, Rename (F2), Show in File Explorer, Export as
+  ZIP…, Delete (Del); F2 and Delete act on the focused row too. Rename edits the name where it is,
+  in a `RenameFlyout` at the name. Settings is the title bar's gear.
+- **Workspace** (Paint's and Visual Studio's title bar, Notepad's and Word's command row, Outlook's
+  layers): the title bar holds back, the icon, the menus and the title, "main.tex - Thesis",
+  centred. Under it the command bar: Navigation pane (E700, a toggle), the style box ("Normal
+  text", or the caret's heading by name; the class's levels in its menu, each in its own style),
+  Bold, Italic, Underline (toggles that show the selection's), then Equation (π: Inline maths,
+  Display maths and the catalogue's maths), Symbol (Ω: the palette) and Insert (the catalogue's
+  blocks, List ▸, References and links ▸). These are enabled in a `.tex` file only, and go to the
+  bar's overflow (…) as it narrows. At its end: PDF (EA90, a toggle) and Compile (accent, 112 wide;
+  Compile ↔ Stop; disabled with "TeX isn't installed" while TeX is missing). Then the navigation
+  pane (280 by default, 200–480; inline from 1008 wide, overlaid on acrylic below) beside the
+  layers: editor | `Sizer` | PDF, and below them the issues panel (toggled, 200 tall, a `Sizer`
+  above it); then the 32 status bar.
   - File: New file, New folder; Open ▸ (Folder…, ZIP or TeX file…); Save, Close project; Settings.
   - Edit: Undo, Redo; Cut, Copy, Paste; Find…, Replace…, Find next, Find previous, Find in
     project…; Toggle comment, Move line up, Move line down; Go to line…, Go to page…, Go to PDF
@@ -253,13 +280,14 @@ secondary text at margin 16,12 is enough.
     shape and numbered, "1.1 Subsection", the caret's level checked); Bold, Italic, Underline
     (checked for the selection); Inline maths, Display maths and the catalogue's maths, Symbol…;
     the catalogue's blocks, List ▸, References and links ▸. Only in a `.tex` file.
-  - View: Sidebar, Outline, PDF, Issues; Zoom ▸ (Zoom in, Zoom out, Actual size, Fit width, Fit
-    page).
+  - View: Navigation pane, Outline, PDF, Issues; Zoom ▸ (Zoom in, Zoom out, Actual size, Fit
+    width, Fit page).
   - Build: Compile, Stop, Clean build folder; Compile automatically, Shell escape, Stop on first
     error.
-- **Sidebar** (Word's navigation pane, File Explorer's tree, VS Code's search view): on Mica, no
-  card; a `SelectorBar` (Files, Outline, Results, always shown) over three `TreeView`s sharing one
-  row template: a 16 glyph, Body text (a search match SemiBold), a trailing count, line number or
+- **Navigation pane** (Word's navigation pane, File Explorer's tree, VS Code's search view): on
+  Mica, no layer; Word's search box at its top ("Search Thesis", Ctrl+Shift+F; Enter or a pause
+  searches the project), then a `SelectorBar` (Files, Outline, Results, always shown) over three
+  `TreeView`s sharing one row template: a 16 glyph, Body text (a search match SemiBold), a trailing count, line number or
   main-file star, and the full text in a ToolTip. Where a tab has nothing to show, a Body note in
   secondary text. Files: glyphs by kind (folder E8B7, tex E8A5, bib E8F1, image E91B, pdf EA90,
   else E7C3), the main file with a trailing E735, the open file selected (also one opened from the
@@ -272,7 +300,7 @@ secondary text at margin 16,12 is enough.
   are kept with the open folders in the project's UI state. Results: one expanded row per file
   (its path and count) with its hits under it on up to two lines, the line number at the right; a
   hit opens with its match selected. Before a search the note says "Search the project with the
-  box in the title bar (Ctrl+Shift+F).", with no hits `No results for “x”.`, or the core's error.
+  box above (Ctrl+Shift+F).", with no hits `No results for “x”.`, or the core's error.
 - **Editor** (Notepad's text area, with Visual Studio's and VS Code's gutter): transparent
   `RichEditBox` chrome via lightweight keys, as Notepad's text area; the caret is its focus
   indicator. Gutter numbers in the editor's font and size on the text's baseline, in
@@ -286,8 +314,9 @@ secondary text at margin 16,12 is enough.
   and a theme change made under Settings wait until it is loaded and laid out. Plain text is the
   ink by colour index, never RichEdit's automatic colour, which follows the control's state. Keys
   go to the core first (`type`, `insert_newline`, `delete_backward`, `tab`, `move_lines`).
-- **Find** (Notepad's find bar, VS Code's find widget): at the text's top right on the flyout
-  surface, up to 480 wide: replace toggle (Ctrl+H, which puts the keys in Replace once there is
+- **Find** (Notepad's find bar, VS Code's find widget): at the editor's top right on the flyout
+  surface, up to 480 wide and 40 short of the editor's width (over the gutter in a narrow editor),
+  the box giving way down to 64: replace toggle (Ctrl+H, which puts the keys in Replace once there is
   something to find and in the find box before that), the box, the count ("1 of 5", "No results"),
   previous, next, options (match case, whole word) and close. It is incremental: typing selects the
   next hit from the selection. Enter and Shift+Enter go to the next and previous, Enter in Replace
@@ -312,22 +341,24 @@ secondary text at margin 16,12 is enough.
   the page's right-click and the status bar's zoom: Go to source position (from a page), Zoom in,
   Zoom out, Fit width, Fit page, 50% to 200%. A SyncTeX mark is an accent box at 30% that fades
   after 2 s. Empty: the empty-state pattern.
-- **Status bar** (Notepad's, with VS Code's left side): 32 tall on Mica, Caption in
-  `TextFillColorSecondaryBrush`, segments grouped by spacing, no dividers. Left: the issue counts
-  button (E783 n, E7BA m; toggles the panel), then the build state (MinWidth 240: "Compiling…",
+- **Status bar** (Word's and Notepad's): 32 tall on Mica, Caption in
+  `TextFillColorSecondaryBrush`, Notepad's divider between the right side's groups. Left: the
+  issue counts button (E783 n, E7BA m; toggles the panel), then the build state ("Compiling…",
   "Built in 0.9 s", "Build failed", "Build stopped", "… · Preview out of date", "No build yet", or
-  empty when a PDF is shown but nothing was built this session). Right: Not saved (Caution E7BA and
-  words in a 96 slot that keeps its size; a click saves), words, `Ln 12, Col 4` (Go to line),
-  `Page 3 of 10` (Go to page), and the zoom % (the PDF's zoom menu). Buttons in
-  `StatusButtonStyle`, based on `SubtleButtonStyle`.
-- **Issues panel** (VS Code's Panel and Problems view): a 48 header row (the `SelectorBar`'s
-  selection pill is cut off at 40): `SelectorBar` (Issues, Build log) and one slot at its end, the
-  Warnings `CheckBox` on Issues or Copy log on Build log. Opening the panel scrolls the caret's line
-  back into view. Issues `ListView`: 16 severity glyph (E783 Critical, E7BA Caution), Body message,
-  Caption `file.tex:42`; click or Enter goes there (`session_choose_issue`). With none, "No issues
-  in the last build." or "Compile to check for issues." Build log: read-only `TextBox`, Cascadia
-  Mono 12. A failed manual build opens the panel on its first error and shows an `InfoBar` (Error,
-  "Build failed", action Show issues) at the top of the PDF column, opened only on a settled result.
+  empty when a PDF is shown but nothing was built this session; trimmed where narrow). Right: Not
+  saved (Caution E7BA and words in a 96 slot that keeps its size; a click saves), `Ln 12, Col 4`
+  (Go to line), words, `Page 3 of 10` (Go to page), and Word's zoom: out, a slider (25–400% on a
+  log scale; from 1008 wide), in, and the percentage (the PDF's zoom menu), disabled with no PDF.
+  Buttons in `StatusButtonStyle`, based on `SubtleButtonStyle`.
+- **Issues panel** (Visual Studio's Error List, VS Code's Problems view): a layer with a 44 header
+  row: `SelectorBar` (Issues, Build log), then one slot, the Error List's warnings filter on Issues
+  (a `ToggleButton` with E7BA and "3 warnings", dim with none) or Copy log on Build log, then a
+  subtle close (E711). Opening the panel scrolls the caret's line back into view. Issues
+  `ListView`: 16 severity glyph (EB90 Critical, E7BA Caution), Body message, Caption `file.tex:42`;
+  click or Enter goes there (`session_choose_issue`). With none, "No issues in the last build." or
+  "Compile to check for issues." Build log: read-only `TextBox`, Cascadia Mono 12. A failed manual
+  build opens the panel on its first error and shows an `InfoBar` (Error, "Build failed", action
+  Show issues) at the top of the PDF layer, opened only on a settled result.
 - **Settings** (Windows Settings, Notepad's Settings page, Windows Terminal's Appearance page): on
   Mica, no content layer, "Settings" fixed above the scroller; `Card`s (20 glyph, Body header,
   Caption description, the control at the right), changes applied at once, no Save. Appearance:
@@ -358,7 +389,7 @@ secondary text at margin 16,12 is enough.
 | Save | Ctrl+S | | Next / previous issue | F8 / Shift+F8 |
 | Close project | Ctrl+W | | Go to line / page | Ctrl+G / Ctrl+Alt+G |
 | Settings | Ctrl+, (or the title bar's gear) | | Go to PDF position | Ctrl+Alt+J (back: double-click the PDF, or its menu's Go to source position) |
-| Find / in project | Ctrl+F / Ctrl+Shift+F | | Sidebar / PDF / issues | Ctrl+Shift+E / Ctrl+Alt+P / Ctrl+Shift+M |
+| Find / in project | Ctrl+F / Ctrl+Shift+F | | Navigation pane / PDF / issues | Ctrl+Shift+E / Ctrl+Alt+P / Ctrl+Shift+M |
 | Toggle replace / find next, previous | Ctrl+H / F3, Shift+F3 | | Zoom in / out / actual size (PDF) | Ctrl+= or Ctrl+Num+ / Ctrl+- or Ctrl+Num- / Ctrl+0, wherever the focus is |
 | Comment / move line | Ctrl+/ / Alt+↑↓ | | Rename / delete (files) | F2 / Del |
 | Bold / italic / underline | Ctrl+B / I / U | | Completions | Ctrl+Space |
@@ -369,17 +400,18 @@ secondary text at margin 16,12 is enough.
 
 | Mac | Windows |
 |---|---|
-| Home window, sheet for New Project | Home page in the main window; `ContentDialog` |
-| Unified toolbar, inspector | Menu row with Compile at its end; inspector's settings become Build menu items (Shell escape, Stop on first error as `ToggleMenuFlyoutItem`, Engine as `RadioMenuFlyoutItem`, Clean build folder) and Set as main file in the tree |
-| Sidebar `NSOutlineView` | `SplitView` + `TreeView` |
-| Status bar accessory | Mica status row |
+| Home window, sheet for New Project | Home page in the main window, Word's Home (templates, then Recent); `ContentDialog` for the name |
+| Unified toolbar, inspector | Menus in the title bar; a command bar under it (Aa as the style box, Math as Equation, Insert, and B I U as Word's), Compile at its end; inspector's settings become Build menu items (Shell escape, Stop on first error as `ToggleMenuFlyoutItem`, Engine as `RadioMenuFlyoutItem`, Clean build folder) and Set as main file in the tree |
+| Sidebar `NSOutlineView` | `SplitView` + `TreeView`, Word's navigation pane |
+| Liquid Glass bars and panes | Mica under everything, layers 8 apart for the editor, PDF and issues, acrylic for the overlaid pane and the hand-made popups |
+| Status bar accessory | Mica status row with Word's zoom |
 | Build panel pop-up | `SelectorBar` tabs |
 | `NSAlert` / SwiftUI alert | `ContentDialog` |
 | Settings window, five panes | Settings page from the title bar's gear (Notepad), grouped cards |
 | PDFKit | `Windows.Data.Pdf` in a zooming `ScrollViewer` → PDFium in the core |
 | NSTextFinder | Find bar over the editor (Notepad), `RichEditTextRange.FindText` |
 | Outline docked under the files | Outline as a tab of the navigation pane (Word) |
-| Search field in the toolbar | Search box in the title bar's middle, naming the project (VS Code's Command Center); hits in a Results tab |
+| Search field in the toolbar | Search box at the top of the navigation pane, naming the project (Word's "Search document"); hits in a Results tab |
 | KaTeX in WebKit | RaTeX SVG from the core in `SvgImageSource` |
 | Move to Trash | Recycle Bin: `FileSystem.DeleteDirectory(…, RecycleOption.SendToRecycleBin)` |
 | Show in Finder | `explorer.exe /select,"path"` |
@@ -398,8 +430,9 @@ file, each with its column and length in UTF-16 units.
 
 1. (Landed: typing transforms.)
 2. **Catalogue command**: the project templates (Blank, Article, Report, Presentation) and the
-   engines, with their labels, for New project and the Build menu; `create_project` takes a
-   `template` id but nothing lists them. Until then New project uses the core's default.
+   engines, with their labels, for Home's gallery and the Build menu; `create_project` takes a
+   `template` id but nothing lists them. Until then Home names the four ids the core makes (blank,
+   article, report, beamer) and draws their pages itself.
 3. (Landed: themes; the editor colours from `theme_colors` through `tl_syntax_call`. The host maps
    only a high-contrast theme to the window text colour. Settings › Editor picks the theme.)
 4. (Landed: document class and heading styles.)
@@ -500,8 +533,9 @@ dotnet test TeXLocal.Tests -c Debug
 `install.ps1` publishes a self-contained Release build to `%LOCALAPPDATA%\Programs\TeXLocal` and
 adds it to the Start menu, until the zip and winget release replace it.
 
-Run dev builds with a scratch `TEXLOCAL_DATA`, never next to an installed copy; drive them with UI
-Automation, not clicks. `TeXLocal.exe --smoke` opens Home, lists projects and exits 0 (CI); a
+Run dev builds with a scratch `TEXLOCAL_DATA`, never next to an installed copy (with it set, their
+preferences are "TeXLocal Dev", apart from the installed app's); drive them with UI Automation,
+not clicks. `TeXLocal.exe --smoke` opens Home, lists projects and exits 0 (CI); a
 failure exits 1 and writes the reason to stderr. With the display asleep, a newly opened WinUI
 window never presents and captures come out black: wake it (`SetThreadExecutionState` with
 `ES_DISPLAY_REQUIRED`) before taking screenshots. Flyouts and dialogs are separate windows, which

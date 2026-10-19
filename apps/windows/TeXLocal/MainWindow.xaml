@@ -8,45 +8,64 @@
 
     <Grid x:Name="Root" Background="Transparent">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="48" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TitleBar
-            x:Name="Bar"
-            Height="48"
-            Title="TeXLocal"
-            BackRequested="OnBackRequested"
-            PaneToggleRequested="OnPaneToggleRequested">
-            <TitleBar.IconSource>
-                <ImageIconSource ImageSource="ms-appx:///Assets/TeXLocal.png" />
-            </TitleBar.IconSource>
-            <!-- The project's search, as VS Code's Command Center. A fixed width rather than Stretch: the bar lets clicks
-                 through its whole content presenter, and it drops the title (compact) when the box doesn't fit. -->
-            <TitleBar.Content>
-                <AutoSuggestBox
-                    x:Name="Search"
-                    Width="440"
-                    x:FieldModifier="public"
-                    AutomationProperties.Name="Search in project">
-                    <AutoSuggestBox.QueryIcon>
-                        <FontIcon Glyph="&#xE721;" />
-                    </AutoSuggestBox.QueryIcon>
-                </AutoSuggestBox>
-            </TitleBar.Content>
-            <TitleBar.RightHeader>
-                <Button
-                    x:Name="SettingsButton"
-                    Width="40"
-                    Height="32"
-                    AutomationProperties.Name="Settings"
-                    Click="{x:Bind OpenSettings}"
-                    Style="{StaticResource SubtleButtonStyle}"
-                    ToolTipService.ToolTip="Settings (Ctrl+,)">
-                    <FontIcon FontSize="16" Glyph="&#xE713;" />
-                </Button>
-            </TitleBar.RightHeader>
-        </TitleBar>
+        <!-- Paint's and Visual Studio's title bar: back, the icon and a project's menus at its left, the title in its
+             middle, Settings by the caption buttons. The row drags the window except over its controls. -->
+        <Grid x:Name="Bar">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition x:Name="CaptionColumn" Width="138" />
+            </Grid.ColumnDefinitions>
+            <Button
+                x:Name="BackButton"
+                Margin="4,0,0,0"
+                VerticalAlignment="Center"
+                AutomationProperties.Name="Back"
+                Click="OnBack"
+                Style="{StaticResource NavigationBackButtonSmallStyle}"
+                ToolTipService.ToolTip="Back (Alt+Left)"
+                Visibility="Collapsed">
+                <Button.KeyboardAccelerators>
+                    <KeyboardAccelerator Key="Left" Modifiers="Menu" />
+                </Button.KeyboardAccelerators>
+            </Button>
+            <Image
+                Grid.Column="1"
+                Width="16"
+                Height="16"
+                Margin="16,0,12,0"
+                AutomationProperties.AccessibilityView="Raw"
+                Source="ms-appx:///Assets/TeXLocal.png" />
+            <Border x:Name="MenuHost" Grid.Column="2" VerticalAlignment="Center" />
+            <TextBlock
+                x:Name="TitleText"
+                Grid.Column="3"
+                Margin="4,0,16,0"
+                VerticalAlignment="Center"
+                Style="{StaticResource CaptionTextBlockStyle}"
+                Text="TeXLocal"
+                TextTrimming="CharacterEllipsis"
+                TextWrapping="NoWrap" />
+            <Button
+                x:Name="SettingsButton"
+                Grid.Column="4"
+                Width="40"
+                Height="32"
+                Padding="0"
+                AutomationProperties.Name="Settings"
+                Click="{x:Bind OpenSettings}"
+                Style="{StaticResource SubtleButtonStyle}"
+                ToolTipService.ToolTip="Settings (Ctrl+,)">
+                <FontIcon FontSize="16" Glyph="&#xE713;" />
+            </Button>
+        </Grid>
 
         <Frame x:Name="Pages" Grid.Row="1" Background="Transparent" Navigated="OnNavigated" />
     </Grid>

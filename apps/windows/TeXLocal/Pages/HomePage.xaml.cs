@@ -9,17 +9,35 @@ using Windows.System;
 
 namespace TeXLocal.Pages;
 
+/// A template the core makes projects from (create_project's `template`), as the gallery shows it.
+public sealed record ProjectTemplate(string Id, string Title, double Width = 120, double Height = 156)
+{
+    public string Spoken => $"New {Title.ToLowerInvariant()} project";
+    public string Tip => Id == "article" ? $"{Spoken} (Ctrl+Shift+N)" : Spoken;
+}
+
 public sealed partial class HomePage : Page
 {
+    static readonly ProjectTemplate[] templates = [new("blank", "Blank"), new("article", "Article"), new("report", "Report"), new("beamer", "Presentation", 160, 90)];
     readonly RenameFlyout rename = new();
     ProjectInfo? target;
     string? focus;
     bool loading, again;
 
-    public HomePage() => InitializeComponent();
+    public HomePage()
+    {
+        InitializeComponent();
+        Templates.ItemsSource = templates;
+        var shortcut = new KeyboardAccelerator { Key = VirtualKey.N, Modifiers = VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift };
+        shortcut.Invoked += (_, e) =>
+        {
+            e.Handled = true;
+            New(templates[1]);
+        };
+        KeyboardAccelerators.Add(shortcut);
+    }
 
-    public static string Caption(string mainFile, long mtime) =>
-        $"{mainFile} · {DateTimeOffset.FromUnixTimeMilliseconds(mtime).LocalDateTime:g}";
+    public static string Modified(long mtime) => $"{DateTimeOffset.FromUnixTimeMilliseconds(mtime).LocalDateTime:g}";
 
     public static string MoreName(string name) => $"More options for {name}";
 
@@ -83,9 +101,7 @@ public sealed partial class HomePage : Page
         }
         var empty = projects.Length == 0;
         Empty.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
-        List.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
-        // One accent on the page: the empty state's New project while it shows.
-        NewButton.Style = (Style)Application.Current.Resources[empty ? "DefaultButtonStyle" : "AccentButtonStyle"];
+        List.Visibility = Columns.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
     }
 
     async Task CheckTex()
@@ -97,8 +113,10 @@ public sealed partial class HomePage : Page
 
     void OnItemClick(object sender, ItemClickEventArgs e) => Window.OpenProject(((ProjectInfo)e.ClickedItem).Id);
 
+    void OnTemplate(object sender, RoutedEventArgs e) => New((ProjectTemplate)((FrameworkElement)sender).DataContext);
+
     /// New project, as File Explorer's New folder: a free name, selected for typing over; a refusal under the box.
-    async void OnNew(object sender, RoutedEventArgs e)
+    async void New(ProjectTemplate template)
     {
         if (App.Core is null) return;
         var box = new TextBox { Header = "Name", Width = 360 };
@@ -106,7 +124,7 @@ public sealed partial class HomePage : Page
         catch (CoreException) { }
         var dialog = new ContentDialog
         {
-            Title = "New project",
+            Title = $"New {template.Title.ToLowerInvariant()} project",
             Content = box,
             PrimaryButtonText = "Create",
             CloseButtonText = "Cancel",
@@ -118,7 +136,7 @@ public sealed partial class HomePage : Page
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             var deferral = args.GetDeferral();
-            try { id = (await Core.CallAsync<ProjectInfo>("create_project", new { name = box.Text.Trim() })).Id; }
+            try { id = (await Core.CallAsync<ProjectInfo>("create_project", new { name = box.Text.Trim(), template = template.Id })).Id; }
             catch (CoreException ex)
             {
                 args.Cancel = true;

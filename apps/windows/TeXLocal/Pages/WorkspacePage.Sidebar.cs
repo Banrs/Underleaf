@@ -117,7 +117,7 @@ public sealed partial class WorkspacePage
         SelectCaretHeading();
         SideNote.Text = tab == OutlineTab && !outlined ? Editor.Path is null ? "Open a file to see its outline." : "No sections in this document."
             : tab != ResultsTab || hits ? ""
-            : searchError ?? (searched.Length == 0 ? "Search the project with the box in the title bar (Ctrl+Shift+F)." : $"No results for “{searched}”.");
+            : searchError ?? (searched.Length == 0 ? "Search the project with the box above (Ctrl+Shift+F)." : $"No results for “{searched}”.");
         SideNote.Visibility = Vis(SideNote.Text.Length > 0);
     }
 
@@ -221,24 +221,28 @@ public sealed partial class WorkspacePage
     async void OnSearchSubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs e)
     {
         searchTimer.Stop();
-        await Search();
+        await RunSearch();
         if (ResultsTree.Visibility == Visibility.Visible) ResultsTree.Focus(FocusState.Keyboard);
     }
 
     void OnSearchKey(object sender, KeyRoutedEventArgs e)
     {
-        if (e.Key != Windows.System.VirtualKey.Escape || App.Window.Search.Text.Length == 0) return;
-        App.Window.Search.Text = "";
-        _ = Search();
+        if (e.Key != Windows.System.VirtualKey.Escape || Search.Text.Length == 0) return;
+        Search.Text = "";
+        _ = RunSearch();
         e.Handled = true;
     }
 
-    void OnFindInProject(object sender, RoutedEventArgs e) => App.Window.Search.Focus(FocusState.Keyboard);
+    void OnFindInProject(object sender, RoutedEventArgs e)
+    {
+        Split.IsPaneOpen = true;
+        Search.Focus(FocusState.Keyboard);
+    }
 
     /// The hits by file; a later search's answer wins over an earlier one's.
-    async Task Search()
+    async Task RunSearch()
     {
-        var query = App.Window.Search.Text.Trim();
+        var query = Search.Text.Trim();
         var generation = ++searches;
         SearchFile[] files = [];
         string? error = null;
@@ -252,7 +256,7 @@ public sealed partial class WorkspacePage
         {
             Split.IsPaneOpen = true;
             SideTabs.SelectedItem = ResultsTab;
-            Announce(App.Window.Search, files.Sum(f => f.Hits.Length) switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" }, "search");
+            Announce(Search, files.Sum(f => f.Hits.Length) switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" }, "search");
         }
         ShowSide();
     }

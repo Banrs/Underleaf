@@ -40,7 +40,7 @@ public sealed partial class WorkspacePage : Page
     readonly Dictionary<string, IssueLine[]> issueLines = [];
     string id = "", root = "", mainFile = "";
     ulong session;
-    bool texAvailable, compiling, outdated, sidebarWanted = true;
+    bool texAvailable, compiling, outdated, zooming, sidebarWanted = true;
     double ratio = Prefs.SplitRatio;
     CompileResult? result;
     UIElement? beforeMenu;
@@ -53,11 +53,16 @@ public sealed partial class WorkspacePage : Page
     {
         InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Required;
-        searchTimer = Timer(250, () => _ = Search());
+        searchTimer = Timer(250, () => _ = RunSearch());
         caretTimer = Timer(150, CaretSettled);
         SetSplit(ratio);
         ShowEdge();
+        ShowPage();
+        foreach (var layer in (FrameworkElement[])[EditorClip, PdfClip, IssuesClip]) Motion.Round(layer, 7);
+        Motion.Reveal(IssuesPanel, y: 24);
+        Motion.Reveal(BuildFailed, y: -12);
         // Wide, the pane is as the reader last left it there; narrow, it opens over the content only when asked.
+        SizeChanged += (_, e) => WideTrigger.IsActive = e.NewSize.Width >= 1008;
         Split.RegisterPropertyChangedCallback(SplitView.DisplayModeProperty, (_, _) =>
         {
             Split.IsPaneOpen = Inline && sidebarWanted;
@@ -68,6 +73,7 @@ public sealed partial class WorkspacePage : Page
             if (Inline || Split.IsPaneOpen) sidebarWanted = Split.IsPaneOpen;
             ShowEdge();
         });
+        Split.PaneOpened += (_, _) => Remeasure(SideTabs);
         PaneSizer.Delta += d => Split.OpenPaneLength = Math.Clamp(Split.OpenPaneLength + d, 200, 480);
         PaneSizer.Released += () => Prefs.SidebarWidth = Split.OpenPaneLength;
         SplitSizer.Delta += d =>
@@ -127,11 +133,10 @@ public sealed partial class WorkspacePage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         id = (string)e.Parameter;
-        App.Window.SetProject(id);
-        var search = App.Window.Search;
-        search.TextChanged += OnSearchChanged;
-        search.QuerySubmitted += OnSearchSubmitted;
-        search.KeyDown += OnSearchKey;
+        MenuSlot.Child = null;
+        App.Window.SetMenu(MainMenu);
+        App.Window.SetTitle(id, Editor.Path);
+        Search.PlaceholderText = $"Search {id}";
         if (session != 0) return;
         Core.Event += OnEvent;
         try { await OpenSession(); }
@@ -151,18 +156,12 @@ public sealed partial class WorkspacePage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
-        var search = App.Window.Search;
-        search.TextChanged -= OnSearchChanged;
-        search.QuerySubmitted -= OnSearchSubmitted;
-        search.KeyDown -= OnSearchKey;
+        App.Window.SetMenu(null);
         if (e.SourcePageType == typeof(SettingsPage)) return;
-        search.Text = "";
         Prefs.EditorChanged -= ShowLook;
         Core.Event -= OnEvent;
         if (session != 0) _ = Core.CallAsync("session_close", new { session });
     }
-
-    public void TogglePane() => Split.IsPaneOpen = !Split.IsPaneOpen;
 
     /// The session is numbered before it opens, so the events that come before its answer are this page's too; a tree
     /// or a build among them is newer than the answer's.
@@ -194,7 +193,10 @@ public sealed partial class WorkspacePage : Page
             case "saved": _ = Analyze(); break;
             case "document_reload" when ev.Path == Editor.Path: Editor.Reload(ev.Text ?? ""); break;
             case "document_closed" when ev.Path == Editor.Path: CloseEditor(); break;
-            case "document_renamed" when ev.From == Editor.Path: Editor.Rename(ev.To!); break;
+            case "document_renamed" when ev.From == Editor.Path:
+                Editor.Rename(ev.To!);
+                App.Window.SetTitle(id, ev.To);
+                break;
             case "conflict": Conflict(ev.Path!, ev.Kind!); break;
             case "build_cleaned": Pdf.Clear(); break;
             case "document":
@@ -241,6 +243,7 @@ public sealed partial class WorkspacePage : Page
             if (Core.SessionSource(session, path) is not { } source) return false;
             (Editor.Visibility, NoFile.Visibility) = (Visibility.Visible, Visibility.Collapsed);
             await Editor.Show(path, source);
+            App.Window.SetTitle(id, path);
             Editor.SetIssues(issueLines.GetValueOrDefault(path, []));
             ShowSaved();
             ShowCaret();
@@ -267,6 +270,7 @@ public sealed partial class WorkspacePage : Page
         OutlineTree.ItemsSource = null;
         Words.Text = "";
         Editor.Clear();
+        App.Window.SetTitle(id);
         (Editor.Visibility, NoFile.Visibility) = (Visibility.Collapsed, Visibility.Visible);
         ShowSide();
         ShowSaved();
@@ -309,6 +313,7 @@ public sealed partial class WorkspacePage : Page
         var done = result = ev.Result!;
         (ErrorCount.Text, WarningCount.Text) = ($"{done.Errors.Length}", $"{done.Warnings.Length}");
         WarningsToggle.IsEnabled = done.Warnings.Length > 0;
+        WarningsLabel.Text = done.Warnings.Length == 1 ? "1 warning" : $"{done.Warnings.Length} warnings";
         Log.Text = done.Log.ReplaceLineEndings("\r");
         ShowIssues();
         var failed = !done.Ok && !done.Stopped;
@@ -385,6 +390,7 @@ public sealed partial class WorkspacePage : Page
     void OnIssueTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowIssueTab();
     void OnIssuesPane(object sender, RoutedEventArgs e) => ShowPanel(IssuesItem.IsChecked);
     void OnIssueCounts(object sender, RoutedEventArgs e) => ShowPanel(!IssuesItem.IsChecked);
+    void OnCloseIssues(object sender, RoutedEventArgs e) => ShowPanel(false);
 
     /// Checked and Unchecked rather than Click, which a toggle through UI Automation doesn't raise; the first comes during
     /// InitializeComponent.
@@ -432,18 +438,31 @@ public sealed partial class WorkspacePage : Page
 
     void ShowPage()
     {
-        PageText.Text = Pdf.PageCount == 0 ? "No PDF" : $"Page {Pdf.CurrentPage} of {Pdf.PageCount}";
+        var shown = Pdf.PageCount > 0;
+        PageText.Text = shown ? $"Page {Pdf.CurrentPage} of {Pdf.PageCount}" : "No PDF";
         ZoomText.Text = $"{Pdf.Zoom * 100:0}%";
+        foreach (var control in ZoomBar.Children.OfType<Control>()) control.IsEnabled = shown;
+        zooming = true;
+        ZoomSlider.Value = Math.Log2(Pdf.Zoom);
+        zooming = false;
     }
 
-    /// NavigationView's content layer: its rounded corner sits by an open inline pane, else it meets the window square.
-    void ShowEdge()
+    /// Word's slider: 100% at its middle, each step either side doubling or halving.
+    void OnZoomSlider(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        var beside = Inline && Split.IsPaneOpen;
-        ContentCard.BorderThickness = new(beside ? 1 : 0, 1, 0, 0);
-        ContentCard.CornerRadius = new(beside ? 8 : 0, 0, 0, 0);
+        if (!zooming && Pdf.PageCount > 0) Pdf.ZoomTo(Math.Pow(2, e.NewValue));
     }
 
+    /// The layers keep 8 from the window's edge; beside an open inline pane, its splitter is that gap.
+    void ShowEdge() => Body.Margin = new(Inline && Split.IsPaneOpen ? 0 : 8, 0, 8, 0);
+
+    /// The pane is first laid out still off-screen, where it slides in from, so the tabs' repeater has realized only
+    /// the first; measured again once the pane is in place, it realizes the rest.
+    static void Remeasure(DependencyObject element)
+    {
+        if (element is ItemsRepeater repeater) repeater.InvalidateMeasure();
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(element); i++) Remeasure(VisualTreeHelper.GetChild(element, i));
+    }
     void SetSplit(double to)
     {
         ratio = Math.Clamp(to, 0.1, 0.9);
@@ -459,13 +478,14 @@ public sealed partial class WorkspacePage : Page
 
     void ShowPdf(bool show)
     {
-        PdfItem.IsChecked = show;
-        Pdf.Visibility = SplitSizer.Visibility = Vis(show);
+        (PdfItem.IsChecked, PdfButton.IsChecked) = (show, show);
+        PdfLayer.Visibility = SplitSizer.Visibility = Vis(show);
         PdfColumn.MinWidth = show ? 240 : 0;
         PdfColumn.Width = new(show ? 1 - ratio : 0, GridUnitType.Star);
     }
 
     void OnPdfPane(object sender, RoutedEventArgs e) => ShowPdf(PdfItem.IsChecked);
+    void OnPdfButton(object sender, RoutedEventArgs e) => ShowPdf(PdfButton.IsChecked == true);
 
     /// F6 and Shift+F6: the sidebar, the editor, the PDF and the issues panel in turn, each that is shown.
     void OnNextRegion(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
