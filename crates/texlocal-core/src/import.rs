@@ -670,6 +670,17 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore = "leaves a file in the user's Trash"]
+    fn a_replaced_file_goes_to_the_trash_without_asking_finder() {
+        let (_dir, service) = with_project();
+        let rel = "replaced by import.txt";
+        let file = service.project_root("P").unwrap().join(rel);
+        fs::write(&file, "old").unwrap();
+        put(&service, rel, b"new", true).unwrap();
+        assert_eq!(fs::read(&file).unwrap(), b"new");
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_link_to_a_folder_in_the_project_is_a_folder_a_file_goes_into() {

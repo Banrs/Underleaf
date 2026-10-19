@@ -424,8 +424,20 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 /// failure is reported and the original is left in place; it must never become
 /// an implicit permanent-delete request.
 pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
-    trash::delete(path)
-        .map_err(|err| CoreError::internal(format!("Could not move the item to Trash: {err}")))
+    // On macOS the crate asks Finder over Apple Events by default, which needs
+    // the Automation permission; the system's file manager moves it instead, as
+    // the Mac app's own Move to Trash does (`FileManager.trashItem`), though
+    // Finder then offers no Put Back for it.
+    #[cfg(target_os = "macos")]
+    let trashed = {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        let mut context = trash::TrashContext::default();
+        context.set_delete_method(DeleteMethod::NsFileManager);
+        context.delete(path)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let trashed = trash::delete(path);
+    trashed.map_err(|err| CoreError::internal(format!("Could not move the item to Trash: {err}")))
 }
 
 // ---------- files ----------
