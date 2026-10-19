@@ -60,12 +60,59 @@ fn spaces_end(src: &[u16], from: usize) -> usize {
 
 /// Whether the line feed at `at` ends a paragraph: the line after it is
 /// blank, and ends in a line feed too.
-pub(crate) fn paragraph_end(src: &[u16], at: usize) -> bool {
+fn paragraph_end(src: &[u16], at: usize) -> bool {
     src.get(spaces_end(src, at + 1)) == Some(&NEWLINE)
 }
 
 fn find(src: &[u16], from: usize, needle: &[u16]) -> Option<usize> {
     (from..=src.len().checked_sub(needle.len())?).find(|&i| src[i..].starts_with(needle))
+}
+
+/// A command's arguments as TeX reads them from where its name ends: past
+/// spaces, line breaks and comments, a star, options in brackets and one
+/// braced argument, none of it past a blank line. Each argument's text
+/// between its comments goes to `piece`, with whether it's the braced
+/// argument's; the answer is where the reading stopped, and whether it
+/// stopped past the braced argument's close.
+pub(crate) fn arguments(
+    src: &[u16],
+    mut i: usize,
+    mut piece: impl FnMut(Range<usize>, bool),
+) -> (usize, bool) {
+    let at = |i: usize| char::from_u32(src[i] as u32).unwrap_or_default();
+    let (mut close, mut from, mut depth) = (None, i, 0);
+    while i < src.len() && !(at(i) == '\n' && paragraph_end(src, i)) {
+        match (at(i), close) {
+            ('%', _) => {
+                if let Some(c) = close {
+                    piece(from..i, c == '}');
+                }
+                i = find(src, i, &[NEWLINE]).unwrap_or(src.len());
+                from = i;
+                continue;
+            }
+            // An escape, but not of a line feed: that may end the paragraph.
+            ('\\', Some(_)) if i + 1 < src.len() && at(i + 1) != '\n' => i += 1,
+            ('{', Some(_)) => depth += 1,
+            ('}', Some(_)) if depth > 0 => depth -= 1,
+            (c, Some(delimiter)) if c == delimiter && depth == 0 => {
+                piece(from..i, c == '}');
+                if c == '}' {
+                    return (i + 1, true);
+                }
+                close = None;
+            }
+            (_, Some(_)) | ('*' | ' ' | '\t' | '\r' | '\n', None) => {}
+            ('[', None) => (close, from) = (Some(']'), i + 1),
+            ('{', None) => (close, from) = (Some('}'), i + 1),
+            _ => break,
+        }
+        i += 1;
+    }
+    if let Some(c) = close {
+        piece(from..i, c == '}');
+    }
+    (i, false)
 }
 
 /// How far after \begin or \end its environment's name is looked for.

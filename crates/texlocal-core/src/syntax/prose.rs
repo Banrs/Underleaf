@@ -3,7 +3,7 @@
 //! before them, as in `\usepackage[utf8]{inputenc}`; for Writing Tools
 //! comments too. What's left is the text's words, which the status bar counts.
 
-use super::scan::{Scanner, Visit, paragraph_end};
+use super::scan::{Scanner, Visit, arguments};
 use super::{Checker, SourceDocument, Text, TextRange, catalog::CATALOG, clamp, span};
 
 impl SourceDocument {
@@ -85,13 +85,16 @@ impl Names {
         ];
         if command_start >= self.parsed_until && lists.iter().any(|l| l.contains(name)) {
             self.from = Some(name_end);
-            self.parsed_until = argument_ranges(text, name_end, end, ranges);
+            self.resume(text, end, ranges);
         }
     }
 
     pub fn resume(&mut self, text: &Text, end: usize, ranges: &mut Vec<TextRange>) {
         if let Some(from) = self.from {
-            self.parsed_until = argument_ranges(text, from, end, ranges);
+            self.parsed_until = arguments(&text.units[..end], from, |r, _| {
+                ranges.push(span(r.start, r.len()));
+            })
+            .0;
         }
     }
 }
@@ -183,66 +186,6 @@ fn count(prose: &[u16]) -> usize {
     words + lettered as usize
 }
 
-/// Options and the first braced argument, stopping at a blank line or EOF.
-fn argument_ranges(text: &Text, mut i: usize, end: usize, ranges: &mut Vec<TextRange>) -> usize {
-    let units = &text.units[..end];
-    let at = |i| char::from_u32(units[i] as u32).unwrap_or_default();
-    let mut push = |from: usize, to: usize| ranges.push(span(from, to - from));
-    let mut close = None;
-    let (mut from, mut depth) = (0, 0);
-    i += (i < end && at(i) == '*') as usize;
-    while i < end && !(at(i) == '\n' && paragraph_end(units, i)) {
-        let c = at(i);
-        if c == '%' {
-            if close.is_some() {
-                push(from, i);
-            }
-            while i < end && at(i) != '\n' {
-                i += 1;
-            }
-            from = i;
-            continue;
-        }
-        if let Some(delimiter) = close {
-            match c {
-                // An escape, but not of a line feed: that may end the paragraph.
-                '\\' if i + 1 < end && at(i + 1) != '\n' => {
-                    i += 2;
-                    continue;
-                }
-                '{' => depth += 1,
-                '}' if depth > 0 => depth -= 1,
-                c if c == delimiter && depth == 0 => {
-                    push(from, i);
-                    i += 1;
-                    close = None;
-                    if delimiter == '}' {
-                        break;
-                    }
-                    continue;
-                }
-                _ => {}
-            }
-        } else {
-            close = match c {
-                '[' => Some(']'),
-                '{' => Some('}'),
-                ' ' | '\t' | '\r' | '\n' => {
-                    i += 1;
-                    continue;
-                }
-                _ => break,
-            };
-            from = i + 1;
-        }
-        i += 1;
-    }
-    if close.is_some() {
-        push(from, i);
-    }
-    i
-}
-
 #[cfg(test)]
 mod tests {
     use crate::syntax::{Checker, SourceDocument, TextRange, range, utf16};
@@ -298,8 +241,8 @@ mod tests {
             ["Knuth", "knuth84"]
         );
         assert_eq!(
-            names("see \\cite[p.~3]{knuth, lamport} and \\cref*{fig:a}."),
-            ["p.~3", "knuth, lamport", "fig:a"]
+            names("see \\cite[e.g.][p.~3]{knuth, lamport} and \\cref*{fig:a}."),
+            ["e.g.", "p.~3", "knuth, lamport", "fig:a"]
         );
         assert_eq!(
             names("\\includegraphics[width=0.8\\linewidth]{plots/a b}"),
