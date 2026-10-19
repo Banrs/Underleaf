@@ -144,13 +144,12 @@ public sealed partial class WorkspacePage
         (OutlineTree.Visibility == Visibility.Visible ? (Control)OutlineTree : SideTabs).Focus(FocusState.Keyboard);
     }
 
-    void OnExpanding(TreeView sender, TreeViewExpandingEventArgs args) => Fold(sender, args.Item, true);
-    void OnCollapsed(TreeView sender, TreeViewCollapsedEventArgs args) => Fold(sender, args.Item, false);
+    void OnExpanding(TreeView sender, TreeViewExpandingEventArgs args) => Fold(sender, (NavItem)args.Item, true);
+    void OnCollapsed(TreeView sender, TreeViewCollapsedEventArgs args) => Fold(sender, (NavItem)args.Item, false);
 
     /// Folders open and headings folded, kept together in the project's UI state.
-    void Fold(TreeView view, object item, bool open)
+    void Fold(TreeView view, NavItem row, bool open)
     {
-        if (item is not NavItem row) return;
         row.IsExpanded = open;
         var changed = view == FilesTree ? (open ? expanded.Add(row.Key) : expanded.Remove(row.Key))
             : view == OutlineTree && (open ? folded.Remove(row.Key) : folded.Add(row.Key));

@@ -4,7 +4,6 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
 using TeXLocal.Bridge;
@@ -13,7 +12,6 @@ using Windows.Foundation;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 using Windows.System;
-using Windows.UI.ViewManagement;
 
 namespace TeXLocal.Controls;
 
@@ -70,6 +68,17 @@ public sealed partial class PdfView : UserControl
 
     public new bool Focus(FocusState state) => Scroller.Focus(state);
     public bool Compiling { set => Progress.Visibility = value ? Visibility.Visible : Visibility.Collapsed; }
+
+    /// With no PDF, says why Compile is off, as Home's tip does.
+    public bool TexMissing
+    {
+        set
+        {
+            EmptyTitle.Text = value ? "TeX isn't installed" : "No PDF yet";
+            EmptyText.Text = value ? "TeXLocal compiles with TeX Live." : "Compile to see the PDF here.";
+            GetTex.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
     public int PageCount => pages.Length;
     public double Zoom => Scroller.ZoomFactor;
     public MenuFlyout ZoomMenu => Menu;
@@ -223,7 +232,7 @@ public sealed partial class PdfView : UserControl
     }
 
     /// Scrolls a SyncTeX point a third of the way down the view, and across only when its box is out
-    /// of view, then flashes the box. With no box from the core it only scrolls (core gap 10).
+    /// of view, then shows the box for 2 s. With no box from the core it only scrolls (core gap 10).
     public void Reveal(ForwardSync at)
     {
         if (at.Page < 1 || at.Page > pages.Length) return;
@@ -239,10 +248,10 @@ public sealed partial class PdfView : UserControl
         Canvas.SetLeft(box, x);
         Canvas.SetTop(box, y - height);
         page.Marks.Children.Add(box);
-        var fade = new DoubleAnimation { To = 0, BeginTime = TimeSpan.FromSeconds(2), Duration = TimeSpan.FromMilliseconds(new UISettings().AnimationsEnabled ? 333 : 0) };
-        Storyboard.SetTarget(fade, box);
-        Storyboard.SetTargetProperty(fade, "Opacity");
-        new Storyboard { Children = { fade } }.Begin();
+        var shown = DispatcherQueue.CreateTimer();
+        (shown.Interval, shown.IsRepeating) = (TimeSpan.FromSeconds(2), false);
+        shown.Tick += (_, _) => page.Marks.Children.Remove(box);
+        shown.Start();
     }
 
     // At the right-click, or from the keyboard a third of the way down the view's centre.

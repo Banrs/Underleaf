@@ -6,8 +6,9 @@
     <Grid Background="{ThemeResource SolidBackgroundFillColorSecondaryBrush}">
         <StackPanel x:Name="Empty" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
             <FontIcon FontSize="48" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Glyph="&#xEA90;" />
-            <TextBlock HorizontalAlignment="Center" Style="{StaticResource SubtitleTextBlockStyle}" Text="No PDF yet" />
-            <TextBlock HorizontalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource BodyTextBlockStyle}" Text="Compile to see the PDF here." />
+            <TextBlock x:Name="EmptyTitle" HorizontalAlignment="Center" Style="{StaticResource SubtitleTextBlockStyle}" Text="No PDF yet" />
+            <TextBlock x:Name="EmptyText" HorizontalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource BodyTextBlockStyle}" Text="Compile to see the PDF here." />
+            <HyperlinkButton x:Name="GetTex" HorizontalAlignment="Center" Content="Get TeX Live" NavigateUri="https://tug.org/texlive/windows.html" Visibility="Collapsed" />
         </StackPanel>
 
         <ScrollViewer

@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
@@ -58,9 +59,15 @@ public sealed partial class WorkspacePage : Page
         SetSplit(ratio);
         ShowEdge();
         ShowPage();
-        foreach (var layer in (FrameworkElement[])[EditorClip, PdfClip, IssuesClip]) Motion.Round(layer, 7);
-        Motion.Reveal(IssuesPanel, y: 24);
-        Motion.Reveal(BuildFailed, y: -12);
+        // A layer's content scrolls under its rounded corners.
+        foreach (var layer in (FrameworkElement[])[EditorClip, PdfClip, IssuesClip])
+        {
+            var visual = ElementCompositionPreview.GetElementVisual(layer);
+            var shape = visual.Compositor.CreateRoundedRectangleGeometry();
+            shape.CornerRadius = new(7, 7);
+            visual.Clip = visual.Compositor.CreateGeometricClip(shape);
+            layer.SizeChanged += (_, e) => shape.Size = new((float)e.NewSize.Width, (float)e.NewSize.Height);
+        }
         // Wide, the pane is as the reader last left it there; narrow, it opens over the content only when asked.
         SizeChanged += (_, e) => WideTrigger.IsActive = e.NewSize.Width >= 1008;
         Split.RegisterPropertyChangedCallback(SplitView.DisplayModeProperty, (_, _) =>
@@ -115,8 +122,7 @@ public sealed partial class WorkspacePage : Page
             await Reveal(at.File, at.Line, at.Column ?? 0);
         });
         foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem]) Shortcut.SetScope(item, Editor);
-        Shortcut.SetScope(RenameItem, FilesTree);
-        Shortcut.SetScope(DeleteItem, FilesTree);
+        foreach (var item in (UIElement[])[RenameItem, DeleteItem]) Shortcut.SetScope(item, FilesTree);
         DeleteItem.KeyboardAcceleratorTextOverride = "Del";
         SetUpInsert();
         SetUpMenuFocus();
@@ -134,14 +140,15 @@ public sealed partial class WorkspacePage : Page
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
-        id = (string)e.Parameter;
+        (id, var file) = ((string, string?))e.Parameter;
         MenuSlot.Child = null;
         App.Window.SetMenu(MainMenu);
         App.Window.SetTitle(id, Editor.Path);
         Search.PlaceholderText = $"Search {id}";
+        CheckTex();
         if (session != 0) return;
         Core.Event += OnEvent;
-        try { await OpenSession(); }
+        try { await OpenSession(file); }
         catch (CoreException ex)
         {
             session = 0;
@@ -167,10 +174,8 @@ public sealed partial class WorkspacePage : Page
 
     /// The session is numbered before it opens, so the events that come before its answer are this page's too; a tree
     /// or a build among them is newer than the answer's.
-    async Task OpenSession()
+    async Task OpenSession(string? file)
     {
-        texAvailable = (await Core.CallAsync<TexStatus>("status")).Available;
-        CompileButton.IsEnabled = CompileItem.IsEnabled = texAvailable;
         session = ++sessions;
         var opened = await Core.CallAsync<SessionOpened>("session_open", new { id, session, autoCompile = Prefs.AutoCompile });
         root = opened.Root;
@@ -181,7 +186,7 @@ public sealed partial class WorkspacePage : Page
         ShowTree(treeJson.Length > 0 ? tree : opened.Tree, true);
         if (opened.Pdf is { } pdf && result is null) await Pdf.Load(pdf);
         ShowBuild();
-        Select(FilesTree, i => i.Key == mainFile);
+        Select(FilesTree, i => i.Key == (file ?? mainFile));
         if (Picked is { Type: not "dir" } main) await OpenDocument(main.Path, main.Kind);
     }
 
@@ -338,7 +343,7 @@ public sealed partial class WorkspacePage : Page
         CompileIcon.Glyph = compiling ? "\uE71A" : "\uE768";
         CompileLabel.Text = compiling ? "Stop" : "Compile";
         AutomationProperties.SetName(CompileButton, CompileLabel.Text);
-        ToolTipService.SetToolTip(CompileButton, !texAvailable ? "TeX isn't installed" : compiling ? "Stop (Shift+F5)" : "Compile (Ctrl+Enter)");
+        ToolTipService.SetToolTip(CompileButton, compiling ? "Stop (Shift+F5)" : "Compile (Ctrl+Enter)");
         StopItem.IsEnabled = Pdf.Compiling = compiling;
         var state = compiling ? "Compiling…"
             : result is null ? (Pdf.PageCount > 0 ? "" : "No build yet")
@@ -418,7 +423,16 @@ public sealed partial class WorkspacePage : Page
 
     void OnCompileButton(object sender, RoutedEventArgs e) => (compiling ? (RoutedEventHandler)OnStop : OnCompile)(sender, e);
 
-    /// Compile and its keys are disabled while TeX is missing.
+    /// TeX installed while the app runs is found as the window comes to the front or the page back from Settings, as on
+    /// the Mac.
+    public async void CheckTex()
+    {
+        if (texAvailable) return;
+        texAvailable = (await Core.CallAsync<TexStatus>("status")).Available;
+        CompileButton.IsEnabled = CompileItem.IsEnabled = texAvailable;
+        Pdf.TexMissing = !texAvailable;
+    }
+
     void OnCompile(object sender, RoutedEventArgs e) => Run("Can't compile", () => Core.CallAsync("session_compile", new { session }));
     void OnStop(object sender, RoutedEventArgs e) => Run("Can't stop the build", () => Core.CallAsync("session_stop_compile", new { session }));
     void OnClean(object sender, RoutedEventArgs e) => Run("Can't clean the build folder", () => Core.CallAsync("session_clean", new { session }));

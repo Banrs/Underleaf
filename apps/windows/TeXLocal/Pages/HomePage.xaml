@@ -41,11 +41,6 @@
     <ScrollViewer x:Name="Scroller">
         <Grid>
             <StackPanel MaxWidth="1064" Padding="36,0,36,36">
-                <StackPanel.ChildrenTransitions>
-                    <TransitionCollection>
-                        <EntranceThemeTransition IsStaggeringEnabled="True" />
-                    </TransitionCollection>
-                </StackPanel.ChildrenTransitions>
                 <Grid Margin="0,24,0,0">
                     <TextBlock AutomationProperties.HeadingLevel="Level1" Style="{StaticResource TitleTextBlockStyle}" Text="Home" />
                     <DropDownButton HorizontalAlignment="Right" VerticalAlignment="Center" AutomationProperties.Name="Open">

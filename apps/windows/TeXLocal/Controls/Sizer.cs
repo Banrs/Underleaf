@@ -26,7 +26,6 @@ public sealed partial class Sizer : Grid
         IsTabStop = true;
         UseSystemFocusVisuals = true;
         Children.Add(grip);
-        if (Motion.Enabled) grip.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(83) };
         AutomationProperties.SetHelpText(this, "Use the arrow keys to resize");
         Loaded += (_, _) =>
         {
