@@ -22,7 +22,7 @@ public sealed partial class HomePage : Page
     readonly RenameFlyout rename = new();
     ProjectInfo? target;
     string? focus;
-    bool loading, again;
+    int loads;
 
     public HomePage()
     {
@@ -42,7 +42,6 @@ public sealed partial class HomePage : Page
     public static string MoreName(string name) => $"More options for {name}";
 
     static Core Core => App.Core!;
-    static MainWindow Window => App.Window;
 
     /// The project of a row, or of an element in one (the More button).
     ProjectInfo? ProjectOf(object? element) =>
@@ -59,31 +58,22 @@ public sealed partial class HomePage : Page
         _ = CheckTex();
     }
 
-    /// Lists the projects again, keeping keyboard focus on its row (or moving it to project `id`). A call made while
-    /// one runs runs again after it.
+    /// Lists the projects again, keeping keyboard focus on its row (or moving it to project `id`); a later call's answer
+    /// wins over an earlier one's.
     async void Reload(string? id = null)
     {
         focus = id ?? focus;
-        if (loading)
-        {
-            again = true;
-            return;
-        }
-        loading = true;
-        do
-        {
-            again = false;
-            var error = App.OpenCore() ? null : App.CoreError ?? "";
-            ProjectInfo[] projects = [];
-            if (error is null)
-                try { projects = await Core.CallAsync<ProjectInfo[]>("list_projects"); }
-                catch (CoreException ex) { error = ex.Message; }
-            LibraryError.Message = error ?? "";
-            LibraryError.IsOpen = error is not null;
-            if (error is null) Show(projects);
-            if (App.Smoke) App.ExitSmoke(error is null ? 0 : 1, error);
-        } while (again);
-        loading = false;
+        var generation = ++loads;
+        var error = App.OpenCore() ? null : App.CoreError ?? "";
+        ProjectInfo[] projects = [];
+        if (error is null)
+            try { projects = await Core.CallAsync<ProjectInfo[]>("list_projects"); }
+            catch (CoreException ex) { error = ex.Message; }
+        if (generation != loads) return;
+        LibraryError.Message = error ?? "";
+        LibraryError.IsOpen = error is not null;
+        if (error is null) Show(projects);
+        if (App.Smoke) App.ExitSmoke(error is null ? 0 : 1, error);
     }
 
     void Show(ProjectInfo[] projects)
@@ -111,7 +101,7 @@ public sealed partial class HomePage : Page
 
     void OnRetry(object sender, RoutedEventArgs e) => Reload();
 
-    void OnItemClick(object sender, ItemClickEventArgs e) => Window.OpenProject(((ProjectInfo)e.ClickedItem).Id);
+    void OnItemClick(object sender, ItemClickEventArgs e) => App.Window.OpenProject(((ProjectInfo)e.ClickedItem).Id);
 
     void OnTemplate(object sender, RoutedEventArgs e) => New((ProjectTemplate)((FrameworkElement)sender).DataContext);
 
@@ -144,7 +134,7 @@ public sealed partial class HomePage : Page
             }
             finally { deferral.Complete(); }
         };
-        if (await App.Show(dialog) == ContentDialogResult.Primary && id is not null) Window.OpenProject(id);
+        if (await App.Show(dialog) == ContentDialogResult.Primary && id is not null) App.Window.OpenProject(id);
     }
 
     void OnMenuOpening(object sender, object e) => target = ProjectOf(((MenuFlyout)sender).Target);
@@ -157,7 +147,7 @@ public sealed partial class HomePage : Page
         else Delete(p);
     }
 
-    void OnOpenItem(object sender, RoutedEventArgs e) => Window.OpenProject(target!.Id);
+    void OnOpenItem(object sender, RoutedEventArgs e) => App.Window.OpenProject(target!.Id);
 
     void OnRenameItem(object sender, RoutedEventArgs e) => Rename(target!);
 
@@ -168,7 +158,7 @@ public sealed partial class HomePage : Page
     async void OnExportItem(object sender, RoutedEventArgs e)
     {
         var p = target!;
-        var picker = new FileSavePicker(Window.AppWindow.Id) { SuggestedFileName = p.Name };
+        var picker = new FileSavePicker(App.Window.AppWindow.Id) { SuggestedFileName = p.Name };
         picker.FileTypeChoices.Add("ZIP archive", [".zip"]);
         if (await picker.PickSaveFileAsync() is not { } picked) return;
         try { await Core.CallAsync("export_zip", new { id = p.Id, dest = picked.Path }); }
@@ -186,15 +176,14 @@ public sealed partial class HomePage : Page
 
     async void Delete(ProjectInfo p)
     {
-        var dialog = new ContentDialog
+        if (await App.Show(new ContentDialog
         {
             Title = $"Delete “{p.Name}”?",
             Content = "The project folder moves to the Recycle Bin.",
             PrimaryButtonText = "Move to Recycle Bin",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
-        };
-        if (await App.Show(dialog) != ContentDialogResult.Primary) return;
+        }) != ContentDialogResult.Primary) return;
         try
         {
             await Core.CallAsync("stop_compile", new { id = p.Id });
