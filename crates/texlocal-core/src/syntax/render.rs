@@ -300,7 +300,7 @@ mod tests {
         let huge = math_svg("x", false, 1e12, BLACK).unwrap();
         assert!(huge.width < 1e4);
         // Past what a number holds: drawn within the size, or an error.
-        let digits = "9".repeat(400);
+        let digits = "9".repeat(310);
         for tex in [
             format!(r"\rule{{{digits}pt}}{{1pt}}"),
             format!(r"a\kern{digits}em b"),

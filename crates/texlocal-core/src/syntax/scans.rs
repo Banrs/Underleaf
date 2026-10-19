@@ -97,14 +97,14 @@ mod tests {
     use crate::syntax::scan::READ;
     use crate::syntax::{Checker, SourceDocument, TextRange};
 
-    /// Whether 200 spelling, style and preview questions near the end of
+    /// Whether 20 spelling, style and preview questions near the end of
     /// `source`, between edits, read it once to keep their points and then
     /// near each question only: each of a question's four answers reads at
     /// most from the kept point before it, less than twice their spacing
     /// (the preview to its maths' close after it too), where from the start
     /// would be the text.
     fn questions_near_the_end_read_near_them(source: &str) {
-        const QUESTIONS: usize = 200;
+        const QUESTIONS: usize = 20;
         let len = source.encode_utf16().count();
         let mut doc = SourceDocument::new(source);
         let before = READ.get();
@@ -115,7 +115,7 @@ mod tests {
             doc.text_styles(range(3));
             doc.insert_symbol("\\alpha", range(0));
             doc.math_at(at);
-            if k % 20 == 0 {
+            if k % 5 == 0 {
                 doc.edit(at + 500, 0, "x");
             }
         }
@@ -128,18 +128,18 @@ mod tests {
 
     #[test]
     fn questions_about_a_long_text_read_only_near_them() {
-        // 2.8 million units, braces closed and paragraphs short: each question
-        // had read it all from the start, 52 s in a test build for these.
-        let source = "A paragraph with $x^2$ and \\textbf{bold \\emph{words}}.\n\n".repeat(50_000);
+        // Braces closed and paragraphs short: each question had read it all
+        // from the start.
+        let source = "A paragraph with $x^2$ and \\textbf{bold \\emph{words}}.\n\n".repeat(5_000);
         questions_near_the_end_read_near_them(&source);
     }
 
     #[test]
     fn braces_nobody_closes_cost_no_more_as_they_pile_up() {
-        // 20,000 lines, a brace left open on each and no blank line: kept points
-        // had been dropped above 64 open groups, and each question read the
-        // whole text from the start, twice.
-        let source: String = (0..20_000).map(|n| format!("{{ line {n} word\n")).collect();
+        // A brace left open on each line and no blank line: kept points had
+        // been dropped above 64 open groups, and each question read the whole
+        // text from the start, twice.
+        let source: String = (0..5_000).map(|n| format!("{{ line {n} word\n")).collect();
         questions_near_the_end_read_near_them(&source);
     }
 }

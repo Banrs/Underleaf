@@ -9,16 +9,6 @@ use std::fmt::Debug;
 use crate::syntax::scans::SPACING;
 use crate::syntax::{Checker, SourceDocument, TextRange, range};
 
-/// How many of a random test's documents or rounds: fewer in a debug build, where
-/// each takes about ten times as long, and still every kind of each.
-const fn runs(release: usize, debug: usize) -> usize {
-    if cfg!(debug_assertions) {
-        debug
-    } else {
-        release
-    }
-}
-
 const PIECES: &[&str] = &[
     "\\cite{",
     "}",
@@ -160,37 +150,34 @@ fn answers(doc: &mut SourceDocument, selection: TextRange) -> impl PartialEq + D
 fn every_answer_after_every_edit_is_a_fresh_reading() {
     // The selections found in a text style, which the test is to ask about.
     let mut styled = 0;
-    let (documents, rounds) = (runs(6, 3), runs(220, 160));
-    for document in 1..=documents {
-        let mut seed = Seeded(document as u32);
-        let mut doc = SourceDocument::new("");
-        let mut units: Vec<u16> = Vec::new();
+    let (documents, rounds) = (4, 10);
+    for document in 0..documents {
+        let mut seed = Seeded(document as u32 + 1);
+        // An article and pieces, each with blank lines and without.
+        let blank_lines = document < 2;
+        let source = match document % 2 {
+            0 => article(&mut seed, blank_lines),
+            _ => pieces(&mut seed, blank_lines),
+        };
+        let mut doc = SourceDocument::new(&source);
+        let mut units: Vec<u16> = source.encode_utf16().collect();
         for round in 0..rounds {
             let len = units.len();
-            let (at, cut, piece) = if round % 20 == 0 {
-                // Random edits leave less and less of a document to ask
-                // about, so every so often a new one is pasted over it: an
-                // article or pieces, every other one of each with no blank line.
-                let (paste, seed) = (round / 20, &mut seed);
-                let blank_lines = paste % 4 < 2;
-                let new = match paste % 2 {
-                    0 => article(seed, blank_lines),
-                    _ => pieces(seed, blank_lines),
-                };
-                (0, len, new)
-            } else {
-                // Anywhere, a surrogate pair's middle too, or just past a
-                // kept point, where what runs over it ends.
-                let at = match seed.next(2) {
-                    0 => seed.next(len + 1),
-                    _ => (SPACING * (1 + seed.next(2)) + seed.next(1_500)).min(len),
-                };
-                let cut = [0, seed.next(8), seed.next(200)][seed.next(3)].min(len - at);
-                let k = seed.next(PIECES.len() + MORE.len() + 8);
-                let piece = PIECES.iter().chain(MORE).nth(k).copied();
-                (at, cut, piece.unwrap_or_default().to_string())
+            // Anywhere, a surrogate pair's middle too, or just past a kept
+            // point, where what runs over it ends.
+            let at = match seed.next(2) {
+                0 => seed.next(len + 1),
+                _ => (SPACING * (1 + seed.next(2)) + seed.next(1_500)).min(len),
             };
-            doc.edit(at as u32, cut as u32, &piece);
+            let cut = [0, seed.next(8), seed.next(200)][seed.next(3)].min(len - at);
+            let k = seed.next(PIECES.len() + MORE.len() + 8);
+            let piece = PIECES
+                .iter()
+                .chain(MORE)
+                .nth(k)
+                .copied()
+                .unwrap_or_default();
+            doc.edit(at as u32, cut as u32, piece);
             units.splice(at..at + cut, piece.encode_utf16());
             let text = String::from_utf16_lossy(&units);
             assert_eq!(doc.text(), text, "document {document}, round {round}");

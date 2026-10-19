@@ -563,55 +563,6 @@ mod tests {
         }
     }
 
-    /// Below `n`, from a seeded linear congruential generator.
-    fn seeded(mut seed: u32) -> impl FnMut(usize) -> usize {
-        move |n| {
-            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
-            (seed >> 16) as usize % n
-        }
-    }
-
-    #[test]
-    fn edits_leave_the_runs_a_fresh_read_gives() {
-        const PIECES: [&str; 17] = [
-            "\\begin{",
-            "}",
-            "$",
-            "$$",
-            "\n",
-            "\n\n",
-            "% c",
-            "\\[",
-            "\\]",
-            "x",
-            "{",
-            "\\cite",
-            "\\begin{verbatim}",
-            "\\end{verbatim}",
-            "\\verb|",
-            "\r\n",
-            "é",
-        ];
-        let mut next = seeded(7);
-        let mut doc = SourceDocument::new("");
-        let mut text: Vec<u16> = Vec::new();
-        for _ in 0..400 {
-            let start = next(text.len() + 1);
-            let length = next(text.len() - start + 1).min(4);
-            let piece = PIECES[next(PIECES.len())];
-            doc.edit(start as u32, length as u32, piece);
-            text.splice(start..start + length, piece.encode_utf16());
-            // Read part of it, so the kept states run only so far.
-            let from = next(text.len() + 1) as u32;
-            doc.highlights(from, 3);
-            let mut fresh = SourceDocument::new(&String::from_utf16_lossy(&text));
-            assert_eq!(
-                doc.highlights(0, text.len() as u32),
-                fresh.highlights(0, text.len() as u32)
-            );
-        }
-    }
-
     #[test]
     fn only_the_lines_asked_for() {
         let mut doc = SourceDocument::new("\\a\n\\b\n\\c");

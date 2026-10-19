@@ -524,12 +524,7 @@ fn several_selections_move_together() {
         // Given last first, they move as the same lines.
         (
             vec![range(8, 1), range(2, 4)],
-            "2
-3
-1
-5
-4
-6",
+            "2\n3\n1\n5\n4\n6",
             vec![range(6, 1), range(0, 4)],
         ),
     ];
