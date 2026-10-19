@@ -7,7 +7,7 @@
 use std::fmt::Debug;
 
 use crate::syntax::scans::SPACING;
-use crate::syntax::{SourceDocument, TextRange, range};
+use crate::syntax::{Checker, SourceDocument, TextRange, range};
 
 /// How many of a random test's documents or rounds: fewer in a debug build, where
 /// each takes about ten times as long, and still every kind of each.
@@ -139,12 +139,17 @@ fn article(seed: &mut Seeded, paragraphs: bool) -> String {
     )
 }
 
+/// What Writing Tools leaves alone where `length` units at `start` are.
+fn code(doc: &mut SourceDocument, start: u32, length: u32) -> Vec<TextRange> {
+    doc.code_ranges(range(start, length), Checker::WritingTools)
+}
+
 /// What a document answers about a selection: what isn't prose, its text
 /// styles, a symbol inserted there, and its highlighting.
 fn answers(doc: &mut SourceDocument, selection: TextRange) -> impl PartialEq + Debug {
     let TextRange { start, length } = selection;
     (
-        doc.not_prose(start, length),
+        doc.code_ranges(selection, Checker::WritingTools),
         doc.text_styles(selection),
         doc.insert_symbol("\\alpha", selection),
         doc.highlights(start, length),
@@ -195,8 +200,8 @@ fn every_answer_after_every_edit_is_a_fresh_reading() {
             if seed.next(2) == 0 {
                 let (from, length) = (len.saturating_sub(40) as u32, 40);
                 assert_eq!(
-                    doc.not_prose(from, length),
-                    fresh.not_prose(from, length),
+                    code(&mut doc, from, length),
+                    code(&mut fresh, from, length),
                     "document {document}, round {round}, the end"
                 );
             }
@@ -237,11 +242,11 @@ fn a_kept_points_names_follow_an_edit_past_it() {
         "word ".repeat(1200)
     );
     let mut doc = SourceDocument::new(&source);
-    assert!(doc.not_prose(9_000, 10).is_empty()); // keeps the points at 4096 and 8192
+    assert!(code(&mut doc, 9_000, 10).is_empty()); // keeps the points at 4096 and 8192
     doc.edit(5_000, 1, ""); // the closing brace goes: the argument runs on
     let mut fresh = SourceDocument::new(&doc.text());
-    assert_eq!(doc.not_prose(9_000, 10), fresh.not_prose(9_000, 10));
-    assert_eq!(doc.not_prose(9_000, 10), [range(6, 9_004)]);
+    assert_eq!(code(&mut doc, 9_000, 10), code(&mut fresh, 9_000, 10));
+    assert_eq!(code(&mut doc, 9_000, 10), [range(6, 9_004)]);
 
     // The mirror: an unclosed \cite{ over the point is closed by a typed brace,
     // and a later unclosed \ref{ is a command again.
@@ -251,10 +256,10 @@ fn a_kept_points_names_follow_an_edit_past_it() {
         "word ".repeat(1200)
     );
     let mut doc = SourceDocument::new(&source);
-    doc.not_prose(9_000, 10);
+    code(&mut doc, 9_000, 10);
     doc.edit(5_000, 0, "}");
     let mut fresh = SourceDocument::new(&doc.text());
-    assert_eq!(doc.not_prose(9_000, 10), fresh.not_prose(9_000, 10));
+    assert_eq!(code(&mut doc, 9_000, 10), code(&mut fresh, 9_000, 10));
 }
 
 #[test]
@@ -264,7 +269,7 @@ fn a_point_that_read_past_the_question_is_not_resumed_from() {
     // leaves the $ open, as the caret there sees it.
     let source = format!("${}\n\n", "a".repeat(4094));
     let mut doc = SourceDocument::new(&source);
-    doc.not_prose(4096, 0); // keeps the points up to 4096
+    code(&mut doc, 4096, 0); // keeps the points up to 4096
     let symbol = doc.insert_symbol("\\alpha", range(4096, 0));
     assert_eq!(symbol.edit.text, "\\alpha");
 }
@@ -273,7 +278,7 @@ fn a_point_that_read_past_the_question_is_not_resumed_from() {
 fn what_runs_over_a_kept_point_keeps_its_start() {
     let maths = "x = 1 \\\\\n\n".repeat(1_000);
     let source = format!("Text \\begin{{equation}}\n{maths}\\end{{equation}} prose");
-    let found = SourceDocument::new(&source).not_prose(9_000, 5);
+    let found = code(&mut SourceDocument::new(&source), 9_000, 5);
     assert_eq!(
         found,
         [range(5, 9_000)],
@@ -284,12 +289,12 @@ fn what_runs_over_a_kept_point_keeps_its_start() {
     let names = "key, \\label{inside} ".repeat(500);
     let source = format!("See \\cite{{{names}}} and \\ref{{fig}}.");
     let mut doc = SourceDocument::new(&source);
-    let found = doc.not_prose(9_000, 5);
+    let found = code(&mut doc, 9_000, 5);
     assert_eq!(
         found,
         [range(10, 8_995)],
         "from the argument's start to the question's end"
     );
     let after = source.find("fig").unwrap() as u32;
-    assert_eq!(doc.not_prose(after, 3), [range(after, 3)]);
+    assert_eq!(code(&mut doc, after, 3), [range(after, 3)]);
 }

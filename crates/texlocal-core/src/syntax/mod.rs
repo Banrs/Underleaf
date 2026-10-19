@@ -256,30 +256,6 @@ impl SourceDocument {
         self.highlighter.highlights(&self.text, start.min(end), end)
     }
 
-    /// What isn't prose where a range is: maths, literal code, and the names
-    /// commands take (packages, citations, labels, files), each from its
-    /// start, however far before the range.
-    pub fn not_prose(&mut self, start: u32, length: u32) -> Vec<TextRange> {
-        self.skipped(range(start, length), None)
-    }
-
-    /// What a checker leaves alone where a range is: what isn't prose and
-    /// command names, and for Writing Tools comments, which spelling checks.
-    pub fn code_ranges(&mut self, selection: TextRange, checker: Checker) -> Vec<TextRange> {
-        self.skipped(selection, Some(checker))
-    }
-
-    fn skipped(&mut self, selection: TextRange, checker: Option<Checker>) -> Vec<TextRange> {
-        let (start, end) = clamp(selection, self.text.len()).bounds();
-        prose::skipped(
-            &self.text,
-            &mut self.scans,
-            start as u32,
-            end as u32,
-            checker,
-        )
-    }
-
     /// Where line `line` (from 1) has `command` (with its backslash), each
     /// time it does, in units from the line's start: not as the start of a
     /// longer name, not after a backslash that is itself a command's (`\\foo`

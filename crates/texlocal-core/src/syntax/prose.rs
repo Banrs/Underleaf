@@ -1,47 +1,40 @@
-//! What isn't prose: maths, literal code, and the names commands take
-//! (packages, citations, labels, files), including the options before them,
-//! as in `\usepackage[utf8]{inputenc}`; for a checker, command names and
+//! What isn't prose: maths, literal code, command names and the names
+//! commands take (packages, citations, labels, files), including the options
+//! before them, as in `\usepackage[utf8]{inputenc}`; for Writing Tools
 //! comments too. What's left is the text's words, which the status bar counts.
 
 use super::scan::{Scanner, Visit, paragraph_end};
-use super::scans::{Point, Scans};
-use super::{Checker, Text, TextRange, catalog::CATALOG, span};
+use super::{Checker, SourceDocument, Text, TextRange, catalog::CATALOG, clamp, span};
 
-/// What isn't prose in `start..end`, each range from its start however far
-/// before: maths and literal code, read on from a kept point before `start`
-/// (which carries how far names have been read), and name arguments. Given
-/// a checker, command names too, and for Writing Tools comments, which are
-/// prose to spelling.
-pub(crate) fn skipped(
-    text: &Text,
-    scans: &mut Scans,
-    start: u32,
-    end: u32,
-    checker: Option<Checker>,
-) -> Vec<TextRange> {
-    let end_index = end as usize;
-    let Point {
-        mut scanner,
-        run,
-        names,
-    } = scans.resume(text, start as usize, end_index);
-    let mut reading = Reading::new(text, end_index, names, checker, |_: &Text, _: &str, _| {});
-    reading
-        .ranges
-        .extend(run.map(|(from, to)| span(from, to - from)));
-    reading.names.resume(text, end_index, &mut reading.others);
-    scanner.run(&text.units[..end_index], end_index, &[], &mut reading);
-    let mut ranges = reading.ranges;
-    ranges.extend(reading.others);
-    ranges.retain(|r| {
-        let range_end = r.start.saturating_add(r.length);
-        if start == end {
-            r.start <= start && start < range_end
-        } else {
-            r.start < end && range_end > start
-        }
-    });
-    merged(ranges)
+impl SourceDocument {
+    /// What a checker leaves alone where a range is, each range from its
+    /// start however far before: maths and literal code, read on from a kept
+    /// point before the range (which carries how far names have been read),
+    /// command names and name arguments, and for Writing Tools comments,
+    /// which are prose to spelling.
+    pub fn code_ranges(&mut self, selection: TextRange, checker: Checker) -> Vec<TextRange> {
+        let (start, end) = clamp(selection, self.text.len()).bounds();
+        let (text, mut point) = (&self.text, self.scans.resume(&self.text, start, end));
+        let mut reading = Reading::new(text, end, point.names, checker, |_: &Text, _: &str, _| {});
+        let run = point.run.map(|(from, to)| span(from, to - from));
+        reading.ranges.extend(run);
+        reading.names.resume(text, end, &mut reading.others);
+        point
+            .scanner
+            .run(&text.units[..end], end, &[], &mut reading);
+        let mut ranges = reading.ranges;
+        ranges.extend(reading.others);
+        let (start, end) = (start as u32, end as u32);
+        ranges.retain(|r| {
+            let range_end = r.start.saturating_add(r.length);
+            if start == end {
+                r.start <= start && start < range_end
+            } else {
+                r.start < end && range_end > start
+            }
+        });
+        merged(ranges)
+    }
 }
 
 /// Ranges in order, overlapping and adjacent ones joined.
@@ -104,30 +97,28 @@ impl Names {
 }
 
 /// A reading of the text for what isn't prose: maths and code as one run
-/// while they touch, then name arguments, command names and comments, as
-/// asked. Each command outside maths and code goes to `command` too, by name
-/// and where its name ends.
+/// while they touch, then name arguments, command names and, as asked,
+/// comments. Each command outside maths and code goes to `command` too, by
+/// name and where its name ends.
 struct Reading<'a, F> {
     text: &'a Text,
     end: usize,
     ranges: Vec<TextRange>,
     others: Vec<TextRange>,
     names: Names,
-    commands: bool,
     comments: bool,
     command: F,
 }
 
 impl<'a, F: FnMut(&Text, &str, usize)> Reading<'a, F> {
-    fn new(text: &'a Text, end: usize, names: Names, checker: Option<Checker>, command: F) -> Self {
+    fn new(text: &'a Text, end: usize, names: Names, checker: Checker, command: F) -> Self {
         Self {
             text,
             end,
             ranges: Vec::new(),
             others: Vec::new(),
             names,
-            commands: checker.is_some(),
-            comments: checker == Some(Checker::WritingTools),
+            comments: checker == Checker::WritingTools,
             command,
         }
     }
@@ -145,10 +136,8 @@ impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
     }
 
     fn command(&mut self, name: &str, command_start: usize, name_end: usize) {
-        if self.commands {
-            self.others
-                .push(span(command_start, name_end - command_start));
-        }
+        self.others
+            .push(span(command_start, name_end - command_start));
         let command = (name, command_start, name_end);
         self.names
             .command(self.text, command, self.end, &mut self.others);
@@ -165,7 +154,7 @@ impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
 pub(crate) fn words(source: &str, command: impl FnMut(&Text, &str, usize)) -> usize {
     let text = Text::new(source);
     let len = text.units.len();
-    let writing = Some(Checker::WritingTools);
+    let writing = Checker::WritingTools;
     let mut reading = Reading::new(&text, len, Names::default(), writing, command);
     Scanner::default().run(&text.units, len, &[], &mut reading);
     let mut skipped = reading.ranges;
@@ -256,22 +245,27 @@ fn argument_ranges(text: &Text, mut i: usize, end: usize, ranges: &mut Vec<TextR
 
 #[cfg(test)]
 mod tests {
-    use crate::syntax::{SourceDocument, TextRange, utf16};
+    use crate::syntax::{Checker, SourceDocument, TextRange, range, utf16};
 
-    /// What isn't prose in the whole of `text`.
-    fn whole(text: &str) -> Vec<TextRange> {
-        SourceDocument::new(text).not_prose(0, utf16(text) as u32)
+    /// What spelling leaves alone where `length` units at `start` are.
+    fn code(doc: &mut SourceDocument, start: u32, length: u32) -> Vec<TextRange> {
+        doc.code_ranges(range(start, length), Checker::Spelling)
     }
 
-    /// The name arguments `not_prose` finds in the whole source.
+    /// What spelling leaves alone in the whole of `text`.
+    fn whole(text: &str) -> Vec<TextRange> {
+        code(&mut SourceDocument::new(text), 0, utf16(text) as u32)
+    }
+
+    /// What spelling leaves alone in the whole source but command names.
     fn names(source: &str) -> Vec<String> {
         let units: Vec<u16> = source.encode_utf16().collect();
-        whole(source)
-            .iter()
-            .map(|r| {
-                String::from_utf16_lossy(&units[r.start as usize..(r.start + r.length) as usize])
-            })
-            .collect()
+        let text = |r: &TextRange| {
+            String::from_utf16_lossy(&units[r.start as usize..(r.start + r.length) as usize])
+        };
+        let ranges = whole(source);
+        let names = ranges.iter().map(text);
+        names.filter(|name| !name.starts_with('\\')).collect()
     }
 
     /// Where `needle` is, the first in `text`, in UTF-16 units.
@@ -322,19 +316,19 @@ mod tests {
         );
         // Not in a comment, nor past a blank line.
         assert_eq!(names("% \\cite{x}\n\\input{a\n\nprose}"), ["a"]);
-        // Not even after a backslash at the end of a line.
-        assert_eq!(names("\\cite{a\\\n\nprose}"), ["a\\"]);
+        // Not even after a backslash at the end of a line, a command with it.
+        assert_eq!(names("\\cite{a\\\n\nprose}"), ["a\\\n"]);
     }
 
     #[test]
     fn from_the_paragraph_start() {
         let source = "\\usepackage{amsmath,\n  amssymb}\n\nText";
         let mut doc = SourceDocument::new(source);
-        let found = doc.not_prose(25, 1); // in "amssymb"
+        let found = code(&mut doc, 25, 1); // in "amssymb"
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].start, 12);
         assert_eq!(found[0].start + found[0].length, 26);
-        assert!(doc.not_prose(36, 2).is_empty()); // in "Text"
+        assert!(code(&mut doc, 36, 2).is_empty()); // in "Text"
     }
 
     #[test]
@@ -369,7 +363,7 @@ mod tests {
     fn ranges_started_before_the_checked_slice_remain_absolute() {
         let text = "first\n\\begin{equation}\n𐐀 + x";
         let start = find(text, "𐐀").start;
-        let found = SourceDocument::new(text).not_prose(start, 1);
+        let found = code(&mut SourceDocument::new(text), start, 1);
         assert!(found.iter().any(|r| r.start == find(text, "\\begin").start));
         let to_it = |r: &TextRange| r.start <= start && r.start + r.length == start + 1;
         assert!(found.iter().any(to_it));
@@ -386,7 +380,7 @@ mod tests {
         assert!(covered(&ranges, text, "open code"));
 
         let code_start = find(text, "Speling code").start;
-        let inside_code = SourceDocument::new(text).not_prose(code_start, 1);
+        let inside_code = code(&mut SourceDocument::new(text), code_start, 1);
         let verbatim_start = find(text, "\\begin{verbatim}").start;
         assert!(
             inside_code
@@ -406,8 +400,8 @@ mod tests {
     fn commands_inside_literal_code_do_not_suppress_following_prose() {
         let text = "\\begin{verbatim}\n\\input{raw\n\\end{verbatim}\nSpeling prose";
         let mut doc = SourceDocument::new(text);
-        let ranges = doc.not_prose(0, utf16(text) as u32);
+        let ranges = code(&mut doc, 0, utf16(text) as u32);
         assert!(prose(&ranges, text, "Speling"));
-        assert!(doc.not_prose(find(text, "Speling").start, 1).is_empty());
+        assert!(code(&mut doc, find(text, "Speling").start, 1).is_empty());
     }
 }

@@ -95,7 +95,7 @@ impl Scans {
 mod tests {
     use super::SPACING;
     use crate::syntax::scan::READ;
-    use crate::syntax::{SourceDocument, TextRange};
+    use crate::syntax::{Checker, SourceDocument, TextRange};
 
     /// Whether 200 spelling, style and preview questions near the end of
     /// `source`, between edits, read it once to keep their points and then
@@ -111,7 +111,7 @@ mod tests {
         for k in 0..QUESTIONS {
             let at = (len - 1_000 - k * 37) as u32;
             let range = |length| TextRange { start: at, length };
-            doc.not_prose(at, 40);
+            doc.code_ranges(range(40), Checker::Spelling);
             doc.text_styles(range(3));
             doc.insert_symbol("\\alpha", range(0));
             doc.math_at(at);
