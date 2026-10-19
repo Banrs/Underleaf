@@ -101,9 +101,12 @@ private struct EditorSettings: View {
         }
     }
 
-    /// Double: the stepper's formatted value takes only floating point, and the editor reads a whole number.
+    /// Double: the stepper's formatted value takes only floating point, and the editor reads a whole number. Clamped here: the
+    /// range bounds the stepper's arrows, not a size typed into its field.
     private var size: Binding<Double> {
-        Binding(get: { Double(fontSize) }, set: { fontSize = Int($0.rounded()) })
+        Binding(get: { Double(fontSize) }, set: {
+            fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
+        })
     }
 }
 

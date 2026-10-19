@@ -225,6 +225,11 @@ struct FilesList: View {
 
     private func commitRename(_ node: TreeNode) {
         guard let name = rename.end(node.path, from: node.name) else { return }
+        // The field refuses a "/" as it is typed; this is for one that got by.
+        guard !name.contains("/") else {
+            app.alert = AppAlert("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
+            return
+        }
         let folder = node.path.parentFolder
         let path = folder.isEmpty ? name : "\(folder)/\(name)"
         Task {
