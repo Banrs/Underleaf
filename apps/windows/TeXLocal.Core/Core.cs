@@ -25,10 +25,8 @@ public sealed class Core : IDisposable
 
     public event Action<CoreEvent>? Event;
 
-    public static string DefaultDataDir =>
-        Environment.GetEnvironmentVariable("TEXLOCAL_DATA") is { Length: > 0 } dir
-            ? dir
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "TeXLocal");
+    public static string DefaultDataDir => Environment.GetEnvironmentVariable("TEXLOCAL_DATA") is { Length: > 0 } dir
+        ? dir : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "TeXLocal");
 
     unsafe Core(nint handle, Action<Action> post)
     {
@@ -37,11 +35,8 @@ public sealed class Core : IDisposable
         tl_set_listener(handle, &Listen, GCHandle.ToIntPtr(self));
     }
 
-    public static Core Open(string dataDir, Action<Action> post)
-    {
-        var h = tl_open(dataDir);
-        return h == 0 ? throw new CoreException(0, $"Can't open {dataDir}") : new Core(h, post);
-    }
+    public static Core Open(string dataDir, Action<Action> post) =>
+        tl_open(dataDir) is var h and not 0 ? new Core(h, post) : throw new CoreException(0, $"Can't open {dataDir}");
 
     public unsafe Task<JsonElement> CallAsync(string command, object? args = null)
     {
@@ -55,11 +50,8 @@ public sealed class Core : IDisposable
     public async Task<T> CallAsync<T>(string command, object? args = null) =>
         (await CallAsync(command, args)).Deserialize<T>(Json)!;
 
-    public Source? SessionSource(ulong session, string path)
-    {
-        var s = tl_session_source(handle, session, path);
-        return s == 0 ? null : new Source(s);
-    }
+    public Source? SessionSource(ulong session, string path) =>
+        tl_session_source(handle, session, path) is var s and not 0 ? new Source(s) : null;
 
     /// Straight from the core's UTF-8 into an element that owns its data.
     static unsafe JsonElement Parse(byte* json) =>
@@ -71,42 +63,27 @@ public sealed class Core : IDisposable
         var gc = GCHandle.FromIntPtr(ctx);
         var (pending, core) = ((TaskCompletionSource<JsonElement>, Core))gc.Target!;
         gc.Free();
-        try
-        {
-            var root = Parse(json);
-            if (root.TryGetProperty("ok", out var ok)) pending.SetResult(ok);
-            else pending.SetException(new CoreException(
-                root.TryGetProperty("status", out var s) ? s.GetInt32() : 500,
-                root.TryGetProperty("error", out var e) ? e.GetString() ?? "" : ""));
-        }
-        catch (Exception e) { pending.TrySetException(e); }
-        finally { Interlocked.Decrement(ref core.inFlight); }
+        var root = Parse(json);
+        if (root.TryGetProperty("ok", out var ok)) pending.SetResult(ok);
+        else pending.SetException(new CoreException(root.GetProperty("status").GetInt32(), root.GetProperty("error").GetString()!));
+        Interlocked.Decrement(ref core.inFlight);
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static unsafe void Listen(nint ctx, byte* json)
     {
-        // Nothing may throw into the core's thread.
-        try
-        {
-            var core = (Core)GCHandle.FromIntPtr(ctx).Target!;
-            var root = Parse(json);
-            var ev = new CoreEvent(
-                root.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "",
-                root.TryGetProperty("session", out var s) && s.ValueKind == JsonValueKind.Number ? s.GetUInt64() : 0,
-                root);
-            core.post(() => core.Event?.Invoke(ev));
-        }
-        catch (Exception) { }
+        var core = (Core)GCHandle.FromIntPtr(ctx).Target!;
+        var root = Parse(json);
+        core.post(() => core.Event?.Invoke(new(root.GetProperty("type").GetString()!, root.GetProperty("session").GetUInt64(), root)));
     }
 
     /// Stops the builds first, so the answers in flight arrive before the core closes.
     public unsafe void Dispose()
     {
         if (disposed) return;
-        disposed = true;
         tl_set_listener(handle, null, 0);
-        tl_free(tl_call(handle, "kill_all", null));
+        _ = CallAsync("kill_all");
+        disposed = true;
         SpinWait.SpinUntil(() => Volatile.Read(ref inFlight) == 0, TimeSpan.FromSeconds(5));
         tl_close(handle);
         self.Free();

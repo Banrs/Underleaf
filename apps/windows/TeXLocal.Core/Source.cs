@@ -21,9 +21,8 @@ public sealed unsafe class Source : SafeHandleZeroOrMinusOneIsInvalid
         return true;
     }
 
-    /// Each edit RichEdit makes, once, with no range it said it would change: typing's closers and a snippet's fields
-    /// move with it. Unless mirroring, what was typed in a snippet's field for its other places, from the last; null
-    /// for none, as nearly always.
+    /// Each edit RichEdit makes, once. Answers the edits that copy what was typed in a snippet's field to its other
+    /// places, from the last, unless mirroring them; null for none, as nearly always.
     public TextEdit[]? Edit(int start, int length, string text, bool mirroring = false) =>
         Parse<TextEdit[]>(tl_source_edit(handle, (uint)start, (uint)length, text, Bytes(text), 0, mirroring));
 
