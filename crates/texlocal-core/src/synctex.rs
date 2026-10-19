@@ -104,19 +104,12 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
             });
         }
     };
-    for ln in stdout.split('\n') {
-        let Some((key, value)) = ln.split_once(':') else {
-            continue;
-        };
+    for (key, value) in stdout.split('\n').filter_map(|ln| ln.split_once(':')) {
         if let Some(i) = KEYS.iter().position(|k| *k == key) {
             if i == 0 {
                 finish(std::mem::take(&mut values));
             }
-            values[i] = value
-                .trim()
-                .parse::<f64>()
-                .ok()
-                .filter(|value| value.is_finite());
+            values[i] = value.trim().parse().ok().filter(|v: &f64| v.is_finite());
         }
     }
     finish(values);
@@ -199,15 +192,11 @@ pub fn match_forward(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projects::testing::project;
 
     #[tokio::test]
     async fn sync_without_a_synctex_program_says_it_is_not_available() {
-        let (_dir, root) = project();
-        std::fs::create_dir_all(root.join("build")).unwrap();
-        std::fs::write(root.join("build/main.pdf"), "fake").unwrap();
-        let none = "/nonexistent-dir-for-test";
-        let err = synctex_inverse(&root, 1.0, 10.0, 20.0, None, None, none).await;
+        let pdf = Some(Path::new("live.pdf"));
+        let err = synctex_inverse(Path::new("P"), 1.0, 1.0, 1.0, None, pdf, "/none").await;
         let err = err.unwrap_err();
         assert_eq!(err.status, 404);
         assert!(err.message.contains("not available"), "{err}");
@@ -218,13 +207,10 @@ mod tests {
         let output = "Page:2\nh:10\nv:80\nW:100\nH:9\nPage:1\nh:10\nv:60\nW:100\nH:9\nPage:2\nh:10\nv:40\nW:100\nH:9\nPage:2\nh:10\nv:40\nW:100\nH:9\n";
         let result = parse_forward(output).unwrap();
         assert_eq!((result.page, result.v), (2.0, Some(80.0)));
+        let boxes: Vec<_> = result.matches.iter().map(|r| (r.page, r.v)).collect();
         assert_eq!(
-            result
-                .matches
-                .iter()
-                .map(|r| (r.page, r.v))
-                .collect::<Vec<_>>(),
-            vec![(1.0, Some(60.0)), (2.0, Some(40.0)), (2.0, Some(80.0))]
+            boxes,
+            [(1.0, Some(60.0)), (2.0, Some(40.0)), (2.0, Some(80.0))]
         );
         assert!(result.matches.iter().all(|r| r.matches.is_empty()));
     }
