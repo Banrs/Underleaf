@@ -121,7 +121,9 @@ impl Actor {
             builds.result_edits = builds.built;
             builds.chosen = None;
             let auto = builds.auto;
-            let announce = !auto || builds.error_count != before;
+            // A build Stop ended has nothing to say; one asked for says how it went, and an
+            // automatic one only when its errors changed.
+            let announce = !result.stopped && (!auto || builds.error_count != before);
             let outdated = builds.outdated;
             self.mark_issues();
             let fields = json!({ "auto": auto, "announce": announce, "outdated": outdated, "result": result });

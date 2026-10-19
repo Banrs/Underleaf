@@ -615,15 +615,18 @@ async fn an_edit_heard_of_after_its_build_began_is_in_it() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_failed_build_announces_and_an_automatic_one_only_when_the_errors_change() {
+async fn an_automatic_build_announces_only_when_its_errors_change_and_a_stopped_one_never() {
     let mut rig = Rig::new(false).await;
     rig.ok("compile", json!({ "auto": true })).await;
     rig.fake.finish_build(built(true, vec![issue(1, "a")]));
     rig.ok("compile", json!({ "auto": true })).await;
     rig.fake.finish_build(built(true, vec![issue(2, "b")]));
+    // Asked for, but stopped: there's nothing to say of it.
+    rig.ok("compile", json!({})).await;
+    rig.ok("stop_compile", json!({})).await;
     let finished = rig.of_type("build_finished").await;
     let announced: Vec<bool> = finished.iter().map(|f| f["announce"] == true).collect();
-    assert_eq!(announced, [true, false]);
+    assert_eq!(announced, [true, false, false]);
 }
 
 // MARK: - Changes on disk

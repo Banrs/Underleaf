@@ -159,7 +159,7 @@ Each is `{"type", "session", …}`.
 | `conflict` | `path`, `kind` | `changed`: alert with Save Anyway, Revert, Cancel and no default button; `gone`: alert whose default saves again, Close, Cancel. Answer with `session_resolve`. |
 | `issues` | `path`, `lines: [{line, error, message, short, compact, tokens, others}]` | The gutter and line-end boxes; `[]` clears them (an edit does). `short`: the message on one line; `compact`: for an undefined command, fewer words that keep its name (“Undefined: \\foo”), else null; `tokens`: where the line has that command, `[{start, length}]` in UTF-16 units from the line's start (an edit clears the issues, so they hold). |
 | `build` | `compiling`, `auto`, `outdated` | Compile/Stop button, spinner, “Preview out of date”. Announce “Compiling” for a manual start. |
-| `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce`; sync after compile if `ok` and not `outdated`. |
+| `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce` (a build asked for, or an automatic one whose errors changed; never one Stop ended); sync after compile if `ok` and not `outdated`. |
 | `build_cleaned` | | Clear the PDF unless live. |
 | `tree` | `tree` (as `file_tree`) | Redraw the sidebar. |
 | `files_changed` | `paths` | Listed files changed in place that aren't open (an image shown, say). |
@@ -332,4 +332,6 @@ Every change a host follows since commit d6bee12, in the order made.
   (`session_set_settings`), and `session_open` and `session_rename` answer the ui state. Both
   hosts' tests write their fixtures into the project's folder.
 - `session_state` is gone: no host used it. A session's events say what it holds.
+- `build_finished` no longer sets `announce` for a build Stop ended, which Windows announced as
+  “Build succeeded”; the Mac app announced nothing for it, and still doesn't.
 
