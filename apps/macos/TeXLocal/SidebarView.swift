@@ -9,8 +9,7 @@ struct FilesList: View {
     @FocusState private var listFocused: Bool
 
     var body: some View {
-        // The File Outline's header is the files' bottom bar: they scroll on beneath it, under SwiftUI's hard edge and its
-        // hairline. Its height is the pane's bottom safe area, which follows the header's as it folds.
+        // The File Outline's header is the files' bottom bar, as high as the pane's bottom safe area.
         GeometryReader { geometry in
             // Two lists: one list diffed from the tree to grouped hits and back keeps stale rows.
             Group { if project.search.isSearching { results } else { files } }
@@ -18,16 +17,14 @@ struct FilesList: View {
         }
             // Each search reads every file in the project; it waits for typing to pause.
             .task(id: project.search.query) {
-                if project.search.isSearching { try? await Task.sleep(for: ProjectSearch.debounce) }
+                if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
                 guard !Task.isCancelled else { return }
                 await project.search.run()
                 // The list changes without a word: VoiceOver hears the count, as it does the PDF's find count.
                 guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
                 let count = project.search.hitCount
-                var spoken = count == 0 ? AttributedString(localized: "Not found")
-                    : AttributedString(localized: "^[\(count) match](inflect: true)")
-                spoken.accessibilitySpeechAnnouncementPriority = .low
-                AccessibilityNotification.Announcement(spoken).post()
+                project.notices.announce(count == 0 ? String(localized: "Not found")
+                    : String(AttributedString(localized: "^[\(count) match](inflect: true)").characters), queued: true)
             }
             .onChange(of: app.newEntry, initial: true) { _, entry in
                 guard let entry else { return }
@@ -115,8 +112,7 @@ struct FilesList: View {
     }
 
     private func showRow(_ path: String) {
-        var folder = path.parentFolder
-        while !folder.isEmpty { project.expandedFolders.insert(folder); folder = folder.parentFolder }
+        project.expandedFolders.formUnion(sequence(first: path.parentFolder) { $0.parentFolder }.prefix { !$0.isEmpty })
     }
 
     private var chosenFolder: String {
@@ -229,11 +225,6 @@ struct FilesList: View {
 
     private func commitRename(_ node: TreeNode) {
         guard let name = rename.end(node.path, from: node.name) else { return }
-        // The field refuses a "/" as it is typed; this is for one that got by.
-        guard !name.contains("/") else {
-            app.alert = AppAlert("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
-            return
-        }
         let folder = node.path.parentFolder
         let path = folder.isEmpty ? name : "\(folder)/\(name)"
         Task {
@@ -330,8 +321,7 @@ extension View {
     }
 }
 
-/// The project's sections from its main file, in a pane under `OutlineHeader`, which folds it away. Takes no drops: files go
-/// into the list above.
+/// The main file's sections, under `OutlineHeader`, which folds them away. Takes no drops: files go into the list above.
 struct OutlineList: View {
     let project: ProjectModel
     @Environment(\.sidebarRowSize) private var rowSize
@@ -384,9 +374,8 @@ struct OutlineList: View {
     }
 }
 
-/// The File Outline's header: the system's collapsible sidebar section (so it folds and shows its chevron on hover; its button
-/// gives VoiceOver the state), with no rows, at the files' foot so it stays put over the outline. Its whole row folds and
-/// unfolds. Folded, it lines up with the status bar; open, the first heading follows at the Files section's own spacing.
+/// The system's collapsible sidebar section with no rows, at the files' foot so it stays put over the outline; its whole
+/// row folds and unfolds. Folded, it lines up with the status bar; open, the first heading follows at the Files' spacing.
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
 
@@ -444,10 +433,9 @@ private struct HeadingRow: View, Equatable {
     }
 }
 
-/// The File Outline header's edge on the files: the hard edge where the header is, the header's region the list's own, in
-/// place of the one its accessory gives the pane, which would double it. SwiftUI draws the edge only under a bar that draws
-/// something itself (measured 2026-10-06: not under `Color.clear`, a `Spacer` or a hidden view), so the bar is a fill the
-/// eye can't see.
+/// The header's hard edge on the files, in place of its accessory's, which would double it. SwiftUI draws the edge only
+/// under a bar that draws something itself (measured 2026-10-06: not under `Color.clear`, a `Spacer` or a hidden view),
+/// so the bar is a fill the eye can't see.
 struct HeaderEdge: ViewModifier {
     /// The header's; none, no edge.
     let height: CGFloat
