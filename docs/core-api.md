@@ -143,7 +143,7 @@ Syntax commands (`tl_syntax_call`), JSON in, JSON out:
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
 | `drop_text` | `path`, `kind`, `into?` ("tex") | `{"insert": "\\includegraphics{path}"}`, `{"open": true}` or `null` | What a project file dropped on the editor does. `path` is the file's project path and `kind` its `file_tree` kind (`image`, `pdf`, `tex`, …; a folder has none: `null`, nothing happens). `into` is the kind of the file dropped on. An `image` or `pdf` dropped on a `tex` file inserts `\includegraphics{path}` at the caret, unless TeX can't read the path as written (`%`, `#`, `\` or unpaired braces); any other file opens (`{"open": true}`). The path is written as given. |
-| `heading_styles` | `class?`, `pointSize?` (10), `hasChapters?` | as `session_analyze`'s `headingStyles` | The levels without a project: no `class` gives every level, numbered as a book's with `hasChapters`. |
+| `heading_styles` | | as `session_analyze`'s `headingStyles` | The levels without a project: every level, as the standard classes set and number them. |
 | `legible` | `color`, `background`, `fill`, `increaseContrast?`, `ratio?` | `[r, g, b, a]` | The colour raised to a contrast `ratio` against the background and the current line. Without `ratio`: 4.5, or 7 with `increaseContrast`. With `ratio`, `increaseContrast` is ignored; a PDF find border under Increase Contrast wants `ratio: 3.0`. |
 
 ## Events
@@ -264,8 +264,6 @@ Every change a host follows since commit d6bee12, in the order made.
 - The `build` event is `{compiling, auto, outdated}`.
 - `tl_source_call` no longer answers `indent`, `set_symbols`, `reset_typing` or the commands
   that need no source; `tl_syntax_call` no longer answers `contrast`.
-- texlocal-ffi builds a static library and an rlib only: Windows builds its DLL with
-  `cargo rustc --crate-type cdylib`.
 - **A host numbers its sessions.** `session_open` takes `session`, the host's number for it
   (409 if one of that number is open), and the core no longer holds a new session's events
   back until its answer is handed over: a host listens for the number before the call and
@@ -346,5 +344,8 @@ Every change a host follows since commit d6bee12, in the order made.
 - `set_tex_dir` and `set_texpresso_dir` take `dir` as given, as both hosts send a folder chosen
   or null: a blank one is 400, where it cleared the choice.
 - texlocal-ffi builds a static library alone, its tests the crate's own, so the release
-  profile's LTO reaches the Mac app's archive too.
+  profile's LTO reaches the Mac app's archive too; Windows builds its DLL with
+  `cargo rustc --crate-type cdylib`.
+- `heading_styles` takes no arguments, `math_svg` and `glyph_svg` answer no `baseline`, and
+  `themes` answers each theme's `id` and `title` alone: what the hosts read.
 

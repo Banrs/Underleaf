@@ -15,8 +15,8 @@ Status and decisions for agents working here. `README.md` is the overview and
   snippets, completion, highlighting, themes, the symbol and template catalogue, heading
   styles, the ranges spelling and Writing Tools leave alone, and maths and glyph rendering
   through RaTeX (`math_svg`, `glyph_svg`).
-- **`crates/texlocal-ffi`** is the C ABI, built as a static library (and an rlib for its
-  tests); the Windows app builds its DLL with `cargo rustc --crate-type cdylib`.
+- **`crates/texlocal-ffi`** is the C ABI, built as a static library; the Windows app builds
+  its DLL with `cargo rustc --crate-type cdylib`.
 - **macOS app** (`apps/macos`) is UI only, on the core.
 - **Windows app** (`apps/windows`) is a native WinUI 3 / Fluent app, UI only, on the core;
   `docs/windows.md` has its design and the core gaps it waits on.
