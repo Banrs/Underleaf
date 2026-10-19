@@ -10,7 +10,6 @@ internal static unsafe partial class Native
     const StringMarshalling Utf8 = StringMarshalling.Utf8;
 
     [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial nint tl_open(string dataDir);
-    [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial nint tl_call(nint h, string cmd, string? args);
     [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial void tl_call_async(nint h, string cmd, string? args, delegate* unmanaged[Cdecl]<nint, byte*, void> done, nint ctx);
     [LibraryImport(Lib)] public static partial void tl_set_listener(nint h, delegate* unmanaged[Cdecl]<nint, byte*, void> listener, nint ctx);
     [LibraryImport(Lib)] public static partial void tl_free(nint p);
