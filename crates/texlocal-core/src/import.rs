@@ -674,7 +674,6 @@ mod tests {
         write_settings(&root, &json!({ "mainFile": "ch/main.tex" })).unwrap();
         assert_eq!(put(&service, "ch", b"x", true).unwrap_err().status, 409);
         // However the import spells it, on a volume that ignores case.
-        #[cfg(target_os = "macos")]
         assert_eq!(put(&service, "CH", b"x", true).unwrap_err().status, 409);
         assert!(root.join("ch/main.tex").is_file());
         // Nothing is left beside the project's files by the refused saves.

@@ -208,11 +208,7 @@ pub(crate) fn write_paths(root: &Path, rel: &str) -> Result<(PathBuf, PathBuf), 
 /// A path as the volume compares it: macOS and Windows volumes usually
 /// ignore case.
 pub(crate) fn fold_case(path: &str) -> String {
-    if cfg!(any(target_os = "macos", windows)) {
-        path.to_lowercase()
-    } else {
-        path.to_owned()
-    }
+    path.to_lowercase()
 }
 
 /// What follows the entry `entry` in `path`, both forward-slash project
@@ -285,9 +281,7 @@ pub fn safe_rel_file(root: &Path, rel: &str) -> Result<String, CoreError> {
 /// the dots and spaces at the end it drops).
 pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
     let refused = |c: char| {
-        std::path::is_separator(c)
-            || c == '/'
-            || (cfg!(windows) && (c.is_control() || "<>:\"|?*".contains(c)))
+        std::path::is_separator(c) || (cfg!(windows) && (c.is_control() || "<>:\"|?*".contains(c)))
     };
     let mut clean: String = name
         .trim()
@@ -342,18 +336,13 @@ mod tests {
     #[test]
     fn main_file_guards_compare_names_as_the_volume_does() {
         // On a Mac's or Windows' case-insensitive volume, Main.tex is main.tex.
-        let insensitive = cfg!(any(target_os = "macos", windows));
         for (path, entry, after) in [
             ("chapters/main.tex", "chapters", Some("/main.tex")),
             ("chapters/main.tex", "chapters/main.tex", Some("")),
             ("chapters2/main.tex", "chapters", None),
             ("chapters", "chapters/main.tex", None),
-            ("main.tex", "Main.tex", insensitive.then_some("")),
-            (
-                "Chapters/a.tex",
-                "chapters",
-                insensitive.then_some("/a.tex"),
-            ),
+            ("main.tex", "Main.tex", Some("")),
+            ("Chapters/a.tex", "chapters", Some("/a.tex")),
         ] {
             assert_eq!(after_entry(path, entry), after, "{path} in {entry}");
             assert_eq!(within(path, entry), after.is_some(), "{path} in {entry}");
