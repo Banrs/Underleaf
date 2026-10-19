@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
@@ -58,9 +59,15 @@ public sealed partial class WorkspacePage : Page
         SetSplit(ratio);
         ShowEdge();
         ShowPage();
-        foreach (var layer in (FrameworkElement[])[EditorClip, PdfClip, IssuesClip]) Motion.Round(layer, 7);
-        Motion.Reveal(IssuesPanel, y: 24);
-        Motion.Reveal(BuildFailed, y: -12);
+        // A layer's content scrolls under its rounded corners.
+        foreach (var layer in (FrameworkElement[])[EditorClip, PdfClip, IssuesClip])
+        {
+            var visual = ElementCompositionPreview.GetElementVisual(layer);
+            var shape = visual.Compositor.CreateRoundedRectangleGeometry();
+            shape.CornerRadius = new(7, 7);
+            visual.Clip = visual.Compositor.CreateGeometricClip(shape);
+            layer.SizeChanged += (_, e) => shape.Size = new((float)e.NewSize.Width, (float)e.NewSize.Height);
+        }
         // Wide, the pane is as the reader last left it there; narrow, it opens over the content only when asked.
         SizeChanged += (_, e) => WideTrigger.IsActive = e.NewSize.Width >= 1008;
         Split.RegisterPropertyChangedCallback(SplitView.DisplayModeProperty, (_, _) =>

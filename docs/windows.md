@@ -60,8 +60,7 @@ apps/windows/
       WorkspacePage.Insert.cs (Insert menu, symbol palette)
     Controls/Card.cs (a settings card), Shortcut.cs (accelerators as one attribute), Sizer.cs, RenameFlyout.xaml(.cs),
       PdfView.xaml(.cs), SourceView.xaml(.cs) (typing through the core, completion, maths preview),
-      SourceView.Find.cs (find and replace), Motion.cs (Fluent show and hide motion, rounded layer clips),
-      PagePreview.cs (a template's first page in outline, for Home)
+      SourceView.Find.cs (find and replace), PagePreview.cs (a template's first page in outline, for Home)
     Themes/Generic.xaml        Card's default style, section and group headers, the layer, the sizer's grip, status bar
                                styles, the template previews' bars
   TeXLocal.Tests/              xUnit, against TeXLocal.Core only: the bridge and smoke behaviour
@@ -106,7 +105,7 @@ apps/windows/
 | Pages | `Frame`: Home, Workspace, Settings; back via the title bar's button. The workspace page stays cached (and its session open) under Settings, and is dropped when it goes anywhere else | `NavigationView` switches top-level sections, which this app hasn't |
 | Commands | The `MenuBar` (File, Edit, Insert, View, Build) lives in the workspace page and is lent to the title bar while the page shows (`MainWindow.SetMenu`). Focus that comes back to the bar from a menu, flyout or dialog goes on to where it was before the bar took it (the editor if that is gone), as a Win32 menu gives it back; MenuBar alone leaves it on its item. Under the title bar, a `CommandBar` (`DefaultLabelPosition` Right, dynamic overflow) for the frequent commands, and a second one at the row's end for the PDF toggle and Compile (an accent `Button` in an `AppBarElementContainer`). Checked `AppBarToggleButton`s sit on `SubtleFillColorSecondary` through lightweight resources, as Word's ribbon toggles, so Compile stays the one accent | Paint's and Visual Studio's menus in the title bar; a menu row of its own costs 40 and pushes the commands down a row ("the menu bar icons should not descend") |
 | Navigation pane | `SplitView` (Inline at 1008 and wider, Overlay on acrylic below; the page's width sets a `StateTrigger`, since an `AdaptiveTrigger` misjudged a page first shown narrow) holding Word's navigation pane: an `AutoSuggestBox` ("Search Thesis"), a `SelectorBar` (Files, Outline, Results, always shown) and three `TreeView`s sharing one item template; width by `Sizer`. The pane is first laid out off-screen, where it slides in from, so the `SelectorBar`'s repeater realizes only Files; `PaneOpened` measures it again. An overlaid pane open as the window widens would be light-dismissed after turning inline, so `PaneClosing` is cancelled while inline (a toggle's close sets `IsPaneOpen` and raises none). The outline's selection is set only while it shows, after `UpdateLayout`: a hidden `TreeView` selects a row in name only, and setting `SelectedItem` on one whose items were just replaced crashed the app | NavigationView is not a file tree; Word's navigation pane is tabs over one pane, not stacked panels |
-| Splitters | `Sizer` (a `Grid`: `Border` is sealed), ~70 lines: the 8 gap between layers is the splitter, a 4 × 24 grip (`ControlStrongFillColorDefault`) fading in over 83 ms under the pointer, while dragging and with focus (Outlook's pane gaps); pointer capture, `SizeWestEast`/`SizeNorthSouth` cursor, arrow keys in steps of 12; `Released` says when to save the size | Toolkit 8.2 pulls the 1.6 metapackage; 8.3 is preview. Move when 8.3 is stable |
+| Splitters | `Sizer` (a `Grid`: `Border` is sealed), ~70 lines: the 8 gap between layers is the splitter, a 4 × 24 grip (`ControlStrongFillColorDefault`) shown under the pointer, while dragging and with focus (Outlook's pane gaps); pointer capture, `SizeWestEast`/`SizeNorthSouth` cursor, arrow keys in steps of 12; `Released` says when to save the size | Toolkit 8.2 pulls the 1.6 metapackage; 8.3 is preview. Move when 8.3 is stable |
 | Settings cards | `Card` (Controls/Card.cs), a `ContentControl` with Header, Description and Glyph, its default style in Generic.xaml; the description's presenter is collapsed without one, as SettingsCard's (an empty one fails XAML's measure with E_INVALIDARG) | No Community Toolkit; a `Grid` style can't set columns |
 | Home | Templates: an `ItemsControl` of subtle `Button`s, each a page in Light resources with a `PagePreview` (a `Canvas` drawing the class's first page in bars) and its name under it. Recent: a `ListView` with `ProjectItemStyle` based on `DefaultListViewItemStyle`, under File Explorer's Details headings | A replaced `ListViewItem` template loses the presenter's focus, keyboard and high-contrast handling; a `GridView` of templates would select, which a gallery of actions shouldn't |
 | Accelerators | `Shortcut.Keys`/`Scope` attached properties on the command; a `Scope` naming an element is set in code, since the XAML compiler fails on an `x:Bind` to it. A menu item shows its keys as text and no accelerator tooltip (`KeyboardAcceleratorPlacementMode` Hidden), as Notepad's. Ctrl+Enter is taken in the editor's `PreviewKeyDown`, before RichEdit puts a line break in as well as the accelerator compiling | OEM keys (= - / ,) have no XAML name; property elements cost five lines each |
@@ -117,7 +116,7 @@ apps/windows/
 | Maths, palette | `SvgImageSource` for RaTeX's SVG (`math_svg`, `glyph_svg`), rasterised at the display's scale; the palette a grouped `GridView` in a `Flyout`, as the emoji panel | A font's glyphs miss TeX's spacing and the palette's constructions |
 | Completion | A `ListView` in a `Popup` on the flyout surface (in-app acrylic, flyout stroke, overlay corners, `ThemeShadow`), never focused | A `Flyout` takes the keyboard from the text |
 | Find | Notepad's find bar (below) over `RichEditTextRange.FindText` | No `TextBox` find in `RichEditBox` |
-| Motion | `Motion.Reveal`: implicit show and hide animations (`ElementCompositionPreview`) of Translation and Opacity, timed as under Look and feel; a rounded geometric clip on each layer's composition visual (`Motion.Round`), so content scrolls under the corners | Storyboards for show and hide need a state machine per element; implicit animations run on `Visibility` |
+| Layer corners | A rounded geometric clip on each layer's composition visual, so content scrolls under the corners | The layer's `CornerRadius` rounds only its own border and fill |
 | Issues | `ListView` opened by `ItemClick` (click or Enter); line ends: `InfoBadge` plus Caption (Visual Studio's inline diagnostics); one `InfoBar` for a failed build | A list of InfoBars is too heavy |
 | Pickers | `Microsoft.Windows.Storage.Pickers` with `AppWindow.Id` | No HWND interop |
 | Packages | `Microsoft.WindowsAppSDK.WinUI` 2.3.9, `.Foundation` 2.3.12, `.InteractiveExperiences` 2.1.9 (= 2.5.1 Stable) | The metapackage adds ~60 MB of AI/ML/Widgets |
@@ -210,14 +209,11 @@ formatting only. `AccessKey` on menus, unique within each. F6 / Shift+F6 cycle t
 pane, editor, PDF, issues list or build log. A menu command, or a flyout or dialog opened from one, gives focus
 back to where it was, so typing goes on in the editor.
 
-**Motion.** Fluent's: `DrillInNavigationTransitionInfo` Home → project,
-`SlideNavigationTransitionInfo` (from right) to Settings, theme transitions (staggered entrance on
-Home and Settings, `PopupThemeTransition` on the hand-made popups), `SplitView`'s own pane motion,
-and `Motion.Reveal` for what appears in place (the issues panel rises 24, the failed-build bar and
-the find bar drop 12, both fading): 250 ms in on the decelerate curve (0,0 0,1), 167 ms out on the
-accelerate curve (0.7,0 1,0.5), Fluent's "fast" and "faster" durations. The sizer's grip fades in 83 ms.
-`ProgressRing`/`ProgressBar`, never a custom spinner. Custom motion (`Motion`, the SyncTeX flash,
-the bracket partner) checks `UISettings.AnimationsEnabled` and is skipped without it.
+**Motion.** Only WinUI's own, as Windows Settings animates a page's arrival and nothing per card:
+`Frame` navigation (`DrillInNavigationTransitionInfo` Home → project,
+`SlideNavigationTransitionInfo` from the right to Settings), `SplitView`'s pane, and the stock
+controls' (flyouts, menus, `InfoBar`, `ProgressBar`). The app animates nothing itself: panels, bars
+and popups it shows appear and go at once.
 
 **Stability.** Fixed `Width` 112 for the Compile button (Compile ↔ Stop keeps its size) and 168
 for the style box; fixed `MinWidth` and `Typography.NumeralAlignment="Tabular"` for each status
@@ -332,7 +328,7 @@ above, or open a folder or a .zip.").
   place. Zoom is the `ScrollViewer`'s own (Ctrl+wheel, touchpad, pinch, around the pointer,
   25–400%); it opens at Fit width, and a fit holds on resize until a manual zoom. One menu serves
   the page's right-click and the status bar's zoom: Go to source position (from a page), Zoom in,
-  Zoom out, Fit width, Fit page, 50% to 200%. A SyncTeX mark is an accent box at 30% that fades
+  Zoom out, Fit width, Fit page, 50% to 200%. A SyncTeX mark is an accent box at 30% that goes
   after 2 s. Empty: the empty-state pattern.
 - **Status bar** (Word's and Notepad's): 32 tall on Mica, Caption in
   `TextFillColorSecondaryBrush`, Notepad's divider between the right side's groups. Left: the

@@ -78,9 +78,6 @@ public sealed partial class SourceView : UserControl
         partnerTimer = DispatcherQueue.CreateTimer();
         partnerTimer.Interval = TimeSpan.FromSeconds(1);
         partnerTimer.Tick += (_, _) => HidePartner();
-        if (Motion.Enabled) PartnerBox.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(250) };
-        // VS Code's find widget drops in from the text's top edge.
-        Motion.Reveal(FindBar, y: -12);
         Editor.TextChanging += (_, e) =>
         {
             if (setting || !e.IsContentChanging) return;

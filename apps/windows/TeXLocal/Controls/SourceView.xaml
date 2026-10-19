@@ -200,11 +200,6 @@
 
         <!-- VS Code's hover: the maths the caret is in, drawn by RaTeX, above its line. -->
         <Popup x:Name="MathPopup" Grid.Column="1">
-            <Popup.ChildTransitions>
-                <TransitionCollection>
-                    <PopupThemeTransition />
-                </TransitionCollection>
-            </Popup.ChildTransitions>
             <Border
                 x:Name="MathSurface"
                 Padding="12,8"
@@ -230,11 +225,6 @@
 
         <!-- IntelliSense on the flyout surface: the list never takes the keyboard from the text. -->
         <Popup x:Name="CompletionPopup" Grid.Column="1">
-            <Popup.ChildTransitions>
-                <TransitionCollection>
-                    <PopupThemeTransition />
-                </TransitionCollection>
-            </Popup.ChildTransitions>
             <Border
                 MinWidth="240"
                 MaxWidth="480"
