@@ -9,7 +9,6 @@ using TeXLocal.Controls;
 
 namespace TeXLocal.Pages;
 
-/// Changes apply at once; there is no Save.
 public sealed partial class SettingsPage : Page
 {
     const string Sample = "\\section{Results}\n% Measured at room temperature\nThe energy is $E = mc^2$, as \\cite{einstein} found.";
@@ -77,7 +76,6 @@ public sealed partial class SettingsPage : Page
         ShowPreview();
     }
 
-    /// The sample in the editor's font, coloured as the editor colours it.
     void ShowPreview()
     {
         if (!IsLoaded) return;
