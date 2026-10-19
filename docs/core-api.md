@@ -63,8 +63,8 @@ session_open {id, session, autoCompile} -> {session, root, pdf, tree, settings, 
 session_close {session}                 -> {saved}
 ```
 
-Ids: `session` is a number the host chooses for each session it opens, and no two of its open
-sessions share; `path` is project-relative with `/`.
+Ids: `session` is the host's number for the session (see Threading); `path` is
+project-relative with `/`.
 
 ## Session commands
 
@@ -90,7 +90,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_rename` | `from`, `to` | `{from, to, mainFile, ui}` or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `set_ui_state` answers it) with the entry's paths moved; a host sends its `set_ui_state` first. |
 | `session_set_settings` | `patch` | settings | The keys of `patch` replace the project's; the answer is the settings, as `get_settings`. A new main file stops the build, restarts the preview, builds. |
 | `session_prepare_delete` | `path` | `{ready}` | Saves, refuses the main file (409, its path compared as the volume compares names), then holds saves under `path` until `session_deleted`. Not `ready`: a save is asked about, and the host deletes nothing. The host trashes the item itself (undoable). |
-| `session_deleted` | `path`, `trashed?` (true) | null | Closes documents under `path` and reads the tree again. |
+| `session_deleted` | `path`, `trashed?` (true) | null | Ends the hold on saves under `path`; when `trashed`, closes documents under it and reads the tree again. |
 | `session_live_start` | `window?` | live state | The user's Start. `window: true` leaves the document to TeXpresso's own window (the Settings fallback): no `live_document` or `live_page` comes, and TeXpresso is told no view or caret. The session's own restarts keep the choice. |
 | `session_live_stop` | | live state | |
 | `session_live_view` | `first`, `last` | null | Pages in view, from 0. Send before Start and on scroll. |
@@ -123,8 +123,6 @@ An error is `{"error": message, "status": code}`; the message is for the person 
   “The project stopped after an internal error. Close it and open it again.” The session then
   sends a `document` event with an `error` for each open document (what was typed is saved as
   far as it can be) and is gone: later commands for its number answer 404 “No such session”.
-
-A session's events can come before its `session_open` has answered (see Threading).
 
 ## Commands that fill small gaps
 
@@ -246,8 +244,8 @@ editor's thread.
   gone from the tree restarts it 180 ms later; files changed on disk are sent and rescanned.
   A preview that ends by itself with an error after more than 10 s of running restarts; otherwise
   the error is reported. A stopped run shows `halted` once it has lasted 1 s.
-- **Symbols** (labels and citations) are scanned 150 ms after a save and when the session
-  opens; the session's documents complete from them.
+- **Symbols** (labels and citations) are scanned when the session opens and 150 ms after a
+  save or another app's change; the session's documents complete from them.
 
 ## Changes for hosts (October 2026)
 
@@ -268,9 +266,8 @@ Every change a host follows since commit d6bee12, in the order made.
   (409 if one of that number is open), and the core no longer holds a new session's events
   back until its answer is handed over: a host listens for the number before the call and
   keeps the events that come before the answer. Windows: choose the number in WorkspacePage's
-  two `session_open` call sites and filter events by it from before the call. This removes
-  the cause of Windows dropping a new session's first events (its filter took the number from
-  the answer, whose continuation may run after Listen has posted them).
+  two `session_open` call sites and filter events by it from before the call, so a new
+  session's first events are no longer dropped.
 - `session_open` also answers `settings` and `ui`, so a host need not call `get_settings` and
   `get_ui_state` after it.
 - A build's `result.pdf` (`build_finished`) is an absolute path, as `session_open`'s `pdf` is;
@@ -287,9 +284,8 @@ Every change a host follows since commit d6bee12, in the order made.
   `session` with `live: true`. Windows: nothing to change (it has no live preview yet).
 - `session_live_status` is gone, and the `live` event has no `revision`: a host says with
   `session_live_log {shown}` whether it shows the Live Preview Log, and while it does, each
-  `live` event carries the log's whole text as `log` (null otherwise), as the Mac app put it
-  together: what went wrong, TeXpresso's error, TeX's log and its output. An `alert`, which
-  opens the log, carries it too. Windows: nothing to change.
+  `live` event carries the log's whole text as `log` (null otherwise), as does an `alert`.
+  Windows: nothing to change.
 - `tl_source_edit` takes `changing` (a `TlRange *`, NULL for none) and `mirroring`, follows the
   edit itself and answers a snippet's mirror edits (NULL for none, which is every edit outside a
   snippet; free one with `tl_free`). `tl_source_select` is new. `tl_source_call` no longer
@@ -331,8 +327,8 @@ Every change a host follows since commit d6bee12, in the order made.
   (`session_set_settings`), and `session_open` and `session_rename` answer the ui state. Both
   hosts' tests write their fixtures into the project's folder.
 - `session_state` is gone: no host used it. A session's events say what it holds.
-- `build_finished` no longer sets `announce` for a build Stop ended, which Windows announced as
-  “Build succeeded”; the Mac app announced nothing for it, and still doesn't.
+- `build_finished` no longer sets `announce` for a build Stop ended (Windows announced it as
+  “Build succeeded”).
 - `live_document` has no `version` or `serial`, and `live_page` no `serial`: events come in
   order, and neither host read them.
 - A host opens one session of a project at a time, as both do: a session's Live Preview no

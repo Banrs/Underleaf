@@ -18,11 +18,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
-# zip's own `deflate` feature brings zopfli as well, which it uses only for
-# levels past 9; the export writes at the default level, 6, which flate2
-# writes either way. zip's `flate2` feature leaves flate2 with no backend, so
-# the core names flate2, which no code uses, only to choose the one `deflate`
-# would have: without its line, flate2 fails to build.
+# zip's `deflate` feature also brings zopfli, used only past level 9, and the
+# export writes level 6. Without it flate2 has no backend, so flate2 is named
+# here, used by no code, only to choose one: without its line it fails to build.
 zip = { version = "2", default-features = false, features = ["chrono", "deflate-flate2", "flate2"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 # The editors' maths as SVG (syntax/render.rs).

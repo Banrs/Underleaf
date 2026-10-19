@@ -15,7 +15,7 @@ use crate::paths::within;
 use crate::projects::TreeNode;
 
 /// A path the system said changed. Structural: made, removed or renamed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct Change {
     pub path: PathBuf,
     pub structural: bool,
@@ -55,7 +55,7 @@ fn changes(event: notify::Event) -> Vec<Change> {
 }
 
 /// The project's entries as last listed (`projects::file_tree`).
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Default, PartialEq, Eq)]
 pub(crate) struct TreeIndex {
     pub files: HashSet<String>,
     pub folders: HashSet<String>,
@@ -98,7 +98,7 @@ pub(crate) struct Meaning {
 }
 
 /// `root`'s path for `path`, with forward slashes; "" for the root itself.
-pub(crate) fn relative(root: &Path, path: &Path) -> Option<String> {
+fn relative(root: &Path, path: &Path) -> Option<String> {
     let rest = path.strip_prefix(root).ok()?;
     let parts: Option<Vec<&str>> = rest.components().map(|c| c.as_os_str().to_str()).collect();
     Some(parts?.join("/"))
@@ -153,11 +153,10 @@ fn listed_as_before(root: &Path, rel: &str, index: &TreeIndex) -> bool {
 /// case leaves a file at the old spelling on a volume that ignores case.
 fn is_file_spelt(root: &Path, rel: &str) -> bool {
     let path = root.join(rel);
-    let is_file = fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file());
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return false;
     };
-    is_file
+    fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file())
         && fs::read_dir(parent).is_ok_and(|entries| {
             entries
                 .flatten()
