@@ -1,12 +1,7 @@
 import SwiftUI
 
-/// The status bar's height, which the File Outline's folded header beside it shares, and the build panel's console bar's
-/// insets.
-enum BarMetrics {
-    static let height: CGFloat = 36
-    static let consoleLeading: CGFloat = 12
-    static let consoleTrailing: CGFloat = 17
-}
+/// The status bar's height, which the File Outline's folded header beside it shares.
+enum BarMetrics { static let height: CGFloat = 36 }
 
 /// Page uses PDFKit numbering, which can differ from LaTeX.
 struct StatusBar: View {
@@ -21,8 +16,6 @@ struct StatusBar: View {
             content(.short).labelStyle(.iconOnly)
         }
         .barRow()
-        // Its ground and line are AppKit's hard scroll edge under each pane (`WorkspaceController.buildStatusBar`), the line
-        // level with the File Outline header's beside it (`HeaderEdge`).
         // Clicks between its controls stay with the bar, not the text or pages scrolled beneath it.
         .contentShape(.rect)
         .monospacedDigit()
