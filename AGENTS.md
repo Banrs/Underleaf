@@ -173,7 +173,8 @@ what is there, and points the Start menu's TeXLocal shortcut at it.
 - The Windows app is not finished (no live preview yet); it follows `docs/core-api.md` and is
   ported to its "Changes for hosts (October 2026)". `docs/audit-2026-10.md` lists what it lacks
   against the Mac, surface by surface, and why. Its shell redesign (`claude/windows-fluent`) is
-  not merged.
+  not merged. `docs/handoff.md` lists what the October concise pass left, the redesign's files
+  and the Mac's unchecked 27.2 workarounds among it.
 - The Mac still calls the core on the main thread (`Core.now`) for `locate` while files are
   dragged over the editor or the tree, and for `kill_all` at quit; core-api.md allows only
   `session_outline_current` there.
