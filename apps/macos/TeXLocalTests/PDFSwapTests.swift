@@ -33,13 +33,13 @@ struct PDFSwapTests {
 
     /// A new document would show only PDFKit's background until its pages draw; the pages go into the one showing
     /// instead. What reaches the screen is the on-screen checks' to see: a view's cached display has none of PDFKit's tiles.
-    @Test(arguments: [1, 3]) func aRebuildKeepsTheDocumentShowing(rebuilds: Int) throws {
+    @Test func aRebuildKeepsTheDocumentShowing() throws {
         let controller = PDFController(), view = controller.view
         view.setFrameSize(NSSize(width: 600, height: 500))
         controller.show(try document(["first"]))
         let shown = try #require(view.document)
         // Back to back, as live preview writes them while typing.
-        for index in 0..<rebuilds {
+        for index in 0..<3 {
             controller.show(try document(["rebuild\(index)"]))
             #expect(view.document === shown && text(view) == ["rebuild\(index)"] && controller.pageCount == 1)
         }
