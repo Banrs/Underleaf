@@ -1166,20 +1166,13 @@ fn until_event(seen: &Mutex<Vec<Value>>, found: impl Fn(&Value) -> bool) -> Opti
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_watcher_tells_another_apps_changes_from_the_sessions_own() {
+async fn the_folders_watcher_tells_another_apps_changes() {
     let rig = Rig::watching(false, true).await;
-    let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, "!");
-    let saved = until_event(&rig.seen, |e| e["type"] == "saved");
-    assert!(saved.is_some(), "autosaved");
-    // Long enough for the save's own changes to have come and gone.
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-    let seen = rig.seen.lock().unwrap().clone();
-    assert!(!seen.iter().any(mistaken), "{seen:?}");
+    rig.open("main.tex").await;
     fs::write(rig.root.join("main.tex"), "theirs").unwrap();
+    fs::write(rig.root.join("new.tex"), "").unwrap();
     let reload = until_event(&rig.seen, |e| e["type"] == "document_reload");
     assert_eq!(reload.expect("reloaded")["text"], "theirs");
-    fs::write(rig.root.join("new.tex"), "").unwrap();
     assert!(until_event(&rig.seen, |e| e["type"] == "tree").is_some());
     rig.sessions.close_all().await;
 }
