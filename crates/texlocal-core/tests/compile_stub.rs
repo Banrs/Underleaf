@@ -96,7 +96,7 @@ fn build(service: &Arc<Service>, id: &'static str) -> JoinHandle<CompileResult> 
 async fn waits(mut build: Pin<&mut impl Future>) {
     std::future::poll_fn(|cx| match build.as_mut().poll(cx) {
         std::task::Poll::Pending => std::task::Poll::Ready(()),
-        std::task::Poll::Ready(_) => panic!("replacement did not wait for the first build"),
+        std::task::Poll::Ready(_) => panic!("a build did not wait for the one before"),
     })
     .await;
 }
@@ -255,82 +255,34 @@ async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
 /// from then it builds at once.
 const SLOW_UNTIL_FAST: &str = "if [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else touch started; sleep 20; fi\n";
 
+/// A build asked for while another runs waits for it to end, though a build
+/// waiting before it is cancelled; and one still waiting when Stop comes never
+/// starts.
 #[tokio::test]
-async fn a_new_compile_supersedes_the_in_flight_one_and_a_third_the_replacement_before_it_spawns() {
-    {
-        let (_tmp, root, mgr) = setup(SLOW_UNTIL_FAST);
-        let mgr = Arc::new(mgr);
-
-        let first = in_flight(&mgr, &root);
-        appears(&root.join("started"), "first latexmk did not start").await;
-        fs::write(root.join("fast"), "").unwrap();
-
-        let second = compile(&mgr, &root).await;
-        let first = first.await.unwrap();
-
-        assert!(second.ok, "superseding compile should succeed");
-        assert!(!first.ok, "superseded compile should be killed");
-        assert_eq!(first.pdf, None);
-        let pdf = fs::read_to_string(root.join("build/main.pdf")).unwrap();
-        assert_eq!(pdf, "new");
-    }
-    {
-        let (_tmp, root, mgr) = setup(
-            r#"case "$*" in
-  *-lualatex*) mkdir -p build; printf 'third' > build/main.pdf; exit 0 ;;
-  *-xelatex*) touch replacement_started; sleep 20 ;;
-  *) touch started; sleep 20 ;;
-esac
-"#,
-        );
-        let mgr = Arc::new(mgr);
-        let first = in_flight(&mgr, &root);
-        appears(&root.join("started"), "first latexmk did not start").await;
-        // Each build reads the engine as it is asked for, which tells the three apart.
-        let engine = |engine: &str| write_settings(&root, &json!({ "engine": engine })).unwrap();
-        engine("xelatex");
-        let mut second = Box::pin(compile(&mgr, &root));
-        // Poll just until it waits on the first build, then register the third
-        // without letting the first release the build directory in between.
-        waits(second.as_mut()).await;
-        engine("lualatex");
-
-        let (third, second, first) = tokio::time::timeout(Duration::from_secs(5), async {
-            let (third, second, first) = tokio::join!(compile(&mgr, &root), second, first);
-            (third, second, first.unwrap())
-        })
-        .await
-        .expect("compile generations deadlocked");
-        assert!(third.ok);
-        assert!(!second.ok);
-        assert!(!first.ok);
-        assert!(!root.join("replacement_started").exists());
-        let pdf = fs::read_to_string(root.join("build/main.pdf")).unwrap();
-        assert_eq!(pdf, "third");
-    }
-}
-
-#[tokio::test]
-async fn a_cancelled_waiting_replacement_does_not_let_the_next_build_overtake_its_predecessor() {
+async fn a_build_waits_for_the_one_running_and_a_stop_ends_one_waiting() {
     let (_tmp, root, mgr) = setup(
-        "if [ -f fast ]; then\n  if kill -0 \"$(cat first.pid)\" 2>/dev/null; then touch overlap; fi\n  mkdir -p build; printf 'new' > build/main.pdf\nelse\n  echo $$ > first.pid\n  sleep 20\nfi\n",
+        "if [ -f fast ]; then\n  if kill -0 \"$(cat first.pid)\" 2>/dev/null; then touch overlap; fi\n  echo x >> runs\n  mkdir -p build; printf 'new' > build/main.pdf\nelse\n  echo $$ > first.pid\n  sleep 20\nfi\n",
     );
     let mgr = Arc::new(mgr);
     let first = in_flight(&mgr, &root);
     appears(&root.join("first.pid"), "first latexmk did not start").await;
-
-    let mut replacement = Box::pin(compile(&mgr, &root));
-    waits(replacement.as_mut()).await;
-    drop(replacement);
+    let mut cancelled = Box::pin(compile(&mgr, &root));
+    waits(cancelled.as_mut()).await;
+    drop(cancelled);
+    let mut waiting = Box::pin(compile(&mgr, &root));
+    waits(waiting.as_mut()).await;
 
     fs::write(root.join("fast"), "").unwrap();
-    let third = tokio::time::timeout(Duration::from_secs(5), compile(&mgr, &root))
-        .await
-        .expect("third build waited forever");
-    let first = first.await.unwrap();
-    assert!(third.ok);
-    assert!(first.stopped);
-    assert!(!root.join("overlap").exists(), "third overtook the first");
+    assert!(mgr.stop(&root));
+    let (next, waiting, first) = tokio::time::timeout(Duration::from_secs(5), async {
+        let (next, waiting, first) = tokio::join!(compile(&mgr, &root), waiting, first);
+        (next, waiting, first.unwrap())
+    })
+    .await
+    .expect("a build waited forever");
+    assert!(first.stopped && waiting.stopped && next.ok);
+    assert_eq!(fs::read_to_string(root.join("runs")).unwrap(), "x\n");
+    assert!(!root.join("overlap").exists(), "a build overtook the first");
 }
 
 #[tokio::test]
