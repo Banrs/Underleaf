@@ -30,6 +30,5 @@ internal static unsafe partial class Native
     [LibraryImport(Lib)] public static partial void tl_source_free(nint s);
     [LibraryImport(Lib, StringMarshalling = Utf8)] public static partial nint tl_syntax_call(string cmd, string args);
 
-    /// A text's length as the calls that take one count it: in UTF-8 bytes.
     public static nuint Bytes(string text) => (nuint)Encoding.UTF8.GetByteCount(text);
 }

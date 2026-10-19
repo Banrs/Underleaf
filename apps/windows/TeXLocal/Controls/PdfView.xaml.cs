@@ -17,12 +17,10 @@ using Windows.UI.ViewManagement;
 
 namespace TeXLocal.Controls;
 
-/// The build's PDF through Windows.Data.Pdf, which renders pages and nothing else. The pages keep
-/// their size in DIPs and the ScrollViewer zooms them; once the view settles, the pages near it are
-/// drawn again at the pixels they're shown at.
+/// The pages keep their size in DIPs and the ScrollViewer zooms them; once the view settles, the
+/// pages near it are drawn again at the pixels they're shown at.
 public sealed partial class PdfView : UserControl
 {
-    /// A page's paper, its rendering, the canvas for its SyncTeX box, and its size in DIPs.
     sealed record Page(Border Box, Image Image, Canvas Marks, Size Size);
 
     enum Fit { None, Width, Page }
@@ -76,7 +74,6 @@ public sealed partial class PdfView : UserControl
     public double Zoom => Scroller.ZoomFactor;
     public MenuFlyout ZoomMenu => Menu;
 
-    /// The page at the view's vertical centre, from 1.
     public int CurrentPage => pages.Length == 0 ? 0 : PageAt(tops, (Scroller.VerticalOffset + Scroller.ViewportHeight / 2) / Zoom) + 1;
 
     /// The last page whose top is at or above a y in the content's DIPs.
@@ -86,7 +83,6 @@ public sealed partial class PdfView : UserControl
         return Math.Clamp(i < 0 ? ~i - 1 : i, 0, tops.Length - 1);
     }
 
-    /// Draws the pages in a view from a content y, and one each side, at the zoom's pixels, and releases those further away.
     async Task Draw(PdfDocument doc, Page[] on, double[] at, double y, double zoom)
     {
         var (first, last) = (Math.Max(PageAt(at, y) - 1, 0), Math.Min(PageAt(at, y + Scroller.ViewportHeight / zoom) + 1, at.Length - 1));
@@ -157,7 +153,7 @@ public sealed partial class PdfView : UserControl
         View(zoom, fit == Fit.None ? null : 0, y);
     }
 
-    /// A page's paper, which the panel's resources style. Its own coordinates are its DIPs at any zoom.
+    /// Its own coordinates are its DIPs at any zoom.
     Page Paper(int number, Size size)
     {
         var image = new Image { Stretch = Stretch.Fill };
@@ -194,7 +190,6 @@ public sealed partial class PdfView : UserControl
         if (pages.Length == 0) return;
         fit = Fit.None;
         var zoom = Math.Clamp(factor, Scroller.MinZoomFactor, Scroller.MaxZoomFactor);
-        // About the view's centre across.
         var centre = Scroller.TransformToVisual(Pages).TransformPoint(new Point(Scroller.ViewportWidth / 2, 0)).X;
         View(zoom, Math.Max(centre * zoom - Scroller.ViewportWidth / 2, 0));
     }
@@ -204,7 +199,6 @@ public sealed partial class PdfView : UserControl
     /// The page at the view's centre, whole, with its top edge at the view's.
     public void FitPage() => Refit(Fit.Page, pages.Length == 0 ? null : tops[CurrentPage - 1] - Edge);
 
-    /// The zoom at which the widest page fills the view across, and with Fit page the tallest one down.
     double FitZoom(Page[] on)
     {
         var zoom = Scroller.ViewportWidth / (on.Max(p => p.Size.Width) + 2 * Edge);
@@ -219,7 +213,7 @@ public sealed partial class PdfView : UserControl
         if (fit != Fit.None && pages.Length > 0 && Scroller.ViewportWidth > 0) View(FitZoom(pages), 0, y);
     }
 
-    /// Zooms with a content y at the top of the view: by default the one there now.
+    /// y: the content's at the top of the view, by default the one there now.
     void View(double zoom, double? across, double? y = null) =>
         Scroller.ChangeView(across, (y ?? Scroller.VerticalOffset / Zoom) * zoom, (float)zoom, true);
 

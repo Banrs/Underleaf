@@ -46,7 +46,6 @@
                         <Setter Property="BorderThickness" Value="1" />
                         <Setter Property="HorizontalAlignment" Value="Center" />
                     </Style>
-                    <!--  The SyncTeX box.  -->
                     <SolidColorBrush x:Key="SyncFill" Opacity="0.3" Color="{ThemeResource SystemAccentColor}" />
                     <Style TargetType="Rectangle">
                         <Setter Property="Fill" Value="{StaticResource SyncFill}" />

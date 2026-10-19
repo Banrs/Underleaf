@@ -86,7 +86,6 @@
                         DisplayMemberPath="Title"
                         SelectedValuePath="Id" />
                 </controls:Card>
-                <!-- The editor's own surface, as Terminal draws its preview. -->
                 <Border
                     Padding="16"
                     Background="{ThemeResource LayerFillColorDefaultBrush}"
@@ -102,10 +101,10 @@
                     </Grid>
                 </Border>
                 <controls:Card Description="Typing (, [ or { adds its partner" Glyph="&#xE943;" Header="Close brackets automatically">
-                    <ToggleSwitch x:Name="PairSwitch" MinWidth="0" AutomationProperties.Name="Close brackets automatically" IsOn="{x:Bind app:Prefs.AutoPair, Mode=TwoWay}" />
+                    <ToggleSwitch MinWidth="0" AutomationProperties.Name="Close brackets automatically" IsOn="{x:Bind app:Prefs.AutoPair, Mode=TwoWay}" />
                 </controls:Card>
                 <controls:Card Description="When off, press Ctrl+Space to see suggestions" Glyph="&#xE8FD;" Header="Suggest completions while typing">
-                    <ToggleSwitch x:Name="CompleteSwitch" MinWidth="0" AutomationProperties.Name="Suggest completions while typing" IsOn="{x:Bind app:Prefs.AutoComplete, Mode=TwoWay}" />
+                    <ToggleSwitch MinWidth="0" AutomationProperties.Name="Suggest completions while typing" IsOn="{x:Bind app:Prefs.AutoComplete, Mode=TwoWay}" />
                 </controls:Card>
 
                 <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="About" />
