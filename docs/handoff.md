@@ -4,6 +4,29 @@ The audit branch (`claude/audit-cuts`, PR #53) gave the repo a pass under AGENTS
 code" rules, the Windows shell's redesign included; `docs/audit-2026-10.md` says what it cut.
 These parts it didn't cut, and why.
 
+## On the Mac, first
+
+Start from PR #53's branch (from `main` once it merges):
+
+```sh
+git fetch origin && git switch claude/audit-cuts
+zsh tools/qa/typecheck.sh
+xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal   TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev test
+```
+
+1. **Check the pass on screen.** The pass edited the Swift without a compiler. CI built it and ran
+   its tests, but nobody has used the app since. Go through a project with the QA driver
+   (`tools/qa/README.md`), on its QA copy:
+   - typing and completion;
+   - Aa, Math and Insert, and the maths preview;
+   - Compile, the build panel and its issues;
+   - SyncTeX both ways;
+   - Live Preview;
+   - renaming and deleting in the sidebar, and Home.
+2. **Test the 27.2 workarounds.** Turn each one below off, and remove it where its bug no longer shows
+   on the current macOS.
+3. **Then the rest:** the native replacements below, and the Mac items under "Kept as too risky".
+
 ## Needs a Mac on screen
 
 No Swift compiler or screen was on hand, so these stayed. Each names a macOS 27.2 bug with no

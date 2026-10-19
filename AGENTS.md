@@ -118,14 +118,22 @@ without a capture of its bug on the current OS is a candidate for removal.
 
 ## Writing code
 
-Agents' code runs long and erodes with each change (SlopCodeBench, arXiv 2603.24755), and
-human code erodes more slowly. So keep a change to what it needs:
+Agents' code runs long and erodes with each change, and human code erodes more slowly
+(`docs/agent-code.md` has the studies). So keep a change to what it needs:
 - Delete before adding. Reuse what exists (grep first). A new helper, option or type needs two
   callers.
 - No checks for states that can't happen, no wrappers that only forward, no single-use variables.
 - Comments say why, never what, nor what the code used to do.
 - Before committing, read the whole diff and remove what the change doesn't need.
 - Test each rule once, deterministically, at one level.
+
+Commits and agents:
+- A commit's subject is a sentence saying what is now true, with no closing full stop and no AI
+  attribution trailer.
+- Follow-on work goes on the open PR's branch; ask the owner before opening another PR.
+- Pick a subagent's model by its task: Haiku for mechanical work, Sonnet at medium for ordinary
+  work, Opus at medium or high for refactors across files and for Swift edited where it can't be
+  compiled.
 
 ## Testing
 
