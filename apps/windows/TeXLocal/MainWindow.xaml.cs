@@ -158,11 +158,18 @@ public sealed partial class MainWindow : Window
     void Fit()
     {
         var now = GetDpiForWindow(Win32Interop.GetWindowFromWindowId(AppWindow.Id)) / 96.0;
-        if (now == scale) return;
-        scale = now;
-        var presenter = (OverlappedPresenter)AppWindow.Presenter;
-        presenter.PreferredMinimumWidth = (int)(800 * scale);
-        presenter.PreferredMinimumHeight = (int)(500 * scale);
+        if (now != scale)
+        {
+            scale = now;
+            var presenter = (OverlappedPresenter)AppWindow.Presenter;
+            presenter.PreferredMinimumWidth = (int)(800 * scale);
+            presenter.PreferredMinimumHeight = (int)(500 * scale);
+        }
+        // WinUI's TitleBar (2.3.9) reserves the caption buttons' inset, which is in pixels, as if it were DIPs, so above
+        // 100% the gear stands a gap short of Minimise (docs/handoff.md): the bar reaches past the window's edge by the
+        // difference. No setting of the control's changes it.
+        var inset = AppWindow.TitleBar.RightInset;
+        Bar.Margin = new Thickness(0, 0, inset / scale - inset, 0);
     }
 
     [LibraryImport("user32.dll")]
