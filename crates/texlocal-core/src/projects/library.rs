@@ -96,18 +96,10 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
     Ok(projects)
 }
 
-pub fn create_project(
-    data_dir: &Path,
-    name: &str,
-    template: &str,
-) -> Result<ProjectInfo, CoreError> {
-    create_project_with_engine(data_dir, name, template, None)
-}
-
-/// `create_project`, set to build with `engine` (a bad one is a 400). The
+/// A project from `template`, set to build with `engine` if given (a bad one is a 400). The
 /// project is made whole or not at all: its files and settings are written in
 /// a hidden folder and moved into the library in one step.
-pub fn create_project_with_engine(
+pub fn create_project(
     data_dir: &Path,
     name: &str,
     template: &str,
@@ -375,7 +367,7 @@ mod tests {
     fn a_project_is_made_with_its_engine_or_not_at_all() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path();
-        let made = create_project_with_engine(data, "Thesis", "report", Some("lualatex"));
+        let made = create_project(data, "Thesis", "report", Some("lualatex"));
         let made = made.unwrap();
         assert_eq!(
             (made.id.as_str(), made.main_file.as_str()),
@@ -387,11 +379,13 @@ mod tests {
         );
 
         // A refusal leaves nothing behind, not even the folder it was built in.
-        let refused = create_project_with_engine(data, "Other", "blank", Some("word"));
+        let refused = create_project(data, "Other", "blank", Some("word"));
         assert_eq!(refused.unwrap_err().status, 400);
         assert_eq!(names_in(data), ["Thesis"]);
         assert_eq!(
-            create_project(data, ".hidden", "blank").unwrap_err().status,
+            create_project(data, ".hidden", "blank", None)
+                .unwrap_err()
+                .status,
             400
         );
         assert_eq!(names_in(data), ["Thesis"]);
@@ -425,7 +419,7 @@ mod tests {
         let running = staged(".texlocal-staging-running", 23 * 60 * 60);
         let other = staged(".hidden", 25 * 60 * 60);
 
-        create_project(data, "P", "blank").unwrap();
+        create_project(data, "P", "blank", None).unwrap();
         assert!(!crashed.exists());
         assert!(running.exists() && other.exists());
         assert!(data.join("P/main.tex").exists());
@@ -439,7 +433,7 @@ mod tests {
         let data = dir.path();
         let date = std::time::SystemTime::now() - Duration::from_secs(3600);
         for name in ["b", "c", "a"] {
-            create_project(data, name, "blank").unwrap();
+            create_project(data, name, "blank", None).unwrap();
             for entry in [".", "main.tex", ".texlocal.json"] {
                 let file = fs::File::open(data.join(name).join(entry)).unwrap();
                 file.set_modified(date).unwrap();

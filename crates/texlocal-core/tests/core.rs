@@ -31,7 +31,7 @@ fn data_dir() -> TempDir {
 /// A library holding one blank project, `name`, and the project's folder.
 fn project(name: &str) -> (TempDir, PathBuf) {
     let data = data_dir();
-    create_project(data.path(), name, "blank").unwrap();
+    create_project(data.path(), name, "blank", None).unwrap();
     let root = project_root(data.path(), name).unwrap();
     (data, root)
 }
@@ -166,7 +166,7 @@ fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
 
     rename_project(data.path(), "case-test", "Case-Test", |_| Ok(())).unwrap();
     assert_eq!(names_in(data.path()), ["Case-Test"]);
-    create_project(data.path(), "second", "blank").unwrap();
+    create_project(data.path(), "second", "blank", None).unwrap();
     let err = rename_project(data.path(), "second", "Case-Test", |_| panic!("moved")).unwrap_err();
     assert_eq!(err.status, 409);
 }
@@ -179,7 +179,7 @@ fn a_project_made_while_a_rename_is_under_way_gets_another_name() {
     fs::write(root.join("main.tex"), "the user's").unwrap();
     let mut made = None;
     let renamed = rename_project(data.path(), "X", "R", |_| {
-        made = Some(create_project(data.path(), "R", "blank")?.name);
+        made = Some(create_project(data.path(), "R", "blank", None)?.name);
         Ok(())
     });
     let renamed = renamed.unwrap_or_else(|e| panic!("rename: {} {}", e.status, e.message));
@@ -535,7 +535,7 @@ fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
 #[test]
 fn a_tools_input_path_maps_back_to_the_project_file() {
     let (data, root) = project("P");
-    create_project(data.path(), "PQ", "blank").unwrap();
+    create_project(data.path(), "PQ", "blank", None).unwrap();
     create_file(&root, "ch/intro.tex", false).unwrap();
     let under = |path: &str| format!("{}{path}", root.display());
     for (input, rel) in [
@@ -554,7 +554,7 @@ fn a_tools_input_path_maps_back_to_the_project_file() {
 fn a_new_project_never_lands_on_an_existing_entry_even_a_dangling_link() {
     let data = data_dir();
     std::os::unix::fs::symlink(data.path().join("gone"), data.path().join("linked")).unwrap();
-    let info = create_project(data.path(), "linked", "blank").unwrap();
+    let info = create_project(data.path(), "linked", "blank", None).unwrap();
     assert_eq!(info.id, "linked 2");
     assert!(!data.path().join("gone").exists());
 }
@@ -563,14 +563,17 @@ fn a_new_project_never_lands_on_an_existing_entry_even_a_dangling_link() {
 fn new_projects_are_named_sanitized_and_stocked_with_a_template() {
     let data = data_dir();
     for bad in [".hidden", "   "] {
-        fails_with(create_project(data.path(), bad, "blank"), "Invalid name");
+        fails_with(
+            create_project(data.path(), bad, "blank", None),
+            "Invalid name",
+        );
     }
     // A taken name gets the first free number, so a second Untitled works.
     for want in ["Untitled", "Untitled 2", "Untitled 3"] {
-        let made = create_project(data.path(), "Untitled", "blank").unwrap();
+        let made = create_project(data.path(), "Untitled", "blank", None).unwrap();
         assert_eq!(made.id, want);
     }
-    let info = create_project(data.path(), "  Thesis  ", "report").unwrap();
+    let info = create_project(data.path(), "  Thesis  ", "report", None).unwrap();
     assert_eq!((info.id.as_str(), info.name.as_str()), ("Thesis", "Thesis"));
     assert_eq!(info.main_file, "main.tex");
     let root = data.path().join("Thesis");

@@ -21,12 +21,13 @@ use crate::error::CoreError;
 pub use files::{RenameResult, create_file, create_free, rename_entry};
 pub(crate) use files::{Trash, copy_paths, discard, discard_replaced, write_creating};
 pub use library::{
-    Located, ProjectInfo, UNTITLED, create_project, create_project_with_engine, free_project_name,
-    list_projects, locate, rename_project,
+    Located, ProjectInfo, UNTITLED, create_project, free_project_name, list_projects, locate,
+    rename_project,
 };
 pub(crate) use library::{Staging, guess_main_file};
 pub use search::{SearchGroup, SearchHit, search_groups, search_project};
 pub use symbols::{SymbolScan, Symbols};
+pub(crate) use tree::is_text;
 pub use tree::{TreeNode, file_kind, file_tree};
 
 /// A vanished or unreadable entry is skipped without failing a project scan.

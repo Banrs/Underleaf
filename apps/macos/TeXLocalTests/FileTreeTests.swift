@@ -11,11 +11,11 @@ extension ProjectFlowTests {
         #expect(changes == 1 && tree.node(at: info.mainFile)?.isDirectory == false)
         await tree.reload()
         #expect(changes == 1)
-        try await Core.shared.call("write_file", ["id": info.id, "path": "notes.tex", "text": "x"])
+        try info.write("x", to: "notes.tex")
         await tree.reload()
         #expect(changes == 2 && tree.node(at: "notes.tex") != nil)
         tree.close()
-        try await Core.shared.call("write_file", ["id": info.id, "path": "more.tex", "text": "x"])
+        try info.write("x", to: "more.tex")
         await tree.reload()
         #expect(changes == 2 && tree.node(at: "more.tex") == nil)
     }

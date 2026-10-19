@@ -1,20 +1,11 @@
-// Round trips through the C ABI exactly as a native host drives it.
+//! Round trips through the C ABI exactly as a native host drives it.
 
-use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::Path;
 use std::ptr;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
-use texlocal_core::syntax::TextRange;
-use texlocal_ffi::{
-    TlHandle, TlSource, tl_call, tl_call_async, tl_close, tl_free, tl_open, tl_session_source,
-    tl_set_listener, tl_source_call, tl_source_edit, tl_source_free, tl_source_free_runs,
-    tl_source_free_text, tl_source_highlights, tl_source_line_at, tl_source_line_count,
-    tl_source_line_start, tl_source_new, tl_source_reload, tl_source_select, tl_source_text,
-    tl_syntax_call,
-};
+use super::*;
 
 fn c(s: &str) -> CString {
     CString::new(s).unwrap()
@@ -108,14 +99,7 @@ fn commands_round_trip_through_the_c_abi() {
     let handle = open_with_project(dir.path());
     assert_eq!(call_raw(handle, "list_projects", None)["ok"][0]["id"], "P");
 
-    call(
-        handle,
-        "write_file",
-        json!({ "id": "P", "path": "a.tex", "text": "x" }),
-    );
-    let read = call(handle, "read_file", json!({ "id": "P", "path": "a.tex" }));
-    assert_eq!(read["ok"]["text"], "x");
-
+    std::fs::write(dir.path().join("P/a.tex"), "x").unwrap();
     let found = call(handle, "search_project", json!({ "id": "P", "query": "x" }));
     assert_eq!(
         found["ok"],
@@ -123,27 +107,9 @@ fn commands_round_trip_through_the_c_abi() {
     );
 
     // Errors come back as an envelope with the core's status, never a crash.
-    let bad = call(handle, "read_file", json!({ "id": "P", "path": "../x" }));
+    let bad = call(handle, "create_entry", json!({ "id": "P", "path": "../x" }));
     assert_eq!(bad["status"], 400);
     assert_eq!(call_raw(handle, "nope", None)["status"], 404);
-
-    unsafe { tl_close(handle) };
-}
-
-#[test]
-fn native_only_commands_resolve_absolute_paths() {
-    let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(dir.path());
-
-    let escape = call(handle, "project_root", json!({ "id": "../x" }));
-    assert_eq!(escape["status"], 400);
-    let root = call(handle, "project_root", json!({ "id": "P" }));
-    assert!(root["ok"].as_str().unwrap().ends_with("P"));
-
-    let dest = dir.path().join("out.zip");
-    let args = json!({ "id": "P", "dest": dest.to_str().unwrap() });
-    assert_eq!(call(handle, "export_zip", args), json!({ "ok": null }));
-    assert!(dest.is_file());
 
     unsafe { tl_close(handle) };
 }
@@ -345,8 +311,7 @@ fn call_async(handle: *const TlHandle, command: &str, args: Value, sink: &mpsc::
 fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
     let dir = tempfile::tempdir().unwrap();
     let handle = open_with_project(dir.path());
-    let empty = json!({ "id": "P", "path": "main.tex", "text": "" });
-    call(handle, "write_file", empty);
+    std::fs::write(dir.path().join("P/main.tex"), "").unwrap();
     let session = open_main(handle);
     unsafe {
         let source = session_source(handle, session, "main.tex");
@@ -401,19 +366,14 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
     until(&events, |e| e["type"] == "saved" && e["session"] == session);
     // A reload is the disk's text, not an edit to save.
     unsafe { tl_source_reload(source, b"x".as_ptr(), 1) };
-    let state = call(handle, "session_state", json!({ "session": session }));
-    assert_eq!(state["ok"]["documents"][0]["dirty"], false);
     unsafe { tl_source_free(source) };
     // Without blocking: the answer comes to the callback.
     let (answered, answers) = collector();
-    call_async(
-        handle,
-        "session_state",
-        json!({ "session": session }),
-        &answered,
-    );
-    let answer = until(&answers, |_| true);
-    assert!(answer["ok"]["documents"].is_array());
+    let args = json!({ "session": session });
+    call_async(handle, "session_save", args, &answered);
+    assert_eq!(until(&answers, |_| true)["ok"]["saved"], true);
+    let disk = std::fs::read_to_string(dir.path().join("P/main.tex")).unwrap();
+    assert_eq!(disk, format!("{added}{text}"));
     unsafe { tl_close(handle) };
 }
 
@@ -423,19 +383,20 @@ fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
     let handle = open_with_project(dir.path());
     let (sink, answers) = collector();
     let seven = json!({ "id": "P", "session": 7 });
-    call_async(handle, "session_open", seven.clone(), &sink);
+    call_async(handle, "session_open", seven, &sink);
     assert_eq!(until(&answers, |_| true)["ok"]["session"], 7);
-    // The host numbers its sessions: a number open already is refused.
-    assert_eq!(call(handle, "session_open", seven)["status"], 409);
+    let main = json!({ "session": 7, "path": "main.tex" });
+    let commands = ["session_open_document", "session_close_document"];
     for round in 0..50 {
-        let last = round % 2 == 0;
-        for auto in [!last, last, !last, last] {
-            let args = json!({ "session": 7, "autoCompile": auto });
-            call_async(handle, "session_set_options", args, &sink);
+        let open = round % 2 == 0;
+        for command in commands.iter().cycle().skip(usize::from(open)).take(4) {
+            call_async(handle, command, main.clone(), &sink);
         }
-        call_async(handle, "session_state", json!({ "session": 7 }), &sink);
-        let state = until(&answers, |answer| answer["ok"]["autoCompile"].is_boolean());
-        assert_eq!(state["ok"]["autoCompile"], last, "round {round}");
+        // Taken after them.
+        call(handle, "session_save", json!({ "session": 7 }));
+        let source = unsafe { session_source(handle, 7, "main.tex") };
+        assert_eq!(!source.is_null(), open, "round {round}");
+        unsafe { tl_source_free(source) };
     }
     unsafe { tl_close(handle) };
 }

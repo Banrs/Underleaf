@@ -6,7 +6,6 @@
 //! cargo test -p texlocal-core --test texpresso_live -- --ignored --nocapture
 
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -43,23 +42,13 @@ fn live_preview_follows_unsaved_edits() {
 /// The longest any one thing may take.
 const PATIENCE: Duration = Duration::from_secs(90);
 
-/// A project's sessions, as a host has them, and every event they sent.
+/// A project's session, as a host has it, and every event it sent.
 struct Client {
     sessions: Sessions,
     events: Arc<Mutex<Vec<Value>>>,
-    id: String,
-    /// The last session's number: a host numbers its own.
-    numbered: AtomicU64,
 }
 
 impl Client {
-    async fn open(&self) -> u64 {
-        let session = self.numbered.fetch_add(1, Ordering::Relaxed) + 1;
-        let args = json!({ "id": self.id, "session": session });
-        let opened = self.call("session_open", args).await;
-        opened["session"].as_u64().unwrap()
-    }
-
     /// `session_<command>` in `session`.
     async fn ask(&self, session: u64, command: &str, mut args: Value) -> Value {
         args["session"] = json!(session);
@@ -88,13 +77,19 @@ impl Client {
     }
 
     /// Waits for a line of the Live Preview Log that starts with `text`, as TeX writes its
-    /// lines, while the preview runs, across any restart of the session's own. Until TeX has
-    /// said something the log has TeXpresso's stderr too, which may echo what it was sent.
+    /// lines, while the preview runs, across any restart of the session's own: the log the
+    /// last `live` event carries, as a host showing it has it. Until TeX has said something
+    /// the log has TeXpresso's stderr too, which may echo what it was sent.
     async fn shows(&self, session: u64, text: &str, check: &str) {
         let began = Instant::now();
         loop {
-            let live = &self.ask(session, "state", json!({})).await["live"];
-            let log = live["log"].as_str().unwrap();
+            let live = {
+                let events = self.events.lock().unwrap();
+                let mut lives = events.iter().rev();
+                let last = lives.find(|e| e["type"] == "live" && e["session"] == session);
+                last.cloned().unwrap_or_default()
+            };
+            let log = live["log"].as_str().unwrap_or_default();
             if live["phase"] == "running" && log.lines().any(|line| line.starts_with(text)) {
                 break;
             }
@@ -181,7 +176,7 @@ async fn run(library: &Path) {
     let project = service
         .call(
             "create_project",
-            &json!({ "name": "TeXpresso check", "template": "blank" }),
+            &json!({ "name": "TeXpresso check", "template": "blank", "engine": "xelatex" }),
         )
         .await
         .unwrap();
@@ -193,22 +188,16 @@ async fn run(library: &Path) {
     sessions.set_listener(Some(Box::new(move |event| {
         sink.lock().unwrap().push(event.clone());
     })));
-    let client = Client {
-        sessions,
-        events,
-        id: id.clone(),
-        numbered: AtomicU64::new(0),
-    };
+    let client = Client { sessions, events };
     let main = "\\documentclass{article}\n\\begin{document}\n\\typeout{UL_MAIN_INITIAL}\nHello café. $x^2+y^2=z^2$\n\\input{section.tex}\n\\end{document}\n";
     let section = "\\typeout{UL_SECTION_INITIAL}\nIncluded text.\n";
     for (path, text) in [("main.tex", main), ("section.tex", section)] {
         std::fs::write(root.join(path), text).unwrap();
     }
-    let engine = json!({ "id": id, "patch": { "engine": "xelatex" } });
-    service.call("set_settings", &engine).await.unwrap();
 
     // As the Mac app starts it: the pages in view first, the document shown in its pane.
-    let a = client.open().await;
+    let opened = client.call("session_open", json!({ "id": id, "session": 1 }));
+    let a = opened.await["session"].as_u64().unwrap();
     let main_doc = client.document(a, "main.tex").await;
     client
         .ask(a, "live_view", json!({ "first": 1, "last": 1 }))
@@ -377,39 +366,12 @@ async fn run(library: &Path) {
     main_doc.edit(two, 8, "");
     client.event(&mut from, a, "live", halted(false)).await;
 
-    // Another session's Start takes the project's preview over; closing the first then
-    // leaves the new one running.
-    client.ask(a, "save", json!({})).await;
-    let mut ended = client.events.lock().unwrap().len();
-    let b = client.open().await;
-    let taken = client.document(b, "main.tex").await;
-    client.start(b).await;
-    let owner = format!("\\typeout{{UL_REPLACEMENT_OWNER}}\n{paged}");
-    retype(&taken, &owner);
-    client
-        .shows(b, "UL_REPLACEMENT_OWNER", "The new owner's text")
-        .await;
-    let stopped = |e: &Value| e["phase"] == "stopped";
-    client.event(&mut ended, a, "live", stopped).await;
-    client.ask(a, "close", json!({})).await;
-    retype(
-        &taken,
-        &owner.replace("UL_REPLACEMENT_OWNER", "UL_OWNER_AFTER_CLOSE"),
-    );
-    client
-        .shows(
-            b,
-            "UL_OWNER_AFTER_CLOSE",
-            "The new owner's after the old closed",
-        )
-        .await;
-
     // TeXpresso never ended on its own, and no failure was reported.
     assert!(client.since(0, "live_restarted").is_empty());
     let failed = client.since(0, "live");
     let failed = failed.iter().find(|e| !e["failure"].is_null());
     assert!(failed.is_none(), "{failed:?}");
-    let stopped = client.ask(b, "live_stop", json!({})).await;
+    let stopped = client.ask(a, "live_stop", json!({})).await;
     assert_eq!(stopped["phase"], "stopped");
-    client.ask(b, "close", json!({})).await;
+    client.ask(a, "close", json!({})).await;
 }

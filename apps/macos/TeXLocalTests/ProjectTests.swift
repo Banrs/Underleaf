@@ -34,14 +34,14 @@ final class ProjectFlowTests {
     func project(_ text: String = "text") async throws -> (info: ProjectInfo, folder: URL) {
         let info = try await newProject()
         folders.append(info.folder)
-        try await Core.shared.call("write_file", ["id": info.id, "path": info.mainFile, "text": text])
+        try info.write(text, to: info.mainFile)
         return (info, info.folder)
     }
 
     /// Opened with its main file's `text` and the `others` written beside it.
     private func opened(_ text: String = "text", with others: [String: String] = [:]) async throws -> (project: ProjectModel, folder: URL) {
         let (info, folder) = try await project(text)
-        for (path, other) in others { try await Core.shared.call("write_file", ["id": info.id, "path": path, "text": other]) }
+        for (path, other) in others { try info.write(other, to: path) }
         await app.open(info.id)
         return (try #require(app.project), folder)
     }
@@ -71,7 +71,7 @@ final class ProjectFlowTests {
 
     @Test func theMainFileOnDiskStaysOutOfTheTrash() async throws {
         let (project, folder) = try await opened()
-        try await Core.shared.call("write_file", ["id": project.id, "path": "second.tex", "text": "x"])
+        try "x".write(to: folder.appending(path: "second.tex"), atomically: true, encoding: .utf8)
         let settings = folder.appending(path: ".texlocal.json")
         var json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
         json["mainFile"] = "second.tex"
@@ -412,8 +412,8 @@ final class ProjectFlowTests {
 
     /// Arrowing down the sidebar's files: each open closes the one before, and one a later open overtook closes its own.
     @Test func onlyTheFileShownStaysOpenInTheSession() async throws {
-        let (project, _) = try await opened()
-        for name in ["a.tex", "b.tex"] { try await Core.shared.call("write_file", ["id": project.id, "path": name, "text": name]) }
+        let (project, folder) = try await opened()
+        for name in ["a.tex", "b.tex"] { try name.write(to: folder.appending(path: name), atomically: true, encoding: .utf8) }
         await project.tree.reload()
         let session = try #require(project.session)
         let paths = ["main.tex", "a.tex", "b.tex"]
@@ -424,9 +424,10 @@ final class ProjectFlowTests {
             for _ in 0..<turns { await Task.yield() }
             await Task { await project.open(last) }.value
             await opening.value
-            let state = try await Core.shared.call("session_state", ["session": session], as: OpenDocuments.self)
+            // Taken after any close an overtaken open sent: a session takes its commands in the order sent.
+            try await Core.shared.call("session_set_options", ["session": session])
             #expect(project.openPath == last && project.editor.path == last)
-            #expect(state.documents.map(\.path) == [last], "after \(turns) turns")
+            #expect(paths.filter { SourceDocument(session: session, path: $0) != nil } == [last], "after \(turns) turns")
         }
         #expect(app.alert == nil)
         await app.close()
@@ -541,9 +542,4 @@ final class ProjectFlowTests {
         #expect(exists(folder.appending(path: "parts/\(outside.lastPathComponent)")) && exists(outside))
         await app.close()
     }
-}
-
-/// `session_state`'s documents: those the session has open.
-private nonisolated struct OpenDocuments: Decodable {
-    let documents: [DocumentState]
 }

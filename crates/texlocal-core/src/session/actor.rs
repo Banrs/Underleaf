@@ -18,7 +18,7 @@ use tokio::time::Instant;
 use super::build::Builds;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
-use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions, Timings};
+use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze;
 use crate::events::Emitter;
 use crate::paths::{self, within};
@@ -125,6 +125,24 @@ pub(crate) enum Timer {
     Log,
 }
 
+impl Timer {
+    /// How long after it is set the timer is due.
+    fn wait(self) -> Duration {
+        Duration::from_millis(match self {
+            Self::Autosave => 700,
+            Self::Symbols | Self::Caret => 150,
+            // FSEvents' latency: changes this close together are taken together.
+            Self::Fs => 250,
+            Self::Halting => 1000,
+            Self::Retry => 750,
+            Self::Restart | Self::Disk => 180,
+            // The log's whole text is copied, sent and laid out again each time, beside
+            // pages that must land within a frame.
+            Self::Log => 200,
+        })
+    }
+}
+
 /// What woke the session's task.
 enum Wake {
     Message(Msg),
@@ -142,7 +160,6 @@ pub(crate) struct Actor {
     events: Emitter,
     pub tx: mpsc::UnboundedSender<Msg>,
     pub shared: Arc<Mutex<HashMap<String, Document>>>,
-    pub t: Timings,
     pub docs: BTreeMap<String, Doc>,
     by_id: HashMap<u64, String>,
     next_doc: u64,
@@ -185,7 +202,6 @@ impl Actor {
     ) -> Result<(Self, Value), CoreError> {
         let tree = projects::file_tree(&root)?;
         let watcher = sessions
-            .timings
             .watch
             .then(|| watch::watch(&root, tx.clone()))
             .flatten();
@@ -215,7 +231,6 @@ impl Actor {
             events: sessions.hub.emitter(),
             tx,
             shared: Arc::default(),
-            t: sessions.timings.clone(),
             docs: BTreeMap::new(),
             by_id: HashMap::new(),
             next_doc: 1,
@@ -321,10 +336,8 @@ impl Actor {
     }
 
     pub fn emit(&self, kind: &str, mut fields: Value) {
-        if let Value::Object(map) = &mut fields {
-            map.insert("type".into(), kind.into());
-            map.insert("session".into(), self.id.into());
-        }
+        fields["type"] = kind.into();
+        fields["session"] = self.id.into();
         self.events.send(fields);
     }
 
@@ -345,8 +358,7 @@ impl Actor {
             Msg::Live(generation, event) => self.live_event(generation, event),
             Msg::Fs(changes) => {
                 self.fs_pending.extend(changes);
-                let at = Instant::now() + self.t.settle;
-                self.timers.entry(Timer::Fs).or_insert(at);
+                self.soon(Timer::Fs);
             }
         }
     }
@@ -370,9 +382,16 @@ impl Actor {
         }
     }
 
-    /// `timer` is due `wait` from now, in place of when it was.
-    pub fn after(&mut self, timer: Timer, wait: Duration) {
-        self.timers.insert(timer, Instant::now() + wait);
+    /// `timer` is due its wait from now, in place of when it was.
+    pub fn after(&mut self, timer: Timer) {
+        self.timers.insert(timer, Instant::now() + timer.wait());
+    }
+
+    /// `timer` is due its wait from now, unless it is due already.
+    pub fn soon(&mut self, timer: Timer) {
+        self.timers
+            .entry(timer)
+            .or_insert(Instant::now() + timer.wait());
     }
 
     fn run_later(&mut self) {
@@ -415,6 +434,7 @@ impl Actor {
         let path = || paths::rel_key(string_arg(args, "path")?);
         match name {
             "close" => return Ok(self.close()),
+            #[cfg(test)]
             "state" => return Ok(self.state()),
             "set_options" => {
                 if let Some(auto) = arg::<Option<bool>>(args, "autoCompile")? {
@@ -428,7 +448,7 @@ impl Actor {
                 if let Some(doc) = self.docs.get_mut(&path) {
                     doc.composing = composing;
                     if !composing && doc.dirty() {
-                        self.after(Timer::Autosave, self.t.autosave);
+                        self.after(Timer::Autosave);
                     }
                 }
             }
@@ -476,7 +496,8 @@ impl Actor {
         Ok(Value::Null)
     }
 
-    /// A snapshot, with what the events leave out.
+    /// A snapshot for the tests, with what the events leave out.
+    #[cfg(test)]
     fn state(&self) -> Value {
         let docs: Vec<Value> = self
             .docs
@@ -519,8 +540,7 @@ impl Actor {
         let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(NOT_UTF8))?;
         let id = self.next_doc;
         self.next_doc += 1;
-        let symbols = Arc::clone(&self.symbols);
-        let document = Document::new(id, &text, self.tx.clone(), symbols);
+        let document = Document::new(id, &text, self.tx.clone(), Arc::clone(&self.symbols));
         let doc = Doc {
             doc: document.clone(),
             path: path.to_owned(),
@@ -548,14 +568,11 @@ impl Actor {
     }
 
     fn close_document(&mut self, path: &str) -> Result<Value, CoreError> {
-        if !self.docs.contains_key(path) {
-            return Ok(json!({ "closed": true }));
+        let closed = self.flush(Some(path), true)?;
+        if closed {
+            self.close_doc(path, "closed");
         }
-        if !self.flush(Some(path), true)? {
-            return Ok(json!({ "closed": false }));
-        }
-        self.close_doc(path, "closed");
-        Ok(json!({ "closed": true }))
+        Ok(json!({ "closed": closed }))
     }
 
     fn close_doc(&mut self, path: &str, reason: &str) {
@@ -577,7 +594,7 @@ impl Actor {
             self.took_edit();
         }
         self.publish_doc(&path);
-        self.after(Timer::Autosave, self.t.autosave);
+        self.after(Timer::Autosave);
         self.live_edited(&path, version, start, length, text);
     }
 
@@ -587,7 +604,7 @@ impl Actor {
         };
         self.text_changed(&path);
         // Its labels and citations may have changed with it.
-        self.after(Timer::Symbols, self.t.symbols);
+        self.after(Timer::Symbols);
         let Some(doc) = self.docs.get_mut(&path) else {
             return;
         };
@@ -704,7 +721,7 @@ impl Actor {
                 Ok(Some(stamp)) => {
                     (doc.disk_text, doc.disk_stamp) = (Some(lf(text)), Some(stamp));
                     (doc.saved, doc.force, doc.held, doc.error) = (version, false, false, None);
-                    self.after(Timer::Symbols, self.t.symbols);
+                    self.after(Timer::Symbols);
                     self.emit("saved", json!({ "path": path }));
                     Ok(true)
                 }
@@ -846,7 +863,7 @@ impl Actor {
         // document's are scanned as it reloads.
         let scan = |path: &&String| matches!(file_kind(path), "tex" | "bib");
         if meaning.tree || others.iter().any(scan) {
-            self.after(Timer::Symbols, self.t.symbols);
+            self.after(Timer::Symbols);
         }
         if !others.is_empty() {
             self.emit("files_changed", json!({ "paths": others }));
@@ -858,7 +875,7 @@ impl Actor {
             self.reload_tree();
         }
         if self.live.active() && !self.live.disk_paths.is_empty() {
-            self.after(Timer::Disk, self.t.live_follow);
+            self.after(Timer::Disk);
         }
     }
 
@@ -972,7 +989,7 @@ impl Actor {
         let (seq, root) = (self.analyses, self.root.clone());
         let (docs, outline) = (Arc::clone(&self.shared), Arc::clone(&self.outline));
         tokio::task::spawn_blocking(move || {
-            // Read each time: another app, or another host's `set_settings`, may have changed it.
+            // Read each time: another app may have changed it.
             let main = settings::read_settings(&root).main_file;
             let open = paths::rel_key(&main)
                 .ok()
@@ -1094,7 +1111,7 @@ fn as_left(abs: &Path, stamp: Option<Stamp>, text: Option<&str>) -> bool {
     let now = fs::metadata(abs).ok().map(|meta| Stamp::of(&meta));
     match (stamp, now) {
         (Some(stamp), Some(now)) if stamp == now => {
-            stamp.nanoseconds != 0
+            stamp.modified % 1_000_000_000 != 0
                 || fs::read(abs)
                     .is_ok_and(|bytes| String::from_utf8(bytes).ok().map(lf).as_deref() == text)
         }

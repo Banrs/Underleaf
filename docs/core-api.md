@@ -72,9 +72,8 @@ All take `session` (except `session_open`). Results are the `ok` value.
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `session_open` | `id`, `session`, `autoCompile?` | `{session, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` as `get_ui_state`: all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
+| `session_open` | `id`, `session`, `autoCompile?` | `{session, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` as `set_ui_state` answers it: all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
-| `session_state` | | `{documents: [document state], build, live, autoCompile}` | A snapshot, for a host coming up; a document's state also has `dirty` and `conflict` (`changed`/`gone`/null), the build's `queued`. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
 | `session_open_document` | `path` | null | Text files only, in UTF-8: another encoding is refused (400), as a save would change its bytes. The editor reads the text from the document's source (`tl_source_text`) once it shows it, so it has whatever reloads came meanwhile. |
 | `session_close_document` | `path` | `{closed}` | Saves first, asking about conflicts; `closed: false` if that failed. |
@@ -88,18 +87,18 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_outline_current` | `path`, `line` | index or null | The heading a line of `path` is under, as its `index` in the outline of the last `session_analyze` sent of those answered: the file's last at or above the line; null above its first. Ask once the analysis it should read has answered. |
 | `session_issue` | `next` | `{index, issue}` or null | The next or previous issue with a place, round the ends; the host opens `issue.file` at `issue.line`. |
 | `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter. |
-| `session_rename` | `from`, `to` | `{from, to, mainFile, ui}` or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `get_ui_state`) with the entry's paths moved; a host sends its `set_ui_state` first. |
-| `session_set_settings` | `patch` | settings | As `set_settings`; a new main file stops the build, restarts the preview, builds. |
+| `session_rename` | `from`, `to` | `{from, to, mainFile, ui}` or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `set_ui_state` answers it) with the entry's paths moved; a host sends its `set_ui_state` first. |
+| `session_set_settings` | `patch` | settings | The keys of `patch` replace the project's; the answer is the settings, as `get_settings`. A new main file stops the build, restarts the preview, builds. |
 | `session_prepare_delete` | `path` | `{ready}` | Saves, refuses the main file (409, its path compared as the volume compares names), then holds saves under `path` until `session_deleted`. Not `ready`: a save is asked about, and the host deletes nothing. The host trashes the item itself (undoable). |
 | `session_deleted` | `path`, `trashed?` (true) | null | Closes documents under `path` and reads the tree again. |
-| `session_live_start` | `window?` | live state | The user's Start: takes the project over from another window. `window: true` leaves the document to TeXpresso's own window (the Settings fallback): no `live_document` or `live_page` comes, and TeXpresso is told no view or caret. The session's own restarts keep the choice. |
+| `session_live_start` | `window?` | live state | The user's Start. `window: true` leaves the document to TeXpresso's own window (the Settings fallback): no `live_document` or `live_page` comes, and TeXpresso is told no view or caret. The session's own restarts keep the choice. |
 | `session_live_stop` | | live state | |
 | `session_live_view` | `first`, `last` | null | Pages in view, from 0. Send before Start and on scroll. |
 | `session_live_caret` | `path`, `offset` | null | On every caret move (UTF-16); told to TeXpresso once it settles (150 ms). |
 | `session_live_log` | `shown` | null | Whether the host shows the Live Preview Log. While it does, each `live` event carries the log, and one comes at once. |
 
-Every other command (`file_tree`, `read_file`, `search_project`, `synctex_*`,
-`get_ui_state`, `pdf_path` for a new main file's PDF, …) is the service's. While the
+Every other command (`file_tree`, `search_project`, `synctex_*`, `set_ui_state`,
+`pdf_path` for a new main file's PDF, …) is the service's. While the
 PDF shown is the live document, pass `live: true, session: <the session's number>` to
 `synctex_forward` and `synctex_inverse`.
 
@@ -110,8 +109,8 @@ An error is `{"error": message, "status": code}`; the message is for the person 
 - File-system failures keep their kind: 404 not there, 403 not allowed, 409 already there,
   else 500. The message is the OS's words without its “(os error N)”, and names the file
   (“path”: …) where a person chose it.
-- A settings or ui-state write (`set_settings`, `set_ui_state`, `session_set_settings`) over
-  an unreadable or invalid `.texlocal.json` is 409 and leaves the file as it is.
+- A settings or ui-state write (`set_ui_state`, `session_set_settings`) over an unreadable
+  or invalid `.texlocal.json` is 409 and leaves the file as it is.
 - A zip that can't be read (import) is 400.
 - Import and export leave out version-control folders (`.git`, `.hg`, `.svn`), `.DS_Store`,
   `__MACOSX`, AppleDouble `._*` files and the core's `.texlocal-*` temporary files, at any
@@ -135,6 +134,7 @@ Service commands (`tl_call`):
 |---|---|---|---|
 | `create_project` | `name`, `template?` (article), `engine?` | the project (`{id, name, mtime, mainFile}`) | A name taken is numbered past (“Paper 2”); `id`/`name` say which. A name the path rules refuse is 400. With `engine`, the project is made with it; an unknown engine is 400, and nothing is made. |
 | `free_project_name` | `name?` (“Untitled”) | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
+| `create_entry` | `id`, `path`, `dir?` (false) | `{path}` | Makes an empty file, or with `dir` a folder, at `path`; a name taken is numbered past (“untitled 2.tex”), and `path` says which. A path outside the project, or the project's `.texlocal.json`, is 400. |
 | `search_project` | `id`, `query` | `[{file, hits: [{file, line, column, length, before, match, after}]}]` | The first 100 lines that have `query` (in any case), by file, the files in order of their paths. `line` counts from 1; `column` (from 0) and `length` place a line's first match in UTF-16 units of the line as written, for the editor to select. |
 | `status` | | `{available, version, latexmkVersion, texDir, found, texpresso, texpressoDir}` | `latexmkVersion`: the number latexmk's version line names (“4.86”), or null. `set_tex_dir` and `set_texpresso_dir` answer the same. |
 
@@ -160,13 +160,13 @@ Each is `{"type", "session", …}`.
 | `conflict` | `path`, `kind` | `changed`: alert with Save Anyway, Revert, Cancel and no default button; `gone`: alert whose default saves again, Close, Cancel. Answer with `session_resolve`. |
 | `issues` | `path`, `lines: [{line, error, message, short, compact, tokens, others}]` | The gutter and line-end boxes; `[]` clears them (an edit does). `short`: the message on one line; `compact`: for an undefined command, fewer words that keep its name (“Undefined: \\foo”), else null; `tokens`: where the line has that command, `[{start, length}]` in UTF-16 units from the line's start (an edit clears the issues, so they hold). |
 | `build` | `compiling`, `auto`, `outdated` | Compile/Stop button, spinner, “Preview out of date”. Announce “Compiling” for a manual start. |
-| `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce`; sync after compile if `ok` and not `outdated`. |
+| `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce` (a build asked for, or an automatic one whose errors changed; never one Stop ended); sync after compile if `ok` and not `outdated`. |
 | `build_cleaned` | | Clear the PDF unless live. |
 | `tree` | `tree` (as `file_tree`) | Redraw the sidebar. |
 | `files_changed` | `paths` | Listed files changed in place that aren't open (an image shown, say). |
 | `live` | `phase` (`stopped`/`starting`/`running`/`stopping`), `halted`, `failure`, `error`, `log`, `alert` | Title and toolbar; `alert`: show the Live Preview Log. `phase: stopped` ends the live PDF (show the build's); the session's own planned restart stays `starting` throughout, with no `stopped` between. `log`: the Live Preview Log's whole text (what went wrong, TeXpresso's error, TeX's log and output) with `alert` and while `session_live_log` says it shows, else null: keep the last one. While it shows, the log comes at most every 200 ms. |
-| `live_document` | `path`, `version`, `serial`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
-| `live_page` | `page`, `path`, `serial` | Draw over that page now if a live document shows and has it; otherwise drop it. The session sends a batch's `live_document` before the batch's pages and drops the pages a document has, so a page is always newer than the document before it, and the next document has any page dropped. |
+| `live_document` | `path`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
+| `live_page` | `page`, `path` | Draw over that page now if a live document shows and has it; otherwise drop it. The session sends a batch's `live_document` before the batch's pages and drops the pages a document has, so a page is always newer than the document before it, and the next document has any page dropped. |
 | `live_restarted` | | Note “Live Preview Restarted”. |
 
 ## The editor's source
@@ -328,4 +328,23 @@ Every change a host follows since commit d6bee12, in the order made.
 - A failed write's message is a sentence that names the file, and its folder when the write
   was refused, as Foundation words it (“You don’t have permission to save the file “main.tex”
   in the folder “Thesis”.”); its status is still the file system's.
+- The service no longer answers `read_file`, `write_file`, `set_settings` or `get_ui_state`,
+  which no host's app called: a session reads and saves its documents and changes the settings
+  (`session_set_settings`), and `session_open` and `session_rename` answer the ui state. Both
+  hosts' tests write their fixtures into the project's folder.
+- `session_state` is gone: no host used it. A session's events say what it holds.
+- `build_finished` no longer sets `announce` for a build Stop ended, which Windows announced as
+  “Build succeeded”; the Mac app announced nothing for it, and still doesn't.
+- `live_document` has no `version` or `serial`, and `live_page` no `serial`: events come in
+  order, and neither host read them.
+- A host opens one session of a project at a time, as both do: a session's Live Preview no
+  longer takes over another session's preview of the project, nor stops when another's Start
+  takes it (“Another window started TeXpresso…”). A live sync (`live: true`) of a session
+  whose Live Preview has been stopped is 404.
+- `create_entry` always numbers past a taken name, as both hosts asked with `free: true`, which
+  it no longer reads.
+- `set_tex_dir` and `set_texpresso_dir` take `dir` as given, as both hosts send a folder chosen
+  or null: a blank one is 400, where it cleared the choice.
+- texlocal-ffi builds a static library alone, its tests the crate's own, so the release
+  profile's LTO reaches the Mac app's archive too.
 

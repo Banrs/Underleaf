@@ -281,7 +281,7 @@ struct PDFFindTests {
         let line = "An echo repeats. An echo repeats."
         let info = try await newProject()
         defer { try? FileManager.default.removeItem(at: info.folder) }
-        try await Core.shared.call("write_file", ["id": info.id, "path": info.mainFile, "text": line])
+        try info.write(line, to: info.mainFile)
         let pdf = try textPDF([line], width: 180), page = try #require(pdf.page(at: 0))
         let rendered = try #require(page.string)
         let box = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).bounds(for: page)

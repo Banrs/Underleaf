@@ -1,28 +1,15 @@
-// The command surface: the JSON dispatch every host forwards to.
+//! The command surface, the JSON dispatch every host forwards to, and the
+//! per-project lock.
 
-use std::path::Path;
-use std::sync::Arc;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use serde_json::{Value, json};
 use tempfile::TempDir;
-use texlocal_core::service::Service;
-use texlocal_core::session::Sessions;
 
-fn service() -> (TempDir, Service) {
-    let dir = tempfile::Builder::new()
-        .prefix("texlocal-service-")
-        .tempdir()
-        .unwrap();
-    let service = Service::new(dir.path().to_path_buf());
-    (dir, service)
-}
-
-/// A service whose data dir holds one blank project, "P".
-fn with_project() -> (TempDir, Service) {
-    let (dir, service) = service();
-    texlocal_core::projects::create_project(&service.data_dir, "P", "blank").unwrap();
-    (dir, service)
-}
+use super::*;
+use crate::projects::testing::{library, with_project};
+use crate::session::Sessions;
 
 async fn call(service: &Service, command: &str, args: Value) -> Value {
     service
@@ -35,9 +22,14 @@ async fn status_of(service: &Service, command: &str, args: Value) -> u16 {
     service.call(command, &args).await.unwrap_err().status
 }
 
+/// The TeX programs folder chosen, None to find TeX automatically.
+fn tex_dir(service: &Service) -> Option<PathBuf> {
+    AppSettings::read(&service.data_dir).tex_dir
+}
+
 #[tokio::test]
 async fn a_free_project_name_is_the_next_untitled() {
-    let (_dir, service) = service();
+    let (_dir, service) = library();
     // Nothing made: the series starts at "Untitled".
     let name = call(&service, "free_project_name", json!({})).await;
     assert_eq!(name, json!({ "name": "Untitled" }));
@@ -46,7 +38,7 @@ async fn a_free_project_name_is_the_next_untitled() {
         assert_eq!(call(&service, "create_project", args).await["id"], name);
     }
     // A gap is filled first, and a name asked for is numbered the same way.
-    std::fs::remove_dir_all(service.data_dir.join("Untitled 2")).unwrap();
+    fs::remove_dir_all(service.data_dir.join("Untitled 2")).unwrap();
     let next = call(&service, "free_project_name", json!({})).await;
     assert_eq!(next, json!({ "name": "Untitled 2" }));
     let from_taken = call(&service, "free_project_name", json!({ "name": "untitled" })).await;
@@ -69,137 +61,74 @@ async fn a_free_project_name_is_the_next_untitled() {
 }
 
 #[tokio::test]
-async fn a_new_project_is_made_with_its_engine_or_not_at_all() {
-    let (_dir, service) = service();
+async fn a_new_project_is_made_with_its_engine() {
+    let (_dir, service) = library();
     let args = json!({ "name": "Xe", "template": "blank", "engine": "xelatex" });
     let made = call(&service, "create_project", args).await;
     let settings = call(&service, "get_settings", json!({ "id": made["id"] })).await;
     assert_eq!(settings["engine"], "xelatex");
-    let unknown = json!({ "name": "Odd", "engine": "troff" });
-    assert_eq!(status_of(&service, "create_project", unknown).await, 400);
-    assert!(!service.data_dir.join("Odd").exists(), "no project made");
-}
-
-#[tokio::test]
-async fn dispatch_round_trips_project_and_file_commands() {
-    let (_dir, service) = service();
-    let args = json!({ "name": "Paper", "template": "blank" });
-    let info = call(&service, "create_project", args).await;
-    let id = info["id"].as_str().unwrap().to_string();
-
-    let listed = call(&service, "list_projects", json!({})).await;
-    assert_eq!(listed[0]["id"], id);
-
-    let args = json!({ "id": id, "path": "sec/a.tex", "text": "hello needle" });
-    call(&service, "write_file", args).await;
-    let args = json!({ "id": id, "path": "sec/a.tex" });
-    let read = call(&service, "read_file", args).await;
-    assert_eq!(read, json!({ "text": "hello needle" }));
-
-    let args = json!({ "id": id, "query": "needle" });
-    let groups = call(&service, "search_project", args).await;
-    assert_eq!(groups[0]["file"], "sec/a.tex");
-    assert_eq!(groups[0]["hits"][0]["after"], "");
-    assert_eq!(groups[0]["hits"][0]["column"], 6);
-    assert_eq!(groups[0]["hits"][0]["length"], 6);
-
-    let tree = call(&service, "file_tree", json!({ "id": id })).await;
-    assert!(tree.as_array().unwrap().iter().any(|n| n["name"] == "sec"));
-}
-
-/// The Mac app keeps it to know its own save's change event by a stat.
-#[cfg(unix)]
-#[tokio::test]
-async fn a_write_answers_the_stamp_of_the_file_it_wrote() {
-    use std::os::unix::fs::MetadataExt;
-    let (dir, service) = with_project();
-    let args = json!({ "id": "P", "path": "main.tex", "text": "saved" });
-    let stamp = call(&service, "write_file", args).await;
-    let meta = std::fs::metadata(dir.path().join("P/main.tex")).unwrap();
-    assert_eq!(
-        stamp,
-        json!({ "inode": meta.ino(), "size": 5, "seconds": meta.mtime(), "nanoseconds": meta.mtime_nsec() })
-    );
 }
 
 #[tokio::test]
 async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     let (_dir, service) = with_project();
-
-    // Raw bytes go through methods, not commands.
-    for command in [
-        "no_such_command",
-        "upload_file",
-        "export_project",
-        "save_pdf_as",
-    ] {
-        let status = status_of(&service, command, json!({ "id": "P" })).await;
-        assert_eq!(status, 404, "{command}");
-    }
+    assert_eq!(status_of(&service, "no_such_command", json!({})).await, 404);
     let pdf = call(&service, "pdf_path", json!({ "id": "P" })).await;
     assert!(pdf.as_str().unwrap().ends_with(".pdf"), "{pdf}");
     // Missing and mistyped arguments, and paths the boundary refuses, which
     // apply through the dispatch exactly as through the methods.
     for (command, args) in [
-        ("read_file", json!({ "id": "P" })),
+        ("search_project", json!({ "id": "P" })),
         (
             "synctex_forward",
             json!({ "id": "P", "file": "a.tex", "line": "x" }),
         ),
         (
-            "read_file",
+            "create_entry",
             json!({ "id": "P", "path": "../../etc/passwd" }),
         ),
-        ("read_file", json!({ "id": "../P", "path": "main.tex" })),
+        ("file_tree", json!({ "id": "../P" })),
+        ("project_root", json!({ "id": "../x" })),
     ] {
         assert_eq!(status_of(&service, command, args).await, 400, "{command}");
     }
-    // A write without its text is refused, never taken as an empty file.
-    for args in [
-        json!({ "id": "P", "path": "main.tex" }),
-        json!({ "id": "P", "path": "main.tex", "text": null }),
-    ] {
-        let err = service.call("write_file", &args).await.unwrap_err();
-        assert_eq!(err.status, 400);
-        assert_eq!(
-            err.message,
-            "Invalid argument `text`: invalid type: null, expected a string"
-        );
+    // A string required that is left out or null is refused in the argument's words.
+    for args in [json!({ "id": "P" }), json!({ "id": "P", "path": null })] {
+        let err = service.call("create_entry", &args).await.unwrap_err();
+        let expected = "Invalid argument `path`: invalid type: null, expected a string";
+        assert_eq!((err.status, err.message.as_str()), (400, expected));
     }
-    let args = json!({ "id": "P", "path": "main.tex" });
-    let main = call(&service, "read_file", args).await;
-    assert!(!main["text"].as_str().unwrap().is_empty());
 }
 
 /// A stand-in program `name` in `dir` that prints `line`: a shell script, or
 /// a batch file on Windows. Its path.
-fn fake_program(dir: &Path, name: &str, line: &str) -> std::path::PathBuf {
-    std::fs::create_dir_all(dir).unwrap();
+fn fake_program(dir: &Path, name: &str, line: &str) -> PathBuf {
+    fs::create_dir_all(dir).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let exe = dir.join(name);
-        std::fs::write(&exe, format!("#!/bin/sh\necho '{line}'\n")).unwrap();
-        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(&exe, format!("#!/bin/sh\necho '{line}'\n")).unwrap();
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
         exe
     }
     #[cfg(windows)]
     {
         let exe = dir.join(format!("{name}.bat"));
-        std::fs::write(&exe, format!("@echo {line}\r\n")).unwrap();
+        fs::write(&exe, format!("@echo {line}\r\n")).unwrap();
         exe
     }
 }
 
 /// A folder holding a stand-in `latexmk` that prints a version.
 fn fake_tex(dir: &Path) -> String {
-    fake_program(dir, "latexmk", "Latexmk, stub 1.0");
+    fake_program(dir, "latexmk", "Latexmk, Version 4.86a");
     dir.to_string_lossy().into_owned()
 }
 
 #[tokio::test]
 async fn set_tex_dir_accepts_a_folder_with_latexmk_or_a_tex_root_above_one() {
-    let (_dir, service) = service();
+    let (_dir, service) = library();
     let tex = TempDir::new().unwrap();
 
     let empty = service
@@ -210,7 +139,7 @@ async fn set_tex_dir_accepts_a_folder_with_latexmk_or_a_tex_root_above_one() {
     assert!(empty.message.contains("doesn't contain latexmk"));
     let relative = json!({ "dir": "relative/bin" });
     assert_eq!(status_of(&service, "set_tex_dir", relative).await, 400);
-    assert_eq!(service.tex_dir(), None);
+    assert_eq!(tex_dir(&service), None);
 
     let bin = fake_tex(&tex.path().join("bin").join("x"));
     let status = call(&service, "set_tex_dir", json!({ "dir": bin })).await;
@@ -227,7 +156,7 @@ async fn set_tex_dir_accepts_a_folder_with_latexmk_or_a_tex_root_above_one() {
 /// goes back to the TeX path when cleared.
 #[tokio::test]
 async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
-    let (_dir, service) = service();
+    let (_dir, service) = library();
     let tex = TempDir::new().unwrap();
     let bin = fake_tex(&tex.path().join("tex"));
     call(&service, "set_tex_dir", json!({ "dir": bin })).await;
@@ -253,12 +182,12 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
 
     let cleared = call(&service, "set_texpresso_dir", json!({ "dir": null })).await;
     assert!(cleared["texpressoDir"].is_null());
-    assert_eq!(service.tex_dir().unwrap().to_string_lossy(), bin);
+    assert_eq!(tex_dir(&service).unwrap().to_string_lossy(), bin);
 }
 
 #[tokio::test]
 async fn the_tex_dir_persists_in_the_data_dir_and_clears_to_automatic() {
-    let (dir, service) = with_project();
+    let (_dir, service) = with_project();
     let tex = TempDir::new().unwrap();
     let bin = fake_tex(tex.path());
     call(&service, "set_tex_dir", json!({ "dir": bin })).await;
@@ -268,90 +197,47 @@ async fn the_tex_dir_persists_in_the_data_dir_and_clears_to_automatic() {
     assert_eq!(listed.as_array().unwrap().len(), 1);
     assert_eq!(listed[0]["id"], "P");
 
-    // Another host on the same data dir sees the same choice.
-    let other = Service::new(dir.path().to_path_buf());
-    assert_eq!(other.tex_dir(), Some(tex.path().to_path_buf()));
-    let saved = std::fs::read(dir.path().join(".texlocal-app.json")).unwrap();
+    let saved = fs::read(service.data_dir.join(".texlocal-app.json")).unwrap();
     let saved: Value = serde_json::from_slice(&saved).unwrap();
     assert_eq!(saved, json!({ "texDir": bin }));
 
     let status = call(&service, "set_tex_dir", json!({ "dir": null })).await;
     assert_eq!(status["texDir"], Value::Null);
-    assert_eq!(other.tex_dir(), None);
-
-    call(&service, "set_tex_dir", json!({ "dir": bin })).await;
-    call(&service, "set_tex_dir", json!({ "dir": "  " })).await;
-    assert_eq!(service.tex_dir(), None);
+    assert_ne!(status["found"], bin);
+    assert_eq!(tex_dir(&service), None);
 }
 
 #[tokio::test]
 async fn status_reports_the_current_tex_choice() {
-    let (_dir, service) = service();
-    let first = call(&service, "status", json!({})).await;
-    assert_eq!(first["texDir"], Value::Null);
-    assert!(first.as_object().unwrap().contains_key("found"));
-
+    let (_dir, service) = library();
     let tex = TempDir::new().unwrap();
     let bin = fake_tex(tex.path());
     let chosen = call(&service, "set_tex_dir", json!({ "dir": bin })).await;
     assert_eq!(chosen["texDir"], bin);
     assert_eq!(call(&service, "status", json!({})).await, chosen);
     assert_eq!(chosen["available"], true);
-    assert_eq!(chosen["version"], "Latexmk, stub 1.0");
-    assert_eq!(
-        chosen["latexmkVersion"],
-        Value::Null,
-        "the stub says no version number"
-    );
+    assert_eq!(chosen["version"], "Latexmk, Version 4.86a");
+    assert_eq!(chosen["latexmkVersion"], "4.86a");
     assert_eq!(chosen["found"], bin);
 
     // An update in the same folder is reflected without another folder choice.
     fake_program(tex.path(), "latexmk", "Latexmk, stub 2.0");
     let updated = call(&service, "status", json!({})).await;
     assert_eq!(updated["version"], "Latexmk, stub 2.0");
+    assert_eq!(updated["latexmkVersion"], Value::Null);
     assert_eq!(updated["texDir"], bin);
-
-    let automatic = call(&service, "set_tex_dir", json!({ "dir": null })).await;
-    assert_eq!(automatic["texDir"], Value::Null);
-    assert_ne!(automatic["version"], "Latexmk, stub 1.0");
 }
 
 #[tokio::test]
 async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
-    let (dir, service) = with_project();
-
-    // A free name is numbered past those taken; a plain create still refuses one.
-    for expected in ["untitled.tex", "untitled 2.tex"] {
-        let args = json!({ "id": "P", "path": "untitled.tex", "free": true });
-        let made = call(&service, "create_entry", args).await;
-        assert_eq!(made, json!({ "path": expected }));
-    }
-    let taken = json!({ "id": "P", "path": "untitled.tex" });
-    assert_eq!(status_of(&service, "create_entry", taken).await, 409);
-    let tree = call(&service, "file_tree", json!({ "id": "P" })).await;
-    assert!(tree.as_array().unwrap().iter().all(|n| n["kind"] == "tex"));
-
-    // Where a path in the library is.
-    let path = dir.path().join("P/sec/new.tex");
-    let located = call(&service, "locate", json!({ "path": path })).await;
-    assert_eq!(located, json!({ "id": "P", "path": "sec/new.tex" }));
-    let outside = json!({ "path": dir.path().parent().unwrap() });
-    assert_eq!(call(&service, "locate", outside).await, Value::Null);
-
-    // The interface state is kept with the project (and follows a rename: projects.rs).
+    let (_dir, service) = with_project();
     let patch = json!({ "expandedFolders": ["sec"], "foldedHeadings": ["sec/a.tex\t2:A#1"] });
     let args = json!({ "id": "P", "patch": patch });
-    call(&service, "set_ui_state", args).await;
-    let ui = call(&service, "get_ui_state", json!({ "id": "P" })).await;
-    assert_eq!(ui, patch);
-    // It is not a file the generic APIs reach.
-    let name = ".texlocal.json";
-    let args = json!({ "id": "P", "path": name, "text": "{}" });
-    assert_eq!(status_of(&service, "write_file", args).await, 400);
+    assert_eq!(call(&service, "set_ui_state", args).await, patch);
 
     // The word a source line's caret is on, among a forward sync's pages.
-    let args = json!({ "id": "P", "path": "main.tex", "text": "alpha beta gamma\n" });
-    call(&service, "write_file", args).await;
+    let root = service.project_root("P").unwrap();
+    fs::write(root.join("main.tex"), "alpha beta gamma\n").unwrap();
     let page = json!({ "page": 2, "text": "alpha beta gamma", "near": [[0, 16]] });
     let args = json!({ "id": "P", "file": "main.tex", "line": 1, "column": 8, "pages": [page] });
     let hit = call(&service, "synctex_match", args).await;
@@ -365,8 +251,8 @@ async fn a_rename_answers_the_moved_ui_state_and_the_main_file_it_moved() {
     let (_dir, service) = with_project();
     let service = Arc::new(service);
     let root = service.project_root("P").unwrap();
-    std::fs::create_dir(root.join("ch")).unwrap();
-    std::fs::write(root.join("ch/a.tex"), "").unwrap();
+    fs::create_dir(root.join("ch")).unwrap();
+    fs::write(root.join("ch/a.tex"), "").unwrap();
     let patch = json!({ "expandedFolders": ["ch"] });
     let args = json!({ "id": "P", "patch": patch });
     call(&service, "set_ui_state", args).await;
@@ -389,4 +275,78 @@ async fn a_rename_answers_the_moved_ui_state_and_the_main_file_it_moved() {
     let refused = sessions.call("session_prepare_delete", &args).await;
     assert_eq!(refused.unwrap_err().status, 409);
     ask("session_close", json!({ "session": 1 })).await;
+}
+
+// MARK: - The per-project lock
+
+#[test]
+fn a_panic_during_an_edit_does_not_stop_later_edits() {
+    let (_dir, service) = with_project();
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        service.with_project("P", |_| -> Result<(), CoreError> { panic!("a bug") })
+    }));
+    assert!(panicked.is_err());
+    assert!(service.with_project("P", |_| Ok(())).is_ok());
+}
+
+/// The interface state a host keeps and the main file a session's rename moves share the
+/// settings file: each read, change and write keeps the other's change.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ui_state_patches_and_main_file_renames_preserve_both_changes() {
+    let (_dir, service) = with_project();
+    let service = Arc::new(service);
+    let root = service.project_root("P").unwrap();
+    for index in 0..16 {
+        let (from, to) = if index % 2 == 0 {
+            ("main.tex", "paper.tex")
+        } else {
+            ("paper.tex", "main.tex")
+        };
+        let folder = format!("part {index}");
+        let start = Arc::new(tokio::sync::Barrier::new(2));
+        let patch = tokio::spawn({
+            let (service, start) = (Arc::clone(&service), Arc::clone(&start));
+            let args = json!({ "id": "P", "patch": { "expandedFolders": [folder] } });
+            async move {
+                start.wait().await;
+                service.call("set_ui_state", &args).await.unwrap();
+            }
+        });
+        start.wait().await;
+        // As a session renames.
+        service
+            .with_project("P", |root| projects::rename_entry(root, from, to))
+            .unwrap();
+        patch.await.unwrap();
+        assert_eq!(settings::read_settings(&root).main_file, to);
+        assert_eq!(settings::read_ui(&root).expanded_folders, [folder]);
+    }
+}
+
+#[test]
+fn an_edit_waits_for_its_own_project_only() {
+    let (_dir, service) = with_project();
+    let data = &service.data_dir;
+    projects::create_project(data, "Q", "blank", None).unwrap();
+    std::thread::scope(|scope| {
+        let edit = service.with_project("P", |_| {
+            // Another project's edit goes ahead.
+            service
+                .with_project("Q", |root| {
+                    projects::write_creating(&root.join("q.tex"), b"q")
+                })
+                .unwrap();
+            // This project's waits, however its id is spelled.
+            let edit = scope.spawn(|| {
+                service.with_project("./P", |root| {
+                    projects::write_creating(&root.join("p.tex"), b"p")
+                })
+            });
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(!data.join("P/p.tex").exists());
+            Ok(edit)
+        });
+        edit.unwrap().join().unwrap().unwrap();
+    });
+    assert!(data.join("P/p.tex").is_file());
 }

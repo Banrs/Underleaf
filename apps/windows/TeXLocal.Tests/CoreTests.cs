@@ -62,7 +62,7 @@ public sealed class CoreTests : IDisposable
         }
         await core.CallAsync("session_save", new { session });
         await saved.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var text = (await core.CallAsync("read_file", new { id = made.Id, path = "main.tex" })).GetProperty("text").GetString();
+        var text = File.ReadAllText(Path.Combine(dir, made.Id, "main.tex"));
         Assert.StartsWith("% x", text);
         await core.CallAsync("session_close", new { session });
     }
@@ -72,7 +72,7 @@ public sealed class CoreTests : IDisposable
     {
         var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Outline" });
         const string text = "\\documentclass{book}\n\\begin{document}\n\\chapter{One}\n\\section{}\nx\n\\end{document}\n";
-        await core.CallAsync("write_file", new { id = made.Id, path = "main.tex", text });
+        File.WriteAllText(Path.Combine(dir, made.Id, "main.tex"), text);
         const ulong session = 7;
         var opened = await core.CallAsync<SessionOpened>("session_open", new { id = made.Id, session });
         Assert.Equal(session, opened.Session);
@@ -96,7 +96,7 @@ public sealed class CoreTests : IDisposable
     public async Task SearchAnswersByFile()
     {
         var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Search" });
-        await core.CallAsync("write_file", new { id = made.Id, path = "notes.tex", text = "a needle\nNeedle b\n" });
+        File.WriteAllText(Path.Combine(dir, made.Id, "notes.tex"), "a needle\nNeedle b\n");
         var notes = Assert.Single(await core.CallAsync<SearchFile[]>("search_project", new { id = made.Id, query = "needle" }));
         Assert.Equal("notes.tex", notes.File);
         Assert.Equal(new[] { 1, 2 }, notes.Hits.Select(h => h.Line));

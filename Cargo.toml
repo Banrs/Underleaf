@@ -24,12 +24,10 @@ unchecked_time_subtraction = "warn"
 unused_self = "warn"
 use_self = "warn"
 
-# LTO reaches the Windows app's DLL, which `cargo rustc --crate-type cdylib`
-# builds as the unit's one crate type, but not the Mac app's archive: Cargo
-# runs it for no crate type of a unit unless it can for all, and
-# texlocal-ffi's rlib, which its tests link, cannot. Measured in October 2026
-# through the C ABI, an LTO archive was no faster on the editor's calls, and
-# left a stripped binary that linked it 1.5 MB smaller.
+# LTO reaches both apps' texlocal-ffi: the Mac app's archive, and the DLL the
+# Windows app builds with `cargo rustc --crate-type cdylib`. Measured in
+# October 2026 through the C ABI, an LTO archive was no faster on the editor's
+# calls, and left a stripped binary that linked it 1.5 MB smaller.
 [profile.release]
 codegen-units = 1
 lto = true

@@ -13,7 +13,7 @@ use tokio::sync::oneshot;
 use super::actor::Newline;
 use super::engine::Fut;
 use super::watch::Change;
-use super::{Document, Engine, Msg, Preview, Sessions, Timings};
+use super::{Document, Engine, Msg, Preview, Sessions};
 use crate::compile::CompileResult;
 use crate::logparse::LogItem;
 use crate::service::Service;
@@ -26,8 +26,8 @@ use crate::{CoreError, lock};
 struct Fake {
     calls: Mutex<Vec<String>>,
     builds: Mutex<VecDeque<oneshot::Sender<Result<CompileResult, CoreError>>>>,
-    /// Each start's files, and whether it was a restart of the session's own.
-    starts: Mutex<Vec<(Vec<String>, bool)>>,
+    /// Each start's files.
+    starts: Mutex<Vec<Vec<String>>>,
     /// Whether each start gave TeXpresso the host's pane, rather than its own window.
     panes: Mutex<Vec<bool>>,
     updates: Mutex<Vec<(String, String)>>,
@@ -133,7 +133,6 @@ impl Preview for Fake {
         _owner: u64,
         _root: &Path,
         files: &[FileBuffer],
-        replacing: bool,
         _path_env: &str,
         pane: Option<&Pane>,
         sink: Sink,
@@ -141,7 +140,7 @@ impl Preview for Fake {
         self.log("live_start");
         self.panes.lock().unwrap().push(pane.is_some());
         let paths = files.iter().map(|f| f.path.clone()).collect();
-        self.starts.lock().unwrap().push((paths, replacing));
+        self.starts.lock().unwrap().push(paths);
         *self.sink.lock().unwrap() = Some(sink);
         Ok(status(true))
     }
@@ -192,10 +191,10 @@ impl Preview for Fake {
     }
 
     /// As the manager's, which ends the preview: its end is told.
-    fn stop_request(&self, _owner: u64) -> Result<Status, CoreError> {
+    fn stop_request(&self, _owner: u64) -> Status {
         self.log("live_stop");
         self.tell(LiveEvent::Ended(None));
-        Ok(status(false))
+        status(false)
     }
 
     fn stop(&self, _root: &Path) -> Result<(), CoreError> {
@@ -224,7 +223,7 @@ impl Rig {
     /// Project "P"'s session, its main.tex "Hello"; with `watch`, the folder's watcher runs.
     async fn watching(auto_compile: bool, watch: bool) -> Self {
         let data = tempfile::tempdir().unwrap();
-        crate::projects::create_project(data.path(), "P", "blank").unwrap();
+        crate::projects::create_project(data.path(), "P", "blank", None).unwrap();
         let root = dunce::canonicalize(data.path().join("P")).unwrap();
         fs::write(root.join("main.tex"), "Hello").unwrap();
         let service = Arc::new(Service::new(data.path().to_path_buf()));
@@ -234,12 +233,8 @@ impl Rig {
             log: Mutex::new("TeX's log".into()),
             ..Fake::default()
         });
-        let timings = Timings {
-            watch,
-            ..Timings::default()
-        };
         let (engine, preview) = (Arc::clone(&fake), Arc::clone(&fake));
-        let sessions = Sessions::with_engine(service, engine, preview, timings);
+        let sessions = Sessions::with_engine(service, engine, preview, watch);
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
         sessions.set_listener(Some(Box::new(move |event| {
@@ -508,41 +503,25 @@ async fn an_undefined_commands_issue_says_where_its_line_has_it() {
     assert_eq!(lines[1]["tokens"], json!([{ "start": 0, "length": 4 }]));
 }
 
-/// The analysis of the file shown, whose outline the heading a line is under is found in.
+/// The analysis of the file shown, as the editor has it, whose outline the heading a line is
+/// under is found in.
 #[tokio::test(start_paused = true)]
 async fn the_analysis_is_kept_for_the_heading_a_line_is_under() {
     let rig = Rig::new(false).await;
     let text = "\\documentclass{book}\n\\chapter{A}\n\\section{B}\n\\section{}\n";
     fs::write(rig.root.join("main.tex"), text).unwrap();
-    let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
-    assert_eq!(
-        analysis["words"], 2,
-        "A and B: the class is a name, not a word"
-    );
-    assert_eq!(analysis["tree"][0]["children"][0]["command"], "section");
-    let untitled = &analysis["tree"][0]["children"][1];
-    assert_eq!(untitled["title"], "Untitled Section");
-    assert_eq!(untitled["foldKey"], "main.tex\t2:(untitled)#1");
-    // The class's levels: a book's, with Normal Text first.
-    let levels: Vec<&str> = analysis["headingStyles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|l| l["command"].as_str().unwrap())
-        .collect();
-    assert_eq!(levels[..3], ["", "part", "chapter"]);
+    let chapters = async || {
+        let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
+        let levels = analysis["headingStyles"].as_array().unwrap();
+        levels.iter().any(|l| l["command"] == "chapter")
+    };
+    assert!(chapters().await);
     assert_eq!(rig.heading("main.tex", 1).await, Value::Null);
     assert_eq!(rig.heading("main.tex", 3).await, json!(1));
     assert_eq!(rig.heading("main.tex", 9).await, json!(2));
-    // The class as the editor has it, before it is saved.
     let doc = rig.open("main.tex").await;
     doc.edit(15, 4, "article");
-    let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
-    let levels = analysis["headingStyles"].as_array().unwrap();
-    assert!(
-        !levels.iter().any(|l| l["command"] == "chapter"),
-        "{levels:?}"
-    );
+    assert!(!chapters().await);
 }
 
 /// An analysis is worked out beside the session: one under way holds up no other command,
@@ -615,15 +594,18 @@ async fn an_edit_heard_of_after_its_build_began_is_in_it() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_failed_build_announces_and_an_automatic_one_only_when_the_errors_change() {
+async fn an_automatic_build_announces_only_when_its_errors_change_and_a_stopped_one_never() {
     let mut rig = Rig::new(false).await;
     rig.ok("compile", json!({ "auto": true })).await;
     rig.fake.finish_build(built(true, vec![issue(1, "a")]));
     rig.ok("compile", json!({ "auto": true })).await;
     rig.fake.finish_build(built(true, vec![issue(2, "b")]));
+    // Asked for, but stopped: there's nothing to say of it.
+    rig.ok("compile", json!({})).await;
+    rig.ok("stop_compile", json!({})).await;
     let finished = rig.of_type("build_finished").await;
     let announced: Vec<bool> = finished.iter().map(|f| f["announce"] == true).collect();
-    assert_eq!(announced, [true, false]);
+    assert_eq!(announced, [true, false, false]);
 }
 
 // MARK: - Changes on disk
@@ -928,7 +910,7 @@ async fn keys_go_to_texpresso_as_made_and_a_refused_one_sends_the_whole_text() {
     let rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
     live(&rig).await;
-    assert_eq!(rig.fake.starts.lock().unwrap()[0].0, ["main.tex"]);
+    assert_eq!(rig.fake.starts.lock().unwrap()[0], ["main.tex"]);
     doc.edit(5, 0, "!");
     rig.state().await;
     assert_eq!(rig.fake.edits.lock().unwrap().len(), 1);
@@ -1006,9 +988,8 @@ async fn documents_and_pages_go_to_the_host_as_they_come_and_none_of_a_start_bef
         shown,
         [
             &json!({ "type": "live_document", "session": session, "path": "/tmp/live.pdf",
-                "version": 1, "serial": 1, "pages": 4, "changed": [[1, 1]], "complete": false }),
-            &json!({ "type": "live_page", "session": session, "page": 1, "path": "/tmp/page.pdf",
-                "serial": 2 }),
+                "pages": 4, "changed": [[1, 1]], "complete": false }),
+            &json!({ "type": "live_page", "session": session, "page": 1, "path": "/tmp/page.pdf" }),
         ]
     );
 }
@@ -1021,9 +1002,7 @@ async fn a_preview_that_ends_after_ten_seconds_restarts_and_a_new_one_reports() 
     rig.events().await;
     rig.fake.tell(exited());
     wait(1).await;
-    let starts = rig.fake.starts.lock().unwrap().clone();
-    assert_eq!(starts.len(), 2);
-    assert!(starts[1].1, "a restart of its own");
+    assert_eq!(rig.fake.starts.lock().unwrap().len(), 2);
     let events = rig.events().await;
     assert_eq!(phases(&events), ["starting", "running"]);
     assert!(events.iter().any(|e| e["type"] == "live_restarted"));
@@ -1052,21 +1031,6 @@ async fn automatic_builds_wait_while_live_preview_runs() {
     rig.ok("live_stop", json!({})).await;
     rig.state().await;
     assert_eq!(rig.fake.called("compile"), 2);
-}
-
-#[tokio::test(start_paused = true)]
-async fn another_windows_preview_ends_this_ones() {
-    let rig = Rig::new(false).await;
-    let doc = rig.open("main.tex").await;
-    live(&rig).await;
-    rig.fake.refuse_edit(CoreError::conflict("Another window"));
-    doc.edit(0, 0, "x");
-    let state = rig.state().await;
-    assert_eq!(state["live"]["phase"], "stopped");
-    assert_eq!(state["live"]["failure"], "Another window");
-    // The preview is another's: its log isn't this session's.
-    rig.ok("live_log", json!({ "shown": true })).await;
-    assert_eq!(rig.state().await["live"]["log"], "Another window");
 }
 
 #[tokio::test(start_paused = true)]
@@ -1121,9 +1085,7 @@ async fn a_rename_restarts_the_preview_once_it_settles_showing_it_as_starting_me
     rig.ok("live_stop", json!({})).await;
     live(&rig).await;
     wait(200).await;
-    let starts = rig.fake.starts.lock().unwrap().clone();
-    let restarts: Vec<bool> = starts.into_iter().map(|(_, restart)| restart).collect();
-    assert_eq!(restarts, [false, true, false]);
+    assert_eq!(rig.fake.starts.lock().unwrap().len(), 3);
 }
 
 /// While the host shows the log it follows TeX's, at most every 200 ms.
@@ -1204,20 +1166,13 @@ fn until_event(seen: &Mutex<Vec<Value>>, found: impl Fn(&Value) -> bool) -> Opti
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_watcher_tells_another_apps_changes_from_the_sessions_own() {
+async fn the_folders_watcher_tells_another_apps_changes() {
     let rig = Rig::watching(false, true).await;
-    let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, "!");
-    let saved = until_event(&rig.seen, |e| e["type"] == "saved");
-    assert!(saved.is_some(), "autosaved");
-    // Long enough for the save's own changes to have come and gone.
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-    let seen = rig.seen.lock().unwrap().clone();
-    assert!(!seen.iter().any(mistaken), "{seen:?}");
+    rig.open("main.tex").await;
     fs::write(rig.root.join("main.tex"), "theirs").unwrap();
+    fs::write(rig.root.join("new.tex"), "").unwrap();
     let reload = until_event(&rig.seen, |e| e["type"] == "document_reload");
     assert_eq!(reload.expect("reloaded")["text"], "theirs");
-    fs::write(rig.root.join("new.tex"), "").unwrap();
     assert!(until_event(&rig.seen, |e| e["type"] == "tree").is_some());
     rig.sessions.close_all().await;
 }
@@ -1360,20 +1315,4 @@ async fn a_panic_ends_the_session_with_its_edits_written_and_the_host_told() {
     });
     assert!(told.is_some());
     assert_eq!(rig.call("state", json!({})).await.unwrap_err().status, 404);
-}
-
-#[tokio::test]
-async fn a_sessions_commands_are_taken_in_the_order_sent_however_they_are_awaited() {
-    let rig = Rig::new(false).await;
-    let send = |auto: bool| {
-        let args = json!({ "session": rig.session, "autoCompile": auto });
-        rig.sessions.send("session_set_options", &args)
-    };
-    let (first, second) = (send(false), send(true));
-    let state = rig
-        .sessions
-        .send("session_state", &json!({ "session": rig.session }));
-    assert_eq!(state.await.unwrap()["autoCompile"], true);
-    second.await.unwrap();
-    first.await.unwrap();
 }

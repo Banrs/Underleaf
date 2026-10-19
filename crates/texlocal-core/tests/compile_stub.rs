@@ -42,7 +42,7 @@ fn stub_env(bin: &Path, script: &str) -> String {
 }
 
 fn project(data: &Path) -> PathBuf {
-    create_project(data, "proj", "blank").unwrap();
+    create_project(data, "proj", "blank", None).unwrap();
     project_root(data, "proj").unwrap()
 }
 
@@ -80,7 +80,7 @@ fn stub_service(script: &str, ids: &[&str]) -> (TempDir, Arc<Service>) {
     let service = Service::new(tmp.path().to_path_buf());
     stub_env(&tmp.path().join("bin"), script);
     for id in ids {
-        create_project(tmp.path(), id, "blank").unwrap();
+        create_project(tmp.path(), id, "blank", None).unwrap();
     }
     (tmp, Arc::new(service))
 }
@@ -449,7 +449,7 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     assert_eq!(stop("one").await.unwrap(), false, "nothing is running");
 
     // A rename refused leaves the build running; one that goes ahead stops it.
-    create_project(tmp.path(), "taken", "blank").unwrap();
+    create_project(tmp.path(), "taken", "blank", None).unwrap();
     let refused = service
         .call("rename_project", &json!({ "id": "two", "name": "taken" }))
         .await;
