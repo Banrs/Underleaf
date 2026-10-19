@@ -415,6 +415,7 @@ impl Actor {
         let path = || paths::rel_key(string_arg(args, "path")?);
         match name {
             "close" => return Ok(self.close()),
+            #[cfg(test)]
             "state" => return Ok(self.state()),
             "set_options" => {
                 if let Some(auto) = arg::<Option<bool>>(args, "autoCompile")? {
@@ -476,7 +477,8 @@ impl Actor {
         Ok(Value::Null)
     }
 
-    /// A snapshot, with what the events leave out.
+    /// A snapshot for the tests, with what the events leave out.
+    #[cfg(test)]
     fn state(&self) -> Value {
         let docs: Vec<Value> = self
             .docs

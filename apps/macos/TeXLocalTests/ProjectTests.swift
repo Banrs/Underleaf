@@ -424,9 +424,10 @@ final class ProjectFlowTests {
             for _ in 0..<turns { await Task.yield() }
             await Task { await project.open(last) }.value
             await opening.value
-            let state = try await Core.shared.call("session_state", ["session": session], as: OpenDocuments.self)
+            // Taken after any close an overtaken open sent: a session takes its commands in the order sent.
+            try await Core.shared.call("session_set_options", ["session": session])
             #expect(project.openPath == last && project.editor.path == last)
-            #expect(state.documents.map(\.path) == [last], "after \(turns) turns")
+            #expect(paths.filter { SourceDocument(session: session, path: $0) != nil } == [last], "after \(turns) turns")
         }
         #expect(app.alert == nil)
         await app.close()
@@ -541,9 +542,4 @@ final class ProjectFlowTests {
         #expect(exists(folder.appending(path: "parts/\(outside.lastPathComponent)")) && exists(outside))
         await app.close()
     }
-}
-
-/// `session_state`'s documents: those the session has open.
-private nonisolated struct OpenDocuments: Decodable {
-    let documents: [DocumentState]
 }

@@ -88,13 +88,19 @@ impl Client {
     }
 
     /// Waits for a line of the Live Preview Log that starts with `text`, as TeX writes its
-    /// lines, while the preview runs, across any restart of the session's own. Until TeX has
-    /// said something the log has TeXpresso's stderr too, which may echo what it was sent.
+    /// lines, while the preview runs, across any restart of the session's own: the log the
+    /// last `live` event carries, as a host showing it has it. Until TeX has said something
+    /// the log has TeXpresso's stderr too, which may echo what it was sent.
     async fn shows(&self, session: u64, text: &str, check: &str) {
         let began = Instant::now();
         loop {
-            let live = &self.ask(session, "state", json!({})).await["live"];
-            let log = live["log"].as_str().unwrap();
+            let live = {
+                let events = self.events.lock().unwrap();
+                let mut lives = events.iter().rev();
+                let last = lives.find(|e| e["type"] == "live" && e["session"] == session);
+                last.cloned().unwrap_or_default()
+            };
+            let log = live["log"].as_str().unwrap_or_default();
             if live["phase"] == "running" && log.lines().any(|line| line.starts_with(text)) {
                 break;
             }
