@@ -73,7 +73,11 @@ Native replacements that need a look on screen:
   - `watch::relative` and `tree`'s `Entry::rel` stay apart: one drops names that aren't UTF-8 and
     the other keeps them with U+FFFD.
 - **Tools:** `tools/qa/xctest.sh` has odd bytes in a comment and a grep pattern, possibly needed
-  on macOS.
+  on macOS; it and `fg-guard.zsh` share a lock loop that one copy could serve, untested without zsh.
+
+## Docs
+
+- `docs/core-api.md` doesn't say what `session_save`'s `reporting` does.
 
 ## Out of scope
 
