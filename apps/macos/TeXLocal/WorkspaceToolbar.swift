@@ -20,8 +20,7 @@ extension NSToolbarItem.Identifier {
     static func template(_ template: Template) -> Self { Self("template." + template.title) }
 }
 
-/// What a narrow window has no room for goes to the system's overflow menu: Zoom leaves first, then the editing tools,
-/// then Back, Compile and the toggles (HIG, Toolbars).
+/// What a narrow window has no room for goes to the overflow menu, the editing tools and Zoom first (HIG, Toolbars).
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
     /// Renamed as the defaults change: a layout saved under an earlier name would bring back or lack items.
@@ -29,7 +28,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
-    /// Set by the workspace that owns the toolbar, as it has finished initialising.
     weak var workspace: WorkspaceController?
     private lazy var format = FormatPopover(app: app, project: project)
     private var applied: State?
@@ -56,8 +54,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     // MARK: - Items
 
-    /// Each pane's tools at its trailing end, as each column's in Mail and the tools after the title in the UI kit's
-    /// toolbar: Zoom beside Compile, the window's one prominent action, on the trailing side (HIG, Toolbars).
+    /// Each pane's tools at its trailing end, as Mail's columns', with Zoom beside Compile (HIG, Toolbars).
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .format, .math, .insert,
          .pdfSeparator, .flexibleSpace, .zoom, .compile,
@@ -127,9 +124,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             share.toolTip = "Share the PDF"
             item = share
         case .compile:
-            // The window's one prominent action (HIG, Toolbars), as a word: a play symbol reads as media. It stands for
-            // the word only where the word doesn't fit (`CompileButton`). Customize Toolbar gets a title, as it draws
-            // custom views without their style.
+            // The one prominent action, as a word: a play symbol reads as media, so it stands only where the word doesn't
+            // fit. Customize Toolbar gets a title, as it draws custom views without their style.
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.compileRun.title
             if flag {
@@ -138,9 +134,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                 item.view = view
                 // A wider section may have room for the word again.
                 if let split = workspace?.columns.splitView {
-                    resized = NotificationCenter.default.addObserver(of: split, for: .didResizeSubviews) { _ in
-                        view.offerWord()
-                    }
+                    resized = NotificationCenter.default.addObserver(of: split, for: .didResizeSubviews) { _ in view.offerWord() }
                 }
             } else {
                 item.title = MenuCommand.compileRun.title
@@ -189,7 +183,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private func zoomItem() -> NSToolbarItem {
         let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
-        let menu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF }) { [app, project, pdf] in
+        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF }) { [app, project, pdf] in
             ForEach([MenuCommand.viewZoomIn, .viewZoomOut], id: \.self) { command in
                 Button(command.title) { app.perform(command, on: project) }
                     .disabled(!app.isEnabled(command, on: project))
@@ -197,8 +191,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             Divider()
             ScaleMenuItems(pdf: pdf)
         })
-        form.submenu = menu
-        // Three segments whatever the symbols: `zoom` reads them by index.
         let control = ZoomControl()
         control.segmentCount = 3
         control.trackingMode = .momentary
@@ -291,8 +283,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.isEnabled = state.isLaTeX
         case .zoom:
             guard let control = item.view as? NSSegmentedControl else { return }
-            // Set as it changes: a segment's label, set unchanged, still lays the toolbar out again, as each frame of a
-            // pane's animation refits the PDF.
+            // Only as it changes: set unchanged, it still lays the toolbar out, each frame of a pane's animation.
             if control.label(forSegment: 1) != state.zoomLabel { control.setLabel(state.zoomLabel, forSegment: 1) }
             control.setEnabled(state.hasPDF && state.canZoomOut, forSegment: 0)
             control.setEnabled(state.hasPDF, forSegment: 1)
@@ -321,13 +312,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     /// The buttons, and their copies in the overflow menu, which AppKit validates through their target.
-    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
-        allows(item.action)
-    }
-
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        allows(menuItem.action)
-    }
+    func validateToolbarItem(_ item: NSToolbarItem) -> Bool { allows(item.action) }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { allows(menuItem.action) }
 
     private func allows(_ action: Selector?) -> Bool {
         guard !project.closed else { return false }
@@ -348,9 +334,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     @objc private func back() { app.perform(.projectClose, on: project) }
 
     /// A toolbar button's action comes from its item, as `insertTemplate`'s does (27.2).
-    @objc private func showFormat(_ item: NSToolbarItem) {
-        format.toggle(relativeTo: item)
-    }
+    @objc private func showFormat(_ item: NSToolbarItem) { format.toggle(relativeTo: item) }
 
     @objc private func style(_ item: NSToolbarItem) {
         if let (command, _) = Self.styles[item.itemIdentifier] { app.perform(command, on: project) }
@@ -401,7 +385,6 @@ private final class ZoomControl: NSSegmentedControl {
         super.layout()
         guard let size = font?.pointSize, size != measuredSize else { return }
         measuredSize = size
-        guard !widestLabel.isEmpty, segmentCount == 3 else { return }
         let label = label(forSegment: 1) ?? ""
         setLabel(widestLabel, forSegment: 1)
         setWidth(0, forSegment: 1)
@@ -413,9 +396,8 @@ private final class ZoomControl: NSSegmentedControl {
     }
 }
 
-/// Compile's view. The toolbar sizes a custom view anywhere between its least and greatest widths, which would leave the
-/// symbol in a capsule as wide as the room: given less than the word, it takes the symbol's circle, and a wider section
-/// offers the word again (`offerWord`), as AppKit's search item folds to its button.
+/// The toolbar sizes a custom view anywhere between its least and greatest widths: given less than the word, Compile takes
+/// the symbol's circle, and a wider section offers the word again, as AppKit's search item folds to its button.
 private final class CompileHost: NSHostingView<CompileButton> {
     /// The word's width, Compile's or Stop's, whichever is wider: the item's own `fittingSize` is its least.
     private lazy var word = NSHostingView(rootView: CompileButton(compiling: false, compact: false, enabled: true) {})
@@ -442,13 +424,9 @@ private final class CompileHost: NSHostingView<CompileButton> {
         }
     }
 
-    private func fold() {
-        if !rootView.compact, frame.width < word - 0.5 { rootView.compact = true }
-    }
+    private func fold() { if !rootView.compact, frame.width < word - 0.5 { rootView.compact = true } }
 
-    func offerWord() {
-        if rootView.compact { rootView.compact = false }
-    }
+    func offerWord() { if rootView.compact { rootView.compact = false } }
 }
 
 /// Compile as its word, or as its symbol where the toolbar has no room for the word, and Stop with the build's spinner in
