@@ -1,7 +1,6 @@
-//! Building a project with latexmk: one build at a time per project, a newer
-//! request superseding the one running, Stop and quit, the timeout, and the
-//! stale-output guard. The process and TeX discovery it stands on are in
-//! `process` and `tex`.
+//! Building a project with latexmk: one build at a time per project, Stop and
+//! quit, the timeout, and the stale-output guard. The process and TeX discovery
+//! it stands on are in `process` and `tex`.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -32,8 +31,8 @@ const OUTPUTS: [&str; 5] = ["log", "pdf", "blg", "aux", "fdb_latexmk"];
 
 /// A build's outcome. `ok`: latexmk finished cleanly and the PDF exists.
 /// `pdf`: the successful build's PDF, or one a failed build wrote while
-/// compiling past errors, as an absolute path. `stopped`: Stop, a newer build
-/// of the same project, or quitting ended it.
+/// compiling past errors, as an absolute path. `stopped`: Stop or quitting
+/// ended it.
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompileResult {
@@ -51,13 +50,12 @@ pub struct CompileResult {
 #[derive(Default)]
 struct RunningEntry {
     gate: Arc<ProjectGate>,
-    /// Which request is the project's current one: each request and each Stop
-    /// moves it on, and a request holding another number has been replaced
-    /// or stopped.
+    /// Moved on by each Stop: a request that holds an earlier number was
+    /// stopped.
     epoch: u64,
     /// The requests alive, waiting for the gate or running.
     busy: usize,
-    /// The active run's tree, for a request that replaces it to kill.
+    /// The active run's tree, for Stop and quitting to kill.
     tree: Option<Tree>,
     /// The active run's latexmk record, until a good run ends. It is removed
     /// where the run ends if it did not end ok, and by a Stop, to remove it
@@ -78,7 +76,7 @@ fn key(root: &Path) -> PathBuf {
     dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
 }
 
-/// One compile per project, supersede-kill semantics, and kill-all on quit.
+/// One build at a time per project, Stop, and kill-all on quit.
 #[derive(Default)]
 pub struct CompileManager {
     running: Mutex<Registry>,
@@ -100,7 +98,7 @@ struct Registration<'a> {
 }
 
 impl Registration<'_> {
-    /// Stop ended it, a newer request replaced it, or the app is quitting.
+    /// Stop ended it, or the app is quitting.
     /// Asked with the registry locked, as `kill_all` sets the latch.
     fn stopped(&self, running: &Registry) -> bool {
         self.manager.shutdown.load(Ordering::Acquire) || running[&self.key].epoch != self.epoch
@@ -263,13 +261,7 @@ impl CompileManager {
         let key = key(root);
         let mut running = lock(&self.running);
         let entry = running.entry(key.clone()).or_default();
-        entry.epoch += 1;
         entry.busy += 1;
-        // The tree belongs to the gate's active owner, even when the latest
-        // request is still waiting or an intervening request was cancelled.
-        if let Some(tree) = &entry.tree {
-            tree.kill();
-        }
         Registration {
             manager: self,
             key,
@@ -277,15 +269,6 @@ impl CompileManager {
             epoch: entry.epoch,
             gate_guard: None,
             child: None,
-        }
-    }
-
-    fn stopped_early(start: Instant) -> CompileResult {
-        CompileResult {
-            stopped: true,
-            duration_ms: start.elapsed().as_millis() as u64,
-            log: "The build was stopped before it started.".to_string(),
-            ..CompileResult::default()
         }
     }
 
@@ -349,7 +332,7 @@ impl CompileManager {
         // Cancelling the active future can only signal the tree, not await reap.
         registration.gate_guard = Some(Arc::clone(&registration.gate).lock_owned().await);
 
-        // Capture the outputs' stamps after the predecessor has stopped,
+        // Capture the outputs' stamps after the predecessor has ended,
         // otherwise its final writes can be mistaken for output from this run.
         let run = CompileRun {
             main_rel,
@@ -362,11 +345,16 @@ impl CompileManager {
 
         let spawned = {
             // Hold the registry lock across synchronous spawn + tree publication.
-            // A successor or Stop therefore sees either no child or its tree,
+            // Stop or quitting therefore sees either no child or its tree,
             // never an unkillable gap between the two.
             let mut running = lock(&self.running);
             if registration.stopped(&running) {
-                return Ok(Self::stopped_early(request_started));
+                return Ok(CompileResult {
+                    stopped: true,
+                    duration_ms: request_started.elapsed().as_millis() as u64,
+                    log: "The build was stopped before it started.".to_string(),
+                    ..CompileResult::default()
+                });
             }
             let entry = running
                 .get_mut(&registration.key)
@@ -385,12 +373,10 @@ impl CompileManager {
                 registration.child = None;
                 output.push_str(&stderr);
                 let mut running = lock(&self.running);
-                let end = if registration.stopped(&running) {
-                    End::Stopped
-                } else if timed_out {
-                    End::TimedOut
-                } else {
-                    End::Exited(code)
+                let end = match (registration.stopped(&running), timed_out) {
+                    (true, _) => End::Stopped,
+                    (_, true) => End::TimedOut,
+                    _ => End::Exited(code),
                 };
                 let entry = running
                     .get_mut(&registration.key)
@@ -477,11 +463,7 @@ fn joined_log(engine_log: Option<&str>, output: String) -> String {
         Some(engine_log) => format!("{}\n\n{output}", crate::tail(engine_log, LOG_TAIL)),
         None => output,
     };
-    if log.len() > LOG_TAIL {
-        crate::tail(&log, LOG_TAIL).to_owned()
-    } else {
-        log
-    }
+    crate::tail(&log, LOG_TAIL).to_owned()
 }
 
 /// A file's last `max` bytes, starting at a line when it had to cut: errors
@@ -502,6 +484,9 @@ fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     }
     Ok(bytes)
 }
+
+#[cfg(all(test, unix))]
+mod stubs;
 
 #[cfg(test)]
 mod tests {

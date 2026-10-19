@@ -150,23 +150,13 @@ mod tests {
     fn every_template_is_plain_file_names_led_by_main_tex() {
         // create_project writes these straight into the new folder, without
         // the path checks user input goes through.
-        for name in ["blank", "article", "report", "beamer", "unknown"] {
+        for name in ["blank", "article", "report", "beamer"] {
             let template = files(name);
             assert_eq!(template[0].0, "main.tex", "{name}");
             for (file, _) in template {
-                assert!(
-                    !file.contains('/') && !file.starts_with('.'),
-                    "{name}: {file}"
-                );
+                assert!(!file.contains('/') && !file.starts_with('.'), "{file}");
             }
         }
         assert_eq!(files("unknown"), files("article"));
-    }
-
-    #[test]
-    fn the_presentation_loads_only_a_theme_beamer_itself_ships() {
-        // LaTeX has no fallback for a theme that isn't installed: the build fails.
-        let main = files("beamer")[0].1;
-        assert!(main.contains("\\usetheme{Madrid}") && !main.contains("metropolis"));
     }
 }

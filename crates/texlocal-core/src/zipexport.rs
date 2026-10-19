@@ -3,9 +3,8 @@
 //! inside the project cannot archive itself and failures never leave a partial
 //! ZIP at the requested path.
 //!
-//! What goes in is what an import takes back: everything but the compile
-//! output, the project's own settings and `projects::is_litter`. Dotfiles the
-//! file tree hides (.latexmkrc) are the author's and are archived.
+//! What goes in is what an import takes back: all but what `left_out` names.
+//! Dotfiles the file tree hides (.latexmkrc) are the author's and are archived.
 
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
@@ -23,9 +22,8 @@ use crate::{BUILD_DIR, SETTINGS_FILE};
 
 pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let root_canonical = dunce::canonicalize(root)?;
-    let parent = dest.parent().filter(|p| !p.as_os_str().is_empty());
-    let parent = parent.unwrap_or(Path::new("."));
-    let (temp_path, file) = create_temp(parent).map_err(CoreError::at(dest))?;
+    let parent = dest.parent().expect("a file is in a folder");
+    let (file, temp_path) = create_temp(parent).map_err(CoreError::at(dest))?;
 
     // Resolve the archive folder as the walk resolves the project, so a
     // destination spelled through a link is still recognised there.
@@ -53,7 +51,8 @@ struct Export<'a> {
 }
 
 impl Export<'_> {
-    /// `dir_canonical` is `dir` resolved, for excluding the archive itself.
+    /// `dir_canonical` is `dir` resolved, for excluding the archive itself, and
+    /// `prefix` its path in the archive, "" or ending in '/'.
     fn add_dir(&mut self, dir: &Path, dir_canonical: &Path, prefix: &str) -> Result<(), CoreError> {
         let mut entries = fs::read_dir(dir)?.collect::<io::Result<Vec<_>>>()?;
         entries.sort_by_key(DirEntry::file_name);
@@ -75,20 +74,10 @@ impl Export<'_> {
     }
 
     fn add_entry(&mut self, entry: &DirEntry, prefix: &str) -> Result<(), CoreError> {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if is_litter(&name) {
+        let rel = format!("{prefix}{}", entry.file_name().to_string_lossy());
+        if left_out(&rel) {
             return Ok(());
         }
-        if prefix.is_empty()
-            && (name.eq_ignore_ascii_case(BUILD_DIR) || name.eq_ignore_ascii_case(SETTINGS_FILE))
-        {
-            return Ok(());
-        }
-        let rel = if prefix.is_empty() {
-            name
-        } else {
-            format!("{prefix}/{name}")
-        };
         let path = entry.path();
 
         let entry_type = entry.file_type()?;
@@ -107,8 +96,9 @@ impl Export<'_> {
             let canonical = dunce::canonicalize(&path)?;
             if canonical.starts_with(self.root_canonical) {
                 let options = dated(self.options, entry.metadata().and_then(|m| m.modified()));
-                self.writer.add_directory(format!("{rel}/"), options)?;
-                self.add_dir(&path, &canonical, &rel)?;
+                let dir = format!("{rel}/");
+                self.writer.add_directory(dir.clone(), options)?;
+                self.add_dir(&path, &canonical, &dir)?;
             }
         } else if entry_type.is_file() {
             self.add_file(&rel, &path)?;
@@ -126,6 +116,16 @@ impl Export<'_> {
         io::copy(&mut file, &mut self.writer)?;
         Ok(())
     }
+}
+
+/// What an export leaves out and an import leaves behind, by its path in the
+/// project: `is_litter` at any depth, and the compile output and the project's
+/// own settings at the top, in any case.
+pub(crate) fn left_out(rel: &str) -> bool {
+    let top = rel.split_once('/').map_or(rel, |(top, _)| top);
+    top.eq_ignore_ascii_case(BUILD_DIR)
+        || rel.eq_ignore_ascii_case(SETTINGS_FILE)
+        || rel.split('/').any(is_litter)
 }
 
 /// Past 4 GiB (a video, a data set), sizes need ZIP64's fields; and from
@@ -150,7 +150,10 @@ fn dated(options: SimpleFileOptions, modified: io::Result<SystemTime>) -> Simple
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::import::import_project;
     use crate::projects::testing::{project, zip_names};
+    use crate::service::Service;
+    use crate::settings::{read_settings, write_settings};
 
     #[test]
     fn a_file_that_could_deflate_past_4_gib_is_written_as_zip64() {
@@ -164,28 +167,77 @@ mod tests {
         assert!(needs_zip64(1 << 32));
     }
 
+    /// An export leaves out what an import would, so a project exported and
+    /// opened again keeps every file the author made, and only those.
     #[test]
-    fn litter_and_the_autosaves_temporary_file_stay_out_and_the_authors_dotfiles_go_in() {
+    fn a_project_exported_and_opened_again_keeps_every_file_the_author_made() {
         let (dir, root) = project();
         for (path, text) in [
             (".latexmkrc", "$pdf_mode = 1;"),
+            (".gitignore", "build/"),
+            ("chapters/intro.tex", "intro"),
+            // A nested settings file is the author's.
+            ("sub/.texlocal.json", "{}"),
             (".git/HEAD", "ref"),
             ("figs/.DS_Store", "x"),
             ("figs/._a.png", "fork"),
+            ("figs/a.png", "png"),
             // What atomic::write leaves beside a document mid-save.
             (".texlocal-AbC123", "half"),
-            ("figs/a.png", "png"),
+            ("Build/main.pdf", "output"),
         ] {
             let file = root.join(path);
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(file, text).unwrap();
         }
+        // The settings file spelt in another case, as the volume still finds it.
+        write_settings(&root, &serde_json::json!({ "engine": "lualatex" })).unwrap();
+        fs::rename(root.join(SETTINGS_FILE), root.join(".TeXLocal.json")).unwrap();
         let dest = dir.path().join("out.zip");
         export_zip(&root, &dest).unwrap();
-        assert_eq!(
-            zip_names(&dest),
-            [".latexmkrc", "figs/", "figs/a.png", "main.tex"]
-        );
+        let kept = [
+            ".gitignore",
+            ".latexmkrc",
+            "chapters/",
+            "chapters/intro.tex",
+            "figs/",
+            "figs/a.png",
+            "main.tex",
+            "sub/",
+            "sub/.texlocal.json",
+        ];
+        assert_eq!(zip_names(&dest), kept);
+        // A destination inside the project can replace an old file there, and
+        // neither it nor its temporary file lands in the archive.
+        let inside = root.join("project.zip");
+        fs::write(&inside, "old incomplete archive").unwrap();
+        export_zip(&root, &inside).unwrap();
+        assert_eq!(zip_names(&inside), kept);
+
+        let service = Service::new(dir.path().join("again"));
+        let copy = service
+            .data_dir
+            .join(import_project(&service, &dest).unwrap().id);
+        export_zip(&copy, &dest).unwrap();
+        assert_eq!(zip_names(&dest), kept);
+        let latexmkrc = fs::read_to_string(copy.join(".latexmkrc")).unwrap();
+        assert_eq!(latexmkrc, "$pdf_mode = 1;");
+        // The settings are the project's own and are not carried in the archive.
+        assert_eq!(read_settings(&copy).engine.as_str(), "pdflatex");
+    }
+
+    #[test]
+    fn zip_export_dates_entries_as_their_files() {
+        let (dir, root) = project();
+        let dest = dir.path().join("out.zip");
+        export_zip(&root, &dest).unwrap();
+        let mut archive = zip::ZipArchive::new(File::open(&dest).unwrap()).unwrap();
+        let dated = archive.by_name("main.tex").unwrap().last_modified();
+        let modified = fs::metadata(root.join("main.tex")).unwrap().modified();
+        let local = chrono::DateTime::<chrono::Local>::from(modified.unwrap());
+        // To the minute, as ZIP dates in steps of two seconds.
+        let minute = local.format("%Y-%m-%d %H:%M").to_string();
+        assert_eq!(dated.unwrap().to_string()[..16], minute);
     }
 
     #[test]
@@ -200,7 +252,7 @@ mod tests {
         fs::remove_file(root.join("gone.tex")).unwrap();
 
         let dest = dir.path().join("out.zip");
-        let (temp, file) = create_temp(dir.path()).unwrap();
+        let (file, temp) = create_temp(dir.path()).unwrap();
         let mut export = Export {
             writer: ZipWriter::new(file),
             options: SimpleFileOptions::default(),

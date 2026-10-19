@@ -12,23 +12,18 @@ use crate::process::{PROBE_TIMEOUT, run};
 use crate::settings::read_settings;
 use crate::wordmatch::{PdfHit, PdfPage, find_in_pdf, find_in_source};
 
-/// Only `page` is required. The rest are omitted when synctex didn't report
-/// them, because the PDF viewer falls back with `??` — which fires on an
-/// absent field but not on a zero, and a zero-size highlight is invisible.
+/// Only `page` is always given: the rest are null where synctex reported none,
+/// for the host to fall back on rather than draw an invisible zero-size box.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ForwardLoc {
     pub page: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub h: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub v: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub width: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<f64>,
-    /// All matching boxes in reading order. The top-level fields retain the
-    /// CLI's first match for clients that do not refine a word selection.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// All matching boxes in reading order (none in each of them). The
+    /// top-level fields retain the CLI's first match for clients that do not
+    /// refine a word selection.
     pub matches: Vec<Self>,
 }
 
@@ -38,7 +33,6 @@ pub struct InverseLoc {
     pub line: u32,
     /// The clicked letter's place in the line, in UTF-16 units (the hosts'
     /// strings), when the host sent the page text and the word was found.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub column: Option<u32>,
 }
 
@@ -110,19 +104,12 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
             });
         }
     };
-    for ln in stdout.split('\n') {
-        let Some((key, value)) = ln.split_once(':') else {
-            continue;
-        };
+    for (key, value) in stdout.split('\n').filter_map(|ln| ln.split_once(':')) {
         if let Some(i) = KEYS.iter().position(|k| *k == key) {
             if i == 0 {
                 finish(std::mem::take(&mut values));
             }
-            values[i] = value
-                .trim()
-                .parse::<f64>()
-                .ok()
-                .filter(|value| value.is_finite());
+            values[i] = value.trim().parse().ok().filter(|v: &f64| v.is_finite());
         }
     }
     finish(values);
@@ -206,18 +193,24 @@ pub fn match_forward(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn sync_without_a_synctex_program_says_it_is_not_available() {
+        let pdf = Some(Path::new("live.pdf"));
+        let err = synctex_inverse(Path::new("P"), 1.0, 1.0, 1.0, None, pdf, "/none").await;
+        let err = err.unwrap_err();
+        assert_eq!(err.status, 404);
+        assert!(err.message.contains("not available"), "{err}");
+    }
+
     #[test]
     fn forward_keeps_all_boxes_in_page_order_without_changing_the_legacy_match() {
         let output = "Page:2\nh:10\nv:80\nW:100\nH:9\nPage:1\nh:10\nv:60\nW:100\nH:9\nPage:2\nh:10\nv:40\nW:100\nH:9\nPage:2\nh:10\nv:40\nW:100\nH:9\n";
         let result = parse_forward(output).unwrap();
         assert_eq!((result.page, result.v), (2.0, Some(80.0)));
+        let boxes: Vec<_> = result.matches.iter().map(|r| (r.page, r.v)).collect();
         assert_eq!(
-            result
-                .matches
-                .iter()
-                .map(|r| (r.page, r.v))
-                .collect::<Vec<_>>(),
-            vec![(1.0, Some(60.0)), (2.0, Some(40.0)), (2.0, Some(80.0))]
+            boxes,
+            [(1.0, Some(60.0)), (2.0, Some(40.0)), (2.0, Some(80.0))]
         );
         assert!(result.matches.iter().all(|r| r.matches.is_empty()));
     }

@@ -88,9 +88,8 @@ fn ensure_existing_ancestor_within(
     }
 
     let resolved = dunce::canonicalize(existing).map_err(|_| CoreError::bad_request(escape_err))?;
-    let Ok(inside) = resolved.strip_prefix(&canonical_root) else {
-        return Err(CoreError::bad_request(escape_err));
-    };
+    let inside =
+        (resolved.strip_prefix(&canonical_root)).map_err(|_| CoreError::bad_request(escape_err))?;
     let suffix = target.strip_prefix(existing).unwrap_or(Path::new(""));
     // Collected, so a whole existing path keeps no trailing slash.
     Ok(inside.join(suffix).components().collect())
@@ -137,7 +136,7 @@ fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
 }
 
 fn is_settings_file(segments: &[&str]) -> bool {
-    segments.len() == 1 && segments[0].eq_ignore_ascii_case(SETTINGS_FILE)
+    matches!(segments, [name] if name.eq_ignore_ascii_case(SETTINGS_FILE))
 }
 
 fn is_in_build_dir(segments: &[&str]) -> bool {
@@ -208,11 +207,7 @@ pub(crate) fn write_paths(root: &Path, rel: &str) -> Result<(PathBuf, PathBuf), 
 /// A path as the volume compares it: macOS and Windows volumes usually
 /// ignore case.
 pub(crate) fn fold_case(path: &str) -> String {
-    if cfg!(any(target_os = "macos", windows)) {
-        path.to_lowercase()
-    } else {
-        path.to_owned()
-    }
+    path.to_lowercase()
 }
 
 /// What follows the entry `entry` in `path`, both forward-slash project
@@ -244,10 +239,8 @@ pub(crate) fn within(path: &str, entry: &str) -> bool {
 #[cfg(unix)]
 pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
-    match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
-        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
-        _ => false,
-    }
+    matches!((fs::symlink_metadata(a), fs::symlink_metadata(b)),
+        (Ok(a), Ok(b)) if a.dev() == b.dev() && a.ino() == b.ino())
 }
 
 /// Whether two paths name one entry. Windows' file identity is had only by
@@ -285,9 +278,7 @@ pub fn safe_rel_file(root: &Path, rel: &str) -> Result<String, CoreError> {
 /// the dots and spaces at the end it drops).
 pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
     let refused = |c: char| {
-        std::path::is_separator(c)
-            || c == '/'
-            || (cfg!(windows) && (c.is_control() || "<>:\"|?*".contains(c)))
+        std::path::is_separator(c) || (cfg!(windows) && (c.is_control() || "<>:\"|?*".contains(c)))
     };
     let mut clean: String = name
         .trim()
@@ -336,24 +327,137 @@ pub fn source_rel(root: &Path, input: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+#[path = "projects/tests.rs"]
+mod projects_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projects::testing::with_project;
+    use crate::projects::{create_file, create_project};
+
+    #[track_caller]
+    pub(super) fn fails_with<T: std::fmt::Debug>(result: Result<T, CoreError>, text: &str) {
+        let message = result.unwrap_err().message;
+        assert!(message.contains(text), "{message:?} lacks {text:?}");
+    }
+
+    /// Escapes and the settings file are refused at every boundary, and a link
+    /// inside the project is held to the rules of where it leads (#26): one out
+    /// of it leads nowhere, however much of the path exists.
+    #[test]
+    fn path_traversal_the_settings_file_and_links_out_are_rejected_at_every_boundary() {
+        let (_dir, service) = with_project();
+        let (data, root) = (&service.data_dir, service.project_root("P").unwrap());
+        fails_with(project_root(data, "../etc"), "Bad project id");
+        // A folder inside a project is not a project of its own.
+        create_file(&root, "chapters/intro.tex", false).unwrap();
+        fails_with(project_root(data, "P/chapters"), "Bad project id");
+        assert_eq!(project_root(data, "./P/").unwrap(), root);
+        let rel = safe_rel_file(&root, "./chapters/../chapters//intro.tex");
+        assert_eq!(rel.unwrap(), "chapters/intro.tex");
+        for path in ["../x", "a/../../b", ".", "/x"] {
+            fails_with(safe_path(&root, path), "Path escapes project");
+        }
+        fails_with(safe_path(&root, ""), "Missing path");
+        // The settings file's case aliases are reserved on every platform on
+        // purpose, as macOS volumes are case-insensitive too.
+        for name in [".texlocal.json", ".TEXLOCAL.JSON", ".TexLocal.Json"] {
+            fails_with(safe_path(&root, name), "Reserved file");
+        }
+        assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let outside = tempfile::tempdir().unwrap();
+            fs::write(outside.path().join("secret.tex"), "secret").unwrap();
+            symlink(outside.path(), root.join("outside")).unwrap();
+            for path in ["outside/secret.tex", "outside/new/sub/file.tex"] {
+                fails_with(safe_path(&root, path), "Path escapes project");
+                fails_with(safe_rel_file(&root, path), "Path escapes project");
+            }
+            fs::create_dir_all(root.join("build")).unwrap();
+            symlink(".texlocal.json", root.join("alias.json")).unwrap();
+            symlink(".", root.join("here")).unwrap();
+            symlink("build", root.join("output")).unwrap();
+            symlink("main.tex", root.join("link.tex")).unwrap();
+            fails_with(safe_write_path(&root, "alias.json"), "Reserved file");
+            fails_with(safe_path(&root, "alias.json"), "Reserved file");
+            fails_with(
+                safe_write_path(&root, "here/.texlocal.json"),
+                "Reserved file",
+            );
+            fails_with(safe_write_path(&root, "output/main.pdf"), "compiled PDF");
+            fails_with(safe_write_path(&root, "here/build/x.tex"), "compiled PDF");
+            // Reading the output through a link, and ordinary links, stay as they were.
+            assert!(safe_path(&root, "output/main.pdf").is_ok());
+            assert!(safe_write_path(&root, "link.tex").is_ok());
+            assert!(safe_write_path(&root, "here/notes.tex").is_ok());
+        }
+    }
+
+    /// What a tool such as synctex names as a source maps back into the
+    /// project, and generated files, the settings and anything outside are
+    /// no source, however the path reaches them.
+    #[test]
+    fn a_tools_input_path_maps_back_to_the_project_file() {
+        let (_dir, service) = with_project();
+        create_project(&service.data_dir, "PQ", "blank", None).unwrap();
+        let root = service.project_root("P").unwrap();
+        create_file(&root, "ch/intro.tex", false).unwrap();
+        fs::create_dir(root.join("build")).unwrap();
+        fs::write(root.join("build/generated.tex"), "").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let outside = service.data_dir.with_file_name("outside.tex");
+            fs::write(&outside, "").unwrap();
+            symlink(&outside, root.join("linked.tex")).unwrap();
+            symlink(root.join("build"), root.join("generated")).unwrap();
+            // A build made before the project was renamed or moved names its
+            // old folder; and TeX names inputs by the physical folder, a
+            // library reached through a link resolved.
+            let rel = source_rel(&root, "/old/Paper/./ch/intro.tex");
+            assert_eq!(rel.as_deref(), Some("ch/intro.tex"));
+            let linked = service.data_dir.with_file_name("linked");
+            symlink(&service.data_dir, &linked).unwrap();
+            let real = dunce::canonicalize(&root).unwrap();
+            let input = format!("{}/./ch/intro.tex", real.display());
+            let rel = source_rel(&linked.join("P"), &input);
+            assert_eq!(rel.as_deref(), Some("ch/intro.tex"));
+        }
+        let under = |path: &str| format!("{}{path}", root.display());
+        for (input, rel) in [
+            (under("/./ch/../ch/intro.tex"), Some("ch/intro.tex")),
+            ("./ch/intro.tex".into(), Some("ch/intro.tex")),
+            (under(""), None),
+            (under("/../PQ/main.tex"), None),
+            (under("Q/main.tex"), None),
+            (".texlocal.json".into(), None),
+            ("build/generated.tex".into(), None),
+            ("Build/generated.tex".into(), None),
+            ("linked.tex".into(), None),
+            ("generated/generated.tex".into(), None),
+            ("/old/Paper/./../outside.tex".into(), None),
+            ("/old/Paper/./linked.tex".into(), None),
+            ("/old/Paper/./generated/generated.tex".into(), None),
+            ("/old/Paper/./Build/generated.tex".into(), None),
+        ] {
+            assert_eq!(source_rel(&root, &input).as_deref(), rel, "{input}");
+        }
+    }
 
     #[test]
     fn main_file_guards_compare_names_as_the_volume_does() {
         // On a Mac's or Windows' case-insensitive volume, Main.tex is main.tex.
-        let insensitive = cfg!(any(target_os = "macos", windows));
         for (path, entry, after) in [
             ("chapters/main.tex", "chapters", Some("/main.tex")),
             ("chapters/main.tex", "chapters/main.tex", Some("")),
             ("chapters2/main.tex", "chapters", None),
             ("chapters", "chapters/main.tex", None),
-            ("main.tex", "Main.tex", insensitive.then_some("")),
-            (
-                "Chapters/a.tex",
-                "chapters",
-                insensitive.then_some("/a.tex"),
-            ),
+            ("main.tex", "Main.tex", Some("")),
+            ("Chapters/a.tex", "chapters", Some("/a.tex")),
         ] {
             assert_eq!(after_entry(path, entry), after, "{path} in {entry}");
             assert_eq!(within(path, entry), after.is_some(), "{path} in {entry}");
