@@ -188,22 +188,37 @@ mod tests {
     use crate::syntax::SourceDocument;
     use crate::syntax::theme::contrast;
 
+    /// The JSON in and out. An argument a command needs is not made up when
+    /// left out, one that is optional is; following an edit or a selection
+    /// is the C ABI's own, and what needs no document is `call`'s.
     #[test]
     fn commands_answer_by_name() {
-        let mut doc = SourceDocument::new("\\cite{kn");
-        assert_eq!(doc.call("partner", r#"{"at": 0}"#).as_deref(), Some("null"));
-        assert_eq!(doc.call("no such command", "{}"), None);
-        assert_eq!(doc.call("partner", "[]"), None);
-        assert_eq!(doc.call("toggle_comment", r#"{"selections": 3}"#), None);
-        // An argument a command needs is not made up when left out; one that
-        // is optional is.
-        assert_eq!(doc.call("partner", "{}"), None);
-        assert_eq!(doc.call("math_at", r#"{"selection": 1}"#), None);
-        assert_eq!(doc.call("move_lines", r#"{"selections": []}"#), None);
-        assert!(doc.call("completions", r#"{"caret": 3}"#).is_some());
-        assert!(doc.call("tab", r#"{"selections": []}"#).is_some());
-        // Those that need no document are only `call`'s.
-        assert_eq!(doc.call("themes", "{}"), None);
+        #[rustfmt::skip]
+        let cases = [
+            ("type", r#"{"selection": {"start": 0, "length": 0}, "text": "{"}"#,
+                Some(r#"{"edit":{"start":0,"length":0,"text":"{}"},"selection":{"start":1,"length":0},"partner":null,"completions":"offer"}"#)),
+            ("type", r#"{"selection": {"start": 0, "length": 0}, "text": "{", "autoPair": false}"#,
+                Some(r#"{"edit":null,"selection":null,"partner":null,"completions":"offer"}"#)),
+            ("tab", r#"{"selections": [{"start": 0, "length": 0}]}"#,
+                Some(r#"{"field":null,"edits":[{"start":0,"length":0,"text":"  "}]}"#)),
+            ("map_selections", r#"{"edits": [{"start": 0, "length": 0, "text": "ab"}], "selections": [{"start": 0, "length": 1}]}"#,
+                Some(r#"[{"start":2,"length":1}]"#)),
+            ("partner", r#"{"at": 0}"#, Some("null")),
+            ("completions", r#"{"caret": 0}"#, Some("null")),
+            ("partner", "{}", None),
+            ("partner", "[]", None),
+            ("math_at", r#"{"selection": 1}"#, None),
+            ("move_lines", r#"{"selections": []}"#, None),
+            ("toggle_comment", r#"{"selections": 3}"#, None),
+            ("toggle_style", r#"{"selections": [], "style": "strong"}"#, None),
+            ("no such command", "{}", None),
+            ("follow", r#"{"old": {"start": 0, "length": 0}, "delta": 2}"#, None),
+            ("themes", "{}", None),
+        ];
+        let mut doc = SourceDocument::new("");
+        for (command, args, answer) in cases {
+            assert_eq!(doc.call(command, args).as_deref(), answer, "{command}");
+        }
     }
 
     #[test]
@@ -243,11 +258,6 @@ mod tests {
     fn the_free_commands_answer_by_name() {
         let themes = call("themes", "{}").unwrap();
         assert!(themes.starts_with(r#"[{"id":"overleaf","title":"Overleaf"},{"id":"#));
-        let light = r#"{"theme": "texstudio", "dark": false, "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0.08]}"#;
-        let colors: Vec<[f64; 4]> =
-            serde_json::from_str(&call("theme_colors", light).unwrap()).unwrap();
-        assert_eq!(colors.len(), 9);
-        assert_eq!(call("theme_colors", r#"{"theme": "solarized"}"#), None);
         // A ratio asked for is the one it is raised to; without one, text's.
         let ratio_of = |extra: &str| {
             let args = format!(

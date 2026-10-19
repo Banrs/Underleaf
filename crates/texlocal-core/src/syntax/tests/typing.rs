@@ -578,34 +578,3 @@ fn a_partner_is_not_an_escaped_bracket_nor_one_in_a_comment() {
     let doc = SourceDocument::new("(a 5\\% )");
     assert_eq!(doc.partner(0), Some(7));
 }
-
-#[test]
-fn typing_answers_by_name() {
-    let mut doc = SourceDocument::new("");
-    let key = doc.call(
-        "type",
-        r#"{"selection": {"start": 0, "length": 0}, "text": "{"}"#,
-    );
-    assert_eq!(
-        key.as_deref(),
-        Some(
-            r#"{"edit":{"start":0,"length":0,"text":"{}"},"selection":{"start":1,"length":0},"partner":null,"completions":"offer"}"#
-        )
-    );
-    let off = r#"{"selection": {"start": 0, "length": 0}, "text": "{", "autoPair": false}"#;
-    assert!(doc.call("type", off).unwrap().contains(r#""edit":null"#));
-    // An edit's following and a selection's are the C ABI's own.
-    let follow = r#"{"old": {"start": 0, "length": 0}, "delta": 2}"#;
-    assert_eq!(doc.call("follow", follow), None);
-    assert_eq!(doc.call("toggle_style", r#"{"style": "strong"}"#), None);
-    let edits = r#"{"edits": [{"start": 0, "length": 0, "text": "ab"}], "selections": [{"start": 0, "length": 1}]}"#;
-    assert_eq!(
-        doc.call("map_selections", edits).as_deref(),
-        Some(r#"[{"start":2,"length":1}]"#)
-    );
-    assert_eq!(
-        doc.call("tab", r#"{"selections": [{"start": 0, "length": 0}]}"#)
-            .as_deref(),
-        Some(r#"{"field":null,"edits":[{"start":0,"length":0,"text":"  "}]}"#)
-    );
-}
