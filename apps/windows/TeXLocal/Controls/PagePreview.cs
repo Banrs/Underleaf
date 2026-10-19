@@ -5,15 +5,31 @@ using Microsoft.UI.Xaml.Shapes;
 namespace TeXLocal.Controls;
 
 /// A template's first page in outline, as a template gallery draws one: grey bars where its text lies, darker for
-/// headings, on white paper in the light theme's colours.
+/// headings. Set once, by Home's gallery.
 public sealed partial class PagePreview : Canvas
 {
-    public static readonly DependencyProperty KindProperty =
-        DependencyProperty.Register(nameof(Kind), typeof(string), typeof(PagePreview), new PropertyMetadata("", (d, _) => ((PagePreview)d).Draw()));
-
-    public PagePreview() => RequestedTheme = ElementTheme.Light;
-
-    public string Kind { get => (string)GetValue(KindProperty); set => SetValue(KindProperty, value); }
+    public string Kind
+    {
+        get;
+        set
+        {
+            field = value;
+            foreach (var (x, y, w, h, head) in Bars(value))
+            {
+                var bar = new Rectangle
+                {
+                    Width = w,
+                    Height = h,
+                    RadiusX = 1,
+                    RadiusY = 1,
+                    Style = (Style)Application.Current.Resources[head ? "PreviewHeadStyle" : "PreviewBarStyle"],
+                };
+                SetLeft(bar, x);
+                SetTop(bar, y);
+                Children.Add(bar);
+            }
+        }
+    } = "";
 
     /// Bars as (x, y, width, height, heading) in the DIPs of a 120 × 156 page, or a 160 × 90 slide.
     static (double X, double Y, double W, double H, bool Head)[] Bars(string kind) => kind switch
@@ -40,23 +56,4 @@ public sealed partial class PagePreview : Canvas
         ],
         _ => [],
     };
-
-    void Draw()
-    {
-        Children.Clear();
-        foreach (var (x, y, w, h, head) in Bars(Kind))
-        {
-            var bar = new Rectangle
-            {
-                Width = w,
-                Height = h,
-                RadiusX = 1,
-                RadiusY = 1,
-                Style = (Style)Application.Current.Resources[head ? "PreviewHeadStyle" : "PreviewBarStyle"],
-            };
-            SetLeft(bar, x);
-            SetTop(bar, y);
-            Children.Add(bar);
-        }
-    }
 }
