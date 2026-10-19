@@ -2,7 +2,9 @@
 //! it, and whether latexmk runs.
 
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::Serialize;
 
 use crate::process::{PROBE_TIMEOUT, run};
@@ -114,11 +116,16 @@ pub(crate) fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
         .find(|c| program_at(&c.join("latexmk")).is_some())
 }
 
+static LATEXMK_VERSION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Version (\d[\w.]*)").unwrap());
+
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TexStatus {
     pub available: bool,
     pub version: Option<String>,
+    /// The number latexmk's version line names ("4.86"), as Settings shows it.
+    pub latexmk_version: Option<String>,
     /// The TeX folder the user chose; None finds TeX automatically.
     pub tex_dir: Option<String>,
     /// The folder the working latexmk runs from.
@@ -129,17 +136,17 @@ pub struct TexStatus {
 }
 
 pub async fn tex_available(path_env: &str) -> TexStatus {
-    let probe = run("latexmk", &["-version"], None, PROBE_TIMEOUT, path_env).await;
-    let (available, stdout) = match probe {
-        Ok((0, stdout)) => (true, stdout),
-        _ => (false, String::new()),
+    let Ok((0, stdout)) = run("latexmk", &["-version"], None, PROBE_TIMEOUT, path_env).await else {
+        return TexStatus::default();
     };
+    let version = version_line(&stdout);
     TexStatus {
-        available,
-        version: available.then(|| version_line(&stdout)),
-        found: available
-            .then(|| find_tool("latexmk", path_env))
-            .flatten()
+        available: true,
+        latexmk_version: LATEXMK_VERSION
+            .captures(&version)
+            .map(|found| found[1].to_owned()),
+        version: Some(version),
+        found: find_tool("latexmk", path_env)
             .and_then(|latexmk| Some(latexmk.parent()?.to_string_lossy().into_owned())),
         ..TexStatus::default()
     }

@@ -3,9 +3,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
-use regex::Regex;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -23,33 +22,6 @@ const SEARCH_LIMIT: usize = 100;
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
     "That folder doesn't contain the texpresso program. Choose the folder it's in.";
-
-/// `status`'s answer: what the look for TeX found, and latexmk's version
-/// number from its version line ("4.86"), as Settings shows it.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Status {
-    #[serde(flatten)]
-    pub tex: TexStatus,
-    pub latexmk_version: Option<String>,
-}
-
-static LATEXMK_VERSION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"Version (\d[\w.]*)").unwrap());
-
-impl From<TexStatus> for Status {
-    fn from(tex: TexStatus) -> Self {
-        let version = tex
-            .version
-            .as_deref()
-            .and_then(|line| LATEXMK_VERSION.captures(line));
-        let latexmk_version = version.map(|found| found[1].to_owned());
-        Self {
-            tex,
-            latexmk_version,
-        }
-    }
-}
 
 pub struct Service {
     pub data_dir: PathBuf,
@@ -120,7 +92,7 @@ impl Service {
     // ---------- status ----------
 
     /// Probe the current TeX choice, including installs made while the app is open.
-    pub async fn status(&self) -> Status {
+    pub async fn status(&self) -> TexStatus {
         let app = AppSettings::read(&self.data_dir);
         let (tex_path, texpresso_path) = tex::tool_paths(&app);
         let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
@@ -129,7 +101,7 @@ impl Service {
         found.tex_dir = shown(app.tex_dir);
         found.texpresso_dir = shown(app.texpresso_dir);
         self.tex_found.send_replace(found.available);
-        found.into()
+        found
     }
 
     /// Whether the last `status` found TeX.
@@ -145,7 +117,7 @@ impl Service {
     }
 
     /// Choose TeXpresso's folder; None or empty goes back to the TeX path.
-    pub async fn set_texpresso_dir(&self, dir: Option<&str>) -> Result<Status, CoreError> {
+    pub async fn set_texpresso_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
         let chosen = dir.map(str::trim).filter(|d| !d.is_empty()).map(Path::new);
         if let Some(dir) = chosen
             && tex::program_at(&dir.join("texpresso")).is_none()
@@ -158,7 +130,7 @@ impl Service {
 
     /// Choose the TeX folder; None or empty goes back to automatic. A TeX Live
     /// root is accepted and saved as its bin folder.
-    pub async fn set_tex_dir(&self, dir: Option<&str>) -> Result<Status, CoreError> {
+    pub async fn set_tex_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
         let chosen = match dir.map(str::trim).filter(|d| !d.is_empty()) {
             None => None,
             Some(dir) => {

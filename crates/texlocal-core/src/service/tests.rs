@@ -122,7 +122,7 @@ fn fake_program(dir: &Path, name: &str, line: &str) -> PathBuf {
 
 /// A folder holding a stand-in `latexmk` that prints a version.
 fn fake_tex(dir: &Path) -> String {
-    fake_program(dir, "latexmk", "Latexmk, stub 1.0");
+    fake_program(dir, "latexmk", "Latexmk, Version 4.86a");
     dir.to_string_lossy().into_owned()
 }
 
@@ -226,39 +226,20 @@ async fn status_reports_the_current_tex_choice() {
     assert_eq!(chosen["texDir"], bin);
     assert_eq!(call(&service, "status", json!({})).await, chosen);
     assert_eq!(chosen["available"], true);
-    assert_eq!(chosen["version"], "Latexmk, stub 1.0");
-    assert_eq!(
-        chosen["latexmkVersion"],
-        Value::Null,
-        "the stub says no version number"
-    );
+    assert_eq!(chosen["version"], "Latexmk, Version 4.86a");
+    assert_eq!(chosen["latexmkVersion"], "4.86a");
     assert_eq!(chosen["found"], bin);
 
     // An update in the same folder is reflected without another folder choice.
     fake_program(tex.path(), "latexmk", "Latexmk, stub 2.0");
     let updated = call(&service, "status", json!({})).await;
     assert_eq!(updated["version"], "Latexmk, stub 2.0");
+    assert_eq!(updated["latexmkVersion"], Value::Null);
     assert_eq!(updated["texDir"], bin);
 
     let automatic = call(&service, "set_tex_dir", json!({ "dir": null })).await;
     assert_eq!(automatic["texDir"], Value::Null);
-    assert_ne!(automatic["version"], "Latexmk, stub 1.0");
-}
-
-#[test]
-fn the_latexmk_version_is_the_number_its_version_line_names() {
-    let version = |line: Option<&str>| {
-        let tex = TexStatus {
-            available: line.is_some(),
-            version: line.map(str::to_owned),
-            ..TexStatus::default()
-        };
-        Status::from(tex).latexmk_version
-    };
-    let line = "Latexmk, John Collins, 1 Jan 2025. Version 4.86a";
-    assert_eq!(version(Some(line)).as_deref(), Some("4.86a"));
-    assert_eq!(version(Some("Latexmk, stub 1.0")), None);
-    assert_eq!(version(None), None);
+    assert_ne!(automatic["version"], "Latexmk, stub 2.0");
 }
 
 #[tokio::test]
