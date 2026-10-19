@@ -13,7 +13,7 @@ struct CoreTests {
         let info = try await core.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"], as: ProjectInfo.self)
         defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
         let error = await #expect(throws: CoreError.self) {
-            _ = try await core.call("read_file", ["id": info.id, "path": "../../x"], as: FileText.self)
+            _ = try await core.call("create_entry", ["id": info.id, "path": "../../x"], as: FileText.self)
         }
         #expect(error?.message == "Path escapes project")
         // An answer in another shape than was asked for is said in the app's words, without the command's name.

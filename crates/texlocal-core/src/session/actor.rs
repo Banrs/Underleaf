@@ -972,7 +972,7 @@ impl Actor {
         let (seq, root) = (self.analyses, self.root.clone());
         let (docs, outline) = (Arc::clone(&self.shared), Arc::clone(&self.outline));
         tokio::task::spawn_blocking(move || {
-            // Read each time: another app, or another host's `set_settings`, may have changed it.
+            // Read each time: another app may have changed it.
             let main = settings::read_settings(&root).main_file;
             let open = paths::rel_key(&main)
                 .ok()

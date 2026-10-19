@@ -2,7 +2,6 @@
 // serialization have one implementation.
 
 use std::collections::{BTreeSet, HashMap};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -149,12 +148,6 @@ impl Service {
 
     // ---------- TeX folder ----------
 
-    /// The TeX programs folder the user chose, or None to find TeX
-    /// automatically. Read per use, so a choice made in another host applies.
-    pub fn tex_dir(&self) -> Option<PathBuf> {
-        AppSettings::read(&self.data_dir).tex_dir
-    }
-
     /// The PATH for TeX's tools, and for TeXpresso's, with the folders chosen.
     pub(crate) fn tool_paths(&self) -> (String, String) {
         tex::tool_paths(&AppSettings::read(&self.data_dir))
@@ -192,7 +185,7 @@ impl Service {
     // ---------- dispatch ----------
 
     /// The JSON command table the hosts call through the FFI, but for the
-    /// sessions' (`session_*`). Raw bytes stay in direct methods outside it.
+    /// sessions' (`session_*`).
     pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
         let s = |key: &str| string_arg(args, key);
         let root = || self.project_root(s("id")?);
@@ -238,33 +231,12 @@ impl Service {
                 })?)
             }
             "get_settings" => out(settings::read_settings(&root()?)),
-            // A rename also rewrites mainFile; serialize read/modify/write. An open project's
-            // session changes its settings itself (`session_set_settings`), to follow a new
-            // main file.
-            "set_settings" => out(self.with_project(s("id")?, |root| {
-                settings::write_settings(root, &arg(args, "patch")?)
-            })?),
             "file_tree" => out(projects::file_tree(&root()?)?),
             "search_project" => out(projects::search_groups(projects::search_project(
                 &root()?,
                 s("query")?,
                 SEARCH_LIMIT,
             )?)),
-            // Already a Value: out() would serialize it again, copying the
-            // whole document.
-            "read_file" => {
-                let bytes = fs::read(paths::safe_path(&root()?, s("path")?)?)?;
-                Ok(json!({ "text": crate::lossy_string(bytes) }))
-            }
-            // `text` is required: a call that lost it must fail, not empty
-            // the file. The answer is the file's stamp. A session saves its
-            // documents itself; the Mac app's tests write their files with it.
-            "write_file" => {
-                let (path, text) = (s("path")?, s("text")?);
-                out(self.with_project(s("id")?, |root| {
-                    projects::write_creating(&paths::safe_write_path(root, path)?, text.as_bytes())
-                })?)
-            }
             // With `free`, a taken name is numbered past ("untitled 2.tex") rather than refused.
             "create_entry" => {
                 let path = s("path")?;
@@ -344,7 +316,6 @@ impl Service {
                 arg(args, "conflict")?,
             )?),
             "import_project" => out(import::import_project(self, Path::new(s("src")?))?),
-            "get_ui_state" => out(settings::read_ui(&root()?)),
             "set_ui_state" => out(self.with_project(s("id")?, |root| {
                 settings::write_ui(root, arg(args, "patch")?)
             })?),

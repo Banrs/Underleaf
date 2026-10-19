@@ -108,14 +108,7 @@ fn commands_round_trip_through_the_c_abi() {
     let handle = open_with_project(dir.path());
     assert_eq!(call_raw(handle, "list_projects", None)["ok"][0]["id"], "P");
 
-    call(
-        handle,
-        "write_file",
-        json!({ "id": "P", "path": "a.tex", "text": "x" }),
-    );
-    let read = call(handle, "read_file", json!({ "id": "P", "path": "a.tex" }));
-    assert_eq!(read["ok"]["text"], "x");
-
+    std::fs::write(dir.path().join("P/a.tex"), "x").unwrap();
     let found = call(handle, "search_project", json!({ "id": "P", "query": "x" }));
     assert_eq!(
         found["ok"],
@@ -123,7 +116,7 @@ fn commands_round_trip_through_the_c_abi() {
     );
 
     // Errors come back as an envelope with the core's status, never a crash.
-    let bad = call(handle, "read_file", json!({ "id": "P", "path": "../x" }));
+    let bad = call(handle, "create_entry", json!({ "id": "P", "path": "../x" }));
     assert_eq!(bad["status"], 400);
     assert_eq!(call_raw(handle, "nope", None)["status"], 404);
 
@@ -345,8 +338,7 @@ fn call_async(handle: *const TlHandle, command: &str, args: Value, sink: &mpsc::
 fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
     let dir = tempfile::tempdir().unwrap();
     let handle = open_with_project(dir.path());
-    let empty = json!({ "id": "P", "path": "main.tex", "text": "" });
-    call(handle, "write_file", empty);
+    std::fs::write(dir.path().join("P/main.tex"), "").unwrap();
     let session = open_main(handle);
     unsafe {
         let source = session_source(handle, session, "main.tex");

@@ -1,18 +1,16 @@
 //! Telling whether a file has changed without reading it.
 
-use serde::Serialize;
 use std::fs::Metadata;
 use std::time::UNIX_EPOCH;
 
 /// A file as written: which file it is, its length, and when it was last
 /// written, to the nanosecond, as stat gives them (st_ino, st_size, and
-/// st_mtime and its nanoseconds, from 0 up even before 1970). A client that
+/// st_mtime and its nanoseconds, from 0 up even before 1970). A session that
 /// keeps it knows a change it is told of for the file is its own write's while
 /// a stat still gives the same, without reading the file back. Windows has no
 /// inode a stat gives, and the stamp none: there, length and date alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stamp {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub inode: Option<u64>,
     pub size: u64,
     pub seconds: i64,

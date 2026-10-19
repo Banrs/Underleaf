@@ -72,7 +72,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `session_open` | `id`, `session`, `autoCompile?` | `{session, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` as `get_ui_state`: all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
+| `session_open` | `id`, `session`, `autoCompile?` | `{session, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` as `set_ui_state` answers it: all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
 | `session_state` | | `{documents: [document state], build, live, autoCompile}` | A snapshot, for a host coming up; a document's state also has `dirty` and `conflict` (`changed`/`gone`/null), the build's `queued`. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
@@ -88,8 +88,8 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_outline_current` | `path`, `line` | index or null | The heading a line of `path` is under, as its `index` in the outline of the last `session_analyze` sent of those answered: the file's last at or above the line; null above its first. Ask once the analysis it should read has answered. |
 | `session_issue` | `next` | `{index, issue}` or null | The next or previous issue with a place, round the ends; the host opens `issue.file` at `issue.line`. |
 | `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter. |
-| `session_rename` | `from`, `to` | `{from, to, mainFile, ui}` or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `get_ui_state`) with the entry's paths moved; a host sends its `set_ui_state` first. |
-| `session_set_settings` | `patch` | settings | As `set_settings`; a new main file stops the build, restarts the preview, builds. |
+| `session_rename` | `from`, `to` | `{from, to, mainFile, ui}` or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `set_ui_state` answers it) with the entry's paths moved; a host sends its `set_ui_state` first. |
+| `session_set_settings` | `patch` | settings | The keys of `patch` replace the project's; the answer is the settings, as `get_settings`. A new main file stops the build, restarts the preview, builds. |
 | `session_prepare_delete` | `path` | `{ready}` | Saves, refuses the main file (409, its path compared as the volume compares names), then holds saves under `path` until `session_deleted`. Not `ready`: a save is asked about, and the host deletes nothing. The host trashes the item itself (undoable). |
 | `session_deleted` | `path`, `trashed?` (true) | null | Closes documents under `path` and reads the tree again. |
 | `session_live_start` | `window?` | live state | The user's Start: takes the project over from another window. `window: true` leaves the document to TeXpresso's own window (the Settings fallback): no `live_document` or `live_page` comes, and TeXpresso is told no view or caret. The session's own restarts keep the choice. |
@@ -98,8 +98,8 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_live_caret` | `path`, `offset` | null | On every caret move (UTF-16); told to TeXpresso once it settles (150 ms). |
 | `session_live_log` | `shown` | null | Whether the host shows the Live Preview Log. While it does, each `live` event carries the log, and one comes at once. |
 
-Every other command (`file_tree`, `read_file`, `search_project`, `synctex_*`,
-`get_ui_state`, `pdf_path` for a new main file's PDF, …) is the service's. While the
+Every other command (`file_tree`, `search_project`, `synctex_*`, `set_ui_state`,
+`pdf_path` for a new main file's PDF, …) is the service's. While the
 PDF shown is the live document, pass `live: true, session: <the session's number>` to
 `synctex_forward` and `synctex_inverse`.
 
@@ -110,8 +110,8 @@ An error is `{"error": message, "status": code}`; the message is for the person 
 - File-system failures keep their kind: 404 not there, 403 not allowed, 409 already there,
   else 500. The message is the OS's words without its “(os error N)”, and names the file
   (“path”: …) where a person chose it.
-- A settings or ui-state write (`set_settings`, `set_ui_state`, `session_set_settings`) over
-  an unreadable or invalid `.texlocal.json` is 409 and leaves the file as it is.
+- A settings or ui-state write (`set_ui_state`, `session_set_settings`) over an unreadable
+  or invalid `.texlocal.json` is 409 and leaves the file as it is.
 - A zip that can't be read (import) is 400.
 - Import and export leave out version-control folders (`.git`, `.hg`, `.svn`), `.DS_Store`,
   `__MACOSX`, AppleDouble `._*` files and the core's `.texlocal-*` temporary files, at any
@@ -328,4 +328,8 @@ Every change a host follows since commit d6bee12, in the order made.
 - A failed write's message is a sentence that names the file, and its folder when the write
   was refused, as Foundation words it (“You don’t have permission to save the file “main.tex”
   in the folder “Thesis”.”); its status is still the file system's.
+- The service no longer answers `read_file`, `write_file`, `set_settings` or `get_ui_state`,
+  which no host's app called: a session reads and saves its documents and changes the settings
+  (`session_set_settings`), and `session_open` and `session_rename` answer the ui state. Both
+  hosts' tests write their fixtures into the project's folder.
 
