@@ -8,64 +8,35 @@
 
     <Grid x:Name="Root" Background="Transparent">
         <Grid.RowDefinitions>
-            <RowDefinition Height="48" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Invoked="{x:Bind GoBack}" Key="Left" Modifiers="Menu" />
+        </Grid.KeyboardAccelerators>
 
-        <!-- Paint's and Visual Studio's title bar: back, the icon and a project's menus at its left, the title in its
-             middle, Settings by the caption buttons. The row drags the window except over its controls. -->
-        <Grid x:Name="Bar">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition x:Name="CaptionColumn" Width="138" />
-            </Grid.ColumnDefinitions>
-            <Button
-                x:Name="BackButton"
-                Margin="4,0,0,0"
-                VerticalAlignment="Center"
-                AutomationProperties.Name="Back"
-                Click="OnBack"
-                Style="{StaticResource NavigationBackButtonSmallStyle}"
-                ToolTipService.ToolTip="Back (Alt+Left)"
-                Visibility="Collapsed">
-                <Button.KeyboardAccelerators>
-                    <KeyboardAccelerator Key="Left" Modifiers="Menu" />
-                </Button.KeyboardAccelerators>
-            </Button>
-            <Image
-                Grid.Column="1"
-                Width="16"
-                Height="16"
-                Margin="16,0,12,0"
-                AutomationProperties.AccessibilityView="Raw"
-                Source="ms-appx:///Assets/TeXLocal.png" />
-            <Border x:Name="MenuHost" Grid.Column="2" VerticalAlignment="Center" />
-            <TextBlock
-                x:Name="TitleText"
-                Grid.Column="3"
-                Margin="4,0,16,0"
-                VerticalAlignment="Center"
-                Style="{StaticResource CaptionTextBlockStyle}"
-                Text="TeXLocal"
-                TextTrimming="CharacterEllipsis"
-                TextWrapping="NoWrap" />
-            <Button
-                x:Name="SettingsButton"
-                Grid.Column="4"
-                Width="40"
-                Height="32"
-                Padding="0"
-                AutomationProperties.Name="Settings"
-                Click="{x:Bind OpenSettings}"
-                Style="{StaticResource SubtleButtonStyle}"
-                ToolTipService.ToolTip="Settings (Ctrl+,)">
-                <FontIcon FontSize="16" Glyph="&#xE713;" />
-            </Button>
-        </Grid>
+        <!-- A project's menus are its content, after the title, as Paint's and Visual Studio's sit in their title bars. -->
+        <TitleBar x:Name="Bar" BackRequested="{x:Bind GoBack}" Title="TeXLocal">
+            <TitleBar.Resources>
+                <HorizontalAlignment x:Key="TitleBarContentHorizontalAlignment">Left</HorizontalAlignment>
+            </TitleBar.Resources>
+            <TitleBar.IconSource>
+                <ImageIconSource ImageSource="ms-appx:///Assets/TeXLocal.ico" />
+            </TitleBar.IconSource>
+            <TitleBar.RightHeader>
+                <Button
+                    x:Name="SettingsButton"
+                    Width="40"
+                    Height="32"
+                    Padding="0"
+                    AutomationProperties.Name="Settings"
+                    Click="{x:Bind OpenSettings}"
+                    Style="{StaticResource SubtleButtonStyle}"
+                    ToolTipService.ToolTip="Settings (Ctrl+,)">
+                    <FontIcon FontSize="16" Glyph="&#xE713;" />
+                </Button>
+            </TitleBar.RightHeader>
+        </TitleBar>
 
         <Frame x:Name="Pages" Grid.Row="1" Background="Transparent" Navigated="OnNavigated" />
     </Grid>

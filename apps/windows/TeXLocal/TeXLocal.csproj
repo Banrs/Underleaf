@@ -19,7 +19,7 @@
     <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.3.9" />
     <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="2.3.12" />
     <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="2.1.9" />
-    <Content Include="Assets\TeXLocal.png;Assets\TeXLocal.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\TeXLocal.ico" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="..\TeXLocal.Core\TeXLocal.Core.csproj" />
   </ItemGroup>
 </Project>
