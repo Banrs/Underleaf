@@ -139,11 +139,6 @@ final class Core {
         return try Self.decoded(command, Data(bytes: out, count: strlen(out)))
     }
 
-    /// Synchronous: it runs as the app quits.
-    func killAll() {
-        _ = try? now("kill_all", [:], as: Ignored?.self)
-    }
-
     /// The session's open document at `path`, for the editor; nil if it isn't open.
     func source(session: UInt64, path: String) -> OpaquePointer? { handle.flatMap { tl_session_source($0, session, path) } }
 

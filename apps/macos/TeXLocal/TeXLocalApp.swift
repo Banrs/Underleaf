@@ -60,20 +60,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { dockMenu.menu }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // A clean editor can still have a settings change or rename in flight.
-        guard let project = app.project else { return .terminateNow }
         Task {
-            let saved = await project.save()
-            // Not saved, the quit stops: the window its alert shows in comes back if closing it began the quit.
-            if !saved, mainWindow.window?.isVisible != true { mainWindow.showWindow(nil) }
+            // A clean editor can still have a settings change or rename in flight.
+            let saved = await app.project?.save() ?? true
+            if saved {
+                // Compiles run in their own process groups; nothing else stops them.
+                try? await Core.shared.call("kill_all", [:])
+            } else if mainWindow.window?.isVisible != true {
+                // Not saved, the quit stops: the window its alert shows in comes back if closing it began the quit.
+                mainWindow.showWindow(nil)
+            }
             sender.reply(toApplicationShouldTerminate: saved)
         }
         return .terminateLater
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        // Compiles run in their own process groups; nothing else stops them.
-        Core.shared.killAll()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
