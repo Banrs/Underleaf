@@ -228,9 +228,11 @@ fn keys_type_as_the_editor_assists() {
         // line further down.
         ("  a", caret(3), "⏎", "  a\n  ", caret(6)),
         ("  a{}", caret(4), "⏎", "  a{\n  \n  }", caret(7)),
-        // The spaces after the caret go; a caret in the indentation takes it down.
+        // The spaces and tabs after the caret go; a caret in the indentation takes it down.
         ("\ta  b", caret(2), "⏎", "\ta\n\tb", caret(4)),
         ("    x", caret(2), "⏎", "\n    x", caret(5)),
+        ("\ta\t b", caret(2), "⏎", "\ta\n\tb", caret(4)),
+        ("\t\tx", caret(1), "⏎", "\n\t\tx", caret(3)),
         // Tab and Shift-Tab indent by two spaces; Delete in the indentation back to a stop.
         ("x", caret(0), "⇥", "  x", caret(2)),
         ("x", caret(0), "⇥⇤", "x", caret(0)),

@@ -246,7 +246,9 @@ impl SourceDocument {
             insert.push('\n');
             insert.push_str(&indented);
         } else {
-            while start + length < line.end && is(units[start + length], ' ') {
+            while start + length < line.end
+                && (is(units[start + length], ' ') || is(units[start + length], '\t'))
+            {
                 length += 1;
             }
             let before = &units[line.start..start];
