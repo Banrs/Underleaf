@@ -91,10 +91,11 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    public void OpenProject(string id)
+    /// With `file`, the project shows that file instead of its main file.
+    public void OpenProject(string id, string? file = null)
     {
         GoHome();
-        Pages.Navigate(typeof(WorkspacePage), id, new DrillInNavigationTransitionInfo());
+        Pages.Navigate(typeof(WorkspacePage), (id, file), new DrillInNavigationTransitionInfo());
     }
 
     public async void OpenFolder()
@@ -108,10 +109,15 @@ public sealed partial class MainWindow : Window
         if (await picker.PickSingleFileAsync() is { } picked) await Import(picked.Path);
     }
 
+    /// What's already in the library opens its project, and a file in it, as on the Mac; anything else is imported.
     async Task Import(string src)
     {
         if (App.Core is null) return;
-        try { OpenProject((await App.Core.CallAsync<ProjectInfo>("import_project", new { src })).Id); }
+        try
+        {
+            if (await App.Core.CallAsync<Located?>("locate", new { path = src }) is { } at) OpenProject(at.Id, File.Exists(src) ? at.Path : null);
+            else OpenProject((await App.Core.CallAsync<ProjectInfo>("import_project", new { src })).Id);
+        }
         catch (CoreException ex) { await App.Alert("Can't open this", ex.Message); }
     }
 

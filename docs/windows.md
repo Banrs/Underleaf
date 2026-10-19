@@ -237,13 +237,15 @@ above, or open a folder or a .zip.").
 
 ### Surfaces
 
-- **Home** (Word's Home, File Explorer's Details view): the title bar
-  holds the icon and "TeXLocal". In the 1064 column: "Home" (`TitleTextBlockStyle`, heading level
-  1) with **Open** at its right (`DropDownButton`, E8E5: Folder… Ctrl+O, ZIP or TeX file…
-  Ctrl+Shift+O). Under it, when they apply: an `InfoBar` (Error, "Can't open the projects folder",
-  the core's reason, Try again) and one (Warning, "TeX isn't installed", "Get TeX Live"), both
-  asked again whenever the window comes to the front. **New**: the templates as Word's gallery, each its first page in outline on white paper (Blank, Article
-  and Report 120 × 156, Presentation 160 × 90) with its name under it; a click asks the name
+- **Home** (Word's Home, File Explorer's Details view): the title bar holds the icon and
+  "TeXLocal". In the 1064 column: "Home" (`TitleTextBlockStyle`, heading level 1) with **Open** at
+  its right (`DropDownButton`, E8E5: Folder… Ctrl+O, ZIP or TeX file… Ctrl+Shift+O; what `locate`
+  finds in the library opens its project, at the file picked, and anything else is imported).
+  Under it, when they apply: an `InfoBar` (Error, "Can't open the projects folder", the core's
+  reason, Try again) and one (Warning, "TeX isn't installed", "Get TeX Live"), both asked again
+  whenever the window comes to the front. **New**: the templates as Word's gallery, each its first
+  page in outline on white paper (Blank, Article and Report 120 × 156, Presentation 160 × 90) with
+  its name under it; a click asks the name
   ("New article project") and creates it from that template (`create_project`'s `template`);
   Ctrl+Shift+N is Article. **Recent**: Name, Main file and Date modified headings over a
   `ListView` (`ProjectItemStyle`, rows 52 tall): a 24 accent folder glyph, the name in Body, the

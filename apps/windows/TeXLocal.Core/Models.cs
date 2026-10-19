@@ -8,6 +8,9 @@ public sealed record ProjectInfo(string Id, string Name, long Mtime, string Main
     public override string ToString() => Name;
 }
 
+/// <param name="Path">"" for the project's folder.</param>
+public sealed record Located(string Id, string Path);
+
 /// <param name="Type">file or dir.</param>
 /// <param name="Kind">tex, bib, image, pdf, text or other; null for a folder.</param>
 public sealed record TreeNode(string Type, string Name, string Path, string? Kind, TreeNode[]? Children);

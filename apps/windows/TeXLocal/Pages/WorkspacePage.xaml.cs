@@ -133,7 +133,7 @@ public sealed partial class WorkspacePage : Page
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
-        id = (string)e.Parameter;
+        (id, var file) = ((string, string?))e.Parameter;
         MenuSlot.Child = null;
         App.Window.SetMenu(MainMenu);
         App.Window.SetTitle(id, Editor.Path);
@@ -141,7 +141,7 @@ public sealed partial class WorkspacePage : Page
         CheckTex();
         if (session != 0) return;
         Core.Event += OnEvent;
-        try { await OpenSession(); }
+        try { await OpenSession(file); }
         catch (CoreException ex)
         {
             session = 0;
@@ -167,7 +167,7 @@ public sealed partial class WorkspacePage : Page
 
     /// The session is numbered before it opens, so the events that come before its answer are this page's too; a tree
     /// or a build among them is newer than the answer's.
-    async Task OpenSession()
+    async Task OpenSession(string? file)
     {
         session = ++sessions;
         var opened = await Core.CallAsync<SessionOpened>("session_open", new { id, session, autoCompile = Prefs.AutoCompile });
@@ -179,7 +179,7 @@ public sealed partial class WorkspacePage : Page
         ShowTree(treeJson.Length > 0 ? tree : opened.Tree, true);
         if (opened.Pdf is { } pdf && result is null) await Pdf.Load(pdf);
         ShowBuild();
-        Select(FilesTree, i => i.Key == mainFile);
+        Select(FilesTree, i => i.Key == (file ?? mainFile));
         if (Picked is { Type: not "dir" } main) await OpenDocument(main.Path, main.Kind);
     }
 
