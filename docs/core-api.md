@@ -345,4 +345,6 @@ Every change a host follows since commit d6bee12, in the order made.
   it no longer reads.
 - `set_tex_dir` and `set_texpresso_dir` take `dir` as given, as both hosts send a folder chosen
   or null: a blank one is 400, where it cleared the choice.
+- texlocal-ffi builds a static library alone, its tests the crate's own, so the release
+  profile's LTO reaches the Mac app's archive too.
 

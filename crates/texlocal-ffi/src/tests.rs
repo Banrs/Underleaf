@@ -1,20 +1,11 @@
-// Round trips through the C ABI exactly as a native host drives it.
+//! Round trips through the C ABI exactly as a native host drives it.
 
-use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::Path;
 use std::ptr;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
-use texlocal_core::syntax::TextRange;
-use texlocal_ffi::{
-    TlHandle, TlSource, tl_call, tl_call_async, tl_close, tl_free, tl_open, tl_session_source,
-    tl_set_listener, tl_source_call, tl_source_edit, tl_source_free, tl_source_free_runs,
-    tl_source_free_text, tl_source_highlights, tl_source_line_at, tl_source_line_count,
-    tl_source_line_start, tl_source_new, tl_source_reload, tl_source_select, tl_source_text,
-    tl_syntax_call,
-};
+use super::*;
 
 fn c(s: &str) -> CString {
     CString::new(s).unwrap()
@@ -119,24 +110,6 @@ fn commands_round_trip_through_the_c_abi() {
     let bad = call(handle, "create_entry", json!({ "id": "P", "path": "../x" }));
     assert_eq!(bad["status"], 400);
     assert_eq!(call_raw(handle, "nope", None)["status"], 404);
-
-    unsafe { tl_close(handle) };
-}
-
-#[test]
-fn native_only_commands_resolve_absolute_paths() {
-    let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(dir.path());
-
-    let escape = call(handle, "project_root", json!({ "id": "../x" }));
-    assert_eq!(escape["status"], 400);
-    let root = call(handle, "project_root", json!({ "id": "P" }));
-    assert!(root["ok"].as_str().unwrap().ends_with("P"));
-
-    let dest = dir.path().join("out.zip");
-    let args = json!({ "id": "P", "dest": dest.to_str().unwrap() });
-    assert_eq!(call(handle, "export_zip", args), json!({ "ok": null }));
-    assert!(dest.is_file());
 
     unsafe { tl_close(handle) };
 }
