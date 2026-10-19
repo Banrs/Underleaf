@@ -38,13 +38,9 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) { popover.contentViewController = nil }
 }
 
-/// Bold, Italic and Underline, standard toggle buttons evenly spaced, on while the selection is in their command; then the
-/// levels the document's class has (the core's `heading_styles`), each at its weight and shape there and its size scaled into
-/// Notes', at an even pitch, after its number as the class prints it. A style toggles and the popover stays, as Notes' does; a
-/// level is chosen and it closes, as a menu. It opens with the caret's level checked and nothing highlighted; the arrow keys
-/// start from the checked level, and the pointer highlights a level without taking the keyboard's focus to it. The highlight is
-/// also the keyboard's focus, which draws no ring: Tab shows where it is, and Return and Space act only on a highlighted level.
-/// Levels go by their commands.
+/// Bold, Italic and Underline as toggles, then the class's levels, each in its weight and shape at a size scaled into Notes'.
+/// A style toggles and the popover stays, as in Notes; a level is chosen and it closes, as a menu. The pointer highlights a
+/// level without taking the keyboard's focus; the arrow keys and Tab move both, and Return and Space choose a highlighted level.
 struct FormatPanel: View {
     let app: AppModel
     let project: ProjectModel
