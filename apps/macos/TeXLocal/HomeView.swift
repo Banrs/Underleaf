@@ -200,7 +200,6 @@ private struct ProjectLabel<Name: View>: View {
     }
 }
 
-/// A button that opens a page in the browser.
 struct LinkButton: View {
     @Environment(\.openURL) private var openURL
     let title: LocalizedStringKey
@@ -325,33 +324,27 @@ private struct PagePreview: View {
 
 struct NewProjectSheet: View {
     @Environment(AppModel.self) private var app
-    @State private var name: String
-    @State private var template: ProjectTemplate
+    @State var draft: NewProjectDraft
     @FocusState private var nameFocused: Bool
 
-    init(draft: NewProjectDraft) {
-        _template = State(initialValue: draft.template)
-        _name = State(initialValue: draft.name)
-    }
-
-    private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
+    private var trimmed: String { draft.name.trimmingCharacters(in: .whitespaces) }
 
     var body: some View {
         DialogSheet(title: "New Project", message: "Saved in \(Core.libraryPath).",
                     action: "Create", enabled: !trimmed.isEmpty, failure: { "Couldn’t Create “\(trimmed)”" }) {
-            try await app.create(name: trimmed, template: template)
+            try await app.create(name: trimmed, template: draft.template)
         } fields: {
             // At a grouped form's trailing edge AppKit shows a space typed last only once a letter follows (27.2), so the text leads in
             // a field as wide as the name: the row keeps it at its trailing edge, and each space moves the name as it is typed.
             LabeledContent("Name") {
                 NameWidth {
-                    TextField("Name", text: $name, prompt: Text("Required"))
+                    TextField("Name", text: $draft.name, prompt: Text("Required"))
                         .labelsHidden()
                         .multilineTextAlignment(.leading)
                         .focused($nameFocused)
                 }
             }
-            Picker("Template", selection: $template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }
+            Picker("Template", selection: $draft.template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }
         }
         .defaultFocus($nameFocused, true)
     }

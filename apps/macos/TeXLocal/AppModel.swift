@@ -61,8 +61,8 @@ nonisolated enum OutlineState { case open, folded, hidden }
 
 /// What the New Project sheet opens with: the template, and the first of "Untitled", "Untitled 2", and so on that no project has.
 struct NewProjectDraft: Identifiable {
-    let template: ProjectTemplate
-    let name: String
+    var template: ProjectTemplate
+    var name: String
 
     var id: ProjectTemplate { template }
 }
