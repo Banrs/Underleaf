@@ -126,8 +126,8 @@ char *_Nullable tl_source_call(TlSource *source, const char *command, const char
  * folder), and maths as SVG:
  * "math_svg" {"tex", "display", "size" (points, default 13), "color" ([r, g,
  * b, a], 0-1, default black)} and "glyph_svg" {"command", "size" (19),
- * "side" (24), "color"} answer {"svg", "width", "height", "baseline"} in
- * points (baseline from the top) or {"error": why}; the SVG holds only
+ * "side" (24), "color"} answer {"svg", "width", "height"} in points or
+ * {"error": why}; the SVG holds only
  * <path> and <rect>. Returns the result's JSON, or NULL for an unknown
  * command or arguments; free it with tl_free. */
 char *_Nullable tl_syntax_call(const char *command, const char *args_json);

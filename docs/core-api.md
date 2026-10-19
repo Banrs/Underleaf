@@ -76,7 +76,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_open` | `id`, `session`, `autoCompile?` | `{session, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` as `set_ui_state` answers it: all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
-| `session_open_document` | `path` | null | Text files only, in UTF-8: another encoding is refused (400), as a save would change its bytes. The editor reads the text from the document's source (`tl_source_text`) once it shows it, so it has whatever reloads came meanwhile. |
+| `session_open_document` | `path` | null | Text files only, in UTF-8: another encoding is refused (400), as a save would change its bytes. The editor reads the text from the document's source (`tl_source_text`) once it shows it. A `document_reload` reaches the source only through the host, so the host applies each to its document's source, shown or not. |
 | `session_close_document` | `path` | `{closed}` | Saves first, asking about conflicts; `closed: false` if that failed. |
 | `session_composing` | `path`, `composing` | null | Marked (IME) text: the autosave waits until it ends. |
 | `session_save` | `reporting?` (true) | `{saved}` | Every unsaved document. A failed write is the error; a conflict is asked (`conflict`) and `saved` is false. With `reporting` false, a conflict isn't asked and a failed write is `saved: false`, not the error. A build follows when it wrote and automatic builds are on. |
@@ -135,6 +135,7 @@ Service commands (`tl_call`):
 | `free_project_name` | `name?` (“Untitled”) | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
 | `create_entry` | `id`, `path`, `dir?` (false) | `{path}` | Makes an empty file, or with `dir` a folder, at `path`; a name taken is numbered past (“untitled 2.tex”), and `path` says which. A path outside the project, or the project's `.texlocal.json`, is 400. |
 | `search_project` | `id`, `query` | `[{file, hits: [{file, line, column, length, before, match, after}]}]` | The first 100 lines that have `query` (in any case), by file, the files in order of their paths. `line` counts from 1; `column` (from 0) and `length` place a line's first match in UTF-16 units of the line as written, for the editor to select. |
+| `kill_all` | | null | Stops every build and live preview at once, on no session's queue: for a host's quit while calls are in flight, when `tl_close` can't be used. |
 | `locate` | `path` | `{id, path}` or null | The project an absolute path is in, as its folder's name, and the path in it, spelt as the disk spells it; null outside every project. |
 | `status` | | `{available, version, latexmkVersion, texDir, found, texpresso, texpressoDir}` | `latexmkVersion`: the number latexmk's version line names (“4.86”), or null. `set_tex_dir` and `set_texpresso_dir` answer the same. |
 
@@ -154,7 +155,7 @@ Each is `{"type", "session", …}`.
 |---|---|---|
 | `document` | `path`, `error`, `held` | Status bar: Not Saved when `error` or `held`. Announce “Wasn’t Saved” when `error` appears. Sent when a document opens or moves and when either field changes. |
 | `saved` | `path` | Ask `session_analyze` again (outline, words, levels). |
-| `document_reload` | `path`, `text`, `reason` (`disk`/`revert`) | Show `text` without making an edit, then `tl_source_reload(source, text)`. Saves of the document wait for it. |
+| `document_reload` | `path`, `text`, `reason` (`disk`/`revert`) | Show `text` without making an edit if the document shows, then, shown or not, `tl_source_reload(source, text)`. Saves of the document wait for it, and say nothing while they wait: no `held` or `error`. |
 | `document_closed` | `path`, `reason` (`gone`/`closed`/`deleted`) | Clear the editor if it shows `path`. |
 | `document_renamed` | `from`, `to` | Re-key the editor's per-file state. |
 | `conflict` | `path`, `kind` | `changed`: alert with Save Anyway, Revert, Cancel and no default button; `gone`: alert whose default saves again, Close, Cancel. Answer with `session_resolve`. |
@@ -166,7 +167,7 @@ Each is `{"type", "session", …}`.
 | `files_changed` | `paths` | Listed files changed in place that aren't open (an image shown, say). |
 | `live` | `phase` (`stopped`/`starting`/`running`/`stopping`), `halted`, `failure`, `error`, `log`, `alert` | Title and toolbar; `alert`: show the Live Preview Log. `phase: stopped` ends the live PDF (show the build's); the session's own planned restart stays `starting` throughout, with no `stopped` between. `log`: the Live Preview Log's whole text (what went wrong, TeXpresso's error, TeX's log and output) with `alert` and while `session_live_log` says it shows, else null: keep the last one. While it shows, the log comes at most every 200 ms. |
 | `live_document` | `path`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
-| `live_page` | `page`, `path` | Draw over that page now if a live document shows and has it; otherwise drop it. The session sends a batch's `live_document` before the batch's pages and drops the pages a document has, so a page is always newer than the document before it, and the next document has any page dropped. |
+| `live_page` | `page`, `path` | Draw over that page now if a live document shows and has it; otherwise drop it. The session forwards pages and documents one at a time, in the order TeXpresso writes them, and drops nothing: a page can come before its run's `live_document`. |
 | `live_restarted` | | Note “Live Preview Restarted”. |
 
 ## The editor's source
