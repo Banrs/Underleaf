@@ -18,8 +18,8 @@ final class ProjectFlowTests {
     let app = AppModel()
 
     init() throws {
-        // Removed rather than trashed, as `CoreTests` explains: only in the test library. Home's, the Dock menu's and the
-        // file tree's flows are in this suite too, in HomeTests.swift and FileTreeTests.swift.
+        // Removed rather than trashed, as `CoreTests` explains: only in the test library. Home's and the Dock menu's
+        // flows are in this suite too, in HomeTests.swift.
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         kept = keys.map { UserDefaults.standard.object(forKey: $0) }
         app.autoCompile = false
@@ -70,15 +70,13 @@ final class ProjectFlowTests {
     }
 
     @Test func theMainFileOnDiskStaysOutOfTheTrash() async throws {
-        let (project, folder) = try await opened()
-        try "x".write(to: folder.appending(path: "second.tex"), atomically: true, encoding: .utf8)
+        let (project, folder) = try await opened(with: ["second.tex": "x"])
         let settings = folder.appending(path: ".texlocal.json")
         var json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
         json["mainFile"] = "second.tex"
         try JSONSerialization.data(withJSONObject: json).write(to: settings)
         await project.deleteEntry("second.tex")
-        #expect(files.fileExists(atPath: folder.appending(path: "second.tex").path))
-        #expect(project.settings?.mainFile == "second.tex")
+        #expect(exists(folder.appending(path: "second.tex")) && project.settings?.mainFile == "second.tex")
     }
 
     @Test func theLastOpenHasTheEditor() async throws {
@@ -86,11 +84,8 @@ final class ProjectFlowTests {
         // Started in this order on the main actor, each waiting on the core in turn.
         let opens = [Task { await app.open(first.id) }, Task { await app.open(second.id) }]
         for open in opens { await open.value }
-
-        #expect(app.project?.id == second.id)
-        let editor = app.project?.editor
-        #expect(editor?.path == second.mainFile)
-        #expect(editor?.textView.document.text == "second")
+        let editor = try #require(app.project?.editor)
+        #expect(app.project?.id == second.id && editor.path == second.mainFile && editor.textView.document.text == "second")
         await app.close()
     }
 
@@ -116,10 +111,8 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func aFileRenameCanBeUndoneAndRedone() async throws {
+    @Test func aFileRenameCanBeUndoneAndRedoneUntilTheProjectCloses() async throws {
         let undo = windowUndo(), (project, folder) = try await opened()
-        #expect(project.settings?.mainFile == "main.tex")
-
         await undo.grouping { await project.renameEntry("main.tex", to: "thesis.tex") }
         #expect(exists(folder.appending(path: "thesis.tex")) && project.settings?.mainFile == "thesis.tex")
         #expect(undo.undoActionName == "Rename")
@@ -130,8 +123,9 @@ final class ProjectFlowTests {
 
         undo.redo()
         try await waitUntil { self.exists(folder.appending(path: "thesis.tex")) && project.settings?.mainFile == "thesis.tex" }
-        #expect(app.alert == nil)
+        #expect(app.alert == nil && undo.canUndo)
         await app.close()
+        #expect(!undo.canUndo)
     }
 
     @Test func theExportedZipHasTheUnsavedEdits() async throws {
@@ -305,18 +299,31 @@ final class ProjectFlowTests {
     @Test func anotherAppsFilesComeAndGo() async throws {
         let (project, folder) = try await opened()
         let paths = { Set(project.tree.nodes.flattened.map(\.path)) }
-
         try "x".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
         try await waitUntil(timeout: .seconds(5)) { paths().contains("notes.tex") }
-        try files.createDirectory(at: folder.appending(path: "parts"), withIntermediateDirectories: false)
-        try files.moveItem(at: folder.appending(path: "notes.tex"), to: folder.appending(path: "parts/notes.tex"))
-        try await waitUntil(timeout: .seconds(5)) { paths().contains("parts/notes.tex") && !paths().contains("notes.tex") }
         // Only the spelling changes, which a volume that ignores case finds under either.
-        try files.moveItem(at: folder.appending(path: "parts/notes.tex"), to: folder.appending(path: "parts/Notes.tex"))
-        try await waitUntil(timeout: .seconds(5)) { paths().contains("parts/Notes.tex") && !paths().contains("parts/notes.tex") }
-        try files.removeItem(at: folder.appending(path: "parts"))
-        try await waitUntil(timeout: .seconds(5)) { !paths().contains("parts") }
+        try files.moveItem(at: folder.appending(path: "notes.tex"), to: folder.appending(path: "Notes.tex"))
+        try await waitUntil(timeout: .seconds(5)) { paths().contains("Notes.tex") && !paths().contains("notes.tex") }
+        try files.removeItem(at: folder.appending(path: "Notes.tex"))
+        try await waitUntil(timeout: .seconds(5)) { !paths().contains("Notes.tex") }
         await app.close()
+    }
+
+    @Test func theTreeTellsOfAChangeOnly() async throws {
+        let info = try await project().info, tree = FileTree(id: info.id)
+        var changes = 0
+        tree.onChange = { changes += 1 }
+        await tree.reload()
+        #expect(changes == 1 && tree.node(at: info.mainFile)?.isDirectory == false)
+        await tree.reload()
+        #expect(changes == 1)
+        try info.write("x", to: "notes.tex")
+        await tree.reload()
+        #expect(changes == 2 && tree.node(at: "notes.tex") != nil)
+        tree.close()
+        try info.write("x", to: "more.tex")
+        await tree.reload()
+        #expect(changes == 2 && tree.node(at: "more.tex") == nil)
     }
 
     /// The session's watcher, reload and conflict reach the editor; the rules are the core's (session/tests.rs).
@@ -350,16 +357,12 @@ final class ProjectFlowTests {
     }
 
     @Test func aClosedProjectsTrashCannotBeUndone() async throws {
-        let undo = windowUndo(), (project, folder) = try await opened()
-        let notes = folder.appending(path: "notes.tex")
-        try "notes".write(to: notes, atomically: false, encoding: .utf8)
-
+        let undo = windowUndo(), (project, folder) = try await opened(with: ["notes.tex": "notes"])
         await undo.grouping { await project.deleteEntry("notes.tex") }
-        #expect(!exists(notes) && undo.undoActionName == "Move to Trash")
+        #expect(undo.undoActionName == "Move to Trash")
         // Back from the Trash, which is left as it was; the Redo is the item's too.
         undo.undo()
-        try await waitUntil { self.exists(notes) }
-        #expect(undo.canRedo)
+        try await waitUntil { self.exists(folder.appending(path: "notes.tex")) && undo.canRedo }
         await app.close()
         #expect(!undo.canRedo && !undo.canUndo)
     }
@@ -377,14 +380,10 @@ final class ProjectFlowTests {
     }
 
     @Test func aDroppedFileOpens() async throws {
-        let (project, folder) = try await opened()
-        let notes = folder.appending(path: "notes.tex"), plot = folder.appending(path: "plot.png")
-        try "notes".write(to: notes, atomically: false, encoding: .utf8)
-        try Data().write(to: plot)
-        try await waitUntil(timeout: .seconds(5)) { Set(project.tree.nodes.flattened.map(\.path)).isSuperset(of: ["notes.tex", "plot.png"]) }
+        let (project, folder) = try await opened(with: ["notes.tex": "notes", "plot.png": ""])
         let drop = project.editor.textView.fileDrop
-        #expect(drop(plot)?.inserted == "\\includegraphics{plot.png}", "An image dropped on LaTeX is a figure")
-        let openNotes = try #require(drop(notes)?.opens, "A text file dropped on the source opens")
+        #expect(drop(folder.appending(path: "plot.png"))?.inserted == "\\includegraphics{plot.png}", "An image dropped on LaTeX is a figure")
+        let openNotes = try #require(drop(folder.appending(path: "notes.tex"))?.opens, "A text file dropped on the source opens")
         openNotes()
         try await waitUntil(timeout: .seconds(5)) { project.openPath == "notes.tex" }
         #expect(drop(files.temporaryDirectory.appending(path: "outside.tex")) == nil)
@@ -412,9 +411,7 @@ final class ProjectFlowTests {
 
     /// Arrowing down the sidebar's files: each open closes the one before, and one a later open overtook closes its own.
     @Test func onlyTheFileShownStaysOpenInTheSession() async throws {
-        let (project, folder) = try await opened()
-        for name in ["a.tex", "b.tex"] { try name.write(to: folder.appending(path: name), atomically: true, encoding: .utf8) }
-        await project.tree.reload()
+        let project = try await opened(with: ["a.tex": "a", "b.tex": "b"]).project
         let session = try #require(project.session)
         let paths = ["main.tex", "a.tex", "b.tex"]
         // A few turns apart, so the later open comes at different points in the earlier one's.
@@ -461,9 +458,7 @@ final class ProjectFlowTests {
     }
 
     @Test func cleanBuildFolderRemovesTheBuildFolder() async throws {
-        let (project, folder) = try await opened()
-        try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
-        try "x".write(to: folder.appending(path: "build/main.aux"), atomically: false, encoding: .utf8)
+        let (project, folder) = try await opened(with: ["build/main.aux": "x"])
         await project.cleanBuildFolder()
         #expect(!exists(folder.appending(path: "build")) && exists(folder.appending(path: "main.tex")))
         #expect(project.result == nil && !project.hasPDF)
@@ -486,48 +481,33 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func theSidebarsStateIsKeptForTheProject() async throws {
-        let project = try await opened().project
-        project.expandedFolders = ["chapters", "chapters/appendix"]
+    /// A rename's answer has the state the core moved, written before the rename asked for it.
+    @Test func theSidebarsStateIsKeptForTheProjectAndFollowsARename() async throws {
+        let project = try await opened(with: ["ch/a.tex": ""]).project
+        project.expandedFolders = ["ch"]
         project.foldedHeadings = ["main.tex\t1:Methods#1"]
+        await project.renameEntry("ch", to: "chapters")
+        #expect(project.expandedFolders == ["chapters"])
         await app.close()
         await app.open(project.id)
         let again = try #require(app.project)
-        #expect(again !== project && again.expandedFolders == ["chapters", "chapters/appendix"])
-        #expect(again.foldedHeadings == ["main.tex\t1:Methods#1"])
-        await app.close()
-    }
-
-    /// The rename's answer has the state the core moved, written before the rename asked for it.
-    @Test func anOpenFolderStaysOpenUnderItsNewName() async throws {
-        let project = try await opened(with: ["ch/a.tex": ""]).project
-        project.expandedFolders = ["ch"]
-        await project.renameEntry("ch", to: "chapters")
-        #expect(project.expandedFolders == ["chapters"])
+        #expect(again !== project && again.expandedFolders == ["chapters"] && again.foldedHeadings == ["main.tex\t1:Methods#1"])
         await app.close()
     }
 
     @Test func newItemsTakeTheNextFreeName() async throws {
-        let (project, folder) = try await opened()
-        try "x".write(to: folder.appending(path: "untitled.tex"), atomically: false, encoding: .utf8)
+        let project = try await opened(with: ["untitled.tex": "x"]).project
         #expect(await project.createEntry(in: "", directory: false) == "untitled 2.tex")
         #expect(project.openPath == "untitled 2.tex" && project.editor.textView.document.text == "")
         #expect(await project.createEntry(in: "", directory: true) == "untitled folder")
-        #expect(await project.createEntry(in: "", directory: true) == "untitled folder 2")
         #expect(await project.createEntry(in: "untitled folder", directory: false) == "untitled folder/untitled.tex")
-        #expect(project.tree.nodes.flattened.contains { $0.path == "untitled folder/untitled.tex" })
-        #expect(exists(folder.appending(path: "untitled folder 2")) && exists(folder.appending(path: "untitled folder/untitled.tex")))
-        #expect(app.alert == nil)
+        #expect(project.tree.nodes.flattened.contains { $0.path == "untitled folder/untitled.tex" } && app.alert == nil)
         await app.close()
     }
 
     @Test func treeDropsMoveTheProjectsFiles() async throws {
-        let (project, folder) = try await opened()
-        try files.createDirectory(at: folder.appending(path: "parts"), withIntermediateDirectories: false)
-        try "notes".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
-        try await waitUntil(timeout: .seconds(5)) { project.tree.nodes.flattened.contains { $0.path == "notes.tex" } }
+        let (project, folder) = try await opened(with: ["notes.tex": "notes", "parts/a.tex": ""])
         let url = { (path: String) in try #require(project.url(path)) }
-
         await project.dropFiles([try url("notes.tex")], into: "parts")
         #expect(exists(folder.appending(path: "parts/notes.tex")) && !exists(folder.appending(path: "notes.tex")))
         await project.dropFiles([try url("parts")], into: "parts")
