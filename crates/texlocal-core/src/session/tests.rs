@@ -833,6 +833,34 @@ async fn a_rename_moves_the_open_document_and_its_saves() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_rename_only_in_case_moves_the_open_document_rather_than_closing_it() {
+    let mut rig = Rig::new(false).await;
+    fs::create_dir(rig.root.join("chapters")).unwrap();
+    fs::write(rig.root.join("chapters/Ch.tex"), "chapter").unwrap();
+    let doc = rig.open("chapters/Ch.tex").await;
+    rig.ok(
+        "rename",
+        json!({ "from": "chapters/Ch.tex", "to": "chapters/ch.tex" }),
+    )
+    .await;
+    rig.ok("rename", json!({ "from": "chapters", "to": "Chapters" }))
+        .await;
+    let events = rig.events().await;
+    assert!(!events.iter().any(|e| e["type"] == "document_closed"));
+    let moved = events.iter().filter(|e| e["type"] == "document_renamed");
+    let moved: Vec<_> = moved.map(|e| e["to"].clone()).collect();
+    assert_eq!(moved, ["chapters/ch.tex", "Chapters/ch.tex"]);
+    assert!(
+        rig.sessions
+            .document(rig.session, "Chapters/ch.tex")
+            .is_some()
+    );
+    doc.edit(0, 0, "A ");
+    wait(800).await;
+    assert_eq!(rig.disk("Chapters/ch.tex"), "A chapter");
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_main_file_cant_go_to_the_trash_and_nothing_puts_a_trashed_file_back() {
     let rig = Rig::new(false).await;
     let refused = rig

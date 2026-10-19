@@ -1028,12 +1028,16 @@ impl Actor {
         })?;
         self.live_follow();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
-        // Whatever was open at the new name is stale: the name was free.
+        // Whatever was open at the new name is stale: the name was free. Names
+        // compare without case, so a rename only in case leaves the entry itself
+        // at the new name: that one moves rather than closes.
         for path in self.docs_within(to) {
-            self.close_doc(&path, "gone");
+            if !within(&path, from) {
+                self.close_doc(&path, "gone");
+            }
         }
         for old in self.docs_within(from) {
-            let new = format!("{to}{}", &old[from.len()..]);
+            let new = format!("{to}{}", paths::after_entry(&old, from).expect("within"));
             let mut doc = self.docs.remove(&old).expect("listed");
             doc.path.clone_from(&new);
             doc.shown = Value::Null;
