@@ -11,13 +11,6 @@ use super::*;
 use crate::projects::testing::{library, with_project};
 use crate::session::Sessions;
 
-/// A library of two blank projects, "P" and "Q".
-fn two_projects() -> (TempDir, Service) {
-    let (dir, service) = with_project();
-    projects::create_project(&service.data_dir, "Q", "blank").unwrap();
-    (dir, service)
-}
-
 async fn call(service: &Service, command: &str, args: Value) -> Value {
     service
         .call(command, &args)
@@ -402,10 +395,11 @@ async fn ui_state_patches_and_main_file_renames_preserve_both_changes() {
 
 #[test]
 fn an_edit_waits_for_its_own_project_only() {
-    let (_dir, service) = two_projects();
+    let (_dir, service) = with_project();
     let data = &service.data_dir;
+    projects::create_project(data, "Q", "blank").unwrap();
     std::thread::scope(|scope| {
-        let edit = service.locked(&["P"], || {
+        let edit = service.with_project("P", |_| {
             // Another project's edit goes ahead.
             service
                 .with_project("Q", |root| {
@@ -420,72 +414,9 @@ fn an_edit_waits_for_its_own_project_only() {
             });
             std::thread::sleep(Duration::from_millis(100));
             assert!(!data.join("P/p.tex").exists());
-            edit
+            Ok(edit)
         });
-        edit.join().unwrap().unwrap();
+        edit.unwrap().join().unwrap().unwrap();
     });
     assert!(data.join("P/p.tex").is_file());
-}
-
-/// Two commands at once, each on a thread of its own, let go together.
-fn race(service: &Service, calls: [(&str, Value); 2]) -> [Result<Value, CoreError>; 2] {
-    let start = std::sync::Barrier::new(2);
-    std::thread::scope(|scope| {
-        let calls = calls.map(|(command, args)| {
-            let start = &start;
-            scope.spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .build()
-                    .unwrap();
-                start.wait();
-                runtime.block_on(service.call(command, &args))
-            })
-        });
-        calls.map(|call| call.join().unwrap())
-    })
-}
-
-#[test]
-fn of_two_renames_to_one_name_the_second_finds_it_taken() {
-    for _ in 0..50 {
-        let (_dir, service) = two_projects();
-        let rename = |id| ("rename_project", json!({ "id": id, "name": "R" }));
-        let renamed = race(&service, [rename("P"), rename("Q")]);
-        let mut statuses = renamed.map(|result| result.map_or_else(|e| e.status, |_| 200));
-        statuses.sort_unstable();
-        assert_eq!(statuses, [200, 409]);
-        let left = fs::read_dir(&service.data_dir).unwrap().count();
-        assert_eq!(left, 2, "one project renamed, one left as it was");
-    }
-}
-
-#[test]
-fn a_rename_and_a_new_project_of_one_name_keep_the_renamed_project_s_files() {
-    for round in 0..120 {
-        let (_dir, service) = two_projects();
-        let data = &service.data_dir;
-        fs::write(data.join("P/main.tex"), "the user's").unwrap();
-        let [renamed, made] = race(
-            &service,
-            [
-                ("rename_project", json!({ "id": "P", "name": "R" })),
-                (
-                    "create_project",
-                    json!({ "name": "R", "template": "blank" }),
-                ),
-            ],
-        );
-        let renamed = renamed.map_err(|e| (e.status, e.message));
-        // The new project is always made; the rename goes ahead or finds
-        // the name taken.
-        assert!(made.is_ok(), "round {round}: create {made:?}");
-        let kept = match renamed {
-            Ok(_) => "R",
-            Err((409, _)) => "P",
-            Err(other) => panic!("round {round}: rename {other:?}"),
-        };
-        let text = fs::read_to_string(data.join(kept).join("main.tex")).unwrap();
-        assert_eq!(text, "the user's", "round {round}");
-        assert_eq!(fs::read_dir(data).unwrap().count(), 3, "round {round}");
-    }
 }

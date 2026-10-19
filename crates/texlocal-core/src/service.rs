@@ -1,7 +1,7 @@
 // Shared command surface: hosts forward here so path checks and edit
 // serialization have one implementation.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -99,31 +99,22 @@ impl Service {
         self.texpresso.live_pdf(session).map(Some)
     }
 
-    /// Run `work` holding the locks of the projects named `names`, taken in
-    /// one order so that two callers wanting the same two can't deadlock.
-    /// Locks no one holds are dropped on the way.
-    fn locked<T>(&self, names: &[&str], work: impl FnOnce() -> T) -> T {
-        let held: Vec<_> = {
-            let mut locks = lock(&self.edits);
-            locks.retain(|_, held| Arc::strong_count(held) > 1);
-            let keys: BTreeSet<_> = names.iter().map(|name| fold_case(name)).collect();
-            let mut held = |key| Arc::clone(locks.entry(key).or_default());
-            keys.into_iter().map(&mut held).collect()
-        };
-        let _guards: Vec<_> = held.iter().map(|project| lock(project)).collect();
-        work()
-    }
-
     /// Run `use_project` holding the project's lock, finding the project
     /// once it is held, so a rename or delete that held it first is seen.
+    /// Locks no one holds are dropped on the way.
     pub(crate) fn with_project<T>(
         &self,
         id: &str,
         use_project: impl FnOnce(&Path) -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
-        self.locked(&[paths::project_name(id)?], || {
-            use_project(&self.project_root(id)?)
-        })
+        let key = fold_case(paths::project_name(id)?);
+        let held = {
+            let mut locks = lock(&self.edits);
+            locks.retain(|_, held| Arc::strong_count(held) > 1);
+            Arc::clone(locks.entry(key).or_default())
+        };
+        let _guard = lock(&held);
+        use_project(&self.project_root(id)?)
     }
 
     // ---------- status ----------
@@ -215,12 +206,9 @@ impl Service {
                     arg::<Option<String>>(args, "name")?.as_deref(),
                 )?
             })),
-            // The new name's lock too: of two renames to one name, the second
-            // waits and finds it taken.
             "rename_project" => {
                 let (id, name) = (s("id")?, s("name")?);
-                let names = [paths::project_name(id)?, &paths::sanitize_name(name)?];
-                out(self.locked(&names, || {
+                out(self.with_project(id, |_| {
                     // A build or live preview would go on in the moved folder, and report back
                     // from the old path.
                     let stop = |root: &Path| {
