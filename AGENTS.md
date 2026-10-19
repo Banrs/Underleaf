@@ -33,7 +33,8 @@ numbers, no custom colours, no platform workaround without a capture of the bug 
 what Apple's own apps do (Preview, TextEdit, Xcode, Notes) settles a question before taste
 does. The few custom pieces kept on purpose: the File Outline at the sidebar's foot, opening
 upward; Home's template cards; Compile as a word; one status bar across source and PDF; the
-completion list as a SwiftUI glass list.
+completion list as a SwiftUI glass list. Since then (2026-10-18) the status bar takes
+Xcode's editor bar and Aa's popover Notes' measures.
 
 **Where main is now:** the window, toolbar and splits are AppKit (`WorkspaceController`,
 `WorkspaceToolbar`, `SplitViews`), because SwiftUI's split can't give the AppKit editor and
@@ -43,21 +44,33 @@ popovers, Settings and Home are SwiftUI.
 
 - **Toolbar**: Compile is the window's one prominent item, its word, or its symbol's circle
   where the toolbar has no room for the word (`CompileHost`); while building it is Stop, with
-  progress. Aa (text styles), Math and Insert sit over the source; Zoom (minus, percentage, plus),
+  progress. Aa (text styles, Notes' popover with standard toggle buttons for Bold, Italic and
+  Underline), Math and Insert (its symbol a plus) sit over the source; Zoom (minus, percentage, plus),
   Compile and the PDF and Inspector toggles over the PDF. Tools without room go to the system's
   overflow by `visibilityPriority`.
 - **Source**: one TextKit 2 `NSTextView` (`SourceTextView`) shared across files, never
   touching `layoutManager`. Issues sit on their lines as in Xcode (numbers-only gutter, a box
-  at the line's end); the measures come from the system font's metrics.
-- **Status bar and build panel**: one bar across source and PDF at the system's spacing, over
-  each pane's own scroll edge (empty bottom split-item accessories); Not Saved after a failed
-  save. The build panel opens below the columns with a console-style bar (Issues, Build Log,
-  Live Preview Log, Warnings, a filter).
+  at the line's end); the measures come from the system font's metrics. Syntax colours are
+  rendering attributes, which 27.2 doesn't redraw on fragments already shown: each fragment
+  keeps the runs it was last coloured with, and a recolouring redraws the edited fragment and
+  those whose runs changed, not every line on screen.
+- **Status bar and build panel**: one bar across source and PDF at the system's spacing, as
+  Xcode's editor bar: each pane has an empty bottom accessory of the bar's height
+  (`BarMetrics.height`) with AppKit's hard scroll edge, whose ground and line are the bar's and
+  which text and pages scroll through; the File Outline's header is level with its line. Until a
+  scroll prepares content, TextKit's content view ends at the scroll view's insets, so the source
+  prepares its visible rect after each viewport layout (27.2). Not Saved after a failed save, and
+  a failed autosave is told once in an alert, as NSDocument's are. The build panel opens below
+  the columns with a console-style bar (Issues, Build Log, Live Preview Log, Warnings, a
+  filter); it resizes from the status bar's line and is dragged open and shut there, as Xcode's
+  debug area (`area.grip`, an additional effective rect; the panel's `canCollapse`).
 - **PDF**: PDFKit as Preview has it, on PDFKit's own canvas colour and always white paper. A
   rebuilt document's pages replace those showing in the same `PDFDocument` (a new document
   flashes the background); PDFKit keeps replaced pages' objects, so once the app has grown 512
   MB since a document was last shown whole, the next one is shown whole
-  (`PDFController.memoryAtWhole`).
+  (`PDFController.memoryAtWhole`). A fitted page keeps PDFKit's side margins, as Preview's;
+  pages have no top margin, so the first meets the toolbar's edge and, at the document's start,
+  stays there as the pane resizes.
 - **Sessions**: the open project is a core session, numbered by the app before it opens
   (`Core.observe`), so none of its events can come before the app listens. Commands go
   through `tl_call_async` and are awaited, so no thread waits on the core; a session takes
@@ -118,6 +131,11 @@ without a capture of its bug on the current OS is a candidate for removal.
 - The Windows app: `dotnet test apps/windows/TeXLocal.Tests -c Debug`; `TeXLocal.exe --smoke`
   opens Home and exits 0. Run dev builds with a scratch `TEXLOCAL_DATA`, never beside the
   installed copy (`docs/windows.md`, Building and testing).
+- Quicker than a build: `zsh tools/qa/typecheck.sh` type-checks the app and its tests in about
+  20 s; `tools/qa/xctest.sh <repo> <derived data> [-only-testing:…]` runs the native tests one
+  at a time per session. Worktree agents use these rather than parallel `xcodebuild`s.
+- On screen: the QA driver in `tools/qa` (its README has the setup and the rules), on a QA copy
+  (`com.texlocal.mac.qa`, data in a scratchpad), never the installed app or `~/TeXLocal`.
 - The live preview's end-to-end check needs the patched engine:
   `cargo test -p texlocal-core --test texpresso_live -- --ignored` (`docs/texpresso.md`).
 - Physical trackpad gestures, the dividers' haptic, interactive IME and visual-material
@@ -125,16 +143,10 @@ without a capture of its bug on the current OS is a candidate for removal.
 
 ## Build and install the Mac app
 
-Requires Xcode 27 and Rust stable.
-
-```sh
-xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Release \
-  -destination 'platform=macOS' -derivedDataPath /private/tmp/underleaf-release \
-  CODE_SIGNING_ALLOWED=NO build
-```
-
-Quit TeXLocal, ad-hoc sign the Release product, replace `/Applications/TeXLocal.app`, verify
-its signature, and compare the installed and built binaries.
+Requires Xcode 27 and Rust stable. `zsh tools/install-mac.sh` builds the checkout it is in
+(Release, derived data in `/private/tmp/underleaf-release`), quits TeXLocal, ad-hoc signs and
+installs `/Applications/TeXLocal.app`, verifies its signature, compares the installed and built
+binaries, and reopens it.
 
 ## Build and install the Windows app
 
@@ -153,3 +165,16 @@ what is there, and points the Start menu's TeXLocal shortcut at it.
   and a quick Stop and Start.
 - The Windows app is not finished (no live preview yet); it follows `docs/core-api.md` and is
   ported to its "Changes for hosts (October 2026)".
+- Measured on the 400-page test document (2026-10-18), not yet improved: a build's PDF shown in
+  place costs the main thread about 0.7 s, mostly PDFKit relaying out its view per inserted and
+  removed page (quadratic in the page count; a 20-page document is a few milliseconds); a SyncTeX
+  query runs the `synctex` program, which reads the whole 14 MB file each time (about 80 ms).
+  Keeping unchanged pages would need a comparison that also sees changed images and fonts, and an
+  in-core SyncTeX index would have to match the program's box choice exactly.
+- Profiling without the screen: `xcrun xctrace record --template 'Time Profiler' --attach <pid>`,
+  with typing posted through Accessibility (`AXSelectedText`); a driver that walks the window's
+  tree per key measures PDFKit building accessibility nodes (it runs text recognition on pages),
+  not typing. The per-key core work is about 0.1 ms; AppKit's text checking and drawing are the rest.
+- TeX on macOS 27 (MacTeX 2026, March package): biber's universal launcher calls
+  `lipo -extract_family`, which macOS 27's `lipo` refuses, so biber exits with lipo's usage until
+  `tlmgr update biber` (or its arm64 slice) replaces it. ConTeXt and arara are not in that package.

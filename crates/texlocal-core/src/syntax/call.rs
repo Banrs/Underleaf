@@ -104,12 +104,13 @@ fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
 
 /// What a file dropped on the editor does: an image or PDF dropped on a
 /// LaTeX file is `\includegraphics` to put at the caret; any other file
-/// opens. `kind` is the file's `file_tree` kind, none for a folder (which
-/// does nothing); `into` the kind of the file dropped on.
+/// opens, as does one whose path TeX can't read as written. `kind` is the
+/// file's `file_tree` kind, none for a folder (which does nothing); `into`
+/// the kind of the file dropped on.
 fn dropped(path: &str, kind: &str, into: &str) -> Value {
     match kind {
         "" => Value::Null,
-        "image" | "pdf" if into == "tex" => {
+        "image" | "pdf" if into == "tex" && tex_reads(path) => {
             json!({ "insert": format!("\\includegraphics{{{path}}}") })
         }
         _ => json!({ "open": true }),
@@ -117,6 +118,25 @@ fn dropped(path: &str, kind: &str, into: &str) -> Value {
 }
 
 const BLACK: Rgba = [0.0, 0.0, 0.0, 1.0];
+
+/// Whether `\includegraphics` reads `path` as written, in pdfTeX, XeTeX and LuaTeX
+/// alike: `%`, `#` and `\` mean something else to TeX there, and its braces must
+/// pair. The rest (spaces, `_`, `&`, `$`, `^`, `~`) it takes as they are.
+fn tex_reads(path: &str) -> bool {
+    let mut depth = 0i32;
+    for c in path.chars() {
+        depth += match c {
+            '%' | '#' | '\\' => return false,
+            '{' => 1,
+            '}' => -1,
+            _ => 0,
+        };
+        if depth < 0 {
+            return false;
+        }
+    }
+    depth == 0
+}
 
 /// The commands that need no document: "themes", the themes' colours;
 /// "theme_colors", a theme's (`theme`, its id) legible in an appearance
@@ -190,6 +210,8 @@ pub fn call(command: &str, args_json: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::call;
     use crate::syntax::SourceDocument;
     use crate::syntax::theme::contrast;
@@ -227,6 +249,17 @@ mod tests {
         assert_eq!(drop(into_bib).as_deref(), Some(r#"{"open":true}"#));
         let tex = r#"{"path": "ch1.tex", "kind": "tex"}"#;
         assert_eq!(drop(tex).as_deref(), Some(r#"{"open":true}"#));
+        // A path TeX reads as written goes in; one it can't opens.
+        let taken = r#"{"path": "figs/a b_c&{d}~$^.png", "kind": "image"}"#;
+        assert!(
+            drop(taken)
+                .unwrap()
+                .contains("includegraphics{figs/a b_c&{d}~$^.png}")
+        );
+        for path in ["50%.png", "a#1.png", "a\\\\b.png", "a}{.png", "a{.png"] {
+            let args = json!({ "path": path, "kind": "image" }).to_string();
+            assert_eq!(drop(&args).as_deref(), Some(r#"{"open":true}"#), "{path}");
+        }
         // A folder does nothing; a call without a path is no call.
         assert_eq!(drop(r#"{"path": "figs"}"#).as_deref(), Some("null"));
         assert_eq!(drop("{}"), None);

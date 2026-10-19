@@ -1,6 +1,7 @@
 //! Making, moving and discarding the files and folders of a project.
 
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use serde::Serialize;
@@ -55,10 +56,43 @@ pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreErro
 }
 
 pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<Stamp, CoreError> {
-    if let Some(parent) = abs.parent() {
-        fs::create_dir_all(parent)?;
+    abs.parent()
+        .map_or(Ok(()), fs::create_dir_all)
+        .and_then(|()| atomic::write(abs, contents))
+        .map_err(|err| write_error(abs, err))
+}
+
+/// A failed write in Foundation's words, as the hosts show it in an alert
+/// whose title already says the file wasn't saved; its status is the file
+/// system's, as any other.
+fn write_error(abs: &Path, err: std::io::Error) -> CoreError {
+    let name = |path: &Path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+    };
+    let file = name(abs).unwrap_or_default();
+    let kind = err.kind();
+    let fallback = CoreError::from(err);
+    let message = match kind {
+        ErrorKind::PermissionDenied => {
+            let folder = abs.parent().and_then(name).unwrap_or_default();
+            format!("You don’t have permission to save the file “{file}” in the folder “{folder}”.")
+        }
+        ErrorKind::ReadOnlyFilesystem => {
+            format!("The file “{file}” couldn’t be saved because the volume is read only.")
+        }
+        ErrorKind::StorageFull => {
+            format!("The file “{file}” couldn’t be saved because there isn’t enough space.")
+        }
+        _ => format!(
+            "The file “{file}” couldn’t be saved ({}).",
+            fallback.message
+        ),
+    };
+    CoreError {
+        message,
+        ..fallback
     }
-    Ok(atomic::write(abs, contents)?)
 }
 
 /// Whether `path` lies inside the folder `dir`, not as `dir` itself.
@@ -128,8 +162,20 @@ pub(crate) type Trash = fn(&Path) -> Result<(), CoreError>;
 /// failure is reported and the original is left in place; it must never become
 /// an implicit permanent-delete request.
 pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
-    trash::delete(path)
-        .map_err(|err| CoreError::internal(format!("Could not move the item to Trash: {err}")))
+    // On macOS the crate asks Finder over Apple Events by default, which needs
+    // the Automation permission; the system's file manager moves it instead, as
+    // the Mac app's own Move to Trash does (`FileManager.trashItem`), though
+    // Finder then offers no Put Back for it.
+    #[cfg(target_os = "macos")]
+    let trashed = {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        let mut context = trash::TrashContext::default();
+        context.set_delete_method(DeleteMethod::NsFileManager);
+        context.delete(path)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let trashed = trash::delete(path);
+    trashed.map_err(|err| CoreError::internal(format!("Could not move the item to Trash: {err}")))
 }
 
 /// Discard, by `trash`, an entry an incoming file of its name replaces. The
@@ -164,6 +210,25 @@ mod tests {
     use super::*;
     use crate::projects::testing::project;
     use crate::settings::{UiPatch, UiState, read_ui, write_ui};
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_refused_says_so_in_a_sentence_naming_the_file_and_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Thesis");
+        fs::create_dir(&folder).unwrap();
+        fs::set_permissions(&folder, fs::Permissions::from_mode(0o555)).unwrap();
+        let err = write_creating(&folder.join("main.tex"), b"x").unwrap_err();
+        fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            (err.status, err.message.as_str()),
+            (
+                403,
+                "You don’t have permission to save the file “main.tex” in the folder “Thesis”."
+            )
+        );
+    }
 
     #[test]
     fn a_new_entry_takes_the_next_free_name() {

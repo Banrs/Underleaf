@@ -37,18 +37,16 @@ extension ProjectModel {
     /// behind it, where it ends the build however soon it comes; the core's `build` events then confirm or end it. An
     /// automatic one waits for them, as the core may leave it.
     func compile(auto: Bool = false) async {
-        guard let session, !closed, texAvailable else { return }
+        guard let session, !closed, app?.tex?.available == true else { return }
         if !auto, !compiling {
             compiling = true
             AccessibilityNotification.Announcement(String(localized: "Compiling")).post()
         }
-        do {
+        let sent: Void? = await alerting(String(localized: "“\((openPath ?? id).fileName)” Wasn’t Saved")) {
             try await core.call("session_compile", ["session": session, "auto": auto])
-        } catch {
-            // The core has ended a build whose save failed, and with no core none started.
-            compiling = false
-            if !closed { report(error, String(localized: "“\((openPath ?? id).fileName)” Wasn’t Saved")) }
         }
+        // The core has ended a build whose save failed, and with no core none started.
+        if sent == nil { compiling = false }
     }
 
     func stopCompile() {
@@ -58,12 +56,10 @@ extension ProjectModel {
 
     func cleanBuildFolder() async {
         guard let session, !closed else { return }
-        do {
+        let cleaned: Void? = await alerting("Couldn’t Clean the Build Folder") {
             try await core.call("session_clean", ["session": session])
-        } catch {
-            if !closed { report(error, "Couldn’t Clean the Build Folder") }
-            return
         }
+        guard cleaned != nil else { return }
         await inOrder { self.buildCleaned() }.value
     }
 
@@ -84,9 +80,7 @@ extension ProjectModel {
             }
         }
         guard !closed else { return }
-        self.result = result
-        outdated = finished.outdated
-        chosenIssue = nil
+        (self.result, outdated, chosenIssue) = (result, finished.outdated, nil)
         finishedBuilds += 1
         if !finished.auto {
             finishedManualBuild(result)
@@ -104,9 +98,7 @@ extension ProjectModel {
             shown = .none
             pdf.clear()
         }
-        result = nil
-        chosenIssue = nil
-        outdated = false
+        (result, chosenIssue, outdated) = (nil, nil, false)
     }
 
     private func finishedManualBuild(_ result: CompileResult) {

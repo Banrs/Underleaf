@@ -52,9 +52,7 @@ struct WorkspaceModals: ViewModifier {
             } message: { clash in
                 Text(clash.message)
             }
-            .onChange(of: project.diskConflict) { _, path in
-                if let path { askWhichVersion(of: path) }
-            }
+            .onChange(of: project.diskConflict) { _, path in if let path { askWhichVersion(of: path) } }
             .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "",
                    item: $project.missingFile) { path in
                 // Return saves: the button that discards the edits is never the default.

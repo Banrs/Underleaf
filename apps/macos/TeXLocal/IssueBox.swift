@@ -40,9 +40,7 @@ struct IssueBox: View, Equatable {
         /// The size of the symbol and of the line numbers: Xcode's 12.35 pt at 13 pt.
         static func small(_ size: CGFloat) -> CGFloat { size * 0.95 }
 
-        static func segment(_ font: NSFont, issues: Int) -> CGFloat {
-            (segment * font.pointSize).rounded() + (issues > 1 ? count : 0)
-        }
+        static func segment(_ font: NSFont, issues: Int) -> CGFloat { (segment * font.pointSize).rounded() + (issues > 1 ? count : 0) }
 
         /// The box's width for a message this wide, or for the symbol alone.
         static func width(ofText text: CGFloat?, font: NSFont, issues: Int) -> CGFloat {

@@ -111,7 +111,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                             MathMenuItems(project: project) { [app, project] in app.perform(.editMath, on: project) },
                             help: "Insert math or a symbol")
         case .insert:
-            item = menuItem(id, "Insert", "ellipsis", InsertMenuItems(project: project),
+            item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project),
                             help: "Insert a figure, table, list or reference")
         case .bold, .italic, .underline:
             let (command, help) = Self.styles[id]!
@@ -366,9 +366,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         pdf.zoom(in: control.selectedSegment == 2)
     }
 
-    @objc private func compile() {
-        app.perform(project.compiling ? .compileStop : .compileRun, on: project)
-    }
+    @objc private func compile() { app.perform(project.compiling ? .compileStop : .compileRun, on: project) }
+
+    @objc private func togglePDF() { app.perform(.viewTogglePDF, on: project) }
 
     private func compileButton(_ state: State, compact: Bool = false) -> CompileButton {
         CompileButton(compiling: state.compiling, compact: compact, enabled: state.canCompile) { [weak self] in
@@ -376,18 +376,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
     }
 
-    @objc private func togglePDF() { app.perform(.viewTogglePDF, on: project) }
-
-    func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
-        project.buildPDF.map { [$0] } ?? []
-    }
+    func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
 }
 
 /// The menu asks the item, and AppKit's answer for it ignores `isEnabled` (27.2).
 private final class ShareItem: NSSharingServicePickerToolbarItem {
-    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        isEnabled && super.validateMenuItem(menuItem)
-    }
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { isEnabled && super.validateMenuItem(menuItem) }
 }
 
 /// The segments keep one width as the scale changes, and the percentage tabular digits: otherwise the capsule, and the items after it, move.
@@ -400,19 +394,13 @@ private final class ZoomControl: NSSegmentedControl {
         set { super.font = newValue.map { .monospacedDigitSystemFont(ofSize: $0.pointSize, weight: .regular) } }
     }
 
-    override var controlSize: NSControl.ControlSize {
-        didSet { font = font }
-    }
+    override var controlSize: NSControl.ControlSize { didSet { font = font } }
 
     /// Inside the toolbar's own update the control's size lags each font change by one (27.2).
     override func layout() {
         super.layout()
         guard let size = font?.pointSize, size != measuredSize else { return }
         measuredSize = size
-        measure()
-    }
-
-    private func measure() {
         guard !widestLabel.isEmpty, segmentCount == 3 else { return }
         let label = label(forSegment: 1) ?? ""
         setLabel(widestLabel, forSegment: 1)
@@ -526,7 +514,5 @@ private struct ToolbarMenuItems<Content: View>: View {
     let isEnabled: () -> Bool
     @ViewBuilder let content: () -> Content
 
-    var body: some View {
-        content().disabled(!isEnabled())
-    }
+    var body: some View { content().disabled(!isEnabled()) }
 }

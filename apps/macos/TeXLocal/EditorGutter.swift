@@ -81,9 +81,7 @@ extension SourceTextView {
         needsDisplay = true
     }
 
-    override var textContainerOrigin: NSPoint {
-        NSPoint(x: gutter.width, y: textContainerInset.height)
-    }
+    override var textContainerOrigin: NSPoint { NSPoint(x: gutter.width, y: textContainerInset.height) }
 
     /// The document's last line when it's empty: TextKit lays it out as an extra line of the paragraph before.
     func extraLine(of fragment: NSTextLayoutFragment) -> NSTextLineFragment? {

@@ -234,9 +234,10 @@ public sealed partial class WorkspacePage : Page
         if (Editor.Path == path) return true;
         try
         {
+            // Opened first and the shown one closed after, so a file that won't open leaves the editor as it was.
+            await Core.CallAsync("session_open_document", new { session, path });
             if (Editor.Path is { } shown && !(await Core.CallAsync("session_close_document", new { session, path = shown })).GetProperty("closed").GetBoolean())
                 return false;
-            await Core.CallAsync("session_open_document", new { session, path });
             if (Core.SessionSource(session, path) is not { } source) return false;
             (Editor.Visibility, NoFile.Visibility) = (Visibility.Visible, Visibility.Collapsed);
             await Editor.Show(path, source);

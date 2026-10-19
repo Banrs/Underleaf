@@ -61,6 +61,14 @@ enum MenuCommand: CaseIterable {
         }
     }
 
+    /// Text commands on the source's selection, which the menu bar's follow the source's keyboard for (`isEnabledInMenuBar`).
+    var editsSelection: Bool {
+        switch self {
+        case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editMoveLineUp, .editMoveLineDown: true
+        default: false
+        }
+    }
+
     var symbol: String? {
         switch self {
         case .editBold: "bold"
@@ -95,7 +103,7 @@ extension AppModel {
         case .fileSave, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .viewTextBigger, .viewTextSmaller:
             project?.editsText == true
         case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
-        case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
+        case .compileRun: tex?.available == true && project?.compiling == false
         case .compileStop: project?.compiling == true
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
         case .viewZoomOut: project.map { $0.hasPDF && $0.pdf.canZoomOut } ?? false
@@ -106,6 +114,12 @@ extension AppModel {
         case .issueNext, .issuePrevious: project?.issues.contains { $0.file != nil } == true
         default: project != nil
         }
+    }
+
+    /// As Xcode's and Notes': with a field, the file list or the PDF focused, the menu bar's text commands are dim and their
+    /// shortcuts are the focused view's. The toolbar's still act on the source, which is theirs.
+    func isEnabledInMenuBar(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
+        isEnabled(command, on: project) && (!command.editsSelection || project?.sourceHasKeyboard == true)
     }
 
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
@@ -135,8 +149,7 @@ extension AppModel {
         case .projectNew: newProject()
         case .projectOpen: openingProject = true
         case .projectClose: Task { await close() }
-        case .projectExport:
-            if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
+        case .projectExport: if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
         case .projectSearch:
             if project != nil { sidebarShown = true }
             searchFocusToken += 1
@@ -145,13 +158,9 @@ extension AppModel {
             newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.save() }
-        case .pdfSave:
-            if let project, let url = project.buildPDF {
-                exporting = ExportFile(name: "\(project.id).pdf", type: .pdf) { url }
-            }
+        case .pdfSave: if let project, let url = project.buildPDF { exporting = ExportFile(name: "\(project.id).pdf", type: .pdf) { url } }
         // The PDF, not the first responder (usually the source), and whether or not its pane shows.
-        case .filePrint:
-            if let project { project.pdf.print(title: project.id) }
+        case .filePrint: if let project { project.pdf.print(title: project.id) }
         case .editBold: project?.editor.perform(.bold)
         case .editItalic: project?.editor.perform(.italic)
         case .editUnderline: project?.editor.perform(.underline)
@@ -191,24 +200,16 @@ struct AppCommands: Commands {
     let app: AppModel
     private var project: ProjectModel? { app.commandProject }
 
-    private func item(_ command: MenuCommand) -> some View {
-        CommandItem(app: app, command: command)
-    }
-
-    private func items(_ commands: [MenuCommand]) -> some View {
-        ForEach(commands, id: \.self) { item($0) }
+    private func items(_ commands: MenuCommand...) -> some View {
+        ForEach(commands, id: \.self) { CommandItem(app: app, command: $0) }
     }
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            items([.projectNew, .fileNew, .fileNewFolder, .projectOpen])
+            items(.projectNew, .fileNew, .fileNewFolder, .projectOpen)
             Menu("Open Recent") {
                 ForEach(app.recents) { recent in
-                    Button {
-                        Task { await app.open(recent.id) }
-                    } label: {
-                        Label(recent.name, systemImage: "text.document")
-                    }
+                    Button(recent.name, systemImage: "text.document") { Task { await app.open(recent.id) } }
                     // macOS 27 hides a menu item's image unless the label style shows it.
                     .labelStyle(.titleAndIcon)
                 }
@@ -217,77 +218,68 @@ struct AppCommands: Commands {
                     .disabled(app.recents.isEmpty)
             }
             Divider()
-            item(.fileUpload)
+            items(.fileUpload)
         }
         CommandGroup(after: .saveItem) {
-            item(.fileSave)
+            items(.fileSave)
             Divider()
-            item(.projectClose)
+            items(.projectClose)
             Divider()
             ItemMenuItems(actions: app.mainWindowIsKey ? app.chosenItem : nil, trashShortcut: KeyboardShortcut(.delete))
                 .labelStyle(.titleAndIcon)
         }
         CommandGroup(replacing: .importExport) {
-            items([.pdfSave, .projectExport])
+            items(.pdfSave, .projectExport)
             Divider()
             if let project, let url = project.buildPDF {
                 ShareLink(item: url)
             } else {
-                Button {} label: { Label("Share…", systemImage: "square.and.arrow.up") }.labelStyle(.titleAndIcon).disabled(true)
+                Button("Share…", systemImage: "square.and.arrow.up") {}.labelStyle(.titleAndIcon).disabled(true)
             }
         }
-        CommandGroup(replacing: .printItem) { item(.filePrint) }
+        CommandGroup(replacing: .printItem) { items(.filePrint) }
         // A replacement group would lose the spelling and substitution checkmarks.
         TextEditingCommands()
-        CommandGroup(before: .textEditing) {
-            items([.projectSearch, .pdfFind])
-        }
+        CommandGroup(before: .textEditing) { items(.projectSearch, .pdfFind) }
         CommandGroup(after: .pasteboard) {
             Divider()
-            items([.editComment, .editMoveLineUp, .editMoveLineDown])
+            items(.editComment, .editMoveLineUp, .editMoveLineDown)
         }
+        // A submenu stays available while its items are dim (HIG Menus).
         CommandGroup(replacing: .textFormatting) {
-            items([.editBold, .editItalic, .editUnderline])
-            Divider()
+            Menu("Font") { items(.editBold, .editItalic, .editUnderline) }
             Menu("Section Level") { SectionLevelItems(project: project) }
-                .disabled(project?.isLaTeX != true)
         }
         CommandGroup(replacing: .sidebar) {
-            item(.viewToggleSidebar)
-            Button(app.outlineOpen(of: project) ? "Hide File Outline" : "Show File Outline") {
-                app.outlineCollapsed.toggle()
-            }
+            items(.viewToggleSidebar)
+            Button(app.outlineOpen(of: project) ? "Hide File Outline" : "Show File Outline") { app.outlineCollapsed.toggle() }
                 .disabled(project?.isLaTeX != true || project?.search.isSearching == true || !app.sidebarShown)
-            items([.viewTogglePDF, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
+            items(.viewTogglePDF, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount)
             Divider()
-            items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage])
+            items(.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage)
             Divider()
-            items([.viewTextBigger, .viewTextSmaller])
+            items(.viewTextBigger, .viewTextSmaller)
         }
         CommandMenu("Go") {
-            items([.editGotoLine, .pdfGotoPage])
+            items(.editGotoLine, .pdfGotoPage)
             Divider()
-            items([.syncForward, .syncInverse])
+            items(.syncForward, .syncInverse)
             Divider()
-            items([.issueNext, .issuePrevious])
+            items(.issueNext, .issuePrevious)
         }
         CommandMenu("Insert") {
-            Group {
-                MathMenuItems(project: project, shortcut: MenuCommand.editMath.shortcut) {
-                    app.perform(.editMath, on: project)
-                }
-                Divider()
-                InsertMenuItems(project: project)
-            }
-            .disabled(project?.isLaTeX != true)
+            MathMenuItems(project: project, shortcut: MenuCommand.editMath.shortcut,
+                          inlineMathEnabled: app.isEnabledInMenuBar(.editMath, on: project)) { app.perform(.editMath, on: project) }
+            Divider()
+            InsertMenuItems(project: project)
         }
         CommandMenu("Compile") {
-            items([.compileRun, .compileStop, .compileClean])
+            items(.compileRun, .compileStop, .compileClean)
             Divider()
             Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
             LivePreviewItem(app: app)
             Divider()
-            EnginePicker(project: project)
+            Menu("Engine") { EngineItems(project: project) }
             SetMainFileItem(app: app)
         }
     }
@@ -308,7 +300,23 @@ private struct CommandItem: View {
         .labelStyle(.titleAndIcon)
         // ⌘N follows whether a project is open, not which window is key.
         .keyboardShortcut(app.shortcut(command, on: app.project))
-        .disabled(!app.isEnabled(command, on: project))
+        .disabled(!app.isEnabledInMenuBar(command, on: project))
+    }
+}
+
+/// Compile ▸ Engine's choices, which dim with no project rather than the submenu.
+private struct EngineItems: View {
+    let project: ProjectModel?
+
+    var body: some View {
+        let engine = project?.settings?.engine
+        ForEach(TeXEngine.allCases) { choice in
+            Toggle(choice.title, isOn: Binding(get: { engine == choice.id }, set: { _ in
+                if let project { Task.immediate { await project.patchSettings(.engine(choice.id)) } }
+            }))
+        }
+        .disabled(engine == nil)
+        if let engine, TeXEngine(rawValue: engine) == nil { Toggle(engine, isOn: .constant(true)) }
     }
 }
 

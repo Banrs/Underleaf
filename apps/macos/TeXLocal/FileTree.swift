@@ -11,9 +11,7 @@ final class FileTree {
     @ObservationIgnored private var taken = 0
     @ObservationIgnored private var closed = false
 
-    init(id: String) {
-        self.id = id
-    }
+    init(id: String) { self.id = id }
 
     /// Down the folders on its way only: the open file's kind is asked for as views draw.
     func node(at path: String) -> TreeNode? {
@@ -49,7 +47,5 @@ final class FileTree {
         onChange()
     }
 
-    func close() {
-        closed = true
-    }
+    func close() { closed = true }
 }

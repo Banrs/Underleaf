@@ -4,16 +4,11 @@ import Foundation
 extension ProjectModel {
     func createEntry(in folder: String, directory: Bool) async -> String? {
         let name = directory ? "untitled folder" : "untitled.tex"
-        let made: String
-        do {
-            // A taken name is numbered on ("untitled 2.tex").
-            made = try await core.call("create_entry", ["id": id, "path": folder.isEmpty ? name : "\(folder)/\(name)", "dir": directory,
-                                                        "free": true], as: PathEvent.self).path
-        } catch {
-            if !closed { report(error, "Couldn’t Create “\(name)”") }
-            return nil
-        }
-        guard !closed else { return nil }
+        // A taken name is numbered on ("untitled 2.tex").
+        guard let made = await alerting("Couldn’t Create “\(name)”", {
+            try await core.call("create_entry", ["id": id, "path": folder.isEmpty ? name : "\(folder)/\(name)", "dir": directory,
+                                                "free": true], as: PathEvent.self).path
+        }), !closed else { return nil }
         // For the sidebar's rename that follows: the open below can be overtaken by a later one, which reads no tree for it.
         await tree.reload()
         if !directory { await open(made, focus: false) }
@@ -38,14 +33,9 @@ extension ProjectModel {
         guard to != from, let session, !closed else { return nil }
         let (before, wasText) = (openPath, editsText)
         await uiStateWrites?.value
-        let renamed: RenameResult?
-        do {
-            renamed = try await core.call("session_rename", ["session": session, "from": from, "to": to], as: RenameResult?.self)
-        } catch {
-            if !closed { report(error, "Couldn’t Rename “\(from.fileName)”") }
-            return nil
-        }
-        guard let result = renamed, !closed else { return nil }
+        guard let renamed = await alerting("Couldn’t Rename “\(from.fileName)”", {
+            try await core.call("session_rename", ["session": session, "from": from, "to": to], as: RenameResult?.self)
+        }), let result = renamed, !closed else { return nil }
         editor.rename(from: result.from, to: result.to)
         let now = before.map { remapPath($0, from: result.from, to: result.to) }
         let moved = now != before && (openPath == before || openPath == now)
@@ -121,8 +111,7 @@ extension ProjectModel {
         for url in urls {
             guard let path = projectPath(url) else { outside.append(url); continue }
             guard path.parentFolder != dir, dir != path, !dir.hasPrefix(path + "/") else { continue }
-            await renameEntry(path, to: dir.isEmpty ? path.fileName : "\(dir)/\(path.fileName)",
-                               action: String(localized: "Move"))
+            await renameEntry(path, to: dir.isEmpty ? path.fileName : "\(dir)/\(path.fileName)", action: String(localized: "Move"))
         }
         if !outside.isEmpty { await importFiles(outside, into: dir) }
     }
@@ -146,7 +135,7 @@ extension ProjectModel {
         guard await save() else {
             let name = openPath?.fileName ?? id
             throw CocoaError(.fileWriteUnknown, userInfo: [
-                NSLocalizedFailureReasonErrorKey: String(localized: "“\(name)” couldn’t be saved, so the archive would be missing its changes."),
+                NSLocalizedDescriptionKey: String(localized: "“\(name)” couldn’t be saved, so the archive would be missing its changes."),
             ])
         }
         removeExport()
@@ -170,10 +159,8 @@ struct ImportClash {
     let names: [String]
 
     var title: String {
-        guard names.count == 1, let name = names.first else {
-            return "\(names.count) items with these names already exist in this location."
-        }
-        return "An item named “\(name.fileName)” already exists in this location."
+        if names.count == 1, let name = names.first { "An item named “\(name.fileName)” already exists in this location." }
+        else { "\(names.count) items with these names already exist in this location." }
     }
 
     var message: String {

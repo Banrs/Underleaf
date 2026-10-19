@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import SwiftUI
 import Testing
 @testable import TeXLocal
@@ -8,11 +9,13 @@ import Testing
 struct ShellTests {
     private let defaults = TestDefaults()
 
-    /// With a model on the test's own defaults, which saves neither the splits nor the toolbar (`AppModel.savesLayout`).
+    /// With a model on the test's own defaults, which saves neither the splits nor the toolbar (`AppModel.savesLayout`), and
+    /// the PDF shown, in a window 1,300 points wide.
     private func workspace(sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
         let app = AppModel(defaults: defaults.store)
         app.sidebarVisible = sidebar
         app.inspectorVisible = false
+        app.showPDF = true
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1300, height: 600),
                               styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -28,9 +31,7 @@ struct ShellTests {
 
     /// Waits, a turn at a time, until no view in the window has moved for a few.
     private func resize(_ window: NSWindow, to width: CGFloat) async throws {
-        func frames(_ view: NSView) -> String {
-            "\(view.frame)" + view.subviews.map(frames).joined()
-        }
+        func frames(_ view: NSView) -> String { "\(view.frame)" + view.subviews.map(frames).joined() }
         let root = try #require(window.contentView?.superview)
         window.setContentSize(NSSize(width: width, height: 600))
         var last = "", quiet = 0
@@ -123,6 +124,44 @@ struct ShellTests {
         }
     }
 
+    /// As Xcode's debug area, the build panel is dragged open, resized and dragged shut from the status bar's line: the area's
+    /// split takes a press there before the bar does, with the panel shut and open.
+    @Test func theStatusBarsLineTakesThePanelsDrag() async throws {
+        let (window, workspace) = try await workspace()
+        defer { workspace.close(); window.close() }
+        // The area's split: the first stacked one the columns are in.
+        let area = try #require(sequence(first: workspace.columns.view, next: \.superview).lazy.compactMap { $0 as? NSSplitView }
+            .first { !$0.isVertical })
+        let outside = try #require(area.superview)
+        func pressed() -> NSView? {
+            area.hitTest(outside.convert(NSPoint(x: 400, y: area.arrangedSubviews[0].frame.maxY - BarMetrics.height), from: area))
+        }
+        #expect(pressed() === area)
+        workspace.project.panel.shown = true
+        try await waitUntil { area.arrangedSubviews[0].frame.maxY < area.bounds.height - ColumnMetrics.panelMinimum }
+        #expect(pressed() === area)
+    }
+
+    /// At the document's start the first page meets the toolbar's edge, and it stays there as the window's width changes.
+    /// Pages have no top margin, so the page at the edge, a fraction of a point above it as the clip view rounds, is at the start.
+    @Test func theFirstPageStaysAtTheToolbarsEdge() async throws {
+        let (window, workspace) = try await workspace()
+        defer { workspace.close(); window.close() }
+        workspace.project.shown = .build(URL(filePath: "/dev/null"))
+        workspace.pdf.show(try textPDF(["a", "b", "c"]))
+        let view = workspace.pdf.view
+        func under() throws -> CGFloat {
+            let page = try #require(view.document?.page(at: 0))
+            let top = view.convert(CGPoint(x: 0, y: page.bounds(for: view.displayBox).maxY), from: page).y
+            return view.bounds.maxY - view.safeAreaInsets.top - top
+        }
+        for width: CGFloat in [1300, 1000, 760, 1100, 900, 1240, 820, 1300] {
+            try await resize(window, to: width)
+            let gap = try under()
+            #expect(isClose(gap, 0), "\(gap) pt under the edge at width \(width)")
+        }
+    }
+
     /// Aa opens Notes' popover; its overflow form is a menu of the styles and the class's levels by name, as the menu
     /// bar's Section Level, while the popover numbers them as the class does ("1.1" for a subsection).
     @Test func formatIsAPopoverWithAMenuForm() async throws {
@@ -139,7 +178,7 @@ struct ShellTests {
         }
         #expect(headings.contains { $0.marker == "1.1" })
         let layout = FormatPanel.Layout(headings)
-        #expect(layout.markers > 0 && headings.allSatisfy { layout.height($0) >= FormatPanel.item })
+        #expect(layout.markers > 0 && layout.pitch >= 24)
     }
 
     /// The File Outline's header is at the files' foot from the first, over an outline folded for a file that has none, and

@@ -8,9 +8,7 @@ use texlocal_core::syntax::{
     map_selections,
 };
 
-fn range(start: u32, length: u32) -> TextRange {
-    TextRange { start, length }
-}
+use super::{range, units};
 
 fn caret(at: u32) -> TextRange {
     range(at, 0)
@@ -22,10 +20,6 @@ fn edit(start: u32, length: u32, text: &str) -> TextEdit {
         length,
         text: text.into(),
     }
-}
-
-fn units(s: &str) -> u32 {
-    s.encode_utf16().count() as u32
 }
 
 /// An empty field at `start`, `index`th in Tab's order.
@@ -534,6 +528,17 @@ fn several_selections_move_together() {
             vec![range(8, 1), range(2, 1), caret(8)],
             "2\n1\n3\n5\n4\n6",
             vec![range(6, 1), range(0, 1), caret(6)],
+        ),
+        // Given last first, they move as the same lines.
+        (
+            vec![range(8, 1), range(2, 4)],
+            "2
+3
+1
+5
+4
+6",
+            vec![range(6, 1), range(0, 4)],
         ),
     ];
     for (selections, text, after) in cases {

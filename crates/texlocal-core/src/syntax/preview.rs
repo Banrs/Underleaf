@@ -99,7 +99,7 @@ pub(crate) fn math_at(text: &Text, scans: &mut Scans, caret: u32) -> Option<Math
     };
     let tex = preview_tex(
         environment(&group),
-        &String::from_utf16_lossy(&units[body..close.start]),
+        &crate::utf16_lossy(&units[body..close.start]),
     );
     (!tex.is_empty()).then(|| MathPreview {
         start: group.open as u32,

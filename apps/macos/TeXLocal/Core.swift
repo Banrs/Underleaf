@@ -14,14 +14,12 @@ nonisolated struct CoreError: LocalizedError {
 final class Core {
     static let shared = Core()
 
-    static let libraryFolder: URL = {
-        let environment = ProcessInfo.processInfo.environment
-        if let dir = environment["TEXLOCAL_DATA"], !dir.isEmpty {
-            return URL(filePath: dir, directoryHint: .isDirectory)
-        }
-        let home = environment["HOME"].map { URL(filePath: $0, directoryHint: .isDirectory) } ?? .homeDirectory
-        return home.appending(path: "TeXLocal", directoryHint: .isDirectory)
-    }()
+    static let libraryFolder = if let dir = ProcessInfo.processInfo.environment["TEXLOCAL_DATA"], !dir.isEmpty {
+        URL(filePath: dir, directoryHint: .isDirectory)
+    } else {
+        (ProcessInfo.processInfo.environment["HOME"].map { URL(filePath: $0, directoryHint: .isDirectory) } ?? .homeDirectory)
+            .appending(path: "TeXLocal", directoryHint: .isDirectory)
+    }
 
     private var handle: OpaquePointer? = Core.open()
     var isOpen: Bool { handle != nil }
@@ -43,9 +41,7 @@ final class Core {
         return handle
     }
 
-    func reopen() {
-        if handle == nil { handle = Self.open() }
-    }
+    func reopen() { if handle == nil { handle = Self.open() } }
 
     // MARK: - Commands
 
@@ -158,10 +154,7 @@ final class Core {
     }
 
     /// The session's open document at `path`, for the editor: its edits are the session's. Nil if it isn't open.
-    func source(session: UInt64, path: String) -> OpaquePointer? {
-        guard let handle else { return nil }
-        return tl_session_source(handle, session, path)
-    }
+    func source(session: UInt64, path: String) -> OpaquePointer? { handle.flatMap { tl_session_source($0, session, path) } }
 
     // MARK: - Events
 
@@ -193,9 +186,7 @@ final class Core {
         return numbered
     }
 
-    func forget(_ session: UInt64) {
-        observers[session] = nil
-    }
+    func forget(_ session: UInt64) { observers[session] = nil }
 }
 
 /// An event as the listener reads it: the session it names, and what it says, or nil for one the app has no use for.

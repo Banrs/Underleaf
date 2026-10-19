@@ -52,12 +52,15 @@ impl Entry {
 /// unreadable subfolder is empty; the project root must be readable.
 pub(super) fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> {
     let read = if dir == root {
-        Some(fs::read_dir(dir)?)
+        fs::read_dir(dir)?
     } else {
-        skip_unreadable(fs::read_dir(dir))?
+        match skip_unreadable(fs::read_dir(dir))? {
+            Some(read) => read,
+            None => return Ok(Vec::new()),
+        }
     };
     let mut out = Vec::new();
-    for entry in read.into_iter().flatten() {
+    for entry in read {
         let Some(entry) = skip_unreadable(entry)? else {
             continue;
         };

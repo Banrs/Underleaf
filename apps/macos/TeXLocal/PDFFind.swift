@@ -8,9 +8,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     static let maxMatches = 5000
     static let debounce: Duration = .milliseconds(200)
 
-    static func normalize(_ query: String) -> String {
-        String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery))
-    }
+    static func normalize(_ query: String) -> String { String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery)) }
 
     static func count(_ index: Int, of total: Int, limited: Bool, for query: String) -> String {
         if query.isEmpty { return "" }
@@ -34,9 +32,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
 
     private let view: SyncPDFView
     /// Whether the bar is open.
-    var isOpen = false {
-        didSet { if isOpen, !oldValue, text.isEmpty { text = Self.shared ?? "" } }
-    }
+    var isOpen = false { didSet { if isOpen, !oldValue, text.isEmpty { text = Self.shared ?? "" } } }
     /// What the field holds, which can be ahead of `query`.
     var text = ""
     let field = FieldHandle()
@@ -53,9 +49,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     /// Past Live Preview's gap between keys, so the search runs again as the typing pauses.
     static let rerunDelay: Duration = .milliseconds(350)
 
-    init(view: SyncPDFView) {
-        self.view = view
-    }
+    init(view: SyncPDFView) { self.view = view }
 
     isolated deinit {
         running?.document.delegate = nil
@@ -85,9 +79,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     }
 
     /// The bar's text again over the document as it now is, where the pane left off.
-    func rerun() {
-        if isOpen { search(text, keepingPlace: true) }
-    }
+    func rerun() { if isOpen { search(text, keepingPlace: true) } }
 
     /// Cancelling posts its end at once, unheard as `running` is cleared first.
     func cancel() {
@@ -123,8 +115,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         matches = Array(all.prefix(Self.maxMatches))
         limited = all.count > matches.count
         if !keepingPlace || matchIndex >= matches.count { matchIndex = 0 }
-        let start = startFrom
-        startFrom = nil
+        let start = startFrom.take()
         if let start, !matches.isEmpty { matchIndex = index(from: start.anchor, step: start.step) }
         matches.forEach { $0.color = .findHighlightColor }
         view.highlightedSelections = matches.isEmpty ? nil : matches
@@ -185,9 +176,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         guard !value.isEmpty else { return }
         if !matches.isEmpty, value == query, running == nil { return advance(by: step) }
         if pending { Self.shared = value }
-        isOpen = true
-        text = value
-        startFrom = anchor.map { ($0, step) }
+        (isOpen, text, startFrom) = (true, value, anchor.map { ($0, step) })
         search(value)
     }
 
@@ -196,16 +185,13 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     func useSelection() {
         guard let selection = view.currentSelection, let value = selection.string, !value.isEmpty else { return }
         Self.shared = value
-        isOpen = true
-        text = value
-        startFrom = position(selection).map { ($0, 0) }
+        (isOpen, text, startFrom) = (true, value, position(selection).map { ($0, 0) })
         search(value)
     }
 
     func close() {
         let fromBar = field.hasFocus
-        isOpen = false
-        text = ""
+        (isOpen, text) = (false, "")
         search("")
         if fromBar { view.window?.makeFirstResponder(view) }
     }

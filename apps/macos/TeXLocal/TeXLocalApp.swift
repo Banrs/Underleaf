@@ -5,10 +5,7 @@ struct TeXLocalApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        Settings {
-            SettingsView()
-                .environment(delegate.app)
-        }
+        Settings { SettingsView().environment(delegate.app) }
         .commands {
             AppCommands(app: delegate.app)
             ToolbarCommands()
@@ -40,19 +37,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
     }
 
-    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
-        true
-    }
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         if app.tex?.available == false { Task { await app.refreshTeXStatus() } }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        let urls = urls.filter(AppModel.canOpen)
-        Task {
-            for url in urls { await app.importProject(from: url, open: urls.count == 1) }
-        }
+        Task { await app.importProjects(urls.filter(AppModel.canOpen)) }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -65,9 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindow.showWindow(nil)
     }
 
-    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
-        dockMenu.menu
-    }
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { dockMenu.menu }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // A clean editor can still have a settings change or rename in flight.
@@ -86,9 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Core.shared.killAll()
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
-    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 
 final class DockMenu: NSObject {

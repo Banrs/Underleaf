@@ -1,14 +1,10 @@
 import SwiftUI
 
-enum PanelTab: String, CaseIterable {
-    case issues = "Issues", log = "Build Log", texpresso = "Live Preview Log"
-}
+enum PanelTab: String, CaseIterable { case issues = "Issues", log = "Build Log", texpresso = "Live Preview Log" }
 
 @Observable
 final class BuildPanelModel {
-    var shown = false {
-        didSet { if !shown { openedByBuild = false } }
-    }
+    var shown = false { didSet { if !shown { openedByBuild = false } } }
     @ObservationIgnored private var openedByBuild = false
     var tab: PanelTab = .issues
     var issueFilter = ""
@@ -28,9 +24,7 @@ final class BuildPanelModel {
         show(.issues)
     }
 
-    func closeAfterCleanBuild() {
-        if openedByBuild, tab == .issues { shown = false }
-    }
+    func closeAfterCleanBuild() { if openedByBuild, tab == .issues { shown = false } }
 }
 
 struct BuildPanel: View {
@@ -71,8 +65,7 @@ struct BuildPanel: View {
     }
 
     /// "No Issues" before any build too: the status bar says whether one has run.
-    @ViewBuilder
-    private var issues: some View {
+    @ViewBuilder private var issues: some View {
         // Enumerate before filtering: duplicate messages keep distinct, stable row IDs.
         let items = project.issues.enumerated().filter { (project.panel.showsWarnings || $0.element.isError) && matches($0.element) }
         if !items.isEmpty {
@@ -90,8 +83,7 @@ struct BuildPanel: View {
         }
     }
 
-    @ViewBuilder
-    private var log: some View {
+    @ViewBuilder private var log: some View {
         if let text = project.result?.log, !text.isEmpty {
             LogPane(text: text, filter: project.panel.logFilter)
         } else {
@@ -119,9 +111,7 @@ struct BuildPanelBar: View {
             .layoutPriority(1)
             Spacer(minLength: 0)
             if panel.tab == .issues {
-                Toggle(isOn: $panel.showsWarnings) {
-                    Label("Warnings", systemImage: "exclamationmark.triangle")
-                }
+                Toggle(isOn: $panel.showsWarnings) { Label("Warnings", systemImage: "exclamationmark.triangle") }
                 .toggleStyle(.button)
                 .help(panel.showsWarnings ? "Hide warnings" : "Show warnings")
                 .disabled(project.warningCount == 0)
@@ -164,17 +154,13 @@ private struct IssueList: View {
                 .accessibilityLabel("Issues")
                 .contextMenu(forSelectionType: Int.self) { rows in
                     if let item = rows.first.flatMap(item) {
-                        if item.file != nil {
-                            Button(item.line == nil ? "Open File" : "Go to Line") { open(item) }
-                        }
+                        if item.file != nil { Button(item.line == nil ? "Open File" : "Go to Line") { open(item) } }
                         Button("Copy") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(item.message, forType: .string)
                         }
                     }
-                } primaryAction: { rows in
-                    if let item = rows.first.flatMap(item) { open(item) }
-                }
+                } primaryAction: { rows in if let item = rows.first.flatMap(item) { open(item) } }
                 .copyable(project.chosenIssue.flatMap(item).map { [$0.message] } ?? [])
                 // The menus' choice may be out of sight, and the panel closed: a hidden list scrolls by its rows' estimated heights,
                 // so again as it comes up. Where the person scrolled to is theirs: nothing else moves the list back.
@@ -190,13 +176,9 @@ private struct IssueList: View {
         }
     }
 
-    private func item(_ id: Int) -> LogItem? {
-        items.first { $0.offset == id }?.element
-    }
+    private func item(_ id: Int) -> LogItem? { items.first { $0.offset == id }?.element }
 
-    private func open(_ item: LogItem) {
-        if let file = item.file { Task { await project.open(file, line: item.line) } }
-    }
+    private func open(_ item: LogItem) { if let file = item.file { Task { await project.open(file, line: item.line) } } }
 }
 
 private struct IssueRow: View {
@@ -224,9 +206,7 @@ private struct IssueRow: View {
         .accessibilityValue(location(line: ", line ") ?? "")
     }
 
-    private func location(line: String) -> String? {
-        item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file }
-    }
+    private func location(line: String) -> String? { item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file } }
 }
 
 /// The text view is inset by the bar's height: the bar's safe area reaches SwiftUI but not an AppKit scroll view, which takes the inset itself.
@@ -289,9 +269,7 @@ struct LogTextView: NSViewRepresentable {
     }
 
     /// An update that leaves the log as it was compares the same storage, without passes over a megabyte log.
-    final class Coordinator {
-        var shown: String?
-    }
+    final class Coordinator { var shown: String? }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -322,8 +300,7 @@ struct LogTextView: NSViewRepresentable {
         // Append without invalidating the entire log's layout; a new build or bounded log rollover can replace it.
         let previousLength = (shown as NSString).length, new = text as NSString
         if previousLength > 0, text.utf16.starts(with: shown.utf16) {
-            view.textStorage?.replaceCharacters(in: NSRange(location: previousLength, length: 0),
-                                                with: new.substring(from: previousLength))
+            view.textStorage?.replaceCharacters(in: .caret(previousLength), with: new.substring(from: previousLength))
         } else {
             view.string = text
         }

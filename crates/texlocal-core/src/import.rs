@@ -713,6 +713,19 @@ mod tests {
         assert_eq!(fs::read(root.join("figs/a.png")).unwrap(), b"new");
     }
 
+    #[test]
+    #[ignore = "leaves a file in the user's Trash"]
+    fn a_replaced_file_goes_to_the_trash_without_asking_finder() {
+        let (_dir, service) = with_project();
+        let file = service
+            .project_root("P")
+            .unwrap()
+            .join("replaced by import.txt");
+        fs::write(&file, "old").unwrap();
+        projects::discard(&file).unwrap();
+        assert!(!file.exists());
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_link_to_a_folder_in_the_project_is_a_folder_a_file_goes_into() {
@@ -856,7 +869,9 @@ mod tests {
 
     #[test]
     fn a_folder_brings_its_files_but_not_litter_build_output_or_another_projects_settings() {
-        let (dir, service) = library();
+        // Into a library folder that doesn't exist yet, as on a first import.
+        let dir = tempfile::tempdir().unwrap();
+        let service = Service::new(dir.path().join("data"));
         let src = dir.path().join("Thesis");
         for (path, text) in [
             ("main.tex", "\\documentclass{book}"),

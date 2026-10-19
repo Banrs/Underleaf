@@ -81,6 +81,8 @@ final class ProjectModel {
     let search: ProjectSearch
 
     let editor = SourceEditor()
+    /// The menu bar's text commands follow it (`isEnabledInMenuBar`).
+    private(set) var sourceHasKeyboard = false
     @ObservationIgnored weak var app: AppModel?
     let core = Core.shared
     @ObservationIgnored private var analysis: Task<Void, Never>?
@@ -120,9 +122,7 @@ final class ProjectModel {
     var isLaTeX: Bool { openKind == .tex }
 
     /// The level of the caret's line, as its sectioning command: empty for Normal Text.
-    var headingCommand: String {
-        outline.first { $0.file == openPath && $0.line == cursorLine }?.command ?? ""
-    }
+    var headingCommand: String { outline.first { $0.file == openPath && $0.line == cursorLine }?.command ?? "" }
     var editsText: Bool { openKind?.isText == true }
 
     private func openKindChanged() {
@@ -145,10 +145,21 @@ final class ProjectModel {
     var warningCount: Int { result?.warnings.count ?? 0 }
 
     var showsLastSuccessfulBuild: Bool { hasPDF && result?.failed == true && result?.pdf == nil }
-    var texAvailable: Bool { app?.tex?.available ?? false }
 
+    /// Once: a failed save's document event may have shown it already.
     func report(_ error: any Error, _ title: String) {
-        app?.alert = AppAlert(title, error)
+        if app?.alert?.title != title { app?.alert = AppAlert(title, error) }
+    }
+
+    /// What `work` answers, or nil once its failure is reported under `title`, which a closed project doesn't report.
+    @discardableResult
+    func alerting<T>(_ title: @autoclosure () -> String, _ work: () async throws -> T) async -> T? {
+        do {
+            return try await work()
+        } catch {
+            if !closed { report(error, title()) }
+            return nil
+        }
     }
 
     let notices = ProjectNotices()
@@ -163,11 +174,7 @@ final class ProjectModel {
     /// Stops if the project is left meanwhile, so it never writes to the editor after the next one.
     func load(restoring saved: SavedWorkspace?) async {
         connectEditor()
-        if let saved {
-            panel.shown = saved.buildPanel
-            pdf.restorePage = saved.pdfPage
-            pdf.restoreZoom = saved.pdfZoom
-        }
+        if let saved { (panel.shown, pdf.restorePage, pdf.restoreZoom) = (saved.buildPanel, saved.pdfPage, saved.pdfZoom) }
         // Its events come to `handle` from here on: the app numbers the session, so none comes before its observer.
         let session = core.observe { [weak self] event in self?.handle(event) }
         // The last build's PDF loads beside the session's open, the file's reading and its analysis, and is shown before the
@@ -216,6 +223,7 @@ final class ProjectModel {
             liveCaret()
         }
         editor.textView.composing = { [weak self] composing in self?.composing(composing) }
+        editor.textView.keyboardChanged = { [weak self] in self?.sourceHasKeyboard = $0 }
         editor.onScroll = { [weak self] line in
             guard let self, line != topLine else { return }
             topLine = line
@@ -281,7 +289,11 @@ final class ProjectModel {
         let before = documents[state.path]
         documents[state.path] = state
         if !state.held { heldReasons[state.path] = nil }
-        if state.error != nil, before?.error == nil { notices.announce(String(localized: "“\(state.path.fileName)” Wasn’t Saved")) }
+        // A failed autosave is told once in an alert, as NSDocument's are; Not Saved stays in the status bar until a save succeeds.
+        if let error = state.error, before?.error == nil {
+            let title = String(localized: "“\(state.path.fileName)” Wasn’t Saved")
+            if let app, app.alert == nil, !closed { app.alert = AppAlert(title, error) } else { notices.announce(title) }
+        }
     }
 
     /// Another app's text, or the disk's after Revert: shown without an edit, which the session waits for before it saves
@@ -336,10 +348,7 @@ final class ProjectModel {
     }
 
     /// `work` on the build's lane, after the build's events before it.
-    @discardableResult
-    func inOrder(_ work: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
-        enqueue(&buildLane, work)
-    }
+    @discardableResult func inOrder(_ work: @escaping @MainActor () async -> Void) -> Task<Void, Never> { enqueue(&buildLane, work) }
 
     // MARK: - Editing
 
@@ -381,10 +390,7 @@ final class ProjectModel {
         openPath = path
         analyze()
         guard editsText else { return }
-        guard let session, let source = SourceDocument(session: session, path: path) else {
-            openPath = nil
-            return
-        }
+        guard let session, let source = SourceDocument(session: session, path: path) else { openPath = nil; return }
         editor.open(path: path, text: source.text, source: source, focus: focus)
         editor.textView.issues.lines = lineIssues[path] ?? [:]
     }
@@ -392,12 +398,9 @@ final class ProjectModel {
     /// Saved first; false, staying open, if that failed or asks about the disk.
     func closeDocument(_ path: String) async -> Bool {
         guard let session else { return true }
-        do {
-            return try await core.call("session_close_document", ["session": session, "path": path], as: Closed.self).closed
-        } catch {
-            if !closed { report(error, String(localized: "“\(path.fileName)” Wasn’t Saved")) }
-            return false
-        }
+        return await alerting(String(localized: "“\(path.fileName)” Wasn’t Saved")) {
+            try await core.call("session_close_document", ["session": session, "path": path], as: Closed.self).closed
+        } ?? false
     }
 
     private func composing(_ composing: Bool) {
@@ -406,9 +409,7 @@ final class ProjectModel {
         core.send("session_composing", ["session": session, "path": path, "composing": composing])
     }
 
-    func url(_ path: String) -> URL? {
-        root.map { $0.appending(path: path) }
-    }
+    func url(_ path: String) -> URL? { root.map { $0.appending(path: path) } }
 
     /// Where a file dropped on the window is in this project, as the disk spells it; asked as the drag moves, so at once.
     func projectPath(_ url: URL) -> String? {
@@ -444,19 +445,14 @@ final class ProjectModel {
     func analyze() {
         analysis?.cancel()
         guard isLaTeX, let path = openPath, let session else {
-            outline = []
-            outlineTree = []
-            words = nil
+            (outline, outlineTree, words) = ([], [], nil)
             findHeadings()
             return
         }
         analysis = Task {
             guard let doc = try? await core.call("session_analyze", ["session": session, "path": path], as: Analysis.self),
                   !Task.isCancelled else { return }
-            outline = doc.outline
-            outlineTree = doc.tree
-            headingStyles = doc.headingStyles
-            words = doc.words
+            (outline, outlineTree, headingStyles, words) = (doc.outline, doc.tree, doc.headingStyles, doc.words)
             findHeadings()
         }
     }
@@ -491,10 +487,8 @@ final class ProjectModel {
         if answer == "close", openPath == path { clearOpenFile() }
         guard let session else { return }
         Task {
-            do {
+            await alerting(String(localized: "“\(path.fileName)” Wasn’t Saved")) {
                 try await core.call("session_resolve", ["session": session, "path": path, "answer": answer])
-            } catch {
-                if !closed { report(error, String(localized: "“\(path.fileName)” Wasn’t Saved")) }
             }
         }
     }
@@ -528,9 +522,7 @@ final class ProjectModel {
     }
 
     /// Once the session has stopped its build and Live Preview, so another model can't race it for the project's.
-    func waitUntilClosed() async {
-        await closing?.value
-    }
+    func waitUntilClosed() async { await closing?.value }
 
     // MARK: - Settings
 
@@ -544,19 +536,16 @@ final class ProjectModel {
         settings?.apply(change)
         // The session takes patches in order, but its answers can come back in another: the latest's has them all.
         let latest = { patch == self.settingsPatches }
-        do {
-            let updated = try await core.call("session_set_settings", ["session": session, "patch": change.patch], as: ProjectSettings.self)
-            guard !closed else { return false }
-            if latest() { settings = updated }
-            if updated.mainFile != before?.mainFile { mainFileChanged() }
-            return true
-        } catch {
-            if !closed {
-                if latest() { settings = before }
-                report(error, "Couldn’t Change the Project’s Settings")
-            }
+        guard let updated = await alerting("Couldn’t Change the Project’s Settings", {
+            try await core.call("session_set_settings", ["session": session, "patch": change.patch], as: ProjectSettings.self)
+        }) else {
+            if !closed, latest() { settings = before }
             return false
         }
+        guard !closed else { return false }
+        if latest() { settings = updated }
+        if updated.mainFile != before?.mainFile { mainFileChanged() }
+        return true
     }
 
     /// The session stops the build, restarts Live Preview and builds the new one; the PDF is the new main file's.
@@ -586,6 +575,4 @@ nonisolated struct SavedWorkspace: Codable, Equatable {
 }
 
 /// What a file dropped on the open one inserts there (`drop_text`); none means it opens.
-private nonisolated struct DropText: Decodable {
-    let insert: String?
-}
+private nonisolated struct DropText: Decodable { let insert: String? }

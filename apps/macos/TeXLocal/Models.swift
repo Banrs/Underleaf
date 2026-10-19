@@ -54,6 +54,11 @@ nonisolated extension String {
     var fileName: String { (self as NSString).lastPathComponent }
 }
 
+nonisolated extension NSRange {
+    /// An empty range: a caret, or where text goes in.
+    static func caret(_ location: Int) -> NSRange { NSRange(location: location, length: 0) }
+}
+
 nonisolated struct TexStatus: Decodable {
     let available: Bool
     var version: String?

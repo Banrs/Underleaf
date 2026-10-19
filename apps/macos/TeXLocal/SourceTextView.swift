@@ -38,10 +38,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var text: NSString { textStorage?.mutableString ?? "" }
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
 
-    enum FileDrop {
-        case open(() -> Void)
-        case insert(String)
-    }
+    enum FileDrop { case open(() -> Void), insert(String) }
     var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
 
     private(set) var loading = false
@@ -118,29 +115,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         guard !edits.isEmpty else { return false }
         let selections = selecting ?? document.map(selectedRanges.map(\.rangeValue), through: edits)
         undoManager?.beginUndoGrouping()
-        for edit in edits.reversed() {
-            if shouldChangeText(in: edit.range, replacementString: edit.text) {
-                textStorage?.replaceCharacters(in: edit.range, with: edit.text)
-                didChangeText()
-            }
+        for edit in edits.reversed() where shouldChangeText(in: edit.range, replacementString: edit.text) {
+            textStorage?.replaceCharacters(in: edit.range, with: edit.text)
+            didChangeText()
         }
         undoManager?.setActionName(name)
         undoManager?.endUndoGrouping()
-        if !selections.isEmpty {
-            setSelectedRanges(selections.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false)
-        }
+        if !selections.isEmpty { setSelectedRanges(selections.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false) }
         scrollRangeToVisible(selectedRange())
         return true
     }
 
     // MARK: the font
 
-    var fontSize = NSFont.systemFontSize {
-        didSet { applyFont() }
-    }
-    var fontName = "" {
-        didSet { if fontName != oldValue { applyFont() } }
-    }
+    var fontSize = NSFont.systemFontSize { didSet { applyFont() } }
+    var fontName = "" { didSet { if fontName != oldValue { applyFont() } } }
     /// How far a line's text sits under its fragment's top: half what the paragraph's least height adds.
     private(set) var rowShift: CGFloat = 0
     private var applied: NSFont?
@@ -190,18 +179,19 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// Each time TextKit lays out the viewport: a scroll past what it had laid out, an edit, a new width.
     var laidOut: () -> Void = {}
 
-    var showsLineNumbers = true {
-        didSet { if showsLineNumbers != oldValue { updateGutterWidth() } }
-    }
+    var showsLineNumbers = true { didSet { if showsLineNumbers != oldValue { updateGutterWidth() } } }
 
     private(set) lazy var issues = IssueOverlay(in: self)
     var issueClicked: (Int) -> Void = { _ in }
 
     var syntaxTheme = SyntaxTheme.overleaf {
-        didSet { if syntaxTheme != oldValue { colour(from: 0) } }
+        didSet { if syntaxTheme != oldValue { fragmentColours.removeAllObjects(); colour(from: 0) } }
     }
     /// From where the text is to be coloured again at the viewport's next layout.
     var staleColours: Int?
+    /// The runs each fragment was last coloured with, by kind and place in the fragment: a pass redraws only the
+    /// fragments whose runs changed (+Colours).
+    let fragmentColours = NSMapTable<NSTextLayoutFragment, NSArray>.weakToStrongObjects()
 
     var reducesMotion = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     /// The bracket partner filled in place of the find indicator, with Reduce Motion (+Colours).
@@ -237,9 +227,14 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     var caret: Int { selectedRange().location }
 
+    /// Whether the text has the window's keyboard, told as it takes and gives it up.
+    var keyboardChanged: (Bool) -> Void = { _ in }
+
     override func becomeFirstResponder() -> Bool {
         defer { Task { self.previewMath() } }
-        return super.becomeFirstResponder()
+        guard super.becomeFirstResponder() else { return false }
+        keyboardChanged(true)
+        return true
     }
 
     override func resignFirstResponder() -> Bool {
@@ -247,7 +242,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             mathPopover?.close()
             completions.close()
         }
-        return super.resignFirstResponder()
+        guard super.resignFirstResponder() else { return false }
+        keyboardChanged(false)
+        return true
     }
 
     private var keyWatches: [NotificationCenter.ObservationToken] = []
@@ -291,7 +288,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             mathPopover?.close()
             return
         }
-        let screen = firstRect(forCharacterRange: NSRange(location: caret, length: 0), actualRange: nil)
+        let screen = firstRect(forCharacterRange: .caret(caret), actualRange: nil)
         // A point wide: NSPopover takes an empty rect for the whole view.
         var rect = convert(window.convertFromScreen(screen), from: nil)
         rect.size.width = max(rect.width, 1)
@@ -304,16 +301,15 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
                           edge: completions.offered != nil && completions.isAbove ? .maxY : .minY)
     }
 
-    override func moveRight(_ sender: Any?) {
-        let before = selectedRange()
-        super.moveRight(sender)
-        if before.length == 0, selectedRange() == NSRange(location: before.location + 1, length: 0) { showPartner(of: before.location) }
-    }
+    override func moveRight(_ sender: Any?) { stepCaret(1) { super.moveRight(sender) } }
+    override func moveLeft(_ sender: Any?) { stepCaret(-1) { super.moveLeft(sender) } }
 
-    override func moveLeft(_ sender: Any?) {
+    /// A caret that steps over a bracket shows its partner; the character stepped over is at the lesser of the two carets.
+    private func stepCaret(_ step: Int, by move: () -> Void) {
         let before = selectedRange()
-        super.moveLeft(sender)
-        if before.length == 0, selectedRange() == NSRange(location: before.location - 1, length: 0) { showPartner(of: before.location - 1) }
+        move()
+        guard before.length == 0, selectedRange() == .caret(before.location + step) else { return }
+        showPartner(of: min(before.location, before.location + step))
     }
 
     // MARK: typing: the core's brackets, indentation and snippet fields
@@ -404,13 +400,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         finish(stroke)
     }
 
-    override func insertTab(_ sender: Any?) {
-        isEditable ? tab(1) : super.insertTab(sender)
-    }
-
-    override func insertBacktab(_ sender: Any?) {
-        isEditable ? tab(-1) : super.insertBacktab(sender)
-    }
+    override func insertTab(_ sender: Any?) { isEditable ? tab(1) : super.insertTab(sender) }
+    override func insertBacktab(_ sender: Any?) { isEditable ? tab(-1) : super.insertBacktab(sender) }
 
     /// A snippet's next field, or the lines indented.
     private func tab(_ step: Int) {
@@ -468,8 +459,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var mirrorEdits: [TextEdit] = []
 
     func startSnippet(_ fields: [SnippetField], at location: Int) {
-        guard let first = document.startSnippet(fields, at: location) else { return }
-        setSelectedRange(first)
+        if let first = document.startSnippet(fields, at: location) { setSelectedRange(first) }
     }
 
     /// What's typed in a field goes in its other places.
@@ -507,17 +497,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         issues.message(at: convert(event.locationInWindow, from: nil))
     }
 
-    override func mouseMoved(with event: NSEvent) {
-        if !setsCursor(with: event) { super.mouseMoved(with: event) }
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        if !setsCursor(with: event) { super.mouseEntered(with: event) }
-    }
-
-    override func cursorUpdate(with event: NSEvent) {
-        if !setsCursor(with: event) { super.cursorUpdate(with: event) }
-    }
+    override func mouseMoved(with event: NSEvent) { if !setsCursor(with: event) { super.mouseMoved(with: event) } }
+    override func mouseEntered(with event: NSEvent) { if !setsCursor(with: event) { super.mouseEntered(with: event) } }
+    override func cursorUpdate(with event: NSEvent) { if !setsCursor(with: event) { super.cursorUpdate(with: event) } }
 
     override func mouseDown(with event: NSEvent) {
         if event.type == .leftMouseDown, inGutter(event) { return selectLines(with: event) }
@@ -545,17 +527,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private func selectLines(with event: NSEvent) {
         func line(at event: NSEvent) -> NSRange {
             let point = NSPoint(x: textContainerOrigin.x, y: convert(event.locationInWindow, from: nil).y)
-            return text.lineRange(for: NSRange(location: characterIndexForInsertion(at: point), length: 0))
+            return text.lineRange(for: .caret(characterIndexForInsertion(at: point)))
         }
         let first = line(at: event)
         let anchor = event.modifierFlags.contains(.shift) ? selectedRange() : first
         window?.makeFirstResponder(self)
+        // Periodic events keep it scrolling while the pointer holds still past an edge, as a drag in the text does.
+        NSEvent.startPeriodicEvents(afterDelay: 0.1, withPeriod: 0.05)
+        defer { NSEvent.stopPeriodicEvents() }
         var current = event
         repeat {
             setSelectedRange(NSUnionRange(anchor, line(at: current)))
             autoscroll(with: current)
-            guard let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) else { break }
-            current = next
+            guard let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp, .periodic]) else { break }
+            // A periodic event has no place: the last drag's, scrolled under, is the next line.
+            if next.type != .periodic { current = next }
         } while current.type != .leftMouseUp
         let number = document.line(at: first.location)
         if selectedRange() == first, issues.lines[number] != nil { issueClicked(number) }
@@ -580,13 +566,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return info.draggingSourceOperationMask.contains(.generic) ? .generic : .copy
     }
 
-    override func draggingEntered(_ info: any NSDraggingInfo) -> NSDragOperation {
-        dragOperation(info) { super.draggingEntered(info) }
-    }
-
-    override func draggingUpdated(_ info: any NSDraggingInfo) -> NSDragOperation {
-        dragOperation(info) { super.draggingUpdated(info) }
-    }
+    override func draggingEntered(_ info: any NSDraggingInfo) -> NSDragOperation { dragOperation(info) { super.draggingEntered(info) } }
+    override func draggingUpdated(_ info: any NSDraggingInfo) -> NSDragOperation { dragOperation(info) { super.draggingUpdated(info) } }
 
     override func performDragOperation(_ info: any NSDraggingInfo) -> Bool {
         let files = files(info)
@@ -597,7 +578,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         case .insert(let text):
             guard isEditable else { return false }
             let at = characterIndexForInsertion(at: convert(info.draggingLocation, from: nil))
-            apply([TextEdit(NSRange(location: at, length: 0), text)], named: String(localized: "Insert Figure"),
+            apply([TextEdit(.caret(at), text)], named: String(localized: "Insert Figure"),
                   selecting: [NSRange(location: at, length: (text as NSString).length)])
             window?.makeFirstResponder(self)
         }
@@ -625,7 +606,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         else { return nil }
         let result = NSAccessibilityCustomRotor.ItemResult(targetElement: self)
         // The outline and the issues are a moment behind the text: within what there is of it.
-        result.targetRange = text.lineRange(for: NSRange(location: min(document.lineStart(found.line), text.length), length: 0))
+        result.targetRange = text.lineRange(for: .caret(min(document.lineStart(found.line), text.length)))
         result.customLabel = found.title
         return result
     }

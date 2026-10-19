@@ -28,9 +28,7 @@ extension PDFController {
     }
 
     /// A run of Live Preview ended, or another began: nothing of the last run's counts in the next.
-    func endLiveRun() {
-        (liveMissed, liveShown) = (false, false)
-    }
+    func endLiveRun() { (liveMissed, liveShown) = (false, false) }
 
     /// Drawn over PDFKit's page; PDFKit's document takes it once the typing pauses, so a key costs one drawing. A page
     /// past the document showing goes: the next document has it.
@@ -50,10 +48,7 @@ extension PDFController {
         // Not a page a whole document is still bringing (`takeLive`), which would go in twice.
         for (index, page) in liveWaiting where liveBacklog?.pages.contains(index) != true {
             liveWaiting[index] = nil
-            guard let old = document.page(ifAt: index) else { continue }
-            document.insert(page, at: index)
-            document.removePage(at: index + 1)
-            gone.insert(old)
+            if let old = document.replacePage(at: index, with: page) { gone.insert(old) }
         }
         replaced(gone)
     }
@@ -94,16 +89,11 @@ extension PDFController {
         while let index = backlog.pages.first, index <= shown.pageCount, ContinuousClock.now - start < .milliseconds(4) {
             backlog.pages.remove(index)
             guard let page = backlog.document.page(at: index)?.copy() as? PDFPage else { continue }
-            let old = shown.page(ifAt: index)
             // A page in view goes in beneath a layer that shows it already, as PDFKit fades a new one in.
-            if let old, liveWaiting.removeValue(forKey: index) == nil, !view.hasLive(at: index) {
+            if let old = shown.page(ifAt: index), liveWaiting.removeValue(forKey: index) == nil, !view.hasLive(at: index) {
                 _ = view.showLive(page, over: old, at: index)
             }
-            shown.insert(page, at: index)
-            if let old {
-                shown.removePage(at: index + 1)
-                gone.insert(old)
-            }
+            if let old = shown.replacePage(at: index, with: page) { gone.insert(old) } else { shown.insert(page, at: index) }
             came = true
         }
         if backlog.pages.first.map({ $0 <= shown.pageCount }) == true {

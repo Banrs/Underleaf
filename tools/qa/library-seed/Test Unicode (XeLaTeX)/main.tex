@@ -1,0 +1,44 @@
+% TeXLocal test document: Unicode, built with XeLaTeX.
+%
+% What to try with it:
+%  - The engine: this project is set to XeLaTeX (in the inspector). Switch it
+%    to pdfLaTeX and compile to see it fail on the fonts; switch back.
+%  - Unicode in the editor, the outline and the breadcrumb: the headings mix
+%    scripts.
+%  - A file whose name isn't ASCII: chapters/café.tex, in the sidebar and
+%    through SyncTeX.
+%  - Find with accented and non-Latin text: "naïve", "Ελληνικά", "中文".
+\documentclass[11pt]{article}
+\usepackage{fontspec}
+\setmainfont{Times New Roman}
+\newfontfamily\cjkfont{Hiragino Sans GB}
+\usepackage{hyperref}
+
+\title{Unicode Everywhere}
+\author{The TeXLocal Test Documents}
+
+\begin{document}
+
+\maketitle
+
+\section{Überblick — Latin Accents}
+A naïve café owner in Zürich served crème brûlée to a señor from São Paulo,
+a Dane from Ærøskøbing and a Pole from Łódź. Façade, coöperate, résumé.
+
+\section{Ελληνικά — Greek}
+Η γρήγορη καφέ αλεπού πηδάει πάνω από τον τεμπέλη σκύλο. Mathematics still
+uses $\alpha$, $\beta$ and $\gamma$.
+
+\section{Русский — Cyrillic}
+Съешь же ещё этих мягких французских булок, да выпей чаю.
+
+\section{\texorpdfstring{{\cjkfont 中文}}{中文} — Chinese}
+{\cjkfont 这是一个测试文档。中文文本需要支持中文的字体。}
+
+\section{Symbols}
+Arrows → ← ↔, maths-like ≤ ≥ ≠ ±, currency € £ ¥, and typographic
+quotes “like these” and ‘these’, with dashes – and —.
+
+\input{chapters/café}
+
+\end{document}

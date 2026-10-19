@@ -13,17 +13,9 @@ struct HomeView: View {
     @State private var slowImports: [URL] = []
 
     var body: some View {
-        Group {
-            if let problem = app.libraryProblem { unavailable(problem) } else { list }
-        }
-        .safeAreaBar(edge: .top) {
-            if app.tex?.available == false, !dismissedTeXTip { texMissing }
-        }
-        .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in
-            Task {
-                for url in urls { await app.importProject(from: url, open: urls.count == 1) }
-            }
-        }
+        Group { if let problem = app.libraryProblem { unavailable(problem) } else { list } }
+        .safeAreaBar(edge: .top) { if app.tex?.available == false, !dismissedTeXTip { texMissing } }
+        .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in Task { await app.importProjects(urls) } }
         .navigationTitle("Projects")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -81,9 +73,7 @@ struct HomeView: View {
                                rename: rename, ended: { listFocused = true }) { commitRename(project) }
                 }
                 if app.projectsLoaded, shown.isEmpty { empty.frame(maxWidth: .infinity).selectionDisabled() }
-            } header: {
-                Text("All Projects")
-            }
+            } header: { Text("All Projects") }
             .listSectionSeparator(.hidden)
         }
         .listStyle(.inset)
@@ -93,18 +83,14 @@ struct HomeView: View {
                 Divider()
                 ItemMenuItems(actions: actions(project))
             }
-        } primaryAction: { ids in
-            if let id = ids.first { Task { await app.open(id) } }
-        }
+        } primaryAction: { ids in if let id = ids.first { Task { await app.open(id) } } }
         .onKeyPress(.return) {
             guard rename.id == nil, let id = selection else { return .ignored }
             Task { await app.open(id) }
             return .handled
         }
         .focused($listFocused)
-        .offersActions(for: listFocused && rename.id == nil ? selection : nil) { id in
-            shown.first { $0.id == id }.map(actions)
-        }
+        .offersActions(for: listFocused && rename.id == nil ? selection : nil) { id in shown.first { $0.id == id }.map(actions) }
     }
 
     private func actions(_ project: ProjectInfo) -> ItemActions {
@@ -118,9 +104,7 @@ struct HomeView: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: TemplateCard.width, maximum: TemplateCard.width), spacing: 4, alignment: .top)],
                   alignment: .leading, spacing: 4) {
             ForEach(ProjectTemplate.allCases) { template in
-                Button { app.newProject(template) } label: {
-                    TemplateCard(template: template)
-                }
+                Button { app.newProject(template) } label: { TemplateCard(template: template) }
                 .buttonStyle(TemplateButtonStyle())
                 .help("Start a project from the \(template.title) template")
             }
@@ -147,14 +131,10 @@ struct HomeView: View {
         Task { await app.rename(project, to: name) }
     }
 
-    private var copying: [URL] {
-        query.isEmpty ? slowImports.filter(app.importing.contains) : []
-    }
+    private var copying: [URL] { query.isEmpty ? slowImports.filter(app.importing.contains) : [] }
 
     /// A copy shown has ended: the project opening is its own, at work in its own row from then on.
-    private var copied: Bool {
-        slowImports.contains { !app.importing.contains($0) }
-    }
+    private var copied: Bool { slowImports.contains { !app.importing.contains($0) } }
 
     private var shown: [ProjectInfo] {
         query.isEmpty ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
@@ -226,9 +206,7 @@ struct LinkButton: View {
     let title: LocalizedStringKey
     let url: URL
 
-    var body: some View {
-        Button(title) { openURL(url) }
-    }
+    var body: some View { Button(title) { openURL(url) } }
 }
 
 enum ProjectTemplate: String, CaseIterable, Identifiable {
@@ -277,16 +255,13 @@ private struct TemplateCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let paper = RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
         VStack(spacing: 8) {
             PagePreview(template: template)
                 .frame(width: Self.page.width, height: Self.page.height)
                 // White paper in either appearance, dimmed a little in dark mode; the drawing in light colours, made for paper.
-                .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1),
-                            in: .rect(cornerRadius: Self.corner, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
-                        .strokeBorder(.separator)
-                }
+                .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1), in: paper)
+                .overlay { paper.strokeBorder(.separator) }
                 .environment(\.colorScheme, .light)
                 // The card reads as its name ("Blank", not "Add, Blank").
                 .accessibilityHidden(true)
@@ -345,9 +320,7 @@ private struct PagePreview: View {
         }
     }
 
-    private func bar(_ width: CGFloat, _ height: CGFloat) -> some View {
-        Capsule().fill(.tertiary).frame(width: width, height: height)
-    }
+    private func bar(_ width: CGFloat, _ height: CGFloat) -> some View { Capsule().fill(.tertiary).frame(width: width, height: height) }
 }
 
 struct NewProjectSheet: View {
@@ -378,9 +351,7 @@ struct NewProjectSheet: View {
                         .focused($nameFocused)
                 }
             }
-            Picker("Template", selection: $template) {
-                ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) }
-            }
+            Picker("Template", selection: $template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }
         }
         .defaultFocus($nameFocused, true)
     }
@@ -399,9 +370,7 @@ private struct NameWidth: Layout {
 }
 
 #Preview("Template cards") {
-    HStack(alignment: .top) {
-        ForEach(ProjectTemplate.allCases) { TemplateCard(template: $0) }
-    }
+    HStack(alignment: .top) { ForEach(ProjectTemplate.allCases) { TemplateCard(template: $0) } }
     .padding()
 }
 

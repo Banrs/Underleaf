@@ -3,7 +3,9 @@
 
 use serde::Deserialize;
 use serde_json::Value;
-use texlocal_core::syntax::{Insertion, SourceDocument, TextRange, math_mode_at};
+use texlocal_core::syntax::{Insertion, SourceDocument, math_mode_at};
+
+use super::{range, units};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,14 +33,6 @@ type Fields = Vec<(u32, u32)>;
 
 fn fixture() -> Fixture {
     serde_json::from_str(include_str!("fixtures/editing.json")).unwrap()
-}
-
-fn units(s: &str) -> u32 {
-    s.encode_utf16().count() as u32
-}
-
-fn range(start: u32, length: u32) -> TextRange {
-    TextRange { start, length }
 }
 
 /// The document without the "|" that marks a position, and that position.
@@ -97,6 +91,13 @@ fn a_line_becomes_a_heading() {
         let expected = (6, units(&line), text, 6 + cursor);
         assert_eq!(found, expected, "{line} as {command}");
     }
+    // A CRLF line keeps its CR.
+    let doc = SourceDocument::new("Intro\r\nbelow");
+    let Insertion { edit, .. } = doc.set_heading(0, "section");
+    assert_eq!(
+        (edit.start, edit.length, edit.text.as_str()),
+        (0, 5, "\\section{Intro}")
+    );
 }
 
 #[test]

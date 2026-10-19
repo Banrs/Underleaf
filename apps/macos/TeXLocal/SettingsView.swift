@@ -1,9 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum SettingsPane: String {
-    case general, editor, compiling, livePreview
-}
+enum SettingsPane: String { case general, editor, compiling, livePreview }
 
 /// In a Settings scene a TabView is the window's toolbar of panes, titles the window after the pane shown and sizes it to that pane (HIG, Settings).
 struct SettingsView: View {
@@ -11,10 +9,10 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $pane) {
-            Tab("General", systemImage: "gearshape", value: .general) { GeneralSettings() }
-            Tab("Editor", systemImage: "character.cursor.ibeam", value: .editor) { EditorSettings() }
-            Tab("Compiling", systemImage: "hammer", value: .compiling) { CompilingSettings() }
-            Tab("Live Preview", systemImage: "bolt", value: .livePreview) { LivePreviewSettings() }
+            Tab("General", systemImage: "gearshape", value: .general) { GeneralSettings().settingsPane() }
+            Tab("Editor", systemImage: "character.cursor.ibeam", value: .editor) { EditorSettings().settingsPane() }
+            Tab("Compiling", systemImage: "hammer", value: .compiling) { CompilingSettings().settingsPane() }
+            Tab("Live Preview", systemImage: "bolt", value: .livePreview) { LivePreviewSettings().settingsPane() }
         }
         .frame(width: 500)
     }
@@ -23,6 +21,19 @@ struct SettingsView: View {
 extension View {
     fileprivate func settingsPane() -> some View {
         formStyle(.grouped).scrollDisabled(true).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+// A setting with a line under its title saying what it does, as Settings and the inspector show them.
+extension Toggle where Label == TupleView<(Text, Text)> {
+    init(_ title: LocalizedStringKey, detail: LocalizedStringKey, isOn: Binding<Bool>) {
+        self.init(isOn: isOn) { Text(title); Text(detail) }
+    }
+}
+
+extension Picker where Label == TupleView<(Text, Text)> {
+    init(_ title: LocalizedStringKey, detail: LocalizedStringKey, selection: Binding<SelectionValue>, @ViewBuilder content: () -> Content) {
+        self.init(selection: selection, content: content) { Text(title); Text(detail) }
     }
 }
 
@@ -41,22 +52,15 @@ private struct GeneralSettings: View {
                         .textSelection(.enabled)
                 }
             } footer: {
-                Text("New and imported projects are kept here.")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("New and imported projects are kept here.").frame(maxWidth: .infinity, alignment: .leading)
             }
             Section("New Projects") {
-                Picker("Template", selection: $template) {
-                    ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) }
-                }
-                Picker(selection: $engine) {
+                Picker("Template", selection: $template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }
+                Picker("Engine", detail: "Each project can change its engine in the inspector.", selection: $engine) {
                     ForEach(TeXEngine.allCases) { Text($0.title).tag($0) }
-                } label: {
-                    Text("Engine")
-                    Text("Each project can change its engine in the inspector.")
                 }
             }
         }
-        .settingsPane()
     }
 }
 
@@ -83,26 +87,17 @@ private struct EditorSettings: View {
                     if !fontName.isEmpty, !Self.families.contains(fontName) { Text(fontName).tag(fontName) }
                 }
                 Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
-                Picker(selection: $syntaxTheme) {
+                Picker("Theme", detail: "Colours for commands, math and comments. All follow light and dark appearance.",
+                       selection: $syntaxTheme) {
                     ForEach(SyntaxTheme.all) { Text($0.title).tag($0) }
-                } label: {
-                    Text("Theme")
-                    Text("Colours for commands, math and comments. All follow light and dark appearance.")
                 }
                 Toggle("Show Line Numbers", isOn: $lineNumbers)
             }
             Section("Typing") {
-                Toggle(isOn: $autoPair) {
-                    Text("Close Brackets Automatically")
-                    Text("Typing (, [ or { adds its partner.")
-                }
-                Toggle(isOn: $autoComplete) {
-                    Text("Suggest Completions While Typing")
-                    Text("When off, press Option-Escape to see suggestions.")
-                }
+                Toggle("Close Brackets Automatically", detail: "Typing (, [ or { adds its partner.", isOn: $autoPair)
+                Toggle("Suggest Completions While Typing", detail: "When off, press Option-Escape to see suggestions.", isOn: $autoComplete)
             }
         }
-        .settingsPane()
     }
 
     /// Double: the stepper's formatted value takes only floating point, and the editor reads a whole number.
@@ -121,23 +116,15 @@ private struct CompilingSettings: View {
         @Bindable var app = app
         Form {
             Section {
-                Toggle(isOn: $app.autoCompile) {
-                    Text("Compile Automatically")
-                    Text("Compiles shortly after you stop typing.")
-                }
-                Toggle(isOn: $syncAfterCompile) {
-                    Text("Scroll to Cursor After Compiling")
-                    Text("Scrolls the PDF to the line you are editing.")
-                }
+                Toggle("Compile Automatically", detail: "Compiles shortly after you stop typing.", isOn: $app.autoCompile)
+                Toggle("Scroll to Cursor After Compiling", detail: "Scrolls the PDF to the line you are editing.", isOn: $syncAfterCompile)
             }
             Section {
                 ProgramFolder(program: .tex)
             } footer: {
-                HelpLink(destination: Links.requirements)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                HelpLink(destination: Links.requirements).frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
-        .settingsPane()
     }
 }
 
@@ -160,18 +147,14 @@ private struct LivePreviewSettings: View {
                 }
                 // An app opened from the Finder sees no shell PATH.
                 ProgramFolder(program: .texpresso)
-                Picker(selection: $viewer) {
+                Picker("Show Live Preview In", detail: "Takes effect the next time Live Preview starts.", selection: $viewer) {
                     ForEach(LiveViewer.allCases) { Text($0.title).tag($0) }
-                } label: {
-                    Text("Show Live Preview In")
-                    Text("Takes effect the next time Live Preview starts.")
                 }
             } footer: {
                 Text("Live Preview is experimental. It uses TeXpresso to update the PDF as you type, without compiling.")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .settingsPane()
     }
 }
 
@@ -187,9 +170,7 @@ private struct ProgramFolder: View {
                 : "Choose the folder the texpresso program is in."
         }
 
-        var automaticFailure: String {
-            self == .tex ? "Couldn’t Find TeX Automatically" : "Couldn’t Find TeXpresso Automatically"
-        }
+        var automaticFailure: String { self == .tex ? "Couldn’t Find TeX Automatically" : "Couldn’t Find TeXpresso Automatically" }
 
         func chosen(in tex: TexStatus) -> String? { self == .tex ? tex.texDir : tex.texpressoDir }
 
@@ -230,9 +211,7 @@ private struct ProgramFolder: View {
                         }
                     })) {
                         Text("Automatic").tag(Choice.automatic)
-                        if let chosen {
-                            Text(URL(filePath: chosen).lastPathComponent).tag(Choice.chosen)
-                        }
+                        if let chosen { Text(URL(filePath: chosen).lastPathComponent).tag(Choice.chosen) }
                         Divider()
                         Text("Other…").tag(Choice.other)
                     }

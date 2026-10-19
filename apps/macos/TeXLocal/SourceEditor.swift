@@ -80,7 +80,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         self.path = path
         textView.load(text, source: source)
         undo = prior?.undo ?? UndoManager()
-        textView.setSelectedRange(prior?.selection ?? NSRange(location: 0, length: 0))
+        textView.setSelectedRange(prior?.selection ?? .caret(0))
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
         scrollView.reflectScrolledClipView(scrollView.contentView)
         if let top = prior?.top { textView.scroll(toShownTop: top) }
@@ -101,9 +101,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         reportCursor()
     }
 
-    func forget(path: String) {
-        kept = kept.filter { $0.key != path && !$0.key.hasPrefix(path + "/") }
-    }
+    func forget(path: String) { kept = kept.filter { $0.key != path && !$0.key.hasPrefix(path + "/") } }
 
     /// Whatever is kept at the new name is stale, a file gone outside the app: the name was free.
     func rename(from: String, to: String) {
@@ -119,10 +117,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     // MARK: - Where it is
 
-    var currentLine: Int {
-        textView.document.line(at: textView.selectedRange().location)
-    }
-
+    var currentLine: Int { textView.document.line(at: textView.selectedRange().location) }
     var currentColumn: Int { textView.selectedRange().location - textView.document.lineStart(currentLine) }
 
     /// Shows the system find indicator after the scroll completes; it bounces, so not with Reduce Motion, where the selected word or the caret's line is the mark.
@@ -130,10 +125,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let document = textView.document
         let start = document.lineStart(line)
         let end = line < document.lineCount ? document.lineStart(line + 1) - 1 : textView.text.length
-        let word = column.map {
-            textView.selectionRange(forProposedRange: NSRange(location: min(start + $0, end), length: 0), granularity: .selectByWord)
-        }
-        textView.setSelectedRange(word ?? NSRange(location: start, length: 0))
+        let word = column.map { textView.selectionRange(forProposedRange: .caret(min(start + $0, end)), granularity: .selectByWord) }
+        textView.setSelectedRange(word ?? .caret(start))
         atTop ? textView.scroll(toTop: start) : textView.centerSelectionInVisibleArea(nil)
         if focus { self.focus() }
         let shown = word ?? NSRange(location: start, length: end - start)
@@ -143,17 +136,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
     }
 
-    private func reportTop() {
-        if let line = textView.topLine { onScroll(line) }
-    }
+    private func reportTop() { if let line = textView.topLine { onScroll(line) } }
+    private func reportCursor() { onCursor(currentLine, currentColumn) }
 
-    private func reportCursor() {
-        onCursor(currentLine, currentColumn)
-    }
-
-    func textDidChange(_ notification: Notification) {
-        changes.count += 1
-    }
+    func textDidChange(_ notification: Notification) { changes.count += 1 }
 
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
@@ -214,7 +200,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let document = textView.document, selection = textView.selectedRange(), selections = textView.selectedRanges.map(\.rangeValue)
         let insert = { (insertion: Insertion?, name: String) in
             guard let insertion else { return false }
-            self.textView.apply([insertion.edit], named: name, selecting: [NSRange(location: insertion.caret, length: 0)])
+            self.textView.apply([insertion.edit], named: name, selecting: [.caret(insertion.caret)])
             self.textView.startSnippet(insertion.fields, at: insertion.edit.start)
             return true
         }
@@ -250,9 +236,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         title.map { String(localized: "Insert \($0)") } ?? String(localized: "Insert")
     }
 
-    var textStyles: TextStyles {
-        path == nil ? TextStyles() : textView.document.textStyles(textView.selectedRange())
-    }
+    var textStyles: TextStyles { path == nil ? TextStyles() : textView.document.textStyles(textView.selectedRange()) }
 }
 
 struct EditorView: NSViewRepresentable {
@@ -305,6 +289,4 @@ enum EditorPrefs {
     }
 }
 
-@Observable final class EditorChanges {
-    var count = 0
-}
+@Observable final class EditorChanges { var count = 0 }

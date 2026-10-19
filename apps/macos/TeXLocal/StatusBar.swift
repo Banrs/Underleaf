@@ -1,10 +1,9 @@
 import SwiftUI
 
-/// The status bar's height and line, which the File Outline's folded header beside it shares, and the build panel's
-/// console bar's insets.
+/// The status bar's height, which the File Outline's folded header beside it shares, and the build panel's console bar's
+/// insets.
 enum BarMetrics {
     static let height: CGFloat = 36
-    static let line: CGFloat = 1
     static let consoleLeading: CGFloat = 12
     static let consoleTrailing: CGFloat = 17
 }
@@ -22,20 +21,16 @@ struct StatusBar: View {
             content(.short).labelStyle(.iconOnly)
         }
         .barRow()
-        // Its line's row, the row of the line over the File Outline's header beside it (`HeaderEdge`). Under it, each
-        // pane's own scroll edge (`WorkspaceController.buildStatusBar`).
-        .padding(.top, BarMetrics.line)
-        .overlay(alignment: .top) { Divider() }
+        // Its ground and line are AppKit's hard scroll edge under each pane (`WorkspaceController.buildStatusBar`), the line
+        // level with the File Outline header's beside it (`HeaderEdge`).
         // Clicks between its controls stay with the bar, not the text or pages scrolled beneath it.
         .contentShape(.rect)
         .monospacedDigit()
         .buttonStyle(.borderless)
-        .contextMenu {
-            Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
-        }
+        .contextMenu { Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) } }
     }
 
-    private nonisolated enum Detail { case full, symbols, short }
+    private enum Detail { case full, symbols, short }
 
     private func content(_ detail: Detail) -> some View {
         HStack {
@@ -43,14 +38,11 @@ struct StatusBar: View {
             let showingIssues = project.panel.shown && project.panel.tab == .issues
             Button {
                 if showingIssues { project.panel.shown = false } else { project.panel.show(.issues) }
-            } label: {
-                buildStatus.fixedSize(horizontal: detail != .short, vertical: true)
-            }
+            } label: { buildStatus.fixedSize(horizontal: detail != .short, vertical: true) }
             .help(showingIssues ? "Hide issues" : "Show issues")
             if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
                 Button { project.panel.show(.texpresso) } label: {
-                    Label(project.texpresso.title,
-                          systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
+                    Label(project.texpresso.title, systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
                 }
                 .help("Show the Live Preview log")
             }
@@ -61,9 +53,7 @@ struct StatusBar: View {
                 }
                 .help("\(reason.hasSuffix(".") ? String(reason.dropLast()) : reason); save again")
             }
-            if let notice = project.notices.current {
-                Text(notice).foregroundStyle(.secondary)
-            }
+            if let notice = project.notices.current { Text(notice).foregroundStyle(.secondary) }
             Spacer(minLength: 0)
             let words = detail == .full && project.editsText && app.showWordCount ? project.words : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
@@ -92,9 +82,7 @@ struct StatusBar: View {
                 }
             }
             .fixedSize()
-            if project.editsText || pages {
-                Divider().padding(.vertical)
-            }
+            if project.editsText || pages { Divider().padding(.vertical) }
             Toggle(isOn: Bindable(project.panel).shown) {
                 // Its state is the accent colour alone: with Differentiate Without Colour the off state is the plain square, without the panel's filled third.
                 Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
@@ -107,15 +95,11 @@ struct StatusBar: View {
         }
     }
 
-    private func place(_ detail: Detail, _ full: LocalizedStringKey, short: String,
-                       spoken: LocalizedStringKey) -> some View {
-        Group {
-            if detail == .short { Text(verbatim: short).accessibilityLabel(spoken) } else { Text(full) }
-        }
+    private func place(_ detail: Detail, _ full: LocalizedStringKey, short: String, spoken: LocalizedStringKey) -> some View {
+        Group { if detail == .short { Text(verbatim: short).accessibilityLabel(spoken) } else { Text(full) } }
     }
 
-    @ViewBuilder
-    private var freshness: some View {
+    @ViewBuilder private var freshness: some View {
         if project.showsLastSuccessfulBuild {
             Button { project.panel.show(.issues) } label: {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill")

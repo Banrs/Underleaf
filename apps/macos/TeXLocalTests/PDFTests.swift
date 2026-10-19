@@ -29,9 +29,7 @@ struct FindTests {
 struct PDFFitTests {
     @Test(arguments: zip([CGFloat(0), 37], [0, 90]))
     func fitPageKeepsTheWholePageInView(_ bottomInset: CGFloat, _ rotation: Int) throws {
-        let controller = PDFController()
-        let view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
+        let controller = sizedController(), view = controller.view
         view.additionalSafeAreaInsets.bottom = bottomInset
         #expect(view.displayMode == .singlePageContinuous)
         view.displaysPageBreaks = true
@@ -55,10 +53,9 @@ struct PDFFitTests {
 
     /// A pinch's steps are the scroll view's magnification, which posts no PDFViewScaleChanged until a pinch ends.
     @Test func theScaleFollowsEveryZoom() throws {
-        let controller = shown(try pages(3)), view = controller.view
+        let controller = showing(try pages(3)), view = controller.view
         func follows(_ fit: PDFController.Fit?, _ step: String) {
-            #expect(controller.scale == view.scaleFactor, "\(step)")
-            #expect(controller.fit == fit, "\(step)")
+            #expect(controller.scale == view.scaleFactor && controller.fit == fit, "\(step)")
         }
         follows(.width, "opened")
         view.setFrameSize(NSSize(width: 800, height: 500))
@@ -92,11 +89,9 @@ struct PDFFitTests {
         // The PDF can finish loading before SwiftUI gives the owned view its first size.
         view.setFrameSize(NSSize(width: 600, height: 500))
         view.layoutDocumentView()
-        #expect(project.pdf.pageCount == 3)
-        #expect(project.saved.pdfPage == 3)
+        #expect(project.pdf.pageCount == 3 && project.saved.pdfPage == 3)
         project.pdf.setScale(view.maxScaleFactor)
-        #expect(!app.isEnabled(.viewZoomIn, on: project))
-        #expect(app.isEnabled(.viewZoomOut, on: project))
+        #expect(!app.isEnabled(.viewZoomIn, on: project) && app.isEnabled(.viewZoomOut, on: project))
         project.tree.show(.sources)
         project.openPath = "references.bib"
         #expect(!app.isEnabled(.syncForward, on: project))
@@ -107,8 +102,7 @@ struct PDFFitTests {
     }
 
     @Test func goToPageKeepsToTheDocument() throws {
-        let controller = PDFController()
-        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        let controller = sizedController()
         controller.go(toPage: 2)
         #expect(controller.page == 0)
         controller.show(try pages(3))
@@ -129,8 +123,7 @@ struct PDFFitTests {
         #expect(project.saved.pdfZoom == zoom)
         project.pdf.view.setFrameSize(NSSize(width: 600, height: 500))
         project.pdf.view.layoutDocumentView()
-        #expect(project.pdf.restoreZoom == nil)
-        #expect(project.saved.pdfZoom == zoom)
+        #expect(project.pdf.restoreZoom == nil && project.saved.pdfZoom == zoom)
         if case .scale(let scale) = zoom { #expect(abs(project.pdf.view.scaleFactor - scale) < 0.001) }
         let old = Data(#"{"project":"p","line":1,"buildPanel":false,"pdfPage":2}"#.utf8)
         #expect(try JSONDecoder().decode(SavedWorkspace.self, from: old).pdfZoom == nil)
@@ -139,7 +132,7 @@ struct PDFFitTests {
     /// The mark is beside the page, not an annotation, which Print and VoiceOver would see.
     @Test func theForwardSearchMarkIsOneAndNoAnnotation() throws {
         let document = try pages(2)
-        let controller = shown(document)
+        let controller = showing(document)
         controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10))
         #expect(document.page(at: 0)?.annotations.isEmpty == true)
         controller.reveal(ForwardLoc(page: 2, h: 72, v: 300, width: 180, height: 10))
@@ -148,35 +141,8 @@ struct PDFFitTests {
         #expect(controller.view.mark == nil)
     }
 
-    private func pages(_ count: Int) throws -> PDFDocument {
-        let image = NSImage(size: NSSize(width: 612, height: 792), flipped: false) { rect in
-            NSColor.white.setFill()
-            rect.fill()
-            return true
-        }
-        let document = PDFDocument()
-        for index in 0..<count { document.insert(try #require(PDFPage(image: image)), at: index) }
-        return document
-    }
-}
-
-/// A controller at 600 by 500 showing `document`.
-private func shown(_ document: PDFDocument) -> PDFController {
-    let controller = PDFController()
-    controller.view.setFrameSize(NSSize(width: 600, height: 500))
-    controller.show(document)
-    return controller
-}
-
-func textPDF(_ pages: [String], width: CGFloat = 612) throws -> PDFDocument {
-    let document = PDFDocument()
-    for text in pages {
-        let view = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 792))
-        view.string = text
-        let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
-        document.insert(page, at: document.pageCount)
-    }
-    return document
+    /// Blank US Letter pages.
+    private func pages(_ count: Int) throws -> PDFDocument { try textPDF(Array(repeating: "", count: count)) }
 }
 
 @Suite(.serialized)
@@ -187,7 +153,7 @@ struct PDFFindTests {
     }
 
     private func targets() throws -> PDFController {
-        shown(try textPDF(["alpha target", "beta target", "gamma target"]))
+        showing(try textPDF(["alpha target", "beta target", "gamma target"]))
     }
 
     private func select(_ word: String, onPage index: Int, in controller: PDFController) throws {
@@ -233,19 +199,23 @@ struct PDFFindTests {
         #expect(controller.find.matchIndex == 2)
     }
 
+    /// The field's text as its typing delay ends.
+    private func type(_ text: String, in controller: PDFController) {
+        controller.find.text = text
+        controller.find.typed()
+    }
+
     @Test(arguments: zip(["alpha", "nothing"], [1, -1]))
     func findNextUsesTheLatestSharedOrTypedText(_ earlier: String, _ step: Int) async throws {
         let controller = try targets()
-        controller.find.text = earlier
-        controller.find.typed()
+        type(earlier, in: controller)
         try await waitUntil(timeout: .seconds(5)) { controller.find.query == earlier && controller.find.matches.count == (earlier == "alpha" ? 1 : 0) }
         PDFFind.shared = "target"
         controller.find.next(step)
         try await waitUntil(timeout: .seconds(5)) { controller.find.query == "target" && controller.find.matches.count == 3 }
         #expect(controller.find.text == "target")
 
-        controller.find.text = "gamma"
-        controller.find.typed()
+        type("gamma", in: controller)
         try #require(controller.view.document?.isFinding == true)
         PDFFind.shared = "target" // Another pane changes it while gamma is still being searched.
         controller.find.next(step)
@@ -260,19 +230,15 @@ struct PDFFindTests {
     }
 
     @Test func rebuildSearchesCurrentFindText() async throws {
-        let first = try textPDF(["old result"])
-        let second = try textPDF(["new result"])
-        let controller = shown(first)
-        controller.find.isOpen = true
-        controller.find.text = "old"
-        controller.find.search("old")
+        let controller = showing(try textPDF(["old result"]))
+        openFind("old", in: controller)
         try await waitUntil(timeout: .seconds(5)) {
             controller.find.query == "old" && controller.find.matches.first?.pages.first?.string?.contains("old") == true
         }
 
         // The field changed, but its debounce has not started a new search yet.
         controller.find.text = "new"
-        controller.show(second)
+        controller.show(try textPDF(["new result"]))
         try await waitUntil(timeout: .seconds(5)) {
             controller.find.query == "new" && controller.find.matches.first?.pages.first?.string?.contains("new") == true
         } state: {
@@ -282,15 +248,12 @@ struct PDFFindTests {
     }
 
     @Test func typingBackKeepsTheFieldsMatches() async throws {
-        let controller = shown(try textPDF(["a ab a"]))
+        let controller = showing(try textPDF(["a ab a"]))
         controller.find.isOpen = true
-        controller.find.text = "a"
-        controller.find.typed()
+        type("a", in: controller)
         try await waitUntil { controller.find.query == "a" && controller.find.matches.count == 3 }
-        controller.find.text = "ab"
-        controller.find.typed()
-        controller.find.text = "a"
-        controller.find.typed()
+        type("ab", in: controller)
+        type("a", in: controller)
         try await waitUntil { controller.find.query == "a" && controller.find.matches.count == 3 }
         // The longer search, had it gone on, would have ended by now.
         try await Task.sleep(for: .milliseconds(300))
@@ -309,22 +272,20 @@ struct PDFFindTests {
     /// PDFKit's word lookup crashes on a page whose document has gone; it has no word.
     @Test func aPageWithoutItsDocumentHasNoWord() throws {
         let page = try autoreleasepool { try #require(try textPDF(["alpha beta"]).page(at: 0)) }
-        #expect(page.document == nil)
-        #expect(page.click(at: CGPoint(x: 10, y: 10)) == nil)
+        #expect(page.document == nil && page.click(at: CGPoint(x: 10, y: 10)) == nil)
     }
 
     /// The core finds the source's word in the text round SyncTeX's box, and the PDF selects it.
     @Test func forwardSearchSelectsTheWordTheCoreFinds() async throws {
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         let line = "An echo repeats. An echo repeats."
-        let info = try await Core.shared.call("create_project", ["name": "Sync \(UUID().uuidString.prefix(8))", "template": "blank"],
-                                              as: ProjectInfo.self)
-        defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
+        let info = try await newProject()
+        defer { try? FileManager.default.removeItem(at: info.folder) }
         try await Core.shared.call("write_file", ["id": info.id, "path": info.mainFile, "text": line])
         let pdf = try textPDF([line], width: 180), page = try #require(pdf.page(at: 0))
         let rendered = try #require(page.string)
         let box = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).bounds(for: page)
-        let controller = shown(pdf)
+        let controller = showing(pdf)
         let column = (line as NSString).range(of: "echo", options: .backwards).location
         controller.reveal(ForwardLoc(page: 1, h: box.minX, v: page.bounds(for: .cropBox).maxY - box.minY, width: box.width, height: box.height),
                           from: SyncSource(id: info.id, file: info.mainFile, line: 1, column: column))
@@ -355,16 +316,11 @@ struct PDFFindTests {
 
     @Test(arguments: zip([NSScroller.Style.overlay, .legacy], [CGFloat?.none, 1.75]))
     func aRebuildFindsAgainInPlace(_ scrollerStyle: NSScroller.Style, _ scale: CGFloat?) async throws {
-        let controller = PDFController()
-        let view = controller.view
-        view.setFrameSize(NSSize(width: 600, height: 500))
+        let controller = sizedController(), view = controller.view
         try #require(view.subviews.compactMap { $0 as? NSScrollView }.first).scrollerStyle = scrollerStyle
-        let first = try textPDF(["needle", "filler", "needle", "needle"])
-        controller.show(first)
+        controller.show(try textPDF(["needle", "filler", "needle", "needle"]))
         if let scale { controller.setScale(scale) }
-        controller.find.isOpen = true
-        controller.find.text = "needle"
-        controller.find.search(controller.find.text)
+        openFind("needle", in: controller)
         try await found(controller)
         controller.find.advance(by: 1)
         view.layoutDocumentView()
@@ -374,14 +330,10 @@ struct PDFFindTests {
         let place = try #require(view.documentView).visibleRect
 
         for _ in 0..<4 {
-            let rebuilt = try textPDF(["needle", "needle", "filler", "needle", "needle"])
-            controller.show(rebuilt)
+            controller.show(try textPDF(["needle", "needle", "filler", "needle", "needle"]))
             view.layoutDocumentView()
             try await found(controller)
-
-            #expect(controller.find.isOpen)
-            #expect(controller.find.matches.count == 4)
-            #expect(controller.find.matchIndex == 1)
+            #expect(controller.find.isOpen && controller.find.matches.count == 4 && controller.find.matchIndex == 1)
             #expect(view.currentSelection?.pages.first === controller.find.matches[1].pages.first)
             #expect(view.document === shown)
             #expect(shown.index(for: try #require(view.currentPage)) == page)

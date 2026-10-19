@@ -1,0 +1,48 @@
+% TeXLocal test document: a book in several files.
+%
+% What to try with it:
+%  - The sidebar's file tree: folders two deep, a file name with a space,
+%    images, a bibliography, a Markdown note and a CSV file.
+%  - Opening each kind of file: TeX in the editor, images and PDFs as previews.
+%  - SyncTeX from the PDF into the chapter files, and from them to the PDF.
+%  - The bibliography: biblatex through BibTeX, which latexmk runs as needed.
+%    Change backend=bibtex to backend=biber to see a tool fail: this Mac's
+%    TeX Live biber can't unpack itself ("extracting arm64 binary with lipo
+%    failed"), and the citations stay undefined.
+%  - Renaming, moving and deleting files in the sidebar, and adding files in
+%    Finder while the project is open.
+\documentclass[11pt]{report}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{lipsum}
+\usepackage[backend=bibtex, style=authoryear]{biblatex}
+\usepackage{hyperref}
+\addbibresource{references.bib}
+\graphicspath{{figures/}}
+
+% \includeonly{chapters/results}
+
+\title{A Test Book for TeXLocal}
+\author{The TeXLocal Test Documents}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\listoffigures
+
+\include{chapters/introduction}
+\include{chapters/methods}
+\include{chapters/results}
+
+\chapter{Related Work}
+\input{chapters/related work}
+
+\appendix
+\chapter{Derivations}
+\input{chapters/appendix/derivations}
+
+\printbibliography[heading=bibintoc]
+
+\end{document}

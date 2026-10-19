@@ -241,6 +241,11 @@ impl AppSettings {
     /// Choose the folder `key` ("texDir" or "texpressoDir"), leaving the
     /// file's other keys as they are.
     pub(crate) fn choose(data_dir: &Path, key: &str, dir: Option<&Path>) -> Result<(), CoreError> {
+        // Held to read, change and write the file, so two choices keep both.
+        static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _writing = WRITING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let file = data_dir.join(APP_SETTINGS_FILE);
         update(&file, Map::new(), |keys| {
             keys.insert(key.into(), json!(dir.map(Path::to_string_lossy)));

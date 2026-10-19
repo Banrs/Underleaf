@@ -108,13 +108,9 @@ struct FilesList: View {
                 return .handled
             }
             .focused($listFocused)
-            .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in
-                project.tree.node(at: path).map(actions)
-            }
+            .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in project.tree.node(at: path).map(actions) }
             // A row named in place comes into view first: the list makes only the rows it shows.
-            .onChange(of: rename.id) { _, id in
-                if let id { Task { proxy.scrollTo(id) } }
-            }
+            .onChange(of: rename.id) { _, id in if let id { Task { proxy.scrollTo(id) } } }
         }
     }
 
@@ -219,9 +215,7 @@ struct FilesList: View {
                         .accessibilityHidden(true)
                 }
             }
-        } icon: {
-            Image(systemName: node.symbol)
-        }
+        } icon: { Image(systemName: node.symbol) }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
         // The star's name too: the row's label replaces its children's.
@@ -327,8 +321,7 @@ extension View {
         }
     }
 
-    @ViewBuilder
-    func draggable(file url: URL?) -> some View {
+    @ViewBuilder func draggable(file url: URL?) -> some View {
         if let url {
             draggable(url).dragConfiguration(DragConfiguration(operationsWithinApp: .init(allowMove: true)))
         } else {
@@ -376,9 +369,7 @@ struct OutlineList: View {
             .clipped()
             // A step under the files' rows: a table of contents under a list.
             .environment(\.sidebarRowSize, rowSize == .large ? .medium : .small)
-            .overlay {
-                if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") }
-            }
+            .overlay { if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") } }
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
                 guard let id = ids.first, outline.indices.contains(id) else { return }
                 let item = outline[id]
@@ -460,23 +451,13 @@ private struct HeadingRow: View, Equatable {
 struct HeaderEdge: ViewModifier {
     /// The header's; none, no edge.
     let height: CGFloat
-    @Environment(\.displayScale) private var displayScale
 
     func body(content: Content) -> some View {
         content
             .safeAreaBar(edge: .bottom, spacing: 0) { Rectangle().fill(.white.opacity(0.001)).frame(height: height) }
             .scrollEdgeEffectStyle(.hard, for: .bottom)
             .scrollEdgeEffectHidden(height == 0, for: .bottom)
+            // Its line is the system's, level with the status bar's.
             .ignoresSafeArea(.container, edges: .bottom)
-            // The hard edge's line is a device pixel in the separator's colour, in the row over the bar (27.2), and the
-            // window's lines are a point: the rest of the point over it, so it meets the status bar's line at its weight.
-            .overlay(alignment: .bottom) {
-                if height > 0, displayScale > 1 {
-                    Rectangle().fill(.separator)
-                        .frame(height: BarMetrics.line - 1 / displayScale)
-                        .padding(.bottom, 1 / displayScale)
-                        .allowsHitTesting(false)
-                }
-            }
     }
 }

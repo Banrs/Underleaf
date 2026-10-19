@@ -7,11 +7,9 @@ enum SyncTeXGeometry {
     private static let margin: CGFloat = 2
 
     static func highlightRect(_ loc: ForwardLoc, pageBounds: CGRect) -> CGRect {
-        let height = loc.height ?? lineHeight
-        let width = max(minimumWidth, loc.width ?? 0)
-        let x = pageBounds.minX + (loc.h ?? 0)
         let baseline = pageBounds.maxY - (loc.v ?? 0)
-        return CGRect(x: x, y: baseline, width: width, height: height).insetBy(dx: -margin, dy: -margin)
+        return CGRect(x: pageBounds.minX + (loc.h ?? 0), y: baseline, width: max(minimumWidth, loc.width ?? 0), height: loc.height ?? lineHeight)
+            .insetBy(dx: -margin, dy: -margin)
     }
 
     static func synctexPoint(_ point: CGPoint, pageBounds: CGRect) -> CGPoint {

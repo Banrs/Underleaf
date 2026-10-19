@@ -21,7 +21,7 @@ struct PDFPane: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if !project.texAvailable {
+        if app.tex?.available != true {
             ContentUnavailableView {
                 Label("MacTeX Isn’t Installed", systemImage: "richtext.page")
             } description: {

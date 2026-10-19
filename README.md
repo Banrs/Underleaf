@@ -50,9 +50,9 @@ You also need a TeX distribution — see [Requirements](#requirements).
   Position, Go to Source Position and Go to Next and Previous Issue, and Compile has Clean
   Build Folder
 - **Auto-compile**: save-on-pause triggers a recompile; superseded runs are cancelled
-- **TeXpresso live preview** (optional, experimental): sends unsaved edits to a persistent
+- **Live Preview** (optional, experimental): sends unsaved edits to a persistent
   TeXpresso process; with [Underleaf's patch](tools/texpresso/) the Mac app shows the live
-  document in its PDF pane. Normal PDF builds stay available. See
+  document in its PDF pane, or TeXpresso's own window. Normal PDF builds stay available. See
   [docs/texpresso.md](docs/texpresso.md).
 - **File outline** at the sidebar's foot that follows the section on screen, plus word and
   line counts
@@ -70,11 +70,12 @@ You also need a TeX distribution — see [Requirements](#requirements).
   build folder, ⇧⌘F find in the project, ⌘L go to line, ⌥⌘G go to page, ⌥⌘J go to PDF
   position, ⌘' and ⌘" next and previous issue, ⌃⌘S sidebar, ⌥⌘P PDF, ⌥⌘I inspector, ⇧⌘Y
   build panel
-- **Settings** (`⌘,`): four panes. General has the projects folder and the template and
+- **Settings** (`⌘,`): five panes. General has the projects folder and the template and
   engine for new projects; Editor has the font, syntax colours, line numbers, closing
   brackets and completions; Compiling has Compile Automatically, jumping to the cursor's
-  place after compiling and the TeX folder; Live Preview has the TeXpresso folder. Per
-  project, the TeX engine and Stop on first error
+  place after compiling and the TeX folder; PDF has the page colour (white, dark, or
+  matching the appearance); Live Preview has the TeXpresso folder and where the live
+  document shows. Per project, the TeX engine and Stop on first error
 
 ## Requirements
 
@@ -109,6 +110,8 @@ docs/                    core-api.md (the hosts' contract) · windows.md (the Wi
                          design and the core gaps it waits on) · texpresso.md (live preview) ·
                          design-tokens.md (editor themes and surfaces)
 tools/texpresso/         Builds and installs TeXpresso with Underleaf's patch.
+tools/qa/                The Mac app's on-screen QA driver, type-check and test runners.
+tools/install-mac.sh     Builds the Release app and installs it in /Applications.
 ```
 
 ## Development
@@ -119,7 +122,10 @@ cargo test --workspace        # the core builds and tests on macOS and Windows
 # macOS app (Xcode 27): the build runs cargo itself
 open apps/macos/TeXLocal.xcodeproj
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal build
-xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal test   # Swift Testing
+xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal \
+  TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev test   # Swift Testing, apart from the installed app's defaults
+zsh tools/qa/typecheck.sh     # the app and its tests type-checked in about 20 s, no build
+zsh tools/install-mac.sh      # Release build into /Applications/TeXLocal.app
 
 # Windows app (.NET 10): the build runs cargo itself
 dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64

@@ -332,7 +332,9 @@ public sealed partial class WorkspacePage
         if (Picked is not { } node || node.Path == mainFile) return;
         Run("Can't delete this", async () =>
         {
-            await Core.CallAsync("session_prepare_delete", new { session, path = node.Path });
+            // Not ready: a save it needed is asked about, and nothing is deleted.
+            var prepared = await Core.CallAsync("session_prepare_delete", new { session, path = node.Path });
+            if (!prepared.GetProperty("ready").GetBoolean()) return;
             var trashed = false;
             try
             {

@@ -233,7 +233,7 @@ impl SourceDocument {
     }
 
     pub fn text(&self) -> String {
-        String::from_utf16_lossy(&self.text.units)
+        crate::utf16_lossy(&self.text.units)
     }
 
     /// The line an offset is on, from 1.

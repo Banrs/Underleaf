@@ -8,11 +8,9 @@ nonisolated struct OutlineNode: Identifiable, Equatable, Decodable, Sendable {
     var id: Int { item.id }
     var descendants: [OutlineNode] { (children ?? []).flatMap { [$0] + $0.descendants } }
 
-    private enum CodingKeys: String, CodingKey {
-        case foldKey, children
-    }
+    private enum CodingKeys: String, CodingKey { case foldKey, children }
 
-    /// The heading's own fields are beside its node's in the same object.
+    /// The heading's fields sit beside its fold key and children.
     init(from decoder: any Decoder) throws {
         item = try OutlineItem(from: decoder)
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -25,16 +23,12 @@ nonisolated struct OutlineNode: Identifiable, Equatable, Decodable, Sendable {
 /// level's name ("Section"), and its title, its level's for one that has none (`untitled`): "Untitled Section".
 nonisolated struct OutlineItem: Identifiable, Hashable, Decodable, Sendable {
     let id: Int
-    let command: String
-    let level: String
-    let title: String
+    let command, level, title: String
     let untitled: Bool
     let line: Int
     let file: String
 
-    private enum CodingKeys: String, CodingKey {
-        case id = "index", command, level, title, untitled, line, file
-    }
+    private enum CodingKeys: String, CodingKey { case id = "index", command, level, title, untitled, line, file }
 }
 
 nonisolated struct Analysis: Decodable, Sendable {

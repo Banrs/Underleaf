@@ -8,9 +8,7 @@ final class ProjectNotices {
     @ObservationIgnored private var clearing: Task<Void, Never>?
     @ObservationIgnored private let lasting: Duration
 
-    init(lasting: Duration = .seconds(3)) {
-        self.lasting = lasting
-    }
+    init(lasting: Duration = .seconds(3)) { self.lasting = lasting }
 
     func note(_ text: String) {
         current = text
@@ -30,7 +28,5 @@ final class ProjectNotices {
         AccessibilityNotification.Announcement(speech).post()
     }
 
-    func cancel() {
-        clearing?.cancel()
-    }
+    func cancel() { clearing?.cancel() }
 }

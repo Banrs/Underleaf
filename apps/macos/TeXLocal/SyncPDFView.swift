@@ -62,7 +62,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         }
         // PDFKit's scale is its scroll view's magnification: the size on screen is the one in the window.
         let onScreen = overlay.convert(overlay.bounds, to: nil).size, pixel = window.backingScaleFactor
-        let box = page.bounds(for: .cropBox), scale = scaleFactor * pixel
         let whole = CGSize(width: (onScreen.width * pixel).rounded(), height: (onScreen.height * pixel).rounded())
         let unit = CGSize(width: overlay.bounds.width / (onScreen.width * pixel), height: overlay.bounds.height / (onScreen.height * pixel))
         let part = CGRect(x: (visible.minX - overlay.bounds.minX) / unit.width, y: (visible.minY - overlay.bounds.minY) / unit.height,
@@ -74,7 +73,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
               let surface = IOSurface(properties: [.width: width, .height: height, .bytesPerElement: 4,
                                                    .pixelFormat: kCVPixelFormatType_32BGRA]),
               surface.lock(options: [], seed: nil) == KERN_SUCCESS else { return false }
-        Self.drawLive(page, to: surface, box: box, scale: scale, from: part.origin)
+        Self.drawLive(page, to: surface, box: page.bounds(for: .cropBox), scale: scaleFactor * pixel, from: part.origin)
         surface.unlock(options: [], seed: nil)
         if let name = Self.liveSpace.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, name) }
         let layer = liveLayers[index] ?? {
@@ -119,9 +118,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     func hasLive(at index: Int) -> Bool { liveLayers[index] != nil }
 
-    func removeLive(at index: Int) {
-        liveLayers.removeValue(forKey: index)?.removeFromSuperlayer()
-    }
+    func removeLive(at index: Int) { liveLayers.removeValue(forKey: index)?.removeFromSuperlayer() }
 
     func removeLive() {
         for layer in liveLayers.values { layer.removeFromSuperlayer() }
@@ -184,13 +181,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         overlay.addSubview(mark)
     }
 
-    override func mouseMoved(with event: NSEvent) {
-        if !updateDividerCursor(with: event) { super.mouseMoved(with: event) }
-    }
-
-    override func cursorUpdate(with event: NSEvent) {
-        if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) }
-    }
+    override func mouseMoved(with event: NSEvent) { if !updateDividerCursor(with: event) { super.mouseMoved(with: event) } }
+    override func cursorUpdate(with event: NSEvent) { if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) } }
 
     /// SwiftUI reassigns unchanged frames during layout; PDFView would refit the width and undo a pinch in its own
     /// `setFrame:` while auto-scaling is active (27.2).
@@ -212,10 +204,11 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         }
     }
 
+    /// The first page's top shows, give or take a device pixel: scrolled to the start, it is at the shown area's top.
     private var atDocumentStart: Bool {
         guard let page = document?.page(at: 0) else { return false }
         let top = convert(CGPoint(x: 0, y: page.bounds(for: displayBox).maxY), from: page).y
-        return top <= bounds.maxY - safeAreaInsets.top + pageBreakMargins.top * scaleFactor
+        return top <= bounds.maxY - safeAreaInsets.top + pageBreakMargins.top * scaleFactor + 1 / (window?.backingScaleFactor ?? 1)
     }
 
     /// Between the bars, which PDFKit's pages scroll beneath.
@@ -223,10 +216,12 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     var hasShownArea: Bool { bounds.width > 0 && shownHeight > 0 }
 
-    /// The page and point at the top of what shows: `currentDestination` lies behind the bars.
+    /// The page's index and the point in it at the top between the bars: `currentDestination` lies behind them.
     var shownPlace: (index: Int, point: CGPoint)? {
         let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
-        guard let document, let page = page(for: top, nearest: true) else { return nil }
+        // Pages have no top margin: one whose top edge is at the top is under it, not the page above, whose gap meets it there.
+        let under = CGPoint(x: top.x, y: top.y - 1 / (window?.backingScaleFactor ?? 1))
+        guard let page = page(for: under, nearest: true), let document else { return nil }
         return (index: document.index(for: page), point: convert(top, to: page))
     }
 
@@ -256,9 +251,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         return menu
     }
 
-    @objc private func goToSource(_ item: NSMenuItem) {
-        if let location = item.representedObject as? CGPoint { goToSource(at: location) }
-    }
+    @objc private func goToSource(_ item: NSMenuItem) { if let location = item.representedObject as? CGPoint { goToSource(at: location) } }
 
     private func goToSource(at location: CGPoint) {
         guard let page = page(for: location, nearest: true), let number = document?.number(of: page) else { return }

@@ -328,6 +328,32 @@ mod tests {
         Heading::new(depth, title, line, Some(file.into()))
     }
 
+    /// Words part at every Unicode space and at TeX's special characters,
+    /// and nowhere else; a letter of any script makes a word.
+    #[test]
+    fn words_part_at_unicode_spaces_and_tex_specials() {
+        let cases = [
+            ("", 0),
+            ("plain ascii words", 3),
+            ("a\u{a0}b\u{2003}c\u{3000}d\u{1680}e\tf", 6),
+            ("one\u{85}two\u{2028}three\u{2029}four", 4),
+            // Neither is a space, so each joins its neighbours.
+            ("x\u{feff}y z\u{200b}w", 2),
+            ("Ελληνικά слова 漢字です עברית", 4),
+            ("a{b}c&d_e^f~g", 7),
+            // Maths is no prose.
+            ("a{b}c$d$e", 4),
+            // What \cite takes is no prose either.
+            ("\\textbf{bold} \\cite[p. 3]{key} 42 -- ...", 1),
+            ("kept % dropped words", 1),
+            ("50\\% off % gone", 1),
+            ("%all comment", 0),
+        ];
+        for (line, expected) in cases {
+            assert_eq!(prose::words(line, |_, _, _| {}), expected, "{line:?}");
+        }
+    }
+
     /// Headings and words, of one file's text.
     #[test]
     fn a_file_reads_as_its_outline_and_words() {

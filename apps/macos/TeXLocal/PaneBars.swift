@@ -28,9 +28,7 @@ struct SearchField: NSViewRepresentable {
 
         init(_ field: SearchField) { self.field = field }
 
-        @objc func changed(_ sender: NSSearchField) {
-            if field.text != sender.stringValue { field.text = sender.stringValue }
-        }
+        @objc func changed(_ sender: NSSearchField) { if field.text != sender.stringValue { field.text = sender.stringValue } }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             // Let the input method commit or cancel marked text before the find bar treats Return and Escape as navigation commands.
@@ -174,9 +172,7 @@ final class InPlaceRename<ID: Hashable> {
     }
 }
 
-struct ItemActions {
-    let rename, showInFinder, moveToTrash: () -> Void
-}
+struct ItemActions { let rename, showInFinder, moveToTrash: () -> Void }
 
 /// All three have an icon, as a group has icons for all its items or none (HIG, Menus); "folder" stands for Show in Finder's file-system location.
 struct ItemMenuItems: View {

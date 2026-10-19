@@ -79,7 +79,9 @@ impl Export<'_> {
         if is_litter(&name) {
             return Ok(());
         }
-        if prefix.is_empty() && (name.eq_ignore_ascii_case(BUILD_DIR) || name == SETTINGS_FILE) {
+        if prefix.is_empty()
+            && (name.eq_ignore_ascii_case(BUILD_DIR) || name.eq_ignore_ascii_case(SETTINGS_FILE))
+        {
             return Ok(());
         }
         let rel = if prefix.is_empty() {

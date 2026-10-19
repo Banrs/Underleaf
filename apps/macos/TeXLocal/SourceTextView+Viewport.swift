@@ -56,7 +56,7 @@ extension SourceTextView {
     /// 27.2: AppKit's Jump to Selection lands lines off where TextKit 2 has only estimated the heights above.
     override func centerSelectionInVisibleArea(_ sender: Any?) {
         guard let clip = enclosingScrollView?.contentView, let manager = textLayoutManager,
-              let location = textRange(NSRange(location: selectedRange().location, length: 0))?.location
+              let location = textRange(.caret(selectedRange().location))?.location
         else { return super.centerSelectionInVisibleArea(sender) }
         // The shown text's middle, under the clip view's top.
         let middle = shownRect.midY - clip.bounds.minY
@@ -86,7 +86,7 @@ extension SourceTextView {
     }
 
     func scroll(toShownTop top: (offset: Int, below: CGFloat)) {
-        guard let location = textRange(NSRange(location: min(top.offset, text.length), length: 0))?.location else { return }
+        guard let location = textRange(.caret(min(top.offset, text.length)))?.location else { return }
         scroll(location) { $0.minY - top.below }
     }
 
@@ -131,6 +131,9 @@ extension SourceTextView {
     /// Each time TextKit lays out the viewport: a scroll past what it had laid out, an edit, a new width.
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
+        // 27.2: until a scroll prepares content, as after a launch or a resize, TextKit's content view ends where the scroll
+        // view's insets start, so the lines it lays out under the status bar aren't drawn there.
+        if !visibleRect.isEmpty, !preparedContentRect.contains(visibleRect) { prepareContent(in: visibleRect) }
         fragments.sort { $0.offset < $1.offset }
         if let from = staleColours { colour(from: from) }
         completions.follow()

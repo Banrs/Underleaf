@@ -40,21 +40,15 @@ final class CompletionList {
     }()
 
     /// A click chooses a row and leaves the keyboard in the document.
-    private final class Surface: NSHostingView<CompletionRowsView> {
-        override var acceptsFirstResponder: Bool { false }
-    }
+    private final class Surface: NSHostingView<CompletionRowsView> { override var acceptsFirstResponder: Bool { false } }
 
     private static let shownRows = 8
     private static let leastWidth: CGFloat = 160
 
-    init(for editor: SourceTextView) {
-        self.editor = editor
-    }
+    init(for editor: SourceTextView) { self.editor = editor }
 
     /// As a key asks: with Settings' completion off, only a list already showing follows the typing.
-    func offer() {
-        if editor.autoComplete || offered != nil { complete(explicit: false) }
-    }
+    func offer() { if editor.autoComplete || offered != nil { complete(explicit: false) } }
 
     /// `explicit` (Escape, or Complete) offers what typing alone wouldn't. None in a read-only editor.
     func complete(explicit: Bool) {
@@ -73,14 +67,10 @@ final class CompletionList {
     }
 
     /// Placed again under what it completes as the text moves, or closed once that is out of sight.
-    func follow() {
-        show(reload: false)
-    }
+    func follow() { show(reload: false) }
 
     /// The chosen row's text in place of what was typed, as one undo step, then its snippet's fields.
-    func accept() {
-        accept(rows.selection)
-    }
+    func accept() { accept(rows.selection) }
 
     private func accept(_ index: Int) {
         let caret = editor.caret
@@ -88,7 +78,7 @@ final class CompletionList {
         let item = offered.items[index]
         close()
         editor.apply([TextEdit(NSRange(location: offered.start, length: caret - offered.start), item.text)], named: String(localized: "Completion"),
-                     selecting: [NSRange(location: offered.start + (item.text as NSString).length, length: 0)])
+                     selecting: [.caret(offered.start + (item.text as NSString).length)])
         editor.startSnippet(item.fields, at: offered.start)
     }
 
@@ -99,18 +89,14 @@ final class CompletionList {
         var start = NSRect.zero, shown = NSRect.zero, host: NSScrollView?
         if let window = editor.window, let scroll = editor.enclosingScrollView {
             host = scroll
-            start = scroll.convert(window.convertFromScreen(
-                editor.firstRect(forCharacterRange: NSRange(location: offered.start, length: 0), actualRange: nil)), from: nil)
+            start = scroll.convert(window.convertFromScreen(editor.firstRect(forCharacterRange: .caret(offered.start), actualRange: nil)), from: nil)
             shown = scroll.convert(editor.shownRect, from: editor)
             guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return close() }
             guard reload else { return place(under: start, in: shown) }
         }
         let count = rows.labels.count
         let font = editor.font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        rows.labels = offered.items.map(\.label)
-        rows.typed = editor.caret - offered.start
-        rows.kind = offered.kind
-        rows.font = font
+        (rows.labels, rows.typed, rows.kind, rows.font) = (offered.items.map(\.label), editor.caret - offered.start, offered.kind, font)
         rows.boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         rows.height = (font.ascender - font.descender + font.leading).rounded(.up) + 8
         rows.selection = 0
@@ -183,9 +169,7 @@ final class CompletionList {
         if shorter { rows.reveal() }
     }
 
-    func contains(_ point: NSPoint) -> Bool {
-        surface.superview != nil && surface.bounds.contains(surface.convert(point, from: nil))
-    }
+    func contains(_ point: NSPoint) -> Bool { surface.superview != nil && surface.bounds.contains(surface.convert(point, from: nil)) }
 
     func move(_ step: Int) {
         guard !rows.labels.isEmpty else { return }
@@ -207,9 +191,7 @@ final class CompletionList {
     /// Counts the times the chosen row is to be scrolled into view.
     private(set) var revealed = 0
 
-    func reveal() {
-        revealed += 1
-    }
+    func reveal() { revealed += 1 }
 }
 
 /// An NSMenu's measures on 27.2: 13 pt corners, rows 5 pt in, the chosen one in the accent with 8 pt corners and white text.

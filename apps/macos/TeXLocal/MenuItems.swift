@@ -8,11 +8,13 @@ struct SectionLevelItems: View {
         // The levels the class has, by name: the numbers are Aa's (`FormatPanel`).
         let styles = project?.headingStyles ?? HeadingStyle.standard
         ForEach(styles, id: \.command) { style in
+            // The run-in levels apart, as in Aa.
             if style == styles.first(where: \.isRunIn) { Divider() }
             Toggle(style.title,
                    isOn: Binding(get: { project?.headingCommand == style.command },
                                  set: { _ in project?.editor.perform(.heading(style.command)) }))
         }
+        .disabled(project?.isLaTeX != true)
     }
 }
 
@@ -20,9 +22,7 @@ struct SectionLevelItems: View {
 struct SymbolItems: View {
     let project: ProjectModel?
 
-    static func columns(_ count: Int) -> Int {
-        [6, 5, 7].first { count % $0 == 0 } ?? 6
-    }
+    static func columns(_ count: Int) -> Int { [6, 5, 7].first { count % $0 == 0 } ?? 6 }
 
     var body: some View {
         ForEach(Menus.shared.symbolGroups, id: \.title) { group in
@@ -42,6 +42,7 @@ struct SymbolItems: View {
                             }
                             .help(symbol.command)
                         }
+                        .disabled(project?.isLaTeX != true)
                     }
                     .controlGroupStyle(.palette)
                 }
@@ -50,28 +51,36 @@ struct SymbolItems: View {
     }
 }
 
+/// Its items dim outside LaTeX, not its submenus (HIG Menus).
 struct MathMenuItems: View {
     let project: ProjectModel?
     var shortcut: KeyboardShortcut?
+    /// The menu bar's follows the source's keyboard (`isEnabledInMenuBar`).
+    var inlineMathEnabled = true
     let inlineMath: () -> Void
 
     var body: some View {
+        let off = project?.isLaTeX != true
         Button(action: inlineMath) {
             Text(MenuCommand.editMath.title)
             Text(verbatim: "$ … $")
         }
         .keyboardShortcut(shortcut)
-        Button { project?.editor.perform(.displayMath) } label: {
-            Text("Display Math")
-            // Verbatim: a string literal is Markdown, where "\\[" is "[".
-            Text(verbatim: "\\[ … \\]")
-        }
-        ForEach(Menus.shared.templates.math, id: \.title) { template in
-            Button { project?.insert(template) } label: {
-                Text(template.title)
-                Text(verbatim: "\\begin{\(template.body)}")
+        .disabled(off || !inlineMathEnabled)
+        Group {
+            Button { project?.editor.perform(.displayMath) } label: {
+                Text("Display Math")
+                // Verbatim: a string literal is Markdown, where "\\[" is "[".
+                Text(verbatim: "\\[ … \\]")
+            }
+            ForEach(Menus.shared.templates.math, id: \.title) { template in
+                Button { project?.insert(template) } label: {
+                    Text(template.title)
+                    Text(verbatim: "\\begin{\(template.body)}")
+                }
             }
         }
+        .disabled(off)
         Section("Symbols") { SymbolItems(project: project) }
     }
 }
@@ -91,6 +100,7 @@ struct InsertMenuItems: View {
         ForEach(templates, id: \.title) { template in
             Button(template.title) { project?.insert(template) }
         }
+        .disabled(project?.isLaTeX != true)
     }
 }
 

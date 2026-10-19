@@ -4,6 +4,11 @@ import PDFKit
 import Testing
 @testable import TeXLocal
 
+private extension SourceTextView.FileDrop {
+    var inserted: String? { if case .insert(let text) = self { text } else { nil } }
+    var opens: (() -> Void)? { if case .open(let open) = self { open } else { nil } }
+}
+
 @Suite(.serialized, .timeLimit(.minutes(2)))
 final class ProjectFlowTests {
     private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects]
@@ -27,16 +32,16 @@ final class ProjectFlowTests {
     }
 
     func project(_ text: String = "text") async throws -> (info: ProjectInfo, folder: URL) {
-        let info = try await Core.shared.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"],
-                                              as: ProjectInfo.self)
-        let folder = Core.libraryFolder.appending(path: info.id)
-        folders.append(folder)
+        let info = try await newProject()
+        folders.append(info.folder)
         try await Core.shared.call("write_file", ["id": info.id, "path": info.mainFile, "text": text])
-        return (info, folder)
+        return (info, info.folder)
     }
 
-    private func opened(_ text: String = "text") async throws -> (project: ProjectModel, folder: URL) {
+    /// Opened with its main file's `text` and the `others` written beside it.
+    private func opened(_ text: String = "text", with others: [String: String] = [:]) async throws -> (project: ProjectModel, folder: URL) {
         let (info, folder) = try await project(text)
+        for (path, other) in others { try await Core.shared.call("write_file", ["id": info.id, "path": path, "text": other]) }
         await app.open(info.id)
         return (try #require(app.project), folder)
     }
@@ -48,6 +53,14 @@ final class ProjectFlowTests {
     }
 
     private func exists(_ url: URL) -> Bool { files.fileExists(atPath: url.path(percentEncoded: false)) }
+
+    /// The window's, which groups only where a test says.
+    private func windowUndo() -> UndoManager {
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        app.undoSource = { undo }
+        return undo
+    }
 
     /// The session builds on a thread of its own, and says when it's done.
     private func built(_ project: ProjectModel, auto: Bool = false) async throws {
@@ -97,23 +110,17 @@ final class ProjectFlowTests {
             #expect(project.openPath == to && project.editor.path == to)
             #expect(project.editor.textView.document.text == expected)
             #expect(try String(contentsOf: folder.appending(path: to), encoding: .utf8) == expected)
-            #expect(!exists(folder.appending(path: from)))
-            #expect(project.diskConflict == nil && project.missingFile == nil)
+            #expect(!exists(folder.appending(path: from)) && project.diskConflict == nil && project.missingFile == nil)
         }
         #expect(app.alert == nil)
         await app.close()
     }
 
     @Test func aFileRenameCanBeUndoneAndRedone() async throws {
-        let undo = UndoManager()
-        undo.groupsByEvent = false
-        app.undoSource = { undo }
-        let (project, folder) = try await opened()
+        let undo = windowUndo(), (project, folder) = try await opened()
         #expect(project.settings?.mainFile == "main.tex")
 
-        undo.beginUndoGrouping()
-        await project.renameEntry("main.tex", to: "thesis.tex")
-        undo.endUndoGrouping()
+        await undo.grouping { await project.renameEntry("main.tex", to: "thesis.tex") }
         #expect(exists(folder.appending(path: "thesis.tex")) && project.settings?.mainFile == "thesis.tex")
         #expect(undo.undoActionName == "Rename")
 
@@ -132,10 +139,9 @@ final class ProjectFlowTests {
         #expect(project.editor.perform(.bold))
         let expected = project.editor.textView.string
         let zip = try await project.exportZip()
-        let unzip = Process()
+        let unzip = Process(), pipe = Pipe()
         unzip.executableURL = URL(filePath: "/usr/bin/unzip")
         unzip.arguments = ["-p", zip.path(percentEncoded: false), try #require(project.openPath)]
-        let pipe = Pipe()
         unzip.standardOutput = pipe
         try unzip.run()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -212,10 +218,8 @@ final class ProjectFlowTests {
         let folder = files.temporaryDirectory.appending(path: "texpresso-\(UUID().uuidString)")
         try files.createDirectory(at: folder, withIntermediateDirectories: true)
         folders.append(folder)
-        let page = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
-        page.string = "live"
         let pdf = folder.appending(path: "live.pdf")
-        try page.dataWithPDF(inside: page.bounds).write(to: pdf)
+        try #require(try textPDF(["live"]).dataRepresentation()).write(to: pdf)
         let script = folder.appending(path: "texpresso")
         try """
         #!/bin/sh
@@ -252,9 +256,7 @@ final class ProjectFlowTests {
         let shown = project.pdf.shownVersion
         project.panel.tab = .issues
         try await built(project)
-        #expect(project.result?.ok == true && project.result?.pdfChanged == false)
-        #expect(project.pdf.shownVersion == shown)
-        #expect(project.panel.shown)
+        #expect(project.result?.ok == true && project.result?.pdfChanged == false && project.pdf.shownVersion == shown && project.panel.shown)
         await app.close()
     }
 
@@ -278,16 +280,10 @@ final class ProjectFlowTests {
     }
 
     @Test func theOutlineReadsTheInputs() async throws {
-        let (info, folder) = try await project("\\section{Intro}\nOne two\n\\include{chapters/a}")
-        try files.createDirectory(at: folder.appending(path: "chapters"), withIntermediateDirectories: false)
-        try "\\section{A}\nthree".write(to: folder.appending(path: "chapters/a.tex"), atomically: false, encoding: .utf8)
-        await app.open(info.id)
-        let project = try #require(app.project)
-        #expect(project.initialLoadComplete)
-        #expect(project.outline.count == 2)
-        #expect(project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
+        let project = try await opened("\\section{Intro}\nOne two\n\\include{chapters/a}",
+                                       with: ["chapters/a.tex": "\\section{A}\nthree"]).project
         // Prose only: the headings' titles and the text, not \include's file name.
-        #expect(project.words == 5)
+        #expect(project.initialLoadComplete && project.outline.map(\.file) == ["main.tex", "chapters/a.tex"] && project.words == 5)
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
         #expect(project.headingCommand == "section")
@@ -296,10 +292,8 @@ final class ProjectFlowTests {
 
     /// The levels are those of the class the main file names outside comments, at its type size, whichever file shows.
     @Test func theLevelsAreTheMainFilesClasses() async throws {
-        let (info, folder) = try await project("% \\documentclass{article}\n\\documentclass[11pt]{report}\n\\include{a}")
-        try "\\section{A}\nthree".write(to: folder.appending(path: "a.tex"), atomically: false, encoding: .utf8)
-        await app.open(info.id)
-        let project = try #require(app.project)
+        let project = try await opened("% \\documentclass{article}\n\\documentclass[11pt]{report}\n\\include{a}",
+                                       with: ["a.tex": "\\section{A}\nthree"]).project
         let reports = { project.headingStyles.contains { $0.command == "chapter" } }
         try await waitUntil(reports)
         project.reveal(project.outline[0])
@@ -356,16 +350,11 @@ final class ProjectFlowTests {
     }
 
     @Test func aClosedProjectsTrashCannotBeUndone() async throws {
-        let undo = UndoManager()
-        undo.groupsByEvent = false
-        app.undoSource = { undo }
-        let (project, folder) = try await opened()
+        let undo = windowUndo(), (project, folder) = try await opened()
         let notes = folder.appending(path: "notes.tex")
         try "notes".write(to: notes, atomically: false, encoding: .utf8)
 
-        undo.beginUndoGrouping()
-        await project.deleteEntry("notes.tex")
-        undo.endUndoGrouping()
+        await undo.grouping { await project.deleteEntry("notes.tex") }
         #expect(!exists(notes) && undo.undoActionName == "Move to Trash")
         // Back from the Trash, which is left as it was; the Redo is the item's too.
         undo.undo()
@@ -376,16 +365,11 @@ final class ProjectFlowTests {
     }
 
     @Test func aRenameOnHomeCannotBeUndoneUnderAProject() async throws {
-        let undo = UndoManager()
-        undo.groupsByEvent = false
-        app.undoSource = { undo }
-        let info = try await project().info
+        let undo = windowUndo(), info = try await project().info
         let renamed = "Renamed \(UUID().uuidString.prefix(8))"
         folders.append(Core.libraryFolder.appending(path: renamed))
 
-        undo.beginUndoGrouping()
-        await app.rename(info, to: renamed)
-        undo.endUndoGrouping()
+        await undo.grouping { await app.rename(info, to: renamed) }
         #expect(undo.canUndo && undo.undoActionName == "Rename")
         await app.open(renamed)
         #expect(app.project?.id == renamed && !undo.canUndo)
@@ -394,22 +378,13 @@ final class ProjectFlowTests {
 
     @Test func aDroppedFileOpens() async throws {
         let (project, folder) = try await opened()
-        let notes = folder.appending(path: "notes.tex")
+        let notes = folder.appending(path: "notes.tex"), plot = folder.appending(path: "plot.png")
         try "notes".write(to: notes, atomically: false, encoding: .utf8)
-        try await waitUntil(timeout: .seconds(5)) { project.tree.nodes.flattened.contains { $0.path == "notes.tex" } }
-        let drop = project.editor.textView.fileDrop
-
-        let plot = folder.appending(path: "plot.png")
         try Data().write(to: plot)
-        try await waitUntil(timeout: .seconds(5)) { project.tree.nodes.flattened.contains { $0.path == "plot.png" } }
-        guard case .insert("\\includegraphics{plot.png}") = drop(plot) else {
-            Issue.record("An image dropped on LaTeX is a figure")
-            return
-        }
-        guard case .open(let openNotes) = drop(notes) else {
-            Issue.record("A text file dropped on the source opens")
-            return
-        }
+        try await waitUntil(timeout: .seconds(5)) { Set(project.tree.nodes.flattened.map(\.path)).isSuperset(of: ["notes.tex", "plot.png"]) }
+        let drop = project.editor.textView.fileDrop
+        #expect(drop(plot)?.inserted == "\\includegraphics{plot.png}", "An image dropped on LaTeX is a figure")
+        let openNotes = try #require(drop(notes)?.opens, "A text file dropped on the source opens")
         openNotes()
         try await waitUntil(timeout: .seconds(5)) { project.openPath == "notes.tex" }
         #expect(drop(files.temporaryDirectory.appending(path: "outside.tex")) == nil)
@@ -495,8 +470,7 @@ final class ProjectFlowTests {
     }
 
     @Test func aSearchListsItsHitsByFile() async throws {
-        let project = try await opened("needle\nhay\nNeedle").project
-        try await Core.shared.call("write_file", ["id": project.id, "path": "appendix.tex", "text": "a needle"])
+        let project = try await opened("needle\nhay\nNeedle", with: ["appendix.tex": "a needle"]).project
         project.search.query = "needle"
         await project.search.run()
         #expect(project.search.hitCount == 3 && project.search.failure == nil)
@@ -525,8 +499,7 @@ final class ProjectFlowTests {
 
     /// The rename's answer has the state the core moved, written before the rename asked for it.
     @Test func anOpenFolderStaysOpenUnderItsNewName() async throws {
-        let project = try await opened().project
-        try await Core.shared.call("write_file", ["id": project.id, "path": "ch/a.tex", "text": ""])
+        let project = try await opened(with: ["ch/a.tex": ""]).project
         project.expandedFolders = ["ch"]
         await project.renameEntry("ch", to: "chapters")
         #expect(project.expandedFolders == ["chapters"])

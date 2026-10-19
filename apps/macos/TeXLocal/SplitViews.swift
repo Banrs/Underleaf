@@ -28,10 +28,7 @@ extension NSView {
             return true
         }
         // Crossing the overlap need not enter a new pane tracking area: return a lingering resize cursor to the real hit view.
-        if NSCursor.isResizingColumn {
-            if hit is NSTextView || hit is NSTextField { NSCursor.iBeam.set() }
-            else { NSCursor.arrow.set() }
-        }
+        if NSCursor.isResizingColumn { (hit is NSTextView || hit is NSTextField ? NSCursor.iBeam : .arrow).set() }
         return false
     }
 }
@@ -46,6 +43,8 @@ extension NSCursor {
 /// and `loaded` puts back what the models say.
 class SplitViewController: NSSplitViewController {
     var loaded: () -> Void = {}
+    /// Where a divider also takes drags, over the panes' own views: the split hit-tests it before them.
+    var grip: (_ divider: Int) -> NSRect = { _ in .zero }
 
     init(splitView: NSSplitView = NSSplitView(), isVertical: Bool = true) {
         super.init(nibName: nil, bundle: nil)
@@ -60,6 +59,11 @@ class SplitViewController: NSSplitViewController {
         super.viewDidLoad()
         loaded()
     }
+
+    override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
+        let rect = super.splitView(splitView, additionalEffectiveRectOfDividerAt: dividerIndex)
+        return grip(dividerIndex).isEmpty ? rect : grip(dividerIndex)
+    }
 }
 
 /// Files over the File Outline. The files' scroll-edge hairline over the outline's header stands for the divider: AppKit has
@@ -67,13 +71,9 @@ class SplitViewController: NSSplitViewController {
 final class SidebarSplitViewController: SplitViewController {
     weak var header: NSSplitViewItemAccessoryViewController?
 
-    private final class SplitView: NSSplitView {
-        override func drawDivider(in rect: NSRect) {}
-    }
+    private final class SplitView: NSSplitView { override func drawDivider(in rect: NSRect) {} }
 
-    init() {
-        super.init(splitView: SplitView(), isVertical: false)
-    }
+    init() { super.init(splitView: SplitView(), isVertical: false) }
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -89,12 +89,10 @@ final class SidebarSplitViewController: SplitViewController {
     }
 }
 
-/// The source|PDF divider stops short of the status bar across both panes, and the line over it, at its foot: a split
-/// view is flipped.
+/// The source|PDF divider stops short of the status bar across both panes, whose line is AppKit's scroll edge's, at its
+/// foot: a split view is flipped.
 final class ColumnsSplitView: NSSplitView {
     override func drawDivider(in rect: NSRect) {
-        var shown = rect
-        shown.size.height -= BarMetrics.height + BarMetrics.line
-        super.drawDivider(in: shown)
+        super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
     }
 }

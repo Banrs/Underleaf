@@ -63,6 +63,12 @@ final class WorkspaceController: SplitViewController {
             follow(sidebarItem) { [unowned self] in app.sideColumn(.sidebar, shown: $0, byWindow: foldedByWindow) },
             follow(inspectorItem) { [unowned self] in app.sideColumn(.inspector, shown: $0, byWindow: foldedByWindow) },
             follow(pdfItem) { [unowned self] _ in fitArea() },
+            // A drag on the status bar's line opens or closes it without the model's asking; the autosave's restore at load
+            // doesn't count.
+            follow(panelItem) { [unowned self] shown in
+                guard [.leftMouseDragged, .leftMouseUp].contains(NSApp.currentEvent?.type), project.panel.shown != shown else { return }
+                project.panel.shown = shown
+            },
         ]
         fitArea()
     }
@@ -133,6 +139,9 @@ final class WorkspaceController: SplitViewController {
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: panelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
         panelItem.holdingPriority = .defaultLow + 1
+        // As Xcode's debug area: dragged under its least height from the status bar's line it closes, and dragged up from
+        // there it opens.
+        panelItem.canCollapse = true
 
         let columnsItem = NSSplitViewItem(viewController: columns)
         columnsItem.minimumThickness = ColumnMetrics.columnsMinimum
@@ -140,22 +149,31 @@ final class WorkspaceController: SplitViewController {
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         area.loaded = { [unowned self] in if !project.panel.shown { panelItem.isCollapsed = true } }
+        // The panel resizes from the status bar's line, as Xcode's debug area does from its bar's, and opens from there while
+        // shut. A split view is flipped, and a thin divider takes presses 2 pt either side of its line.
+        area.grip = { [unowned area] _ in
+            let split = area.splitView, line = split.arrangedSubviews[0].frame.maxY - BarMetrics.height
+            return NSRect(x: 0, y: line - 2, width: split.bounds.width, height: split.dividerThickness + 4)
+        }
 
         areaItem = NSSplitViewItem(viewController: area)
         addSplitViewItem(areaItem)
     }
 
     /// The editors' one bar, across both panes at the columns' foot: their text and the PDF's pages scroll on beneath it,
-    /// and it rides up with them as the panel opens. Each pane has an empty accessory of the bar's height, for its safe
-    /// area, its scrollers and the system's scroll edge under the bar.
+    /// and it rides up with them as the panel opens. Each pane has an empty bottom accessory of the bar's height with
+    /// AppKit's hard scroll edge, as Xcode's editor bar has: the ground, its line and what shows through are AppKit's, and
+    /// the bar lies over both. 27.2: one accessory across the columns gave its edge to one pane's scroll view only, about
+    /// half the launches.
     private func buildStatusBar() {
-        let height = BarMetrics.height + BarMetrics.line
         for item in [sourceItem!, pdfItem!] {
             let space = NSSplitViewItemAccessoryViewController()
             space.view = NSView()
-            space.view.heightAnchor.constraint(equalToConstant: height).isActive = true
+            space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
             // 27.2: AppKit's insets would pad it, and the pane's safe area with it.
             space.automaticallyAppliesContentInsets = false
+            // A bar of text and controls: even over its whole height, as under Xcode's editor bar.
+            space.preferredScrollEdgeEffectStyle = .hard
             item.addBottomAlignedAccessoryViewController(space)
         }
         let bar = NSHostingView(rootView: root(StatusBar(project: project)))
@@ -166,7 +184,7 @@ final class WorkspaceController: SplitViewController {
             bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
             bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
-            bar.heightAnchor.constraint(equalToConstant: height),
+            bar.heightAnchor.constraint(equalToConstant: BarMetrics.height),
         ])
     }
 
@@ -178,13 +196,8 @@ final class WorkspaceController: SplitViewController {
     }
 
     /// The toolbar's toggles go through the model, as the menu's do.
-    override func toggleSidebar(_ sender: Any?) {
-        app.sidebarShown.toggle()
-    }
-
-    override func toggleInspector(_ sender: Any?) {
-        app.inspectorShown.toggle()
-    }
+    override func toggleSidebar(_ sender: Any?) { app.sidebarShown.toggle() }
+    override func toggleInspector(_ sender: Any?) { app.inspectorShown.toggle() }
 
     /// SwiftUI whose sizes stay out of Auto Layout, so the split item's limits size it and its content never sets the
     /// window's minimum.
@@ -222,9 +235,7 @@ final class WorkspaceController: SplitViewController {
         outlineBar.preferredScrollEdgeEffectStyle = .soft
     }
 
-    private func outlineBarHeight(folded: Bool) -> CGFloat {
-        folded ? BarMetrics.height : OutlineHeader.openHeight
-    }
+    private func outlineBarHeight(folded: Bool) -> CGFloat { folded ? BarMetrics.height : OutlineHeader.openHeight }
 
     private func accessory(_ content: some View, hidden: Bool = false) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
@@ -330,9 +341,7 @@ final class WorkspaceController: SplitViewController {
         setCollapsed(panelItem, !shown)
     }
 
-    private var animates: Bool {
-        view.window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-    }
+    private var animates: Bool { view.window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     private func focusField(_ field: FieldHandle, in accessory: NSSplitViewItemAccessoryViewController) {
         if field.field == nil { accessory.view.layoutSubtreeIfNeeded() }
@@ -386,7 +395,5 @@ private struct WorkspaceContent<Content: View>: View {
     let project: ProjectModel
     let content: Content
 
-    var body: some View {
-        content.disabled(project.closed)
-    }
+    var body: some View { content.disabled(project.closed) }
 }

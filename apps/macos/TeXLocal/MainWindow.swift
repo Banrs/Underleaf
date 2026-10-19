@@ -112,13 +112,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     // MARK: - Window
 
-    func windowDidBecomeKey(_ notification: Notification) {
-        app.mainWindowIsKey = true
-    }
-
-    func windowDidResignKey(_ notification: Notification) {
-        app.mainWindowIsKey = false
-    }
+    func windowDidBecomeKey(_ notification: Notification) { app.mainWindowIsKey = true }
+    func windowDidResignKey(_ notification: Notification) { app.mainWindowIsKey = false }
 
     // MARK: - Find
 
@@ -128,9 +123,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         return findEditor
     }
 
-    @objc func performFindPanelAction(_ sender: Any?) {
-        findAction(for: sender)?()
-    }
+    @objc func performFindPanelAction(_ sender: Any?) { findAction(for: sender)?() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
@@ -177,9 +170,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         return (window?.firstResponder as? NSView)?.isDescendant(of: pdf.view) == true
     }
 
-    override func centerSelectionInVisibleArea(_ sender: Any?) {
-        workspace?.pdf.view.jumpToSelection()
-    }
+    override func centerSelectionInVisibleArea(_ sender: Any?) { workspace?.pdf.view.jumpToSelection() }
 
     /// Answered here only while the PDF's pages have the keyboard. Elsewhere it stays unanswered: its menu item is off, and its key
     /// binding (⌃L) falls off the responder chain, where NSResponder beeps (27.2) and a controller that always answered would take it in silence.
@@ -211,10 +202,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private static let workspaceKey = "workspace"
 }
 
-private nonisolated struct OpenFile: Equatable {
-    let path: String?
-    let url: URL?
-}
+private nonisolated struct OpenFile: Equatable { let path: String?, url: URL? }
 
 /// The Open panel, the New Project sheet and the app's alerts, and while a workspace shows, its project's sheets and alerts.
 private struct WindowModals: View {
