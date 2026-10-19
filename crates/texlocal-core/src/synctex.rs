@@ -12,23 +12,18 @@ use crate::process::{PROBE_TIMEOUT, run};
 use crate::settings::read_settings;
 use crate::wordmatch::{PdfHit, PdfPage, find_in_pdf, find_in_source};
 
-/// Only `page` is required. The rest are omitted when synctex didn't report
-/// them, because the PDF viewer falls back with `??` — which fires on an
-/// absent field but not on a zero, and a zero-size highlight is invisible.
+/// Only `page` is always given: the rest are null where synctex reported none,
+/// for the host to fall back on rather than draw an invisible zero-size box.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ForwardLoc {
     pub page: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub h: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub v: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub width: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<f64>,
-    /// All matching boxes in reading order. The top-level fields retain the
-    /// CLI's first match for clients that do not refine a word selection.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// All matching boxes in reading order (none in each of them). The
+    /// top-level fields retain the CLI's first match for clients that do not
+    /// refine a word selection.
     pub matches: Vec<Self>,
 }
 
@@ -38,7 +33,6 @@ pub struct InverseLoc {
     pub line: u32,
     /// The clicked letter's place in the line, in UTF-16 units (the hosts'
     /// strings), when the host sent the page text and the word was found.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub column: Option<u32>,
 }
 
