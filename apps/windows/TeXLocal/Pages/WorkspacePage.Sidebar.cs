@@ -47,6 +47,7 @@ public sealed partial class WorkspacePage
     bool fileUnshown;
     Analysis? analysis;
     NavItem? caretHeading;
+    Task foldsSaved = Task.CompletedTask;
 
     TreeView[] SideTrees => [FilesTree, OutlineTree, ResultsTree];
     TreeNode? Picked => (FilesTree.SelectedItem as NavItem)?.Target as TreeNode;
@@ -156,7 +157,7 @@ public sealed partial class WorkspacePage
         if (changed) SaveFolds();
     }
 
-    void SaveFolds() => _ = Core.CallAsync("set_ui_state", new { id, patch = new { expandedFolders = expanded.Order(), foldedHeadings = folded.Order() } });
+    void SaveFolds() => foldsSaved = Core.CallAsync("set_ui_state", new { id, patch = new { expandedFolders = expanded.Order(), foldedHeadings = folded.Order() } });
 
     /// The project's UI state: as it opens, and after a rename, which moves the entry's paths.
     void ReadFolds(JsonElement ui)
@@ -316,6 +317,9 @@ public sealed partial class WorkspacePage
     void Rename(TreeNode node, FrameworkElement row) => rename.Show(row, node.Name, async name =>
     {
         var to = Join(ParentOf(node.Path), name);
+        // The core takes a session's service commands in no set order, and the rename moves the folds this wrote; a
+        // write that failed doesn't stop it.
+        await Task.WhenAny(foldsSaved);
         if (await Core.CallAsync("session_rename", new { session, from = node.Path, to }) is { ValueKind: JsonValueKind.Object } renamed)
         {
             mainFile = MainFile(renamed);
