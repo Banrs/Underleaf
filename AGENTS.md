@@ -51,16 +51,12 @@ popovers, Settings and Home are SwiftUI.
 - **Source**: one TextKit 2 `NSTextView` (`SourceTextView`) shared across files, never
   touching `layoutManager`. Issues sit on their lines as in Xcode (numbers-only gutter, a box
   at the line's end); the measures come from the system font's metrics. Syntax colours are
-  rendering attributes, which 27.2 doesn't redraw on fragments already shown: each fragment
-  keeps the runs it was last coloured with, and a recolouring redraws the edited fragment and
-  those whose runs changed, not every line on screen.
+  rendering attributes, and a recolouring redraws only the fragments whose runs changed.
 - **Status bar and build panel**: one bar across source and PDF at the system's spacing, as
   Xcode's editor bar: each pane has an empty bottom accessory of the bar's height
   (`BarMetrics.height`) with AppKit's hard scroll edge, whose ground and line are the bar's and
-  which text and pages scroll through; the File Outline's header is level with its line. Until a
-  scroll prepares content, TextKit's content view ends at the scroll view's insets, so the source
-  prepares its visible rect after each viewport layout (27.2). Not Saved after a failed save, and
-  a failed autosave is told once in an alert, as NSDocument's are. The build panel opens below
+  which text and pages scroll through; the File Outline's header is level with its line. Not
+  Saved after a failed save, and a failed autosave is told once in an alert, as NSDocument's are. The build panel opens below
   the columns with a console-style bar (Issues, Build Log, Live Preview Log, Warnings, a
   filter); it resizes from the status bar's line and is dragged open and shut there, as Xcode's
   debug area (`area.grip`, an additional effective rect; the panel's `canCollapse`).
@@ -75,18 +71,17 @@ popovers, Settings and Home are SwiftUI.
   (`Core.observe`), so none of its events can come before the app listens. Commands go
   through `tl_call_async` and are awaited, so no thread waits on the core; a session takes
   them in the order sent. Events are decoded on the core's thread and reach their session's
-  `ProjectModel` on the main actor in order. `ProjectModel` is split by concern:
-  `ProjectModel.swift` (state, events, editing, outline, conflicts, settings),
-  `+Build`, `+Live` (live preview and SyncTeX), `+Files`, and `SessionEvents.swift`. The
-  sidebar's open folders and folded headings are the project's settings (`get_ui_state`,
-  `set_ui_state`, and a rename's answer), not UserDefaults.
+  `ProjectModel` on the main actor in order. `ProjectModel` is split by concern (`+Build`,
+  `+Live`, `+Files`, `SessionEvents.swift`). The sidebar's open folders and folded headings are
+  the project's settings (`session_open`'s `ui`, `set_ui_state`, a rename's answer), not
+  UserDefaults.
 - **Editor logic is the core's**: each key asks the source (`tl_source_call`: `type`,
   `delete_backward`, `insert_newline`) for the edit to type instead; each storage edit is
   told back once (`tl_source_edit`, which also answers a snippet's mirror edits) and each
   selection too (`tl_source_select`). The text comes from `tl_source_text`, and what
-  spelling and Writing Tools skip from `code_ranges`. Command edits, theme colours, the menu
-  catalogue and maths SVG come from `tl_syntax_call` (`Syntax`). The maths preview is set at
-  1.21 times the text.
+  spelling and Writing Tools skip from `code_ranges`. Command edits are the source's too
+  (`toggle_style`, `wrap`, `set_heading`, …); theme colours, the menu catalogue and maths SVG
+  come from `tl_syntax_call` (`Syntax`). The maths preview is set at 1.21 times the text.
 - **Other helpers are the core's**: SyncTeX finds the word (`synctex_match`,
   `synctex_inverse`); `session_analyze` gives the outline's tree with its fold keys, the
   word count and the main file's heading styles, and `session_outline_current` the heading
@@ -113,12 +108,24 @@ popovers, Settings and Home are SwiftUI.
   subject. The verb is Compile, and a run and its result are a build. Interface spelling is
   British (Colours) except LaTeX's own terms (Math).
 - **Home** is the start screen, as Word's gallery and Overleaf's project list: template
-  cards and recent projects. The Mac and Windows apps should look and work alike.
+  cards and every project in the library (recent ones are in Open Recent and the Dock menu).
+  The Mac and Windows apps should look and work alike.
 - **Builds** follow Overleaf and IDEs: they run past errors with every issue listed, a
   project can Stop on First Error, and a pause in typing saves and compiles.
 
 Platform quirks met on the way (27.2) are in the code's comments where they're handled; one
 without a capture of its bug on the current OS is a candidate for removal.
+
+## Writing code
+
+Agents' code runs long and erodes with each change (SlopCodeBench, arXiv 2603.24755), and
+human code erodes more slowly. So keep a change to what it needs:
+- Delete before adding. Reuse what exists (grep first). A new helper, option or type needs two
+  callers.
+- No checks for states that can't happen, no wrappers that only forward, no single-use variables.
+- Comments say why, never what, nor what the code used to do.
+- Before committing, read the whole diff and remove what the change doesn't need.
+- Test each rule once, deterministically, at one level.
 
 ## Testing
 
@@ -164,7 +171,12 @@ what is there, and points the Start menu's TeXLocal shortcut at it.
 - Not watched on screen since the live preview's rewrite: a restart after TeXpresso exits,
   and a quick Stop and Start.
 - The Windows app is not finished (no live preview yet); it follows `docs/core-api.md` and is
-  ported to its "Changes for hosts (October 2026)".
+  ported to its "Changes for hosts (October 2026)". `docs/audit-2026-10.md` lists what it lacks
+  against the Mac, surface by surface, and why. Its shell redesign (`claude/windows-fluent`) is
+  not merged.
+- The Mac still calls the core on the main thread (`Core.now`) for `locate` while files are
+  dragged over the editor or the tree, and for `kill_all` at quit; core-api.md allows only
+  `session_outline_current` there.
 - Measured on the 400-page test document (2026-10-18), not yet improved: a build's PDF shown in
   place costs the main thread about 0.7 s, mostly PDFKit relaying out its view per inserted and
   removed page (quadratic in the page count; a 20-page document is a few milliseconds); a SyncTeX

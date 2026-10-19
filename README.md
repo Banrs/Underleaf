@@ -3,9 +3,9 @@
 A fully offline LaTeX editor — an Overleaf alternative that runs entirely on your machine. No accounts, no cloud, no network needed.
 
 > **Naming:** the repo and project are **Underleaf**; the app presents as
-> **TeXLocal**, and the on-disk contract keeps that name — the `texlocal://`
-> scheme, `~/TeXLocal` projects, `.texlocal.json` settings, and `TEXLOCAL_DATA`
-> — so existing installs and projects keep working.
+> **TeXLocal**, and the on-disk contract keeps that name — `~/TeXLocal`
+> projects, `.texlocal.json` settings, and `TEXLOCAL_DATA` — so existing
+> installs and projects keep working.
 
 One Rust core, thin native hosts:
 
@@ -33,10 +33,10 @@ You also need a TeX distribution — see [Requirements](#requirements).
 
 ## Features
 
-- **Projects** with templates (Article, Report, Beamer, Blank); the Mac app also opens a
+- **Projects** with templates (Blank, Article, Report, Presentation); the Mac app also opens a
   folder, a `.zip` or a `.tex` from anywhere as a new project
 - **File tree** with folders, rename/delete, drag-and-drop import (a name that's taken asks
-  Replace / Keep Both / Stop), ZIP export; deletes go to the Trash
+  Keep Both, Replace or Cancel), ZIP export; deletes go to the Trash
 - **LaTeX editor**: autocomplete for ~140 commands and ~40 environments, `\cite{}`
   completion from your `.bib` files and `\ref{}` completion from your `\label{}`s, closing
   brackets and snippets, and Overleaf, TeXstudio and System syntax colours. The stock find
@@ -49,13 +49,14 @@ You also need a TeX distribution — see [Requirements](#requirements).
   Export as PDF… and Export Project as ZIP…, Go has Go to Line, Go to Page, Go to PDF
   Position, Go to Source Position and Go to Next and Previous Issue, and Compile has Clean
   Build Folder
-- **Auto-compile**: save-on-pause triggers a recompile; superseded runs are cancelled
+- **Auto-compile**: save-on-pause triggers a recompile; one asked for during a build runs
+  after it
 - **Live Preview** (optional, experimental): sends unsaved edits to a persistent
   TeXpresso process; with [Underleaf's patch](tools/texpresso/) the Mac app shows the live
   document in its PDF pane, or TeXpresso's own window. Normal PDF builds stay available. See
   [docs/texpresso.md](docs/texpresso.md).
-- **File outline** at the sidebar's foot that follows the section on screen, plus word and
-  line counts
+- **File outline** at the sidebar's foot that follows the section on screen, plus a word
+  count
 - **Project-wide search** with highlighted matches
 - **Compile** with latexmk — pdfLaTeX / XeLaTeX / LuaLaTeX, automatic BibTeX/biber reruns.
   Builds carry on past errors, as Overleaf's do, so the PDF shows with every error listed;
@@ -63,19 +64,19 @@ You also need a TeX distribution — see [Requirements](#requirements).
   stopped
 - **Issues and log**: parsed errors and warnings sit on their lines in the source and click
   through to the panel; raw log view
-- **PDF preview**: pinch or ⌘-scroll zoom, fit width/height, page tracking, **Find in PDF**
+- **PDF preview**: pinch zoom, fit width or page, page tracking, **Find in PDF** (Mac)
 - **SyncTeX both ways**, to the word
 - **One command model** for menus, shortcuts and toolbar buttons. The Mac app's main
   shortcuts: ⇧⌘N new project, ⌘N new file, ⌘S save, ⌘Return compile, ⌘. stop, ⇧⌘K clean
   build folder, ⇧⌘F find in the project, ⌘L go to line, ⌥⌘G go to page, ⌥⌘J go to PDF
   position, ⌘' and ⌘" next and previous issue, ⌃⌘S sidebar, ⌥⌘P PDF, ⌥⌘I inspector, ⇧⌘Y
   build panel
-- **Settings** (`⌘,`): five panes. General has the projects folder and the template and
+- **Settings** (`⌘,`): four panes. General has the projects folder and the template and
   engine for new projects; Editor has the font, syntax colours, line numbers, closing
   brackets and completions; Compiling has Compile Automatically, jumping to the cursor's
-  place after compiling and the TeX folder; PDF has the page colour (white, dark, or
-  matching the appearance); Live Preview has the TeXpresso folder and where the live
-  document shows. Per project, the TeX engine and Stop on first error
+  place after compiling and the TeX folder; Live Preview has the TeXpresso folder and where
+  the live document shows. Per project (the Mac's inspector): the main file, the TeX engine,
+  shell escape and Stop on first error
 
 ## Requirements
 
@@ -131,10 +132,6 @@ zsh tools/install-mac.sh      # Release build into /Applications/TeXLocal.app
 dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64
 dotnet test apps/windows/TeXLocal.Tests -c Debug
 ```
-
-These are full regression commands. For an individual change, select the affected
-test files or Xcode methods; keep cursor, menu tracking and visual-material checks
-in native UI verification. `AGENTS.md` records the current evidence and limits.
 
 CI (`.github/workflows/ci.yml`) runs Rust (fmt, clippy, tests) on macOS and Windows, the
 Windows app's build, tests and smoke run, and the Mac app's `xcodebuild test` on the
