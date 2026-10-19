@@ -335,7 +335,8 @@ final class ProjectModel {
 
     // MARK: - Editing
 
-    /// After the opens asked for before it; one superseded meanwhile stops, closing the document it opened.
+    /// After the opens asked for before it. One superseded meanwhile stops, closing the document it opened, unless it has
+    /// already closed the file shown: then it shows its own, since the editor never shows a file without its document.
     func open(_ path: String, line: Int? = nil, column: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
         openRequests += 1
         let request = openRequests
@@ -356,7 +357,7 @@ final class ProjectModel {
                 }
                 // Read first and closed last, with nothing awaited between the close and the switch.
                 var shows = latest()
-                if shows, let was = openPath, editsText { shows = await closeDocument(was) && latest() }
+                if shows, let was = openPath, editsText { shows = await closeDocument(was) && !closed }
                 guard shows else {
                     // The session keeps no document the editor doesn't show; a later open of it opens it again.
                     if text, path != openPath, !closed { core.send("session_close_document", ["session": session, "path": path]) }
