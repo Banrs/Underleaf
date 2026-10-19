@@ -46,12 +46,13 @@ the PDF pane, and the log only on a failure. The feature is experimental.
 
 `tools/texpresso/underleaf-pdf.patch` (MIT, like TeXpresso) acts when `TEXPRESSO_PDF_OUTPUT`
 is set, which the core sets unless the window is chosen: TeXpresso then opens no window and
-quits when its input closes.
+quits when its input closes, as the app's pipe does when the app quits or crashes.
 
 - The client says which pages are in view (`["view", first, last]`). A change is typeset as
   far as those, and each page that changed is written at once with MuPDF's PDF writer as a
   one-page PDF beside the document and reported (`["page", index, path, mark]`). TeX's
-  Type 1 fonts are written as CFF copies so PDFKit draws them.
+  Type 1 fonts are written as CFF copies (`src/dvi/type1_cff.c`): MuPDF's writer would embed
+  them as PDF doesn't allow, and PDFKit would draw the wrong glyphs.
 - When typing pauses the rest is typeset and the whole document is written (to a `.part`
   file, renamed when complete) with its SyncTeX beside it (`live.synctex`), reported as
   `["pdf", path, pages, run, changed, mark]`: the pages that changed, and whether TeX
@@ -62,9 +63,11 @@ quits when its input closes.
 - References and contents are brought up to date by finishing passes in a second TeX, which
   takes the first one's place when done and is dropped by a keystroke. TeXpresso's own idle
   reruns stay off.
-- TeX Live's `doc` and `source` folders are left out of the files TeX can read, since a
-  package's example `color.cfg`, `graphics.cfg` or `hyperref.cfg` there would otherwise be
-  found before the real one.
+
+Without the variable it behaves as upstream's but for one change, in `texpresso-xetex` too:
+TeX Live's `doc` and `source` folders are left out of the files TeX can read, since a
+package's example `color.cfg`, `graphics.cfg` or `hyperref.cfg` there would otherwise be
+found before the real one.
 
 Edits go to TeXpresso as the range they replaced; a file's whole text is sent only when it
 is opened, changed by another app, or an edit didn't fit the core's copy. Either way
@@ -88,9 +91,8 @@ in `crates/texlocal-core/src/session/tests.rs`, which run with `cargo test --wor
 
 - Live preview uses XeTeX regardless of the project's engine, so engine-specific documents
   can differ.
-- Upstream's editor protocol has no PDF endpoint; the patch adds it. While the live document
-  shows, PDF↔source navigation uses its own SyncTeX (`live: true, session: <the project
-  session's number>`).
+- While the live document shows, PDF↔source navigation uses its own SyncTeX (`live: true,
+  session: <the project session's number>`).
 - The live document has no links: MuPDF's PDF device carries content and no annotations.
   `hyperref` links work again in a build's PDF.
 - A normal Compile is still needed for final output and bibliography tools; live sessions
