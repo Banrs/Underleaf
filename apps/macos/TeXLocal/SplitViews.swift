@@ -56,6 +56,8 @@ class DraggedSplitView: NSSplitView {
 /// opening position, stops there, with the alignment haptic as it arrives.
 class DetentSplitViewController: NSSplitViewController {
     var loaded: () -> Void = {}
+    /// While a divider is dragged: `setPosition` asks for the same constraint, and a position set in code is where it goes.
+    private var held = false
     var detent: (_ divider: Int) -> CGFloat? = { _ in nil }
     /// A divider that takes no drag, and so shows no resize cursor.
     var fixed: (_ divider: Int) -> Bool = { _ in false }
@@ -68,7 +70,10 @@ class DetentSplitViewController: NSSplitViewController {
         super.init(nibName: nil, bundle: nil)
         splitView.isVertical = isVertical
         splitView.dividerStyle = .thin
-        splitView.dragging = { [unowned self] in dragging($0) }
+        splitView.dragging = { [unowned self] in
+            held = $0
+            dragging($0)
+        }
         self.splitView = splitView
     }
 
@@ -82,7 +87,7 @@ class DetentSplitViewController: NSSplitViewController {
     /// 27.2: NSSplitViewController declares this, as the split's delegate, without implementing it, so there is no super to call.
     override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
                             ofSubviewAt dividerIndex: Int) -> CGFloat {
-        guard let detent = detent(dividerIndex),
+        guard held, let detent = detent(dividerIndex),
               abs(proposedPosition - detent) <= ColumnMetrics.detentReach else { return proposedPosition }
         // Once, as the divider arrives: not on each step of a drag held there.
         let pane = splitView.arrangedSubviews[dividerIndex].frame
