@@ -29,8 +29,7 @@ Without the screen, prefer:
   edges, accent colours) need a fronted, key window: say so first, and keep them short.
 - Foreground scripts source `fg-guard.zsh`, which runs them only after five idle minutes and never alongside
   `xctest.sh`. `when-idle.sh <script>` waits for that.
-- Never use `qa frames` (ScreenCaptureKit raises a prompt only the owner may answer), never answer a system
-  prompt, never run Print in the QA copy (it raises the local-network prompt).
+- Never answer a system prompt, never run Print in the QA copy (it raises the local-network prompt).
 - Several steps that must not interleave with another caller: `qa lock -- ./script.sh`.
 
 ## qa
