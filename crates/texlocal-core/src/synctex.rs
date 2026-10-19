@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::error::CoreError;
 use crate::paths::{safe_path, safe_rel_file, source_rel};
-use crate::process::{PROBE_TIMEOUT, run};
+use crate::process::run;
 use crate::settings::read_settings;
 use crate::wordmatch::{PdfHit, PdfPage, find_in_pdf, find_in_source};
 
@@ -50,7 +50,7 @@ fn pdf_for(root: &Path, live: Option<&Path>) -> Result<PathBuf, CoreError> {
 
 /// What synctex prints for `args` ("view …" or "edit …"), run in the project.
 async fn synctex(root: &Path, args: &[&str], path_env: &str) -> Result<String, CoreError> {
-    match run("synctex", args, Some(root), PROBE_TIMEOUT, path_env).await {
+    match run("synctex", args, Some(root), path_env).await {
         Ok((0, stdout)) => Ok(stdout),
         Ok(_) => Err(CoreError::internal(format!("synctex {} failed", args[0]))),
         // TeX's own program, which a TeX install brings: not a fault to report as one.

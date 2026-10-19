@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::process::{PROBE_TIMEOUT, run};
+use crate::process::run;
 use crate::settings::AppSettings;
 
 /// What `dir` holds; nothing if it can't be read.
@@ -136,7 +136,7 @@ pub struct TexStatus {
 }
 
 pub async fn tex_available(path_env: &str) -> TexStatus {
-    let Ok((0, stdout)) = run("latexmk", &["-version"], None, PROBE_TIMEOUT, path_env).await else {
+    let Ok((0, stdout)) = run("latexmk", &["-version"], None, path_env).await else {
         return TexStatus::default();
     };
     let version = version_line(&stdout);

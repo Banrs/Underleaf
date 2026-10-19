@@ -166,19 +166,18 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R, kept: &mut 
     }
 }
 
-/// Spawn, collect capped output, and kill the whole tree on timeout: the exit
-/// code (-1 for none, as after a timeout) and stdout. An error says why the
-/// program could not start; `NotFound` when it is not on the PATH.
+/// Spawn, collect capped output, and kill the whole tree after `PROBE_TIMEOUT`:
+/// the exit code (-1 for none, as after a timeout) and stdout. An error says
+/// why the program could not start; `NotFound` when it is not on the PATH.
 pub(crate) async fn run(
     program: &str,
     args: &[&str],
     cwd: Option<&Path>,
-    timeout: Duration,
     path_env: &str,
 ) -> std::io::Result<(i32, String)> {
     let mut cmd = command(program, cwd, path_env)?;
     let (mut child, tree) = Tree::spawn(cmd.args(args))?;
-    let (code, stdout, ..) = drive(&mut child, &tree, timeout).await;
+    let (code, stdout, ..) = drive(&mut child, &tree, PROBE_TIMEOUT).await;
     Ok((code, stdout))
 }
 
@@ -245,13 +244,13 @@ mod tests {
 
     #[tokio::test]
     async fn a_program_off_the_path_is_not_found_and_one_that_fails_has_its_code() {
-        let missing = run("no-such-tool", &[], None, PROBE_TIMEOUT, "/nonexistent")
+        let missing = run("no-such-tool", &[], None, "/nonexistent")
             .await
             .unwrap_err();
         assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
         if cfg!(unix) {
             let path = std::env::var("PATH").unwrap();
-            let sh = run("sh", &["-c", "echo 3; exit 3"], None, PROBE_TIMEOUT, &path);
+            let sh = run("sh", &["-c", "echo 3; exit 3"], None, &path);
             assert_eq!(sh.await.unwrap(), (3, "3\n".to_string()));
         }
     }

@@ -436,9 +436,8 @@ mod tests {
         assert_eq!(current_heading(&outline, "a.tex", 100), Some(4));
         assert_eq!(current_heading(&outline, "b.tex", 1), None);
         assert_eq!(current_heading(&outline, "c.tex", 5), None);
-        // The file named in another case is the same one where names fold it.
-        let folded = cfg!(any(target_os = "macos", windows)).then_some(3);
-        assert_eq!(current_heading(&outline, "A.TEX", 9), folded);
+        // Both platforms' volumes fold case, so another spelling is the same file.
+        assert_eq!(current_heading(&outline, "A.TEX", 9), Some(3));
     }
 
     /// A project folder of `files`, each a path and its text.

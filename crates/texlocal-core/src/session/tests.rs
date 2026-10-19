@@ -839,11 +839,8 @@ async fn the_main_file_cant_go_to_the_trash_and_nothing_puts_a_trashed_file_back
         .call("prepare_delete", json!({ "path": "main.tex" }))
         .await;
     assert_eq!(refused.unwrap_err().status, 409);
-    if cfg!(any(target_os = "macos", windows)) {
-        // Spelt as a volume that ignores case finds it.
-        let other_case = rig.call("prepare_delete", json!({ "path": "MAIN.tex" }));
-        assert_eq!(other_case.await.unwrap_err().status, 409);
-    }
+    let other_case = rig.call("prepare_delete", json!({ "path": "MAIN.tex" }));
+    assert_eq!(other_case.await.unwrap_err().status, 409);
     fs::write(rig.root.join("old.tex"), "old").unwrap();
     let doc = rig.open("old.tex").await;
     doc.edit(0, 0, "x");

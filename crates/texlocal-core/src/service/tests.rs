@@ -42,13 +42,7 @@ async fn a_free_project_name_is_the_next_untitled() {
     let next = call(&service, "free_project_name", json!({})).await;
     assert_eq!(next, json!({ "name": "Untitled 2" }));
     let from_taken = call(&service, "free_project_name", json!({ "name": "untitled" })).await;
-    let case_insensitive = cfg!(any(target_os = "macos", windows));
-    let expected = if case_insensitive {
-        "untitled 2"
-    } else {
-        "untitled"
-    };
-    assert_eq!(from_taken["name"], expected);
+    assert_eq!(from_taken["name"], "untitled 2");
     // A new project whose name is taken is numbered past it.
     let args = json!({ "name": "Untitled 3", "template": "blank" });
     let numbered = call(&service, "create_project", args).await;
