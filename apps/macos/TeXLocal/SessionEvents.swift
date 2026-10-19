@@ -46,8 +46,6 @@ nonisolated enum SessionEvent: Sendable {
 
 nonisolated struct SessionOpened: Decodable, Sendable {
     let root: String
-    /// The last build's, if it has one.
-    let pdf: String?
     let tree: [TreeNode]
     let settings: ProjectSettings
     let ui: UIState

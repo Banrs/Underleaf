@@ -31,7 +31,7 @@ struct CoreTests {
         let session = core.observe { events.append($0) }
         defer { core.forget(session) }
         let opened = try await core.call("session_open", ["id": info.id, "session": session], as: SessionOpened.self)
-        #expect(opened.settings.mainFile == info.mainFile && opened.pdf == nil)
+        #expect(opened.settings.mainFile == info.mainFile)
         try await core.call("session_open_document", ["session": session, "path": info.mainFile])
         _ = try await core.call("session_close_document", ["session": session, "path": info.mainFile], as: Closed.self)
         try await waitUntil {
