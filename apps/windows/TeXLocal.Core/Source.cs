@@ -55,15 +55,12 @@ public sealed unsafe class Source : SafeHandleZeroOrMinusOneIsInvalid
         finally { tl_source_free_runs(runs, count); }
     }
 
-    public void Call(string cmd, object args) => tl_free(tl_source_call(handle, cmd, JsonSerializer.Serialize(args, Core.Json)));
-
     /// A document command's answer; default for null or none.
     public T? Call<T>(string cmd, object args) => Parse<T>(tl_source_call(handle, cmd, JsonSerializer.Serialize(args, Core.Json)));
 
-    /// The core's syntax commands that need no document: themes, menus, headings, maths. Any thread.
+    /// Any thread.
     public static T? SyntaxCall<T>(string cmd, object args) => Parse<T>(tl_syntax_call(cmd, JsonSerializer.Serialize(args, Core.Json)));
 
-    /// Reads the core's UTF-8 answer and frees it.
     static T? Parse<T>(nint json)
     {
         if (json == 0) return default;

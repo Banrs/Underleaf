@@ -233,7 +233,7 @@ public sealed partial class SourceView : UserControl
         HidePartner();
         (lastMath, shownMath, dismissedMath) = (null, null, null);
         MathPopup.IsOpen = false;
-        source?.Call("end_snippet", new { });
+        source?.Call<bool>("end_snippet", new { });
         Document.EndUndoGroup();
         (Ink, inked, stale) = (Of(TextInk), ActualTheme, !IsLoaded);
         kinds = SyntaxColors(theme, ActualTheme == ElementTheme.Dark, ((SolidColorBrush)PaperInk.Fill).Color,

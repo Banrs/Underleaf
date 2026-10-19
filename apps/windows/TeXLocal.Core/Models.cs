@@ -16,7 +16,6 @@ public sealed record TreeNode(string Type, string Name, string Path, string? Kin
 public sealed record TexStatus(bool Available, string? Version, string? TexDir, string? Found);
 
 /// <param name="Pdf">The last build's, absolute, if it is on disk.</param>
-/// <param name="Settings">As get_settings.</param>
 /// <param name="Ui">The project's UI state, as set_ui_state patches it.</param>
 public sealed record SessionOpened(ulong Session, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, JsonElement Ui);
 
@@ -78,8 +77,7 @@ public sealed record TextStyles(TextEdit[]? Bold, TextEdit[]? Italic, TextEdit[]
 /// RaTeX's SVG and its size in the points of the size asked for, or why there's none.
 public sealed record MathSvg(string? Svg, double Width, double Height, string? Error);
 
-/// A heading and what nests under it, by its place in the outline read in order; FoldKey names its fold in the
-/// project's UI state.
+/// Index: its place in the outline read in order; FoldKey names its fold in the project's UI state.
 /// <param name="Command">Its sectioning command without the backslash: "section".</param>
 /// <param name="Title">Plain text; untitled, its level's: "Untitled Section".</param>
 public sealed record OutlineNode(int Index, string Command, string Title, bool Untitled, int Line, string? File, string FoldKey,
@@ -88,10 +86,8 @@ public sealed record OutlineNode(int Index, string Command, string Title, bool U
     public IEnumerable<OutlineNode> AndBelow => [this, .. (Children ?? []).SelectMany(c => c.AndBelow)];
 }
 
-/// session_analyze: the outline as a tree, the words, and the levels the main file's class has.
 public sealed record Analysis(OutlineNode[] Tree, int Words, HeadingStyle[] HeadingStyles)
 {
-    /// The headings in reading order.
     public IEnumerable<OutlineNode> Outline => Tree.SelectMany(n => n.AndBelow);
 }
 
@@ -115,5 +111,4 @@ public sealed record MathSymbol(string Command);
 
 public sealed record SymbolGroup(string Title, MathSymbol[] Symbols);
 
-/// The catalogue the Insert menu and the palette are made from.
 public sealed record Menus(Templates Templates, SymbolGroup[] SymbolGroups);
