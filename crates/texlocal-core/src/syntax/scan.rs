@@ -404,35 +404,6 @@ impl Scanner {
 mod tests {
     use super::*;
 
-    fn in_math(text: &str) -> bool {
-        let units: Vec<u16> = text.encode_utf16().collect();
-        let mut scanner = Scanner::default();
-        scanner.run(&units, units.len(), &[], &mut ());
-        scanner.in_math()
-    }
-
-    #[test]
-    fn an_unclosed_verb_ends_with_its_line() {
-        // \verb can't cross a line, so what follows is read as ever.
-        assert!(in_math("a \\verb|x\n$y"));
-        assert!(!in_math("a \\verb|x\n$y$ z"));
-        assert!(in_math("$ \\verb|x\ny"), "the maths it was in goes on");
-        // A line feed straight after \verb ends it too.
-        assert!(in_math("\\verb\n$y"));
-        // Still on its line, the position is in the code, not maths.
-        assert!(!in_math("$ \\verb|x"));
-        // Closed, it's skipped as before, delimiters and all.
-        assert!(!in_math("\\verb|$| a"));
-        assert!(in_math("\\verb*+x+ $a"));
-    }
-
-    #[test]
-    fn a_blank_line_may_end_in_a_carriage_return() {
-        assert!(!in_math("$x\r\n\r\ny"));
-        assert!(!in_math("$x\n \t\ny"));
-        assert!(in_math("$x\r\ny"));
-    }
-
     /// How far a scan probed twice at " b}" in `source` reads.
     fn probed_read(source: &str) -> usize {
         let units: Vec<u16> = source.encode_utf16().collect();

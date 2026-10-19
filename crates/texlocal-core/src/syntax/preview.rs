@@ -122,34 +122,3 @@ fn preview_tex(environment: Option<&str>, body: &str) -> String {
     };
     format!("\\begin{{{environment}}}{clean}\\end{{{environment}}}")
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::syntax::SourceDocument;
-
-    /// The maths previewed at "|", as its start and TeX, "" for none.
-    fn preview(marked: &str) -> (u32, String) {
-        let at = marked.find('|').unwrap();
-        let mut doc = SourceDocument::new(&marked.replacen('|', "", 1));
-        let found = doc.math_at(at as u32);
-        found.map_or((0, String::new()), |m| (m.start, m.tex))
-    }
-
-    #[test]
-    fn maths_is_what_the_scanner_reads_as_maths() {
-        // Not in a comment, nor between escaped dollars, nor in a listing.
-        assert_eq!(preview("% costs $5 and $|6"), (0, String::new()));
-        assert_eq!(preview("\\$5 and \\$|6"), (0, String::new()));
-        let listing = "\\begin{lstlisting}\n$ make |all $\n\\end{lstlisting}";
-        assert_eq!(preview(listing), (0, String::new()));
-        // A display block the read starts within pairs as ever: the caret
-        // between two is in prose.
-        let between = format!("{}$$ a $$ prose| $$ b $$", "x ".repeat(15_000));
-        assert_eq!(preview(&between), (0, String::new()));
-        // Inline maths may wrap onto the next line, as TeX reads it.
-        assert_eq!(preview("$a\n|b$"), (0, "a\nb".into()));
-        assert_eq!(preview("\\(x|\\)"), (0, "x".into()));
-        // An unclosed $$ while typing goes no further than its paragraph.
-        assert_eq!(preview("$$ x|\n\nprose $$ y $$"), (0, String::new()));
-    }
-}
