@@ -200,7 +200,6 @@ struct CompletionRowsView: View {
     let clicked: (Int) -> Void
 
     static let margin: CGFloat = 5, textInset: CGFloat = 10
-    private static let radius: CGFloat = 13, highlightRadius: CGFloat = 8
 
     var body: some View {
         ScrollViewReader { scroller in
@@ -215,7 +214,7 @@ struct CompletionRowsView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, Self.textInset)
                             .frame(height: rows.height)
-                            .background(chosen ? Color(nsColor: .controlAccentColor) : .clear, in: .rect(cornerRadius: Self.highlightRadius))
+                            .background(chosen ? Color(nsColor: .controlAccentColor) : .clear, in: .rect(cornerRadius: 8))
                             .padding(.horizontal, Self.margin)
                             .contentShape(.rect)
                             .onTapGesture { clicked(row) }
@@ -230,7 +229,7 @@ struct CompletionRowsView: View {
             // The fewest lines that bring it into view: a row an arrow key reaches is just shown.
             .onChange(of: rows.revealed) { scroller.scrollTo(rows.selection) }
         }
-        .glassEffect(.regular, in: .rect(cornerRadius: Self.radius))
+        .glassEffect(.regular, in: .rect(cornerRadius: 13))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Completions")
     }
