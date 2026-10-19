@@ -3,9 +3,9 @@
 
 use serde::Deserialize;
 use serde_json::Value;
-use texlocal_core::syntax::{Insertion, SourceDocument};
 
-use super::{range, units};
+use super::units;
+use crate::syntax::{Insertion, SourceDocument, range};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,7 +32,7 @@ struct ByLine(String, String, Fields, Vec<(u32, u32, String)>, String);
 type Fields = Vec<(u32, u32)>;
 
 fn fixture() -> Fixture {
-    serde_json::from_str(include_str!("fixtures/editing.json")).unwrap()
+    serde_json::from_str(include_str!("editing.json")).unwrap()
 }
 
 /// The document without the "|" that marks a position, and that position.

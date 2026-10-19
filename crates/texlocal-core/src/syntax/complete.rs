@@ -197,7 +197,8 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
 
 #[cfg(test)]
 mod tests {
-    use crate::syntax::{Completion, SnippetField, SourceDocument};
+    use super::{Completion, SnippetField};
+    use crate::syntax::SourceDocument;
 
     /// What's offered at the end of `before`, `keys` being the citations.
     fn offered(before: &str, keys: &[String]) -> Vec<Completion> {

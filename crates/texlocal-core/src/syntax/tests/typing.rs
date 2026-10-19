@@ -3,23 +3,15 @@
 //! each change reported back (`follow`), each selection (`select`), and a
 //! snippet's field mirrored once the text has changed.
 
-use texlocal_core::syntax::{
-    Change, Completing, Keystroke, SnippetField, SourceDocument, Style, TextEdit, TextRange,
-    map_selections,
-};
+use crate::syntax::complete::SnippetField;
+use crate::syntax::edit::{Change, Style, map_selections};
+use crate::syntax::typing::{Completing, Keystroke};
+use crate::syntax::{SourceDocument, TextEdit, TextRange, edit, range};
 
-use super::{range, units};
+use super::units;
 
 fn caret(at: u32) -> TextRange {
     range(at, 0)
-}
-
-fn edit(start: u32, length: u32, text: &str) -> TextEdit {
-    TextEdit {
-        start,
-        length,
-        text: text.into(),
-    }
 }
 
 /// An empty field at `start`, `index`th in Tab's order.

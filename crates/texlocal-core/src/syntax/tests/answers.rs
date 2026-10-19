@@ -6,9 +6,8 @@
 
 use std::fmt::Debug;
 
-use texlocal_core::syntax::{SourceDocument, TextRange};
-
-use super::range;
+use crate::syntax::scans::SPACING;
+use crate::syntax::{SourceDocument, TextRange, range};
 
 /// How many of a random test's documents or rounds: fewer in a debug build, where
 /// each takes about ten times as long, and still every kind of each.
@@ -118,9 +117,6 @@ const PROSE: &[&str] = &[
     "{a group \\emph{in it}} ",
     "\n\n",
 ];
-
-/// The scanner's keep interval.
-const SPACING: usize = 4096;
 
 /// An article of a few kept points' length: its text is in a document
 /// environment, styled groups nested in it, and a \cite's and a \ref's

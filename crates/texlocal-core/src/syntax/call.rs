@@ -6,8 +6,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::edit::map_selections;
 use super::theme::{self, Rgba};
-use super::{SourceDocument, TextEdit, TextRange, map_selections};
+use super::{SourceDocument, TextEdit, TextRange};
 use super::{catalog, headings, render};
 
 fn json(value: impl Serialize) -> Option<String> {
