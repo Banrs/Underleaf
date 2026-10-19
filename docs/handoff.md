@@ -4,6 +4,51 @@ The audit branch (`claude/audit-cuts`, PR #53) gave the repo a pass under AGENTS
 code" rules, the Windows shell's redesign included; `docs/audit-2026-10.md` says what it cut.
 These parts it didn't cut, and why.
 
+## Paused on the Mac (2026-10-20)
+
+Done on this branch:
+- **Restored main's decided Mac behaviour**, which the branch had lost by being built on the reverted
+  `claude/trim` line: 542 pt window with the side columns folding, the divider under the toolbar's
+  separator, Compile's form from measured widths, detents and haptic, double-click to even, sidebar
+  270/222, fixed inspector divider, the display link and quiet scrollers in pane animations, PDF white,
+  dark or automatic paper and Settings' PDF pane, the untinted surfaces, the status bar's measures, Aa's
+  glass tiles. AGENTS.md's Mac section is main's again. Seen on screen: the narrow window, the divider's
+  detent and double-click, dark paper, the editor's surface around the PDF, Aa, completion, Compile and
+  issues, Live Preview.
+- `kill_all` at quit goes through the async path; core-api.md lists `locate` (allowed on the UI thread)
+  and what `session_save`'s `reporting` does.
+- **27.2 workarounds:** none could go on the headless evidence (ten probed today, their bugs still show:
+  `characterIndex` on T1 fonts, replaced pages' memory, zoom limits, menu images, the Share item, the
+  rendering-attribute underline, PDFKit's quarter-second fade, the frame guard, PDFKit's one drawer, no
+  super for `constrainSplitPosition`). On screen against a build with each turned off: still needed are
+  `HeadingRow`'s Equatable, `redrawFragments` and the width following a live resize; the sheets'
+  `.controlSize(.regular)` was not, and is gone. Not yet looked at: the viewport after quick divider
+  drags (`layOutViewportOnceSettled`), the display link for the PDF, inspector and panel (the sidebar
+  animated without it in a 110 ms-per-frame capture), the PDF shown at launch then collapsed, the
+  palette's text-only rows and `MathGlyphs.unmark`, `NameWidth`'s trailing space, and AppKit's own
+  completion list.
+- Once, after a slow then quick divider drags in Test Long, a blurred band about 115 pt tall showed
+  over the source's last lines in this build; three later tries didn't show it, nor main's build.
+
+**The review (2026-10-20)** found 29 issues a skeptic confirmed. Being fixed on three local branches
+from ae4116ab (`worktree-agent-*` in `.claude/worktrees/`), not yet merged:
+- Core: a case-only rename of an open file or folder closes it and loses later edits (`paths::within`
+  folds case; `session::rename`); Return in tab indentation adds tabs; File › Open of a `-name.tex`
+  fails; Live Preview reads any changed text file whole (main's 8 MB guard); two tests sleep 100 ms;
+  docs (live_page order, reloads of unshown documents, `kill_all`, texlocal.h's maths answer,
+  design-tokens' Mac metrics, the audit's test count and Windows Home row).
+- Mac: an open overtaken by a later one can leave the editor on a closed document, dropping typing;
+  New File or Add Files during a project switch writes into the old project; a side column AppKit folds
+  after a click is saved as hidden; `joinDivider` can snap to the even split's detent; Aa opens with
+  Normal Text highlighted (main too); the mirrored-field undo test can't fail; no test of a failed
+  save; `SessionOpened.pdf` unused; `create_entry`'s `free`.
+- Windows: a `document_reload` for an unshown document blocks its saves; leaving a project closes the
+  session without a reporting save; `session_rename` doesn't wait for `set_ui_state`; `create_entry`'s
+  `free`; maybe main's TitleBar inset compensation.
+To resume: check each branch's commits, merge into `claude/audit-cuts`, run the Mac tests named in the
+Mac branch's report (`tools/qa/xctest.sh`), push for CI (Windows builds only there), then the on-screen
+checks above, `tools/install-mac.sh`, and merge PR 53.
+
 ## On the Mac, first
 
 Start from PR #53's branch (from `main` once it merges):
@@ -89,10 +134,6 @@ WinUI 2.3.9's `TitleBar` sets `RightPaddingColumn` (right of `RightHeader`) in n
 about one caption group's gap parts the Settings gear from Minimise. No supported setting changes
 it: not the order of `PreferredHeightOption`, nor `TitleBarRightPaddingWidth` (the code overwrites
 it), and `TitleBarMinDragRegionWidth` only gives back its 48.
-
-## Docs
-
-- `docs/core-api.md` doesn't say what `session_save`'s `reporting` does.
 
 ## Out of scope
 
