@@ -172,6 +172,19 @@ public sealed partial class WorkspacePage : Page
         if (session != 0) _ = Core.CallAsync("session_close", new { session });
     }
 
+    /// Before the project goes, as on the Mac: session_close saves quietly, so edits a conflict's Cancel held or a write
+    /// refused would be lost. False, staying, when this save is asked about or fails.
+    public async Task<bool> Save()
+    {
+        if (session == 0) return true;
+        try { return (await Core.CallAsync("session_save", new { session })).GetProperty("saved").GetBoolean(); }
+        catch (CoreException ex)
+        {
+            await App.Alert("Can't save", ex.Message);
+            return false;
+        }
+    }
+
     /// The session is numbered before it opens, so the events that come before its answer are this page's too; a tree
     /// or a build among them is newer than the answer's.
     async Task OpenSession(string? file)

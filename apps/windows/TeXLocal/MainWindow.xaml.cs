@@ -20,6 +20,7 @@ public sealed partial class MainWindow : Window
 {
     RectInt32 restored;
     double scale;
+    WorkspacePage? project;
 
     public MainWindow()
     {
@@ -47,6 +48,16 @@ public sealed partial class MainWindow : Window
             if (e.WindowActivationState == WindowActivationState.Deactivated) return;
             (Pages.Content as HomePage)?.Refresh();
             (Pages.Content as WorkspacePage)?.CheckTex();
+        };
+        // Held until the project's save answers, as the Mac's quit; one that fails keeps the window, and closing again
+        // saves again.
+        AppWindow.Closing += async (_, e) =>
+        {
+            if (project is null) return;
+            e.Cancel = true;
+            if (!await Leave()) return;
+            project = null;
+            Close();
         };
         Closed += (_, _) =>
         {
@@ -80,9 +91,10 @@ public sealed partial class MainWindow : Window
     }
 
     /// With `file`, the project shows that file instead of its main file.
-    public void OpenProject(string id, string? file = null)
+    public async void OpenProject(string id, string? file = null)
     {
-        GoHome();
+        if (!await Leave()) return;
+        ShowHome();
         Pages.Navigate(typeof(WorkspacePage), (id, file), new DrillInNavigationTransitionInfo());
     }
 
@@ -115,22 +127,36 @@ public sealed partial class MainWindow : Window
             Pages.Navigate(typeof(SettingsPage), null, new SlideNavigationTransitionInfo { Effect = SlideNavigationTransitionEffect.FromRight });
     }
 
-    public void GoHome()
+    public async void GoHome()
+    {
+        if (await Leave()) ShowHome();
+    }
+
+    void ShowHome()
     {
         while (Pages.CanGoBack && Pages.Content is not HomePage) Pages.GoBack();
     }
 
-    void GoBack()
+    /// Back from Settings returns to the project; back from the project leaves it.
+    async void GoBack()
     {
-        if (Pages.CanGoBack) Pages.GoBack();
+        if (Pages.CanGoBack && (Pages.Content is not WorkspacePage || await Leave())) Pages.GoBack();
     }
+
+    /// False, staying, when the open project's save fails or is asked about: the editor holds the only copy.
+    async Task<bool> Leave() => project is null || await project.Save();
 
     /// Back shows only where there is somewhere to go back to, as in Windows Settings.
     void OnNavigated(object sender, NavigationEventArgs e)
     {
         Bar.IsBackButtonVisible = Pages.CanGoBack;
         SettingsButton.Visibility = e.Content is SettingsPage ? Visibility.Collapsed : Visibility.Visible;
-        if (e.Content is WorkspacePage) return;
+        if (e.Content is WorkspacePage page)
+        {
+            project = page;
+            return;
+        }
+        if (e.Content is HomePage) project = null;
         SetMenu(null);
         SetTitle(null);
     }
