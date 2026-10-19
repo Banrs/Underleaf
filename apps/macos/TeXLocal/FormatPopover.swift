@@ -38,9 +38,10 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) { popover.contentViewController = nil }
 }
 
-/// Bold, Italic and Underline as toggles, then the class's levels, each in its weight and shape at a size scaled into Notes'.
-/// A style toggles and the popover stays, as in Notes; a level is chosen and it closes, as a menu. The pointer highlights a
-/// level without taking the keyboard's focus; the arrow keys and Tab move both, and Return and Space choose a highlighted level.
+/// Bold, Italic and Underline, lit while the selection is in their command, then the class's levels, each in its weight and
+/// shape at a size scaled into Notes'. A style toggles and the popover stays, as in Notes; a level is chosen and it closes, as a
+/// menu. It opens with the caret's level checked and nothing highlighted. The pointer highlights a level without taking the
+/// keyboard's focus; the arrow keys and Tab move both, and Return and Space choose a highlighted level.
 struct FormatPanel: View {
     let app: AppModel
     let project: ProjectModel
@@ -49,6 +50,8 @@ struct FormatPanel: View {
     @FocusState private var focused: String?
     /// The level under the pointer or last reached by the arrow keys, as a menu's highlight.
     @State private var highlighted: String?
+    /// Set while the caret's level is given the keyboard on opening, which isn't a move to highlight.
+    @State private var seeding = false
     /// The selection's, read again as the text or the selection changes.
     @State private var styles = TextStyles()
 
@@ -107,10 +110,13 @@ struct FormatPanel: View {
             return .handled
         }
         // At the caret's level, as a pop-up menu opens at its item.
-        .onAppear { focused = current }
-        // A key that moves the keyboard's focus (Tab) highlights where it went; the focus the popover hands out as it
-        // opens, to its first level and then the caret's, comes with the click on Aa and highlights nothing.
-        .onChange(of: focused) { _, level in if NSApp.currentEvent?.type == .keyDown { highlighted = level } }
+        .onAppear {
+            seeding = levels.contains(current)
+            focused = current
+        }
+        .onChange(of: focused) { _, level in
+            if seeding { seeding = false } else { highlighted = level }
+        }
         .onChange(of: project.editor.changes.count, initial: true) { styles = project.editor.textStyles }
     }
 
@@ -121,13 +127,30 @@ struct FormatPanel: View {
         Toggle(command.title, systemImage: symbol, isOn: Binding(get: { on }, set: { _ in
             app.perform(command, on: project)
         }))
-        .toggleStyle(.button)
-        .buttonStyle(.accessoryBar)
-        .labelStyle(.iconOnly)
-        .controlSize(.large)
-        .imageScale(.large)
+        .toggleStyle(GlassTile())
         // What it does, as the toolbar's own buttons for these say (HIG, Offering help).
         .help(help)
+    }
+
+    /// Notes' style toggles: the symbol alone, on a tile of the accent's glass while on.
+    fileprivate struct GlassTile: ToggleStyle {
+        /// Notes' tile's height, and its pitch along the row (measured, 27.2).
+        static let side: CGFloat = 24, width: CGFloat = 29
+
+        func makeBody(configuration: Configuration) -> some View {
+            Button { configuration.isOn.toggle() } label: {
+                configuration.label
+                    .labelStyle(.iconOnly)
+                    .imageScale(.large)
+                    .foregroundStyle(configuration.isOn ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                    .frame(width: Self.width, height: Self.side)
+                    .glassEffect(configuration.isOn ? .regular.tint(.accentColor).interactive() : .identity,
+                                 in: .rect(cornerRadius: FormatPanel.highlightRadius))
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(configuration.isOn ? [.isToggle, .isSelected] : .isToggle)
+        }
     }
 
     private func row(_ style: HeadingStyle, layout: Layout, checked: Bool) -> some View {
@@ -148,8 +171,7 @@ struct FormatPanel: View {
                     Text(style.title)
                 }
                 .font(layout.font(style))
-                // As wide as the widest level and the rows' margins: a menu's items, not a field.
-                Spacer(minLength: 0)
+                Spacer(minLength: 12)
             }
             .padding(.horizontal, Self.contentInset - Self.rowInset)
             .frame(height: layout.pitch - Self.rowGap)
