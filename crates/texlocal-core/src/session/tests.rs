@@ -1005,9 +1005,8 @@ async fn documents_and_pages_go_to_the_host_as_they_come_and_none_of_a_start_bef
         shown,
         [
             &json!({ "type": "live_document", "session": session, "path": "/tmp/live.pdf",
-                "version": 1, "serial": 1, "pages": 4, "changed": [[1, 1]], "complete": false }),
-            &json!({ "type": "live_page", "session": session, "page": 1, "path": "/tmp/page.pdf",
-                "serial": 2 }),
+                "pages": 4, "changed": [[1, 1]], "complete": false }),
+            &json!({ "type": "live_page", "session": session, "page": 1, "path": "/tmp/page.pdf" }),
         ]
     );
 }

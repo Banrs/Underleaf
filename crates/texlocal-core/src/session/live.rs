@@ -67,9 +67,6 @@ pub(crate) struct Live {
     window: bool,
     /// Rises with each start and each end: what an earlier start's preview tells is dropped.
     generation: u64,
-    /// The documents this start's preview has written, and its documents and pages.
-    version: u64,
-    serial: u64,
     pub document_seen: bool,
     shown: Value,
 }
@@ -163,7 +160,6 @@ impl Actor {
         live.sent.clear();
         (live.halted, live.started, live.sent_view) = (false, None, None);
         (live.caret, live.settling) = (None, None);
-        (live.version, live.serial) = (0, 0);
     }
 
     pub fn live_cancel_work(&mut self) {
@@ -518,9 +514,7 @@ impl Actor {
         let live = &mut self.live;
         match event {
             LiveEvent::Page { page, path } => {
-                live.serial += 1;
-                let page = json!({ "page": page, "path": path, "serial": live.serial });
-                self.emit("live_page", page);
+                self.emit("live_page", json!({ "page": page, "path": path }));
             }
             LiveEvent::Document {
                 path,
@@ -528,14 +522,11 @@ impl Actor {
                 run,
                 changed,
             } => {
-                (live.version, live.serial) = (live.version + 1, live.serial + 1);
                 if pages > 0 {
                     live.document_seen = true;
                     let complete = !matches!(run.as_deref(), Some("stopped" | "partial"));
                     let document = json!({
                         "path": path,
-                        "version": live.version,
-                        "serial": live.serial,
                         "pages": pages,
                         "changed": changed,
                         "complete": complete,

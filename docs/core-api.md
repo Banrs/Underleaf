@@ -164,8 +164,8 @@ Each is `{"type", "session", …}`.
 | `tree` | `tree` (as `file_tree`) | Redraw the sidebar. |
 | `files_changed` | `paths` | Listed files changed in place that aren't open (an image shown, say). |
 | `live` | `phase` (`stopped`/`starting`/`running`/`stopping`), `halted`, `failure`, `error`, `log`, `alert` | Title and toolbar; `alert`: show the Live Preview Log. `phase: stopped` ends the live PDF (show the build's); the session's own planned restart stays `starting` throughout, with no `stopped` between. `log`: the Live Preview Log's whole text (what went wrong, TeXpresso's error, TeX's log and output) with `alert` and while `session_live_log` says it shows, else null: keep the last one. While it shows, the log comes at most every 200 ms. |
-| `live_document` | `path`, `version`, `serial`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
-| `live_page` | `page`, `path`, `serial` | Draw over that page now if a live document shows and has it; otherwise drop it. The session sends a batch's `live_document` before the batch's pages and drops the pages a document has, so a page is always newer than the document before it, and the next document has any page dropped. |
+| `live_document` | `path`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
+| `live_page` | `page`, `path` | Draw over that page now if a live document shows and has it; otherwise drop it. The session sends a batch's `live_document` before the batch's pages and drops the pages a document has, so a page is always newer than the document before it, and the next document has any page dropped. |
 | `live_restarted` | | Note “Live Preview Restarted”. |
 
 ## The editor's source
@@ -334,4 +334,6 @@ Every change a host follows since commit d6bee12, in the order made.
 - `session_state` is gone: no host used it. A session's events say what it holds.
 - `build_finished` no longer sets `announce` for a build Stop ended, which Windows announced as
   “Build succeeded”; the Mac app announced nothing for it, and still doesn't.
+- `live_document` has no `version` or `serial`, and `live_page` no `serial`: events come in
+  order, and neither host read them.
 
