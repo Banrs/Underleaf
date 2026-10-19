@@ -373,12 +373,10 @@ impl CompileManager {
                 registration.child = None;
                 output.push_str(&stderr);
                 let mut running = lock(&self.running);
-                let end = if registration.stopped(&running) {
-                    End::Stopped
-                } else if timed_out {
-                    End::TimedOut
-                } else {
-                    End::Exited(code)
+                let end = match (registration.stopped(&running), timed_out) {
+                    (true, _) => End::Stopped,
+                    (_, true) => End::TimedOut,
+                    _ => End::Exited(code),
                 };
                 let entry = running
                     .get_mut(&registration.key)
@@ -465,11 +463,7 @@ fn joined_log(engine_log: Option<&str>, output: String) -> String {
         Some(engine_log) => format!("{}\n\n{output}", crate::tail(engine_log, LOG_TAIL)),
         None => output,
     };
-    if log.len() > LOG_TAIL {
-        crate::tail(&log, LOG_TAIL).to_owned()
-    } else {
-        log
-    }
+    crate::tail(&log, LOG_TAIL).to_owned()
 }
 
 /// A file's last `max` bytes, starting at a line when it had to cut: errors
