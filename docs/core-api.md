@@ -91,7 +91,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_set_settings` | `patch` | settings | The keys of `patch` replace the project's; the answer is the settings, as `get_settings`. A new main file stops the build, restarts the preview, builds. |
 | `session_prepare_delete` | `path` | `{ready}` | Saves, refuses the main file (409, its path compared as the volume compares names), then holds saves under `path` until `session_deleted`. Not `ready`: a save is asked about, and the host deletes nothing. The host trashes the item itself (undoable). |
 | `session_deleted` | `path`, `trashed?` (true) | null | Closes documents under `path` and reads the tree again. |
-| `session_live_start` | `window?` | live state | The user's Start: takes the project over from another window. `window: true` leaves the document to TeXpresso's own window (the Settings fallback): no `live_document` or `live_page` comes, and TeXpresso is told no view or caret. The session's own restarts keep the choice. |
+| `session_live_start` | `window?` | live state | The user's Start. `window: true` leaves the document to TeXpresso's own window (the Settings fallback): no `live_document` or `live_page` comes, and TeXpresso is told no view or caret. The session's own restarts keep the choice. |
 | `session_live_stop` | | live state | |
 | `session_live_view` | `first`, `last` | null | Pages in view, from 0. Send before Start and on scroll. |
 | `session_live_caret` | `path`, `offset` | null | On every caret move (UTF-16); told to TeXpresso once it settles (150 ms). |
@@ -336,4 +336,8 @@ Every change a host follows since commit d6bee12, in the order made.
   “Build succeeded”; the Mac app announced nothing for it, and still doesn't.
 - `live_document` has no `version` or `serial`, and `live_page` no `serial`: events come in
   order, and neither host read them.
+- A host opens one session of a project at a time, as both do: a session's Live Preview no
+  longer takes over another session's preview of the project, nor stops when another's Start
+  takes it (“Another window started TeXpresso…”). A live sync (`live: true`) of a session
+  whose Live Preview has been stopped is 404.
 

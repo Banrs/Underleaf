@@ -26,8 +26,8 @@ use crate::{CoreError, lock};
 struct Fake {
     calls: Mutex<Vec<String>>,
     builds: Mutex<VecDeque<oneshot::Sender<Result<CompileResult, CoreError>>>>,
-    /// Each start's files, and whether it was a restart of the session's own.
-    starts: Mutex<Vec<(Vec<String>, bool)>>,
+    /// Each start's files.
+    starts: Mutex<Vec<Vec<String>>>,
     /// Whether each start gave TeXpresso the host's pane, rather than its own window.
     panes: Mutex<Vec<bool>>,
     updates: Mutex<Vec<(String, String)>>,
@@ -133,7 +133,6 @@ impl Preview for Fake {
         _owner: u64,
         _root: &Path,
         files: &[FileBuffer],
-        replacing: bool,
         _path_env: &str,
         pane: Option<&Pane>,
         sink: Sink,
@@ -141,7 +140,7 @@ impl Preview for Fake {
         self.log("live_start");
         self.panes.lock().unwrap().push(pane.is_some());
         let paths = files.iter().map(|f| f.path.clone()).collect();
-        self.starts.lock().unwrap().push((paths, replacing));
+        self.starts.lock().unwrap().push(paths);
         *self.sink.lock().unwrap() = Some(sink);
         Ok(status(true))
     }
@@ -192,10 +191,10 @@ impl Preview for Fake {
     }
 
     /// As the manager's, which ends the preview: its end is told.
-    fn stop_request(&self, _owner: u64) -> Result<Status, CoreError> {
+    fn stop_request(&self, _owner: u64) -> Status {
         self.log("live_stop");
         self.tell(LiveEvent::Ended(None));
-        Ok(status(false))
+        status(false)
     }
 
     fn stop(&self, _root: &Path) -> Result<(), CoreError> {
@@ -927,7 +926,7 @@ async fn keys_go_to_texpresso_as_made_and_a_refused_one_sends_the_whole_text() {
     let rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
     live(&rig).await;
-    assert_eq!(rig.fake.starts.lock().unwrap()[0].0, ["main.tex"]);
+    assert_eq!(rig.fake.starts.lock().unwrap()[0], ["main.tex"]);
     doc.edit(5, 0, "!");
     rig.state().await;
     assert_eq!(rig.fake.edits.lock().unwrap().len(), 1);
@@ -1019,9 +1018,7 @@ async fn a_preview_that_ends_after_ten_seconds_restarts_and_a_new_one_reports() 
     rig.events().await;
     rig.fake.tell(exited());
     wait(1).await;
-    let starts = rig.fake.starts.lock().unwrap().clone();
-    assert_eq!(starts.len(), 2);
-    assert!(starts[1].1, "a restart of its own");
+    assert_eq!(rig.fake.starts.lock().unwrap().len(), 2);
     let events = rig.events().await;
     assert_eq!(phases(&events), ["starting", "running"]);
     assert!(events.iter().any(|e| e["type"] == "live_restarted"));
@@ -1050,21 +1047,6 @@ async fn automatic_builds_wait_while_live_preview_runs() {
     rig.ok("live_stop", json!({})).await;
     rig.state().await;
     assert_eq!(rig.fake.called("compile"), 2);
-}
-
-#[tokio::test(start_paused = true)]
-async fn another_windows_preview_ends_this_ones() {
-    let rig = Rig::new(false).await;
-    let doc = rig.open("main.tex").await;
-    live(&rig).await;
-    rig.fake.refuse_edit(CoreError::conflict("Another window"));
-    doc.edit(0, 0, "x");
-    let state = rig.state().await;
-    assert_eq!(state["live"]["phase"], "stopped");
-    assert_eq!(state["live"]["failure"], "Another window");
-    // The preview is another's: its log isn't this session's.
-    rig.ok("live_log", json!({ "shown": true })).await;
-    assert_eq!(rig.state().await["live"]["log"], "Another window");
 }
 
 #[tokio::test(start_paused = true)]
@@ -1119,9 +1101,7 @@ async fn a_rename_restarts_the_preview_once_it_settles_showing_it_as_starting_me
     rig.ok("live_stop", json!({})).await;
     live(&rig).await;
     wait(200).await;
-    let starts = rig.fake.starts.lock().unwrap().clone();
-    let restarts: Vec<bool> = starts.into_iter().map(|(_, restart)| restart).collect();
-    assert_eq!(restarts, [false, true, false]);
+    assert_eq!(rig.fake.starts.lock().unwrap().len(), 3);
 }
 
 /// While the host shows the log it follows TeX's, at most every 200 ms.

@@ -95,8 +95,7 @@ in `crates/texlocal-core/src/session/tests.rs`, which run with `cargo test --wor
   `hyperref` links work again in a build's PDF.
 - A normal Compile is still needed for final output and bibliography tools; live sessions
   include the normal build directory for existing auxiliary files.
-- Sessions are temporary: closing the project stops them. A preview is its project session's;
-  starting live in another session of the project replaces the previous preview, whose late
-  requests cannot affect the new one.
+- Sessions are temporary: closing the project stops them. A preview is its project session's,
+  and a host opens one session of a project at a time.
 - A file TeXpresso can't be sent (a path outside the project, a folder, text with a NUL)
   is reported until that file is accepted, and does not block other files.

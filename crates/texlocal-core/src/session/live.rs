@@ -33,9 +33,6 @@ pub(crate) enum Phase {
 #[derive(Default)]
 pub(crate) struct Live {
     phase: Phase,
-    /// Whether the project's TeXpresso preview is this session's: kept after it ends, for a
-    /// restart; gone with the user's Stop or another session's Start.
-    owns: bool,
     /// Paths to send whole: None for the document's own text when sent, else a file's text from disk.
     pending: BTreeMap<String, Option<String>>,
     /// Paths TeXpresso has a text of. It keeps them through a rescan: only a new start drops
@@ -108,9 +105,9 @@ impl Actor {
     /// The Live Preview Log as the host shows it: what went wrong, then the preview's own
     /// error, its log and its output.
     fn live_log(&self, failure: Option<&str>) -> String {
-        let status = self.live.owns.then(|| self.preview.status(self.id));
+        let status = self.preview.status(self.id);
         let mut parts: Vec<&str> = failure.into_iter().collect();
-        if let Some(Ok(status)) = &status {
+        if let Ok(status) = &status {
             let error = status.error.as_deref();
             parts.extend(error.filter(|&error| Some(error) != failure));
             let texts = [status.log.as_str(), status.output.as_str()];
@@ -176,12 +173,6 @@ impl Actor {
 
     fn fail(&mut self, error: CoreError) {
         self.live.failure = Some(error.message);
-        if error.status == 409 {
-            // Another window's preview now: nothing more is sent.
-            self.live.owns = false;
-            self.live_cancel_work();
-            self.ended();
-        }
         self.report();
     }
 
@@ -222,12 +213,10 @@ impl Actor {
         self.live_state()
     }
 
-    /// Whether a start was tried: `replacing` restarts the preview this session owns.
-    pub fn live_start(&mut self, replacing: bool) -> bool {
-        if self.closed
-            || !replacing && self.live.phase != Phase::Stopped
-            || replacing && !self.live.owns
-        {
+    /// Whether a start was tried: the user's, of a stopped preview, or the session's own
+    /// `restart`.
+    pub fn live_start(&mut self, restart: bool) -> bool {
+        if self.closed || !restart && self.live.phase != Phase::Stopped {
             return false;
         }
         self.live.phase = Phase::Starting;
@@ -259,10 +248,9 @@ impl Actor {
         let (root, pane) = (&self.root, pane.as_ref());
         let start = self
             .preview
-            .start(self.id, root, &files, replacing, &path_env, pane, sink);
+            .start(self.id, root, &files, &path_env, pane, sink);
         match start {
             Ok(status) => {
-                self.live.owns = true;
                 self.live.synced = versions.keys().cloned().collect();
                 self.live.sent = versions;
                 (self.live.sent_view, self.live.caret) = (self.live.view, caret);
@@ -302,29 +290,19 @@ impl Actor {
         }
     }
 
-    /// A Stop: the user's, or the session's as it closes. Pending live work goes with it.
+    /// A Stop: the user's, or the session's as it closes. Pending live work goes with it, and
+    /// the log of a preview that has ended.
     pub fn live_stop(&mut self) {
         self.live_cancel_work();
         if self.live.phase == Phase::Stopped {
-            self.live.owns = false;
+            self.preview.stop_request(self.id);
             return;
         }
         self.live.phase = Phase::Stopping;
         self.live_reset();
         self.publish_live(false);
-        if self.live.owns {
-            match self.preview.stop_request(self.id) {
-                Ok(status) => {
-                    self.live.owns = false;
-                    self.live.error = status.error;
-                }
-                Err(error) if !self.closed => self.fail(error),
-                Err(_) => {}
-            }
-        }
-        if self.live.phase != Phase::Stopped {
-            self.ended();
-        }
+        self.live.error = self.preview.stop_request(self.id).error;
+        self.ended();
     }
 
     /// A rename or a new main file changed what the preview shows, and stopped it: it starts
@@ -349,16 +327,14 @@ impl Actor {
         if live.sent.get(path).is_some_and(|sent| version <= *sent) {
             return;
         }
-        if live.fits(path) {
-            let sent = self
+        // One refused leaves the copy a step behind: the whole text puts it right, or says why not.
+        if live.fits(path)
+            && self
                 .preview
-                .edit(self.id, path, start as usize, length as usize, text);
-            match sent {
-                Ok(()) => return,
-                Err(error) if error.status == 409 => return self.fail(error),
-                // Refused, so the copy is a step behind: the whole text puts it right, or says why not.
-                Err(_) => {}
-            }
+                .edit(self.id, path, start as usize, length as usize, text)
+                .is_ok()
+        {
+            return;
         }
         self.live.pending.insert(path.to_owned(), None);
         self.flush_pending();
@@ -543,7 +519,6 @@ impl Actor {
             LiveEvent::Log => {}
             LiveEvent::Ended(error) => {
                 let restartable = error.is_some()
-                    && live.owns
                     && live
                         .started
                         .is_some_and(|at| at.elapsed() > RESTARTABLE_AFTER);

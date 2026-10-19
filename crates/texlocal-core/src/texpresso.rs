@@ -34,9 +34,7 @@ const MISSING: &str = if cfg!(windows) {
 } else {
     "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin."
 };
-/// For a session whose preview another session's Start took over, or its own Stop ended.
-const REPLACED: &str =
-    "Another window started TeXpresso for this project. Start TeXpresso again to preview here.";
+const NOT_RUNNING: &str = "Live Preview isn't running.";
 const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
 const INVALID: &str = "A file sent to TeXpresso has an invalid path or text.";
 const REPEATED: &str = "Files sent to TeXpresso repeat a path.";
@@ -95,21 +93,15 @@ pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
 /// The live preview as a project session drives it, by the session's number (`owner`):
 /// the Manager's, or its tests' fake.
 pub(crate) trait Preview: Send + Sync {
-    /// A preview of the project at `root` for the session `owner`, which takes the project
-    /// over from any other session's. `replacing`: the owner's own restart, which takes
-    /// back only a preview still its own. With a `pane`, a build with Underleaf's patch
-    /// writes the document for it instead of opening a window; upstream opens its window
-    /// all the same. What it shows from then on goes to `sink`.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "a start is all of these, each the session's own"
-    )]
+    /// A preview of the project at `root` for the session `owner`, in place of any the
+    /// owner had. With a `pane`, a build with Underleaf's patch writes the document for it
+    /// instead of opening a window; upstream opens its window all the same. What it shows
+    /// from then on goes to `sink`.
     fn start(
         &self,
         owner: u64,
         root: &Path,
         files: &[FileBuffer],
-        replacing: bool,
         path_env: &str,
         pane: Option<&Pane>,
         sink: Sink,
@@ -141,10 +133,10 @@ pub(crate) trait Preview: Send + Sync {
     fn rescan(&self, owner: u64) -> Result<(), CoreError>;
     /// The owner's preview as it is now, its log and output with it.
     fn status(&self, owner: u64) -> Result<Status, CoreError>;
-    /// The owner's Stop. It ends the ownership too; `stop` keeps it.
-    fn stop_request(&self, owner: u64) -> Result<Status, CoreError>;
-    /// Stops the project's preview and keeps its owner, as a project about to move or go,
-    /// a rename and a new main file do, so the owner's restart can take it back.
+    /// The owner's Stop: its preview is gone, and how it ended is answered.
+    fn stop_request(&self, owner: u64) -> Status;
+    /// Stops the project's preview, as a project about to move or go, a rename and a new
+    /// main file do. Its status stays the owner's until a start replaces it.
     fn stop(&self, root: &Path) -> Result<(), CoreError>;
 }
 
@@ -314,9 +306,8 @@ fn remove_pdf_folder(pdf: Option<&Path>) {
 
 #[derive(Default)]
 pub struct Manager {
-    /// Each preview by the project session that owns it, by the number its host gave the
-    /// session: a session has one preview, and a project one, which a session's Start takes
-    /// over.
+    /// Each preview by the project session it is for, by the number its host gave the
+    /// session: a session has one.
     sessions: Mutex<HashMap<u64, Arc<Session>>>,
     shutdown: AtomicBool,
 }
@@ -332,21 +323,12 @@ impl Manager {
             session.stop(None);
         }
     }
-    /// The owner's preview; refused once another session's Start has taken the project
-    /// over, or the owner's own Stop has ended it, so late calls change nothing.
+    /// The owner's preview, from its start until its Stop.
     fn owned(&self, owner: u64) -> Result<Arc<Session>, CoreError> {
         lock(&self.sessions)
             .get(&owner)
             .cloned()
-            .ok_or_else(|| CoreError::conflict(REPLACED))
-    }
-    /// The previews of the project at the resolved `root`, and with `owner`, that owner's.
-    fn previews(&self, root: &Path, owner: Option<u64>) -> Vec<Arc<Session>> {
-        let sessions = lock(&self.sessions);
-        let of = |(&key, session): (&u64, &Arc<Session>)| {
-            (session.root == root || Some(key) == owner).then(|| Arc::clone(session))
-        };
-        sessions.iter().filter_map(of).collect()
+            .ok_or_else(|| CoreError::not_found(NOT_RUNNING))
     }
     /// The live document the owner's preview last wrote, which has its SyncTeX beside it:
     /// the session's folder is its own, so none is there before it writes one.
@@ -360,22 +342,6 @@ impl Manager {
                 CoreError::not_found("TeXpresso hasn't written a document to sync with yet")
             })
     }
-    /// The owner's preview from now on, and the project's only one. Another session's is
-    /// over: its late calls are refused. One started since `start` stopped the others is
-    /// stopped here, as is the owner's own before this: out of the map nothing could reach
-    /// it, and its readers would keep it running.
-    fn install(&self, owner: u64, session: &Arc<Session>) {
-        let mut sessions = lock(&self.sessions);
-        if self.shutdown.load(Ordering::Acquire) {
-            session.stop(None);
-        }
-        let others = sessions.extract_if(|_, other| other.root == session.root);
-        let others: Vec<_> = others.map(|(_, other)| other).collect();
-        let replaced = sessions.insert(owner, Arc::clone(session));
-        for other in others.into_iter().chain(replaced) {
-            other.stop(None);
-        }
-    }
 }
 
 impl Preview for Manager {
@@ -384,15 +350,11 @@ impl Preview for Manager {
         owner: u64,
         root: &Path,
         files: &[FileBuffer],
-        replacing: bool,
         path_env: &str,
         pane: Option<&Pane>,
         sink: Sink,
     ) -> Result<Status, CoreError> {
         let root = dunce::canonicalize(root)?;
-        if replacing {
-            self.owned(owner)?;
-        }
         let main = settings::read_settings(&root).main_file;
         let mut buffers = Files::default();
         let main_path = validate_buffer(&root, &main, "", &buffers.paths)?;
@@ -420,8 +382,8 @@ impl Preview for Manager {
         let build = paths::safe_path(&root, BUILD_DIR)?;
         fs::create_dir_all(&build)?;
         let build = dunce::canonicalize(build)?;
-        for session in self.previews(&root, Some(owner)) {
-            session.stop(None);
+        if let Some(previous) = lock(&self.sessions).get(&owner) {
+            previous.stop(None);
         }
         // The session's own folder, for its owner alone: no build output or
         // other session shares it. The session removes it as it stops.
@@ -494,7 +456,14 @@ impl Preview for Manager {
                 ..State::default()
             }),
         });
-        self.install(owner, &session);
+        {
+            let mut sessions = lock(&self.sessions);
+            // Under the map's lock, so `kill_all` stops it either way.
+            if self.shutdown.load(Ordering::Acquire) {
+                session.stop(None);
+            }
+            sessions.insert(owner, Arc::clone(&session));
+        }
         tokio::spawn(write_lines(
             child.stdin.take().unwrap(),
             queued,
@@ -609,15 +578,16 @@ impl Preview for Manager {
     fn status(&self, owner: u64) -> Result<Status, CoreError> {
         Ok(self.owned(owner)?.status())
     }
-    fn stop_request(&self, owner: u64) -> Result<Status, CoreError> {
+    fn stop_request(&self, owner: u64) -> Status {
         let session = lock(&self.sessions).remove(&owner);
-        let session = session.ok_or_else(|| CoreError::conflict(REPLACED))?;
-        session.stop(None);
-        Ok(session.status())
+        session.map_or_else(Status::default, |session| {
+            session.stop(None);
+            session.status()
+        })
     }
     fn stop(&self, root: &Path) -> Result<(), CoreError> {
         let root = dunce::canonicalize(root)?;
-        for session in self.previews(&root, None) {
+        for session in lock(&self.sessions).values().filter(|s| s.root == root) {
             session.stop(None);
         }
         Ok(())
@@ -1023,22 +993,12 @@ mod tests {
             pane: Option<&Pane>,
         ) -> (Status, Events) {
             let (sink, events) = sink();
-            let status = manager.start(owner, root, files, false, path_env, pane, sink);
+            let status = manager.start(owner, root, files, path_env, pane, sink);
             (status.unwrap(), events)
         }
         /// The user's Start, in the host's pane.
         fn begin(manager: &Manager, owner: u64, root: &Path, path_env: &str) -> Status {
             start(manager, owner, root, path_env, &[], Some(&Pane::default())).0
-        }
-        /// The owner's own restart, which takes back only a preview still its own.
-        fn restart(
-            manager: &Manager,
-            owner: u64,
-            root: &Path,
-            path_env: &str,
-        ) -> Result<Status, CoreError> {
-            let pane = Some(&Pane::default());
-            manager.start(owner, root, &[], true, path_env, pane, sink().0)
         }
         /// The status code of a refusal.
         fn refused<T>(result: Result<T, CoreError>) -> u16 {
@@ -1116,30 +1076,24 @@ mod tests {
             }
             manager.rescan(OWNER).unwrap();
             until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
-            assert!(!manager.stop_request(OWNER).unwrap().running);
+            assert!(!manager.stop_request(OWNER).running);
             assert!(!folder.exists());
+            assert_eq!(refused(manager.status(OWNER)), 404);
             begin(&manager, OWNER, &root, &path_env);
             manager.kill_all();
             assert!(!manager.status(OWNER).unwrap().running);
         }
 
-        /// Two starts of one project at once: one may find the project free and the other's
-        /// preview in the map by the time it puts its own there. Whatever it takes out is
-        /// stopped, as is the owner's own preview of another project.
+        /// The owner's preview before a start, of this project or another, is stopped.
         #[tokio::test]
-        async fn a_start_stops_every_preview_it_takes_the_place_of() {
+        async fn a_start_stops_the_owners_preview_before_it() {
             let (_tmp, root, path_env) = setup();
             let (_other_tmp, other_root, _) = setup();
             let manager = Manager::default();
-            begin(&manager, OWNER + 1, &root, &path_env);
             begin(&manager, OWNER, &other_root, &path_env);
-            let (racing, own) = (manager.owned(OWNER + 1), manager.owned(OWNER));
-            let (racing, own) = (racing.unwrap(), own.unwrap());
-            let session = idle(dunce::canonicalize(&root).unwrap());
-            manager.install(OWNER, &session);
-            assert!(!racing.running() && !own.running());
-            let sessions = lock(&manager.sessions);
-            assert!(sessions.len() == 1 && Arc::ptr_eq(&sessions[&OWNER], &session));
+            let before = manager.owned(OWNER).unwrap();
+            assert!(begin(&manager, OWNER, &root, &path_env).running);
+            assert!(!before.running());
         }
 
         #[tokio::test]
@@ -1220,42 +1174,6 @@ mod tests {
             assert!(status.log.contains(diagnostic));
         }
 
-        #[tokio::test]
-        async fn another_sessions_start_takes_over_and_a_stop_ends_ownership() {
-            let (_tmp, root, path_env) = setup();
-            let manager = Manager::default();
-            let (old, current) = (OWNER, OWNER + 1);
-            let (_, mut ended) = start(&manager, old, &root, &path_env, &[], None);
-            start(
-                &manager,
-                current,
-                &root,
-                &path_env,
-                &main_buffer("owner B"),
-                None,
-            );
-            assert_eq!(next(&mut ended, shown).await, LiveEvent::Ended(None));
-            // The old owner's late calls change nothing.
-            assert_eq!(refused(manager.update(old, "main.tex", "stale A")), 409);
-            assert_eq!(refused(manager.edit(old, "main.tex", 0, 0, "x")), 409);
-            assert_eq!(refused(manager.status(old)), 409);
-            assert_eq!(refused(manager.rescan(old)), 409);
-            assert_eq!(refused(manager.stop_request(old)), 409);
-            assert_eq!(refused(restart(&manager, old, &root, &path_env)), 409);
-            assert!(manager.status(current).unwrap().running);
-            let main = dunce::canonicalize(root.join("main.tex")).unwrap();
-            let session = manager.owned(current).unwrap();
-            assert_eq!(lock(&session.files).texts[&main].string(), "owner B");
-            // A rename's stop keeps the owner, whose restart takes the preview back.
-            manager.stop(&root).unwrap();
-            assert!(!manager.status(current).unwrap().running);
-            let restarted = restart(&manager, current, &root, &path_env).unwrap();
-            assert!(restarted.running && !session.status().running);
-            // The owner's Stop ends its ownership too.
-            assert!(!manager.stop_request(current).unwrap().running);
-            assert_eq!(refused(restart(&manager, current, &root, &path_env)), 409);
-        }
-
         /// A stub that speaks as a build with Underleaf's patch does: it says so first, writes
         /// "the document", answers each change with page 1 in a file of its own, and a request
         /// for a finishing pass with a new document.
@@ -1318,7 +1236,7 @@ mod tests {
             }
             assert_eq!(refused(manager.caret(OWNER, "main.tex", 9)), 412);
             assert_eq!(refused(manager.edit(OWNER, "main.tex", 0, 0, "\0")), 400);
-            assert_eq!(refused(manager.edit(OWNER + 1, "main.tex", 0, 0, "x")), 409);
+            assert_eq!(refused(manager.edit(OWNER + 1, "main.tex", 0, 0, "x")), 404);
             // The whole text puts the copy right, sent as the change from what TeXpresso has.
             manager.update(OWNER, "main.tex", "aXb😀").unwrap();
             manager.edit(OWNER, "main.tex", 5, 0, "!").unwrap();
