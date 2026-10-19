@@ -172,15 +172,13 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }) {
             menu.removeItem(item)
         }
-        var own: [NSMenuItem] = []
-        if textView.forwardSync(false) != nil {
-            own.append(NSMenuItem(title: MenuCommand.syncForward.title, action: #selector(goToPDF), keyEquivalent: ""))
+        menu.insertItem(.separator(), at: 0)
+        for (shown, command, action) in [(textView.isEditable, MenuCommand.editComment, #selector(toggleComment)),
+                                         (textView.forwardSync(false) != nil, MenuCommand.syncForward, #selector(goToPDF))] where shown {
+            let item = NSMenuItem(title: command.title, action: action, keyEquivalent: "")
+            item.target = self
+            menu.insertItem(item, at: 0)
         }
-        if textView.isEditable {
-            own.append(NSMenuItem(title: MenuCommand.editComment.title, action: #selector(toggleComment), keyEquivalent: ""))
-        }
-        own.forEach { $0.target = self }
-        for item in (own + [.separator()]).reversed() { menu.insertItem(item, at: 0) }
         // A separator only between two groups.
         for item in menu.items.reversed() where item.isSeparatorItem {
             let index = menu.index(of: item)
@@ -211,7 +209,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         case .math: textView.apply(document.wrap(selections, in: "$$0$"), named: String(localized: "Inline Math"))
         case .displayMath: textView.apply(document.wrap(selections, in: "\\[$0\\]"), named: String(localized: "Display Math"))
         case .inline(let template, let title):
-            // A template such as \ref{$0}: "$0" is where the selection goes.
             textView.apply(document.wrap(selections, in: template), named: Self.insertion(titled: title))
             // Empty braces: the labels or citations for them, once the menu has closed.
             if selection.length == 0 { Task { self.textView.complete(nil) } }

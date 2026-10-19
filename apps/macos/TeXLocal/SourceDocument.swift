@@ -137,8 +137,7 @@ final class SourceDocument {
     // MARK: calls
 
     private func call<T: Decodable>(_ command: String, _ args: [String: Any]) -> T? {
-        let json = try? JSONSerialization.data(withJSONObject: args)
-        return Syntax.decode(command, json.flatMap { tl_source_call(raw, command, String(decoding: $0, as: UTF8.self)) })
+        Syntax.decode(command, tl_source_call(raw, command, Syntax.json(args)))
     }
 }
 
@@ -152,13 +151,9 @@ private extension NSRange {
 nonisolated enum Syntax {
     static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "source")
 
-    static func call<T: Decodable>(_ command: String, _ args: [String: Any]) -> T? {
-        guard let json = try? JSONSerialization.data(withJSONObject: args) else {
-            log.error("\(command, privacy: .public): arguments that aren't JSON")
-            return nil
-        }
-        return decode(command, tl_syntax_call(command, String(decoding: json, as: UTF8.self)))
-    }
+    static func call<T: Decodable>(_ command: String, _ args: [String: Any]) -> T? { decode(command, tl_syntax_call(command, json(args))) }
+
+    static func json(_ args: [String: Any]) -> String { String(decoding: try! JSONSerialization.data(withJSONObject: args), as: UTF8.self) }
 
     /// Nil for a null answer, which some commands give for none, and frees `out`. No answer, or one in another shape than
     /// was asked for, is a fault of the app's own or the core's, logged as Core logs one.

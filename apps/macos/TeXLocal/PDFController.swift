@@ -8,7 +8,13 @@ final class PDFController: NSObject {
     /// Read whole: the next build rewrites the file in place.
     @concurrent static func loadDocument(_ url: URL) async -> sending PDFDocument? {
         guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
-        for index in 0..<document.pageCount { document.page(at: index)?.hideLinkBorders() }
+        for index in 0..<document.pageCount {
+            for link in document.page(at: index)?.annotations ?? [] where link.type == "Link" {
+                let border = PDFBorder()
+                border.lineWidth = 0
+                link.border = border
+            }
+        }
         return document
     }
 
@@ -286,16 +292,6 @@ final class PDFController: NSObject {
         guard let number = restorePage, view.document != nil, view.hasShownArea else { return }
         restorePage = nil
         go(toPage: number)
-    }
-}
-
-extension PDFPage {
-    nonisolated func hideLinkBorders() {
-        for annotation in annotations where annotation.type == "Link" {
-            let border = PDFBorder()
-            border.lineWidth = 0
-            annotation.border = border
-        }
     }
 }
 

@@ -15,7 +15,6 @@ struct EditorGutter {
     private(set) var width: CGFloat = 0
     /// The digits the gutter has room for: four at least.
     private(set) var digits = 0
-    /// Where the numbers end.
     private(set) var numbersEnd: CGFloat = 0
     var font = NSFont.systemFont(ofSize: NSFont.systemFontSize) {
         didSet {
@@ -134,9 +133,8 @@ extension SourceTextView {
         context.saveGState()
         defer { context.restoreGState() }
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        let origin = textContainerOrigin
         for (offset, fragment) in fragments {
-            let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: origin.y)
+            let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: textContainerOrigin.y)
             guard frame.maxY >= rect.minY, frame.minY <= rect.maxY, let line = fragment.textLineFragments.first else { continue }
             let lineNumber = document.line(at: offset)
             func draw(_ lineNumber: Int, on line: NSTextLineFragment) {

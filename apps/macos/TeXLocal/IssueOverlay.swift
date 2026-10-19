@@ -8,7 +8,6 @@ final class IssueOverlay {
     /// A line's issue as placed: its band, the box at the line's end where it has room, and the underlines.
     struct Row {
         let line: Int
-        let isError: Bool
         let band: NSRect
         var message: (view: IssueMessageView, rect: NSRect, cut: Bool)?
         var tip: String?
@@ -18,9 +17,7 @@ final class IssueOverlay {
 
     private unowned let view: SourceTextView
 
-    init(in view: SourceTextView) {
-        self.view = view
-    }
+    init(in view: SourceTextView) { self.view = view }
 
     var lines: [Int: IssuesEvent.Line] = [:] {
         didSet {
@@ -77,7 +74,7 @@ final class IssueOverlay {
                      of fragment: NSTextLayoutFragment, in former: IssueMessageView?) -> Row? {
         guard let first = lines.first else { return nil }
         let band = view.band(lines, of: fragment)
-        var issue = Row(line: number, isError: reported.error, band: band)
+        var issue = Row(line: number, band: band)
         // The fragment's lines in the view: its frame has the line fragment's padding in it.
         let left = view.textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = view.textContainerOrigin.y + fragment.layoutFragmentFrame.minY
@@ -108,19 +105,17 @@ final class IssueOverlay {
         // given as a rendering attribute (27.2).
         if !reported.tokens.isEmpty, let textFont = view.font {
             // As far under the baseline as the font puts an underline, a point thick at least, on whole pixels.
-            let scale = view.window?.backingScaleFactor ?? 1
-            func whole(_ length: CGFloat) -> CGFloat { (length * scale).rounded() / scale }
-            let thickness = max(1, whole(textFont.underlineThickness))
+            let thickness = max(1, view.onPixels(textFont.underlineThickness))
             for token in reported.tokens {
                 // A command a line is too narrow for is on two.
                 for line in lines {
                     let part = NSIntersectionRange(token.range, line.characterRange)
                     guard part.length > 0 else { continue }
                     let lineLeft = left + line.typographicBounds.minX
-                    let start = whole(lineLeft + line.locationForCharacter(at: part.location).x)
-                    let end = whole(lineLeft + line.locationForCharacter(at: NSMaxRange(part)).x)
+                    let start = view.onPixels(lineLeft + line.locationForCharacter(at: part.location).x)
+                    let end = view.onPixels(lineLeft + line.locationForCharacter(at: NSMaxRange(part)).x)
                     let under = top + line.typographicBounds.minY + line.glyphOrigin.y - textFont.underlinePosition
-                    issue.tokens.append(NSRect(x: start, y: whole(under), width: end - start, height: thickness))
+                    issue.tokens.append(NSRect(x: start, y: view.onPixels(under), width: end - start, height: thickness))
                 }
             }
         }
@@ -140,8 +135,7 @@ final class IssueOverlay {
 
     /// The row whose box is under `point`, in the view's coordinates.
     func message(at point: NSPoint) -> Row? {
-        guard !rows.isEmpty, view.visibleRect.contains(point) else { return nil }
-        return rows.first { $0.message?.rect.contains(point) == true }
+        view.visibleRect.contains(point) ? rows.first(where: { $0.message?.rect.contains(point) == true }) : nil
     }
 
     /// The bands and underlines in `rect`; the caret's line has the current line's fill, which is the same shape, and not both.

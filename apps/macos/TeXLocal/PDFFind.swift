@@ -136,10 +136,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         }
         guard isOpen else { return }
         cancel()
-        restart(&rerunning, after: Self.rerunDelay) { [weak self] in
-            guard let self else { return }
-            search(text, keepingPlace: true)
-        }
+        restart(&rerunning, after: Self.rerunDelay) { [weak self] in self?.rerun() }
     }
 
     // MARK: - Where the next match is

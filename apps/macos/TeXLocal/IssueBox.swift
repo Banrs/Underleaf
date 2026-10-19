@@ -30,9 +30,6 @@ struct IssueBox: View, Equatable {
         static let count: CGFloat = 12
         /// How far the count reaches into the symbol's segment, as Xcode's.
         static let countOverlap: CGFloat = 1
-        static let symbolScale = Image.Scale.small
-        static let cornerRadius: CGFloat = 4
-        static let border: CGFloat = 1
         static let divider: CGFloat = 1
         /// From the band's end.
         static let endInset: CGFloat = 1
@@ -60,7 +57,7 @@ struct IssueBox: View, Equatable {
     let baseline: CGFloat
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Metrics.cornerRadius)
+        let shape = RoundedRectangle(cornerRadius: 4)
         let separator = Color(nsColor: .separatorColor)
         HStack(spacing: 0) {
             if issues > 1 {
@@ -70,7 +67,7 @@ struct IssueBox: View, Equatable {
             }
             Image(systemName: isError ? "exclamationmark.octagon" : "exclamationmark.triangle")
                 .font(.system(size: Metrics.small(font.pointSize)))
-                .imageScale(Metrics.symbolScale)
+                .imageScale(.small)
                 .foregroundStyle(isError ? .red : .yellow)
                 .frame(width: Metrics.segment(font, issues: 1))
             if let text {
@@ -83,7 +80,7 @@ struct IssueBox: View, Equatable {
         .font(Font(font as CTFont))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(fill, in: shape)
-        .overlay(shape.strokeBorder(separator, lineWidth: Metrics.border))
+        .overlay(shape.strokeBorder(separator, lineWidth: 1))
         .accessibilityHidden(true)
     }
 
@@ -98,8 +95,7 @@ struct IssueBox: View, Equatable {
 
 /// An issue's message for its line's end, from the core's one-line form: whole where there is room for it, then for an
 /// undefined command in the core's fewer words that keep its name ("Undefined: \name"), then cut at the tail with an
-/// ellipsis, and not at all where fewer than ten of its characters would show. The line's issues are counted in the
-/// box's symbol segment, as Xcode counts them.
+/// ellipsis, and not at all where fewer than ten of its characters would show.
 struct IssueLabel {
     private let whole: String
     private let short: (text: String, width: CGFloat)?
