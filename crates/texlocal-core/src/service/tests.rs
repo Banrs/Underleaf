@@ -3,7 +3,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use tempfile::TempDir;
 
@@ -336,7 +335,7 @@ fn an_edit_waits_for_its_own_project_only() {
                     projects::write_creating(&root.join("p.tex"), b"p")
                 })
             });
-            std::thread::sleep(Duration::from_millis(100));
+            service.wait_for_a_waiter("P");
             assert!(!data.join("P/p.tex").exists());
             Ok(edit)
         });

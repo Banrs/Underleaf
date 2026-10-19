@@ -89,6 +89,24 @@ impl Service {
         use_project(&self.project_root(id)?)
     }
 
+    /// Returns once a second caller waits for the project's lock, which the test holds: the
+    /// map, the holder and the waiter then share it.
+    #[cfg(test)]
+    pub(crate) fn wait_for_a_waiter(&self, id: &str) {
+        let key = fold_case(paths::project_name(id).unwrap());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while lock(&self.edits)
+            .get(&key)
+            .is_none_or(|held| Arc::strong_count(held) < 3)
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "nothing waits for {id}"
+            );
+            std::thread::yield_now();
+        }
+    }
+
     // ---------- status ----------
 
     /// Probe the current TeX choice, including installs made while the app is open.
