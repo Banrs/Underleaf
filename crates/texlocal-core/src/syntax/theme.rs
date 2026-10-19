@@ -114,7 +114,6 @@ pub fn theme(id: &str) -> Option<&'static Theme> {
 }
 
 impl Theme {
-    /// The colour of a highlight kind.
     pub fn color(&self, kind: HighlightKind) -> &ThemeColor {
         use HighlightKind::*;
         match kind {

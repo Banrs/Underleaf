@@ -103,7 +103,6 @@ impl Snippet {
         true
     }
 
-    /// Whether a selection is within a field.
     pub(super) fn contains(&self, start: usize, end: usize) -> bool {
         self.fields.iter().any(|f| f.holds(start, end))
     }
