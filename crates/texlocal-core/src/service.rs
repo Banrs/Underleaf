@@ -225,19 +225,11 @@ impl Service {
                 s("query")?,
                 SEARCH_LIMIT,
             )?)),
-            // With `free`, a taken name is numbered past ("untitled 2.tex") rather than refused.
             "create_entry" => {
                 let path = s("path")?;
                 let dir = arg::<Option<bool>>(args, "dir")?.unwrap_or(false);
-                let free = arg::<Option<bool>>(args, "free")?.unwrap_or(false);
                 out(self.with_project(s("id")?, |root| {
-                    let made = if free {
-                        projects::create_free(root, path, dir)?
-                    } else {
-                        projects::create_file(root, path, dir)?;
-                        path.to_owned()
-                    };
-                    Ok(json!({ "path": made }))
+                    Ok(json!({ "path": projects::create_free(root, path, dir)? }))
                 })?)
             }
             // A session builds and cleans; this stops a project's build from outside it, as
