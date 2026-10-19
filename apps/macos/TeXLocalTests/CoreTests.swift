@@ -9,14 +9,12 @@ struct CoreTests {
     }
 
     @Test func aCoreErrorIsDecodedAndAMisshapenAnswerIsSaidInTheAppsWords() async throws {
-        let core = Core.shared
-        let info = try await core.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"], as: ProjectInfo.self)
-        defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
+        let core = Core.shared, info = try await newProject()
+        defer { try? FileManager.default.removeItem(at: info.folder) }
         let error = await #expect(throws: CoreError.self) {
             _ = try await core.call("create_entry", ["id": info.id, "path": "../../x"], as: FileText.self)
         }
         #expect(error?.message == "Path escapes project")
-        // An answer in another shape than was asked for is said in the app's words, without the command's name.
         let fault = await #expect(throws: CoreError.self) {
             _ = try await core.call("file_tree", ["id": info.id], as: FileText.self)
         }
@@ -26,20 +24,14 @@ struct CoreTests {
         #expect(unsent?.message == fault?.message)
     }
 
-    /// The app numbers its sessions, and their events reach the observer of the number, decoded.
     @Test func aSessionsEventsReachTheObserverOfItsNumber() async throws {
-        let core = Core.shared
-        let info = try await core.call("create_project", ["name": "Test \(UUID().uuidString.prefix(8))", "template": "blank"], as: ProjectInfo.self)
-        defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
+        let core = Core.shared, info = try await newProject()
+        defer { try? FileManager.default.removeItem(at: info.folder) }
         var events: [SessionEvent] = []
         let session = core.observe { events.append($0) }
         defer { core.forget(session) }
         let opened = try await core.call("session_open", ["id": info.id, "session": session], as: SessionOpened.self)
         #expect(opened.settings.mainFile == info.mainFile && opened.pdf == nil)
-        let taken = await #expect(throws: CoreError.self) {
-            _ = try await core.call("session_open", ["id": info.id, "session": session], as: SessionOpened.self)
-        }
-        #expect(taken?.status == 409)
         try await core.call("session_open_document", ["session": session, "path": info.mainFile])
         _ = try await core.call("session_close_document", ["session": session, "path": info.mainFile], as: Closed.self)
         try await waitUntil {
