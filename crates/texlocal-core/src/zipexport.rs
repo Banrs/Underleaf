@@ -24,7 +24,7 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let root_canonical = dunce::canonicalize(root)?;
     let parent = dest.parent().filter(|p| !p.as_os_str().is_empty());
     let parent = parent.unwrap_or(Path::new("."));
-    let (temp_path, file) = create_temp(parent).map_err(CoreError::at(dest))?;
+    let (file, temp_path) = create_temp(parent).map_err(CoreError::at(dest))?;
 
     // Resolve the archive folder as the walk resolves the project, so a
     // destination spelled through a link is still recognised there.
@@ -256,7 +256,7 @@ mod tests {
         fs::remove_file(root.join("gone.tex")).unwrap();
 
         let dest = dir.path().join("out.zip");
-        let (temp, file) = create_temp(dir.path()).unwrap();
+        let (file, temp) = create_temp(dir.path()).unwrap();
         let mut export = Export {
             writer: ZipWriter::new(file),
             options: SimpleFileOptions::default(),

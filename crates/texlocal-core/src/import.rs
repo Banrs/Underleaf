@@ -312,7 +312,7 @@ fn save(
     // rename stays on one volume.
     let abs = paths::safe_write_path(&root, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
-    let (temp, mut file) = atomic::create_temp(folder.unwrap_or(&root))?;
+    let (mut file, temp) = atomic::create_temp(folder.unwrap_or(&root))?;
     let origin = File::open(source).map_err(CoreError::at(source))?;
     allowance.copy(origin, &mut file)?;
     file.sync_all()?;

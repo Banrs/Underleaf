@@ -14,7 +14,7 @@ use crate::stamp::Stamp;
 /// a new file's mode (0666 less the umask), as any other way of making a file
 /// gives it. tempfile's own 0600 would leave every file the app made
 /// unreadable to the accounts and tools a project is shared with.
-pub(crate) fn create_temp(dir: &Path) -> io::Result<(TempPath, File)> {
+pub(crate) fn create_temp(dir: &Path) -> io::Result<(File, TempPath)> {
     let mut builder = tempfile::Builder::new();
     builder.prefix(".texlocal-");
     #[cfg(unix)]
@@ -22,8 +22,7 @@ pub(crate) fn create_temp(dir: &Path) -> io::Result<(TempPath, File)> {
         use std::os::unix::fs::PermissionsExt;
         builder.permissions(fs::Permissions::from_mode(0o666));
     }
-    let (file, temp_path) = builder.tempfile_in(dir)?.into_parts();
-    Ok((temp_path, file))
+    Ok(builder.tempfile_in(dir)?.into_parts())
 }
 
 /// The extended attributes of `from` (a Finder tag, "where from", the
@@ -74,8 +73,7 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     if permissions.as_ref().is_some_and(fs::Permissions::readonly) {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
-    let dir = target.parent().filter(|p| !p.as_os_str().is_empty());
-    let (temp, mut file) = create_temp(dir.unwrap_or(Path::new(".")))?;
+    let (mut file, temp) = create_temp(target.parent().expect("a file is in a folder"))?;
     // Before the contents, so a private file's text is never readable
     // under a new file's mode.
     if let Some(permissions) = permissions {
@@ -106,9 +104,6 @@ mod tests {
         assert_eq!(fs::read(&file).unwrap(), b"two");
         assert_eq!(names_in(dir.path()), ["main.tex"]);
         assert_eq!(written, Stamp::of(&fs::metadata(&file).unwrap()));
-        // Another app's write in place keeps the file but not the stamp, once
-        // the clock has moved: Windows dates writes in steps of up to 16 ms.
-        std::thread::sleep(std::time::Duration::from_millis(20));
         fs::write(&file, b"three").unwrap();
         assert_ne!(written, Stamp::of(&fs::metadata(&file).unwrap()));
     }
