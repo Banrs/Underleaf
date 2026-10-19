@@ -128,8 +128,6 @@ struct DialogSheet<Fields: View>: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(width: 390)
-        // macOS 27 resets the control size in sheets: set it here.
-        .controlSize(.regular)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(submitting) }
             ToolbarItem(placement: .confirmationAction) {
