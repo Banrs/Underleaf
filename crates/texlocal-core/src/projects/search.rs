@@ -71,8 +71,7 @@ fn read_searchable(path: &Path) -> Result<Option<String>, CoreError> {
     };
     let mut bytes = Vec::new();
     // One past the cap, so a file that grew since it was measured is told apart.
-    let read = file.take(SEARCH_FILE_MAX + 1).read_to_end(&mut bytes);
-    let Some(len) = skip_unreadable(read)? else {
+    let Some(len) = skip_unreadable(file.take(SEARCH_FILE_MAX + 1).read_to_end(&mut bytes))? else {
         return Ok(None);
     };
     Ok((len as u64 <= SEARCH_FILE_MAX).then(|| crate::lossy_string(bytes)))
