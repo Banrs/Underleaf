@@ -59,6 +59,14 @@ Native replacements that need a look on screen:
 - **Tools:** `tools/qa/xctest.sh` has odd bytes in a comment and a grep pattern, possibly needed
   on macOS; it and `fg-guard.zsh` share a lock loop that one copy could serve, untested without zsh.
 
+## Windows, for a later WindowsAppSDK
+
+WinUI 2.3.9's `TitleBar` sets `RightPaddingColumn` (right of `RightHeader`) in native code from
+`AppWindow.TitleBar.RightInset`; at 150% it comes out about twice the caption buttons' width, so
+about one caption group's gap parts the Settings gear from Minimise. No supported setting changes
+it: not the order of `PreferredHeightOption`, nor `TitleBarRightPaddingWidth` (the code overwrites
+it), and `TitleBarMinDragRegionWidth` only gives back its 48.
+
 ## Docs
 
 - `docs/core-api.md` doesn't say what `session_save`'s `reporting` does.
