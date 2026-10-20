@@ -4,7 +4,8 @@ import UniformTypeIdentifiers
 enum MenuCommand: CaseIterable {
     case projectNew, projectOpen, projectClose, projectExport, projectSearch
     case fileNew, fileNewFolder, fileUpload, fileSave, pdfSave, filePrint
-    case editBold, editItalic, editUnderline, editMath, editComment, editMoveLineUp, editMoveLineDown, editGotoLine
+    case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
+    case editGotoLine
     case pdfFind, pdfGotoPage
     case viewToggleSidebar, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage, viewTextBigger, viewTextSmaller
@@ -33,6 +34,8 @@ enum MenuCommand: CaseIterable {
         case .editUnderline: ("Underline", KeyboardShortcut("u"))
         case .editMath: ("Inline Math", KeyboardShortcut("e", modifiers: [.command, .option]))
         case .editComment: ("Comment Selection", KeyboardShortcut("/"))
+        case .editShiftRight: ("Shift Right", KeyboardShortcut("]"))
+        case .editShiftLeft: ("Shift Left", KeyboardShortcut("["))
         case .editMoveLineUp: ("Move Line Up", KeyboardShortcut(.upArrow, modifiers: [.command, .control]))
         case .editMoveLineDown: ("Move Line Down", KeyboardShortcut(.downArrow, modifiers: [.command, .control]))
         case .editGotoLine: ("Go to Line…", KeyboardShortcut("l"))
@@ -64,7 +67,8 @@ enum MenuCommand: CaseIterable {
     /// Text commands on the source's selection, which the menu bar's follow the source's keyboard for (`isEnabledInMenuBar`).
     var editsSelection: Bool {
         switch self {
-        case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editMoveLineUp, .editMoveLineDown: true
+        case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp,
+             .editMoveLineDown: true
         default: false
         }
     }
@@ -103,7 +107,8 @@ extension AppModel {
         switch command {
         case .projectNew, .projectOpen: libraryProblem == nil
         case .projectSearch: project != nil || (self.project == nil && mainWindowIsKey)
-        case .fileSave, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .viewTextBigger, .viewTextSmaller:
+        case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .viewTextBigger,
+             .viewTextSmaller:
             project?.editsText == true
         case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
         case .compileRun: tex?.available == true && project?.compiling == false
@@ -169,6 +174,8 @@ extension AppModel {
         case .editUnderline: project?.editor.perform(.underline)
         case .editMath: project?.editor.perform(.math)
         case .editComment: project?.editor.perform(.comment)
+        case .editShiftRight: project?.editor.textView.shiftLines(1)
+        case .editShiftLeft: project?.editor.textView.shiftLines(-1)
         case .editMoveLineUp: project?.editor.perform(.moveLineUp)
         case .editMoveLineDown: project?.editor.perform(.moveLineDown)
         case .editGotoLine: prompt = .gotoLine
@@ -246,7 +253,7 @@ struct AppCommands: Commands {
         CommandGroup(before: .textEditing) { items(.projectSearch, .pdfFind) }
         CommandGroup(after: .pasteboard) {
             Divider()
-            items(.editComment, .editMoveLineUp, .editMoveLineDown)
+            items(.editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown)
         }
         // A submenu stays available while its items are dim (HIG Menus).
         CommandGroup(replacing: .textFormatting) {
