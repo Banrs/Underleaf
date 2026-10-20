@@ -100,7 +100,8 @@ Agents' code runs long and erodes with each change (`docs/agent-code.md`). So:
 - On screen: the QA driver (`tools/qa/README.md`) on its QA copy (`com.texlocal.mac.qa`), never the
   installed app or `~/TeXLocal`.
 - The Windows app: `dotnet test apps/windows/TeXLocal.Tests -c Debug`; `TeXLocal.exe --smoke` opens
-  Home and exits 0. Run dev builds with a scratch `TEXLOCAL_DATA`, never beside the installed copy.
+  a new blank project and exits 0 once its session is open. Run dev builds with a scratch
+  `TEXLOCAL_DATA`, never beside the installed copy.
 - Live Preview end to end needs the patched engine:
   `cargo test -p texlocal-core --test texpresso_live -- --ignored` (`docs/texpresso.md`).
 - Profiling without the screen: `xcrun xctrace record --template 'Time Profiler' --attach <pid>`,
