@@ -356,6 +356,34 @@ public sealed partial class WorkspacePage
         });
     }
 
+    string? KindOf(string path) => (Find(FilesTree.ItemsSource as List<NavItem>, i => i.Key == path)?.Target as TreeNode)?.Kind;
+
+    /// A file dragged to the editor, as on the Mac; a folder, which a drop there does nothing with, isn't dragged.
+    void OnFilesDrag(TreeView sender, TreeViewDragItemsStartingEventArgs args)
+    {
+        if (args.Items.Count == 1 && args.Items[0] is NavItem { Target: TreeNode { Type: not "dir" } node })
+        {
+            args.Data.SetData(SourceView.FileFormat, Full(node.Path));
+            args.Data.RequestedOperation = DataPackageOperation.Copy;
+        }
+        else args.Cancel = true;
+    }
+
+    /// The first file of this project decides, as on the Mac: a figure goes in where it was dropped; another file opens.
+    void OnFilesDropped(string[] paths, int at) => Run(null, async () =>
+    {
+        foreach (var path in paths)
+        {
+            if (await Core.CallAsync<Located?>("locate", new { path }) is not { Path.Length: > 0 } found || found.Id != id || KindOf(found.Path) is not { } kind)
+                continue;
+            if (Source.SyntaxCall<JsonElement>("drop_text", new { path = found.Path, kind, into = KindOf(Editor.Path!) }) is { ValueKind: JsonValueKind.Object } drop
+                && drop.TryGetProperty("insert", out var insert))
+                Editor.Drop(at, insert.GetString()!);
+            else await OpenDocument(found.Path, kind);
+            return;
+        }
+    });
+
     void OnDragOver(object sender, DragEventArgs e)
     {
         if (e.DataView.Contains(StandardDataFormats.StorageItems)) e.AcceptedOperation = DataPackageOperation.Copy;

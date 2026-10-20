@@ -108,6 +108,12 @@ public sealed partial class SourceView : UserControl
     /// Once per dispatcher turn, after the edit is mirrored, so the caret's line is the new text's.
     public event Action? CaretMoved;
     public event Action<IssueLine>? IssueInvoked;
+    /// Files dropped on the text, by their absolute paths, and the offset they were dropped at.
+    public event Action<string[], int>? FilesDropped;
+
+    /// A file dragged from the navigation pane, by its absolute path: as storage items, the pane's own drop would add it
+    /// to the project again.
+    public const string FileFormat = "TeXLocal.File";
 
     RichEditTextDocument Document => Editor.Document;
 
@@ -164,6 +170,9 @@ public sealed partial class SourceView : UserControl
             };
             if (Editor.ActualWidth > 0) ready.TrySetResult();
         };
+        // Handled ones too, so a drag RichEdit answers for itself still reaches FilesDropped.
+        AddHandler(DragOverEvent, new DragEventHandler(OnDragOver), true);
+        AddHandler(DropEvent, new DragEventHandler(OnDrop), true);
         SizeChanged += (_, e) => Clip = new RectangleGeometry { Rect = new(0, 0, e.NewSize.Width, e.NewSize.Height) };
         ActualThemeChanged += (_, _) => Recolour(true);
         Loaded += (_, _) =>
@@ -812,6 +821,33 @@ public sealed partial class SourceView : UserControl
         var at = Selected;
         Apply(new Change([new(at.Start, at.Length, pasted)], [new(at.Start + pasted.Length, 0)]));
     }
+
+    static bool HasFiles(DataPackageView data) => data.Contains(StandardDataFormats.StorageItems) || data.Contains(FileFormat);
+
+    void OnDragOver(object sender, DragEventArgs e)
+    {
+        if (source is null || !HasFiles(e.DataView)) return;
+        e.AcceptedOperation = DataPackageOperation.Copy;
+        e.Handled = true;
+    }
+
+    /// The offset is read before the paths, while the drop's point holds.
+    async void OnDrop(object sender, DragEventArgs e)
+    {
+        if (source is null || !HasFiles(e.DataView)) return;
+        e.Handled = true;
+        var p = e.GetPosition(Editor);
+        var at = Document.GetRangeFromPoint(new Point(Math.Max(0, p.X - Editor.Padding.Left + scroller!.HorizontalOffset),
+            Math.Max(0, p.Y - Editor.Padding.Top + scroller.VerticalOffset)), PointOptions.ClientCoordinates).StartPosition;
+        var deferral = e.GetDeferral();
+        var paths = e.DataView.Contains(FileFormat) ? new[] { await e.DataView.GetDataAsync(FileFormat) as string ?? "" }
+            : (await e.DataView.GetStorageItemsAsync()).Select(i => i.Path).ToArray();
+        deferral.Complete();
+        FilesDropped?.Invoke(paths, at);
+    }
+
+    /// A dropped file's text, in where it was dropped and selected, as on the Mac.
+    public void Drop(int at, string text) => Command(() => Apply(new Change([new(at, 0, text)], [new(at, text.Length)])));
 
     int End(int line) => line < source!.LineCount ? source.LineStart(line + 1) - 1 : Text.Length;
 

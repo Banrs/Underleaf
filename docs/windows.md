@@ -189,9 +189,9 @@ templates) is `core-api.md`'s. The numbers are the ones the app's comments cite,
 | App | Open Recent, Dock menu, opens files from Finder | Open with and the command line; no jump list | UI |
 | Home | Engine for new projects, search, drop to import | No engine | Core 7 |
 | Workspace | Inspector with the engine | Build menu toggles, no engine | Design; UI |
-| Sidebar | Drag to move, undoable trash; outline follows the scroll | Drop from Explorer, Recycle Bin, no undo; caret only | UI |
+| Sidebar | Drag to move, undoable trash; outline follows the scroll | Drop from Explorer, drag to the editor, Recycle Bin, no undo; caret only | UI |
 | Editor | Spelling over `code_ranges`, Writing Tools | Spell check off | UI; Platform |
-| Editor | `drop_text`, per-file undo, double-click to the PDF | None; undo cleared on switch | UI |
+| Editor | `drop_text`, per-file undo, double-click to the PDF | `drop_text`; undo cleared on switch | UI |
 | PDF | Find, selection, copy, SyncTeX to the word | None; to the line | Core 6 |
 | PDF | A mark where SyncTeX has no box; nearest line from whitespace | Scroll only; nothing | Core 10, 30 |
 | PDF | Print, scroll to the caret after compiling | None | UI |

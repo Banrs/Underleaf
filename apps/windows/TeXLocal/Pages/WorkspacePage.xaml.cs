@@ -116,6 +116,7 @@ public sealed partial class WorkspacePage : Page
             var index = Array.FindIndex(BuildIssues, i => i.File == Editor.Path && i.Line == line.Line);
             if (index >= 0) GoToIssue("session_choose_issue", new { session, index });
         };
+        Editor.FilesDropped += OnFilesDropped;
         Pdf.ViewMoved += ShowPage;
         Pdf.Inverse += (page, x, y) => Run(null, async () =>
         {
