@@ -243,15 +243,32 @@ final class ProjectModel {
         case .document(let state): documentChanged(state)
         case .saved: analyze()
         case .reload(let reloaded): reload(reloaded)
-        case .closed(let gone): documentClosed(gone)
-        case .renamed(let renamed): documentRenamed(renamed)
-        case .conflict(let asked): conflict(asked)
-        case .issues(let marked): markIssues(marked)
+        case .closed(let gone):
+            // One this model closed has the next file shown already.
+            (documents[gone.path], heldReasons[gone.path], lineIssues[gone.path]) = (nil, nil, nil)
+            if openPath == gone.path, gone.reason != "closed" { clearOpenFile() }
+        case .renamed(let renamed):
+            // The editor follows the rename's own answer (`performRename`).
+            documents[renamed.to] = documents.removeValue(forKey: renamed.from)
+            heldReasons[renamed.to] = heldReasons.removeValue(forKey: renamed.from)
+            lineIssues[renamed.to] = lineIssues.removeValue(forKey: renamed.from)
+        case .conflict(let asked) where asked.kind == .changed: diskConflict = asked.path
+        case .conflict(let asked): missingFile = asked.path
+        case .issues(let marked):
+            let lines = Dictionary(marked.lines.map { ($0.line, $0) }) { $1 }
+            lineIssues[marked.path] = lines.isEmpty ? nil : lines
+            if editor.path == marked.path { editor.textView.issues.lines = lines }
         case .build(let state): inOrder { self.buildChanged(state) }
         case .buildFinished(let finished): inOrder { await self.buildFinished(finished) }
         case .buildCleaned: inOrder { self.buildCleaned() }
-        case .tree(let listed): showTree(listed)
-        case .filesChanged(let changed): filesChanged(changed)
+        case .tree(let listed):
+            treeChanged = true
+            tree.show(listed.tree)
+            // A previewed file has no document for the session to close.
+            if let openPath, !editsText, tree.node(at: openPath) == nil { clearOpenFile() }
+        case .filesChanged(let changed):
+            if let openPath, !editsText, changed.paths.contains(openPath) { previewVersion += 1 }
+            if changed.paths.contains(where: { tree.node(at: $0)?.kind == .tex }) { analyze() }
         case .live(let state): liveChanged(state)
         case .livePDF(let read): showLive(read)
         case .liveRestarted: notices.note(String(localized: "Live Preview Restarted"))
@@ -277,46 +294,6 @@ final class ProjectModel {
         } else if let session, let source = SourceDocument(session: session, path: event.path) {
             source.reload(event.text)
         }
-    }
-
-    /// One this model closed has the next file shown already.
-    private func documentClosed(_ event: ClosedEvent) {
-        documents[event.path] = nil
-        heldReasons[event.path] = nil
-        lineIssues[event.path] = nil
-        if openPath == event.path, event.reason != "closed" { clearOpenFile() }
-    }
-
-    /// The editor follows the rename's own answer (`performRename`).
-    private func documentRenamed(_ event: RenamedEvent) {
-        documents[event.to] = documents.removeValue(forKey: event.from)
-        heldReasons[event.to] = heldReasons.removeValue(forKey: event.from)
-        lineIssues[event.to] = lineIssues.removeValue(forKey: event.from)
-    }
-
-    private func conflict(_ event: ConflictEvent) {
-        switch event.kind {
-        case .changed: diskConflict = event.path
-        case .gone: missingFile = event.path
-        }
-    }
-
-    private func markIssues(_ event: IssuesEvent) {
-        let lines = Dictionary(event.lines.map { ($0.line, $0) }) { $1 }
-        lineIssues[event.path] = lines.isEmpty ? nil : lines
-        if editor.path == event.path { editor.textView.issues.lines = lines }
-    }
-
-    private func showTree(_ event: TreeEvent) {
-        treeChanged = true
-        tree.show(event.tree)
-        // A previewed file has no document for the session to close.
-        if let openPath, !editsText, tree.node(at: openPath) == nil { clearOpenFile() }
-    }
-
-    private func filesChanged(_ event: PathsEvent) {
-        if let openPath, !editsText, event.paths.contains(openPath) { previewVersion += 1 }
-        if event.paths.contains(where: { tree.node(at: $0)?.kind == .tex }) { analyze() }
     }
 
     @discardableResult func inOrder(_ work: @escaping @MainActor () async -> Void) -> Task<Void, Never> { enqueue(&buildLane, work) }

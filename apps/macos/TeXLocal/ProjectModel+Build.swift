@@ -74,7 +74,13 @@ extension ProjectModel {
         (self.result, outdated, chosenIssue) = (result, finished.outdated, nil)
         finishedBuilds += 1
         if !finished.auto {
-            finishedManualBuild(result)
+            if result.failed {
+                panel.openForFailedBuild()
+                if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+            } else if result.ok, issues.isEmpty {
+                panel.closeAfterCleanBuild()
+            }
+            announceResult(result)
         } else if finished.announce {
             announceResult(result, queued: true)
         }
@@ -90,16 +96,6 @@ extension ProjectModel {
             pdf.clear()
         }
         (result, chosenIssue, outdated) = (nil, nil, false)
-    }
-
-    private func finishedManualBuild(_ result: CompileResult) {
-        if result.failed {
-            panel.openForFailedBuild()
-            if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
-        } else if result.ok, issues.isEmpty {
-            panel.closeAfterCleanBuild()
-        }
-        announceResult(result)
     }
 
     private func announceResult(_ result: CompileResult, queued: Bool = false) {

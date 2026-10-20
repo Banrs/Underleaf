@@ -87,7 +87,11 @@ struct FormatPanel: View {
             .padding(.vertical, Self.gap)
             .onKeyPress(.downArrow) { move(by: 1, in: levels, from: current) }
             .onKeyPress(.upArrow) { move(by: -1, in: levels, from: current) }
-            .onKeyPress(keys: [.return, .space]) { _ in chooseFocused() }
+            .onKeyPress(keys: [.return, .space]) { _ in
+                guard let highlighted else { return .ignored }
+                choose(highlighted)
+                return .handled
+            }
             // At the caret's level, as a pop-up menu opens at its item.
             .defaultFocus($focused, current)
             .accessibilityElement(children: .contain)
@@ -190,12 +194,6 @@ struct FormatPanel: View {
     private func choose(_ command: String) {
         project.editor.perform(.heading(command))
         close()
-    }
-
-    private func chooseFocused() -> KeyPress.Result {
-        guard let highlighted else { return .ignored }
-        choose(highlighted)
-        return .handled
     }
 
     /// The levels' fonts, the even pitch the largest needs, and the markers' column, as wide as the widest.
