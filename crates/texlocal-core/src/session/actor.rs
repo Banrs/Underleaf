@@ -1000,6 +1000,7 @@ impl Actor {
     }
 
     fn main_file_changed(&mut self) {
+        self.reload_tree();
         self.live_follow();
         let building = self.builds.compiling;
         self.stop_compile();

@@ -696,6 +696,31 @@ async fn a_new_file_changes_the_tree_and_a_changed_unopened_file_is_told_of() {
     assert_eq!(changed[0]["paths"], json!(["refs.bib"]));
 }
 
+#[tokio::test(start_paused = true)]
+async fn the_tree_marks_the_main_file_and_comes_again_when_another_is_chosen() {
+    let mut rig = Rig::new(false).await;
+    fs::write(rig.root.join("paper.tex"), "").unwrap();
+    rig.changed("paper.tex", true);
+    wait(300).await;
+    rig.events().await;
+    let patch = json!({ "patch": { "mainFile": "paper.tex" } });
+    rig.ok("set_settings", patch).await;
+    let trees = rig.of_type("tree").await;
+    let marks: Vec<_> = trees[0]["tree"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| (n["path"].clone(), n.get("main").cloned()))
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            (json!("main.tex"), None),
+            (json!("paper.tex"), Some(json!(true)))
+        ]
+    );
+}
+
 #[test]
 fn a_file_ends_its_lines_as_its_first_line_break_does() {
     assert_eq!(Newline::of("a\r\nb\nc"), Newline::CrLf);

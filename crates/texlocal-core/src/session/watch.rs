@@ -55,6 +55,8 @@ fn changes(event: notify::Event) -> Vec<Change> {
 pub(crate) struct TreeIndex {
     pub files: HashSet<String>,
     pub folders: HashSet<String>,
+    /// So another main file's mark sends the tree again.
+    main: Option<String>,
 }
 
 impl TreeIndex {
@@ -68,6 +70,9 @@ impl TreeIndex {
                     }
                     None => {
                         index.files.insert(node.path.clone());
+                        if node.main {
+                            index.main = Some(node.path.clone());
+                        }
                     }
                 }
             }
@@ -150,6 +155,7 @@ mod tests {
         TreeIndex {
             files: files.iter().map(ToString::to_string).collect(),
             folders: folders.iter().map(ToString::to_string).collect(),
+            main: None,
         }
     }
 

@@ -165,7 +165,7 @@ Each is `{"type", "session", …}`.
 | `build` | `compiling`, `auto`, `outdated` | Compile/Stop button, spinner, “Preview out of date”. Announce “Compiling” for a manual start. |
 | `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce` (a build asked for, or an automatic one whose errors changed; never one Stop ended); sync after compile if `ok` and not `outdated`. `result.badBoxes`: the overfull and underfull boxes, items as `errors` and `warnings` are, kept apart from them (not issues). |
 | `build_cleaned` | | Clear the PDF unless live. |
-| `tree` | `tree` (as `file_tree`) | Redraw the sidebar. |
+| `tree` | `tree` (as `file_tree`, whose main file's node has `main: true`) | Redraw the sidebar; it comes again when another main file is chosen. |
 | `files_changed` | `paths` | Listed files changed in place that aren't open (an image shown, say). |
 | `live` | `phase` (`stopped`/`starting`/`running`/`stopping`), `halted`, `failure`, `error`, `log`, `alert` | Title and toolbar; `alert`: show the Live Preview Log. `phase: stopped` ends the live PDF (show the build's); the session's own planned restart stays `starting` throughout, with no `stopped` between. `log`: the Live Preview Log's whole text (what went wrong, TeXpresso's error, TeX's log and output) with `alert` and while `session_live_log` says it shows, else null: keep the last one. While it shows, the log comes at most every 200 ms. |
 | `live_document` | `path`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
@@ -361,3 +361,6 @@ Every change a host follows since commit d6bee12, in the order made.
   document by the disk's spelling too, so a save never renames the file: its events name it so,
   and `tl_session_source` and the session's commands find it by that spelling. Both hosts open
   the paths the tree and these answers give, so nothing changes for them.
+- `file_tree` and the `tree` event mark the main file's node `main: true` (other nodes have no
+  `main`), and a session sends the tree again when the main file changes. Both hosts may adopt
+  it in place of their own marks; nothing breaks meanwhile.
