@@ -163,8 +163,9 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     }
     tex.sort();
     let starts_document = |name: &&String| {
-        fs::read(root.join(name.as_str()))
-            .is_ok_and(|bytes| String::from_utf8_lossy(&bytes).contains("\\documentclass"))
+        fs::read(root.join(name.as_str())).is_ok_and(|bytes| {
+            crate::syntax::headings::document_class(&String::from_utf8_lossy(&bytes)).is_some()
+        })
     };
     Ok(tex
         .iter()

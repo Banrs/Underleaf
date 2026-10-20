@@ -665,7 +665,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let service = Service::new(dir.path().join("data"));
         let files = [
-            ("Thesis/aaa.tex", "\\section{Intro}"),
+            (
+                "Thesis/aaa.tex",
+                "% \\documentclass{book}\n\\section{Intro}",
+            ),
             ("Thesis/doc.tex", "\\documentclass{book}"),
             ("Thesis/figs/a.png", "png"),
             ("Thesis/figs/.DS_Store", "x"),
@@ -686,7 +689,7 @@ mod tests {
         // A taken name gets a number, as Finder's copies do.
         for (src, id) in [("Thesis", "Thesis"), ("Thesis.zip", "Thesis 2")] {
             let info = import_project(&service, &dir.path().join(src)).unwrap();
-            // No main.tex: the first file that starts a document, in settings of its own.
+            // No main.tex: the first file that starts a document, not in a comment, in settings of its own.
             assert_eq!([info.id, info.main_file], [id, "doc.tex"]);
             let root = service.data_dir.join(id);
             assert_eq!(files_in(&root), ["aaa.tex", "doc.tex", "figs/a.png"]);
