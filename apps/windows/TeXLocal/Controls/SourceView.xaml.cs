@@ -27,6 +27,7 @@ public sealed record CompletionRow(Completion Item, int Count, string Glyph)
 {
     public string Typed => Item.Label[..Math.Clamp(Count, 0, Item.Label.Length)];
     public string Rest => Item.Label[Math.Clamp(Count, 0, Item.Label.Length)..];
+    public bool HasDetail => Item.Detail is not null;
 }
 
 /// An issue's label at its line's end, as Visual Studio 2022's inline diagnostics: the message where there is room, then

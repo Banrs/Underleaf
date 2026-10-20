@@ -269,14 +269,15 @@
                     </ListView.Resources>
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="local:CompletionRow">
-                            <Grid AutomationProperties.Name="{x:Bind Item.Label}" ColumnSpacing="12">
+                            <!-- Margins rather than column spacing, so a row without a detail has no gap after its label. -->
+                            <Grid AutomationProperties.Name="{x:Bind Item.Label}">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="16" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <FontIcon FontSize="16" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="{x:Bind Glyph}" />
-                                <TextBlock Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                <TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                                     <Run FontWeight="SemiBold" Text="{x:Bind Typed}" /><Run Text="{x:Bind Rest}" />
                                 </TextBlock>
                                 <!-- A citation's entry after its key, as VS Code shows a detail: one line, so the row keeps its
@@ -284,12 +285,14 @@
                                 <TextBlock
                                     Grid.Column="2"
                                     MaxWidth="240"
+                                    Margin="12,0,0,0"
                                     VerticalAlignment="Center"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Style="{StaticResource CaptionTextBlockStyle}"
                                     Text="{x:Bind Item.Detail}"
                                     TextTrimming="CharacterEllipsis"
-                                    TextWrapping="NoWrap" />
+                                    TextWrapping="NoWrap"
+                                    Visibility="{x:Bind HasDetail}" />
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>
