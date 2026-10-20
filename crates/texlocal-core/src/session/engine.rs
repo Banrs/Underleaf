@@ -34,6 +34,10 @@ impl Engine for Arc<Service> {
     }
 
     fn clean(&self, root: PathBuf) -> Fut<Result<(), CoreError>> {
-        Box::pin(async move { CompileManager::clean(&root) })
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || CompileManager::clean(&root))
+                .await
+                .map_err(|err| CoreError::internal(err.to_string()))?
+        })
     }
 }
