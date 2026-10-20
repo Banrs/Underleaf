@@ -7,15 +7,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     static let identifier = NSUserInterfaceItemIdentifier("main")
 
     private let app: AppModel
-    /// Made each time the projects show and let go when a project opens, so one screen's alerts and sheets never wait in another's views.
+    /// Made each time the projects show, so one screen's alerts and sheets never wait in another's views.
     private var home: NSViewController?
     private(set) var workspace: WorkspaceController?
-    /// The window's sheets, alerts and file dialogs, and its workspace's: one host, carried into whichever content shows.
-    private lazy var modals: NSHostingView<WindowModals> = {
-        let host = NSHostingView(rootView: WindowModals(app: app, project: nil))
-        host.sizingOptions = []
-        return host
-    }()
+    private let modals: NSHostingView<WindowModals>
     private var restored: SavedWorkspace?
     private var watches: [Task<Void, Never>] = []
     private var titleWatch: Task<Void, Never>?
@@ -23,6 +18,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     init(app: AppModel) {
         self.app = app
+        modals = NSHostingView(rootView: WindowModals(app: app, project: nil))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
@@ -34,6 +30,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.autorecalculatesKeyViewLoop = true
         super.init(window: window)
         window.delegate = self
+        modals.sizingOptions = []
         findEditor.isFieldEditor = true
         showHome()
         window.center()
@@ -75,10 +72,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
         setContent(workspace, project: project)
         window.contentMinSize = ColumnMetrics.contentMinimum
-        // AppKit's top scroll edge is a glass that lightens what is under it in Dark (27.2), so the toolbar over the source is the editor's surface at rest only in Light.
+        // The toolbar's ground over the source is the editor's surface.
         window.backgroundColor = .untintedTextBackground
         window.toolbar = workspace.toolbar.toolbar
-        // Compile's form goes by the toolbar's tools, which a workspace that appeared as the window took it could not yet read.
+        // Compile's form goes by the toolbar's tools, which the workspace could not read before the window had them.
         workspace.toolbarItemsChanged()
         self.workspace = workspace
         home = nil
@@ -109,7 +106,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         self.home = home
     }
 
-    /// A new content view controller resets the window's frame.
+    /// A new content view controller would reset the window's frame.
     private func setContent(_ controller: NSViewController, project: ProjectModel?) {
         guard let window else { return }
         controller.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
@@ -125,7 +122,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     // MARK: - Find
 
-    /// The PDF find bar's field passes Find on to here, as the editor would answer it (`FindPassingTextView`).
+    /// The PDF find bar's field passes Find on to here (`FindPassingTextView`).
     func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
         guard let field = client as? NSTextField, field === workspace?.pdf.find.field.field else { return nil }
         return findEditor
@@ -180,11 +177,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     override func centerSelectionInVisibleArea(_ sender: Any?) { workspace?.pdf.view.jumpToSelection() }
 
-    /// Answered here only while the PDF's pages have the keyboard. Elsewhere it stays unanswered: its menu item is off, and its key
-    /// binding (⌃L) falls off the responder chain, where NSResponder beeps (27.2) and a controller that always answered would take it in silence.
+    /// Only while the PDF's pages have the keyboard: elsewhere ⌃L falls off the responder chain, which beeps, where a
+    /// controller that always answered would take it in silence. The responder chain asks on the main thread.
     override nonisolated func responds(to selector: Selector!) -> Bool {
         guard selector == #selector(centerSelectionInVisibleArea(_:)) else { return super.responds(to: selector) }
-        // The responder chain asks on the main thread.
         return MainActor.assumeIsolated { pdfPagesHaveKeyboard }
     }
 
@@ -210,7 +206,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private static let workspaceKey = "workspace"
 }
 
-/// The Open panel, the New Project sheet and the app's alerts, and while a workspace shows, its project's sheets and alerts.
 private struct WindowModals: View {
     let app: AppModel
     let project: ProjectModel?

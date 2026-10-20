@@ -9,10 +9,10 @@ struct WorkspaceModals: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var app = app
         content
-            // Separate hosts keep each file dialog's labels with its own panel.
+            // Each file dialog in a host of its own, which keeps its labels.
             .background {
                 Color.clear
-                    // Not from a project left for another, which still shows while the next loads.
+                    // Not from a project left for another, still showing while the next loads.
                     .fileImporter(isPresented: Binding(get: { app.addingFiles && !project.closed }, set: { app.addingFiles = $0 }),
                                   allowedContentTypes: [.item, .folder],
                                   allowsMultipleSelection: true) { result in
@@ -47,7 +47,7 @@ struct WorkspaceModals: ViewModifier {
                 }
             }
             .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
-                // Keep Both, which loses nothing, is the default, as in Finder's copy alert.
+                // Keep Both, which loses nothing, is the default, as in Finder's.
                 Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "keepBoth") } }
                 Button("Replace", role: .destructive) { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
                 Button("Cancel", role: .cancel) {}
@@ -68,13 +68,12 @@ struct WorkspaceModals: ViewModifier {
             }
     }
 
-    /// The Changed on Disk alert, where either answer loses a version, has no default button, so that Return chooses neither
-    /// unread (HIG, Alerts). It is AppKit's own: SwiftUI's alert can move its default button but has no way to have none.
+    /// No default button, as either answer loses a version (HIG, Alerts): AppKit's, as SwiftUI's alert always has one.
     private func askWhichVersion(of path: String) {
         let alert = NSAlert()
         alert.messageText = String(localized: "“\(path.fileName)” Changed on Disk")
         alert.informativeText = String(localized: "Another app changed “\(path)” while it has unsaved changes here.")
-        // An alert's first button has Return until it gives it up; one titled Cancel has Escape.
+        // The first button has Return until it gives it up; Cancel has Escape.
         alert.addButton(withTitle: String(localized: "Save Anyway")).keyEquivalent = ""
         alert.addButton(withTitle: String(localized: "Revert")).hasDestructiveAction = true
         alert.addButton(withTitle: String(localized: "Cancel"))
@@ -101,7 +100,7 @@ private struct GoToSheet: View {
     @State private var text = ""
     @FocusState private var focused: Bool
 
-    /// Read from the text as it is typed: a field of a number's own tells its binding only as editing ends, and Go would wait for a first Return.
+    /// From the text as typed: a number field tells its binding only as editing ends.
     private var number: Int? {
         guard let number = try? Int(text.trimmingCharacters(in: .whitespaces), format: .number.grouping(.never)),
               number >= 1 else { return nil }

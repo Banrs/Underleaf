@@ -31,7 +31,7 @@ struct SearchField: NSViewRepresentable {
         @objc func changed(_ sender: NSSearchField) { if field.text != sender.stringValue { field.text = sender.stringValue } }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            // Let the input method commit or cancel marked text before the find bar treats Return and Escape as navigation commands.
+            // The input method's Return and Escape first.
             guard !textView.hasMarkedText() else { return false }
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
@@ -70,9 +70,9 @@ struct SearchField: NSViewRepresentable {
     func updateNSView(_ view: NSSearchField, context: Context) {
         context.coordinator.field = self
         view.placeholderString = prompt
-        // VoiceOver's name: the placeholder goes once there's text.
+        // For VoiceOver, as the placeholder goes once there's text.
         view.setAccessibilityLabel(prompt)
-        // A SwiftUI update can arrive during input-method composition; writing the bound query back would discard the marked characters.
+        // Not during input-method composition, whose marked text it would discard.
         if view.stringValue != text, (view.currentEditor() as? NSTextView)?.hasMarkedText() != true {
             view.stringValue = text
         }
@@ -86,7 +86,7 @@ final class FindPassingTextView: NSTextView {
 
     override func validateMenuItem(_ item: NSMenuItem) -> Bool {
         guard item.action == Self.find else { return super.validateMenuItem(item) }
-        // The chain from the next responder; NSApp.target(forAction:) starts at the first responder, which is this editor.
+        // From the next responder: NSApp.target(forAction:) starts at this editor.
         let target = nextResponder.flatMap { first in sequence(first: first, next: \.nextResponder).first { $0.responds(to: Self.find) } }
         return target.map { ($0 as? any NSMenuItemValidation)?.validateMenuItem(item) ?? true } ?? false
     }
@@ -118,9 +118,9 @@ struct DialogSheet<Fields: View>: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            // A grouped form's own inset, so the title lines up with its sections.
+            // The grouped form's inset, so the title lines up with its sections.
             .scenePadding([.horizontal, .top])
-            // The grouped form's background differs in dark mode, leaving seams.
+            // Its own background leaves seams in Dark.
             Form { fields }
                 .formStyle(.grouped)
                 .scrollContentBackground(.hidden)
@@ -167,7 +167,7 @@ final class InPlaceRename<ID: Hashable> {
 
 struct ItemActions { let rename, showInFinder, moveToTrash: () -> Void }
 
-/// All three have an icon, as a group has icons for all its items or none (HIG, Menus); "folder" stands for Show in Finder's file-system location.
+/// A group has icons for all its items or none (HIG, Menus).
 struct ItemMenuItems: View {
     let actions: ItemActions?
     var trashShortcut: KeyboardShortcut?
@@ -197,7 +197,7 @@ private struct ActionsOffer<ID: Hashable>: ViewModifier {
     let actions: (ID) -> ItemActions?
 
     func body(content: Content) -> some View {
-        // Only while its item exists: one trashed or renamed away, here or by another app, takes its actions with it.
+        // Only while its item exists.
         let present = id.flatMap { actions($0) == nil ? nil : $0 }
         content
             .onChange(of: present, initial: true) { _, id in app.chosenItem = id.flatMap(actions) }
@@ -229,7 +229,7 @@ struct RenameField: View {
                 if now, isFile { selection = .baseName(of: text) }
                 if was, !now { commit() }
             }
-            // Taken from wherever it is, such as the editor: a default focus would leave it there.
+            // Taken from wherever it is: a default focus would leave it there.
             .onAppear { focused = true }
     }
 }

@@ -152,8 +152,3 @@ enum PDFPaper: String, CaseIterable, Identifiable {
         }
     }
 }
-
-#Preview("Find bar") {
-    PDFFindBar(find: PDFController().find)
-        .frame(width: 480)
-}

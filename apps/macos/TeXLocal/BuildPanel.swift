@@ -49,8 +49,8 @@ struct BuildPanel: View {
         .background(.textSurface)
         // The bar's own line is the edge, where SwiftUI draws none (an AppKit scroll view).
         .scrollEdgeEffectHidden(true, for: .bottom)
-        // 27.2: in the panel's own content, not a split-item accessory, since AppKit shows a bottom accessory only once the pane
-        // has its height. A safe-area bar: in one a search field is the filled capsule it is in a toolbar; in a plain stack, an outlined field.
+        // 27.2: not a split item's accessory, which AppKit shows only once the pane has its height. In a safe-area bar a
+        // search field is a toolbar's filled capsule.
         .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 Divider()
@@ -99,7 +99,6 @@ struct BuildPanelBar: View {
         @Bindable var panel = project.panel
         HStack {
             Picker("Show", selection: $panel.tab) {
-                // TeXpresso's is dim until it has been started in this window, when it has a log.
                 ForEach(PanelTab.allCases, id: \.self) { tab in
                     Text(tab.rawValue).selectionDisabled(tab == .texpresso && !project.texpresso.used)
                 }
@@ -133,7 +132,7 @@ struct BuildPanelBar: View {
         .background(.textSurface)
     }
 
-    /// At the small size a search field is an outlined box, and SwiftUI's change of size drops its symbol (27.2).
+    /// Small, a search field is an outlined box, and SwiftUI's change of size drops its symbol (27.2).
     private func filter(_ text: Binding<String>) -> some View {
         SearchField(text: text, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
             .controlSize(.regular)
@@ -162,7 +161,7 @@ private struct IssueList: View {
                     }
                 } primaryAction: { rows in if let item = rows.first.flatMap(item) { open(item) } }
                 .copyable(project.chosenIssue.flatMap(item).map { [$0.message] } ?? [])
-                // The menus' choice may be out of sight, and the panel closed: a hidden list scrolls by its rows' estimated heights, so again as it comes up.
+                // A hidden list scrolls by its rows' estimated heights, so again as it comes up.
                 .onChange(of: project.chosenIssue) { _, place in if let place { proxy.scrollTo(place) } }
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { _ in
                     if let place = project.chosenIssue { proxy.scrollTo(place) }
@@ -196,20 +195,18 @@ private struct IssueRow: View {
         .help(item.message)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
-        // Spoken as words: "main.tex, line 12", not "main.tex colon 12".
         .accessibilityValue(location(line: ", line ") ?? "")
     }
 
     private func location(line: String) -> String? { item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file } }
 }
 
-/// The text view is inset by the bar's height: the bar's safe area reaches SwiftUI but not an AppKit scroll view, which takes the inset itself.
+/// The bar's safe area reaches SwiftUI but not an AppKit scroll view, which takes it as an inset.
 private struct LogPane: View {
     let text: String
     let filter: String
     var title = "Build Log"
-    /// Found off the main actor, not on every redraw of a log that can be megabytes, and written only by a search that was
-    /// not cancelled. Until the next are in, the last non-empty ones stay, and an empty result is no answer to another filter.
+    /// Found off the main actor, not on every redraw of a log that can be megabytes; the last ones stay until the next.
     @State private var filtered: (filter: String, lines: String)?
 
     var body: some View {
@@ -232,7 +229,6 @@ private struct LogPane: View {
         }
     }
 
-    /// Nil when cancelled part-way: a newer search has taken over.
     @concurrent private nonisolated static func lines(of text: String, with filter: String) async -> String? {
         var kept: [Substring] = []
         for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -261,14 +257,13 @@ struct LogTextView: NSViewRepresentable {
         return scroll
     }
 
-    /// An update that leaves the log as it was compares the same storage, without passes over a megabyte log.
+    /// An unchanged log compares the same storage, without passes over a megabyte log.
     final class Coordinator { var shown: String? }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
-        // A text view has no title of its own for VoiceOver.
         view.setAccessibilityLabel(title)
         if scroll.contentInsets.bottom != bottomInset {
             let atEnd = scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1
@@ -290,7 +285,7 @@ struct LogTextView: NSViewRepresentable {
         let origin = scroll.contentView.bounds.origin
         let followsTail = !scroll.isFindBarVisible && selections.allSatisfy { $0.length == 0 }
             && (shown.isEmpty || scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1)
-        // Append without invalidating the entire log's layout; a new build or bounded log rollover can replace it.
+        // Appended without laying the whole log out again, unless a new build or the log's rollover replaced it.
         let previousLength = (shown as NSString).length, new = text as NSString
         if previousLength > 0, text.utf16.starts(with: shown.utf16) {
             view.textStorage?.replaceCharacters(in: .caret(previousLength), with: new.substring(from: previousLength))
@@ -310,19 +305,4 @@ struct LogTextView: NSViewRepresentable {
             scroll.reflectScrolledClipView(scroll.contentView)
         }
     }
-}
-
-#Preview("Issues") {
-    List {
-        IssueRow(item: LogItem(type: "error", file: "chapters/intro.tex", line: 42, message: "Undefined control sequence."))
-        IssueRow(item: LogItem(type: "warning", file: "main.tex", line: nil, message: "Citation `knuth84' undefined."))
-        IssueRow(item: LogItem(type: "warning", file: nil, line: nil, message: "There were undefined references."))
-    }
-    .listStyle(.inset)
-    .frame(width: 480, height: 200)
-}
-
-#Preview("Build log") {
-    LogTextView(text: "This is pdfTeX, Version 3.141592653\n(./main.tex\nLaTeX2e <2025-06-01>\n)\nOutput written on main.pdf (4 pages).")
-        .frame(width: 480, height: 160)
 }

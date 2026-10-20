@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Xcode's editor bar's measures; the File Outline's folded header beside the bar shares its height.
+/// Xcode's editor bar's measures, which the File Outline's folded header shares.
 enum BarMetrics {
     static let height: CGFloat = 36
     static let leading: CGFloat = 14
@@ -35,7 +35,7 @@ struct StatusBar: View {
 
     private func content(_ detail: Detail) -> some View {
         HStack(spacing: BarMetrics.spacing) {
-            // A button, not a toggle: the panel's own toggle is the one place its open state shows.
+            // A button: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.panel.shown && project.panel.tab == .issues
             Button {
                 if showingIssues { project.panel.shown = false } else { project.panel.show(.issues) }
@@ -87,7 +87,7 @@ struct StatusBar: View {
             .fixedSize()
             if project.editsText || pages { Divider().frame(height: BarMetrics.dividerHeight) }
             Toggle(isOn: Bindable(project.panel).shown) {
-                // Its state is the accent colour alone: with Differentiate Without Colour the off state is the plain square, without the panel's filled third.
+                // With Differentiate Without Colour, off is the plain square.
                 Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
                       ? "square" : "inset.filled.bottomthird.square")
                     .font(.body)
@@ -145,11 +145,11 @@ struct StatusBar: View {
                 badge("\(project.warningCount)", "exclamationmark.triangle.fill", spoken: "^[\(project.warningCount) warning](inflect: true)")
             }
         }
-        // A build starting or ending crossfades its status, also under Reduce Motion, where the HIG has a crossfade stand for motion.
+        // A crossfade, which the HIG keeps under Reduce Motion.
         .animation(.easeInOut(duration: 0.2), value: project.compiling)
     }
 
-    /// `spoken` is what the short `title` stands for, so VoiceOver and Voice Control name the badge "3 errors", not "3".
+    /// `spoken` names the badge "3 errors" to VoiceOver and Voice Control, not "3".
     private func badge(_ title: LocalizedStringKey, _ systemImage: String, _ color: Color? = nil,
                        spoken: LocalizedStringKey? = nil) -> some View {
         Label {
