@@ -23,7 +23,7 @@ use crate::analyze::{self, Facts, Named, Place};
 use crate::events::Emitter;
 use crate::paths::{self, within};
 use crate::projects::{self, Query, Symbols, file_kind};
-use crate::service::{SEARCH_LIMIT, Service, arg, out, string_arg};
+use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
 use crate::syntax::{SymbolKind, Text, TextEdit};
@@ -950,7 +950,7 @@ impl Actor {
     fn search(&self, query: Query, reply: Reply) {
         let (root, docs) = (self.root.clone(), Arc::clone(&self.shared));
         tokio::task::spawn_blocking(move || {
-            let hits = projects::search_project(&root, &query, &texts(&docs), SEARCH_LIMIT);
+            let hits = projects::search_project(&root, &query, &texts(&docs), 100);
             reply.send(hits.and_then(|hits| out(projects::search_groups(hits))));
         });
     }

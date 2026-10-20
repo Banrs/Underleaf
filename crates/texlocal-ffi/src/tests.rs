@@ -89,13 +89,6 @@ fn commands_round_trip_through_the_c_abi() {
     let handle = open_with_project(dir.path());
     assert_eq!(call_raw(handle, "list_projects", None)["ok"][0]["id"], "P");
 
-    std::fs::write(dir.path().join("P/a.tex"), "x").unwrap();
-    let found = call(handle, "search_project", json!({ "id": "P", "query": "x" }));
-    assert_eq!(
-        found["ok"],
-        json!([{ "file": "a.tex", "hits": [{ "file": "a.tex", "line": 1, "column": 0, "length": 1, "before": "", "match": "x", "after": "" }] }])
-    );
-
     let bad = call(handle, "create_entry", json!({ "id": "P", "path": "../x" }));
     assert_eq!(bad["status"], 400);
     assert_eq!(call_raw(handle, "nope", None)["status"], 404);

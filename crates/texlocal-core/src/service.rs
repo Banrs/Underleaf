@@ -1,7 +1,6 @@
 // Shared command surface: hosts forward here so path checks and edit
 // serialization have one implementation.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -17,7 +16,6 @@ use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
 use crate::{CoreError, import, lock, paths, templates, wordmatch, zipexport};
 
-pub(crate) const SEARCH_LIMIT: usize = 100;
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
     "That folder doesn't contain the texpresso program. Choose the folder it's in.";
@@ -163,12 +161,6 @@ impl Service {
             }
             "get_settings" => out(settings::read_settings(&root()?)),
             "file_tree" => out(projects::file_tree(&root()?)?),
-            "search_project" => out(projects::search_groups(projects::search_project(
-                &root()?,
-                &projects::Query::new(s("query")?, false, false),
-                &HashMap::new(),
-                SEARCH_LIMIT,
-            )?)),
             "create_entry" => {
                 let path = s("path")?;
                 let dir = arg::<Option<bool>>(args, "dir")?.unwrap_or(false);

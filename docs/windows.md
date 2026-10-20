@@ -164,7 +164,7 @@ templates) is `core-api.md`'s. The numbers are the ones the app's comments cite,
     JSON dedupe go.
 25. **Unsaved in the document event**: the `document` event carries `unsaved`.
 26. **Find in the core**: a source `find {query, matchCase, wholeWord}` returning every match as a
-    UTF-16 range with `search_project`'s folding, so Ctrl+F and Ctrl+Shift+F agree and the
+    UTF-16 range with `session_search`'s folding, so Ctrl+F and Ctrl+Shift+F agree and the
     `FindText` loop goes.
 27. **Maths size**: `math_svg` takes `size`, but both hosts keep the 1.21 ratio; a
     `math_preview {caret, size, color}` would take it.

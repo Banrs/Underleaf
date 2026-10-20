@@ -81,7 +81,6 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     let pdf = call(&service, "pdf_path", json!({ "id": "P" })).await;
     assert!(pdf.as_str().unwrap().ends_with(".pdf"), "{pdf}");
     for (command, args) in [
-        ("search_project", json!({ "id": "P" })),
         (
             "synctex_forward",
             json!({ "id": "P", "file": "a.tex", "line": "x" }),
