@@ -45,10 +45,7 @@ pub fn scan_symbols(
     }
     let all = files.values();
     Ok(Symbols {
-        citations: dedup(
-            all.clone().flat_map(|f| names(&f.citations)),
-            String::as_str,
-        ),
+        citations: dedup(all.clone().flat_map(|f| &f.citations), |c| &c.name),
         labels: dedup(all.clone().flat_map(|f| names(&f.labels)), String::as_str),
         commands: dedup(all.clone().flat_map(|f| &f.commands), |c| &c.name),
         environments: dedup(all.flat_map(|f| names(&f.environments)), String::as_str),

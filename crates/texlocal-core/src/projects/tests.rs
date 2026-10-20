@@ -243,6 +243,7 @@ fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
     let Symbols {
         citations, labels, ..
     } = scan_symbols(&root, &Files::default(), &HashMap::new()).unwrap();
+    let citations: Vec<String> = citations.into_iter().map(|c| c.name).collect();
     assert_eq!(citations.len(), 4, "{citations:?}");
     assert_eq!(citations[..2], ["Smith2020", "Jones2021"]);
     assert!(citations[2].contains("ller2020") && citations[3] == "ok2021");
@@ -261,9 +262,12 @@ fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
          \\begin{thebibliography}{9}\n\\bibitem[K]{knuth} Knuth.\n\\bibitem {lamport} Lamport.\n",
     )
     .unwrap();
+    let keys = |found: &Symbols| -> Vec<String> {
+        found.citations.iter().map(|c| c.name.clone()).collect()
+    };
     let found = scan_symbols(&root, &Files::default(), &HashMap::new()).unwrap();
     assert_eq!(found.labels, ["kept", "after-percent", "spaced", "eq:one"]);
-    assert_eq!(found.citations, ["knuth", "lamport"]);
+    assert_eq!(keys(&found), ["knuth", "lamport"]);
 
     fs::remove_file(root.join("main.tex")).unwrap();
     for (file, text) in [
@@ -278,7 +282,7 @@ fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
     }
     let found = scan_symbols(&root, &Files::default(), &HashMap::new()).unwrap();
     assert_eq!(found.labels, ["first", "shared", "last"]);
-    assert_eq!(found.citations, ["one", "three", "two"]);
+    assert_eq!(keys(&found), ["one", "three", "two"]);
 }
 
 #[test]

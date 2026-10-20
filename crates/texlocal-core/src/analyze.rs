@@ -100,9 +100,12 @@ impl Place {
     }
 }
 
+#[derive(Clone)]
 pub struct Named {
     pub name: String,
     pub place: Place,
+    /// What completion says of it beside its name: a .bib entry's authors, year and title.
+    pub detail: Option<String>,
 }
 
 /// A command the project defines, with the arguments it takes in braces.
@@ -174,23 +177,30 @@ impl Facts {
     pub(crate) fn read(source: &str, kind: &str) -> Self {
         let text = Text::new(source);
         if kind == "bib" {
-            let entries = BIB_KEY.captures_iter(source).filter(|entry| {
+            let mut entries = BIB_KEY.captures_iter(source).peekable();
+            let (mut citations, mut byte, mut unit) = (Vec::new(), 0, 0);
+            while let Some(entry) = entries.next() {
                 let kind = entry[1].to_ascii_lowercase();
-                !matches!(kind.as_str(), "comment" | "string" | "preamble")
-            });
-            let (mut byte, mut unit) = (0, 0);
-            let citations = entries.map(|entry| {
+                if matches!(kind.as_str(), "comment" | "string" | "preamble") {
+                    continue;
+                }
                 let key = entry.get(2).expect("an entry has a key");
                 unit += source[byte..key.start()].encode_utf16().count();
                 byte = key.start();
                 let end = unit + key.as_str().encode_utf16().count();
-                Named {
+                // Read to the next entry at most, so one left unbalanced takes nothing of those
+                // after it.
+                let next = entries
+                    .peek()
+                    .map_or(source.len(), |next| next.get_match().start());
+                citations.push(Named {
                     name: key.as_str().to_owned(),
                     place: Place::of(&text, unit..end),
-                }
-            });
+                    detail: detail(&fields(&source[entry.get_match().end()..next])),
+                });
+            }
             return Self {
-                citations: citations.collect(),
+                citations,
                 ..Self::default()
             };
         }
@@ -248,7 +258,11 @@ impl Visit for Names<'_> {
                         facts.commands.push(defined);
                     } else {
                         let Defined { name, place, .. } = defined;
-                        facts.environments.push(Named { name, place });
+                        facts.environments.push(Named {
+                            name,
+                            place,
+                            detail: None,
+                        });
                     }
                 }
             }
@@ -275,7 +289,7 @@ impl Visit for Names<'_> {
         };
         let list = matches!(kind, SymbolKind::Label | SymbolKind::Citation);
         for at in listed(&text.units, name_end, list) {
-            let Named { name, place } = named(text, at);
+            let Named { name, place, .. } = named(text, at);
             self.1.uses.push(Used { kind, name, place });
         }
     }
@@ -285,7 +299,88 @@ fn named(text: &Text, at: Range<usize>) -> Named {
     Named {
         name: String::from_utf16_lossy(&text.units[at.clone()]),
         place: Place::of(text, at),
+        detail: None,
     }
+}
+
+/// A .bib entry's fields from just after its key, each named in lower case, with its value as
+/// written but for the braces or quotes around it and any `#` joining its parts. Braces nest
+/// and hold quotes; the entry ends at the brace or parenthesis that closes it, or, unbalanced,
+/// with `body`.
+fn fields(body: &str) -> Vec<(String, String)> {
+    let (mut fields, mut name, mut value) = (Vec::new(), String::new(), None::<String>);
+    let (mut depth, mut quoted) = (0_usize, false);
+    for c in body.chars() {
+        let top = depth == 0 && !quoted;
+        match (c, value.as_mut()) {
+            ('}' | ')', _) if top => break,
+            (',', _) if top => {
+                fields.extend(value.take().map(|value| (name.clone(), value)));
+                name.clear();
+            }
+            ('=', None) => value = Some(String::new()),
+            (c, None) if !c.is_whitespace() => name.push(c.to_ascii_lowercase()),
+            (_, None) => {}
+            ('"', Some(_)) if depth == 0 => quoted = !quoted,
+            ('{', Some(text)) => {
+                if !top {
+                    text.push(c);
+                }
+                depth += 1;
+            }
+            ('}', Some(text)) => {
+                depth = depth.saturating_sub(1);
+                if depth > 0 || quoted {
+                    text.push(c);
+                }
+            }
+            (c, Some(_)) if top && (c == '#' || c.is_whitespace()) => {}
+            (c, Some(text)) => text.push(c),
+        }
+    }
+    fields.extend(value.map(|value| (name, value)));
+    fields
+}
+
+/// What completion says of a .bib entry, "Knuth · 1984 · The TeXbook", as far as its fields
+/// tell: its authors' last names, its year (or biblatex's date's) and its title.
+fn detail(fields: &[(String, String)]) -> Option<String> {
+    let field = |name: &str| {
+        fields
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    };
+    // A last name comes first before a comma, else last, and a braced name is one.
+    let last = |name: &str| {
+        let name = name.trim();
+        let last = if name.starts_with('{') && name.ends_with('}') {
+            name
+        } else if let Some((last, _)) = name.split_once(',') {
+            last
+        } else {
+            name.rsplit_once(' ').map_or(name, |(_, last)| last)
+        };
+        plain_title(last)
+    };
+    let authors = field("author").and_then(|authors| {
+        let authors = SPACES.replace_all(authors, " ");
+        let names: Vec<String> = authors.split(" and ").filter_map(last).collect();
+        match names.as_slice() {
+            [] => None,
+            [one] => Some(one.clone()),
+            [one, two] => Some(format!("{one} and {two}")),
+            [one, ..] => Some(format!("{one} et al.")),
+        }
+    });
+    let year = field("year").or_else(|| field("date").and_then(|date| date.get(..4)));
+    let parts = [
+        authors,
+        year.and_then(plain_title),
+        field("title").and_then(plain_title),
+    ];
+    let parts: Vec<String> = parts.into_iter().flatten().collect();
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 /// Each file's facts by its name as the volume compares names, with the stamp read at. An
@@ -774,6 +869,31 @@ mod tests {
         assert_eq!(
             named(&bib.citations),
             [("knuth84".into(), at(2, 6, 7)), ("é2".into(), at(4, 7, 2))]
+        );
+    }
+
+    /// Through braces and quotes, a biblatex date, `#` and a name in braces; an entry left open
+    /// reads to the next one, not past it.
+    #[test]
+    fn a_bib_entry_tells_its_authors_year_and_title() {
+        let bib = "@book{knuth,\n  author = {Knuth, Donald E.},\n  title = \"The {TeX}book, \" # {Vol. A},\n  year = 1984,\n}\n\
+            @article{two, title = {On {\\em Two}}, author = {A. One and\n B. {Two}}, date = {2020-05-01}}\n\
+            @misc(many, author = \"A and B and {World Health Organization}\")\n\
+            @misc{open, title = {Never {closed},\n  year = 1999\n\
+            @misc{after, author = {Last, First}, year = {2001}}\n@misc{bare,}";
+        let read = Facts::read(bib, "bib").citations.into_iter();
+        let details: Vec<_> = read.map(|c| (c.name, c.detail)).collect();
+        let detail = |key: &str, detail: Option<&str>| (key.into(), detail.map(String::from));
+        assert_eq!(
+            details,
+            [
+                detail("knuth", Some("Knuth · 1984 · The TeXbook, Vol. A")),
+                detail("two", Some("One and Two · 2020 · On Two")),
+                detail("many", Some("A et al.")),
+                detail("open", Some("Never closed, year = 1999")),
+                detail("after", Some("Last · 2001")),
+                detail("bare", None),
+            ]
         );
     }
 

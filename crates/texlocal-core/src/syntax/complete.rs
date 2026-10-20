@@ -27,6 +27,8 @@ pub struct Completion {
     pub label: String,
     pub text: String,
     pub fields: Vec<SnippetField>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// What completion offers, and what a definition is of.
@@ -45,7 +47,7 @@ pub enum SymbolKind {
 /// completion, and each file's facts for definitions.
 #[derive(Default)]
 pub struct Symbols {
-    pub citations: Vec<String>,
+    pub citations: Vec<Named>,
     pub labels: Vec<String>,
     pub commands: Vec<Defined>,
     pub environments: Vec<String>,
@@ -89,10 +91,18 @@ impl SourceDocument {
         };
 
         if let Some(c) = ARGUMENT.captures(&before) {
+            let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
+            let start = before.len() - before[start..].trim_start().len();
+            let typed = &before[start..];
             let listed: Vec<String>;
             let (names, kind): (&[String], _) = match &c[1] {
                 c if catalog.cite_commands.contains(c) => {
-                    (&self.symbols.citations, SymbolKind::Citation)
+                    let cited = matching(&self.symbols.citations, typed, |c| &c.name);
+                    let mut items = words(cited.iter().map(|c| &c.name).collect(), "");
+                    for (item, cited) in items.iter_mut().zip(cited) {
+                        item.detail.clone_from(&cited.detail);
+                    }
+                    return offer(start, SymbolKind::Citation, items);
                 }
                 c if catalog.ref_commands.contains(c) => (&self.symbols.labels, SymbolKind::Label),
                 "begin" | "end" => {
@@ -124,9 +134,7 @@ impl SourceDocument {
                     (&listed, SymbolKind::File)
                 }
             };
-            let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
-            let start = before.len() - before[start..].trim_start().len();
-            let items = words(matching(names, &before[start..], |n| n), "");
+            let items = words(matching(names, typed, |n| n), "");
             return offer(start, kind, items);
         }
         // In a .bib file; `before` starts at the line's start unless the line is long.
@@ -143,6 +151,7 @@ impl SourceDocument {
                 label: name.clone(),
                 text,
                 fields,
+                detail: None,
             }
         };
         let own = &self.symbols.commands;
@@ -261,6 +270,7 @@ fn words(names: Vec<&String>, prefix: &str) -> Vec<Completion> {
                 text: label.clone(),
                 label,
                 fields: vec![],
+                detail: None,
             }
         })
         .collect()
@@ -321,6 +331,7 @@ mod tests {
 
     use super::{Completion, Defined, Place, SnippetField, Symbols};
     use crate::syntax::SourceDocument;
+    use crate::syntax::tests::cited;
 
     fn offered(before: &str, symbols: Symbols) -> Vec<Completion> {
         let mut doc = SourceDocument::new(before);
@@ -430,10 +441,10 @@ mod tests {
 
     #[test]
     fn keys_match_lowercased_whole() {
-        let keys = ["Knuth84", "knuth86", "Émile", "émile2", "Kn"].map(String::from);
+        let keys = ["Knuth84", "knuth86", "Émile", "émile2", "Kn"];
         let offered = |typed: &str| {
             let symbols = Symbols {
-                citations: keys.to_vec(),
+                citations: cited(&keys),
                 ..Symbols::default()
             };
             labels(&format!("\\cite{{{typed}"), symbols)
@@ -444,5 +455,18 @@ mod tests {
         assert_eq!(offered("é"), ["émile2", "Émile"]);
         assert_eq!(offered("ÉMILE"), ["Émile", "émile2"]);
         assert_eq!(offered("\u{212a}n"), ["Knuth84", "knuth86", "Kn"]);
+    }
+
+    #[test]
+    fn a_citation_says_what_its_entry_is() {
+        let bib = "@book{knuth, author = {Knuth}, year = 1984}\n@misc{kn,}";
+        let symbols = Symbols {
+            citations: crate::analyze::Facts::read(bib, "bib").citations,
+            ..Symbols::default()
+        };
+        let items = offered("\\cite{kn", symbols);
+        let item = |i: usize| serde_json::to_value(&items[i]).unwrap();
+        assert_eq!(item(0)["detail"], "Knuth · 1984");
+        assert_eq!(item(1).get("detail"), None, "none to say");
     }
 }

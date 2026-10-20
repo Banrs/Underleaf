@@ -1286,7 +1286,7 @@ async fn citations_and_files_another_app_writes_reach_completion() {
     rig.changed("refs.bib", true);
     // The file list comes with the tree's own rescan, perhaps one scan after the key.
     let cited = |symbols: &Symbols, key| {
-        symbols.citations.iter().any(|cited| cited == key)
+        symbols.citations.iter().any(|cited| cited.name == key)
             && symbols.files == ["main.tex", "refs.bib"]
     };
     assert!(until(&doc, |s| cited(s, "first")).await, "a new file's");

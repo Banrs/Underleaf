@@ -11,6 +11,15 @@ fn units(s: &str) -> u32 {
     utf16(s) as u32
 }
 
+/// Citations as a .bib file's entries of these keys, with nothing to say of them.
+pub(crate) fn cited(keys: &[&str]) -> Vec<crate::analyze::Named> {
+    let bib: String = keys
+        .iter()
+        .map(|key| format!("@misc{{{key},}}\n"))
+        .collect();
+    crate::analyze::Facts::read(&bib, "bib").citations
+}
+
 #[test]
 fn line_starts_follow_edits() {
     let mut doc = SourceDocument::new("a\nb\nc");
@@ -41,12 +50,11 @@ fn completions_offer_the_symbols_set_on_the_document() {
                 .collect()
         })
     };
-    let owned = |names: &[&str]| names.iter().map(|&n| n.to_owned()).collect();
     let mut doc = SourceDocument::new("\\cite{sm} \\ref{fig");
     assert!(offered(&mut doc, 8).is_empty(), "a new document has none");
     doc.set_symbols(std::sync::Arc::new(Symbols {
-        labels: owned(&["fig:one", "sec:two"]),
-        citations: owned(&["smith2020", "jones"]),
+        labels: vec!["fig:one".into(), "sec:two".into()],
+        citations: cited(&["smith2020", "jones"]),
         ..Symbols::default()
     }));
     assert_eq!(offered(&mut doc, 8), ["smith2020"]);
@@ -54,7 +62,7 @@ fn completions_offer_the_symbols_set_on_the_document() {
     doc.edit(0, 0, "x ");
     assert_eq!(offered(&mut doc, 10), ["smith2020"]);
     doc.set_symbols(std::sync::Arc::new(Symbols {
-        citations: owned(&["smyth"]),
+        citations: cited(&["smyth"]),
         ..Symbols::default()
     }));
     assert_eq!(offered(&mut doc, 10), ["smyth"]);
