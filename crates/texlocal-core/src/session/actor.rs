@@ -808,7 +808,13 @@ impl Actor {
             self.live.disk_paths.extend(meaning.listed.iter().cloned());
         }
         if meaning.tree || meaning.settings {
+            let main = self.tree.main.clone();
             self.reload_tree();
+            // Another app chose another main file: builds and Live Preview follow it as they
+            // follow the app's own choice.
+            if meaning.settings && self.tree.main != main {
+                self.main_file_changed();
+            }
         }
         if self.live.active() && !self.live.disk_paths.is_empty() {
             self.after(Timer::Disk);

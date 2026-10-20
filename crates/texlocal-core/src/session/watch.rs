@@ -57,7 +57,7 @@ pub(crate) struct TreeIndex {
     pub files: HashSet<String>,
     pub folders: HashSet<String>,
     /// So another main file's mark sends the tree again.
-    main: Option<String>,
+    pub main: Option<String>,
 }
 
 impl TreeIndex {

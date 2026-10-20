@@ -739,12 +739,13 @@ fn a_file_ends_its_lines_as_its_first_line_break_does() {
 
 /// By hand, by git or by a sync client: the host's mark follows the tree's.
 #[tokio::test(start_paused = true)]
-async fn another_apps_change_to_the_settings_sends_the_tree_with_their_main_file() {
-    let mut rig = Rig::new(false).await;
+async fn another_apps_change_of_the_main_file_is_marked_and_built() {
+    let mut rig = Rig::new(true).await;
     fs::write(rig.root.join("paper.tex"), "").unwrap();
     rig.changed("paper.tex", true);
     wait(300).await;
     rig.events().await;
+    let builds = rig.fake.called("compile");
     let settings = r#"{ "mainFile": "paper.tex" }"#;
     fs::write(rig.root.join(".texlocal.json"), settings).unwrap();
     rig.changed(".texlocal.json", false);
@@ -753,6 +754,11 @@ async fn another_apps_change_to_the_settings_sends_the_tree_with_their_main_file
     let tree = trees[0]["tree"].as_array().unwrap();
     let main = tree.iter().find(|node| node["main"] == true);
     assert_eq!(main.unwrap()["path"], "paper.tex");
+    assert_eq!(
+        rig.fake.called("compile"),
+        builds + 1,
+        "the new main file is built"
+    );
 }
 
 #[tokio::test(start_paused = true)]
