@@ -1,23 +1,19 @@
 import AppKit
 import SwiftUI
 
-/// Aa's popover, as Notes' Aa: the styles' toggles, then the levels, the caret's checked. The menu bar's Format menu and
-/// the toolbar's overflow menu keep them as plain menu items.
+/// Aa's popover, as Notes' Aa: the styles' toggles, then the levels, the caret's checked.
 final class FormatPopover: NSObject, NSPopoverDelegate {
     let popover = NSPopover()
     private let app: AppModel
     private let project: ProjectModel
-    /// The click that closed it, when one did: on Aa, it isn't one to open it again.
+    /// The click on Aa that closed it isn't one to open it again; a click's press and release have one number.
     private var closingClick: Int?
-
-    /// The mouse click being handled; its press and release have one number.
     private var click: Int? { NSApp.currentEvent.flatMap { [.leftMouseDown, .leftMouseUp].contains($0.type) ? $0.eventNumber : nil } }
 
     init(app: AppModel, project: ProjectModel) {
         self.app = app
         self.project = project
         super.init()
-        // Escape and a click elsewhere close it.
         popover.behavior = .transient
         popover.delegate = self
     }
@@ -38,32 +34,25 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) { popover.contentViewController = nil }
 }
 
-/// Bold, Italic and Underline, lit while the selection is in their command, then the class's levels, each in its weight and
-/// shape at a size scaled into Notes'. A style toggles and the popover stays, as in Notes; a level is chosen and it closes, as a
-/// menu. It opens with the caret's level checked and nothing highlighted. The pointer highlights a level without taking the
-/// keyboard's focus; the arrow keys and Tab move both, and Return and Space choose a highlighted level.
+/// The styles, lit while the selection is in their command, then the class's levels in their weight and shape. A style
+/// toggles and the popover stays, as in Notes; a level is chosen and it closes, as a menu. It opens with nothing
+/// highlighted; the pointer highlights a level without taking the focus, the arrow keys and Tab move both, and Return
+/// and Space choose the highlighted level.
 struct FormatPanel: View {
     let app: AppModel
     let project: ProjectModel
     let close: () -> Void
-    /// The keyboard's level, which the arrow keys move.
     @FocusState private var focused: String?
-    /// The level under the pointer or last reached by the arrow keys, as a menu's highlight.
+    /// The level under the pointer or last reached by the keys, as a menu's highlight.
     @State private var highlighted: String?
-    /// Set by the first key pressed here. SwiftUI hands the keyboard out as the popover opens, takes it back, and hands it
-    /// to the first level (27.2): only a key's move of it, as Tab's, is one to highlight.
+    /// 27.2: SwiftUI hands the keyboard to the first level as the popover opens; only a key's move of it is a highlight.
     @State private var keyed = false
-    /// The selection's, read again as the text or the selection changes.
     @State private var styles = TextStyles()
 
-    /// Notes' list markers sit a word space from their text.
-    private static let markerGap: CGFloat = 4
-    /// Notes' Aa, read through Accessibility (27.2): 7 pt between each part and the next and at the edges, dividers 7 pt
-    /// in from the sides, rows 28 pt high a point apart and 10 pt in, their content 16 pt in; highlights with 8 pt corners.
+    /// Notes' Aa, read through Accessibility (27.2): parts 7 pt apart and from the edges, dividers 7 pt in, rows at a 29 pt
+    /// pitch 10 pt in with their content 16 pt in, 8 pt corners, list markers a word space from their text.
     fileprivate static let gap: CGFloat = 7, dividerInset: CGFloat = 7, rowInset: CGFloat = 10, rowGap: CGFloat = 1,
-                           contentInset: CGFloat = 16, highlightRadius: CGFloat = 8
-    /// Notes' row pitch.
-    fileprivate static let notesPitch: CGFloat = 29
+                           contentInset: CGFloat = 16, highlightRadius: CGFloat = 8, notesPitch: CGFloat = 29, markerGap: CGFloat = 4
 
     var body: some View {
         let headings = project.headingStyles
@@ -72,14 +61,11 @@ struct FormatPanel: View {
         // Read once: it searches the outline.
         let current = project.headingCommand
         VStack(spacing: 0) {
-            // Evenly spaced: the gap between them is the gap to the popover's edges.
             HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                toggle(.editBold, symbol: "bold", on: styles.bold != nil, help: "Make text bold")
-                Spacer(minLength: 0)
-                toggle(.editItalic, symbol: "italic", on: styles.italic != nil, help: "Make text italic")
-                Spacer(minLength: 0)
-                toggle(.editUnderline, symbol: "underline", on: styles.underline != nil, help: "Underline text")
+                ForEach([(MenuCommand.editBold, styles.bold), (.editItalic, styles.italic), (.editUnderline, styles.underline)], id: \.0) { command, edits in
+                    Spacer(minLength: 0)
+                    toggle(command, on: edits != nil)
+                }
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity)
@@ -88,7 +74,7 @@ struct FormatPanel: View {
                 .padding(.horizontal, Self.dividerInset)
             VStack(spacing: Self.rowGap) {
                 ForEach(headings, id: \.command) { style in
-                    // The run-in levels set apart from the displayed ones, as Notes sets Block Quote apart from its styles.
+                    // The run-in levels apart, as Notes sets Block Quote apart from its styles.
                     if style == headings.first(where: \.isRunIn), style != headings.first {
                         separator
                             .padding(.horizontal, Self.dividerInset - Self.rowInset)
@@ -122,21 +108,19 @@ struct FormatPanel: View {
         .onChange(of: project.editor.changes.count, initial: true) { styles = project.editor.textStyles }
     }
 
-    /// Notes' popover separator: half a point, where SwiftUI's `Divider` takes a point here.
+    /// Notes' half-point separator, where SwiftUI's `Divider` takes a point here.
     private var separator: some View { Divider().frame(height: 0.5) }
 
-    private func toggle(_ command: MenuCommand, symbol: String, on: Bool, help: LocalizedStringKey) -> some View {
-        Toggle(command.title, systemImage: symbol, isOn: Binding(get: { on }, set: { _ in
+    private func toggle(_ command: MenuCommand, on: Bool) -> some View {
+        Toggle(command.title, systemImage: command.style!.symbol, isOn: Binding(get: { on }, set: { _ in
             app.perform(command, on: project)
         }))
         .toggleStyle(GlassTile())
-        // What it does, as the toolbar's own buttons for these say (HIG, Offering help).
-        .help(help)
+        .help(command.style!.help)
     }
 
-    /// Notes' style toggles: the symbol alone, on a tile of the accent's glass while on.
+    /// Notes' style toggles: the symbol alone, on the accent's glass while on, 24 pt high at a 29 pt pitch (27.2).
     fileprivate struct GlassTile: ToggleStyle {
-        /// Notes' tile's height, and its pitch along the row (measured, 27.2).
         static let side: CGFloat = 24, width: CGFloat = 29
 
         func makeBody(configuration: Configuration) -> some View {
@@ -159,7 +143,6 @@ struct FormatPanel: View {
         let lit = highlighted == style.command
         return Button { choose(style.command) } label: {
             HStack(spacing: 6) {
-                // The kit's checkmark: bold at the menu's size.
                 Image(systemName: "checkmark")
                     .font(.body.bold())
                     .opacity(checked ? 1 : 0)
@@ -177,8 +160,7 @@ struct FormatPanel: View {
             }
             .padding(.horizontal, Self.contentInset - Self.rowInset)
             .frame(height: layout.pitch - Self.rowGap)
-            // A menu's highlight, the system's tint, which follows the pointer and the arrow keys;
-            // on it the text's styles turn as a selected row's do.
+            // A menu's highlight, on which the text's styles turn as a selected row's do.
             .foregroundStyle(.primary)
             .background(lit ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: Self.highlightRadius))
             .environment(\.backgroundProminence, lit ? .increased : .standard)
@@ -197,7 +179,7 @@ struct FormatPanel: View {
     }
 
     private func move(by step: Int, in levels: [String], from current: String) -> KeyPress.Result {
-        // From the highlight; with none yet, the caret's level is highlighted first: the keyboard may not have reached it.
+        // With no highlight yet, the caret's level first: the keyboard may not have reached it.
         let next = highlighted.flatMap(levels.firstIndex).map { levels[min(max($0 + step, 0), levels.count - 1)] }
             ?? (levels.contains(current) ? current : focused)
         highlighted = next
@@ -210,15 +192,13 @@ struct FormatPanel: View {
         close()
     }
 
-    /// Return and Space choose the highlighted level.
     private func chooseFocused() -> KeyPress.Result {
         guard let highlighted else { return .ignored }
         choose(highlighted)
         return .handled
     }
 
-    /// The levels' fonts at the text's size, the even pitch the largest needs, and the marker
-    /// column, as wide as the widest number shown in its level's font.
+    /// The levels' fonts, the even pitch the largest needs, and the markers' column, as wide as the widest.
     struct Layout {
         private let fonts: [String: NSFont]
         let pitch: CGFloat
@@ -227,7 +207,6 @@ struct FormatPanel: View {
         init(_ headings: [HeadingStyle]) {
             let fonts = Dictionary(headings.map { ($0.command, Self.font($0.font)) }) { first, _ in first }
             self.fonts = fonts
-            // The rows' even pitch, Notes': the largest line and a little where that's more.
             let line = fonts.values.map { $0.ascender - $0.descender + $0.leading }.max() ?? 16
             pitch = max(FormatPanel.notesPitch, (line + 4).rounded(.up))
             markers = headings.compactMap { style in
@@ -237,8 +216,7 @@ struct FormatPanel: View {
 
         func font(_ style: HeadingStyle) -> Font { Font(fonts[style.command] ?? .systemFont(ofSize: NSFont.systemFontSize)) }
 
-        /// A level at its weight and shape, its size LaTeX's scaled into Notes' range: \Huge's 2.5 times the text comes
-        /// out at Notes' Title, 22 points, and \large and \Large near its Subheading and Heading.
+        /// LaTeX's sizes scaled into Notes': \Huge comes out at its Title's 22 pt, \large and \Large near its Subheading and Heading.
         private static func font(_ style: HeadingStyle.Font) -> NSFont {
             let size = (NSFont.systemFontSize * pow(style.scale, 0.58)).rounded()
             var descriptor = NSFont.systemFont(ofSize: size, weight: style.bold ? .bold : .regular).fontDescriptor

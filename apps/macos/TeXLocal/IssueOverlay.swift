@@ -2,16 +2,13 @@ import AppKit
 import SwiftUI
 
 /// The build's issues on the lines laid out: a band over each paragraph with one, a box at the end of its first line
-/// (`IssueBox`), help tags for words the box doesn't show, and the undefined command underlined. Placed again on each
-/// layout, keeping each line's box.
+/// (`IssueBox`), help tags for words the box doesn't show, and the undefined command underlined.
 final class IssueOverlay {
-    /// A line's issue as placed: its band, the box at the line's end where it has room, and the underlines.
     struct Row {
         let line: Int
         let band: NSRect
         var message: (view: IssueMessageView, rect: NSRect, cut: Bool)?
         var tip: String?
-        /// The undefined command's underlines, where the line has it.
         var tokens: [NSRect] = []
     }
 
@@ -29,14 +26,12 @@ final class IssueOverlay {
     }
 
     private(set) var rows: [Row] = []
-    /// The messages as measured, by line: for these issues and this font.
     private var labels: [Int: IssueLabel] = [:]
     private var font = NSFont.systemFont(ofSize: NSFont.systemFontSize - 1)
     /// A character's width of the text's font: the least room between a line's text and its box.
     private var gap: CGFloat = 0
     private var tips: [(tag: NSView.ToolTipTag, rect: NSRect, text: NSString)] = []
 
-    /// The message's font is the text's size; the gap a character of the text's font.
     func fontChanged(size: CGFloat, text: NSFont) {
         font = .systemFont(ofSize: size)
         gap = ("0" as NSString).size(withAttributes: [.font: text]).width
@@ -45,7 +40,7 @@ final class IssueOverlay {
 
     func place() {
         guard !lines.isEmpty || !rows.isEmpty else { return }
-        // Each line keeps its box's view; every band in sight, a handful at most, is drawn again.
+        // Each line keeps its box's view.
         var views = Dictionary(rows.compactMap { row in row.message.map { (row.line, $0.view) } }) { $1 }
         rows.forEach { view.setNeedsDisplay($0.band) }
         rows.removeAll()
@@ -75,7 +70,6 @@ final class IssueOverlay {
         guard let first = lines.first else { return nil }
         let band = view.band(lines, of: fragment)
         var issue = Row(line: number, band: band)
-        // The fragment's lines in the view: its frame has the line fragment's padding in it.
         let left = view.textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = view.textContainerOrigin.y + fragment.layoutFragmentFrame.minY
         let said = [reported.message] + reported.others
@@ -101,13 +95,10 @@ final class IssueOverlay {
             issue.message = (message, rect, fitted?.cut ?? true)
         }
         if issue.message?.cut != false || issues > 1 { issue.tip = said.joined(separator: "\n") }
-        // Underlined in the system's red, as Xcode does an issue's token, under the text: TextKit 2 draws no underline
-        // given as a rendering attribute (27.2).
+        // 27.2: TextKit 2 draws no underline given as a rendering attribute: it is drawn under the text, in Xcode's red.
         if !reported.tokens.isEmpty, let textFont = view.font {
-            // As far under the baseline as the font puts an underline, a point thick at least, on whole pixels.
             let thickness = max(1, view.onPixels(textFont.underlineThickness))
             for token in reported.tokens {
-                // A command a line is too narrow for is on two.
                 for line in lines {
                     let part = NSIntersectionRange(token.range, line.characterRange)
                     guard part.length > 0 else { continue }
@@ -133,12 +124,11 @@ final class IssueOverlay {
         }
     }
 
-    /// The row whose box is under `point`, in the view's coordinates.
     func message(at point: NSPoint) -> Row? {
         view.visibleRect.contains(point) ? rows.first(where: { $0.message?.rect.contains(point) == true }) : nil
     }
 
-    /// The bands and underlines in `rect`; the caret's line has the current line's fill, which is the same shape, and not both.
+    /// The caret's line has the current line's fill, of the same shape, in place of its band.
     func draw(in rect: NSRect, currentLine: Int?) {
         for issue in rows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
             if issue.line != currentLine {

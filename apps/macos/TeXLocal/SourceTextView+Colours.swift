@@ -21,8 +21,7 @@ extension SourceTextView {
         }
     }
 
-    /// The fragments already shown keep their colours until validated here, from the line `start` is on down. Only the
-    /// fragments whose runs changed are drawn again, so typing redraws the lines it recoloured, not every line on screen.
+    /// From the line `start` is on down; only the fragments whose runs changed are drawn again.
     func colour(from start: Int) {
         guard let manager = textLayoutManager else { return }
         staleColours = nil
@@ -42,8 +41,7 @@ extension SourceTextView {
         redrawFragments(in: changed)
     }
 
-    /// 27.2: each shown fragment draws in a view of its own, which new rendering attributes don't redraw, nor does the
-    /// text view's own display: the views over `rects`. The issues' boxes draw no text of the document's.
+    /// 27.2: new rendering attributes don't redraw the fragments' own views, nor does the text view's display.
     private func redrawFragments(in rects: [CGRect]) {
         guard !rects.isEmpty else { return }
         func redraw(_ view: NSView) {
@@ -55,26 +53,20 @@ extension SourceTextView {
         subviews.filter { !($0 is IssueMessageView) }.forEach(redraw)
     }
 
-    /// The find indicator bounces: with Reduce Motion the partner is filled where it is, under the text, until the
-    /// selection next changes. A fill of the view's own, as the current line's: TextKit drops a rendering attribute's
-    /// once the fragment is laid out again, as the edit that typed the bracket does. Only a partner in sight: the indicator
-    /// would scroll to one out of it. Asked of TextKit, not of `fragments`, which an edit empties until the next layout.
+    /// The find indicator bounces: with Reduce Motion the partner in sight is filled in place until the selection next
+    /// changes, by the view, since TextKit drops a rendering attribute as it lays the fragment out again.
     func showPartner(of at: Int) {
         guard at >= 0, at < text.length, let i = document.partner(of: at) else { return }
         let range = NSRange(location: i, length: 1)
         guard let rect = segments(range), visibleRect.intersects(rect) else { return }
-        guard reducesMotion() else { return showFindIndicator(for: range) }
+        guard NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return showFindIndicator(for: range) }
         markPartner(range)
     }
 
     func markPartner(_ range: NSRange?) {
-        if let partnerDrawn { setNeedsDisplay(partnerDrawn) }
-        partnerDrawn = nil
-        partnerMark = range
-        if let rect = partnerRect { setNeedsDisplay(rect) }
+        for rect in [partnerDrawn, range.flatMap(segments)] { if let rect { setNeedsDisplay(rect) } }
+        (partnerMark, partnerDrawn) = (range, nil)
     }
-
-    private var partnerRect: NSRect? { partnerMark.flatMap(segments) }
 
     func segments(_ marked: NSRange) -> NSRect? {
         guard NSMaxRange(marked) <= text.length, let manager = textLayoutManager, let range = textRange(marked) else { return nil }
@@ -87,7 +79,7 @@ extension SourceTextView {
     }
 
     func drawPartner(in rect: NSRect) {
-        partnerDrawn = partnerRect
+        partnerDrawn = partnerMark.flatMap(segments)
         guard let partnerDrawn, partnerDrawn.intersects(rect) else { return }
         NSColor.unemphasizedSelectedTextBackgroundColor.setFill()
         partnerDrawn.fill()

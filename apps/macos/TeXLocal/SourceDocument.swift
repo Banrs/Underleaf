@@ -2,18 +2,17 @@ import Foundation
 import os
 import TeXLocalCore
 
-/// The editor's text as the core's syntax module's `SourceDocument` mirrors it, and what it answers about it: highlighting,
-/// completion, the editing commands, and typing's brackets, indentation and snippet fields, kept between keys.
+/// The editor's text as the core's syntax module mirrors it, and what it answers about it.
 final class SourceDocument {
     private let raw: OpaquePointer
 
-    /// Text goes by its UTF-8 byte count: a C string would end at a U+0000 the editor keeps.
+    /// By its UTF-8 byte count: a C string would end at a U+0000 the editor keeps.
     init(text: String) {
         var text = text
         raw = text.withUTF8 { tl_source_new($0.baseAddress, $0.count) }
     }
 
-    /// The document a project session has open at `path`: each edit is the session's, which saves and previews it.
+    /// A project session's document, whose edits it saves and previews.
     init?(session: UInt64, path: String) {
         guard let raw = Core.shared.source(session: session, path: path) else { return nil }
         self.raw = raw
@@ -21,9 +20,8 @@ final class SourceDocument {
 
     isolated deinit { tl_source_free(raw) }
 
-    /// The storage replaced `range` with `text`; `changing` is what the view said it would change. The closers typing put
-    /// in and a snippet's fields move with it. Unless the edit is a mirror edit going in (`mirroring`), what's typed in a
-    /// snippet's field for its other places, from the last: nearly always none.
+    /// The storage replaced `range` with `text`; `changing` is what the view said it would change. Unless it is a mirror
+    /// edit going in, what's typed in a snippet's field for its other places, from the last.
     func edit(_ range: NSRange, with text: String, changing: NSRange?, mirroring: Bool) -> [TextEdit] {
         var text = text
         let out = text.withUTF8 { text in
@@ -33,17 +31,15 @@ final class SourceDocument {
             guard let changing else { return edit(nil) }
             return withUnsafePointer(to: TlRange(start: UInt32(changing.location), length: UInt32(changing.length)), edit)
         }
-        // None is no answer at all.
         guard let out else { return [] }
         return Syntax.decode("edit", out) ?? []
     }
 
-    /// The view's first selection moved.
     func select(_ selection: NSRange, mirroring: Bool) {
         tl_source_select(raw, UInt32(selection.location), UInt32(selection.length), mirroring)
     }
 
-    /// The editor shows `text` whole, as the session's `document_reload` gave it: not an edit to save.
+    /// Not an edit to save.
     func reload(_ text: String) {
         var text = text
         text.withUTF8 { tl_source_reload(raw, $0.baseAddress, $0.count) }
@@ -62,8 +58,7 @@ final class SourceDocument {
         }
     }
 
-    /// What spelling or Writing Tools leave alone where `range` is: code, and what isn't prose, each from its start,
-    /// however far before the range.
+    /// What spelling or Writing Tools leave alone, each from its start, however far before the range.
     func codeRanges(in range: NSRange, for checker: Checker) -> [NSRange] {
         (call("code_ranges", ["selection": range.json, "for": checker.rawValue]) as [SourceRange]?)?.map(\.range) ?? []
     }
@@ -80,7 +75,6 @@ final class SourceDocument {
     func textStyles(_ selection: NSRange) -> TextStyles { call("text_styles", ["selection": selection.json]) ?? TextStyles() }
     func mathAt(caret: Int) -> MathPreview? { call("math_at", ["caret": caret]) }
 
-    /// By its UTF-8 bytes, so a U+0000 in it stays.
     var text: String {
         var count = 0
         guard let bytes = tl_source_text(raw, &count) else { return "" }
@@ -90,7 +84,6 @@ final class SourceDocument {
 
     // MARK: typing
 
-    /// A character typed in place of the selection.
     func type(_ text: String, replacing selection: NSRange, autoPair: Bool) -> Keystroke {
         call("type", ["selection": selection.json, "text": text, "autoPair": autoPair]) ?? Keystroke()
     }
@@ -101,19 +94,16 @@ final class SourceDocument {
 
     func insertNewline(_ selection: NSRange) -> Keystroke { call("insert_newline", ["selection": selection.json]) ?? Keystroke() }
 
-    /// Where the bracket at `at` is matched.
     func partner(of at: Int) -> Int? { call("partner", ["at": at]) }
 
-    /// A completion's or block's fields, put in at `at`: the first field's range, to select.
+    /// The first field's range, to select.
     func startSnippet(_ fields: [SnippetField], at: Int) -> NSRange? {
         let fields = fields.map { ["start": $0.start, "length": $0.length, "index": $0.index] }
         return (call("start_snippet", ["fields": fields, "at": at]) as SourceRange?)?.range
     }
 
-    /// Whether there was a snippet to end.
     func endSnippet() -> Bool { call("end_snippet", [:]) ?? false }
 
-    /// Tab (1) or Shift-Tab (-1): a snippet's next field to select, or the lines' indentation.
     func tab(_ selections: [NSRange], step: Int) -> Tabbing { call("tab", ["selections": selections.map(\.json), "step": step]) ?? Tabbing() }
 
     /// Nil when a line has nowhere to go.
@@ -123,7 +113,6 @@ final class SourceDocument {
         call("toggle_style", ["selections": selections.map(\.json), "style": style.rawValue])
     }
 
-    /// The selection round a template's "$0".
     func wrap(_ selections: [NSRange], in template: String) -> Change? {
         call("wrap", ["selections": selections.map(\.json), "template": template])
     }
@@ -134,20 +123,16 @@ final class SourceDocument {
         return mapped?.map(\.range) ?? selections
     }
 
-    // MARK: calls
-
     private func call<T: Decodable>(_ command: String, _ args: [String: Any]) -> T? {
         Syntax.decode(command, tl_source_call(raw, command, Syntax.json(args)))
     }
 }
 
 private extension NSRange {
-    /// A range as the core's commands take it.
     var json: [String: Int] { ["start": location, "length": length] }
 }
 
-/// The core's syntax module's commands that need no document (`tl_syntax_call`): the themes' colours, the menus'
-/// catalogue, the levels without a class, and maths as SVG. On any thread.
+/// The core's syntax commands that need no document (`tl_syntax_call`), on any thread.
 nonisolated enum Syntax {
     static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "source")
 
@@ -155,8 +140,7 @@ nonisolated enum Syntax {
 
     static func json(_ args: [String: Any]) -> String { String(decoding: try! JSONSerialization.data(withJSONObject: args), as: UTF8.self) }
 
-    /// Nil for a null answer, which some commands give for none, and frees `out`. No answer, or one in another shape than
-    /// was asked for, is a fault of the app's own or the core's, logged as Core logs one.
+    /// Nil for a null answer, and frees `out`; no answer, or one of another shape, is logged as a fault.
     static func decode<T: Decodable>(_ command: String, _ out: UnsafeMutablePointer<CChar>?) -> T? {
         guard let out else {
             log.error("\(command, privacy: .public): no answer")
@@ -171,7 +155,7 @@ nonisolated enum Syntax {
         }
     }
 
-    /// Maths (`math_svg`) or a symbol (`glyph_svg`) as the core draws it, or why it can't.
+    /// `math_svg`'s or `glyph_svg`'s.
     nonisolated struct Drawing: Decodable, Sendable {
         var svg: String?
         var width, height: Double?
@@ -198,26 +182,22 @@ nonisolated struct TextEdit: Decodable, Equatable {
     var range: NSRange { NSRange(location: start, length: length) }
 }
 
-/// Edits, applied from the last as one undo step, and the selections after them.
 nonisolated struct Change: Decodable {
     var edits: [TextEdit]
     var selections: [SourceRange]
 }
 
-/// What a key does instead of what the view would: an edit, typed as a key types, and where the selection goes.
-/// Neither: the view handles the key itself.
+/// What a key does instead of what the view would; with neither edit nor selection the view handles it.
 nonisolated struct Keystroke: Decodable {
     nonisolated enum Completing: String, Decodable { case keep, offer, close }
 
     var edit: TextEdit?
-    /// Once the edit is in, if not where the edit leaves it.
     var selection: SourceRange?
     /// A bracket whose partner to show.
     var partner: Int?
     var completions = Completing.keep
 }
 
-/// Tab: a snippet's field to select, or without a snippet the lines' indentation.
 nonisolated struct Tabbing: Decodable {
     var field: SourceRange?
     var edits: [TextEdit] = []

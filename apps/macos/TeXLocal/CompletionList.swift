@@ -15,13 +15,11 @@ nonisolated enum CompletionKind: String, Decodable {
     }
 }
 
-/// The core's completions under the caret. A view over the editor, in the document's window, not a window of its own:
-/// glass in a borderless panel that isn't key draws as a flat grey slab, a menu's material there as an opaque beige one,
-/// and AppKit's own completion list for a text view is still its square box from before the glass (all 27.2). Typing
-/// stays in the document, which moves the selection and accepts it.
+/// The core's completions under the caret, a view over the editor: 27.2's glass in a borderless panel that isn't key
+/// draws flat, and AppKit's own completion list is still its square box. Typing stays in the document.
 final class CompletionList {
     private unowned let editor: SourceTextView
-    /// The core's items for what is being typed at the caret; nil while the list is closed.
+    /// Nil while the list is closed.
     private(set) var offered: Completions?
 
     private let rows = CompletionRows()
@@ -47,10 +45,10 @@ final class CompletionList {
 
     init(for editor: SourceTextView) { self.editor = editor }
 
-    /// As a key asks: with Settings' completion off, only a list already showing follows the typing.
+    /// With Settings' completion off, only a list already showing follows the typing.
     func offer() { if editor.autoComplete || offered != nil { complete(explicit: false) } }
 
-    /// `explicit` (Escape, or Complete) offers what typing alone wouldn't. None in a read-only editor.
+    /// `explicit` (Escape, or Complete) offers what typing alone wouldn't.
     func complete(explicit: Bool) {
         guard editor.isEditable, editor.selectedRange().length == 0, editor.selectedRanges.count == 1, !editor.hasMarkedText(),
               let found = editor.document.completions(caret: editor.caret, explicit: explicit), !found.items.isEmpty
@@ -66,10 +64,9 @@ final class CompletionList {
         rows.labels = []
     }
 
-    /// Placed again under what it completes as the text moves, or closed once that is out of sight.
+    /// Closed once what it completes is out of sight.
     func follow() { show(reload: false) }
 
-    /// The chosen row's text in place of what was typed, as one undo step, then its snippet's fields.
     func accept() { accept(rows.selection) }
 
     private func accept(_ index: Int) {
@@ -82,18 +79,13 @@ final class CompletionList {
         editor.startSnippet(item.fields, at: offered.start)
     }
 
-    /// Under the start of what it completes, in the editor's scroll view. Without a window it holds its items unseen, as
-    /// the tests use it.
+    /// Under the start of what it completes, in the editor's scroll view.
     private func show(reload: Bool) {
-        guard let offered else { return }
-        var start = NSRect.zero, shown = NSRect.zero, host: NSScrollView?
-        if let window = editor.window, let scroll = editor.enclosingScrollView {
-            host = scroll
-            start = scroll.convert(window.convertFromScreen(editor.firstRect(forCharacterRange: .caret(offered.start), actualRange: nil)), from: nil)
-            shown = scroll.convert(editor.shownRect, from: editor)
-            guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return close() }
-            guard reload else { return place(under: start, in: shown) }
-        }
+        guard let offered, let window = editor.window, let host = editor.enclosingScrollView else { return }
+        let start = host.convert(window.convertFromScreen(editor.firstRect(forCharacterRange: .caret(offered.start), actualRange: nil)), from: nil)
+        let shown = host.convert(editor.shownRect, from: editor)
+        guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return close() }
+        guard reload else { return place(under: start, in: shown) }
         let count = rows.labels.count
         let font = editor.font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         (rows.labels, rows.typed, rows.kind, rows.font) = (offered.items.map(\.label), editor.caret - offered.start, offered.kind, font)
@@ -101,17 +93,16 @@ final class CompletionList {
         rows.height = (font.ascender - font.descender + font.leading).rounded(.up) + 8
         rows.selection = 0
         rows.reveal()
-        guard let host else { return }
         let opening = surface.superview == nil
         fit()
         if surface.superview !== host { host.addSubview(surface) }
         place(under: start, in: shown)
-        // Typing that leaves fewer, or more again, is spoken too, after the typed character.
+        // Typing that changes the count is spoken too, after the typed character.
         if opening || rows.labels.count != count { announce(interrupting: opening) }
         editor.previewMath()
     }
 
-    /// The list never has VoiceOver's focus, which stays in the document: the row chosen is spoken as the list opens and as the arrows move through it.
+    /// VoiceOver's focus stays in the document: the row chosen is spoken as the list opens and as the arrows move.
     private func announce(interrupting: Bool = true) {
         let selection = rows.selection
         guard rows.labels.indices.contains(selection) else { return }
@@ -126,8 +117,7 @@ final class CompletionList {
 
     private func fit() {
         let labels = rows.labels
-        // The editor's font is fixed-pitch, so of the labels all in ASCII the longest is the widest; accents and other scripts
-        // come from a fallback font of another width and are measured.
+        // Fixed-pitch: of the ASCII labels the longest is the widest; other scripts come from fallback fonts and are measured.
         let isASCII = { (row: Int) in labels[row].utf8.allSatisfy { $0 < 0x80 } }
         var measured = labels.indices.filter { !isASCII($0) }
         if let longest = labels.indices.filter(isASCII).max(by: { labels[$0].utf8.count < labels[$1].utf8.count }) { measured.append(longest) }
@@ -145,13 +135,12 @@ final class CompletionList {
 
     private(set) var isAbove = false
 
-    /// An editor too short for either has it on the side with more room: it is a view of the editor's, and what ran past the foot would be under the status bar.
+    /// An editor too short for either side has it on the one with more room, cut to whole rows.
     private func place(under start: NSRect, in editor: NSRect) {
         guard let host = surface.superview else { return }
         var frame = NSRect(origin: NSPoint(x: start.minX - Self.textStart, y: 0), size: size)
         frame.size.width = min(size.width, max(Self.leastWidth, editor.maxX - frame.minX))
         frame.origin.x = max(editor.minX, min(frame.minX, editor.maxX - frame.width))
-        // Down the screen is up a scroll view's numbers: it is flipped.
         let under = editor.maxY - start.maxY, over = start.minY - editor.minY
         isAbove = under < frame.height && over > under
         let room = isAbove ? over : under
@@ -161,7 +150,7 @@ final class CompletionList {
             frame.size.height = shown * rows.height + margins
         }
         frame.origin.y = isAbove ? start.minY - frame.height : start.maxY
-        // On the display's pixels: the text's start is between them, and the glass's edge would blur.
+        // The text's start is between pixels, and the glass's edge would blur.
         frame = host.backingAlignedRect(frame, options: .alignAllEdgesNearest)
         guard frame != surface.frame else { return }
         let shorter = frame.height != surface.frame.height
@@ -181,14 +170,14 @@ final class CompletionList {
 
 @Observable final class CompletionRows {
     var labels: [String] = []
-    /// How many of each label's UTF-16 units were typed, which are bold.
+    /// The UTF-16 units typed, which are bold.
     var typed = 0
     var kind = CompletionKind.command
     var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
     var boldFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .bold)
     var height: CGFloat = 24
     var selection = 0
-    /// Counts the times the chosen row is to be scrolled into view.
+    /// Bumped to scroll the chosen row into view.
     private(set) var revealed = 0
 
     func reveal() { revealed += 1 }
@@ -223,10 +212,9 @@ struct CompletionRowsView: View {
                     }
                 }
             }
-            // As a menu's: the list is as wide as its labels, which a scroller set to show always would cut.
+            // As a menu's: a scroller shown always would cut the labels.
             .scrollIndicators(.never)
             .padding(.vertical, Self.margin)
-            // The fewest lines that bring it into view: a row an arrow key reaches is just shown.
             .onChange(of: rows.revealed) { scroller.scrollTo(rows.selection) }
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 13))

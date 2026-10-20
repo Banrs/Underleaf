@@ -4,9 +4,9 @@ import SwiftUI
 final class SourceEditor: NSObject, NSTextViewDelegate {
     let textView = SourceTextView.plainDocument()
     let scrollView = NSScrollView()
-    /// The caret's line and column, told as the selection moves or a file opens.
+    /// The caret's line and column.
     var onCursor: (Int, Int) -> Void = { _, _ in }
-    /// The top line, told as a scroll or a layout may have changed it.
+    /// The top line.
     var onScroll: (Int) -> Void = { _ in }
 
     private(set) var path: String?
@@ -14,7 +14,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     private var kept: [String: (text: String, undo: UndoManager, selection: NSRange, top: (offset: Int, below: CGFloat)?)] = [:]
     private var undo = UndoManager()
 
-    /// Hiding removes the editor from the key view loop; showing it restores requested focus after a file opens.
+    /// Hidden, it is out of the key view loop; shown, it takes the focus a file's open asked for.
     var shown = false {
         didSet {
             textView.isHidden = !shown
@@ -32,11 +32,11 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.usesFontPanel = false
         text.usesFindBar = true
         text.isIncrementalSearchingEnabled = true
-        // The first line's band 8 pt under the text's top, as Xcode's: the band is a point into the line's fragment (rowShift).
+        // The first line's band 8 pt under the text's top, as Xcode's.
         text.textContainerInset = NSSize(width: 0, height: 7)
         text.fontSize = NSFont.systemFontSize
         text.allowsUndo = true
-        // Smart dashes and quotes would rewrite the LaTeX (-- to an em dash), so spelling, correction and text replacement apply to prose only (below).
+        // Smart dashes and quotes would rewrite the LaTeX; spelling and Writing Tools keep to the prose (below).
         text.isContinuousSpellCheckingEnabled = EditorPrefs.spellCheck
         text.isGrammarCheckingEnabled = false
         text.isAutomaticQuoteSubstitutionEnabled = false
@@ -46,9 +46,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.isAutomaticTextCompletionEnabled = false
         text.smartInsertDeleteEnabled = false
         text.inlinePredictionType = .no
-        // An answer offered after "2+3=" would be the system's sum in the LaTeX.
         text.mathExpressionCompletionType = .no
-        // Writing Tools proofread and rewrite the prose in place, as plain text, and leave the LaTeX alone (below).
         text.writingToolsBehavior = .limited
         text.allowedWritingToolsResultOptions = .plainText
         text.setAccessibilityLabel(String(localized: "Source"))
@@ -64,7 +62,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             self?.textView.scrolled()
             self?.reportTop()
         }
-        // A jump's new top line is known once the viewport is laid out there.
+        // A jump's top line is known once the viewport is laid out there.
         text.laidOut = { [weak self] in self?.reportTop() }
     }
 
@@ -75,8 +73,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     /// `source` is the session's document of `path`, which holds `text`.
     func open(path: String, text: String, source: SourceDocument? = nil, focus: Bool) {
         if let current = self.path { kept[current] = (textView.string, undo, textView.selectedRange(), textView.shownTop) }
-        // By UTF-16, as the kept ranges count: Swift's `==` also holds for a file rewritten in another Unicode normal form,
-        // whose undo stack would then replace the wrong ranges.
+        // By UTF-16, as the undo stack counts: Swift's `==` holds across Unicode normal forms.
         let prior = kept[path].flatMap { ($0.text as NSString).isEqual(to: text) ? $0 : nil }
         self.path = path
         textView.load(text, source: source)
@@ -90,8 +87,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         if focus { self.focus() }
     }
 
-    /// Another app's text for the file shown, from the session: its undo was the old text's. The caret and the top line
-    /// stay where they were, as Xcode's do, within the new text.
+    /// Another app's text for the file shown: a new undo, and the caret and top line where they were, as Xcode's.
     func reload(text: String) {
         undo = UndoManager()
         let selection = textView.selectedRange(), top = textView.shownTop
@@ -121,7 +117,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     var currentLine: Int { textView.document.line(at: textView.selectedRange().location) }
     var currentColumn: Int { textView.selectedRange().location - textView.document.lineStart(currentLine) }
 
-    /// Shows the system find indicator after the scroll completes; it bounces, so not with Reduce Motion, where the selected word or the caret's line is the mark.
+    /// The find indicator bounces, so not with Reduce Motion, where the selection is the mark.
     func reveal(line: Int, column: Int? = nil, atTop: Bool = false, focus: Bool = true) {
         let document = textView.document
         let start = document.lineStart(line)
@@ -131,10 +127,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         atTop ? textView.scroll(toTop: start) : textView.centerSelectionInVisibleArea(nil)
         if focus { self.focus() }
         let shown = word ?? NSRange(location: start, length: end - start)
-        if shown.length > 0, !textView.reducesMotion() {
-            // Once the scroll's layout is done.
-            Task { self.textView.showFindIndicator(for: shown) }
-        }
+        // Once the scroll's layout is done.
+        if shown.length > 0, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { Task { self.textView.showFindIndicator(for: shown) } }
     }
 
     private func reportTop() { if let line = textView.topLine { onScroll(line) } }
@@ -146,12 +140,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
                   orthography: NSOrthography, wordCount: Int) -> [NSTextCheckingResult] {
         let code = textView.document.codeRanges(in: range, for: .spelling)
+        // Results count from the checked range's start; orthography spans prose and TeX alike.
         return results.filter { result in
-            // Language metadata can span both prose and TeX without changing it.
-            if result.resultType == .orthography { return true }
-            // Native results count from the checked range's start. Rebase only the comparison and return the original results for AppKit to apply.
             let found = NSRange(location: range.location + result.range.location, length: result.range.length)
-            return !code.contains { NSIntersectionRange($0, found).length > 0 }
+            return result.resultType == .orthography || !code.contains { NSIntersectionRange($0, found).length > 0 }
         }
     }
 
@@ -168,30 +160,26 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
         let unwanted = [#selector(NSTextView.changeLayoutOrientation(_:)), #selector(NSTextView.startSpeaking(_:)),
                         #selector(NSResponder.uppercaseWord(_:))]
-        for item in menu.items where unwanted.contains(where: { action in
-            item.action == action || item.submenu?.items.contains { $0.action == action } == true
-        }) {
-            menu.removeItem(item)
-        }
-        menu.insertItem(.separator(), at: 0)
-        for (shown, command, action) in [(textView.isEditable, MenuCommand.editComment, #selector(toggleComment)),
-                                         (textView.forwardSync(false) != nil, MenuCommand.syncForward, #selector(goToPDF))] where shown {
+        let ours = [(textView.forwardSync(false) != nil, MenuCommand.syncForward, #selector(goToPDF)),
+                    (textView.isEditable, MenuCommand.editComment, #selector(toggleComment))].filter(\.0).map { _, command, action in
             let item = NSMenuItem(title: command.title, action: action, keyEquivalent: "")
             item.target = self
-            menu.insertItem(item, at: 0)
+            return item
         }
+        let kept = menu.items.filter { item in
+            !unwanted.contains { action in item.action == action || item.submenu?.items.contains { $0.action == action } == true }
+        }
+        menu.removeAllItems()
         // A separator only between two groups.
-        for item in menu.items.reversed() where item.isSeparatorItem {
-            let index = menu.index(of: item)
-            if index == 0 || index == menu.numberOfItems - 1 || menu.item(at: index + 1)?.isSeparatorItem == true { menu.removeItem(item) }
+        for item in ours + [.separator()] + kept where !item.isSeparatorItem || menu.items.last?.isSeparatorItem == false {
+            menu.addItem(item)
         }
+        if menu.items.last?.isSeparatorItem == true { menu.removeItem(at: menu.numberOfItems - 1) }
         return menu
     }
 
     @objc private func goToPDF() { textView.forwardSync(false)?() }
     @objc private func toggleComment() { perform(.comment) }
-
-    // MARK: - Commands
 
     @discardableResult
     func perform(_ command: EditorCommand) -> Bool {
@@ -211,7 +199,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         case .displayMath: textView.apply(document.wrap(selections, in: "\\[$0\\]"), named: String(localized: "Display Math"))
         case .inline(let template, let title):
             textView.apply(document.wrap(selections, in: template), named: Self.insertion(titled: title))
-            // Empty braces: the labels or citations for them, once the menu has closed.
+            // Empty braces: their labels or citations, once the menu has closed.
             if selection.length == 0 { Task { self.textView.complete(nil) } }
         case .comment:
             textView.apply(document.toggleComment(selections), named: String(localized: "Comment"))
@@ -250,7 +238,7 @@ struct EditorView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
 
     func updateNSView(_ view: NSScrollView, context: Context) {
-        // A new size only: setting one builds the font to compare.
+        // A new size only: setting one builds the font.
         if editor.textView.fontSize != CGFloat(fontSize) { editor.textView.fontSize = CGFloat(fontSize) }
         editor.textView.fontName = fontName
         editor.textView.showsLineNumbers = lineNumbers
@@ -263,12 +251,12 @@ struct EditorView: NSViewRepresentable {
 
 enum EditorCommand: Equatable {
     case bold, italic, underline, math, displayMath, comment, moveLineUp, moveLineDown
-    /// A section command without its backslash; empty for Normal Text.
+    /// Without its backslash; empty for Normal Text.
     case heading(String)
     case symbol(String)
-    /// A block of the core's by its id; the title names the undo.
+    /// The core's block by its id; the title names the undo.
     case block(id: String, title: String? = nil)
-    /// A template whose "$0" is where the selection goes.
+    /// "$0" is where the selection goes.
     case inline(template: String, title: String? = nil)
 }
 
