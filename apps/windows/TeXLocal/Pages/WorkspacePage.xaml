@@ -99,6 +99,11 @@
                     </MenuFlyoutSubItem>
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+S" AccessKey="S" Click="OnSave" Text="Save" />
+                    <MenuFlyoutSeparator />
+                    <!-- The PDF shown, as the Mac's Export as PDF and Share. -->
+                    <MenuFlyoutItem x:Name="ExportItem" AccessKey="E" Click="OnExportPdf" Text="Export as PDF…" />
+                    <MenuFlyoutItem x:Name="ShareItem" AccessKey="H" Click="OnSharePdf" Text="Share…" />
+                    <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+W" AccessKey="C" Click="{x:Bind app:App.Window.GoHome}" Text="Close project" />
                     <MenuFlyoutSeparator />
                     <!-- The window handles Ctrl+, itself: the editor swallows it before accelerators. -->

@@ -79,6 +79,8 @@ public sealed partial class PdfView : UserControl
             GetTex.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
         }
     }
+    /// The file the pages shown were read from, for Export and Share.
+    public string? FilePath { get; private set; }
     public int PageCount => pages.Length;
     public double Zoom => Scroller.ZoomFactor;
     public MenuFlyout ZoomMenu => Menu;
@@ -158,6 +160,7 @@ public sealed partial class PdfView : UserControl
         await Draw(next, fresh, at, y, zoom);
         if (load != loads) return;
 
+        FilePath = path;
         Show(next, fresh, at);
         View(zoom, fit == Fit.None ? null : 0, y);
     }
@@ -182,6 +185,7 @@ public sealed partial class PdfView : UserControl
     public void Clear()
     {
         loads++;
+        FilePath = null;
         Show(null, [], []);
     }
 

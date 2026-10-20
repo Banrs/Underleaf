@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
 using TeXLocal.Controls;
 using Windows.ApplicationModel.DataTransfer;
@@ -532,6 +533,7 @@ public sealed partial class WorkspacePage : Page
         PageText.Text = shown ? $"Page {Pdf.CurrentPage} of {Pdf.PageCount}" : "No PDF";
         ZoomText.Text = $"{Pdf.Zoom * 100:0}%";
         foreach (var control in ZoomBar.Children.OfType<Control>()) control.IsEnabled = shown;
+        ExportItem.IsEnabled = ShareItem.IsEnabled = shown;
         zooming = true;
         ZoomSlider.Value = Math.Log2(Pdf.Zoom);
         zooming = false;
@@ -659,6 +661,39 @@ public sealed partial class WorkspacePage : Page
     void OnMoveLineUp(object sender, RoutedEventArgs e) => Editor.MoveLines(true);
     void OnMoveLineDown(object sender, RoutedEventArgs e) => Editor.MoveLines(false);
     void OnActualSize(object sender, RoutedEventArgs e) => Pdf.ZoomTo(1);
+
+    async void OnExportPdf(object sender, RoutedEventArgs e)
+    {
+        if (Pdf.FilePath is not { } path) return;
+        var picker = new FileSavePicker(App.Window.AppWindow.Id) { SuggestedFileName = id };
+        picker.FileTypeChoices.Add("PDF document", [".pdf"]);
+        if (await picker.PickSaveFileAsync() is not { } picked) return;
+        try { File.Copy(path, picked.Path, true); }
+        catch (Exception ex) { await App.Alert("Can't export", ex.Message); }
+    }
+
+    /// Windows' share sheet, which a desktop app opens through its window.
+    void OnSharePdf(object sender, RoutedEventArgs e)
+    {
+        if (Pdf.FilePath is not { } path) return;
+        var window = Microsoft.UI.Win32Interop.GetWindowFromWindowId(App.Window.AppWindow.Id);
+        DataTransferManagerInterop.GetForWindow(window).DataRequested += Requested;
+        DataTransferManagerInterop.ShowShareUIForWindow(window);
+
+        // For this Share only: the manager is the window's, and outlives the page.
+        async void Requested(DataTransferManager manager, DataRequestedEventArgs args)
+        {
+            manager.DataRequested -= Requested;
+            var deferral = args.Request.GetDeferral();
+            try
+            {
+                args.Request.Data.Properties.Title = System.IO.Path.GetFileName(path);
+                args.Request.Data.SetStorageItems([await Windows.Storage.StorageFile.GetFileFromPathAsync(path)]);
+            }
+            catch (Exception ex) { args.Request.FailWithDisplayText(ex.Message); }
+            finally { deferral.Complete(); }
+        }
+    }
 
     // MARK: helpers
 
