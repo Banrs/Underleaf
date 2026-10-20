@@ -8,7 +8,7 @@ public sealed record SyntaxTheme(string Id, string Title);
 
 /// The host's preferences, typed, in LocalSettings (the registry, under HKCU\Software\Classes\Local Settings\Software\TeXLocal)
 /// until the core keeps validated shared ones; a run on a scratch library (TEXLOCAL_DATA) keeps its own, as "TeXLocal Dev".
-/// Settings › Editor's five raise EditorChanged.
+/// Settings › Editor's six raise EditorChanged.
 public static unsafe partial class Prefs
 {
     static readonly IPropertySet values = Microsoft.Windows.Storage.ApplicationData.GetForUnpackaged("TeXLocal",
@@ -28,6 +28,7 @@ public static unsafe partial class Prefs
     public static string EditorTheme { get => Get("editorTheme", "overleaf"); set => Set("editorTheme", value, EditorTheme); }
     public static bool AutoPair { get => Get("editorAutoPair", true); set => Set("editorAutoPair", value, AutoPair); }
     public static bool AutoComplete { get => Get("editorAutoComplete", true); set => Set("editorAutoComplete", value, AutoComplete); }
+    public static bool LineNumbers { get => Get("editorLineNumbers", true); set => Set("editorLineNumbers", value, LineNumbers); }
 
     public static event Action? EditorChanged;
 

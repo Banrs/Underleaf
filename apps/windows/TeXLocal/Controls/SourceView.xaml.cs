@@ -82,12 +82,14 @@ public sealed partial class SourceView : UserControl
     readonly DispatcherQueueTimer partnerTimer;
     Source? source;
     ScrollViewer? scroller;
-    bool setting, changed, undoing, restoring, composing, loading, stale, mirroring, reoffer, queued, moved;
+    bool setting, changed, undoing, restoring, composing, loading, stale, mirroring, reoffer, queued, moved, numbered = true;
     int loads, lastEnd = -1;
     double advance = 8.4;
     (int Start, int End) placed = (-1, -1);
     SourceRange before = new(0, 0);
     Completions? offered;
+    /// A drag in the gutter: what it extends, and the line it started on.
+    (SourceRange Anchor, SourceRange First)? dragging;
     MathPreview? shownMath;
     int? dismissedMath;
     Color[] kinds = [];
@@ -162,7 +164,13 @@ public sealed partial class SourceView : UserControl
         };
         SizeChanged += (_, e) => Clip = new RectangleGeometry { Rect = new(0, 0, e.NewSize.Width, e.NewSize.Height) };
         ActualThemeChanged += (_, _) => Recolour(true);
-        Loaded += (_, _) => Recolour(ActualTheme != inked);
+        // Settings covers the workspace, so a change there is read when it comes back.
+        Loaded += (_, _) =>
+        {
+            numbered = Prefs.LineNumbers;
+            Recolour(ActualTheme != inked);
+            Invalidate(false);
+        };
     }
 
     public void SetLook(string family, double size, string themeId)
@@ -860,6 +868,48 @@ public sealed partial class SourceView : UserControl
             : new Rect(r.X + Editor.Padding.Left - scroller.HorizontalOffset, r.Y + Editor.Padding.Top - scroller.VerticalOffset, Math.Max(r.Width, 0), r.Height);
     }
 
+    /// The line under the pointer with its line break, scrolled to where the pointer is past the text's edge.
+    SourceRange LineUnder(PointerRoutedEventArgs e)
+    {
+        var y = e.GetCurrentPoint(Editor).Position.Y;
+        var at = Document.GetRangeFromPoint(new Point(0, Math.Max(0, y - Editor.Padding.Top + scroller!.VerticalOffset)), PointOptions.ClientCoordinates);
+        if (y < Editor.Padding.Top || y > Editor.ActualHeight - Editor.Padding.Bottom) at.ScrollIntoView(PointOptions.None);
+        var line = source!.LineAt(at.StartPosition);
+        var start = source.LineStart(line);
+        return new(start, (line < source.LineCount ? source.LineStart(line + 1) : Text.Length) - start);
+    }
+
+    /// The Mac's gutter: a press selects its line, a drag the lines it crosses, Shift extends the selection to them.
+    void OnGutterPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (source is null || !e.GetCurrentPoint(Gutter).Properties.IsLeftButtonPressed) return;
+        var first = LineUnder(e);
+        dragging = (Down(VirtualKey.Shift) ? Selected : first, first);
+        Gutter.CapturePointer(e.Pointer);
+        Editor.Focus(FocusState.Pointer);
+        OnGutterMoved(sender, e);
+        e.Handled = true;
+    }
+
+    void OnGutterMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (dragging is not { Anchor: var anchor }) return;
+        var line = LineUnder(e);
+        Document.Selection.SetRange(Math.Min(anchor.Start, line.Start), Math.Max(anchor.End, line.End));
+    }
+
+    /// A press that selected only its line opens that line's issue, as a click on its box does.
+    void OnGutterReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (dragging is not { First: var first }) return;
+        Gutter.ReleasePointerCapture(e.Pointer);
+        dragging = null;
+        var line = source!.LineAt(first.Start);
+        if (Selected == first && marks.Where(m => m.Issue.Line == line).Select(m => m.Issue).FirstOrDefault() is { } issue) IssueInvoked?.Invoke(issue);
+    }
+
+    void OnGutterCaptureLost(object sender, PointerRoutedEventArgs e) => dragging = null;
+
     /// One refresh, CaretMoved and maths preview per dispatcher turn. RichEdit can raise TextChanged after
     /// SelectionChanged, so an edit of its own is mirrored first.
     void Invalidate(bool caret = true)
@@ -890,13 +940,13 @@ public sealed partial class SourceView : UserControl
         var first = source!.LineAt(Document.GetRangeFromPoint(new Point(0, y), PointOptions.ClientCoordinates).StartPosition);
         var last = source.LineAt(Document.GetRangeFromPoint(new Point(Editor.ActualWidth, y + Editor.ActualHeight), PointOptions.ClientCoordinates).StartPosition);
         var caret = source.LineAt(CaretOffset);
-        Gutter.Width = Math.Ceiling(16 + Math.Max(3, source.LineCount.ToString().Length) * advance + 8);
+        Gutter.Width = numbered ? Math.Ceiling(16 + Math.Max(3, source.LineCount.ToString().Length) * advance + 8) : 16;
         // Only beside the text's viewport, so nothing shows in the find bar's band.
         var view = new Rect(0, Editor.Padding.Top, Gutter.Width + Editor.ActualWidth, Math.Max(0, Editor.ActualHeight - Editor.Padding.Top - Editor.Padding.Bottom));
         foreach (var layer in (UIElement[])[Gutter, Backdrop, Overlay]) layer.Clip = new RectangleGeometry { Rect = view };
 
         var used = 0;
-        for (var line = first; line <= last; line++)
+        for (var line = first; numbered && line <= last; line++)
         {
             if (RectOf(source.LineStart(line), source.LineStart(line)) is not { } r) continue;
             if (used == Gutter.Children.Count)

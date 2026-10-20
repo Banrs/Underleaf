@@ -74,7 +74,14 @@
             <Rectangle x:Name="NumberInk" Fill="{ThemeResource TextFillColorTertiaryBrush}" />
         </Grid>
 
-        <Canvas x:Name="Gutter" />
+        <!-- Transparent, so a press between the numbers selects lines too. -->
+        <Canvas
+            x:Name="Gutter"
+            Background="Transparent"
+            PointerCaptureLost="OnGutterCaptureLost"
+            PointerMoved="OnGutterMoved"
+            PointerPressed="OnGutterPressed"
+            PointerReleased="OnGutterReleased" />
         <Canvas x:Name="Backdrop" Grid.Column="1" AutomationProperties.AccessibilityView="Raw">
             <Rectangle x:Name="CurrentLine" Fill="{ThemeResource SubtleFillColorSecondaryBrush}" />
         </Canvas>
