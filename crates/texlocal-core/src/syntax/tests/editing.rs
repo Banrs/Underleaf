@@ -1,7 +1,7 @@
 //! The editing commands' answers, case by case: maths at a place, the maths
 //! to preview, completions, headings, blocks, and comments and indentation.
 
-use super::units;
+use super::{cited, units};
 use crate::syntax::{Insertion, SourceDocument, Symbols, range};
 
 fn marked(source: &str) -> (SourceDocument, u32) {
@@ -153,7 +153,7 @@ fn completions_are_offered_for_what_is_typed() {
         let mut doc = SourceDocument::new(before);
         doc.set_symbols(std::sync::Arc::new(Symbols {
             labels: vec!["sec:intro".into()],
-            citations: vec!["knuth84".into()],
+            citations: cited(&["knuth84"]),
             ..Symbols::default()
         }));
         let found = doc.completions(units(before), explicit);

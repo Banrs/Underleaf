@@ -49,6 +49,7 @@ impl SourceDocument {
             "delete_backward" => json(self.delete_backward(selection()?, auto_pair()?)),
             "insert_newline" => json(self.insert_newline(selection()?)),
             "partner" => json(self.partner(get(a, "at")?)),
+            "definition" => json(self.definition(get(a, "at")?)),
             "start_snippet" => {
                 json(self.start_snippet(&get::<Vec<_>>(a, "fields")?, get(a, "at")?))
             }

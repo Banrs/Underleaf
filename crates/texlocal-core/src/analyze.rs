@@ -1,9 +1,11 @@
 //! A document's outline and word count, read from its main file through the files it
-//! inputs, and what each file defines; each file is read once per change.
+//! inputs, and what each file defines and refers to, and where; each file is read once per
+//! change.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -12,8 +14,9 @@ use serde::Serialize;
 
 use crate::projects::file_kind;
 use crate::stamp::Stamp;
+use crate::syntax::catalog::CATALOG;
 use crate::syntax::scan::{Scanner, Visit};
-use crate::syntax::{Defined, headings, prose, scan};
+use crate::syntax::{SymbolKind, Text, headings, prose, scan};
 use crate::{lock, paths};
 
 // What a title drops whole: \texorpdfstring's TeX argument (its PDF string is
@@ -67,19 +70,64 @@ pub struct Facts {
     pub headings: Vec<Heading>,
     pub inputs: Vec<Input>,
     pub words: usize,
-    pub labels: Vec<String>,
+    pub labels: Vec<Named>,
     /// A .bib file's keys, or a .tex file's \bibitems.
-    pub citations: Vec<String>,
+    pub citations: Vec<Named>,
     pub commands: Vec<Defined>,
-    pub environments: Vec<String>,
+    pub environments: Vec<Named>,
+    /// Labels and citations referred to, one for each key a list names, environments begun or
+    /// ended, and graphics included.
+    pub uses: Vec<Used>,
     pub class: Option<headings::DocumentClass>,
+}
+
+/// Where a name is written: its line, from 1, and its column, from 0, and length in UTF-16 units.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Place {
+    pub line: u32,
+    pub column: u32,
+    pub length: u32,
+}
+
+impl Place {
+    fn of(text: &Text, range: Range<usize>) -> Self {
+        let line = text.line_index(range.start as u32);
+        Self {
+            line: line as u32 + 1,
+            column: range.start as u32 - text.lines[line],
+            length: range.len() as u32,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Named {
+    pub name: String,
+    pub place: Place,
+    /// What completion says of it beside its name: a .bib entry's authors, year and title.
+    pub detail: Option<String>,
+}
+
+/// A command the project defines, with the arguments it takes in braces.
+#[derive(Clone)]
+pub struct Defined {
+    pub name: String,
+    pub arguments: usize,
+    pub place: Place,
+}
+
+pub struct Used {
+    pub kind: SymbolKind,
+    pub name: String,
+    pub place: Place,
 }
 
 /// A file read in place after the first `before` headings of the file that names it.
 pub struct Input {
     before: usize,
-    name: String,
+    pub(crate) name: String,
     folder: Folder,
+    pub(crate) place: Place,
 }
 
 /// Where an input's name is looked for, as the import package has it.
@@ -92,14 +140,65 @@ enum Folder {
     Sub(String),
 }
 
+impl Input {
+    /// The file it names, spelt as `found` finds it, read from `file`, which an \import gave the
+    /// folder `within`; and the folder that file's own inputs are looked for in.
+    pub(crate) fn resolve(
+        &self,
+        file: &str,
+        within: &str,
+        found: impl Fn(&str) -> Option<String>,
+    ) -> Option<(String, String)> {
+        let parent = file.rsplit_once('/').map_or("", |(parent, _)| parent);
+        let folder = match &self.folder {
+            Folder::Inherited => None,
+            Folder::Import(folder) => Some(folder.clone()),
+            Folder::Sub(folder) => Some(joined(parent, folder)),
+        };
+        let folders: Vec<&str> = match &folder {
+            Some(folder) => vec![folder],
+            None => [within]
+                .into_iter()
+                .chain((!within.is_empty()).then_some(""))
+                .collect(),
+        };
+        let name = &self.name;
+        let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
+        // TeX tries name.tex before the name as written.
+        let input = folders
+            .iter()
+            .flat_map(|folder| [joined(folder, &tex), joined(folder, name)])
+            .find_map(|rel| found(&rel))?;
+        Some((input, folder.unwrap_or_else(|| within.to_owned())))
+    }
+}
+
 impl Facts {
-    fn read(text: &str, kind: &str) -> Self {
+    pub(crate) fn read(source: &str, kind: &str) -> Self {
+        let text = Text::new(source);
         if kind == "bib" {
-            let entries = BIB_KEY.captures_iter(text).filter(|entry| {
+            let mut entries = BIB_KEY.captures_iter(source).peekable();
+            let (mut citations, mut byte, mut unit) = (Vec::new(), 0, 0);
+            while let Some(entry) = entries.next() {
                 let kind = entry[1].to_ascii_lowercase();
-                !matches!(kind.as_str(), "comment" | "string" | "preamble")
-            });
-            let citations = entries.map(|entry| entry[2].to_owned()).collect();
+                if matches!(kind.as_str(), "comment" | "string" | "preamble") {
+                    continue;
+                }
+                let key = entry.get(2).expect("an entry has a key");
+                unit += source[byte..key.start()].encode_utf16().count();
+                byte = key.start();
+                let end = unit + key.as_str().encode_utf16().count();
+                // Read to the next entry at most, so one left unbalanced takes nothing of those
+                // after it.
+                let next = entries
+                    .peek()
+                    .map_or(source.len(), |next| next.get_match().start());
+                citations.push(Named {
+                    name: key.as_str().to_owned(),
+                    place: Place::of(&text, unit..end),
+                    detail: detail(&fields(&source[entry.get_match().end()..next])),
+                });
+            }
             return Self {
                 citations,
                 ..Self::default()
@@ -108,52 +207,62 @@ impl Facts {
         let mut facts = Self::default();
         // Found as the words are counted, so none is in a comment, maths or literal code.
         let mut heading_line = None;
-        let words = prose::words(text, |text, name, name_end| {
+        let words = prose::words(&text, |text, name, name_end| {
             let line = text.line_index(name_end as u32) + 1;
             let units = &text.units;
             if let Some(depth) = headings::LEVELS.iter().position(|l| l.0 == name) {
                 if heading_line != Some(line)
-                    && let (Some(title), _) = braced(units, name_end)
+                    && let (Some((title, _)), _) = braced(units, name_end)
                 {
                     let heading = Heading::new(depth, plain_title(&title), line);
                     facts.headings.push(heading);
                 }
                 heading_line = Some(line);
-            } else if let Some((name, folder)) = input(units, name, name_end) {
+            } else if let Some((name, folder, at)) = input(units, name, name_end) {
                 let before = facts.headings.len();
                 facts.inputs.push(Input {
                     before,
                     name,
                     folder,
+                    place: Place::of(text, at),
                 });
             }
         });
-        let units: Vec<u16> = text.encode_utf16().collect();
-        let mut names = Names(&units, &mut facts);
-        Scanner::default().run(&units, units.len(), &[], &mut names);
+        let mut names = Names(&text, &mut facts);
+        Scanner::default().run(&text.units, text.units.len(), &[], &mut names);
         Self { words, ..facts }
     }
 }
 
-/// What a text names for others to refer to, outside comments and literal code.
-struct Names<'a>(&'a [u16], &'a mut Facts);
+/// What a text names for others to refer to, and the names it refers to, outside comments and
+/// literal code.
+struct Names<'a>(&'a Text, &'a mut Facts);
 
 impl Visit for Names<'_> {
     fn command(&mut self, name: &str, start: usize, name_end: usize) {
+        let (text, facts) = (self.0, &mut *self.1);
         match name {
-            "bibitem" => self.1.citations.extend(braced(self.0, name_end).0),
-            "documentclass" if self.1.class.is_none() => {
-                self.1.class = headings::class_at(self.0, name_end);
+            "bibitem" => {
+                let keys = listed(&text.units, name_end, false).into_iter();
+                facts.citations.extend(keys.map(|at| named(text, at)));
+            }
+            "documentclass" if facts.class.is_none() => {
+                facts.class = headings::class_at(&text.units, name_end);
             }
             "newcommand" | "DeclareMathOperator" | "newenvironment" => {
                 let command = name != "newenvironment";
-                if let Some(defined) = defined(self.0, name_end)
+                if let Some(defined) = defined(text, name_end)
                     && defined.name.starts_with('\\') == command
                 {
                     if command {
-                        self.1.commands.push(defined);
+                        facts.commands.push(defined);
                     } else {
-                        self.1.environments.push(defined.name);
+                        let Defined { name, place, .. } = defined;
+                        facts.environments.push(Named {
+                            name,
+                            place,
+                            detail: None,
+                        });
                     }
                 }
             }
@@ -162,15 +271,140 @@ impl Visit for Names<'_> {
     }
 
     fn math_command(&mut self, name: &str, _: usize, name_end: usize) {
-        // One still being typed (`fig:`) isn't a label yet.
-        if name == "label"
-            && let (Some(label), _) = braced(self.0, name_end)
-            && !label.is_empty()
-            && !label.ends_with(':')
-        {
-            self.1.labels.push(label);
+        let (text, catalog) = (self.0, &*CATALOG);
+        let kind = match name {
+            "begin" | "end" => SymbolKind::Environment,
+            "includegraphics" => SymbolKind::File,
+            name if catalog.ref_commands.contains(name) => SymbolKind::Label,
+            name if catalog.cite_commands.contains(name) => SymbolKind::Citation,
+            "label" => {
+                let labels = listed(&text.units, name_end, false).into_iter();
+                let labels = labels.map(|at| named(text, at));
+                // One still being typed (`fig:`) isn't a label yet.
+                let labels = labels.filter(|label| !label.name.ends_with(':'));
+                self.1.labels.extend(labels);
+                return;
+            }
+            _ => return,
+        };
+        let list = matches!(kind, SymbolKind::Label | SymbolKind::Citation);
+        for at in listed(&text.units, name_end, list) {
+            let Named { name, place, .. } = named(text, at);
+            self.1.uses.push(Used { kind, name, place });
         }
     }
+}
+
+fn named(text: &Text, at: Range<usize>) -> Named {
+    Named {
+        name: String::from_utf16_lossy(&text.units[at.clone()]),
+        place: Place::of(text, at),
+        detail: None,
+    }
+}
+
+/// A .bib entry's fields from just after its key, each named in lower case, with its value as
+/// written but for the braces or quotes around it and any `#` joining its parts. Braces nest
+/// and hold quotes; the entry ends at the brace or parenthesis that closes it, or, unbalanced,
+/// with `body`.
+fn fields(body: &str) -> Vec<(String, String)> {
+    let (mut fields, mut name, mut value) = (Vec::new(), String::new(), None::<String>);
+    let (mut depth, mut quoted) = (0_usize, false);
+    for c in body.chars() {
+        let top = depth == 0 && !quoted;
+        match (c, value.as_mut()) {
+            ('}' | ')', _) if top => break,
+            (',', _) if top => {
+                fields.extend(value.take().map(|value| (name.clone(), value)));
+                name.clear();
+            }
+            ('=', None) => value = Some(String::new()),
+            (c, None) if !c.is_whitespace() => name.push(c.to_ascii_lowercase()),
+            (_, None) => {}
+            ('"', Some(_)) if depth == 0 => quoted = !quoted,
+            ('{', Some(text)) => {
+                if !top {
+                    text.push(c);
+                }
+                depth += 1;
+            }
+            ('}', Some(text)) => {
+                depth = depth.saturating_sub(1);
+                if depth > 0 || quoted {
+                    text.push(c);
+                }
+            }
+            (c, Some(_)) if top && (c == '#' || c.is_whitespace()) => {}
+            (c, Some(text)) => text.push(c),
+        }
+    }
+    fields.extend(value.map(|value| (name, value)));
+    fields
+}
+
+/// What completion says of a .bib entry, "Knuth · 1984 · The TeXbook", as far as its fields
+/// tell: its authors' last names, its year (or biblatex's date's) and its title.
+fn detail(fields: &[(String, String)]) -> Option<String> {
+    let field = |name: &str| {
+        fields
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    };
+    // A last name comes first before a comma, else last.
+    let last = |name: &str| {
+        let name = name.trim();
+        let last = match parted(name, ",").as_slice() {
+            [last, _, ..] => *last,
+            _ => *parted(name, " ").last().expect("a part at least"),
+        };
+        plain_title(last)
+    };
+    let authors = field("author").and_then(|authors| {
+        let authors = SPACES.replace_all(authors, " ");
+        let names: Vec<String> = parted(&authors, " and ")
+            .into_iter()
+            .filter_map(last)
+            .collect();
+        match names.as_slice() {
+            [] => None,
+            [one] => Some(one.clone()),
+            [one, two] => Some(format!("{one} and {two}")),
+            [one, ..] => Some(format!("{one} et al.")),
+        }
+    });
+    let year = field("year").or_else(|| field("date").and_then(|date| date.get(..4)));
+    let parts = [
+        authors,
+        year.and_then(plain_title),
+        field("title").and_then(plain_title),
+    ];
+    let parts: Vec<String> = parts.into_iter().flatten().collect();
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// `text` parted at each `at` outside braces, which hold a name's own spaces, commas and
+/// `and`s, as BibTeX parts names; `and` in any case.
+fn parted<'a>(text: &'a str, at: &str) -> Vec<&'a str> {
+    let (mut parts, mut depth, mut from) = (Vec::new(), 0_usize, 0);
+    for (i, c) in text.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ if depth == 0
+                && i >= from
+                && text
+                    .get(i..i + at.len())
+                    .is_some_and(|s| s.eq_ignore_ascii_case(at)) =>
+            {
+                parts.push(&text[from..i]);
+                from = i + at.len();
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[from..]);
+    parts
 }
 
 /// Each file's facts by its name as the volume compares names, with the stamp read at. An
@@ -190,7 +424,8 @@ impl Files {
         {
             return Ok(Arc::clone(facts));
         }
-        let text = crate::lossy_string(fs::read(abs)?);
+        // A line ends where an editor's does, at a carriage return alone too.
+        let text = crate::lf(crate::lossy_string(fs::read(abs)?));
         let facts = Arc::new(Facts::read(&text, file_kind(rel)));
         lock(&self.0).insert(key, (stamp, Arc::clone(&facts)));
         Ok(facts)
@@ -356,29 +591,13 @@ fn walk(
         into.outline
             .extend(placed(&facts.headings[at..input.before]));
         at = input.before;
-        let parent = file.rsplit_once('/').map_or("", |(parent, _)| parent);
-        let folder = match &input.folder {
-            Folder::Inherited => None,
-            Folder::Import(folder) => Some(folder.clone()),
-            Folder::Sub(folder) => Some(joined(parent, folder)),
+        let found = |rel: &str| {
+            let path = paths::safe_path(root, rel);
+            path.is_ok_and(|path| path.is_file())
+                .then(|| rel.to_owned())
         };
-        let folders: Vec<&str> = match &folder {
-            Some(folder) => vec![folder],
-            None => [within]
-                .into_iter()
-                .chain((!within.is_empty()).then_some(""))
-                .collect(),
-        };
-        let name = &input.name;
-        let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
-        // TeX tries name.tex before the name as written.
-        if let Some(input) = folders
-            .iter()
-            .flat_map(|folder| [joined(folder, &tex), joined(folder, name)])
-            .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
-        {
-            let within = folder.as_deref().unwrap_or(within);
-            walk(root, files, &input, within, seen, into);
+        if let Some((input, within)) = input.resolve(&file, within, found) {
+            walk(root, files, &input, &within, seen, into);
         }
     }
     into.outline.extend(placed(&facts.headings[at..]));
@@ -387,15 +606,16 @@ fn walk(
 
 /// What \newcommand, \DeclareMathOperator or \newenvironment defines, named braced or not, with
 /// the arguments it takes in braces: as many as its first option counts, but for an optional one.
-fn defined(units: &[u16], name_end: usize) -> Option<Defined> {
-    let (name, stop) = match braced(units, name_end) {
-        (Some(name), stop) => (name.trim().to_owned(), stop),
+fn defined(text: &Text, name_end: usize) -> Option<Defined> {
+    let units = &text.units;
+    let (name, at, stop) = match braced(units, name_end) {
+        (Some((name, at)), stop) => (name.trim().to_owned(), at, stop),
         (None, stop) if units.get(stop) == Some(&(b'\\' as u16)) => {
             let letters = units[stop + 1..]
                 .iter()
                 .take_while(|&&u| u < 128 && (u as u8).is_ascii_alphabetic());
             let end = stop + 1 + letters.count();
-            (String::from_utf16_lossy(&units[stop..end]), end)
+            (String::from_utf16_lossy(&units[stop..end]), stop..end, end)
         }
         _ => return None,
     };
@@ -412,7 +632,11 @@ fn defined(units: &[u16], name_end: usize) -> Option<Defined> {
     let arguments = count
         .unwrap_or(0_usize)
         .saturating_sub(usize::from(options.len() > 1));
-    Some(Defined { name, arguments })
+    Some(Defined {
+        name,
+        arguments,
+        place: Place::of(text, at),
+    })
 }
 
 fn joined(folder: &str, name: &str) -> String {
@@ -422,38 +646,70 @@ fn joined(folder: &str, name: &str) -> String {
     }
 }
 
-fn braced(units: &[u16], name_end: usize) -> (Option<String>, usize) {
-    let mut text = Vec::new();
+/// A command's braced argument as TeX reads it, comments left out, and the range it spans; and
+/// where the reading stopped.
+fn braced(units: &[u16], name_end: usize) -> (Option<(String, Range<usize>)>, usize) {
+    let (mut text, mut span) = (Vec::new(), None);
     let (stop, closed) = scan::arguments(units, name_end, |piece, braced| {
         if braced {
-            text.extend_from_slice(&units[piece]);
+            text.extend_from_slice(&units[piece.clone()]);
+            span.get_or_insert(piece.clone()).end = piece.end;
         }
     });
-    (closed.then(|| String::from_utf16_lossy(&text)), stop)
+    let span = span.filter(|_| closed);
+    let found = span.map(|span| (String::from_utf16_lossy(&text), span));
+    (found, stop)
 }
 
-/// The file an \input, \include, \subfile, \import or \subimport names; \input also takes an
-/// unbraced name.
-fn input(units: &[u16], command: &str, name_end: usize) -> Option<(String, Folder)> {
-    let (name, folder) = match (command, braced(units, name_end)) {
-        ("input" | "include" | "subfile", (Some(name), _)) => (name, Folder::Inherited),
+/// The names a command's closed braced argument holds, without the spaces around them: each
+/// key of a `list` that commas part, or else the one name.
+fn listed(units: &[u16], name_end: usize, list: bool) -> Vec<Range<usize>> {
+    let blank = |u: &&u16| scan::tex_space(**u) || **u == u16::from(b'\n');
+    let mut names = Vec::new();
+    let (_, closed) = scan::arguments(units, name_end, |piece, braced| {
+        if !braced {
+            return;
+        }
+        let commas = piece
+            .clone()
+            .filter(|&i| list && units[i] == u16::from(b','));
+        let mut from = piece.start;
+        for end in commas.chain([piece.end]) {
+            let start = from + units[from..end].iter().take_while(blank).count();
+            let trail = units[start..end].iter().rev().take_while(blank).count();
+            if start < end {
+                names.push(start..end - trail);
+            }
+            from = end + 1;
+        }
+    });
+    if closed { names } else { Vec::new() }
+}
+
+/// The file an \input, \include, \subfile, \import or \subimport names, and where; \input also
+/// takes an unbraced name.
+fn input(units: &[u16], command: &str, name_end: usize) -> Option<(String, Folder, Range<usize>)> {
+    let (name, folder, at) = match (command, braced(units, name_end)) {
+        ("input" | "include" | "subfile", (Some((name, at)), _)) => (name, Folder::Inherited, at),
         ("input", (None, stop)) => {
-            let name = char::decode_utf16(units[stop..].iter().copied())
+            let name: String = char::decode_utf16(units[stop..].iter().copied())
                 .map_while(|c| c.ok().filter(|c| !"{}\\% \t\r\n".contains(*c)))
                 .collect();
-            (name, Folder::Inherited)
+            let end = stop + name.encode_utf16().count();
+            (name, Folder::Inherited, stop..end)
         }
-        ("import" | "subimport", (Some(folder), stop)) => {
+        ("import" | "subimport", (Some((folder, _)), stop)) => {
             let folder = folder.trim().to_owned();
             let folder = match command {
                 "import" => Folder::Import(folder),
                 _ => Folder::Sub(folder),
             };
-            (braced(units, stop).0?, folder)
+            let (name, at) = braced(units, stop).0?;
+            (name, folder, at)
         }
         _ => return None,
     };
-    Some((name.trim().to_owned(), folder))
+    Some((name.trim().to_owned(), folder, at))
 }
 
 fn plain_title(title: &str) -> Option<String> {
@@ -516,7 +772,8 @@ mod tests {
             ),
         ];
         for (line, expected) in cases {
-            assert_eq!(prose::words(line, |_, _, _| {}), expected, "{line:?}");
+            let words = prose::words(&Text::new(line), |_, _, _| {});
+            assert_eq!(words, expected, "{line:?}");
         }
     }
 
@@ -524,9 +781,9 @@ mod tests {
     fn a_file_reads_as_its_outline_and_words() {
         let cases: &[(&str, Outline, usize)] = &[
             (
-                "one\r\n\\section{Two}\r\n\\section{Three}\nfour",
-                &[(2, "Two", 2), (2, "Three", 3)],
-                4,
+                "one\r\n\\section{Two}\r\n\\section{Three}\nfour\r\\section{Five}",
+                &[(2, "Two", 2), (2, "Three", 3), (2, "Five", 5)],
+                5,
             ),
             (
                 "\\part{P}\n\\chapter{C}\n\\section{S}\n\\subsection{Sub}\n\\subsubsection{SubSub}\n\\paragraph{Para}\n\\subparagraph{Not in the outline}",
@@ -597,6 +854,74 @@ mod tests {
                 analyze_project(dir.path(), &Files::default(), "main.tex", "main.tex", None);
             assert_eq!((found.outline, found.words), (expected, words), "{text}");
         }
+    }
+
+    /// In UTF-16 units, as the editors count: the emoji is two.
+    #[test]
+    fn a_file_places_what_it_defines_and_refers_to() {
+        let at = |line, column, length| Place {
+            line,
+            column,
+            length,
+        };
+        let named = |list: &[Named]| -> Vec<(String, Place)> {
+            list.iter().map(|n| (n.name.clone(), n.place)).collect()
+        };
+        let tex = "😀 \\label{fig:a}\n\\cite[p.~3]{knuth, lamport} \\ref{fig:a}\n\
+            \\newcommand{\\R}{x} \\newenvironment{thm}{}{}\n\
+            \\begin{thm}\\includegraphics{figs/plot}\\end{thm}\n\\bibitem{b} \\input{chapters/a}";
+        let facts = Facts::read(tex, "tex");
+        assert_eq!(named(&facts.labels), [("fig:a".into(), at(1, 10, 5))]);
+        assert_eq!(named(&facts.citations), [("b".into(), at(5, 9, 1))]);
+        assert_eq!(named(&facts.environments), [("thm".into(), at(3, 35, 3))]);
+        let commands = facts.commands.iter().map(|c| (&*c.name, c.place));
+        assert_eq!(commands.collect::<Vec<_>>(), [("\\R", at(3, 12, 2))]);
+        let input = &facts.inputs[0];
+        assert_eq!((&*input.name, input.place), ("chapters/a", at(5, 19, 10)));
+        let uses = facts.uses.iter().map(|u| (u.kind, &*u.name, u.place));
+        assert_eq!(
+            uses.collect::<Vec<_>>(),
+            [
+                (SymbolKind::Citation, "knuth", at(2, 12, 5)),
+                (SymbolKind::Citation, "lamport", at(2, 19, 7)),
+                (SymbolKind::Label, "fig:a", at(2, 33, 5)),
+                (SymbolKind::Environment, "thm", at(4, 7, 3)),
+                (SymbolKind::File, "figs/plot", at(4, 28, 9)),
+                (SymbolKind::Environment, "thm", at(4, 43, 3)),
+            ]
+        );
+        let bib = Facts::read("% 😀\n@book{knuth84,\n  title={T}}\n@misc{ é2,}", "bib");
+        assert_eq!(
+            named(&bib.citations),
+            [("knuth84".into(), at(2, 6, 7)), ("é2".into(), at(4, 7, 2))]
+        );
+    }
+
+    /// Through braces and quotes, a biblatex date, `#`, names in braces and an `AND`; an entry
+    /// left open reads to the next one, not past it.
+    #[test]
+    fn a_bib_entry_tells_its_authors_year_and_title() {
+        let bib = "@book{knuth,\n  author = {Knuth, Donald E.},\n  title = \"The {TeX}book, \" # {Vol. A},\n  year = 1984,\n}\n\
+            @article{two, title = {On {\\em Two}}, author = {A. One and\n B. {Two}}, date = {2020-05-01}}\n\
+            @misc(many, author = \"A and B and {World Health Organization}\")\n\
+            @misc{corp, author = {{Procter and Gamble} AND Jean {de La Fontaine}}}\n\
+            @misc{open, title = {Never {closed},\n  year = 1999\n\
+            @misc{after, author = {Last, First}, year = {2001}}\n@misc{bare,}";
+        let read = Facts::read(bib, "bib").citations.into_iter();
+        let details: Vec<_> = read.map(|c| (c.name, c.detail)).collect();
+        let detail = |key: &str, detail: Option<&str>| (key.into(), detail.map(String::from));
+        assert_eq!(
+            details,
+            [
+                detail("knuth", Some("Knuth · 1984 · The TeXbook, Vol. A")),
+                detail("two", Some("One and Two · 2020 · On Two")),
+                detail("many", Some("A et al.")),
+                detail("corp", Some("Procter and Gamble and de La Fontaine")),
+                detail("open", Some("Never closed, year = 1999")),
+                detail("after", Some("Last · 2001")),
+                detail("bare", None),
+            ]
+        );
     }
 
     #[test]

@@ -26,7 +26,7 @@ use crate::projects::{self, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
-use crate::{CoreError, lock};
+use crate::{CoreError, lf, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
@@ -495,7 +495,8 @@ impl Actor {
         let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(NOT_UTF8))?;
         let id = self.next_doc;
         self.next_doc += 1;
-        let document = Document::new(id, &text, self.tx.clone(), Arc::clone(&self.symbols));
+        let symbols = Arc::clone(&self.symbols);
+        let document = Document::new(id, path, &text, self.tx.clone(), symbols);
         let doc = Doc {
             doc: document.clone(),
             path: path.to_owned(),
@@ -883,11 +884,13 @@ impl Actor {
     fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
         let (seq, root, tx) = (self.symbols_seq, self.root.clone(), self.tx.clone());
-        let facts = Arc::clone(&self.facts);
+        let (facts, docs) = (Arc::clone(&self.facts), Arc::clone(&self.shared));
         let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
         files.sort_unstable();
         tokio::task::spawn_blocking(move || {
-            let symbols = projects::scan_symbols(&root, &facts);
+            let docs = lock(&docs).clone();
+            let open = docs.into_iter().map(|(path, doc)| (path, doc.snapshot().0));
+            let symbols = projects::scan_symbols(&root, &facts, &open.collect());
             let symbols = symbols.map(|symbols| Symbols { files, ..symbols });
             let _ = tx.send(Msg::Symbols(seq, symbols));
         });
@@ -896,9 +899,6 @@ impl Actor {
     fn symbols_done(&mut self, seq: u64, result: Result<Symbols, CoreError>) {
         let Ok(symbols) = result else { return };
         if seq != self.symbols_seq {
-            return;
-        }
-        if **self.symbols.read().unwrap_or_else(PoisonError::into_inner) == symbols {
             return;
         }
         *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
@@ -958,6 +958,7 @@ impl Actor {
             let new = format!("{to}{}", paths::after_entry(&old, from).expect("within"));
             let mut doc = self.docs.remove(&old).expect("listed");
             doc.path.clone_from(&new);
+            doc.doc.moved(&new);
             doc.shown = Value::Null;
             self.by_id.insert(doc.doc.id(), new.clone());
             {
@@ -1078,13 +1079,5 @@ impl Newline {
             Self::Cr => "\r",
         };
         Cow::Owned(lf(text.to_owned()).replace('\n', ending))
-    }
-}
-
-pub(crate) fn lf(text: String) -> String {
-    if text.contains('\r') {
-        text.replace("\r\n", "\n").replace('\r', "\n")
-    } else {
-        text
     }
 }

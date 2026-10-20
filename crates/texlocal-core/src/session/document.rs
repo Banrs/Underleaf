@@ -28,6 +28,7 @@ pub struct Document(Arc<Cell>);
 impl Document {
     pub(crate) fn new(
         id: u64,
+        path: &str,
         text: &str,
         tx: mpsc::UnboundedSender<Msg>,
         symbols: Arc<RwLock<Arc<Symbols>>>,
@@ -35,7 +36,7 @@ impl Document {
         Self(Arc::new(Cell {
             id,
             text: Mutex::new(Text {
-                source: SourceDocument::new(text),
+                source: SourceDocument::named(text, path),
                 version: 0,
             }),
             tx,
@@ -59,7 +60,7 @@ impl Document {
 
     pub fn reload(&self, text: &str) {
         let mut held = lock(&self.0.text);
-        held.source = SourceDocument::new(text);
+        held.source = SourceDocument::named(text, &held.source.path);
         held.version += 1;
         let _ = self.0.tx.send(Msg::Reloaded {
             doc: self.0.id,
@@ -87,6 +88,10 @@ impl Document {
 
     pub(crate) fn id(&self) -> u64 {
         self.0.id
+    }
+
+    pub(crate) fn moved(&self, path: &str) {
+        path.clone_into(&mut lock(&self.0.text).source.path);
     }
 
     pub(crate) fn snapshot(&self) -> (String, u64) {

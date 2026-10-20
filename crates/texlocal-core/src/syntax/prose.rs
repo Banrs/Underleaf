@@ -134,11 +134,10 @@ impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
 
 /// A file's words: runs of prose that hold a letter, prose being what Writing Tools is given. Each command outside
 /// maths and code goes to `command` too, so the outline finds its headings and inputs in the same reading.
-pub(crate) fn words(source: &str, command: impl FnMut(&Text, &str, usize)) -> usize {
-    let text = Text::new(source);
+pub(crate) fn words(text: &Text, command: impl FnMut(&Text, &str, usize)) -> usize {
     let len = text.units.len();
     let writing = Checker::WritingTools;
-    let mut reading = Reading::new(&text, len, Names::default(), writing, command);
+    let mut reading = Reading::new(text, len, Names::default(), writing, command);
     Scanner::default().run(&text.units, len, &[], &mut reading);
     let mut skipped = reading.ranges;
     skipped.extend(reading.others);
