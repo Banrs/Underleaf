@@ -10,7 +10,7 @@ use serde_json::Value;
 pub type Listener = Box<dyn Fn(&Value) + Send + Sync>;
 
 pub struct Hub {
-    queue: Option<mpsc::Sender<Value>>,
+    queue: mpsc::Sender<Value>,
     listener: Arc<RwLock<Option<Listener>>>,
 }
 
@@ -19,7 +19,9 @@ impl Default for Hub {
         let (queue, events) = mpsc::channel::<Value>();
         let listener: Arc<RwLock<Option<Listener>>> = Arc::default();
         let held = Arc::clone(&listener);
-        let spawned = std::thread::Builder::new()
+        // A hub that can't deliver would lose every event unseen, so a failed
+        // spawn panics, and tl_open turns that into its NULL.
+        std::thread::Builder::new()
             .name("texlocal-events".into())
             .spawn(move || {
                 for event in events {
@@ -29,11 +31,9 @@ impl Default for Hub {
                         let _ = catch_unwind(AssertUnwindSafe(|| listen(&event)));
                     }
                 }
-            });
-        Self {
-            queue: spawned.ok().map(|_| queue),
-            listener,
-        }
+            })
+            .expect("the event thread starts");
+        Self { queue, listener }
     }
 }
 
@@ -59,13 +59,11 @@ impl Drop for Hub {
 }
 
 #[derive(Clone)]
-pub(crate) struct Emitter(Option<mpsc::Sender<Value>>);
+pub(crate) struct Emitter(mpsc::Sender<Value>);
 
 impl Emitter {
     pub(crate) fn send(&self, event: Value) {
-        if let Some(queue) = &self.0 {
-            let _ = queue.send(event);
-        }
+        let _ = self.0.send(event);
     }
 }
 
