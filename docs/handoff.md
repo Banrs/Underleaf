@@ -8,21 +8,17 @@ Check on the QA copy (`tools/qa/README.md`), then `zsh tools/install-mac.sh`:
 - Aa opens with no level highlighted and the first arrow key highlights the caret's level; Tab's
   path through the popover is unverified.
 
-## Unchecked 27.2 workarounds
+## 27.2 workarounds
 
-Each says why in its comment. Turn it off on a current build and remove it if the bug is gone:
-- `SourceTextView.layOutViewportOnceSettled`, after quick divider drags; once, a blurred band
-  about 115 pt tall showed over the source's last lines after slow then quick drags in Test Long.
-- `WorkspaceController.paneAnimation`'s display link for the PDF, inspector and build panel (the
-  sidebar animated without it).
-- `WorkspaceController`'s `pdfItem.isCollapsed = false` at the first layout.
-- `MathGlyphs`' palette rows, `unmark` and `centre` (`MenuItems.swift`).
-- `NameWidth`'s trailing space (`HomeView.swift`).
-
-Still needed, checked on screen: `HeadingRow`'s Equatable, `redrawFragments`, the width
-following a live resize. Still showing headless: `characterIndex` on T1 fonts, replaced pages'
-memory (`PDFController.wholeAt`), zoom limits, menu images, the Share item, the drawn underline,
-PDFKit's fade, the frame guard, PDFKit's one drawer, `constrainSplitPosition`'s missing super.
+Each says why in its comment. Still needed, checked on screen: `HeadingRow`'s Equatable,
+`redrawFragments`, the width following a live resize, `WorkspaceController`'s `pdfItem.isCollapsed =
+false` at the first layout (collapsed from the start, the source under a hidden PDF scrolls under
+the toolbar with no edge), `MathGlyphs`' `unmark` and `centre` (without them a symbol chosen shows
+marked when its menu reopens, and the palettes sit about 6 pt left of centre), `NameWidth` (without
+it a space typed last in New Project's name doesn't show until a letter follows). Still showing
+headless: `characterIndex` on T1 fonts, replaced pages' memory (`PDFController.wholeAt`), zoom
+limits, menu images, the Share item, the drawn underline, PDFKit's fade, the frame guard, PDFKit's
+one drawer, `constrainSplitPosition`'s missing super.
 
 ## Left
 

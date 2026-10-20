@@ -125,7 +125,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let top = shownTop
         defer {
             top.map(scroll(toShownTop:))
-            if !issues.lines.isEmpty { layOutViewportOnceSettled() }
+            // The issues' rows are placed anew once the new font is laid out.
+            if !issues.lines.isEmpty {
+                Task { [weak self] in self?.textLayoutManager?.textViewportLayoutController.layoutViewport() }
+            }
         }
         self.font = font
         completions.close()
@@ -155,7 +158,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var gutter = EditorGutter()
     /// The fragments TextKit last laid out in the viewport, by offset (+Viewport).
     var fragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
-    var viewportPending = false
     /// Each time TextKit lays out the viewport.
     var laidOut: () -> Void = {}
     var showsLineNumbers = true { didSet { if showsLineNumbers != oldValue { updateGutterWidth() } } }

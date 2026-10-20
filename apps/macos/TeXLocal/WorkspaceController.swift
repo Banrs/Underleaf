@@ -21,7 +21,6 @@ final class WorkspaceController: DetentSplitViewController {
     private var appeared = false, joining = false
     private var panelHeight: CGFloat = 0
     private var paneAnimations = 0, quieting = 0
-    private var paneFrames: CADisplayLink?
     private var quietScrollViews: [NSScrollView] = []
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
@@ -350,22 +349,12 @@ final class WorkspaceController: DetentSplitViewController {
         }
     }
 
-    /// 27.2: with nothing else waking the run loop, a split's animation holds still, then jumps to its end.
     private func paneAnimation(_ running: Bool) {
         // It puts every pane in live resize, which shows their overlay scrollers too.
         quiet(running)
         paneAnimations += running ? 1 : -1
-        if running, paneFrames == nil {
-            paneFrames = view.displayLink(target: self, selector: #selector(paneFrame))
-            paneFrames?.add(to: .main, forMode: .common)
-        } else if paneAnimations == 0 {
-            paneFrames?.invalidate()
-            paneFrames = nil
-            fitColumns()
-        }
+        if paneAnimations == 0 { fitColumns() }
     }
-
-    @objc private func paneFrame(_ link: CADisplayLink) { for split in splitViews { split.needsLayout = true } }
 
     private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
 
@@ -429,8 +418,6 @@ final class WorkspaceController: DetentSplitViewController {
     /// A split animation still running finishes after its window has gone and would save its frames over the next window's.
     func close() {
         for split in splitViews { split.autosaveName = nil }
-        paneFrames?.invalidate()
-        paneFrames = nil
         watches.forEach { $0.cancel() }
         app.performPDF = nil
         // The next workspace's columns are AppKit's to fold afresh.
