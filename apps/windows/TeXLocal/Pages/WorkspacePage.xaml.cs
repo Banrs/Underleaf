@@ -612,8 +612,6 @@ public sealed partial class WorkspacePage : Page
     void OnFindPrevious(object sender, RoutedEventArgs e) => Editor.FindNext(false);
     void OnMoveLineUp(object sender, RoutedEventArgs e) => Editor.MoveLines(true);
     void OnMoveLineDown(object sender, RoutedEventArgs e) => Editor.MoveLines(false);
-    void OnZoomIn(object sender, RoutedEventArgs e) => Pdf.ZoomBy(1.25);
-    void OnZoomOut(object sender, RoutedEventArgs e) => Pdf.ZoomBy(0.8);
     void OnActualSize(object sender, RoutedEventArgs e) => Pdf.ZoomTo(1);
 
     // MARK: helpers

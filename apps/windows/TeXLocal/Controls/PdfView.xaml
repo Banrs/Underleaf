@@ -25,10 +25,10 @@
                 <MenuFlyout x:Name="Menu" Opening="OnMenuOpening">
                     <MenuFlyoutItem x:Name="SourceItem" Click="OnGoToSource" Text="Go to source position" />
                     <MenuFlyoutSeparator x:Name="SourceRule" />
-                    <MenuFlyoutItem Click="OnZoomIn" KeyboardAcceleratorTextOverride="Ctrl+=" Text="Zoom in">
+                    <MenuFlyoutItem Click="{x:Bind ZoomIn}" KeyboardAcceleratorTextOverride="Ctrl+=" Text="Zoom in">
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8A3;" /></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
-                    <MenuFlyoutItem Click="OnZoomOut" KeyboardAcceleratorTextOverride="Ctrl+-" Text="Zoom out">
+                    <MenuFlyoutItem Click="{x:Bind ZoomOut}" KeyboardAcceleratorTextOverride="Ctrl+-" Text="Zoom out">
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE71F;" /></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                     <MenuFlyoutSeparator />

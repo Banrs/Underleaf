@@ -159,8 +159,8 @@
                     <MenuFlyoutSeparator />
                     <!-- The PDF's, wherever the focus is: the editor has no zoom of its own. -->
                     <MenuFlyoutSubItem AccessKey="Z" Text="Zoom">
-                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+=; Ctrl+Add" AccessKey="I" Click="OnZoomIn" Text="Zoom in" />
-                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+-; Ctrl+Subtract" AccessKey="O" Click="OnZoomOut" Text="Zoom out" />
+                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+=; Ctrl+Add" AccessKey="I" Click="{x:Bind Pdf.ZoomIn}" Text="Zoom in" />
+                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+-; Ctrl+Subtract" AccessKey="O" Click="{x:Bind Pdf.ZoomOut}" Text="Zoom out" />
                         <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+0" AccessKey="A" Click="OnActualSize" Text="Actual size" />
                         <MenuFlyoutSeparator />
                         <MenuFlyoutItem AccessKey="W" Click="{x:Bind Pdf.FitWidth}" Text="Fit width" />
@@ -625,7 +625,7 @@
                 </Button>
                 <Rectangle Style="{StaticResource StatusDividerStyle}" />
                 <StackPanel x:Name="ZoomBar" Margin="4,0,0,0" Orientation="Horizontal" Spacing="2">
-                    <RepeatButton AutomationProperties.Name="Zoom out" Click="OnZoomOut" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom out (Ctrl+-)">
+                    <RepeatButton AutomationProperties.Name="Zoom out" Click="{x:Bind Pdf.ZoomOut}" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom out (Ctrl+-)">
                         <FontIcon FontSize="12" Glyph="&#xE738;" />
                     </RepeatButton>
                     <Slider
@@ -639,7 +639,7 @@
                         StepFrequency="0.01"
                         ValueChanged="OnZoomSlider"
                         Visibility="Collapsed" />
-                    <RepeatButton AutomationProperties.Name="Zoom in" Click="OnZoomIn" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom in (Ctrl+=)">
+                    <RepeatButton AutomationProperties.Name="Zoom in" Click="{x:Bind Pdf.ZoomIn}" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom in (Ctrl+=)">
                         <FontIcon FontSize="12" Glyph="&#xE710;" />
                     </RepeatButton>
                     <Button MinWidth="56" Flyout="{x:Bind Pdf.ZoomMenu}" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Zoom">
