@@ -55,6 +55,7 @@ public sealed partial class SourceView : UserControl
     MathPreview? shownMath;
     int? dismissedMath;
     Color[] kinds = [];
+    SolidColorBrush numbers = new();
     ElementTheme inked;
     string theme = "overleaf";
 
@@ -159,12 +160,15 @@ public sealed partial class SourceView : UserControl
         });
     }
 
-    Color Of(Rectangle r) => Over(((SolidColorBrush)r.Fill).Color, ((SolidColorBrush)PaperInk.Fill).Color);
+    internal static Color Fill(Rectangle r) => ((SolidColorBrush)r.Fill).Color;
+
+    /// Opaque, as RichEdit needs, and raised by the core to the text's contrast on the paper and the current line.
+    Color Legible(Rectangle ink) => Opaque(Source.SyntaxCall<double[]>("legible",
+        new { color = Rgba(Fill(ink)), background = Rgba(Fill(PaperInk)), fill = Rgba(Fill(CurrentLine)) })!);
 
     /// None in high contrast, where every kind is drawn in the window's text colour.
     public static Color[] SyntaxColors(string theme, bool dark, Color paper, Color line, Color secondary)
     {
-        static byte Byte(double v) => (byte)Math.Round(Math.Clamp(v, 0, 1) * 255);
         var colours = new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast ? null
             : Source.SyntaxCall<double[][]>("theme_colors", new
             {
@@ -174,16 +178,16 @@ public sealed partial class SourceView : UserControl
                 fill = Rgba(line),
                 system = new Dictionary<string, double[]> { ["secondaryLabelColor"] = Rgba(secondary) },
             });
-        return [.. (colours ?? []).Select(c => Color.FromArgb(255, Byte(c[0]), Byte(c[1]), Byte(c[2])))];
+        return [.. (colours ?? []).Select(Opaque)];
     }
 
     public static double[] Rgba(Color c) => [c.R / 255.0, c.G / 255.0, c.B / 255.0, c.A / 255.0];
 
-    /// RichEdit ignores alpha.
-    public static Color Over(Color c, Color under)
+    /// The core composites what it answers over the paper.
+    static Color Opaque(double[] c)
     {
-        byte Mix(byte a, byte b) => (byte)((a * c.A + b * (255 - c.A)) / 255);
-        return Color.FromArgb(255, Mix(c.R, under.R), Mix(c.G, under.G), Mix(c.B, under.B));
+        static byte Byte(double v) => (byte)Math.Round(Math.Clamp(v, 0, 1) * 255);
+        return Color.FromArgb(255, Byte(c[0]), Byte(c[1]), Byte(c[2]));
     }
 
     /// RichEdit drops the text's colours if it gets them before its template is applied and it has
@@ -229,9 +233,8 @@ public sealed partial class SourceView : UserControl
         MathPopup.IsOpen = false;
         source?.Call<bool>("end_snippet", new { });
         Document.EndUndoGroup();
-        (Ink, inked, stale) = (Of(TextInk), ActualTheme, !IsLoaded);
-        kinds = SyntaxColors(theme, ActualTheme == ElementTheme.Dark, ((SolidColorBrush)PaperInk.Fill).Color,
-            ((SolidColorBrush)CurrentLine.Fill).Color, Of(SecondaryInk));
+        (Ink, numbers, inked, stale) = (Legible(TextInk), new SolidColorBrush(Legible(NumberInk)), ActualTheme, !IsLoaded);
+        kinds = SyntaxColors(theme, ActualTheme == ElementTheme.Dark, Fill(PaperInk), Fill(CurrentLine), Fill(SecondaryInk));
         var split = source is { LineCount: > 200 } s ? s.LineStart(201) : content.Length;
         setting = true;
         Document.SetText(TextSetOptions.FormatRtf, Rtf(content, 0, split));
@@ -878,7 +881,7 @@ public sealed partial class SourceView : UserControl
             // The editor's font and size at the line's top: the number sits on the text's baseline.
             var number = (TextBlock)Gutter.Children[used++];
             (number.FontFamily, number.FontSize, number.Width) = (Editor.FontFamily, Editor.FontSize, Gutter.Width - 8);
-            (number.Text, number.Foreground) = (line.ToString(), (line == caret ? TextInk : NumberInk).Fill);
+            (number.Text, number.Foreground) = (line.ToString(), line == caret ? TextInk.Fill : numbers);
             number.Visibility = Visibility.Visible;
             Canvas.SetTop(number, r.Y);
         }
