@@ -15,7 +15,8 @@ Rules and standing decisions for agents working here. `README.md` is the overvie
   glyphs through RaTeX (`math_svg`, `glyph_svg`).
 - **`crates/texlocal-ffi`** is the C ABI, a static library; Windows builds it as a DLL.
 - **macOS app** (`apps/macos`) and **Windows app** (`apps/windows`, WinUI 3, `docs/windows.md`)
-  are UI only, on the core. They should look and work alike.
+  are UI only, on the core. They have the same features, each in its own system's look: the Mac
+  follows the HIG, Windows WinUI 3 and Fluent, never the Mac's design.
 - **CI** (`.github/workflows/ci.yml`): path-filtered jobs for Rust on both systems, the Windows
   app and the Mac app; `ci-ok` is the one required check.
 
