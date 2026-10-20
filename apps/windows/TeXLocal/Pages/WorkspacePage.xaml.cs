@@ -315,7 +315,7 @@ public sealed partial class WorkspacePage : Page
     void ShowLook()
     {
         Editor.SetLook(Prefs.EditorFont, Prefs.EditorFontSize, Prefs.EditorTheme);
-        (Editor.AutoPair, Editor.AutoComplete) = (Prefs.AutoPair, Prefs.AutoComplete);
+        (Editor.AutoPair, Editor.AutoComplete, Editor.LineNumbers) = (Prefs.AutoPair, Prefs.AutoComplete, Prefs.LineNumbers);
     }
 
     /// Another app changed or removed a file with edits here. Changed, the safe choice (Cancel) is the default.

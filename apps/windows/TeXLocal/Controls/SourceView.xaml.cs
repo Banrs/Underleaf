@@ -83,7 +83,7 @@ public sealed partial class SourceView : UserControl
     readonly Windows.UI.ViewManagement.UISettings system = new();
     Source? source;
     ScrollViewer? scroller;
-    bool setting, changed, undoing, restoring, composing, loading, stale, mirroring, reoffer, queued, moved, numbered = true;
+    bool setting, changed, undoing, restoring, composing, loading, stale, mirroring, reoffer, queued, moved;
     int loads, lastEnd = -1;
     double advance = 8.4;
     (int Start, int End) placed = (-1, -1);
@@ -103,6 +103,7 @@ public sealed partial class SourceView : UserControl
     public Color Ink { get; private set; }
     public bool AutoPair { get; set; } = true;
     public bool AutoComplete { get; set; } = true;
+    public bool LineNumbers { get; set { field = value; Invalidate(false); } } = true;
     public event Action<bool>? Composing;
     /// Once per dispatcher turn, after the edit is mirrored, so the caret's line is the new text's.
     public event Action? CaretMoved;
@@ -165,13 +166,10 @@ public sealed partial class SourceView : UserControl
         };
         SizeChanged += (_, e) => Clip = new RectangleGeometry { Rect = new(0, 0, e.NewSize.Width, e.NewSize.Height) };
         ActualThemeChanged += (_, _) => Recolour(true);
-        // Settings covers the workspace, so a change there is read when it comes back.
         Loaded += (_, _) =>
         {
-            numbered = Prefs.LineNumbers;
             system.ColorValuesChanged += OnColoursChanged;
             Recolour(ActualTheme != inked);
-            Invalidate(false);
         };
         Unloaded += (_, _) => system.ColorValuesChanged -= OnColoursChanged;
     }
@@ -955,13 +953,13 @@ public sealed partial class SourceView : UserControl
         var first = source!.LineAt(Document.GetRangeFromPoint(new Point(0, y), PointOptions.ClientCoordinates).StartPosition);
         var last = source.LineAt(Document.GetRangeFromPoint(new Point(Editor.ActualWidth, y + Editor.ActualHeight), PointOptions.ClientCoordinates).StartPosition);
         var caret = source.LineAt(CaretOffset);
-        Gutter.Width = numbered ? Math.Ceiling(16 + Math.Max(3, source.LineCount.ToString().Length) * advance + 8) : 16;
+        Gutter.Width = LineNumbers ? Math.Ceiling(16 + Math.Max(3, source.LineCount.ToString().Length) * advance + 8) : 16;
         // Only beside the text's viewport, so nothing shows in the find bar's band.
         var view = new Rect(0, Editor.Padding.Top, Gutter.Width + Editor.ActualWidth, Math.Max(0, Editor.ActualHeight - Editor.Padding.Top - Editor.Padding.Bottom));
         foreach (var layer in (UIElement[])[Gutter, Backdrop, Overlay]) layer.Clip = new RectangleGeometry { Rect = view };
 
         var used = 0;
-        for (var line = first; numbered && line <= last; line++)
+        for (var line = first; LineNumbers && line <= last; line++)
         {
             if (RectOf(source.LineStart(line), source.LineStart(line)) is not { } r) continue;
             if (used == Gutter.Children.Count)
