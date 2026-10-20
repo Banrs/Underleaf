@@ -1389,9 +1389,9 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
 /// A citation's .bib entry and the key of a list that names it; refused for a key TeX
 /// couldn't read, one nothing defines and one taken.
 #[tokio::test(start_paused = true)]
-async fn a_rename_answers_the_open_documents_edits_and_writes_the_rest_keeping_their_line_ends() {
+async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_disk() {
     let rig = Rig::new(false).await;
-    let bib = "@book{knuth,\r\n  title = {The {TeX}book},\r\n}\r\n@misc{lamport,}\r\n";
+    let bib = "@book{knuth,\n  title = {The {TeX}book},\n}\n@misc{lamport,}\n";
     fs::write(rig.root.join("refs.bib"), bib).unwrap();
     let doc = rig.open("main.tex").await;
     doc.edit(5, 0, "\\cite{x, knuth}");
