@@ -1,5 +1,6 @@
 //! Making, moving and discarding the files and folders of a project.
 
+use std::borrow::Cow;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -7,11 +8,11 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::atomic;
 use crate::error::CoreError;
 use crate::paths::{after_entry, rel_key, safe_path, safe_write_path, same_entry};
 use crate::settings::{move_ui, read_settings, write_settings};
 use crate::stamp::Stamp;
+use crate::{atomic, lf};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +51,37 @@ pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreErro
         }
     }
     unreachable!("a free name")
+}
+
+/// A document holds `\n` alone, as an editor needs; a write keeps the file's own ending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Newline {
+    Lf,
+    CrLf,
+    Cr,
+}
+
+impl Newline {
+    pub fn of(text: &str) -> Self {
+        let Some(at) = text.find(['\r', '\n']) else {
+            return Self::Lf;
+        };
+        match &text.as_bytes()[at..] {
+            [b'\r', b'\n', ..] => Self::CrLf,
+            [b'\r', ..] => Self::Cr,
+            _ => Self::Lf,
+        }
+    }
+
+    pub fn written(self, text: &str) -> Cow<'_, str> {
+        let ending = match self {
+            Self::Lf if !text.contains('\r') => return Cow::Borrowed(text),
+            Self::Lf => return Cow::Owned(lf(text.to_owned())),
+            Self::CrLf => "\r\n",
+            Self::Cr => "\r",
+        };
+        Cow::Owned(lf(text.to_owned()).replace('\n', ending))
+    }
 }
 
 pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<Stamp, CoreError> {
@@ -194,6 +226,18 @@ mod tests {
     use super::*;
     use crate::projects::testing::project;
     use crate::settings::{UiPatch, UiState, read_ui, write_ui};
+
+    #[test]
+    fn a_file_ends_its_lines_as_its_first_line_break_does() {
+        assert_eq!(Newline::of("a\r\nb\nc"), Newline::CrLf);
+        assert_eq!(Newline::of("a\rb"), Newline::Cr);
+        assert_eq!(Newline::of("a\nb\r\n"), Newline::Lf);
+        assert_eq!(Newline::of("a"), Newline::Lf);
+        assert_eq!(Newline::CrLf.written("a\nb\r\nc\rd"), "a\r\nb\r\nc\r\nd");
+        assert_eq!(Newline::Cr.written("a\nb"), "a\rb");
+        assert_eq!(Newline::Lf.written("a\r\nb"), "a\nb");
+        assert!(matches!(Newline::Lf.written("a\nb"), Cow::Borrowed(_)));
+    }
 
     #[cfg(unix)]
     #[test]

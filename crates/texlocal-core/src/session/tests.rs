@@ -10,7 +10,6 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
-use super::actor::Newline;
 use super::engine::Fut;
 use super::watch::Change;
 use super::{Document, Engine, Msg, Preview, Sessions};
@@ -720,21 +719,6 @@ async fn the_tree_marks_the_main_file_and_comes_again_when_another_is_chosen() {
             (json!("paper.tex"), Some(json!(true)))
         ]
     );
-}
-
-#[test]
-fn a_file_ends_its_lines_as_its_first_line_break_does() {
-    assert_eq!(Newline::of("a\r\nb\nc"), Newline::CrLf);
-    assert_eq!(Newline::of("a\rb"), Newline::Cr);
-    assert_eq!(Newline::of("a\nb\r\n"), Newline::Lf);
-    assert_eq!(Newline::of("a"), Newline::Lf);
-    assert_eq!(Newline::CrLf.written("a\nb\r\nc\rd"), "a\r\nb\r\nc\r\nd");
-    assert_eq!(Newline::Cr.written("a\nb"), "a\rb");
-    assert_eq!(Newline::Lf.written("a\r\nb"), "a\nb");
-    assert!(matches!(
-        Newline::Lf.written("a\nb"),
-        std::borrow::Cow::Borrowed(_)
-    ));
 }
 
 #[tokio::test(start_paused = true)]
