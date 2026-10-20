@@ -46,12 +46,11 @@ public sealed partial class SourceView : UserControl
     Source? source;
     ScrollViewer? scroller;
     bool setting, changed, undoing, restoring, composing, loading, stale, mirroring, reoffer, queued, moved;
-    int loads, lastEnd = -1, edits;
+    int loads, lastEnd = -1;
     double advance = 8.4;
     (int Start, int End) placed = (-1, -1);
     SourceRange before = new(0, 0);
     Completions? offered;
-    (int Caret, int Edits, MathPreview? Value)? lastMath;
     MathPreview? shownMath;
     int? dismissedMath;
     Color[] kinds = [];
@@ -229,7 +228,7 @@ public sealed partial class SourceView : UserControl
         var generation = ++loads;
         CloseCompletions();
         HidePartner();
-        (lastMath, shownMath, dismissedMath) = (null, null, null);
+        (shownMath, dismissedMath) = (null, null);
         MathPopup.IsOpen = false;
         source?.Call<bool>("end_snippet", new { });
         Document.EndUndoGroup();
@@ -376,7 +375,6 @@ public sealed partial class SourceView : UserControl
         var mirrors = source!.Edit(start, removed, inserted, mirroring);
         Text = string.Concat(Text.AsSpan(0, start), inserted, Text.AsSpan(start + removed));
         lastEnd = start + inserted.Length;
-        edits++;
         if (colour) Colour(source.LineAt(start), source.LineAt(start + inserted.Length));
         if (mirrors is not { Length: > 0 }) return;
         // The typing stays where it was, moved only by copies put in before it.
@@ -639,17 +637,9 @@ public sealed partial class SourceView : UserControl
         peer.RaiseNotificationEvent(AutomationNotificationKind.ItemAdded, AutomationNotificationProcessing.MostRecent, label, "completion");
     }
 
-    MathPreview? MathAt(int caret)
-    {
-        if (lastMath is { } last && last.Caret == caret && last.Edits == edits) return last.Value;
-        var value = source?.Call<MathPreview>("math_at", new { caret });
-        lastMath = (caret, edits, value);
-        return value;
-    }
-
     async void PreviewMath()
     {
-        var maths = source is null || loading || Selected.Length > 0 ? null : MathAt(CaretOffset);
+        var maths = source is null || loading || Selected.Length > 0 ? null : source.Call<MathPreview>("math_at", new { caret = CaretOffset });
         if (maths?.Start != dismissedMath) dismissedMath = null;
         if (maths is null || dismissedMath is not null || Editor.FocusState == FocusState.Unfocused)
         {
