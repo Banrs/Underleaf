@@ -47,7 +47,7 @@ apps/windows/
   TeXLocal/                    the WinUI 3 app (unpackaged, self-contained)
     App.xaml(.cs), MainWindow.xaml(.cs)
     Prefs.cs                   the host's preferences, typed: window, panes, Compile automatically, Settings › Editor
-                               (EditorChanged); the core's themes; monospace families by GDI
+                               (EditorChanged) and › PDF; the core's themes; monospace families by GDI
     Pages/HomePage, WorkspacePage, SettingsPage (.xaml/.cs); WorkspacePage.xaml.cs (the session: editor, builds, issues,
       PDF, SyncTeX, status bar), WorkspacePage.Sidebar.cs (files, outline, project search, words),
       WorkspacePage.Insert.cs (Insert menu, symbol palette)
@@ -78,7 +78,7 @@ apps/windows/
 - **Data folder.** `TEXLOCAL_DATA`, else `%USERPROFILE%\TeXLocal` (the Mac's `~/TeXLocal`; outside
   OneDrive-redirected Documents, whose sync locks files mid-build).
 - **Host preferences** (theme, window bounds, navigation pane width, split, issues height, Compile
-  automatically, and the editor's font, size, theme and typing switches, which raise
+  automatically, sync after compile, and the editor's font, size, theme and typing switches, which raise
   `EditorChanged`) are `Prefs`' typed properties over
   `ApplicationData.GetForUnpackaged("TeXLocal", "TeXLocal").LocalSettings` (the registry, under
   `HKCU\Software\Classes\Local Settings\Software\TeXLocal`), as the Mac's in `UserDefaults`; a run
@@ -194,10 +194,10 @@ templates) is `core-api.md`'s. The numbers are the ones the app's comments cite,
 | Editor | `drop_text`, per-file undo, double-click to the PDF | `drop_text`; undo cleared on switch | UI |
 | PDF | Find, selection, copy, SyncTeX to the word | None; to the line | Core 6 |
 | PDF | A mark where SyncTeX has no box; nearest line from whitespace | Scroll only; nothing | Core 10, 30 |
-| PDF | Print, scroll to the caret after compiling | None | UI |
+| PDF | Print, scroll to the caret after compiling | Scroll to the caret after compiling; no print | UI |
 | Panel | Log find | The filter keeps matching lines | UI |
 | Live | Pane or TeXpresso window, log, restarts | None | Core 12 |
-| Settings | Template, engine, sync after compile, Live Preview | None; raw latexmk line | Core 7, 12; UI |
+| Settings | Template, engine, sync after compile, Live Preview | Sync after compile; raw latexmk line | Core 7, 12 |
 
 Windows' own: an app theme setting, the editor preview in Settings, search in the symbol palette,
 ZIP export on Home and F6 region cycling. Its tests cover the C# bridge only; `--smoke` opens a new blank project.

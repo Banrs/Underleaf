@@ -371,7 +371,13 @@ public sealed partial class WorkspacePage : Page
             IssueList.SelectedIndex = IssueList.Items.Count > 0 ? 0 : -1;
         }
         if (ev.Announce) Announce(BuildState, failed ? $"Build failed, {done.Errors.Length} {(done.Errors.Length == 1 ? "error" : "errors")}" : "Build succeeded", "build");
-        if (done.Pdf is { } pdf && (done.PdfChanged || Pdf.PageCount == 0)) _ = Pdf.Load(pdf);
+        var shown = done.Pdf is { } pdf && (done.PdfChanged || Pdf.PageCount == 0) ? Pdf.Load(pdf) : Task.CompletedTask;
+        // Settings › PDF, as on the Mac: only to a PDF that shows and has the caret's text.
+        if (done.Ok && !ev.Outdated && Prefs.SyncAfterCompile && PdfItem.IsChecked && Editor.Path is not null) Run(null, async () =>
+        {
+            await shown;
+            await SyncToCaret();
+        });
         outdated = ev.Outdated;
         ShowBuild();
     }
@@ -666,10 +672,15 @@ public sealed partial class WorkspacePage : Page
     /// Turns the PDF on if it's hidden, since that's where this goes.
     void OnForwardSync(object sender, RoutedEventArgs e)
     {
-        if (Editor.Path is not { } file || Pdf.PageCount == 0) return;
-        var (line, column) = Editor.Caret;
+        if (Editor.Path is null || Pdf.PageCount == 0) return;
         ShowPdf(true);
-        Run(null, async () => Pdf.Reveal(await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file, line, column })));
+        Run(null, SyncToCaret);
+    }
+
+    async Task SyncToCaret()
+    {
+        var (line, column) = Editor.Caret;
+        Pdf.Reveal(await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file = Editor.Path, line, column }));
     }
 
     void OnSave(object sender, RoutedEventArgs e) => Run("Can't save", () => Core.CallAsync("session_save", new { session }));
