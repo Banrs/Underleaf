@@ -2,7 +2,7 @@
 //! to preview, completions, headings, blocks, and comments and indentation.
 
 use super::units;
-use crate::syntax::{Insertion, SourceDocument, range};
+use crate::syntax::{Insertion, SourceDocument, Symbols, range};
 
 fn marked(source: &str) -> (SourceDocument, u32) {
     let at = units(&source[..source.find('|').unwrap()]);
@@ -151,7 +151,10 @@ fn completions_are_offered_for_what_is_typed() {
     ];
     for (before, explicit, expected) in cases {
         let mut doc = SourceDocument::new(before);
-        doc.set_symbols(vec!["sec:intro".into()], vec!["knuth84".into()]);
+        doc.set_symbols(std::sync::Arc::new(Symbols {
+            labels: vec!["sec:intro".into()],
+            citations: vec!["knuth84".into()],
+        }));
         let found = doc.completions(units(before), explicit);
         let place = found
             .as_ref()

@@ -7,12 +7,7 @@ use super::skip_unreadable;
 use super::tree::{file_kind, visit_files};
 use crate::analyze::Files;
 use crate::error::CoreError;
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Symbols {
-    pub citations: Vec<String>,
-    pub labels: Vec<String>,
-}
+pub use crate::syntax::Symbols;
 
 /// Their union over the project's .tex and .bib files, each read again only once it changes.
 pub fn scan_symbols(root: &Path, facts: &Files) -> Result<Symbols, CoreError> {

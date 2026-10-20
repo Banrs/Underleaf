@@ -32,6 +32,13 @@ pub enum CompletionKind {
     EntryType,
 }
 
+/// What the project defines that completion offers, one the session's documents share.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Symbols {
+    pub citations: Vec<String>,
+    pub labels: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Completions {
     pub start: u32,
@@ -68,9 +75,11 @@ impl SourceDocument {
         if let Some(c) = ARGUMENT.captures(&before) {
             let (names, kind): (&[String], _) = match &c[1] {
                 c if catalog.cite_commands.contains(c) => {
-                    (&self.citations, CompletionKind::Citation)
+                    (&self.symbols.citations, CompletionKind::Citation)
                 }
-                c if catalog.ref_commands.contains(c) => (&self.labels, CompletionKind::Label),
+                c if catalog.ref_commands.contains(c) => {
+                    (&self.symbols.labels, CompletionKind::Label)
+                }
                 "begin" | "end" => (&catalog.environments, CompletionKind::Environment),
                 _ => return None,
             };
@@ -167,12 +176,17 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
 
 #[cfg(test)]
 mod tests {
-    use super::{Completion, SnippetField};
+    use std::sync::Arc;
+
+    use super::{Completion, SnippetField, Symbols};
     use crate::syntax::SourceDocument;
 
     fn offered(before: &str, keys: &[String]) -> Vec<Completion> {
         let mut doc = SourceDocument::new(before);
-        doc.set_symbols(vec![], keys.to_vec());
+        doc.set_symbols(Arc::new(Symbols {
+            citations: keys.to_vec(),
+            ..Symbols::default()
+        }));
         let offer = doc.completions(before.encode_utf16().count() as u32, false);
         offer.map_or(vec![], |offer| offer.items)
     }

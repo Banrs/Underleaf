@@ -44,15 +44,18 @@ fn completions_offer_the_symbols_set_on_the_document() {
     let owned = |names: &[&str]| names.iter().map(|&n| n.to_owned()).collect();
     let mut doc = SourceDocument::new("\\cite{sm} \\ref{fig");
     assert!(offered(&mut doc, 8).is_empty(), "a new document has none");
-    doc.set_symbols(
-        owned(&["fig:one", "sec:two"]),
-        owned(&["smith2020", "jones"]),
-    );
+    doc.set_symbols(std::sync::Arc::new(Symbols {
+        labels: owned(&["fig:one", "sec:two"]),
+        citations: owned(&["smith2020", "jones"]),
+    }));
     assert_eq!(offered(&mut doc, 8), ["smith2020"]);
     assert_eq!(offered(&mut doc, 18), ["fig:one"]);
     doc.edit(0, 0, "x ");
     assert_eq!(offered(&mut doc, 10), ["smith2020"]);
-    doc.set_symbols(vec![], owned(&["smyth"]));
+    doc.set_symbols(std::sync::Arc::new(Symbols {
+        citations: owned(&["smyth"]),
+        ..Symbols::default()
+    }));
     assert_eq!(offered(&mut doc, 10), ["smyth"]);
     assert!(offered(&mut doc, 20).is_empty());
 }

@@ -22,10 +22,13 @@ mod typing;
 #[cfg(test)]
 mod tests;
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 pub use call::call;
 use complete::SnippetField;
+pub use complete::Symbols;
 use highlight::{Highlight, HighlightKind};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,8 +167,7 @@ pub struct SourceDocument {
     text: Text,
     highlighter: highlight::Cache,
     scans: scans::Scans,
-    labels: Vec<String>,
-    citations: Vec<String>,
+    symbols: Arc<Symbols>,
     typing: typing::Typing,
 }
 
@@ -175,15 +177,14 @@ impl SourceDocument {
             text: Text::new(text),
             highlighter: highlight::Cache::default(),
             scans: scans::Scans::default(),
-            labels: Vec::new(),
-            citations: Vec::new(),
+            symbols: Arc::default(),
             typing: typing::Typing::default(),
         }
     }
 
     /// Kept here rather than sent with each completions call: a bibliography is thousands of keys.
-    pub fn set_symbols(&mut self, labels: Vec<String>, citations: Vec<String>) {
-        (self.labels, self.citations) = (labels, citations);
+    pub fn set_symbols(&mut self, symbols: Arc<Symbols>) {
+        self.symbols = symbols;
     }
 
     /// A range past the end is cut to the text: the mirror never fails the editor.
