@@ -9,6 +9,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 use super::Msg;
+use crate::SETTINGS_FILE;
 use crate::analyze::disk_spelling;
 use crate::paths::within;
 use crate::projects::TreeNode;
@@ -90,6 +91,8 @@ impl TreeIndex {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Meaning {
     pub tree: bool,
+    /// The settings changed, perhaps their main file, which the tree marks.
+    pub settings: bool,
     pub docs: BTreeSet<String>,
     pub listed: BTreeSet<String>,
 }
@@ -129,6 +132,7 @@ pub(crate) fn classify(
         if change.structural && shown_folder && !listed_as_before(root, &rel, index) {
             meaning.tree = true;
         }
+        meaning.settings |= rel.eq_ignore_ascii_case(SETTINGS_FILE);
         if index.contains(&rel) {
             meaning.listed.insert(rel);
         }

@@ -869,7 +869,8 @@ mod tests {
         };
         let tex = "😀 \\label{fig:a}\n\\cite[p.~3]{knuth, lamport} \\ref{fig:a}\n\
             \\newcommand{\\R}{x} \\newenvironment{thm}{}{}\n\
-            \\begin{thm}\\includegraphics{figs/plot}\\end{thm}\n\\bibitem{b} \\input{chapters/a}";
+            \\begin{thm}\\includegraphics{figs/plot}\\end{thm}\n\\bibitem{b} \\input{chapters/a}\n\
+            \\nocite{b} \\nameref{fig:a}";
         let facts = Facts::read(tex, "tex");
         assert_eq!(named(&facts.labels), [("fig:a".into(), at(1, 10, 5))]);
         assert_eq!(named(&facts.citations), [("b".into(), at(5, 9, 1))]);
@@ -888,6 +889,8 @@ mod tests {
                 (SymbolKind::Environment, "thm", at(4, 7, 3)),
                 (SymbolKind::File, "figs/plot", at(4, 28, 9)),
                 (SymbolKind::Environment, "thm", at(4, 43, 3)),
+                (SymbolKind::Citation, "b", at(6, 8, 1)),
+                (SymbolKind::Label, "fig:a", at(6, 20, 5)),
             ]
         );
         let bib = Facts::read("% 😀\n@book{knuth84,\n  title={T}}\n@misc{ é2,}", "bib");

@@ -737,6 +737,24 @@ fn a_file_ends_its_lines_as_its_first_line_break_does() {
     ));
 }
 
+/// By hand, by git or by a sync client: the host's mark follows the tree's.
+#[tokio::test(start_paused = true)]
+async fn another_apps_change_to_the_settings_sends_the_tree_with_their_main_file() {
+    let mut rig = Rig::new(false).await;
+    fs::write(rig.root.join("paper.tex"), "").unwrap();
+    rig.changed("paper.tex", true);
+    wait(300).await;
+    rig.events().await;
+    let settings = r#"{ "mainFile": "paper.tex" }"#;
+    fs::write(rig.root.join(".texlocal.json"), settings).unwrap();
+    rig.changed(".texlocal.json", false);
+    wait(300).await;
+    let trees = rig.of_type("tree").await;
+    let tree = trees[0]["tree"].as_array().unwrap();
+    let main = tree.iter().find(|node| node["main"] == true);
+    assert_eq!(main.unwrap()["path"], "paper.tex");
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_document_holds_line_feeds_and_saves_the_files_own_line_ends() {
     let mut rig = Rig::new(false).await;
@@ -1321,6 +1339,97 @@ async fn an_open_documents_definitions_are_placed_under_its_name_once_it_moves()
     let answer = doc.with(|source| source.call("definition", r#"{"at": 20}"#));
     let answer: Value = serde_json::from_str(&answer.unwrap()).unwrap();
     assert_eq!(answer["places"][0]["file"], "b.tex");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_search_reads_the_open_document_as_the_editor_has_it() {
+    let rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    // Marked text holds the autosave, so the word never reaches the disk.
+    let composing = json!({ "path": "main.tex", "composing": true });
+    rig.ok("composing", composing).await;
+    doc.edit(5, 0, " needle");
+    let found = rig.ok("search", json!({ "query": "needle" })).await;
+    assert_eq!(found[0]["hits"][0]["file"], "main.tex");
+    assert_eq!(found[0]["hits"][0]["column"], 6);
+    assert_eq!(rig.disk("main.tex"), "Hello");
+}
+
+/// Every match in a file goes, and only in the files asked for; one that isn't UTF-8 refuses
+/// them all, as writing it would change its bytes.
+#[tokio::test(start_paused = true)]
+async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_their_line_ends() {
+    let rig = Rig::new(false).await;
+    // Each line as it ended, though the first's ending isn't the second's.
+    fs::write(rig.root.join("ch.tex"), "a cat\nand a cat\r\n").unwrap();
+    fs::write(rig.root.join("notes.txt"), "cat").unwrap();
+    fs::write(rig.root.join("latin.tex"), b"cat caf\xe9").unwrap();
+    let doc = rig.open("main.tex").await;
+    doc.edit(5, 0, " cat");
+    let replace = |files: Value| {
+        let args = json!({ "query": "Cat", "replacement": "dog", "files": files });
+        rig.call("replace", args)
+    };
+    let refused = replace(Value::Null).await.unwrap_err();
+    assert!(refused.status == 400 && refused.message.contains("latin.tex"));
+    assert_eq!(rig.disk("ch.tex"), "a cat\nand a cat\r\n");
+    let replaced = replace(json!(["ch.tex", "main.tex"])).await.unwrap();
+    let edit = json!({ "start": 6, "length": 3, "text": "dog" });
+    assert_eq!(
+        replaced,
+        json!({
+            "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
+            "written": [{ "file": "ch.tex", "count": 2 }],
+        })
+    );
+    assert_eq!(rig.disk("ch.tex"), "a dog\nand a dog\r\n");
+    assert_eq!(rig.disk("notes.txt"), "cat");
+}
+
+/// A citation's .bib entry and the key of a list that names it; refused for a key TeX
+/// couldn't read, one nothing defines and one taken.
+#[tokio::test(start_paused = true)]
+async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_disk() {
+    let rig = Rig::new(false).await;
+    let bib = "@book{knuth,\n  title = {The {TeX}book},\n}\n@misc{lamport,}\n";
+    fs::write(rig.root.join("refs.bib"), bib).unwrap();
+    let doc = rig.open("main.tex").await;
+    doc.edit(5, 0, "\\cite{x, knuth}");
+    let rename = |from: &str, to: &str| {
+        let args = json!({ "kind": "citation", "from": from, "to": to });
+        rig.call("rename_symbol", args)
+    };
+    let refusals = [
+        ("knuth", "knuth 84", 400),
+        ("nobody", "x", 404),
+        ("knuth", "lamport", 409),
+    ];
+    for (from, to, status) in refusals {
+        assert_eq!(rename(from, to).await.unwrap_err().status, status, "{to}");
+    }
+    let renamed = rename("knuth", "knuth84").await.unwrap();
+    let edit = json!({ "start": 14, "length": 5, "text": "knuth84" });
+    assert_eq!(
+        renamed,
+        json!({
+            "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
+            "written": [{ "file": "refs.bib", "count": 1 }],
+        })
+    );
+    assert_eq!(rig.disk("refs.bib"), bib.replace("knuth,", "knuth84,"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn nothing_is_renamed_or_replaced_while_a_change_on_disk_is_unsettled() {
+    let rig = Rig::new(false).await;
+    in_conflict(&rig).await;
+    let rename = json!({ "kind": "label", "from": "a", "to": "b" });
+    let replace = json!({ "query": "Hello", "replacement": "Bye" });
+    for (command, args) in [("rename_symbol", rename), ("replace", replace)] {
+        let refused = rig.call(command, args).await.unwrap_err();
+        let unsettled = refused.status == 409 && refused.message.contains("changed on disk");
+        assert!(unsettled, "{command}");
+    }
 }
 
 /// Two files on their way to the Trash at once: the first's end leaves the second held.

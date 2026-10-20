@@ -20,7 +20,8 @@ pub use library::{
     ProjectInfo, create_project, free_project_name, list_projects, locate, rename_project,
 };
 pub(crate) use library::{guess_main_file, new_project};
-pub use search::{search_groups, search_project};
+pub(crate) use search::replace_in_files;
+pub use search::{Query, search_groups, search_project};
 pub use symbols::{Symbols, scan_symbols};
 pub(crate) use tree::is_text;
 pub use tree::{TreeNode, file_kind, file_tree};
