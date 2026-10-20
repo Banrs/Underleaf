@@ -159,8 +159,23 @@ impl CompileManager {
 
         // None is made here: one made before the stop check could ghost a project renamed meanwhile.
         let outdir_arg = format!("-outdir={BUILD_DIR}");
-        let mut args = vec![settings.engine.flag()];
+        let auxdir_arg = format!("-auxdir={BUILD_DIR}");
+        let mut args = vec![if shell_escape {
+            "-shell-escape"
+        } else {
+            "-norc"
+        }];
+        // A project's own latexmkrc runs Perl on every build, so only a trusted project's is read.
+        let user_rc = (!shell_escape)
+            .then(|| user_latexmkrc(|key| std::env::var_os(key)))
+            .flatten();
+        // latexmk obeys an rc file where it comes in the arguments, so the user's goes first
+        // and can't move the PDF out of the build folder or swap the engine.
+        if let Some(rc) = &user_rc {
+            args.extend(["-r", rc]);
+        }
         args.extend([
+            settings.engine.flag(),
             "-interaction=batchmode",
             "-file-line-error",
             "-synctex=1",
@@ -171,19 +186,8 @@ impl CompileManager {
                 "-f"
             },
             &outdir_arg,
-            if shell_escape {
-                "-shell-escape"
-            } else {
-                "-norc"
-            },
+            &auxdir_arg,
         ]);
-        // A project's own latexmkrc runs Perl on every build, so only a trusted project's is read.
-        let user_rc = (!shell_escape)
-            .then(|| user_latexmkrc(|key| std::env::var_os(key)))
-            .flatten();
-        if let Some(rc) = &user_rc {
-            args.extend(["-r", rc]);
-        }
         args.push(&main_arg);
         let outputs: HashMap<_, _> = OUTPUTS
             .into_iter()
