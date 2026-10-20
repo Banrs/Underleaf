@@ -24,13 +24,11 @@ following a live resize. Still showing headless: `characterIndex` on T1 fonts, r
 memory (`PDFController.wholeAt`), zoom limits, menu images, the Share item, the drawn underline,
 PDFKit's fade, the frame guard, PDFKit's one drawer, `constrainSplitPosition`'s missing super.
 
-## Native replacements to consider
+## Left
 
-- AppKit's own completion list instead of `CompletionList`, once the system's has glass.
-- Aa's level rows as a `Picker`: about 60 lines fewer, but not Notes' look.
-
-## The owner's call
-
-- The highlighter on the core's shared scanner (about −330 lines; colours change, Overleaf parity goes).
-- The hosts trashing for Replace, dropping the core's `trash` and 7 crates (−106; 10–20 lines per host).
-- TeXpresso's second copy of each text (−103; offsets in flight are delicate).
+- AppKit's own completion list in place of `CompletionList` once the system's has glass; until
+  then the custom one stays (the look is decided).
+- The hosts trashing for Replace, dropping the core's `trash` and 7 crates (−106 lines; 10–20
+  lines per host).
+- `typed_during_a_save` (session tests) waits 100 ms of paused time for the save to reach the
+  library's lock; with one lock it has no waiter to watch, so it can pass without testing the order.
