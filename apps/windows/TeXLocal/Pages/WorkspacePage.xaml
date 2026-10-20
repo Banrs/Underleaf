@@ -497,6 +497,7 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <SelectorBar x:Name="IssueTabs" VerticalAlignment="Center" SelectionChanged="OnIssueTab">
                                 <SelectorBarItem x:Name="IssuesTab" IsSelected="True" Text="Issues" />
@@ -522,8 +523,21 @@
                                     <TextBlock Text="Copy log" />
                                 </StackPanel>
                             </Button>
-                            <Button
+                            <!-- The Mac's filter, one for each tab: issues by message or file, the log by line. -->
+                            <AutoSuggestBox
+                                x:Name="Filter"
                                 Grid.Column="2"
+                                Width="180"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Filter"
+                                PlaceholderText="Filter"
+                                TextChanged="OnFilter">
+                                <AutoSuggestBox.QueryIcon>
+                                    <FontIcon FontSize="12" Glyph="&#xE71C;" />
+                                </AutoSuggestBox.QueryIcon>
+                            </AutoSuggestBox>
+                            <Button
+                                Grid.Column="3"
                                 Width="32"
                                 Height="32"
                                 Padding="0"
@@ -534,7 +548,24 @@
                                 <FontIcon FontSize="12" Glyph="&#xE711;" />
                             </Button>
                         </Grid>
-                        <ListView x:Name="IssueList" Grid.Row="1" Padding="0,0,0,4" AutomationProperties.Name="Issues" IsItemClickEnabled="True" ItemClick="OnIssueClick" Visibility="Collapsed">
+                        <ListView
+                            x:Name="IssueList"
+                            Grid.Row="1"
+                            Padding="0,0,0,4"
+                            AutomationProperties.Name="Issues"
+                            ContextRequested="OnIssueContext"
+                            IsItemClickEnabled="True"
+                            ItemClick="OnIssueClick"
+                            Visibility="Collapsed">
+                            <!-- The Mac's issue menu. -->
+                            <ListView.ContextFlyout>
+                                <MenuFlyout>
+                                    <MenuFlyoutItem x:Name="IssuePlaceItem" Click="OnIssuePlace" Text="Go to line" />
+                                    <MenuFlyoutItem x:Name="CopyIssueItem" Click="OnCopyIssue" Text="Copy">
+                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8C8;" /></MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                </MenuFlyout>
+                            </ListView.ContextFlyout>
                             <ListView.ItemTemplate>
                                 <DataTemplate x:DataType="local:IssueItem">
                                     <Grid Padding="0,6" ColumnSpacing="12">

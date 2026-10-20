@@ -35,7 +35,7 @@ public sealed partial class WorkspacePage : Page
     readonly DispatcherQueueTimer searchTimer, caretTimer;
     readonly HashSet<string> unsaved = [];
     readonly Dictionary<string, IssueLine[]> issueLines = [];
-    string id = "", root = "", mainFile = "";
+    string id = "", root = "", mainFile = "", issueFilter = "", logFilter = "";
     ulong session;
     bool texAvailable, compiling, outdated, zooming, sidebarWanted = true;
     double ratio = Prefs.SplitRatio;
@@ -347,7 +347,7 @@ public sealed partial class WorkspacePage : Page
         (ErrorCount.Text, WarningCount.Text) = ($"{done.Errors.Length}", $"{done.Warnings.Length}");
         WarningsToggle.IsEnabled = done.Warnings.Length > 0;
         WarningsLabel.Text = done.Warnings.Length == 1 ? "1 warning" : $"{done.Warnings.Length} warnings";
-        Log.Text = done.Log.ReplaceLineEndings("\r");
+        ShowLog();
         ShowIssues();
         var failed = !done.Ok && !done.Stopped;
         if (failed && !ev.Auto)
@@ -381,21 +381,47 @@ public sealed partial class WorkspacePage : Page
 
     void ShowIssues()
     {
-        var all = BuildIssues.Select((item, i) => new IssueItem(i, item));
-        IssueList.ItemsSource = (WarningsToggle.IsChecked == true ? all : all.Where(i => i.IsError)).ToArray();
+        IssueList.ItemsSource = BuildIssues.Select((item, i) => new IssueItem(i, item))
+            .Where(i => (WarningsToggle.IsChecked == true || i.IsError) && (Has(i.Item.Message, issueFilter) || Has(i.Item.File, issueFilter))).ToArray();
         ShowIssueTab();
     }
+
+    void ShowLog()
+    {
+        var log = (result?.Log ?? "").ReplaceLineEndings("\r");
+        Log.Text = logFilter.Length == 0 ? log : string.Join('\r', log.Split('\r').Where(line => Has(line, logFilter)));
+    }
+
+    static bool Has(string? text, string part) => text?.Contains(part, StringComparison.CurrentCultureIgnoreCase) == true;
 
     void ShowIssueTab()
     {
         if (Log is null) return;
         var log = IssueTabs.SelectedItem == LogTab;
-        var none = IssueList.ItemsSource is not IssueItem[] { Length: > 0 };
-        Log.Visibility = CopyLog.Visibility = Vis(log);
+        var filter = Filter.Text = log ? logFilter : issueFilter;
+        var none = log ? filter.Length > 0 && Log.Text.Length == 0 : IssueList.ItemsSource is not IssueItem[] { Length: > 0 };
+        Log.Visibility = Vis(log && !none);
+        CopyLog.Visibility = Vis(log);
         WarningsToggle.Visibility = Vis(!log);
         IssueList.Visibility = Vis(!log && !none);
-        NoIssues.Visibility = Vis(!log && none);
-        NoIssues.Text = result is null ? "Compile to check for issues." : "No issues in the last build.";
+        NoIssues.Visibility = Vis(none);
+        NoIssues.Text = filter.Length > 0 ? $"No results for “{filter}”." : result is null ? "Compile to check for issues." : "No issues in the last build.";
+    }
+
+    void OnFilter(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs e)
+    {
+        if (e.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
+        if (IssueTabs.SelectedItem == LogTab)
+        {
+            logFilter = sender.Text;
+            ShowLog();
+            ShowIssueTab();
+        }
+        else
+        {
+            issueFilter = sender.Text;
+            ShowIssues();
+        }
     }
 
     void ShowPanel(bool open)
@@ -440,10 +466,32 @@ public sealed partial class WorkspacePage : Page
         IssueList.Focus(FocusState.Programmatic);
     }
 
-    void OnCopyLog(object sender, RoutedEventArgs e)
+    void OnCopyLog(object sender, RoutedEventArgs e) => Copy(result?.Log ?? "");
+
+    /// The Mac's issue menu, on the row right-clicked or, from the keyboard, the one focused.
+    void OnIssueContext(UIElement sender, ContextRequestedEventArgs args)
+    {
+        var row = (args.OriginalSource as FrameworkElement)?.DataContext as IssueItem;
+        IssueList.SelectedItem = row;
+        IssuePlaceItem.Text = row?.Item.Line is null ? "Open file" : "Go to line";
+        IssuePlaceItem.Visibility = Vis(row?.HasPlace == true);
+        CopyIssueItem.IsEnabled = row is not null;
+    }
+
+    void OnIssuePlace(object sender, RoutedEventArgs e)
+    {
+        if (IssueList.SelectedItem is IssueItem row) GoToIssue("session_choose_issue", new { session, row.Index });
+    }
+
+    void OnCopyIssue(object sender, RoutedEventArgs e)
+    {
+        if (IssueList.SelectedItem is IssueItem row) Copy(row.Item.Message);
+    }
+
+    static void Copy(string text)
     {
         var data = new DataPackage();
-        data.SetText(result?.Log ?? "");
+        data.SetText(text);
         Clipboard.SetContent(data);
     }
 
