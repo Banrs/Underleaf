@@ -2,7 +2,6 @@
 //! the paths' rules, the library, search, the symbol scan, and links.
 
 use std::fs;
-use std::path::Path;
 
 use serde_json::json;
 
@@ -94,7 +93,8 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
     fs::write(root.join("main.tex"), "\\label{sec:open} needle\n").unwrap();
     create_free(&root, "locked/inside.tex", false).unwrap();
     fs::write(root.join("secret.tex"), "needle").unwrap();
-    let lock = |path: &Path, mode| fs::set_permissions(path, fs::Permissions::from_mode(mode));
+    let lock =
+        |path: &std::path::Path, mode| fs::set_permissions(path, fs::Permissions::from_mode(mode));
     lock(&root.join("locked"), 0o000).unwrap();
     lock(&root.join("secret.tex"), 0o000).unwrap();
     if fs::read_dir(root.join("locked")).is_ok() {
@@ -306,7 +306,7 @@ fn the_tree_scans_and_zip_follow_links_to_files_only() {
     fs::write(root.join("source.txt"), "needle \\label{linked}").unwrap();
     fs::create_dir(root.join("figures")).unwrap();
     fs::write(root.join("figures/a.txt"), "figure").unwrap();
-    let link = |target: &Path, name: &str| {
+    let link = |target: &std::path::Path, name: &str| {
         std::os::unix::fs::symlink(target, root.join(name)).unwrap();
     };
     link(&root.join("source.txt"), "linked.tex");
