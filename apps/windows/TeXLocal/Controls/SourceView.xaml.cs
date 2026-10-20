@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
@@ -28,9 +29,44 @@ public sealed record CompletionRow(Completion Item, int Count, string Glyph)
     public string Rest => Item.Label[Math.Clamp(Count, 0, Item.Label.Length)..];
 }
 
-public sealed class IssueMark(IssueLine issue)
+/// An issue's box at its line's end, as the Mac's: the message where there is room, then the core's fewer words that keep
+/// an undefined command's name, then cut at the tail, and the badge alone where fewer than ten characters would show.
+public sealed class IssueMark(IssueLine issue) : INotifyPropertyChanged
 {
-    public string Label => (issue.Short.Length > 0 ? issue.Short : issue.Message) + (issue.Others.Length > 0 ? $" +{issue.Others.Length}" : "");
+    const int Least = 10;
+    static readonly TextBlock measure = new() { Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] };
+    string Whole => (issue.Short.Length > 0 ? issue.Short : issue.Message) + (issue.Others.Length > 0 ? $" +{issue.Others.Length}" : "");
+    (double Whole, double Compact, double Cut)? widths;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public string Label
+    {
+        get;
+        private set
+        {
+            if (field == value) return;
+            field = value;
+            PropertyChanged?.Invoke(this, new(nameof(Label)));
+        }
+    } = "";
+
+    /// The label for this much room after the badge.
+    public void Fit(double room)
+    {
+        static double Width(string text)
+        {
+            measure.Text = text;
+            measure.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            return measure.DesiredSize.Width;
+        }
+        var shortest = issue.Compact ?? Whole;
+        widths ??= (Width(Whole), issue.Compact is { } compact ? Width(compact) : double.PositiveInfinity,
+            shortest.Length < Least ? double.PositiveInfinity : Width(shortest[..Least].TrimEnd() + "…"));
+        var (all, fewer, cut) = widths.Value;
+        Label = all <= room ? Whole : fewer <= room || cut <= room ? shortest : "";
+    }
+
     public string Tip => string.Join("\n", [issue.Message, .. issue.Others]);
     public Style Badge => (Style)Application.Current.Resources[issue.Error ? "CriticalIconInfoBadgeStyle" : "CautionIconInfoBadgeStyle"];
 }
@@ -38,10 +74,11 @@ public sealed class IssueMark(IssueLine issue)
 public sealed partial class SourceView : UserControl
 {
     // LabelInset: the list's border, padding, glyph and spacing before a label.
-    const int RowHeight = 32, ShownRows = 8, LabelInset = 1 + 12 + 16 + 12;
+    // Badge: an icon InfoBadge's width.
+    const int RowHeight = 32, ShownRows = 8, LabelInset = 1 + 12 + 16 + 12, Badge = 16;
     // Asynchronous, so the first text goes in after the layout pass that completes it.
     readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    readonly List<(IssueLine Issue, FrameworkElement Mark)> marks = [];
+    readonly List<(IssueLine Issue, IssueMark Label, FrameworkElement Mark, FrameworkElement Band, FrameworkElement[] Underlines)> marks = [];
     readonly DispatcherQueueTimer partnerTimer;
     Source? source;
     ScrollViewer? scroller;
@@ -884,13 +921,38 @@ public sealed partial class SourceView : UserControl
         }
 
         var right = Overlay.ActualWidth - Editor.Padding.Right;
-        foreach (var (issue, mark) in marks)
+        foreach (var (issue, label, mark, band, underlines) in marks)
         {
-            var end = issue.Line >= first && issue.Line <= last ? RectOf(End(issue.Line), End(issue.Line)) : null;
+            var seen = issue.Line >= first && issue.Line <= last;
+            var start = seen ? source.LineStart(issue.Line) : 0;
+            // The caret's line has the current line's fill in place of its band, as on the Mac.
+            var paragraph = seen && issue.Line != caret ? RectOf(start, End(issue.Line)) : null;
+            band.Visibility = paragraph is null ? Visibility.Collapsed : Visibility.Visible;
+            if (paragraph is { } p)
+            {
+                (band.Width, band.Height) = (Backdrop.ActualWidth, p.Height);
+                Canvas.SetTop(band, p.Y);
+            }
+            for (var i = 0; i < underlines.Length; i++)
+            {
+                var token = seen ? RectOf(start + issue.Tokens[i].Start, start + issue.Tokens[i].End) : null;
+                underlines[i].Visibility = token is null ? Visibility.Collapsed : Visibility.Visible;
+                if (token is not { } t) continue;
+                underlines[i].Width = t.Width;
+                Canvas.SetLeft(underlines[i], t.X);
+                Canvas.SetTop(underlines[i], t.Bottom - underlines[i].Height);
+            }
+            var end = seen ? RectOf(End(issue.Line), End(issue.Line)) : null;
             var x = (end?.X ?? 0) + 16;
-            mark.Visibility = end is not null && right - x >= 16 ? Visibility.Visible : Visibility.Collapsed;
-            if (end is not { } r) continue;
-            (mark.MaxWidth, mark.Height) = (Math.Max(0, right - x), r.Height);
+            if (end is not { } r || right - x < Badge)
+            {
+                mark.Visibility = Visibility.Collapsed;
+                continue;
+            }
+            mark.Visibility = Visibility.Visible;
+            // Past the badge and the template's spacing.
+            label.Fit(right - x - Badge - 8);
+            (mark.MaxWidth, mark.Height) = (right - x, r.Height);
             Canvas.SetLeft(mark, x);
             Canvas.SetTop(mark, r.Y);
         }
@@ -898,15 +960,26 @@ public sealed partial class SourceView : UserControl
 
     public void SetIssues(IssueLine[] lines)
     {
-        marks.ForEach(m => Overlay.Children.Remove(m.Mark));
+        foreach (var (_, _, mark, band, underlines) in marks)
+        {
+            Backdrop.Children.Remove(band);
+            foreach (var shown in (FrameworkElement[])[mark, .. underlines]) Overlay.Children.Remove(shown);
+        }
         marks.Clear();
+        FrameworkElement Load(string template, Canvas layer)
+        {
+            var made = (FrameworkElement)((DataTemplate)Resources[template]).LoadContent();
+            made.Visibility = Visibility.Collapsed;
+            layer.Children.Add(made);
+            return made;
+        }
         foreach (var issue in lines)
         {
-            var mark = (FrameworkElement)((DataTemplate)Resources["IssueTemplate"]).LoadContent();
-            (mark.DataContext, mark.Visibility) = (new IssueMark(issue), Visibility.Collapsed);
+            var label = new IssueMark(issue);
+            var mark = Load("IssueTemplate", Overlay);
+            mark.DataContext = label;
             mark.Tapped += (_, _) => IssueInvoked?.Invoke(issue);
-            Overlay.Children.Add(mark);
-            marks.Add((issue, mark));
+            marks.Add((issue, label, mark, Load("IssueBandTemplate", Backdrop), issue.Tokens.Select(_ => Load("IssueTokenTemplate", Overlay)).ToArray()));
         }
         Invalidate(false);
     }

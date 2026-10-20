@@ -34,7 +34,9 @@ public sealed record LogItem(string Type, string? File, int? Line, string Messag
 public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, string? Pdf, LogItem[] Errors, LogItem[] Warnings, string Log, bool PdfChanged);
 
 /// An `issues` event's line: the first issue on it, and the messages of the rest.
-public sealed record IssueLine(int Line, bool Error, string Message, string Short, string[] Others);
+/// <param name="Compact">For an undefined command, fewer words that keep its name.</param>
+/// <param name="Tokens">Where the line has that command, from the line's start.</param>
+public sealed record IssueLine(int Line, bool Error, string Message, string Short, string? Compact, SourceRange[] Tokens, string[] Others);
 
 /// A session event's fields, each type setting its own (docs/core-api.md, Events).
 public sealed record DocEvent(string? Path, string? Error, bool Held, string? Text, string? From, string? To, string? Kind,
