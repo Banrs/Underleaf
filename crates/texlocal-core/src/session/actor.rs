@@ -806,7 +806,7 @@ impl Actor {
         if self.live.active() {
             self.live.disk_paths.extend(meaning.listed.iter().cloned());
         }
-        if meaning.tree {
+        if meaning.tree || meaning.settings {
             self.reload_tree();
         }
         if self.live.active() && !self.live.disk_paths.is_empty() {

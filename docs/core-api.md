@@ -169,7 +169,7 @@ Each is `{"type", "session", …}`.
 | `build` | `compiling`, `auto`, `outdated` | Compile/Stop button, spinner, “Preview out of date”. Announce “Compiling” for a manual start. |
 | `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce` (a build asked for, or an automatic one whose errors changed; never one Stop ended); sync after compile if `ok` and not `outdated`. `result.badBoxes`: the overfull and underfull boxes, items as `errors` and `warnings` are, kept apart from them (not issues). |
 | `build_cleaned` | | Clear the PDF unless live. |
-| `tree` | `tree` (as `file_tree`, whose main file's node has `main: true`) | Redraw the sidebar; it comes again when another main file is chosen. |
+| `tree` | `tree` (as `file_tree`, whose main file's node has `main: true`) | Redraw the sidebar; it comes again when another main file is chosen, here or by another app in `.texlocal.json`. |
 | `files_changed` | `paths` | Listed files changed in place that aren't open (an image shown, say). |
 | `live` | `phase` (`stopped`/`starting`/`running`/`stopping`), `halted`, `failure`, `error`, `log`, `alert` | Title and toolbar; `alert`: show the Live Preview Log. `phase: stopped` ends the live PDF (show the build's); the session's own planned restart stays `starting` throughout, with no `stopped` between. `log`: the Live Preview Log's whole text (what went wrong, TeXpresso's error, TeX's log and output) with `alert` and while `session_live_log` says it shows, else null: keep the last one. While it shows, the log comes at most every 200 ms. |
 | `live_document` | `path`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
@@ -239,10 +239,11 @@ editor's thread.
   can't tell; then the text is compared.
 - **Watcher**: changes are taken together for 250 ms. The tree is read again when a listed
   folder gained, lost or renamed an entry (a save renaming over a listed file doesn't count;
-  hidden files and `build/` never do). An open document's file changed: reloaded if it has no
-  unsaved edits, else asked about once; a change to its line ends alone is no change. Gone, or
-  no longer UTF-8: closed, or asked about if it has unsaved edits (Revert then closes one that
-  isn't UTF-8).
+  hidden files and `build/` never do), and when `.texlocal.json` changed, for its main file,
+  which the tree marks. An open document's file changed: reloaded if it has no unsaved edits,
+  else asked about once; a change to its line ends alone is no change. Gone, or no longer
+  UTF-8: closed, or asked about if it has unsaved edits (Revert then closes one that isn't
+  UTF-8).
 - **Builds**: one at a time; a request during one queues one more (manual wins over
   automatic); Stop drops it. Automatic builds wait while live preview runs or is restarting,
   and run only once `status` has found TeX (both hosts ask it as they start).
@@ -389,3 +390,5 @@ Every change a host follows since commit d6bee12, in the order made.
   files.
 - `session_rename_symbol {kind, from, to}` is new, for Rename of a label or a citation: it
   answers as `session_replace`, and a host applies the answer the same way.
+- The `tree` event also comes when another app (by hand, git, a sync client) changes the main
+  file in `.texlocal.json`, so a host marking the tree's `main` follows it with nothing to do.

@@ -721,6 +721,24 @@ async fn the_tree_marks_the_main_file_and_comes_again_when_another_is_chosen() {
     );
 }
 
+/// By hand, by git or by a sync client: the host's mark follows the tree's.
+#[tokio::test(start_paused = true)]
+async fn another_apps_change_to_the_settings_sends_the_tree_with_their_main_file() {
+    let mut rig = Rig::new(false).await;
+    fs::write(rig.root.join("paper.tex"), "").unwrap();
+    rig.changed("paper.tex", true);
+    wait(300).await;
+    rig.events().await;
+    let settings = r#"{ "mainFile": "paper.tex" }"#;
+    fs::write(rig.root.join(".texlocal.json"), settings).unwrap();
+    rig.changed(".texlocal.json", false);
+    wait(300).await;
+    let trees = rig.of_type("tree").await;
+    let tree = trees[0]["tree"].as_array().unwrap();
+    let main = tree.iter().find(|node| node["main"] == true);
+    assert_eq!(main.unwrap()["path"], "paper.tex");
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_document_holds_line_feeds_and_saves_the_files_own_line_ends() {
     let mut rig = Rig::new(false).await;
