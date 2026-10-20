@@ -27,7 +27,7 @@ pub use library::{
 };
 pub(crate) use library::{guess_main_file, new_project};
 pub use search::{search_groups, search_project};
-pub use symbols::{SymbolScan, Symbols};
+pub use symbols::{Symbols, scan_symbols};
 pub(crate) use tree::is_text;
 pub use tree::{TreeNode, file_kind, file_tree};
 

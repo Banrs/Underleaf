@@ -9,15 +9,10 @@ use serde_json::json;
 use crate::CoreError;
 use crate::projects::testing::{fails_with, library, names_in, project};
 use crate::projects::{
-    SymbolScan, Symbols, create_free, create_project, file_tree, list_projects, rename_entry,
-    rename_project, search_project,
+    Symbols, create_free, create_project, file_tree, list_projects, rename_entry, rename_project,
+    scan_symbols, search_project,
 };
 use crate::settings::{read_settings, write_settings};
-
-/// A project's labels and citations, read afresh.
-fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
-    SymbolScan::default().scan(root)
-}
 
 #[test]
 fn a_rename_that_cannot_write_the_settings_is_undone_and_leaves_them_as_they_were() {

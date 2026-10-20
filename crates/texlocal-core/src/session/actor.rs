@@ -22,7 +22,7 @@ use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze;
 use crate::events::Emitter;
 use crate::paths::{self, within};
-use crate::projects::{self, SymbolScan, Symbols, file_kind};
+use crate::projects::{self, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
@@ -165,8 +165,6 @@ pub(crate) struct Actor {
     next_doc: u64,
     symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
-    /// What the last scan read; taken out while a scan runs, so one beside it starts afresh.
-    symbol_scan: SymbolScan,
     pub edits: u64,
     /// The edit each path last had, kept for the session's life: a document closed since
     /// isn't marked with a build's issues on lines that may have moved.
@@ -236,7 +234,6 @@ impl Actor {
             next_doc: 1,
             symbols: Arc::default(),
             symbols_seq: 0,
-            symbol_scan: SymbolScan::default(),
             edits: 0,
             last_edits: HashMap::new(),
             auto_compile,
@@ -354,7 +351,7 @@ impl Actor {
             Msg::Command { name, args, reply } => self.command(&name, &args, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
-            Msg::Symbols(seq, scan, result) => self.symbols_done(seq, scan, result),
+            Msg::Symbols(seq, result) => self.symbols_done(seq, result),
             Msg::Live(generation, event) => self.live_event(generation, event),
             Msg::Fs(changes) => {
                 self.fs_pending.extend(changes);
@@ -946,15 +943,12 @@ impl Actor {
     fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
         let (seq, root, tx) = (self.symbols_seq, self.root.clone(), self.tx.clone());
-        let mut scan = std::mem::take(&mut self.symbol_scan);
         tokio::task::spawn_blocking(move || {
-            let result = scan.scan(&root);
-            let _ = tx.send(Msg::Symbols(seq, scan, result));
+            let _ = tx.send(Msg::Symbols(seq, projects::scan_symbols(&root)));
         });
     }
 
-    fn symbols_done(&mut self, seq: u64, scan: SymbolScan, result: Result<Symbols, CoreError>) {
-        self.symbol_scan = scan;
+    fn symbols_done(&mut self, seq: u64, result: Result<Symbols, CoreError>) {
         let Ok(symbols) = result else { return };
         if seq != self.symbols_seq {
             return;
