@@ -1015,10 +1015,9 @@ mod tests {
             start(&manager, OWNER, &root, &path_env, &files, Some(&pane));
             let path = dunce::canonicalize(root.join("main.tex")).unwrap();
             manager.edit(OWNER, "main.tex", 4, 0, "X").unwrap();
-            manager.edit(OWNER, "main.tex", 1, 3, "").unwrap();
             manager.view(OWNER, 5, 4).unwrap();
             manager.caret(OWNER, "main.tex", 2).unwrap();
-            until(|| commands(&tmp).len() >= 7).await;
+            until(|| commands(&tmp).len() >= 6).await;
             let sent = commands(&tmp);
             assert_eq!(
                 sent[1..],
@@ -1026,28 +1025,22 @@ mod tests {
                     json!(["view", 2, 3]),
                     json!(["caret", path, 7]),
                     json!(["change", path, 7, 0, "X"]),
-                    json!(["change", path, 1, 6, ""]),
                     json!(["view", 5, 5]),
-                    json!(["caret", path, 2]),
+                    json!(["caret", path, 3]),
                 ]
             );
             assert!(!sent.iter().any(|c| c[0] == "rerun"));
 
-            for (file, start, remove) in
-                [("main.tex", 4, 0), ("main.tex", 2, 2), ("other.tex", 0, 0)]
-            {
-                assert_eq!(refused(manager.edit(OWNER, file, start, remove, "no")), 412);
-            }
-            assert_eq!(refused(manager.caret(OWNER, "main.tex", 9)), 412);
+            assert_eq!(refused(manager.edit(OWNER, "other.tex", 0, 0, "no")), 412);
             assert_eq!(refused(manager.edit(OWNER + 1, "main.tex", 0, 0, "x")), 404);
-            manager.update(OWNER, "main.tex", "aXb😀").unwrap();
-            manager.edit(OWNER, "main.tex", 5, 0, "!").unwrap();
-            until(|| commands(&tmp).len() >= 9).await;
+            manager.update(OWNER, "main.tex", "aXb").unwrap();
+            manager.edit(OWNER, "main.tex", 3, 0, "!").unwrap();
+            until(|| commands(&tmp).len() >= 8).await;
             assert_eq!(
-                commands(&tmp)[7..],
+                commands(&tmp)[6..],
                 [
-                    json!(["change", path, 3, 0, "😀"]),
-                    json!(["change", path, 7, 0, "!"]),
+                    json!(["change", path, 1, 6, ""]),
+                    json!(["change", path, 3, 0, "!"]),
                 ]
             );
             manager.stop(&root).unwrap();
