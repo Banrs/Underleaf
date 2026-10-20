@@ -109,7 +109,7 @@ pub struct Named {
 }
 
 /// A command the project defines, with the arguments it takes in braces.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Defined {
     pub name: String,
     pub arguments: usize,
