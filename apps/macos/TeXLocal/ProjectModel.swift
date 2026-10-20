@@ -70,7 +70,7 @@ final class ProjectModel {
     /// Not the session's, so not in its order: written in turn, and a rename waits for the last.
     @ObservationIgnored var uiStateWrites: Task<Void, Never>?
 
-    let search: ProjectSearch
+    let search = ProjectSearch()
 
     let editor = SourceEditor()
     private(set) var sourceHasKeyboard = false
@@ -92,7 +92,6 @@ final class ProjectModel {
     init(id: String, app: AppModel) {
         self.id = id
         self.app = app
-        search = ProjectSearch(id: id)
         tree = FileTree(id: id)
         // The session sends the log while the panel shows it.
         liveLogWatch = track({ [panel] in panel.showsLiveLog }, initial: false) { [weak self] shown in

@@ -3,7 +3,6 @@ import Observation
 
 @Observable
 final class ProjectSearch {
-    private let id: String
     private let core = Core.shared
 
     var query = ""
@@ -15,14 +14,13 @@ final class ProjectSearch {
 
     var hitCount: Int { groups?.reduce(0) { $0 + $1.hits.count } ?? 0 }
 
-    init(id: String) { self.id = id }
-
-    func run() async {
+    /// The session's, which searches the open document as the editor has it.
+    func run(in session: UInt64?) async {
         let query = query
         var found: [SearchGroup]?, why: String?
-        if isSearching {
+        if isSearching, let session {
             do {
-                found = try await core.call("search_project", ["id": id, "query": query], as: [SearchGroup].self)
+                found = try await core.call("session_search", ["session": session, "query": query], as: [SearchGroup].self)
             } catch {
                 (found, why) = ([], error.localizedDescription)
             }

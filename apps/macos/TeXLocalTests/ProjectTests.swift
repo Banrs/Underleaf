@@ -499,14 +499,14 @@ final class ProjectFlowTests {
     @Test func aSearchShowsWhatItSearchedAndABlankOneClears() async throws {
         let project = try await opened("a needle").project
         project.search.query = "needle"
-        await project.search.run()
+        await project.search.run(in: project.session)
         #expect(project.search.groups?.first?.hits.first?.column == 2)
         project.search.query = "needles"
         #expect(project.search.searched == "needle")
-        await project.search.run()
+        await project.search.run(in: project.session)
         #expect(project.search.groups?.isEmpty == true && project.search.searched == "needles")
         project.search.query = " "
-        await project.search.run()
+        await project.search.run(in: project.session)
         #expect(project.search.groups == nil && project.search.hitCount == 0)
         await app.close()
     }

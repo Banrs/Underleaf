@@ -19,7 +19,7 @@ struct FilesList: View {
             .task(id: project.search.query) {
                 if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
                 guard !Task.isCancelled else { return }
-                await project.search.run()
+                await project.search.run(in: project.session)
                 // VoiceOver hears the count, as it does the PDF's find count.
                 guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
                 let count = project.search.hitCount
