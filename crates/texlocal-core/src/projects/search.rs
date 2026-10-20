@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::Read;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -226,23 +226,18 @@ pub(crate) fn edits(text: &Text, places: &[Place], to: &str) -> Vec<TextEdit> {
 }
 
 /// `to` in place of what `found` finds in each file `chosen` takes of those a search walks,
-/// given its text with line feeds alone, each read again and written with its lines ending as
-/// they did: `{file, count}` for each, in the order of their paths. One too large to search is
-/// left out; one that isn't UTF-8, which writing would change, refuses them all before any is
-/// written.
+/// given its text with line feeds alone, each written with its lines ending as they did:
+/// `{file, count}` for each, in the order of their paths. One too large to search is left out;
+/// one that isn't UTF-8, which writing would change, refuses them all before any is written.
 pub(crate) fn replace_in_files(
     root: &Path,
     chosen: &dyn Fn(&str) -> bool,
     found: &dyn Fn(&str, &str) -> Vec<Place>,
     to: &str,
 ) -> Result<Vec<Value>, CoreError> {
-    let mut edited = BTreeMap::new();
-    visit_files(root, &mut |abs, rel| {
-        if !chosen(rel) {
-            return Ok(true);
-        }
+    let replace = |abs: &Path, rel: &str| -> Result<Option<(String, usize)>, CoreError> {
         let Some(bytes) = read_capped(abs)? else {
-            return Ok(true);
+            return Ok(None);
         };
         let (file, utf8) = match String::from_utf8(bytes) {
             Ok(file) => (file, true),
@@ -250,22 +245,31 @@ pub(crate) fn replace_in_files(
         };
         let places = found(rel, &lf(file.clone()));
         if places.is_empty() {
-            return Ok(true);
+            return Ok(None);
         }
         if !utf8 {
             return Err(CoreError::bad_request(format!(
                 "“{rel}” isn't UTF-8 text, and writing it would change it, so nothing was changed. Convert it to UTF-8 to edit it."
             )));
         }
-        let file = replaced(&file, &places, to);
-        edited.insert(rel.to_owned(), (abs.to_owned(), file, places.len()));
+        Ok(Some((replaced(&file, &places, to), places.len())))
+    };
+    let mut edited = BTreeMap::new();
+    visit_files(root, &mut |abs, rel| {
+        if chosen(rel) && replace(abs, rel)?.is_some() {
+            edited.insert(rel.to_owned(), abs.to_owned());
+        }
         Ok(true)
     })?;
-    let write = |(file, (abs, text, count)): (String, (PathBuf, String, usize))| {
-        write_creating(&abs, text.as_bytes())?;
-        Ok(json!({ "file": file, "count": count }))
-    };
-    edited.into_iter().map(write).collect()
+    // Each read again as it's written: another app may have written it while the rest were read.
+    let mut written = Vec::new();
+    for (rel, abs) in edited {
+        if let Some((file, count)) = replace(&abs, &rel)? {
+            write_creating(&abs, file.as_bytes())?;
+            written.push(json!({ "file": rel, "count": count }));
+        }
+    }
+    Ok(written)
 }
 
 /// `to` in place of each of `places`, which are in order, in `file` as written: a place's line
@@ -319,6 +323,24 @@ mod tests {
         assert_eq!(hits[0].file, "notes.tex");
         big.set_len(SEARCH_FILE_MAX).unwrap();
         assert!(read_capped(&root.join("big.csv")).unwrap().is_some());
+    }
+
+    /// Another app's write while the replace reads the project is kept, not written over.
+    #[test]
+    fn a_replace_reads_each_file_again_as_it_writes_it() {
+        let (_dir, root) = project();
+        fs::write(root.join("a.tex"), "cat").unwrap();
+        let other_app = std::cell::Cell::new(true);
+        let found = |_: &str, text: &str| {
+            if other_app.replace(false) {
+                fs::write(root.join("a.tex"), "cat, their cat").unwrap();
+            }
+            Query::new("cat", false, false).places(text)
+        };
+        let written = replace_in_files(&root, &|rel| rel == "a.tex", &found, "dog").unwrap();
+        assert_eq!(written, [json!({ "file": "a.tex", "count": 2 })]);
+        let disk = fs::read_to_string(root.join("a.tex")).unwrap();
+        assert_eq!(disk, "dog, their dog");
     }
 
     /// Apart from each other, in any case or in the query's, and as whole words or not; in
