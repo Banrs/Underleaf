@@ -34,7 +34,7 @@ extension ProjectModel {
             compiling = true
             AccessibilityNotification.Announcement(String(localized: "Compiling")).post()
         }
-        let sent: Void? = await alerting(String(localized: "“\((openPath ?? id).fileName)” Wasn’t Saved")) {
+        let sent: Void? = await alerting(notSavedTitle()) {
             try await core.call("session_compile", ["session": session, "auto": auto])
         }
         // The core has ended a build whose save failed.

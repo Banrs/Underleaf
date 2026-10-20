@@ -129,6 +129,9 @@ final class ProjectModel {
         return nil
     }
 
+    /// One spelling for every failed save, as `AppModel.report` drops an alert whose title is the one showing.
+    func notSavedTitle(_ path: String? = nil) -> String { String(localized: "“\((path ?? openPath ?? id).fileName)” Wasn’t Saved") }
+
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
 
@@ -280,7 +283,7 @@ final class ProjectModel {
         if !state.held { heldReasons[state.path] = nil }
         // A failed autosave is told once in an alert, as NSDocument's are; Not Saved stays until a save succeeds.
         if let error = state.error, before?.error == nil {
-            let title = String(localized: "“\(state.path.fileName)” Wasn’t Saved")
+            let title = notSavedTitle(state.path)
             if let app, app.alert == nil, !closed { app.alert = AppAlert(title, error) } else { notices.announce(title) }
         }
     }
@@ -346,7 +349,7 @@ final class ProjectModel {
     /// Saved first; false, staying open, if that failed or asks about the disk.
     func closeDocument(_ path: String) async -> Bool {
         guard let session else { return true }
-        return await alerting(String(localized: "“\(path.fileName)” Wasn’t Saved")) {
+        return await alerting(notSavedTitle(path)) {
             try await core.call("session_close_document", ["session": session, "path": path], as: Closed.self).closed
         } ?? false
     }
@@ -384,7 +387,7 @@ final class ProjectModel {
         do {
             return try await core.call("session_save", ["session": session, "reporting": reporting], as: Saved.self).saved
         } catch {
-            if reporting, !closed { app?.report(error, String(localized: "“\((openPath ?? id).fileName)” Wasn’t Saved")) }
+            if reporting, !closed { app?.report(error, notSavedTitle()) }
             return false
         }
     }
@@ -432,7 +435,7 @@ final class ProjectModel {
         if answer == "close", openPath == path { clearOpenFile() }
         guard let session else { return }
         Task {
-            await alerting(String(localized: "“\(path.fileName)” Wasn’t Saved")) {
+            await alerting(notSavedTitle(path)) {
                 try await core.call("session_resolve", ["session": session, "path": path, "answer": answer])
             }
         }
