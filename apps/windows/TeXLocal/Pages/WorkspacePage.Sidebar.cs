@@ -398,7 +398,7 @@ public sealed partial class WorkspacePage
                 continue;
             if (Source.SyntaxCall<JsonElement>("drop_text", new { path = found.Path, kind, into = KindOf(Editor.Path!) }) is { ValueKind: JsonValueKind.Object } drop
                 && drop.TryGetProperty("insert", out var insert))
-                Editor.Drop(at, insert.GetString()!);
+                Editor.InsertDropped(at, insert.GetString()!);
             else await OpenDocument(found.Path, kind);
             return;
         }

@@ -860,8 +860,8 @@ public sealed partial class SourceView : UserControl
         FilesDropped?.Invoke(paths, at);
     }
 
-    /// A dropped file's text, in where it was dropped and selected, as on the Mac.
-    public void Drop(int at, string text) => Command(() => Apply(new Change([new(at, 0, text)], [new(at, text.Length)])));
+    /// A dropped file's text, put in where it was dropped and selected, as on the Mac. Not Drop, UIElement's event.
+    public void InsertDropped(int at, string text) => Command(() => Apply(new Change([new(at, 0, text)], [new(at, text.Length)])));
 
     int End(int line) => line < source!.LineCount ? source.LineStart(line + 1) - 1 : Text.Length;
 
