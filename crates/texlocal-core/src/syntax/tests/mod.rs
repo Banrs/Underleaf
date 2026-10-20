@@ -119,8 +119,9 @@ fn a_definition_is_found_for_each_kind_of_name() {
     assert_eq!(definition("one"), answer("file", "chapters/one", &input));
     let graphic = [("figs/plot.png", 1, 0, 0)];
     assert_eq!(definition("plot"), answer("file", "figs/plot", &graphic));
-    let own = [("main.tex", 3, 13, 3)];
-    assert_eq!(definition("own"), answer("label", "own", &own));
+    let own = answer("label", "own", &[("main.tex", 3, 13, 3)]);
+    assert_eq!(definition("own"), own);
+    assert_eq!(definition("own}\\ref"), own, "at the label itself");
     assert_eq!(
         definition("x,"),
         serde_json::Value::Null,

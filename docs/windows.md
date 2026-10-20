@@ -130,7 +130,7 @@ bar past the window's edge by the difference until a later WindowsAppSDK.
 Logic the Windows app needs that belongs in a crate, not C#. What the core already has
 (sessions, the outline, typing, themes, menus, heading styles, maths as SVG, absolute PDF paths, the catalogue of
 templates) is `core-api.md`'s. The numbers are the ones the app's comments cite, so the landed gaps (1, 2, 3, 4, 5, 8,
-15, 18, 19, 21) leave holes.
+15, 18, 19, 21, 32) leave holes.
 
 6. **PDF in the core**: PDFium (`pdfium-render` 0.9.4, `pdfium-win-x64` chromium/7881) giving page
    text with UTF-16 character boxes (search, selection, `synctex_match`, word-precise inverse),
@@ -176,10 +176,6 @@ templates) is `core-api.md`'s. The numbers are the ones the app's comments cite,
     in whitespace.
 31. **Default library**: `tl_open(NULL)` resolves the default library folder (`TEXLOCAL_DATA`, else
     home/TeXLocal).
-32. **Rename at a definition**: `definition` answers null on `\label{a}` itself, a `\bibitem` or a
-    .bib key, so Rename symbol (F2) works from a `\ref` or `\cite` kin only; VS Code's renames from
-    the definition too. Its answer could also carry the name's own range, which the editor now
-    finds by searching back from the caret.
 33. **The source's version**: `session_replace` and `session_rename_symbol` answer edits against a
     document `version` that `Source` can't read, so the editor applies them unchecked; typing in the
     moment between the call and its answer would shift them.

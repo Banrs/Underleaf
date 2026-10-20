@@ -210,6 +210,19 @@ impl SourceDocument {
                     kind => self.defined(&own, kind, name),
                 };
                 (used.kind, name.clone(), places)
+            } else if let Some((kind, named)) = [
+                (SymbolKind::Label, &own.labels),
+                (SymbolKind::Citation, &own.citations),
+            ]
+            .into_iter()
+            .find_map(|(kind, list)| Some((kind, list.iter().find(|n| holds(&n.place))?)))
+            {
+                // At a definition itself, so Rename can start there as from a reference.
+                (
+                    kind,
+                    named.name.clone(),
+                    self.defined(&own, kind, &named.name),
+                )
             } else {
                 let units = &text.units;
                 let at = at as usize;
