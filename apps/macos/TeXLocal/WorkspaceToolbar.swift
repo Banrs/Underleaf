@@ -128,8 +128,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .insert:
             item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project), help: "Insert a figure, table, list or reference")
         case .bold, .italic, .underline:
-            let (command, help) = Self.styles[id]!
-            item = button(id, command.title, command.symbol!, #selector(style(_:)), help: help)
+            let command = Self.styles[id]!
+            item = button(id, command.title, command.symbol!, #selector(style(_:)), help: command.style!.help)
         case .pdfSeparator:
             guard let split = workspace?.columns.splitView else { return nil }
             return NSTrackingSeparatorToolbarItem(identifier: id, splitView: split, dividerIndex: 0)
@@ -162,9 +162,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         return item
     }
 
-    private static let styles: [NSToolbarItem.Identifier: (MenuCommand, help: String)] = [
-        .bold: (.editBold, "Make text bold"), .italic: (.editItalic, "Make text italic"), .underline: (.editUnderline, "Underline text"),
-    ]
+    private static let styles: [NSToolbarItem.Identifier: MenuCommand] = [.bold: .editBold, .italic: .editItalic, .underline: .editUnderline]
 
     /// Its help tag says what it does (HIG, Offering help: not the name again).
     private func button(_ id: NSToolbarItem.Identifier, _ label: String, _ symbol: String, _ action: Selector, help: String) -> NSToolbarItem {
@@ -313,7 +311,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     /// A toolbar button's action comes from its item (27.2).
     @objc private func showFormat(_ item: NSToolbarItem) { format.toggle(relativeTo: item) }
-    @objc private func style(_ item: NSToolbarItem) { if let (command, _) = Self.styles[item.itemIdentifier] { app.perform(command, on: project) } }
+    @objc private func style(_ item: NSToolbarItem) { if let command = Self.styles[item.itemIdentifier] { app.perform(command, on: project) } }
     @objc private func togglePDF() { app.perform(.viewTogglePDF, on: project) }
 
     @objc private func insertTemplate(_ item: NSToolbarItem) {
