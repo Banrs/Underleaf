@@ -116,9 +116,11 @@ public sealed class CoreTests : IDisposable
         const ulong session = 4;
         await core.CallAsync("session_open", new { id = made.Id, session });
         await core.CallAsync("session_open_document", new { session, path = "main.tex" });
-        using (var source = core.SessionSource(session, "main.tex")) source!.Edit(0, 0, "needle ");
+        using var source = core.SessionSource(session, "main.tex")!;
+        source.Edit(0, 0, "needle ");
         var replaced = await core.CallAsync<Replaced>("session_replace", new { session, query = "needle", replacement = "pin" });
         Assert.Equal("main.tex", replaced.Edits?.Path);
+        Assert.Equal(source.Call<ulong?>("version", new { }), replaced.Edits?.Version);
         Assert.Equal(new[] { new TextEdit(0, 6, "pin") }, replaced.Edits?.Edits);
         Assert.Equal(new[] { new FileCount("notes.tex", 1) }, replaced.Written);
         await core.CallAsync("session_close", new { session });

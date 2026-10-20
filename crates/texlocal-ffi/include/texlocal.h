@@ -114,8 +114,9 @@ void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 /* A command of SourceDocument::call (crates/texlocal-core/src/syntax/call.rs),
  * with a JSON object of arguments: "completions", "toggle_comment",
  * "set_heading", "insert_block", "insert_symbol", "math_at", "text_styles",
- * "code_ranges" and the rest it lists. Returns the result's JSON, or
- * NULL for an unknown command or arguments; free it with tl_free. */
+ * "code_ranges" and the rest it lists, and for a session's document
+ * "version". Returns the result's JSON, or NULL for an unknown command or
+ * arguments; free it with tl_free. */
 char *_Nullable tl_source_call(TlSource *source, const char *command, const char *args_json);
 
 /* A command of the syntax module's call, which needs no source, on any thread:

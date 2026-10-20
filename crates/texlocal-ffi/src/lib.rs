@@ -447,7 +447,13 @@ pub unsafe extern "C" fn tl_source_call(
 ) -> *mut c_char {
     let call = |source: &mut TlSource| {
         let (command, args) = unsafe { (str_arg(command)?, str_arg(args_json)?) };
-        source.with(|doc| doc.call(command, args))
+        match &source.0 {
+            // The session counts a document's edits, not the syntax module.
+            Source::Session(document) if command == "version" => {
+                Some(document.version().to_string())
+            }
+            _ => source.with(|doc| doc.call(command, args)),
+        }
     };
     let answer = unsafe { on_source(source, None, call) };
     answer.map_or(std::ptr::null_mut(), |json| c_json(json).into_raw())

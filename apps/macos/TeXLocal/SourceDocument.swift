@@ -76,6 +76,8 @@ final class SourceDocument {
     func mathAt(caret: Int) -> MathPreview? { call("math_at", ["caret": caret]) }
     /// The name at `offset` and the places the project defines it, the first where a jump goes.
     func definition(at offset: Int) -> Definition? { call("definition", ["at": offset]) }
+    /// What the session's replaces and renames of its document are made against; nil for the editor's own text.
+    var version: Int? { call("version", [:]) }
 
     var text: String {
         var count = 0

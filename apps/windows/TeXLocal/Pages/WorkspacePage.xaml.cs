@@ -128,8 +128,8 @@ public sealed partial class WorkspacePage : Page
         Editor.FilesDropped += OnFilesDropped;
         Editor.DefinitionFound += place => _ = Reveal(place.File, place.Line, place.Column, place.Length);
         // The core's refusal shows in the flyout.
-        Editor.RenameAsked += (symbol, at) => rename.Show(Editor, symbol.Name, async to => Apply(await Core.CallAsync<Replaced>("session_rename_symbol",
-            new { session, kind = symbol.Kind, from = symbol.Name, to })), at);
+        Editor.RenameAsked += (symbol, at) => rename.Show(Editor, symbol.Name, async to => Editor.Apply((await Core.CallAsync<Replaced>("session_rename_symbol",
+            new { session, kind = symbol.Kind, from = symbol.Name, to })).Edits), at);
         Pdf.ViewMoved += ShowPage;
         Pdf.Inverse += (page, x, y) => Run(null, async () =>
         {
@@ -307,13 +307,6 @@ public sealed partial class WorkspacePage : Page
     async Task Reveal(string path, int line, int column = 0, int length = 0)
     {
         if (await OpenDocument(path, KindOf(path) ?? "tex")) Editor.GoTo(line, column, length);
-    }
-
-    /// A replace's or rename's edits of the open document, at once as one undo step; not into another file shown meanwhile,
-    /// whose offsets they aren't.
-    void Apply(Replaced replaced)
-    {
-        if (replaced.Edits is { } edits && edits.Path == Editor.Path) Editor.Apply(edits.Edits);
     }
 
     /// Another app's text, or the disk's after Revert, shown without an edit. The session holds the document's saves until

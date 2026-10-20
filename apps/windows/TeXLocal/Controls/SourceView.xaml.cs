@@ -481,8 +481,16 @@ public sealed partial class SourceView : UserControl
     }
 
     /// Edits in the text's order, as one undo step, with the selection moved by them.
-    public bool Apply(TextEdit[]? edits) => edits is { Length: > 0 } && Apply(new Change(edits,
+    bool Apply(TextEdit[]? edits) => edits is { Length: > 0 } && Apply(new Change(edits,
         source!.Call<SourceRange[]>("map_selections", new { edits, selections = new[] { Selected } }) ?? []));
+
+    /// A replace's or rename's edits of the open document, at once as one undo step; not into another file shown meanwhile,
+    /// or this one typed in since, whose offsets they aren't. RichEdit's own edit, not yet mirrored, is typing too.
+    public void Apply(DocumentEdits? edits)
+    {
+        if (changed) OnEdited();
+        if (edits is not null && edits.Path == Path && edits.Version == source?.Call<ulong?>("version", new { })) Apply(edits.Edits);
+    }
 
     void Insert(Insertion? insertion)
     {

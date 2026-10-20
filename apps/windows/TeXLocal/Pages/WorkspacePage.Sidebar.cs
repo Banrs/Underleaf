@@ -299,7 +299,7 @@ public sealed partial class WorkspacePage
     {
         var replacement = ReplaceBox.Text;
         var replaced = await Core.CallAsync<Replaced>("session_replace", new { session, query = searched, replacement });
-        Apply(replaced);
+        Editor.Apply(replaced.Edits);
         var count = replaced.Written.Sum(w => w.Count) + (replaced.Edits?.Edits.Length ?? 0);
         var files = replaced.Written.Length + (replaced.Edits is null ? 0 : 1);
         await RunSearch($"Replaced {count} {(count == 1 ? "occurrence" : "occurrences")} across {files} {(files == 1 ? "file" : "files")} with “{replacement}”.");

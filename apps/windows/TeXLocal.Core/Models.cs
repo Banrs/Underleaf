@@ -118,8 +118,8 @@ public sealed record SearchHit(string File, int Line, int Column, int Length, st
 
 public sealed record SearchFile(string File, SearchHit[] Hits);
 
-/// The open document's edits, against the text the editor has, to apply at once as one undoable edit.
-public sealed record DocumentEdits(string Path, TextEdit[] Edits);
+/// The open document's edits, against its text at Version, to apply at once as one undoable edit.
+public sealed record DocumentEdits(string Path, ulong Version, TextEdit[] Edits);
 
 public sealed record FileCount(string File, int Count);
 
