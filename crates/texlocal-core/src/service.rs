@@ -10,11 +10,11 @@ use serde_json::{Value, json};
 
 use crate::compile::CompileManager;
 use crate::projects;
-use crate::settings::{self, AppSettings};
+use crate::settings::{self, AppSettings, Engine};
 use crate::synctex;
 use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
-use crate::{CoreError, import, lock, paths, wordmatch, zipexport};
+use crate::{CoreError, import, lock, paths, templates, wordmatch, zipexport};
 
 const SEARCH_LIMIT: usize = 100;
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
@@ -122,6 +122,14 @@ impl Service {
             "status" => out(self.status().await),
             "set_texpresso_dir" => out(self.set_texpresso_dir(folder()?.as_deref()).await?),
             "set_tex_dir" => out(self.set_tex_dir(folder()?.as_deref()).await?),
+            "catalogue" => Ok(json!({
+                "templates": templates::TEMPLATES.map(|(id, title)| json!({ "id": id, "title": title })),
+                "engines": Engine::ALL.map(|engine| json!({
+                    "id": engine,
+                    "title": engine.title(),
+                    "default": engine == Engine::default(),
+                })),
+            })),
             "list_projects" => out(projects::list_projects(&self.data_dir)?),
             // The project made is answered, so its `id` is the name it got.
             "create_project" => {
