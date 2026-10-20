@@ -222,9 +222,14 @@ mod tests {
             assert_eq!(rel.as_deref(), Some("ch/intro.tex"));
         }
         let under = |path: &str| format!("{}{path}", root.display());
+        // A folder it was built in before a move, absolute as the system spells it.
+        let old = std::env::temp_dir().join("old").join("Paper");
         for (input, rel) in [
             (under("/./ch/../ch/intro.tex"), Some("ch/intro.tex")),
-            ("/old/Paper/./ch/intro.tex".into(), Some("ch/intro.tex")),
+            (
+                format!("{}/./ch/intro.tex", old.display()),
+                Some("ch/intro.tex"),
+            ),
             (under(""), None),
             (under("/../PQ/main.tex"), None),
             (".texlocal.json".into(), None),
