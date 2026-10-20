@@ -4,6 +4,14 @@ import AppKit
 extension ProjectModel {
     // MARK: - Live preview
 
+    /// The inspector's toggle and the Compile menu's.
+    var livePreview: Bool {
+        get { texpresso.active }
+        set { if newValue { startTeXpresso() } else { stopTeXpresso() } }
+    }
+
+    var canSwitchLivePreview: Bool { app?.canPreviewLive == true && initialLoadComplete && texpresso.phase != .stopping }
+
     func startTeXpresso() {
         guard !closed, let session, texpresso.phase == .stopped else { return }
         texpresso.starting()

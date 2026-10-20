@@ -33,8 +33,8 @@ struct InspectorView: View {
             Section {
                 Toggle("Live Preview", detail: app.canPreviewLive ? "Experimental. Updates the preview as you type, without compiling."
                            : "Live Preview needs TeXpresso. Install it, or choose its folder in Settings.",
-                       isOn: Binding(get: { project.texpresso.active }, set: { $0 ? project.startTeXpresso() : project.stopTeXpresso() }))
-                .disabled(!app.canPreviewLive || !project.initialLoadComplete || project.texpresso.phase == .stopping)
+                       isOn: Bindable(project).livePreview)
+                .disabled(!project.canSwitchLivePreview)
                 if !app.canPreviewLive {
                     HStack {
                         LinkButton(title: "Install Guide", url: Links.texpressoGuide)

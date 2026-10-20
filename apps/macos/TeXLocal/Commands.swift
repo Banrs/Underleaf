@@ -328,9 +328,8 @@ private struct LivePreviewItem: View {
 
     var body: some View {
         let project = app.commandProject
-        Toggle("Live Preview", isOn: Binding(get: { project?.texpresso.active == true },
-                                             set: { $0 ? project?.startTeXpresso() : project?.stopTeXpresso() }))
-            .disabled(!app.canPreviewLive || project.map { !$0.initialLoadComplete || $0.texpresso.phase == .stopping } ?? true)
+        Toggle("Live Preview", isOn: project.map { Bindable($0).livePreview } ?? .constant(false))
+            .disabled(project?.canSwitchLivePreview != true)
     }
 }
 
