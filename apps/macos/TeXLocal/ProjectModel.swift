@@ -41,10 +41,10 @@ final class ProjectModel {
     var result: CompileResult?
     @ObservationIgnored var finishedBuilds = 0
     var chosenIssue: Int?
-    nonisolated enum ShownPDF: Equatable { case none, build(URL), live(URL) }
+    nonisolated enum ShownPDF: Equatable { case none, build(URL), live }
     var shown = ShownPDF.none
     var hasPDF: Bool { shown != .none }
-    var livePDF: Bool { if case .live = shown { true } else { false } }
+    var livePDF: Bool { shown == .live }
     var buildPDF: URL?
     let pdf = PDFController()
     let panel = BuildPanelModel()

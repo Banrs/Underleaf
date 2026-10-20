@@ -31,7 +31,7 @@ struct PDFSwapTests {
     }
 
     private func live(_ pages: [String], changed: IndexSet) throws -> LiveRead {
-        .document(LiveDocument(url: URL(filePath: "/live.pdf"), document: try document(pages), changed: changed, complete: true))
+        .document(LiveDocument(document: try document(pages), changed: changed, complete: true))
     }
 
     private func text(_ view: PDFView) -> [String] {

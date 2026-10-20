@@ -55,9 +55,9 @@ extension ProjectModel {
     /// Read where the event arrived, in the session's order; a page is drawn over its own run's document only.
     func showLive(_ read: LiveRead) {
         guard texpresso.active, !closed else { return }
-        if case .document(let live?) = read {
+        if case .document(_?) = read {
             if !livePDF, app?.showPDF == false { app?.showPDF = true }
-            shown = .live(live.url)
+            shown = .live
         }
         pdf.showLive(read)
     }

@@ -30,8 +30,7 @@ nonisolated enum LiveRead: Sendable {
 
     /// Mapped: the file is replaced, never rewritten, so it stays whole when its name goes. It has no links to see to.
     init(_ event: LiveDocumentEvent) {
-        let url = URL(filePath: event.path)
-        guard let document = Self.mapped(url), document.pageCount > 0 else {
+        guard let document = Self.mapped(URL(filePath: event.path)), document.pageCount > 0 else {
             self = .document(nil)
             return
         }
@@ -40,7 +39,7 @@ nonisolated enum LiveRead: Sendable {
                 if range.count == 2, range[0] <= range[1] { set.insert(integersIn: range[0]...range[1]) }
             }
         }
-        self = .document(LiveDocument(url: url, document: document, changed: changed, complete: event.complete))
+        self = .document(LiveDocument(document: document, changed: changed, complete: event.complete))
     }
 
     /// None for a file already gone: TeXpresso keeps a page's last two, and a newer one is coming.
@@ -54,7 +53,7 @@ nonisolated enum LiveRead: Sendable {
 }
 
 /// Made off the main actor and handed to it, which alone uses it from then on.
-nonisolated struct LiveDocument: @unchecked Sendable { let url: URL, document: PDFDocument, changed: IndexSet?, complete: Bool }
+nonisolated struct LiveDocument: @unchecked Sendable { let document: PDFDocument, changed: IndexSet?, complete: Bool }
 
 nonisolated struct LivePage: @unchecked Sendable { let index: Int, page: PDFPage }
 
