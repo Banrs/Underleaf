@@ -104,10 +104,13 @@ nonisolated struct CompileResult: Decodable {
     let pdf: String?
     let pdfChanged: Bool
     let durationMs: Int
-    let errors, warnings: [LogItem]
+    let errors, warnings, badBoxes: [LogItem]
     let log: String
 
     var failed: Bool { !ok && !stopped }
+    /// The bad boxes after the warnings, as Overleaf lists its typesetting warnings: numbered on from the issues, which the
+    /// session numbers alone.
+    var listed: [LogItem] { errors + warnings + badBoxes }
 
     var durationText: String {
         Duration.milliseconds(durationMs)
