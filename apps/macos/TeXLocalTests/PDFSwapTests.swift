@@ -159,13 +159,11 @@ struct PDFSwapTests {
 
     @Test func aDocumentIsShownWholeOnceTheAppHasGrown() throws {
         let controller = sizedController(), view = controller.view
-        var memory: UInt64 = 1 << 30
-        controller.memory = { memory }
         controller.show(try document(["a", "b"]))
         let first = try #require(view.document)
         controller.showLive(try document(["a2", "b"]), changed: [0], complete: true)
         #expect(view.document === first && text(view) == ["a2", "b"])
-        memory += 513 << 20
+        controller.wholeAt = 0
         // TeX stopped short of the end: the pages past there aren't in its document.
         controller.showLive(try document(["a3"]), changed: [0], complete: false)
         #expect(view.document === first && text(view) == ["a3", "b"])
@@ -175,7 +173,7 @@ struct PDFSwapTests {
         // Counted from there on.
         controller.showLive(try document(["a5", "b4"]), changed: [0], complete: true)
         #expect(view.document === whole && text(view) == ["a5", "b4"])
-        memory += 513 << 20
+        controller.wholeAt = 0
         let build = try document(["c"])
         controller.show(build)
         #expect(view.document === build)
