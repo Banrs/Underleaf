@@ -41,9 +41,6 @@ final class CompletionList {
     /// A click chooses a row and leaves the keyboard in the document.
     private final class Surface: NSHostingView<CompletionRowsView> { override var acceptsFirstResponder: Bool { false } }
 
-    private static let shownRows = 8
-    private static let leastWidth: CGFloat = 160
-
     init(for editor: SourceTextView) { self.editor = editor }
 
     /// With Settings' completion off, only a list already showing follows the typing.
@@ -124,7 +121,7 @@ final class CompletionList {
         if let longest = labels.indices.filter(isASCII).max(by: { labels[$0].utf8.count < labels[$1].utf8.count }) { measured.append(longest) }
         let widest = measured.map { width(of: labels[$0]) }.max() ?? 0
         size = NSSize(width: (widest + 2 * Self.textStart).rounded(.up),
-                      height: CGFloat(min(labels.count, Self.shownRows)) * rows.height + 2 * CompletionRowsView.margin)
+                      height: CGFloat(min(labels.count, 8)) * rows.height + 2 * CompletionRowsView.margin)
     }
 
     /// With the typed part in bold, as the row shows it.
@@ -140,7 +137,7 @@ final class CompletionList {
     private func place(under start: NSRect, in editor: NSRect) {
         guard let host = surface.superview else { return }
         var frame = NSRect(origin: NSPoint(x: start.minX - Self.textStart, y: 0), size: size)
-        frame.size.width = min(size.width, max(Self.leastWidth, editor.maxX - frame.minX))
+        frame.size.width = min(size.width, max(160, editor.maxX - frame.minX))
         frame.origin.x = max(editor.minX, min(frame.minX, editor.maxX - frame.width))
         let under = editor.maxY - start.maxY, over = start.minY - editor.minY
         isAbove = under < frame.height && over > under
@@ -162,7 +159,6 @@ final class CompletionList {
     func contains(_ point: NSPoint) -> Bool { surface.superview != nil && surface.bounds.contains(surface.convert(point, from: nil)) }
 
     func move(_ step: Int) {
-        guard !rows.labels.isEmpty else { return }
         rows.selection = max(0, min(rows.labels.count - 1, rows.selection + step))
         rows.reveal()
         announce()
