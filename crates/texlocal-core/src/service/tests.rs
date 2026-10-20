@@ -26,6 +26,24 @@ fn tex_dir(service: &Service) -> Option<PathBuf> {
 }
 
 #[tokio::test]
+async fn the_catalogue_lists_templates_and_engines_a_project_can_be_made_with() {
+    let (_dir, service) = library();
+    let catalogue = call(&service, "catalogue", json!({})).await;
+    let beamer = json!({ "id": "beamer", "title": "Presentation" });
+    assert_eq!(catalogue["templates"][3], beamer);
+    let engines = catalogue["engines"].as_array().unwrap();
+    for (n, engine) in engines.iter().enumerate() {
+        let args = json!({ "name": format!("P{n}"), "engine": engine["id"] });
+        call(&service, "create_project", args).await;
+    }
+    let defaults: Vec<_> = engines.iter().filter(|e| e["default"] == true).collect();
+    assert_eq!(
+        defaults,
+        [&json!({ "id": "pdflatex", "title": "pdfLaTeX", "default": true })]
+    );
+}
+
+#[tokio::test]
 async fn a_free_project_name_is_the_next_untitled() {
     let (_dir, service) = library();
     let name = call(&service, "free_project_name", json!({})).await;
