@@ -184,18 +184,6 @@ impl Actor {
         }
     }
 
-    /// A preview that ended for the session to start again when its `Timer::Restart` comes.
-    /// It stays `starting` meanwhile: a host that saw it stop would show the build's PDF in
-    /// place of the live document until the new run's first one came.
-    fn restarting(&mut self) {
-        if self.closed {
-            return self.ended();
-        }
-        self.live.phase = Phase::Starting;
-        self.live_reset();
-        self.publish_live(false);
-    }
-
     /// The user's Start, `window` choosing TeXpresso's own window. A restart still pending
     /// gives way to it: it would stop the preview this starts.
     pub fn live_start_asked(&mut self, window: bool) -> Value {
@@ -456,7 +444,10 @@ impl Actor {
             }
             others = true;
             let file = self.root.join(&path);
-            if is_text_file(&path)
+            // As the editor opens them: hidden files aren't.
+            let name = path.rsplit('/').next().unwrap_or(&path);
+            if !name.starts_with('.')
+                && is_text(name)
                 && std::fs::metadata(&file).is_ok_and(|meta| meta.len() <= MAX_FILE)
                 && let Ok(bytes) = std::fs::read(&file)
             {
@@ -509,9 +500,13 @@ impl Actor {
             LiveEvent::Log if live.log_shown => self.soon(Timer::Log),
             LiveEvent::Log => {}
             LiveEvent::Ended(error) => {
-                // A rename, a new main file or a file gone stopped it, to start again after.
-                if self.timers.contains_key(&Timer::Restart) {
-                    return self.restarting();
+                // A rename, a new main file or a file gone stopped it, to start again when
+                // `Timer::Restart` comes. It stays `starting` meanwhile: a host that saw it
+                // stop would show the build's PDF until the new run's first page came.
+                if self.timers.contains_key(&Timer::Restart) && !self.closed {
+                    self.live.phase = Phase::Starting;
+                    self.live_reset();
+                    return self.publish_live(false);
                 }
                 if let Some(error) = error {
                     live.failure = Some(error);
@@ -528,11 +523,4 @@ impl Actor {
             self.publish_live(false);
         }
     }
-}
-
-/// The files the editor opens as text, as the Mac app's `isTextFile` has them: those
-/// `is_text` has them, but for hidden ones.
-fn is_text_file(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path);
-    !name.starts_with('.') && is_text(name)
 }

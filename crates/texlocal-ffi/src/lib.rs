@@ -8,7 +8,6 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde::Serialize;
 use serde_json::{Map, Value, json};
 use texlocal_core::CoreError;
 use texlocal_core::events::Listener;
@@ -76,10 +75,6 @@ unsafe fn on_source<T>(source: *mut TlSource, none: T, body: impl FnOnce(&mut Tl
 /// JSON text for C: JSON escapes a NUL inside a string, so it holds none.
 fn c_json(text: String) -> CString {
     CString::new(text).expect("JSON has no interior NUL")
-}
-
-fn json_string(value: impl Serialize) -> *mut c_char {
-    c_json(serde_json::to_string(&value).expect("command results serialize")).into_raw()
 }
 
 /// # Safety
@@ -340,7 +335,8 @@ pub unsafe extern "C" fn tl_source_edit(
         source.with(|doc| {
             doc.follow(TextRange { start, length }, delta, changing, mirroring);
             let mirror = (!mirroring).then(|| doc.mirror_snippet());
-            mirror.filter(|edits| !edits.is_empty()).map(json_string)
+            let mirror = mirror.filter(|edits| !edits.is_empty());
+            mirror.map(|edits| c_json(json!(edits).to_string()).into_raw())
         })
     };
     unsafe { on_source(source, None, followed) }.unwrap_or(std::ptr::null_mut())
