@@ -16,6 +16,7 @@ use super::watch::Change;
 use super::{Document, Engine, Msg, Preview, Sessions};
 use crate::compile::CompileResult;
 use crate::logparse::LogItem;
+use crate::projects::testing::names_in;
 use crate::service::Service;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane, Sink, Status};
 use crate::{CoreError, lock};
@@ -695,6 +696,31 @@ async fn a_new_file_changes_the_tree_and_a_changed_unopened_file_is_told_of() {
     assert_eq!(changed[0]["paths"], json!(["refs.bib"]));
 }
 
+#[tokio::test(start_paused = true)]
+async fn the_tree_marks_the_main_file_and_comes_again_when_another_is_chosen() {
+    let mut rig = Rig::new(false).await;
+    fs::write(rig.root.join("paper.tex"), "").unwrap();
+    rig.changed("paper.tex", true);
+    wait(300).await;
+    rig.events().await;
+    let patch = json!({ "patch": { "mainFile": "paper.tex" } });
+    rig.ok("set_settings", patch).await;
+    let trees = rig.of_type("tree").await;
+    let marks: Vec<_> = trees[0]["tree"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| (n["path"].clone(), n.get("main").cloned()))
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            (json!("main.tex"), None),
+            (json!("paper.tex"), Some(json!(true)))
+        ]
+    );
+}
+
 #[test]
 fn a_file_ends_its_lines_as_its_first_line_break_does() {
     assert_eq!(Newline::of("a\r\nb\nc"), Newline::CrLf);
@@ -802,6 +828,35 @@ async fn a_rename_only_in_case_moves_the_open_document_rather_than_closing_it() 
     doc.edit(0, 0, "A ");
     wait(800).await;
     assert_eq!(rig.disk("Chapters/ch.tex"), "A chapter");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_file_tex_names_in_another_case_is_spelt_as_the_disk_spells_it() {
+    let mut rig = Rig::new(false).await;
+    fs::create_dir(rig.root.join("chapters")).unwrap();
+    fs::write(rig.root.join("chapters/intro.tex"), "\\section{Intro}\n").unwrap();
+    if !rig.root.join("Chapters/Intro.tex").exists() {
+        return; // A volume that compares case, where TeX wouldn't find the file either.
+    }
+    fs::write(rig.root.join("main.tex"), "\\input{Chapters/Intro}\n").unwrap();
+    let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
+    assert_eq!(analysis["tree"][0]["file"], "chapters/intro.tex");
+    rig.ok("compile", json!({})).await;
+    let mut error = issue(1, "Undefined");
+    error.file = Some("Chapters/Intro.tex".into());
+    rig.fake.finish_build(built(true, vec![error]));
+    let finished = rig.of_type("build_finished").await;
+    let file = &finished[0]["result"]["errors"][0]["file"];
+    assert_eq!(file, "chapters/intro.tex");
+    rig.ok("open_document", json!({ "path": "Chapters/Intro.tex" }))
+        .await;
+    let issues = rig.of_type("issues").await;
+    assert_eq!(issues[0]["path"], "chapters/intro.tex");
+    let doc = rig.sessions.document(rig.session, "chapters/intro.tex");
+    doc.unwrap().edit(0, 0, "% ");
+    wait(800).await;
+    assert_eq!(rig.disk("chapters/intro.tex"), "% \\section{Intro}\n");
+    assert_eq!(names_in(&rig.root.join("chapters")), ["intro.tex"]);
 }
 
 #[tokio::test(start_paused = true)]

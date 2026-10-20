@@ -302,6 +302,26 @@ pub fn analyze_project(
     analysis
 }
 
+/// The project file `rel` names, spelt as the disk spells it. TeX names a file as the author
+/// wrote it, which a volume that ignores case finds under another spelling; a document kept
+/// by that spelling would be out of step with the tree, and its save would rename the file.
+pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {
+    let mut path = root.to_path_buf();
+    let mut spelt = Vec::new();
+    for name in rel.split('/') {
+        let folded = paths::fold_case(name);
+        let found = fs::read_dir(&path)
+            .ok()?
+            .flatten()
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|entry| paths::fold_case(entry) == folded)
+            .max_by_key(|entry| entry == name)?;
+        path.push(&found);
+        spelt.push(found);
+    }
+    path.is_file().then(|| spelt.join("/"))
+}
+
 /// `within` is the folder an \import gave the file, where its own inputs are looked for first.
 fn walk(
     root: &Path,
@@ -311,7 +331,10 @@ fn walk(
     seen: &mut HashSet<String>,
     into: &mut Analysis,
 ) {
-    let Ok(file) = paths::rel_key(file) else {
+    let Some(file) = paths::rel_key(file)
+        .ok()
+        .and_then(|file| disk_spelling(root, &file))
+    else {
         return;
     };
     if !seen.insert(paths::fold_case(&file)) {

@@ -12,6 +12,8 @@ use serde::Serialize;
 use super::skip_unreadable;
 use crate::BUILD_DIR;
 use crate::error::CoreError;
+use crate::paths::fold_case;
+use crate::settings::read_settings;
 
 #[derive(Debug, Serialize)]
 pub struct TreeNode {
@@ -23,6 +25,8 @@ pub struct TreeNode {
     pub file_kind: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<Self>>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub main: bool,
 }
 
 pub(super) struct Entry {
@@ -107,18 +111,21 @@ pub(super) fn visit_files(
     Ok(())
 }
 
+/// The main file is marked however the settings spell it, as latexmk finds it.
 pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
-    fn walk(root: &Path, dir: &Path) -> Result<Vec<TreeNode>, CoreError> {
+    fn walk(root: &Path, dir: &Path, main: &str) -> Result<Vec<TreeNode>, CoreError> {
         let mut nodes = Vec::new();
         for entry in entries(root, dir)? {
             let (kind, children) = if entry.dir {
-                ("dir", Some(walk(root, &entry.path)?))
+                ("dir", Some(walk(root, &entry.path, main)?))
             } else {
                 ("file", None)
             };
+            let path = entry.rel(root).into_owned();
             nodes.push(TreeNode {
                 kind,
-                path: entry.rel(root).into_owned(),
+                main: children.is_none() && fold_case(&path) == main,
+                path,
                 file_kind: children.is_none().then(|| file_kind(&entry.name)),
                 name: entry.name,
                 children,
@@ -134,7 +141,7 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
         Ok(nodes)
     }
 
-    walk(root, root)
+    walk(root, root, &fold_case(&read_settings(root).main_file))
 }
 
 /// What the editor edits as text besides .tex and .bib, by extension.

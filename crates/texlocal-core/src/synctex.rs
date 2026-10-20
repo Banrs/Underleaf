@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::analyze::disk_spelling;
 use crate::error::CoreError;
 use crate::paths::{safe_path, safe_rel_file, source_rel};
 use crate::process::run;
@@ -143,6 +144,7 @@ pub async fn synctex_inverse(
 
     // Generated files and anything outside the project report no match.
     let rel = source_rel(root, file)
+        .and_then(|rel| disk_spelling(root, &rel))
         .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
     let found = click.and_then(|(text, at)| {
         let source = crate::lossy_string(std::fs::read(root.join(&rel)).ok()?);

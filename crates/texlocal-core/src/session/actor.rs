@@ -487,6 +487,7 @@ impl Actor {
     // MARK: - Documents
 
     fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
+        let path = &analyze::disk_spelling(&self.root, path).unwrap_or_else(|| path.to_owned());
         if self.docs.contains_key(path) {
             return Ok(());
         }
@@ -999,6 +1000,7 @@ impl Actor {
     }
 
     fn main_file_changed(&mut self) {
+        self.reload_tree();
         self.live_follow();
         let building = self.builds.compiling;
         self.stop_compile();
