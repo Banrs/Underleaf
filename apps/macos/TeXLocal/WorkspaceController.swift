@@ -331,24 +331,22 @@ final class WorkspaceController: DetentSplitViewController {
             view.layoutSubtreeIfNeeded()
             return done()
         }
-        nonisolated(unsafe) let item = item
         if !collapsed { mount(item.viewController, true) }
         paneAnimation(true)
-        NSAnimationContext.runAnimationGroup { context in
-            if !animates { context.duration = 0 }
-            // One animation carries the outline's pane and its header's height.
-            if item === outlineItem {
-                context.allowsImplicitAnimation = true
-                outlineBarHeight.animator().constant = outlineBarHeight(folded: collapsed)
+        Task.immediate {
+            await NSAnimationContext.runAnimationGroup { context in
+                if !animates { context.duration = 0 }
+                // One animation carries the outline's pane and its header's height.
+                if item === outlineItem {
+                    context.allowsImplicitAnimation = true
+                    outlineBarHeight.animator().constant = outlineBarHeight(folded: collapsed)
+                }
+                item.animator().isCollapsed = collapsed
+                if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
             }
-            item.animator().isCollapsed = collapsed
-            if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
-        } completionHandler: { [weak self] in
-            MainActor.assumeIsolated {
-                if item.isCollapsed { self?.mount(item.viewController, false) }
-                self?.paneAnimation(false)
-                done()
-            }
+            if item.isCollapsed { mount(item.viewController, false) }
+            paneAnimation(false)
+            done()
         }
     }
 
@@ -393,16 +391,13 @@ final class WorkspaceController: DetentSplitViewController {
             return
         }
         paneAnimation(true)
-        NSAnimationContext.runAnimationGroup { _ in
-            accessory.animator().isHidden = hidden
-        } completionHandler: { [weak self] in
-            MainActor.assumeIsolated {
-                if hidden, accessory.isHidden {
-                    accessory.view.isHidden = true
-                    self?.mount(accessory, false)
-                }
-                self?.paneAnimation(false)
+        Task.immediate {
+            await NSAnimationContext.runAnimationGroup { _ in accessory.animator().isHidden = hidden }
+            if hidden, accessory.isHidden {
+                accessory.view.isHidden = true
+                mount(accessory, false)
             }
+            paneAnimation(false)
         }
     }
 
