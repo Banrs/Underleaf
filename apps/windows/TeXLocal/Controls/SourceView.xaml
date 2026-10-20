@@ -5,38 +5,60 @@
     xmlns:local="using:TeXLocal.Controls">
 
     <UserControl.Resources>
-        <!-- A flyout's surface, for the popups that leave the keyboard in the editor. -->
-        <Style x:Key="SurfaceStyle" TargetType="Border">
-            <Setter Property="Background" Value="{ThemeResource AcrylicInAppFillColorDefaultBrush}" />
-            <Setter Property="BorderBrush" Value="{ThemeResource SurfaceStrokeColorFlyoutBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="{ThemeResource OverlayCornerRadius}" />
-        </Style>
-        <Style x:Key="FindButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
-            <Setter Property="Width" Value="32" />
-            <Setter Property="Height" Value="32" />
-            <Setter Property="Padding" Value="0" />
-        </Style>
-        <Style x:Key="CompletionItemStyle" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
-            <Setter Property="Padding" Value="12,0,16,0" />
-            <Setter Property="AllowFocusOnInteraction" Value="False" />
-        </Style>
-        <DataTemplate x:Key="IssueTemplate" x:DataType="local:IssueMark">
-            <Grid ColumnSpacing="8" ToolTipService.ToolTip="{x:Bind Tip}">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <InfoBadge VerticalAlignment="Center" Style="{x:Bind Badge}" />
-                <TextBlock
-                    Grid.Column="1"
-                    VerticalAlignment="Center"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Style="{StaticResource CaptionTextBlockStyle}"
-                    Text="{x:Bind Label}"
-                    TextWrapping="NoWrap" />
-            </Grid>
-        </DataTemplate>
+        <ResourceDictionary>
+            <!-- High contrast's subtle fills are the window's colour, so an issue's band is outlined there. -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Default">
+                    <StaticResource x:Key="IssueBandStroke" ResourceKey="ControlFillColorTransparentBrush" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                    <StaticResource x:Key="IssueBandStroke" ResourceKey="ControlFillColorTransparentBrush" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="HighContrast">
+                    <SolidColorBrush x:Key="IssueBandStroke" Color="{ThemeResource SystemColorWindowTextColor}" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+            <!-- A flyout's surface, for the popups that leave the keyboard in the editor. -->
+            <Style x:Key="SurfaceStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource AcrylicInAppFillColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource SurfaceStrokeColorFlyoutBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{ThemeResource OverlayCornerRadius}" />
+            </Style>
+            <Style x:Key="FindButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+                <Setter Property="Width" Value="32" />
+                <Setter Property="Height" Value="32" />
+                <Setter Property="Padding" Value="0" />
+            </Style>
+            <Style x:Key="CompletionItemStyle" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+                <Setter Property="Padding" Value="12,0,16,0" />
+                <Setter Property="AllowFocusOnInteraction" Value="False" />
+            </Style>
+            <DataTemplate x:Key="IssueTemplate" x:DataType="local:IssueMark">
+                <Grid ColumnSpacing="8" ToolTipService.ToolTip="{x:Bind Tip}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <InfoBadge VerticalAlignment="Center" Style="{x:Bind Badge}" />
+                    <TextBlock
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Text="{x:Bind Label, Mode=OneWay}"
+                        TextTrimming="CharacterEllipsis"
+                        TextWrapping="NoWrap" />
+                </Grid>
+            </DataTemplate>
+            <!-- The Mac's band over an issue's paragraph, and its undefined command underlined. -->
+            <DataTemplate x:Key="IssueBandTemplate">
+                <Rectangle Fill="{ThemeResource SubtleFillColorTertiaryBrush}" Stroke="{ThemeResource IssueBandStroke}" />
+            </DataTemplate>
+            <DataTemplate x:Key="IssueTokenTemplate">
+                <Rectangle Height="2" Fill="{ThemeResource SystemFillColorCriticalBrush}" IsHitTestVisible="False" />
+            </DataTemplate>
+        </ResourceDictionary>
     </UserControl.Resources>
 
     <Grid>
@@ -52,7 +74,14 @@
             <Rectangle x:Name="NumberInk" Fill="{ThemeResource TextFillColorTertiaryBrush}" />
         </Grid>
 
-        <Canvas x:Name="Gutter" />
+        <!-- Transparent, so a press between the numbers selects lines too. -->
+        <Canvas
+            x:Name="Gutter"
+            Background="Transparent"
+            PointerCaptureLost="OnGutterCaptureLost"
+            PointerMoved="OnGutterMoved"
+            PointerPressed="OnGutterPressed"
+            PointerReleased="OnGutterReleased" />
         <Canvas x:Name="Backdrop" Grid.Column="1" AutomationProperties.AccessibilityView="Raw">
             <Rectangle x:Name="CurrentLine" Fill="{ThemeResource SubtleFillColorSecondaryBrush}" />
         </Canvas>

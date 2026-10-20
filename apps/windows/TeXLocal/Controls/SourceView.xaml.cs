@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
@@ -28,33 +29,72 @@ public sealed record CompletionRow(Completion Item, int Count, string Glyph)
     public string Rest => Item.Label[Math.Clamp(Count, 0, Item.Label.Length)..];
 }
 
-public sealed class IssueMark(IssueLine issue)
+/// An issue's box at its line's end, as the Mac's: the message where there is room, then the core's fewer words that keep
+/// an undefined command's name, then cut at the tail, and the badge alone where fewer than ten characters would show.
+public sealed class IssueMark(IssueLine issue) : INotifyPropertyChanged
 {
-    public string Label => (issue.Short.Length > 0 ? issue.Short : issue.Message) + (issue.Others.Length > 0 ? $" +{issue.Others.Length}" : "");
+    const int Least = 10;
+    static readonly TextBlock measure = new() { Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] };
+    string Whole => (issue.Short.Length > 0 ? issue.Short : issue.Message) + (issue.Others.Length > 0 ? $" +{issue.Others.Length}" : "");
+    (double Whole, double Compact, double Cut)? widths;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public string Label
+    {
+        get;
+        private set
+        {
+            if (field == value) return;
+            field = value;
+            PropertyChanged?.Invoke(this, new(nameof(Label)));
+        }
+    } = "";
+
+    /// The label for this much room after the badge.
+    public void Fit(double room)
+    {
+        static double Width(string text)
+        {
+            measure.Text = text;
+            measure.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            return measure.DesiredSize.Width;
+        }
+        var shortest = issue.Compact ?? Whole;
+        widths ??= (Width(Whole), issue.Compact is { } compact ? Width(compact) : double.PositiveInfinity,
+            shortest.Length < Least ? double.PositiveInfinity : Width(shortest[..Least].TrimEnd() + "…"));
+        var (all, fewer, cut) = widths.Value;
+        Label = all <= room ? Whole : fewer <= room || cut <= room ? shortest : "";
+    }
+
     public string Tip => string.Join("\n", [issue.Message, .. issue.Others]);
     public Style Badge => (Style)Application.Current.Resources[issue.Error ? "CriticalIconInfoBadgeStyle" : "CautionIconInfoBadgeStyle"];
 }
 
 public sealed partial class SourceView : UserControl
 {
-    // LabelInset: the list's border, padding, glyph and spacing before a label.
-    const int RowHeight = 32, ShownRows = 8, LabelInset = 1 + 12 + 16 + 12;
+    // RowHeight: ListViewItemMinHeight, for a row not yet laid out. LabelInset: the list's border, padding, glyph and spacing
+    // before a label. Badge: an icon InfoBadge's width.
+    const int RowHeight = 32, ShownRows = 8, LabelInset = 1 + 12 + 16 + 12, Badge = 16;
     // Asynchronous, so the first text goes in after the layout pass that completes it.
     readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    readonly List<(IssueLine Issue, FrameworkElement Mark)> marks = [];
+    readonly List<(IssueLine Issue, IssueMark Label, FrameworkElement Mark, FrameworkElement Band, FrameworkElement[] Underlines)> marks = [];
     readonly DispatcherQueueTimer partnerTimer;
+    readonly Windows.UI.ViewManagement.UISettings system = new();
     Source? source;
     ScrollViewer? scroller;
     bool setting, changed, undoing, restoring, composing, loading, stale, mirroring, reoffer, queued, moved;
-    int loads, lastEnd = -1, edits;
+    int loads, lastEnd = -1;
     double advance = 8.4;
     (int Start, int End) placed = (-1, -1);
     SourceRange before = new(0, 0);
     Completions? offered;
-    (int Caret, int Edits, MathPreview? Value)? lastMath;
+    /// A drag in the gutter: what it extends, and the line it started on.
+    (SourceRange Anchor, SourceRange First)? dragging;
     MathPreview? shownMath;
     int? dismissedMath;
     Color[] kinds = [];
+    SolidColorBrush numbers = new();
     ElementTheme inked;
     string theme = "overleaf";
 
@@ -63,6 +103,7 @@ public sealed partial class SourceView : UserControl
     public Color Ink { get; private set; }
     public bool AutoPair { get; set; } = true;
     public bool AutoComplete { get; set; } = true;
+    public bool LineNumbers { get; set { field = value; Invalidate(false); } } = true;
     public event Action<bool>? Composing;
     /// Once per dispatcher turn, after the edit is mirrored, so the caret's line is the new text's.
     public event Action? CaretMoved;
@@ -125,8 +166,20 @@ public sealed partial class SourceView : UserControl
         };
         SizeChanged += (_, e) => Clip = new RectangleGeometry { Rect = new(0, 0, e.NewSize.Width, e.NewSize.Height) };
         ActualThemeChanged += (_, _) => Recolour(true);
-        Loaded += (_, _) => Recolour(ActualTheme != inked);
+        Loaded += (_, _) =>
+        {
+            system.ColorValuesChanged += OnColoursChanged;
+            Recolour(ActualTheme != inked);
+        };
+        Unloaded += (_, _) => system.ColorValuesChanged -= OnColoursChanged;
     }
+
+    /// Off the UI thread. A switch into, out of or between high-contrast themes may raise no ActualThemeChanged; kinds are
+    /// none in high contrast.
+    void OnColoursChanged(Windows.UI.ViewManagement.UISettings sender, object? args) => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (kinds.Length == 0 || new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast) Recolour(true);
+    });
 
     public void SetLook(string family, double size, string themeId)
     {
@@ -159,12 +212,15 @@ public sealed partial class SourceView : UserControl
         });
     }
 
-    Color Of(Rectangle r) => Over(((SolidColorBrush)r.Fill).Color, ((SolidColorBrush)PaperInk.Fill).Color);
+    internal static Color Fill(Rectangle r) => ((SolidColorBrush)r.Fill).Color;
+
+    /// Opaque, as RichEdit needs, and raised by the core to the text's contrast on the paper and the current line.
+    Color Legible(Rectangle ink) => Opaque(Source.SyntaxCall<double[]>("legible",
+        new { color = Rgba(Fill(ink)), background = Rgba(Fill(PaperInk)), fill = Rgba(Fill(CurrentLine)) })!);
 
     /// None in high contrast, where every kind is drawn in the window's text colour.
     public static Color[] SyntaxColors(string theme, bool dark, Color paper, Color line, Color secondary)
     {
-        static byte Byte(double v) => (byte)Math.Round(Math.Clamp(v, 0, 1) * 255);
         var colours = new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast ? null
             : Source.SyntaxCall<double[][]>("theme_colors", new
             {
@@ -174,16 +230,16 @@ public sealed partial class SourceView : UserControl
                 fill = Rgba(line),
                 system = new Dictionary<string, double[]> { ["secondaryLabelColor"] = Rgba(secondary) },
             });
-        return [.. (colours ?? []).Select(c => Color.FromArgb(255, Byte(c[0]), Byte(c[1]), Byte(c[2])))];
+        return [.. (colours ?? []).Select(Opaque)];
     }
 
     public static double[] Rgba(Color c) => [c.R / 255.0, c.G / 255.0, c.B / 255.0, c.A / 255.0];
 
-    /// RichEdit ignores alpha.
-    public static Color Over(Color c, Color under)
+    /// The core composites what it answers over the paper.
+    static Color Opaque(double[] c)
     {
-        byte Mix(byte a, byte b) => (byte)((a * c.A + b * (255 - c.A)) / 255);
-        return Color.FromArgb(255, Mix(c.R, under.R), Mix(c.G, under.G), Mix(c.B, under.B));
+        static byte Byte(double v) => (byte)Math.Round(Math.Clamp(v, 0, 1) * 255);
+        return Color.FromArgb(255, Byte(c[0]), Byte(c[1]), Byte(c[2]));
     }
 
     /// RichEdit drops the text's colours if it gets them before its template is applied and it has
@@ -225,13 +281,12 @@ public sealed partial class SourceView : UserControl
         var generation = ++loads;
         CloseCompletions();
         HidePartner();
-        (lastMath, shownMath, dismissedMath) = (null, null, null);
+        (shownMath, dismissedMath) = (null, null);
         MathPopup.IsOpen = false;
         source?.Call<bool>("end_snippet", new { });
         Document.EndUndoGroup();
-        (Ink, inked, stale) = (Of(TextInk), ActualTheme, !IsLoaded);
-        kinds = SyntaxColors(theme, ActualTheme == ElementTheme.Dark, ((SolidColorBrush)PaperInk.Fill).Color,
-            ((SolidColorBrush)CurrentLine.Fill).Color, Of(SecondaryInk));
+        (Ink, numbers, inked, stale) = (Legible(TextInk), new SolidColorBrush(Legible(NumberInk)), ActualTheme, !IsLoaded);
+        kinds = SyntaxColors(theme, ActualTheme == ElementTheme.Dark, Fill(PaperInk), Fill(CurrentLine), Fill(SecondaryInk));
         var split = source is { LineCount: > 200 } s ? s.LineStart(201) : content.Length;
         setting = true;
         Document.SetText(TextSetOptions.FormatRtf, Rtf(content, 0, split));
@@ -373,7 +428,6 @@ public sealed partial class SourceView : UserControl
         var mirrors = source!.Edit(start, removed, inserted, mirroring);
         Text = string.Concat(Text.AsSpan(0, start), inserted, Text.AsSpan(start + removed));
         lastEnd = start + inserted.Length;
-        edits++;
         if (colour) Colour(source.LineAt(start), source.LineAt(start + inserted.Length));
         if (mirrors is not { Length: > 0 }) return;
         // The typing stays where it was, moved only by copies put in before it.
@@ -567,16 +621,21 @@ public sealed partial class SourceView : UserControl
             "label" => "\uE8EC",
             "citation" => "\uE8F1",
             "entryType" => "\uE8A5",
+            "file" => "\uE7C3",
             _ => "\uE943",
         };
         CompletionList.ItemsSource = found.Items.Select(i => new CompletionRow(i, s.Start - found.Start, glyph)).ToList();
         CompletionList.SelectedIndex = 0;
-        // The surface's padding and border are the 10 past the rows; above the line when there's no room below. Near the
-        // text's left edge the list reaches over the gutter, so its labels still line up with the typed text.
-        var height = Math.Min(found.Items.Length, ShownRows) * RowHeight + 10;
+        // Near the text's left edge the list reaches over the gutter, so its labels still line up with the typed text.
         CompletionPopup.HorizontalOffset = Math.Max(-Gutter.ActualWidth, at.X - LabelInset);
-        CompletionPopup.VerticalOffset = at.Bottom + 4 + height <= ActualHeight || at.Y - height - 4 < 0 ? at.Bottom + 4 : at.Y - height - 4;
+        // Laid out open, before it is drawn, so a row is measured: text scaling makes rows taller.
         CompletionPopup.IsOpen = true;
+        CompletionList.UpdateLayout();
+        var row = CompletionList.ContainerFromIndex(0) is FrameworkElement { ActualHeight: > 0 } shown ? shown.ActualHeight : RowHeight;
+        CompletionList.MaxHeight = ShownRows * row;
+        // The surface's padding and border are the 10 past the rows; above the line when there's no room below.
+        var height = Math.Min(found.Items.Length, ShownRows) * row + 10;
+        CompletionPopup.VerticalOffset = at.Bottom + 4 + height <= ActualHeight || at.Y - height - 4 < 0 ? at.Bottom + 4 : at.Y - height - 4;
         Announce(found.Items[0].Label);
     }
 
@@ -636,17 +695,9 @@ public sealed partial class SourceView : UserControl
         peer.RaiseNotificationEvent(AutomationNotificationKind.ItemAdded, AutomationNotificationProcessing.MostRecent, label, "completion");
     }
 
-    MathPreview? MathAt(int caret)
-    {
-        if (lastMath is { } last && last.Caret == caret && last.Edits == edits) return last.Value;
-        var value = source?.Call<MathPreview>("math_at", new { caret });
-        lastMath = (caret, edits, value);
-        return value;
-    }
-
     async void PreviewMath()
     {
-        var maths = source is null || loading || Selected.Length > 0 ? null : MathAt(CaretOffset);
+        var maths = source is null || loading || Selected.Length > 0 ? null : source.Call<MathPreview>("math_at", new { caret = CaretOffset });
         if (maths?.Start != dismissedMath) dismissedMath = null;
         if (maths is null || dismissedMath is not null || Editor.FocusState == FocusState.Unfocused)
         {
@@ -830,6 +881,48 @@ public sealed partial class SourceView : UserControl
             : new Rect(r.X + Editor.Padding.Left - scroller.HorizontalOffset, r.Y + Editor.Padding.Top - scroller.VerticalOffset, Math.Max(r.Width, 0), r.Height);
     }
 
+    /// The line under the pointer with its line break, scrolled to where the pointer is past the text's edge.
+    SourceRange LineUnder(PointerRoutedEventArgs e)
+    {
+        var y = e.GetCurrentPoint(Editor).Position.Y;
+        var at = Document.GetRangeFromPoint(new Point(0, Math.Max(0, y - Editor.Padding.Top + scroller!.VerticalOffset)), PointOptions.ClientCoordinates);
+        if (y < Editor.Padding.Top || y > Editor.ActualHeight - Editor.Padding.Bottom) at.ScrollIntoView(PointOptions.None);
+        var line = source!.LineAt(at.StartPosition);
+        var start = source.LineStart(line);
+        return new(start, (line < source.LineCount ? source.LineStart(line + 1) : Text.Length) - start);
+    }
+
+    /// The Mac's gutter: a press selects its line, a drag the lines it crosses, Shift extends the selection to them.
+    void OnGutterPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (source is null || !e.GetCurrentPoint(Gutter).Properties.IsLeftButtonPressed) return;
+        var first = LineUnder(e);
+        dragging = (Down(VirtualKey.Shift) ? Selected : first, first);
+        Gutter.CapturePointer(e.Pointer);
+        Editor.Focus(FocusState.Pointer);
+        OnGutterMoved(sender, e);
+        e.Handled = true;
+    }
+
+    void OnGutterMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (dragging is not { Anchor: var anchor }) return;
+        var line = LineUnder(e);
+        Document.Selection.SetRange(Math.Min(anchor.Start, line.Start), Math.Max(anchor.End, line.End));
+    }
+
+    /// A press that selected only its line opens that line's issue, as a click on its box does.
+    void OnGutterReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (dragging is not { First: var first }) return;
+        Gutter.ReleasePointerCapture(e.Pointer);
+        dragging = null;
+        var line = source!.LineAt(first.Start);
+        if (Selected == first && marks.Where(m => m.Issue.Line == line).Select(m => m.Issue).FirstOrDefault() is { } issue) IssueInvoked?.Invoke(issue);
+    }
+
+    void OnGutterCaptureLost(object sender, PointerRoutedEventArgs e) => dragging = null;
+
     /// One refresh, CaretMoved and maths preview per dispatcher turn. RichEdit can raise TextChanged after
     /// SelectionChanged, so an edit of its own is mirrored first.
     void Invalidate(bool caret = true)
@@ -860,13 +953,13 @@ public sealed partial class SourceView : UserControl
         var first = source!.LineAt(Document.GetRangeFromPoint(new Point(0, y), PointOptions.ClientCoordinates).StartPosition);
         var last = source.LineAt(Document.GetRangeFromPoint(new Point(Editor.ActualWidth, y + Editor.ActualHeight), PointOptions.ClientCoordinates).StartPosition);
         var caret = source.LineAt(CaretOffset);
-        Gutter.Width = Math.Ceiling(16 + Math.Max(3, source.LineCount.ToString().Length) * advance + 8);
+        Gutter.Width = LineNumbers ? Math.Ceiling(16 + Math.Max(3, source.LineCount.ToString().Length) * advance + 8) : 16;
         // Only beside the text's viewport, so nothing shows in the find bar's band.
         var view = new Rect(0, Editor.Padding.Top, Gutter.Width + Editor.ActualWidth, Math.Max(0, Editor.ActualHeight - Editor.Padding.Top - Editor.Padding.Bottom));
         foreach (var layer in (UIElement[])[Gutter, Backdrop, Overlay]) layer.Clip = new RectangleGeometry { Rect = view };
 
         var used = 0;
-        for (var line = first; line <= last; line++)
+        for (var line = first; LineNumbers && line <= last; line++)
         {
             if (RectOf(source.LineStart(line), source.LineStart(line)) is not { } r) continue;
             if (used == Gutter.Children.Count)
@@ -878,7 +971,7 @@ public sealed partial class SourceView : UserControl
             // The editor's font and size at the line's top: the number sits on the text's baseline.
             var number = (TextBlock)Gutter.Children[used++];
             (number.FontFamily, number.FontSize, number.Width) = (Editor.FontFamily, Editor.FontSize, Gutter.Width - 8);
-            (number.Text, number.Foreground) = (line.ToString(), (line == caret ? TextInk : NumberInk).Fill);
+            (number.Text, number.Foreground) = (line.ToString(), line == caret ? TextInk.Fill : numbers);
             number.Visibility = Visibility.Visible;
             Canvas.SetTop(number, r.Y);
         }
@@ -891,13 +984,38 @@ public sealed partial class SourceView : UserControl
         }
 
         var right = Overlay.ActualWidth - Editor.Padding.Right;
-        foreach (var (issue, mark) in marks)
+        foreach (var (issue, label, mark, band, underlines) in marks)
         {
-            var end = issue.Line >= first && issue.Line <= last ? RectOf(End(issue.Line), End(issue.Line)) : null;
+            var seen = issue.Line >= first && issue.Line <= last;
+            var start = seen ? source.LineStart(issue.Line) : 0;
+            // The caret's line has the current line's fill in place of its band, as on the Mac.
+            var paragraph = seen && issue.Line != caret ? RectOf(start, End(issue.Line)) : null;
+            band.Visibility = paragraph is null ? Visibility.Collapsed : Visibility.Visible;
+            if (paragraph is { } p)
+            {
+                (band.Width, band.Height) = (Backdrop.ActualWidth, p.Height);
+                Canvas.SetTop(band, p.Y);
+            }
+            for (var i = 0; i < underlines.Length; i++)
+            {
+                var token = seen ? RectOf(start + issue.Tokens[i].Start, start + issue.Tokens[i].End) : null;
+                underlines[i].Visibility = token is null ? Visibility.Collapsed : Visibility.Visible;
+                if (token is not { } t) continue;
+                underlines[i].Width = t.Width;
+                Canvas.SetLeft(underlines[i], t.X);
+                Canvas.SetTop(underlines[i], t.Bottom - underlines[i].Height);
+            }
+            var end = seen ? RectOf(End(issue.Line), End(issue.Line)) : null;
             var x = (end?.X ?? 0) + 16;
-            mark.Visibility = end is not null && right - x >= 16 ? Visibility.Visible : Visibility.Collapsed;
-            if (end is not { } r) continue;
-            (mark.MaxWidth, mark.Height) = (Math.Max(0, right - x), r.Height);
+            if (end is not { } r || right - x < Badge)
+            {
+                mark.Visibility = Visibility.Collapsed;
+                continue;
+            }
+            mark.Visibility = Visibility.Visible;
+            // Past the badge and the template's spacing.
+            label.Fit(right - x - Badge - 8);
+            (mark.MaxWidth, mark.Height) = (right - x, r.Height);
             Canvas.SetLeft(mark, x);
             Canvas.SetTop(mark, r.Y);
         }
@@ -905,15 +1023,26 @@ public sealed partial class SourceView : UserControl
 
     public void SetIssues(IssueLine[] lines)
     {
-        marks.ForEach(m => Overlay.Children.Remove(m.Mark));
+        foreach (var (_, _, mark, band, underlines) in marks)
+        {
+            Backdrop.Children.Remove(band);
+            foreach (var shown in (FrameworkElement[])[mark, .. underlines]) Overlay.Children.Remove(shown);
+        }
         marks.Clear();
+        FrameworkElement Load(string template, Canvas layer)
+        {
+            var made = (FrameworkElement)((DataTemplate)Resources[template]).LoadContent();
+            made.Visibility = Visibility.Collapsed;
+            layer.Children.Add(made);
+            return made;
+        }
         foreach (var issue in lines)
         {
-            var mark = (FrameworkElement)((DataTemplate)Resources["IssueTemplate"]).LoadContent();
-            (mark.DataContext, mark.Visibility) = (new IssueMark(issue), Visibility.Collapsed);
+            var label = new IssueMark(issue);
+            var mark = Load("IssueTemplate", Overlay);
+            mark.DataContext = label;
             mark.Tapped += (_, _) => IssueInvoked?.Invoke(issue);
-            Overlay.Children.Add(mark);
-            marks.Add((issue, mark));
+            marks.Add((issue, label, mark, Load("IssueBandTemplate", Backdrop), issue.Tokens.Select(_ => Load("IssueTokenTemplate", Overlay)).ToArray()));
         }
         Invalidate(false);
     }

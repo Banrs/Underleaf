@@ -81,9 +81,8 @@ public sealed partial class SettingsPage : Page
         if (!IsLoaded) return;
         Preview.FontFamily = new FontFamily(Prefs.EditorFont);
         Preview.FontSize = Prefs.EditorFontSize;
-        var paper = ((SolidColorBrush)PaperInk.Fill).Color;
-        var secondary = SourceView.Over(((SolidColorBrush)SecondaryInk.Fill).Color, paper);
-        var inks = SourceView.SyntaxColors(Prefs.EditorTheme, ActualTheme == ElementTheme.Dark, paper, ((SolidColorBrush)LineInk.Fill).Color, secondary);
+        var inks = SourceView.SyntaxColors(Prefs.EditorTheme, ActualTheme == ElementTheme.Dark, SourceView.Fill(PaperInk), SourceView.Fill(LineInk),
+            SourceView.Fill(SecondaryInk));
         using var source = Source.New(Sample);
         Preview.Inlines.Clear();
         var at = 0;
