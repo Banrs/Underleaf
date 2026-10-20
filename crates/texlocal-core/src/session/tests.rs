@@ -1210,9 +1210,12 @@ async fn cleans_asked_for_together_are_all_answered() {
     assert_eq!(rig.fake.called("clean"), 1);
 }
 
-async fn until_cited(doc: &Document, key: &str) -> bool {
+/// Until the document's symbols hold `key` and the file list `files`, which the tree's own
+/// rescan brings, perhaps one symbol scan after the key.
+async fn until_cited(doc: &Document, key: &str, files: &[&str]) -> bool {
     for _ in 0..500 {
-        if doc.symbols().citations.iter().any(|cited| cited == key) {
+        let symbols = doc.symbols();
+        if symbols.citations.iter().any(|cited| cited == key) && symbols.files == files {
             return true;
         }
         wait(10).await;
@@ -1227,10 +1230,10 @@ async fn citations_and_files_another_app_writes_reach_completion() {
     let doc = rig.open("main.tex").await;
     fs::write(rig.root.join("refs.bib"), "@book{first,").unwrap();
     rig.changed("refs.bib", true);
-    assert!(until_cited(&doc, "first").await, "a new file's");
-    assert_eq!(doc.symbols().files, ["main.tex", "refs.bib"]);
+    let files = ["main.tex", "refs.bib"];
+    assert!(until_cited(&doc, "first", &files).await, "a new file's");
     rig.write_elsewhere("refs.bib", "@book{second,");
-    assert!(until_cited(&doc, "second").await, "a listed file's");
+    assert!(until_cited(&doc, "second", &files).await, "a listed file's");
 }
 
 /// Two files on their way to the Trash at once: the first's end leaves the second held.
