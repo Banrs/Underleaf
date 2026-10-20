@@ -224,6 +224,8 @@ nonisolated struct Completions: Decodable {
 nonisolated struct Completion: Decodable {
     var label, text: String
     var fields: [SnippetField]
+    /// A citation's entry: “Knuth · 1984 · The TeXbook”.
+    var detail: String?
 }
 
 nonisolated struct Definition: Decodable {
