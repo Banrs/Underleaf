@@ -11,8 +11,6 @@ Check on the QA copy (`tools/qa/README.md`), then `zsh tools/install-mac.sh`:
 ## Unchecked 27.2 workarounds
 
 Each says why in its comment. Turn it off on a current build and remove it if the bug is gone:
-- `SourceTextView.layOutViewportOnceSettled`, after quick divider drags; once, a blurred band
-  about 115 pt tall showed over the source's last lines after slow then quick drags in Test Long.
 - `WorkspaceController`'s `pdfItem.isCollapsed = false` at the first layout.
 - `MathGlyphs`' palette rows, `unmark` and `centre` (`MenuItems.swift`).
 - `NameWidth`'s trailing space (`HomeView.swift`).
