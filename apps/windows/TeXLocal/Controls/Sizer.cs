@@ -1,6 +1,8 @@
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.System;
@@ -17,6 +19,8 @@ public sealed partial class Sizer : Grid
     bool over;
 
     public Orientation Orientation { get; set; } = Orientation.Vertical;
+    /// The size it sets, as UI Automation reads it.
+    public Func<string>? Spoken { get; set; }
     public event Action<double>? Delta;
     public event Action? Released;
 
@@ -52,8 +56,10 @@ public sealed partial class Sizer : Grid
         {
             var step = e.Key is VirtualKey.Left or VirtualKey.Up ? -12 : e.Key is VirtualKey.Right or VirtualKey.Down ? 12 : 0;
             if (step == 0) return;
+            var was = Spoken?.Invoke() ?? "";
             Delta?.Invoke(step);
             Released?.Invoke();
+            FrameworkElementAutomationPeer.FromElement(this)?.RaisePropertyChangedEvent(ValuePatternIdentifiers.ValueProperty, was, Spoken?.Invoke() ?? "");
             e.Handled = true;
         };
 
@@ -69,4 +75,19 @@ public sealed partial class Sizer : Grid
     void Show(bool shown) => grip.Opacity = shown || from is not null ? 1 : 0;
 
     double Along(Windows.Foundation.Point p) => Orientation == Orientation.Vertical ? p.X : p.Y;
+
+    protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);
+
+    /// A thumb, as WPF's GridSplitter is to UI Automation, whose value is the size it sets.
+    sealed partial class Peer(Sizer owner) : FrameworkElementAutomationPeer(owner), IValueProvider
+    {
+        public bool IsReadOnly => true;
+        public string Value => ((Sizer)Owner).Spoken?.Invoke() ?? "";
+        public void SetValue(string value) => throw new InvalidOperationException("The arrow keys resize it.");
+
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Thumb;
+        protected override string GetClassNameCore() => nameof(Sizer);
+        protected override object GetPatternCore(PatternInterface patternInterface) =>
+            patternInterface == PatternInterface.Value ? this : base.GetPatternCore(patternInterface);
+    }
 }

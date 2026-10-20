@@ -90,6 +90,9 @@ public sealed partial class WorkspacePage : Page
         SplitSizer.Released += () => Prefs.SplitRatio = ratio;
         IssuesSizer.Delta += d => IssuesRow.Height = new(Math.Clamp(IssuesRow.Height.Value - d, 120, Math.Max(ActualHeight / 2, 120)));
         IssuesSizer.Released += () => Prefs.IssuesHeight = IssuesRow.Height.Value;
+        PaneSizer.Spoken = () => $"{Split.OpenPaneLength:0} pixels";
+        SplitSizer.Spoken = () => $"{ratio:P0}";
+        IssuesSizer.Spoken = () => $"{IssuesRow.Height.Value:0} pixels";
 
         Editor.CaretMoved += () =>
         {
