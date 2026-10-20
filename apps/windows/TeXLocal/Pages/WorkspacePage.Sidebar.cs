@@ -3,6 +3,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
 using TeXLocal.Controls;
 using Windows.ApplicationModel.DataTransfer;
@@ -360,38 +361,46 @@ public sealed partial class WorkspacePage
         if (e.DataView.Contains(StandardDataFormats.StorageItems)) e.AcceptedOperation = DataPackageOperation.Copy;
     }
 
-    /// Files dropped from File Explorer, into the folder they're dropped on; a clash asks as File Explorer does.
+    /// Files dropped from File Explorer, into the folder they're dropped on.
     async void OnDrop(object sender, DragEventArgs e)
     {
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
         var deferral = e.GetDeferral();
         var dropped = await e.DataView.GetStorageItemsAsync();
         deferral.Complete();
-        var dir = TargetDir((e.OriginalSource as FrameworkElement)?.DataContext as NavItem);
-        var paths = dropped.Select(i => i.Path).Where(p => p.Length > 0).ToArray();
-        Run("Can't add these files", async () =>
-        {
-            var imported = await Core.CallAsync<Imported>("import_files", new { id, dir, paths });
-            if (imported.Existing.Length > 0)
-            {
-                var conflict = await App.Show(new ContentDialog
-                {
-                    Title = "Replace existing files?",
-                    Content = string.Join("\n", imported.Existing.Select(c => c.Path)),
-                    PrimaryButtonText = "Replace",
-                    SecondaryButtonText = "Keep both",
-                    CloseButtonText = "Cancel",
-                    DefaultButton = ContentDialogButton.Secondary,
-                }) switch
-                {
-                    ContentDialogResult.Primary => "replace",
-                    ContentDialogResult.Secondary => "keepBoth",
-                    _ => null,
-                };
-                if (conflict is null) return;
-                await Core.CallAsync("import_files", new { id, dir, paths, conflict });
-            }
-            await RefreshTree();
-        });
+        AddFiles(TargetDir((e.OriginalSource as FrameworkElement)?.DataContext as NavItem), [.. dropped.Select(i => i.Path).Where(p => p.Length > 0)]);
     }
+
+    /// Beside the selection, as New file.
+    async void OnAddFiles(object sender, RoutedEventArgs e)
+    {
+        var picked = await new FileOpenPicker(App.Window.AppWindow.Id).PickMultipleFilesAsync();
+        if (picked.Count > 0) AddFiles(TargetDir(FilesTree.SelectedItem as NavItem), [.. picked.Select(f => f.Path)]);
+    }
+
+    /// Copies of other files into a folder of the project; a clash asks as File Explorer does.
+    void AddFiles(string dir, string[] paths) => Run("Can't add these files", async () =>
+    {
+        var imported = await Core.CallAsync<Imported>("import_files", new { id, dir, paths });
+        if (imported.Existing.Length > 0)
+        {
+            var conflict = await App.Show(new ContentDialog
+            {
+                Title = "Replace existing files?",
+                Content = string.Join("\n", imported.Existing.Select(c => c.Path)),
+                PrimaryButtonText = "Replace",
+                SecondaryButtonText = "Keep both",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Secondary,
+            }) switch
+            {
+                ContentDialogResult.Primary => "replace",
+                ContentDialogResult.Secondary => "keepBoth",
+                _ => null,
+            };
+            if (conflict is null) return;
+            await Core.CallAsync("import_files", new { id, dir, paths, conflict });
+        }
+        await RefreshTree();
+    });
 }

@@ -91,6 +91,7 @@
                 <MenuBarItem AccessKey="F" Title="File">
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+N" AccessKey="N" Click="OnNewFile" Text="New file" />
                     <MenuFlyoutItem AccessKey="F" Click="OnNewFolder" Text="New folder" />
+                    <MenuFlyoutItem AccessKey="A" Click="OnAddFiles" Text="Add files…" />
                     <MenuFlyoutSeparator />
                     <MenuFlyoutSubItem AccessKey="O" Text="Open">
                         <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+O" AccessKey="F" Click="{x:Bind app:App.Window.OpenFolder}" Text="Folder…" />
@@ -364,6 +365,9 @@
                                 </MenuFlyoutItem>
                                 <MenuFlyoutItem Click="OnNewFolder" Text="New folder">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8F4;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Click="OnAddFiles" Text="Add files…">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                                 <MenuFlyoutSeparator />
                                 <MenuFlyoutItem x:Name="MainItem" Click="OnSetMain" Text="Set as main file">
