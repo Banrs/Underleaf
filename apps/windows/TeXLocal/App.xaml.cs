@@ -35,11 +35,11 @@ public partial class App : Application
         return Core is not null;
     }
 
-    public static void ExitSmoke(int code, string? why = null)
+    public static void ExitSmoke(string? error)
     {
-        if (why is not null) Console.Error.WriteLine(why);
+        if (error is not null) Console.Error.WriteLine(error);
         Core?.Dispose();
-        Environment.Exit(code);
+        Environment.Exit(error is null ? 0 : 1);
     }
 
     /// Opens a folder in File Explorer, or with `select` its parent with the item selected.

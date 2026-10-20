@@ -500,8 +500,7 @@ public sealed partial class WorkspacePage : Page
     /// The layers keep 8 from the window's edge; beside an open inline pane, its splitter is that gap.
     void ShowEdge() => Body.Margin = new(Inline && Split.IsPaneOpen ? 0 : 8, 0, 8, 0);
 
-    /// The pane is first laid out still off-screen, where it slides in from, so the tabs' repeater has realized only
-    /// the first; measured again once the pane is in place, it realizes the rest.
+    /// Laid out off-screen as the pane slides in, the tabs' repeater realizes only the first until measured again.
     static void Remeasure(DependencyObject element)
     {
         if (element is ItemsRepeater repeater) repeater.InvalidateMeasure();

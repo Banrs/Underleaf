@@ -73,7 +73,7 @@ public sealed partial class HomePage : Page
         LibraryError.Message = error ?? "";
         LibraryError.IsOpen = error is not null;
         if (error is null) Show(projects);
-        if (App.Smoke) App.ExitSmoke(error is null ? 0 : 1, error);
+        if (App.Smoke) App.ExitSmoke(error);
     }
 
     void Show(ProjectInfo[] projects)
