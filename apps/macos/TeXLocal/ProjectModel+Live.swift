@@ -4,6 +4,14 @@ import AppKit
 extension ProjectModel {
     // MARK: - Live preview
 
+    /// The inspector's toggle and the Compile menu's.
+    var livePreview: Bool {
+        get { texpresso.active }
+        set { if newValue { startTeXpresso() } else { stopTeXpresso() } }
+    }
+
+    var canSwitchLivePreview: Bool { app?.canPreviewLive == true && initialLoadComplete && texpresso.phase != .stopping }
+
     func startTeXpresso() {
         guard !closed, let session, texpresso.phase == .stopped else { return }
         texpresso.starting()
@@ -16,7 +24,9 @@ extension ProjectModel {
         guard let session else { return }
         texpresso.stopping()
         Task {
-            if let state = try? await core.call("session_live_stop", ["session": session], as: LiveState.self) { texpresso.stopped(state) }
+            // A preview that had ended already sends no event.
+            if let state = try? await core.call("session_live_stop", ["session": session], as: LiveState.self), state.phase == .stopped,
+               texpresso.phase == .stopping { liveChanged(state) }
         }
         // Its pages go now, not as the stop ends.
         Task { await endLivePDF() }
@@ -43,16 +53,19 @@ extension ProjectModel {
 
     /// A run's PDFs start afresh.
     func liveChanged(_ state: LiveState) {
+        let was = texpresso.phase
         texpresso.receive(state)
+        if state.alert == true { panel.show(.texpresso) }
+        if state.phase == .stopped, was != .stopped { Task { await endLivePDF() } }
         if state.phase != .running { pdf.endLiveRun() }
     }
 
     /// Read where the event arrived, in the session's order; a page is drawn over its own run's document only.
     func showLive(_ read: LiveRead) {
         guard texpresso.active, !closed else { return }
-        if case .document(let live?) = read {
+        if case .document(_?) = read {
             if !livePDF, app?.showPDF == false { app?.showPDF = true }
-            shown = .live(live.url)
+            shown = .live
         }
         pdf.showLive(read)
     }

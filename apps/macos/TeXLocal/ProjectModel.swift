@@ -41,10 +41,10 @@ final class ProjectModel {
     var result: CompileResult?
     @ObservationIgnored var finishedBuilds = 0
     var chosenIssue: Int?
-    nonisolated enum ShownPDF: Equatable { case none, build(URL), live(URL) }
+    nonisolated enum ShownPDF: Equatable { case none, build(URL), live }
     var shown = ShownPDF.none
     var hasPDF: Bool { shown != .none }
-    var livePDF: Bool { if case .live = shown { true } else { false } }
+    var livePDF: Bool { shown == .live }
     var buildPDF: URL?
     let pdf = PDFController()
     let panel = BuildPanelModel()
@@ -84,6 +84,7 @@ final class ProjectModel {
     /// A finished build's PDF is shown before the next build event.
     @ObservationIgnored private var buildLane: Task<Void, Never>?
     @ObservationIgnored private var closing: Task<Void, Never>?
+    @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
     @ObservationIgnored var trashed: [UndoableTrash] = []
     @ObservationIgnored var exportFolder: URL?
     private(set) var closed = false
@@ -93,18 +94,17 @@ final class ProjectModel {
         self.app = app
         search = ProjectSearch(id: id)
         tree = FileTree(id: id)
-        texpresso.watchLog { [panel] in panel.showsLiveLog } tell: { [weak self] shown in
-            guard let self, let session else { return }
-            core.send("session_live_log", ["session": session, "shown": shown])
+        // The session sends the log while the panel shows it.
+        liveLogWatch = track({ [panel] in panel.showsLiveLog }, initial: false) { [weak self] shown in
+            guard let self else { return }
+            if let session { core.send("session_live_log", ["session": session, "shown": shown]) }
+            if !shown { texpresso.logClosed() }
         }
-        texpresso.onAlert = { [weak self] in self?.panel.show(.texpresso) }
-        texpresso.onEnded = { [weak self] in Task { await self?.endLivePDF() } }
         tree.onChange = { [weak self] in
             self?.openKindChanged()
             self?.analyze()
         }
         pdf.onVisiblePages = { [weak self] in self?.liveView($0) }
-        pdf.buildBehindLive = { [weak self] in self.flatMap { $0.livePDF ? $0.buildPDF : nil } }
     }
 
     var isLaTeX: Bool { openKind == .tex }
@@ -128,6 +128,9 @@ final class ProjectModel {
         }
         return nil
     }
+
+    /// One spelling for every failed save, as `AppModel.report` drops an alert whose title is the one showing.
+    func notSavedTitle(_ path: String? = nil) -> String { String(localized: "“\((path ?? openPath ?? id).fileName)” Wasn’t Saved") }
 
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
@@ -280,7 +283,7 @@ final class ProjectModel {
         if !state.held { heldReasons[state.path] = nil }
         // A failed autosave is told once in an alert, as NSDocument's are; Not Saved stays until a save succeeds.
         if let error = state.error, before?.error == nil {
-            let title = String(localized: "“\(state.path.fileName)” Wasn’t Saved")
+            let title = notSavedTitle(state.path)
             if let app, app.alert == nil, !closed { app.alert = AppAlert(title, error) } else { notices.announce(title) }
         }
     }
@@ -346,7 +349,7 @@ final class ProjectModel {
     /// Saved first; false, staying open, if that failed or asks about the disk.
     func closeDocument(_ path: String) async -> Bool {
         guard let session else { return true }
-        return await alerting(String(localized: "“\(path.fileName)” Wasn’t Saved")) {
+        return await alerting(notSavedTitle(path)) {
             try await core.call("session_close_document", ["session": session, "path": path], as: Closed.self).closed
         } ?? false
     }
@@ -384,7 +387,7 @@ final class ProjectModel {
         do {
             return try await core.call("session_save", ["session": session, "reporting": reporting], as: Saved.self).saved
         } catch {
-            if reporting, !closed { app?.report(error, String(localized: "“\((openPath ?? id).fileName)” Wasn’t Saved")) }
+            if reporting, !closed { app?.report(error, notSavedTitle()) }
             return false
         }
     }
@@ -432,7 +435,7 @@ final class ProjectModel {
         if answer == "close", openPath == path { clearOpenFile() }
         guard let session else { return }
         Task {
-            await alerting(String(localized: "“\(path.fileName)” Wasn’t Saved")) {
+            await alerting(notSavedTitle(path)) {
                 try await core.call("session_resolve", ["session": session, "path": path, "answer": answer])
             }
         }
@@ -456,6 +459,7 @@ final class ProjectModel {
         tree.close()
         syncTask?.cancel()
         pdfLoad?.cancel()
+        liveLogWatch?.cancel()
         if let session {
             core.forget(session)
             closing = Task { [uiStateWrites] in

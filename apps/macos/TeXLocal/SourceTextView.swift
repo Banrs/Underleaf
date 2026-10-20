@@ -367,6 +367,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         apply(answer.edits, named: step > 0 ? String(localized: "Indent") : String(localized: "Outdent"))
     }
 
+    /// Shift Right and Shift Left: the lines, even from within a snippet's field, which Tab would leave for the next.
+    func shiftLines(_ step: Int) {
+        guard isEditable else { return }
+        _ = document.endSnippet()
+        tab(step)
+    }
+
     override func toggleContinuousSpellChecking(_ sender: Any?) {
         super.toggleContinuousSpellChecking(sender)
         EditorPrefs.spellCheck = isContinuousSpellCheckingEnabled
