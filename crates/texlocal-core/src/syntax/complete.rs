@@ -1,13 +1,18 @@
 //! Completion: an argument's labels, citations, environments or files, a bibliography entry's type, or a command;
 //! environments and commands the project's own first.
 //! Commands are snippets, expanded here, so an editor only places the text and its fields.
+//! And definitions: where the project defines the name at a place.
 
-use std::sync::LazyLock;
+use std::collections::BTreeMap;
+use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
-use super::{SourceDocument, Text, catalog, indentation, utf16};
+use super::{SourceDocument, Text, catalog, escaped, indentation, is, letter, utf16};
+use crate::analyze::{Defined, Facts, Named, Place};
+use crate::paths;
 use crate::projects::file_kind;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,9 +29,10 @@ pub struct Completion {
     pub fields: Vec<SnippetField>,
 }
 
+/// What completion offers, and what a definition is of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum CompletionKind {
+pub enum SymbolKind {
     Command,
     Environment,
     Label,
@@ -35,8 +41,9 @@ pub enum CompletionKind {
     File,
 }
 
-/// What the project defines that completion offers, one the session's documents share.
-#[derive(Debug, Default, PartialEq, Eq)]
+/// What the project defines, one the session's documents share: the first of each name for
+/// completion, and each file's facts for definitions.
+#[derive(Default)]
 pub struct Symbols {
     pub citations: Vec<String>,
     pub labels: Vec<String>,
@@ -44,19 +51,14 @@ pub struct Symbols {
     pub environments: Vec<String>,
     /// The project's, from its folder, to complete a file's name.
     pub files: Vec<String>,
-}
-
-/// A command the project defines, with the arguments it takes in braces.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Defined {
-    pub name: String,
-    pub arguments: usize,
+    /// Each .tex and .bib file's, by its name.
+    pub by_file: BTreeMap<String, Arc<Facts>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Completions {
     pub start: u32,
-    pub kind: CompletionKind,
+    pub kind: SymbolKind,
     pub items: Vec<Completion>,
 }
 
@@ -78,7 +80,7 @@ impl SourceDocument {
         let from = text.lines[line].max(caret.saturating_sub(250));
         let before = String::from_utf16_lossy(&text.units[from as usize..caret as usize]);
         let catalog = &*catalog::CATALOG;
-        let offer = |start: usize, kind: CompletionKind, items: Vec<Completion>| {
+        let offer = |start: usize, kind: SymbolKind, items: Vec<Completion>| {
             (!items.is_empty()).then(|| Completions {
                 start: from + utf16(&before[..start]) as u32,
                 kind,
@@ -90,16 +92,14 @@ impl SourceDocument {
             let listed: Vec<String>;
             let (names, kind): (&[String], _) = match &c[1] {
                 c if catalog.cite_commands.contains(c) => {
-                    (&self.symbols.citations, CompletionKind::Citation)
+                    (&self.symbols.citations, SymbolKind::Citation)
                 }
-                c if catalog.ref_commands.contains(c) => {
-                    (&self.symbols.labels, CompletionKind::Label)
-                }
+                c if catalog.ref_commands.contains(c) => (&self.symbols.labels, SymbolKind::Label),
                 "begin" | "end" => {
                     let own = &self.symbols.environments;
                     let others = catalog.environments.iter().filter(|e| !own.contains(e));
                     listed = own.iter().chain(others).cloned().collect();
-                    (&listed, CompletionKind::Environment)
+                    (&listed, SymbolKind::Environment)
                 }
                 command => {
                     // \input's and \bibliography's names go without their extension, as LaTeX
@@ -121,7 +121,7 @@ impl SourceDocument {
                             _ => file.clone(),
                         })
                         .collect();
-                    (&listed, CompletionKind::File)
+                    (&listed, SymbolKind::File)
                 }
             };
             let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
@@ -134,7 +134,7 @@ impl SourceDocument {
         if let Some(at) = ENTRY_TYPE.captures(&before).filter(|_| whole_line) {
             let at = at.get(1).unwrap();
             let names = matching(&catalog.bib_entry_types, &at.as_str()[1..], |t| t);
-            return offer(at.start(), CompletionKind::EntryType, words(names, "@"));
+            return offer(at.start(), SymbolKind::EntryType, words(names, "@"));
         }
         let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
         let complete = |name: &String, snippet: &str| {
@@ -158,9 +158,99 @@ impl SourceDocument {
         let others = matching(&catalog.commands, m.as_str(), |c| &c.0).into_iter();
         let others = others.filter(|(name, _)| !own.iter().any(|c| c.name == *name));
         items.extend(others.map(|(name, snippet)| complete(name, snippet)));
-        offer(m.start(), CompletionKind::Command, items)
+        offer(m.start(), SymbolKind::Command, items)
+    }
+
+    /// The name at `at` and where the project defines it: a label, citation, environment or
+    /// command, from the last scan and this document as it is now, or the file an input or a
+    /// graphic names, from its start. None where no name is, or nothing defines it.
+    pub fn definition(&self, at: u32) -> Option<Value> {
+        let (text, at) = (&self.text, at.min(self.text.len()));
+        let own = Facts::read(&self.text(), file_kind(&self.path));
+        let line = text.line_index(at);
+        let column = at - text.lines[line];
+        let holds = |place: &Place| {
+            place.line as usize == line + 1
+                && (place.column..=place.column + place.length).contains(&column)
+        };
+        let found = |rel: &str| {
+            let rel = paths::fold_case(&paths::rel_key(rel).ok()?);
+            let mut files = self.symbols.files.iter();
+            files.find(|file| paths::fold_case(file) == rel).cloned()
+        };
+        let start = |file: Option<String>| -> Vec<Value> {
+            let start = |file| json!({ "file": file, "line": 1, "column": 0, "length": 0 });
+            file.map(start).into_iter().collect()
+        };
+        let (kind, name, places) =
+            if let Some(input) = own.inputs.iter().find(|input| holds(&input.place)) {
+                let parent = self.path.rsplit_once('/').map_or("", |(parent, _)| parent);
+                // The folder an \import gave this file isn't known here: the main file's is the
+                // likeliest, then the file's own.
+                let file = input.resolve(&self.path, "", found);
+                let file = file.or_else(|| input.resolve(&self.path, parent, found));
+                let places = start(file.map(|(file, _)| file));
+                (SymbolKind::File, input.name.clone(), places)
+            } else if let Some(used) = own.uses.iter().find(|used| holds(&used.place)) {
+                let name = &used.name;
+                let places = match used.kind {
+                    SymbolKind::File => {
+                        let graphic = GRAPHICS.iter().find_map(|ext| found(&(name.clone() + ext)));
+                        start(graphic)
+                    }
+                    kind => self.defined(&own, kind, name),
+                };
+                (used.kind, name.clone(), places)
+            } else {
+                let units = &text.units;
+                let at = at as usize;
+                // The backslash is the command's too.
+                let at = at + usize::from(units.get(at).is_some_and(|&u| is(u, '\\')));
+                let start = at - units[..at].iter().rev().take_while(|&&u| letter(u)).count();
+                let end = at + units[at..].iter().take_while(|&&u| letter(u)).count();
+                let slash = start.checked_sub(1).filter(|&slash| {
+                    start < end && is(units[slash], '\\') && !escaped(units, slash)
+                })?;
+                let name = String::from_utf16_lossy(&units[slash..end]);
+                let places = self.defined(&own, SymbolKind::Command, &name);
+                (SymbolKind::Command, name, places)
+            };
+        (!places.is_empty()).then(|| json!({ "kind": kind, "name": name, "places": places }))
+    }
+
+    /// Where each file defines `name` as a `kind`, the files in the order of their names, this
+    /// one as it is now, `own`.
+    fn defined(&self, own: &Facts, kind: SymbolKind, name: &str) -> Vec<Value> {
+        let others = self.symbols.by_file.iter();
+        let others = others.filter(|(file, _)| **file != self.path);
+        let mut files: Vec<(&str, &Facts)> =
+            others.map(|(file, facts)| (&**file, &**facts)).collect();
+        files.push((&self.path, own));
+        files.sort_by_key(|&(file, _)| file);
+        let named = |list: &[Named]| -> Vec<Place> {
+            let list = list.iter().filter(|named| named.name == name);
+            list.map(|named| named.place).collect()
+        };
+        let places = files.into_iter().flat_map(|(file, facts)| {
+            let places = match kind {
+                SymbolKind::Label => named(&facts.labels),
+                SymbolKind::Citation => named(&facts.citations),
+                SymbolKind::Environment => named(&facts.environments),
+                _ => {
+                    let commands = facts.commands.iter().filter(|c| c.name == name);
+                    commands.map(|c| c.place).collect()
+                }
+            };
+            places.into_iter().map(move |at| {
+                json!({ "file": file, "line": at.line, "column": at.column, "length": at.length })
+            })
+        });
+        places.collect()
     }
 }
+
+/// A graphic named without its extension is looked for with pdfTeX's, in its order.
+const GRAPHICS: [&str; 6] = ["", ".pdf", ".png", ".jpg", ".jpeg", ".eps"];
 
 fn words(names: Vec<&String>, prefix: &str) -> Vec<Completion> {
     names
@@ -229,7 +319,7 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
 mod tests {
     use std::sync::Arc;
 
-    use super::{Completion, Defined, SnippetField, Symbols};
+    use super::{Completion, Defined, Place, SnippetField, Symbols};
     use crate::syntax::SourceDocument;
 
     fn offered(before: &str, symbols: Symbols) -> Vec<Completion> {
@@ -307,6 +397,11 @@ mod tests {
         let defined = |name: &str, arguments| Defined {
             name: name.into(),
             arguments,
+            place: Place {
+                line: 1,
+                column: 0,
+                length: 0,
+            },
         };
         let symbols = || Symbols {
             commands: vec![defined("\\pair", 2), defined("\\frac", 1)],

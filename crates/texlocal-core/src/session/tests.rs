@@ -1308,6 +1308,25 @@ async fn the_symbol_scan_reads_an_open_document_as_the_editor_has_it() {
     assert_eq!(rig.disk("main.tex"), "Hello");
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_definition_typed_into_an_open_document_is_found_under_its_name_as_it_moves() {
+    let rig = Rig::new(false).await;
+    fs::write(rig.root.join("a.tex"), "").unwrap();
+    let doc = rig.open("a.tex").await;
+    doc.edit(0, 0, "\\label{typed} \\ref{typed}");
+    let defined = |doc: &Document| {
+        let answer = doc.with(|source| source.call("definition", r#"{"at": 20}"#));
+        let answer: Value = serde_json::from_str(&answer.unwrap()).unwrap();
+        answer["places"][0]["file"].clone()
+    };
+    assert_eq!(defined(&doc), "a.tex");
+    let renamed = json!({ "from": "a.tex", "to": "b.tex" });
+    rig.ok("rename", renamed).await;
+    // Other files are as the last scan found them, which may be the old name's.
+    assert!(until(&doc, |symbols| !symbols.by_file.contains_key("a.tex")).await);
+    assert_eq!(defined(&doc), "b.tex");
+}
+
 /// Two files on their way to the Trash at once: the first's end leaves the second held.
 #[tokio::test(start_paused = true)]
 async fn two_trashes_under_way_each_keep_their_file_from_being_saved_again() {

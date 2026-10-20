@@ -198,6 +198,7 @@ editor's thread.
   | `insert_newline` | `selection` | as `type` |
   | `partner` | `at` | the matching bracket's offset, or null |
   | `completions` | `caret`, [`explicit` false] | the offered completions; in a file's argument (`\input`, `\includegraphics`, `\bibliography`) the project's files, of `kind` `file`; the project's own commands and environments come first |
+  | `definition` | `at` | `{kind, name, places: [{file, line, column, length}]}`, or null where no name is or nothing defines it. `kind` `label`, `citation`, `environment` or `command`: the key a `\ref` or `\cite` kin names at `at` (one of a list), a `\begin` or `\end`'s environment, or a command's name, with every place the project defines it (`\label`, `\bibitem` or a .bib entry, `\newenvironment`, `\newcommand`), its files in the order of their paths, this document as it is now and the others as last scanned. `kind` `file`: the file an `\input`, `\include`, `\subfile`, `\import` or `\includegraphics` names, found as TeX finds it, at its start (line 1, column 0, length 0). `line` counts from 1; `column` (from 0) and `length` are UTF-16 units of the line. A host goes to the first place. |
   | `start_snippet` | `fields`, `at` | the first field's range |
   | `end_snippet` | | whether one was open |
   | `tab` | `selections`, [`step` 1] | the next field, or the indent |
@@ -364,3 +365,8 @@ Every change a host follows since commit d6bee12, in the order made.
 - `file_tree` and the `tree` event mark the main file's node `main: true` (other nodes have no
   `main`), and a session sends the tree again when the main file changes. Both hosts may adopt
   it in place of their own marks; nothing breaks meanwhile.
+- `tl_source_call` answers `definition {at}`: the label, citation, environment, command or file
+  named at the offset and the places the project defines it (`{kind, name, places: [{file,
+  line, column, length}]}`, or null), for Jump to Definition. A host opens the first place's
+  `file` at its `line` and selects `length` units from `column`; one that doesn't ask changes
+  nothing.

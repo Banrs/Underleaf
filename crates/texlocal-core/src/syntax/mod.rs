@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 pub use call::call;
 use complete::SnippetField;
-pub use complete::{Defined, Symbols};
+pub use complete::{SymbolKind, Symbols};
 use highlight::{Highlight, HighlightKind};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,7 +110,7 @@ fn line_starts(units: &[u16], at: u32) -> impl Iterator<Item = u32> + '_ {
 }
 
 impl Text {
-    fn new(text: &str) -> Self {
+    pub(crate) fn new(text: &str) -> Self {
         let units: Vec<u16> = text.encode_utf16().collect();
         let lines = std::iter::once(0).chain(line_starts(&units, 0)).collect();
         Self { units, lines }
@@ -169,6 +169,9 @@ pub struct SourceDocument {
     scans: scans::Scans,
     symbols: Arc<Symbols>,
     typing: typing::Typing,
+    /// The project's name for the file, which its own definitions are placed in; none for a
+    /// source of the editor's own.
+    pub(crate) path: String,
 }
 
 impl SourceDocument {
@@ -179,6 +182,14 @@ impl SourceDocument {
             scans: scans::Scans::default(),
             symbols: Arc::default(),
             typing: typing::Typing::default(),
+            path: String::new(),
+        }
+    }
+
+    pub(crate) fn named(text: &str, path: &str) -> Self {
+        Self {
+            path: path.to_owned(),
+            ..Self::new(text)
         }
     }
 

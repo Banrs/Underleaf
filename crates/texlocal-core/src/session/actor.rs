@@ -495,7 +495,8 @@ impl Actor {
         let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(NOT_UTF8))?;
         let id = self.next_doc;
         self.next_doc += 1;
-        let document = Document::new(id, &text, self.tx.clone(), Arc::clone(&self.symbols));
+        let symbols = Arc::clone(&self.symbols);
+        let document = Document::new(id, path, &text, self.tx.clone(), symbols);
         let doc = Doc {
             doc: document.clone(),
             path: path.to_owned(),
@@ -903,9 +904,6 @@ impl Actor {
         if seq != self.symbols_seq {
             return;
         }
-        if **self.symbols.read().unwrap_or_else(PoisonError::into_inner) == symbols {
-            return;
-        }
         *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
     }
 
@@ -963,6 +961,7 @@ impl Actor {
             let new = format!("{to}{}", paths::after_entry(&old, from).expect("within"));
             let mut doc = self.docs.remove(&old).expect("listed");
             doc.path.clone_from(&new);
+            doc.doc.moved(&new);
             doc.shown = Value::Null;
             self.by_id.insert(doc.doc.id(), new.clone());
             {
