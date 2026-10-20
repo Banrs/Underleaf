@@ -5,7 +5,7 @@ enum MenuCommand: CaseIterable {
     case projectNew, projectOpen, projectClose, projectExport, projectSearch
     case fileNew, fileNewFolder, fileUpload, fileSave, pdfSave, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
-    case editGotoLine, jumpToDefinition
+    case editGotoLine, jumpToDefinition, editRename
     case pdfFind, pdfGotoPage
     case viewToggleSidebar, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage, viewTextBigger, viewTextSmaller
@@ -40,6 +40,7 @@ enum MenuCommand: CaseIterable {
         case .editMoveLineDown: ("Move Line Down", KeyboardShortcut(.downArrow, modifiers: [.command, .control]))
         case .editGotoLine: ("Go to Line…", KeyboardShortcut("l"))
         case .jumpToDefinition: ("Jump to Definition", KeyboardShortcut("j", modifiers: [.command, .control]))
+        case .editRename: ("Rename…", nil)
         case .pdfFind: ("Find in PDF…", nil)
         case .pdfGotoPage: ("Go to Page…", KeyboardShortcut("g", modifiers: [.command, .option]))
         case .viewToggleSidebar: ("Sidebar", KeyboardShortcut("s", modifiers: [.command, .control]))
@@ -69,7 +70,7 @@ enum MenuCommand: CaseIterable {
     var editsSelection: Bool {
         switch self {
         case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp,
-             .editMoveLineDown, .jumpToDefinition: true
+             .editMoveLineDown, .jumpToDefinition, .editRename: true
         default: false
         }
     }
@@ -88,7 +89,7 @@ enum MenuCommand: CaseIterable {
 }
 
 enum Prompt: Identifiable, Hashable {
-    case gotoLine, gotoPage
+    case gotoLine, gotoPage, rename(Definition)
 
     var id: Self { self }
 }
@@ -112,6 +113,7 @@ extension AppModel {
              .viewTextBigger, .viewTextSmaller:
             project?.editsText == true
         case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
+        case .editRename: project.map { $0.editsText && $0.editor.renamable != nil } ?? false
         case .compileRun: tex?.available == true && project?.compiling == false
         case .compileStop: project?.compiling == true
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
@@ -181,6 +183,7 @@ extension AppModel {
         case .editMoveLineDown: project?.editor.perform(.moveLineDown)
         case .editGotoLine: prompt = .gotoLine
         case .jumpToDefinition: project?.editor.jumpToDefinition()
+        case .editRename: project?.editor.renameSymbol()
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarShown.toggle()
@@ -256,6 +259,8 @@ struct AppCommands: Commands {
         CommandGroup(after: .pasteboard) {
             Divider()
             items(.editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown)
+            Divider()
+            items(.editRename)
         }
         // A submenu stays available while its items are dim (HIG Menus).
         CommandGroup(replacing: .textFormatting) {

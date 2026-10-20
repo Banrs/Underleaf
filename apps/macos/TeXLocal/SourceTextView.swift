@@ -469,7 +469,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
         // ⌘-click, as Xcode's: asked before the release, so a name nothing defines leaves the click to the text view.
         if event.type == .leftMouseDown, held == .command,
-           let place = document.definition(at: characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))),
+           let place = document.definition(at: characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)))?.places.first,
            release(of: event) != nil {
             return openDefinition(place)
         }

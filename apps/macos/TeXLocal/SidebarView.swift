@@ -19,7 +19,7 @@ struct FilesList: View {
             .task(id: project.search.query) {
                 if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
                 guard !Task.isCancelled else { return }
-                await project.search.run()
+                await project.search.run(in: project.session)
                 // VoiceOver hears the count, as it does the PDF's find count.
                 guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
                 let count = project.search.hitCount
@@ -146,6 +146,7 @@ struct FilesList: View {
             .onChange(of: project.search.query, initial: true) { hit = nil }
             .onChange(of: hit) { _, id in open(id, focus: false) }
             .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
+            .safeAreaBar(edge: .top, spacing: 0) { replaceBar }
             .overlay {
                 if let failure = project.search.failure {
                     ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",
@@ -154,6 +155,18 @@ struct FilesList: View {
                     ContentUnavailableView.search(text: project.search.searched)
                 }
             }
+    }
+
+    /// Under the search field, as Xcode's Find navigator in Replace mode, at the inset and spacing the field's accessory has
+    /// (measured, 27.2).
+    private var replaceBar: some View {
+        HStack {
+            SearchField(text: Bindable(project.search).replacement, prompt: "Replace With", symbol: "arrow.2.squarepath")
+            Button("Replace All") { Task { await project.replaceAll() } }
+                .disabled(project.search.hitCount == 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 9)
     }
 
     private func open(_ id: SearchHit.ID?, focus: Bool) {

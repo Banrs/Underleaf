@@ -499,15 +499,30 @@ final class ProjectFlowTests {
     @Test func aSearchShowsWhatItSearchedAndABlankOneClears() async throws {
         let project = try await opened("a needle").project
         project.search.query = "needle"
-        await project.search.run()
+        await project.search.run(in: project.session)
         #expect(project.search.groups?.first?.hits.first?.column == 2)
         project.search.query = "needles"
         #expect(project.search.searched == "needle")
-        await project.search.run()
+        await project.search.run(in: project.session)
         #expect(project.search.groups?.isEmpty == true && project.search.searched == "needles")
         project.search.query = " "
-        await project.search.run()
+        await project.search.run(in: project.session)
         #expect(project.search.groups == nil && project.search.hitCount == 0)
+        await app.close()
+    }
+
+    /// The open document's match is an unsaved edit, which the session finds and replaces as the editor has it.
+    @Test func replaceAllReplacesInTheOpenDocumentAndOnDisk() async throws {
+        let (project, folder) = try await opened("a", with: ["b.tex": "needle b"])
+        let text = project.editor.textView
+        text.apply([TextEdit(.caret(1), " needle")], named: "Typing")
+        project.search.query = "needle"
+        await project.search.run(in: project.session)
+        project.search.replacement = "pin"
+        await project.replaceAll()
+        #expect(text.string == "a pin" && text.undoManager?.undoActionName == "Replace")
+        #expect(try String(contentsOf: folder.appending(path: "b.tex"), encoding: .utf8) == "pin b")
+        #expect(project.search.groups?.isEmpty == true && app.alert == nil)
         await app.close()
     }
 
