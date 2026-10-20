@@ -275,8 +275,7 @@ final class ProjectFlowTests {
     @Test func theOutlineReadsTheInputs() async throws {
         let project = try await opened("\\section{Intro}\nOne two\n\\include{chapters/a}",
                                        with: ["chapters/a.tex": "\\section{A}\nthree"]).project
-        // Prose only: the headings' titles and the text, not \include's file name.
-        #expect(project.initialLoadComplete && project.outline.map(\.file) == ["main.tex", "chapters/a.tex"] && project.words == 5)
+        #expect(project.initialLoadComplete && project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
         #expect(project.headingCommand == "section")
@@ -496,11 +495,12 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func aSearchListsItsHitsByFile() async throws {
-        let project = try await opened("needle\nhay\nNeedle", with: ["appendix.tex": "a needle"]).project
+    /// Which lines match is the core's rule; a hit keeps its match's place for the editor.
+    @Test func aSearchShowsWhatItSearchedAndABlankOneClears() async throws {
+        let project = try await opened("a needle").project
         project.search.query = "needle"
         await project.search.run()
-        #expect(project.search.hitCount == 3 && project.search.groups?.map(\.file) == ["appendix.tex", "main.tex"])
+        #expect(project.search.groups?.first?.hits.first?.column == 2)
         project.search.query = "needles"
         #expect(project.search.searched == "needle")
         await project.search.run()

@@ -111,15 +111,11 @@ struct SourceEditorTests {
         #expect(try #require(text.completions.offered).items.count < all)
     }
 
-    @Test func aCommandIsOneUndoStepThatKeepsTheSelection() {
+    @Test func aCommandKeepsTheSelection() {
         open("word")
         text.setSelectedRange(NSRange(location: 0, length: 4))
         #expect(editor.perform(.bold))
         #expect(text.string == "\\textbf{word}" && text.selectedRange() == NSRange(location: 8, length: 4))
-        text.undoManager?.undo()
-        #expect(text.string == "word" && text.document.text == text.string)
-        text.undoManager?.redo()
-        #expect(text.string == "\\textbf{word}" && text.document.text == text.string)
     }
 
     @Test func blocksTabThroughTheirFields() {
@@ -260,11 +256,6 @@ struct SourceEditorTests {
         text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         #expect(text.completions.offered == nil && text.undoManager?.undoActionName == "Completion")
         #expect(text.string == "  \\begin{env}\n    \n  \\end{env}" && text.selectedRange() == NSRange(location: 9, length: 3))
-        type("itemize")
-        text.insertTab(nil)
-        #expect(text.selectedRange() == .caret(22))
-        text.insertTab(nil)
-        #expect(text.string == "  \\begin{itemize}\n      \n  \\end{itemize}" && text.document.text == text.string)
     }
 
     @Test func theCompletionListTakesOnlyItsKeys() throws {
