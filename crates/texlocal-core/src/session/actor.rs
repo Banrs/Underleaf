@@ -18,14 +18,14 @@ use super::build::Builds;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
-use crate::analyze::{self, Place};
+use crate::analyze::{self, Facts, Named, Place};
 use crate::events::Emitter;
 use crate::paths::{self, within};
 use crate::projects::{self, Newline, Query, Symbols, file_kind};
 use crate::service::{SEARCH_LIMIT, Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
-use crate::syntax::Text;
+use crate::syntax::{SymbolKind, Text};
 use crate::{CoreError, lf, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
@@ -427,6 +427,7 @@ impl Actor {
                 return self.rename(&from, string_arg(args, "to")?);
             }
             "replace" => return self.replace(args),
+            "rename_symbol" => return self.rename_symbol(args),
             "set_settings" => return self.set_settings(&arg(args, "patch")?),
             "prepare_delete" => return self.prepare_delete(&path()?),
             "deleted" => {
@@ -958,6 +959,53 @@ impl Actor {
         self.edit_project(&open, &chosen, &|_, text| query.places(text), to)
     }
 
+    /// A label's or citation's definitions and every `\ref` or `\cite` kin's key that names it,
+    /// one key of a list alone.
+    fn rename_symbol(&self, args: &Value) -> Result<Value, CoreError> {
+        let (kind, noun) = match string_arg(args, "kind")? {
+            "label" => (SymbolKind::Label, "label"),
+            "citation" => (SymbolKind::Citation, "citation"),
+            _ => {
+                return Err(CoreError::bad_request(
+                    "Only a label or a citation is renamed",
+                ));
+            }
+        };
+        let (from, to) = (string_arg(args, "from")?, string_arg(args, "to")?);
+        if to.is_empty() || to.contains(|c: char| "{}%\\,".contains(c) || c.is_whitespace()) {
+            return Err(CoreError::bad_request(format!(
+                "A {noun} can't be empty or have spaces, commas, braces, % or \\ in it."
+            )));
+        }
+        let open = self.texts_to_edit("renamed")?;
+        let symbols = projects::scan_symbols(
+            &self.root,
+            &self.facts,
+            &open
+                .iter()
+                .map(|(path, text, _)| (path.clone(), text.clone()))
+                .collect(),
+        )?;
+        let defines = |name: &str| {
+            let mut files = symbols.by_file.values();
+            files.any(|facts| definitions(facts, kind).iter().any(|n| n.name == name))
+        };
+        if !defines(from) {
+            return Err(CoreError::not_found(format!(
+                "No {noun} “{from}” is defined."
+            )));
+        }
+        if defines(to) {
+            return Err(CoreError::conflict(format!(
+                "A {noun} “{to}” exists already."
+            )));
+        }
+        let tex = |rel: &str| matches!(file_kind(rel), "tex" | "bib");
+        let found =
+            |rel: &str, text: &str| places_of(&Facts::read(text, file_kind(rel)), kind, from);
+        self.edit_project(&open, &tex, &found, to)
+    }
+
     /// The open documents' paths, text and versions, unless one has a change on disk still to
     /// settle, when nothing is edited, as nothing is saved.
     fn texts_to_edit(&self, done: &str) -> Result<Vec<(String, String, u64)>, CoreError> {
@@ -1099,6 +1147,30 @@ impl Actor {
         self.deleting.insert(path.to_owned());
         Ok(json!({ "ready": true }))
     }
+}
+
+/// What `facts` defines as a label, or as a citation (a `\bibitem` or a .bib entry's key).
+fn definitions(facts: &Facts, kind: SymbolKind) -> &[Named] {
+    if kind == SymbolKind::Label {
+        &facts.labels
+    } else {
+        &facts.citations
+    }
+}
+
+/// Where `facts` defines `name` as a `kind`, and where a `\ref` or `\cite` kin names it, in order.
+fn places_of(facts: &Facts, kind: SymbolKind, name: &str) -> Vec<Place> {
+    let defined = definitions(facts, kind).iter().filter(|n| n.name == name);
+    let used = facts
+        .uses
+        .iter()
+        .filter(|u| u.kind == kind && u.name == name);
+    let mut places: Vec<Place> = defined
+        .map(|n| n.place)
+        .chain(used.map(|u| u.place))
+        .collect();
+    places.sort_by_key(|place| (place.line, place.column));
+    places
 }
 
 fn query(args: &Value) -> Result<Query, CoreError> {

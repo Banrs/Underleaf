@@ -1351,13 +1351,50 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
     assert_eq!(rig.disk("notes.txt"), "cat");
 }
 
+/// A citation's .bib entry and the key of a list that names it; refused for a key TeX
+/// couldn't read, one nothing defines and one taken.
 #[tokio::test(start_paused = true)]
-async fn nothing_is_replaced_while_a_change_on_disk_is_unsettled() {
+async fn a_rename_answers_the_open_documents_edits_and_writes_the_rest_keeping_their_line_ends() {
+    let rig = Rig::new(false).await;
+    let bib = "@book{knuth,\r\n  title = {The {TeX}book},\r\n}\r\n@misc{lamport,}\r\n";
+    fs::write(rig.root.join("refs.bib"), bib).unwrap();
+    let doc = rig.open("main.tex").await;
+    doc.edit(5, 0, "\\cite{x, knuth}");
+    let rename = |from: &str, to: &str| {
+        let args = json!({ "kind": "citation", "from": from, "to": to });
+        rig.call("rename_symbol", args)
+    };
+    let refusals = [
+        ("knuth", "knuth 84", 400),
+        ("nobody", "x", 404),
+        ("knuth", "lamport", 409),
+    ];
+    for (from, to, status) in refusals {
+        assert_eq!(rename(from, to).await.unwrap_err().status, status, "{to}");
+    }
+    let renamed = rename("knuth", "knuth84").await.unwrap();
+    let edit = json!({ "start": 14, "length": 5, "text": "knuth84" });
+    assert_eq!(
+        renamed,
+        json!({
+            "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
+            "written": [{ "file": "refs.bib", "count": 1 }],
+        })
+    );
+    assert_eq!(rig.disk("refs.bib"), bib.replace("knuth,", "knuth84,"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn nothing_is_renamed_or_replaced_while_a_change_on_disk_is_unsettled() {
     let rig = Rig::new(false).await;
     in_conflict(&rig).await;
+    let rename = json!({ "kind": "label", "from": "a", "to": "b" });
     let replace = json!({ "query": "Hello", "replacement": "Bye" });
-    let refused = rig.call("replace", replace).await.unwrap_err();
-    assert!(refused.status == 409 && refused.message.contains("changed on disk"));
+    for (command, args) in [("rename_symbol", rename), ("replace", replace)] {
+        let refused = rig.call(command, args).await.unwrap_err();
+        let unsettled = refused.status == 409 && refused.message.contains("changed on disk");
+        assert!(unsettled, "{command}");
+    }
 }
 
 /// Two files on their way to the Trash at once: the first's end leaves the second held.
