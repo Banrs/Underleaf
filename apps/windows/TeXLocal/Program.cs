@@ -17,6 +17,7 @@ public static partial class Program
         var first = AppInstance.FindOrRegisterForKey(Core.DefaultDataDir.ToLowerInvariant());
         if (first.IsCurrent)
         {
+            first.Activated += App.Arrived;
             Application.Start(_ =>
             {
                 SynchronizationContext.SetSynchronizationContext(new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));

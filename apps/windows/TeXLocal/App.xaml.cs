@@ -13,6 +13,7 @@ public partial class App : Application
     public static Core? Core { get; private set; }
     public static MainWindow Window { get; private set; } = null!;
     public static readonly bool Smoke = Environment.GetCommandLineArgs().Contains("--smoke");
+    static readonly TaskCompletionSource<MainWindow> shown = new();
 
     internal static string? CoreError { get; private set; }
 
@@ -70,17 +71,21 @@ public partial class App : Application
         return Show(new ContentDialog { Title = title, Content = message, CloseButtonText = "OK", DefaultButton = ContentDialogButton.Close });
     }
 
+    /// A later launch handed over by Program.Main, heard on a pool thread from before the window is made: AppInstance
+    /// drops one that arrives with no handler, as Explorer's several files opened at once would.
+    internal static async void Arrived(object? sender, AppActivationArguments e)
+    {
+        var words = Program.Arguments(e);
+        var window = await shown.Task;
+        window.DispatcherQueue.TryEnqueue(() => window.Arrive(words));
+    }
+
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
         OpenCore();
         Window = new MainWindow();
         Window.Activate();
-        // A later launch, handed over by Program.Main.
-        AppInstance.GetCurrent().Activated += (_, e) =>
-        {
-            var words = Program.Arguments(e);
-            Window.DispatcherQueue.TryEnqueue(() => Window.Arrive(words));
-        };
+        shown.SetResult(Window);
         _ = Window.Import(Program.Arguments(AppInstance.GetCurrent().GetActivatedEventArgs()));
         if (!Smoke) return;
         // A new blank project, opened: the workspace ends the run once its session is open.
