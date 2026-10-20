@@ -8,6 +8,8 @@ mkdir -p $S/qa $S/logs $S/locks
 xcrun swiftc -O -o $S/qa/qa $T/qa.swift
 clang -dynamiclib -framework Cocoa -o $S/qa/appearance.dylib $T/appearance.m
 for n in locked cgwin post; do xcrun swiftc -O -o $S/qa/$n $T/$n.swift; done
-rsync -a --delete $T/library-seed/ $S/qa-library-seed/
+rsync -a --delete --exclude='*.gz' $T/library-seed/ $S/qa-library-seed/
+# Stored compressed: its text came from an unrecorded random generator, so it can't be regenerated.
+L="Test Long (400 pages)/main.tex"; gunzip -c "$T/library-seed/$L.gz" > "$S/qa-library-seed/$L"
 rsync -a --delete $S/qa-library-seed/ $S/qa-library/
 echo "ready: export QA_SCRATCH=$S"
