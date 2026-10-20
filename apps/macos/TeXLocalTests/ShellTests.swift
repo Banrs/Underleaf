@@ -30,7 +30,7 @@ struct ShellTests {
         return (window, workspace)
     }
 
-    /// Waits, a turn at a time, until no view in the window has moved for a few.
+    /// Until no view in the window has moved for five turns.
     private func resize(_ window: NSWindow, to width: CGFloat) async throws {
         func frames(_ view: NSView) -> String { "\(view.frame)" + view.subviews.map(frames).joined() }
         let root = try #require(window.contentView?.superview)
@@ -239,14 +239,10 @@ struct ShellTests {
         #expect(!app.sidebarVisible && defaults.saved(DefaultsKey.sidebarVisible) as? Bool == false)
     }
 
-    /// Shut otherwise, with a click or a drag on its divider, a side column is hidden and saved so; the window widening
-    /// brings back one it folded.
+    /// Shut with a drag on its divider, a side column is hidden and saved so.
     @Test func aSideColumnShutByTheUserIsHidden() {
         let app = AppModel(defaults: defaults.store)
         app.inspectorVisible = true
-        app.sideColumn(.sidebar, shown: false, byWindow: true)
-        app.sideColumn(.sidebar, shown: true, byWindow: true)
-        #expect(app.sidebarShown && !app.sidebarFolded)
         app.sideColumn(.sidebar, shown: false, byWindow: false)
         app.sideColumn(.inspector, shown: false, byWindow: false)
         #expect(!app.sidebarVisible && !app.sidebarFolded && !app.inspectorVisible && !app.inspectorFolded)

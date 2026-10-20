@@ -175,13 +175,11 @@ final class AppModel {
     /// Shut by the window, for want of room, a column stays shown, unsaved, and comes back as the window widens; shut by
     /// the user, with its toggle or on its divider, it is hidden, and saved so.
     func sideColumn(_ column: SideColumn, shown: Bool, byWindow: Bool) {
-        let (visible, folded): (ReferenceWritableKeyPath<AppModel, Bool>, ReferenceWritableKeyPath<AppModel, Bool>) =
-            column == .sidebar ? (\.sidebarVisible, \.sidebarFolded) : (\.inspectorVisible, \.inspectorFolded)
-        if shown || !byWindow {
-            if self[keyPath: folded] { self[keyPath: folded] = false }
-            if self[keyPath: visible] != shown { self[keyPath: visible] = shown }
-        } else if self[keyPath: visible], !self[keyPath: folded] {
-            self[keyPath: folded] = true
+        switch (column, shown || !byWindow) {
+        case (.sidebar, true): sidebarShown = shown
+        case (.sidebar, false): sidebarFolded = sidebarVisible
+        case (.inspector, true): inspectorShown = shown
+        case (.inspector, false): inspectorFolded = inspectorVisible
         }
     }
 
