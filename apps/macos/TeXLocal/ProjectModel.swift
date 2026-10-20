@@ -455,8 +455,10 @@ final class ProjectModel {
     @discardableResult
     private func editProject(_ command: String, _ args: [String: any Sendable], named name: String) async throws -> ProjectEdits {
         let answer = try await core.call(command, args, as: ProjectEdits.self)
-        // A file shown since has text of its own.
-        if let edits = answer.edits, edits.path == editor.path { editor.textView.apply(edits.edits, named: name) }
+        // A file shown since has text of its own, as one typed in since does.
+        if let edits = answer.edits, edits.path == editor.path, edits.version == editor.textView.document.version {
+            editor.textView.apply(edits.edits, named: name)
+        }
         return answer
     }
 
@@ -560,6 +562,7 @@ private nonisolated struct DropText: Decodable { let insert: String? }
 private nonisolated struct ProjectEdits: Decodable {
     nonisolated struct Document: Decodable {
         var path: String
+        var version: Int
         var edits: [TextEdit]
     }
 

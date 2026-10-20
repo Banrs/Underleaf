@@ -99,7 +99,7 @@ impl Document {
         (held.source.text(), held.version)
     }
 
-    pub(crate) fn version(&self) -> u64 {
+    pub fn version(&self) -> u64 {
         lock(&self.0.text).version
     }
 }

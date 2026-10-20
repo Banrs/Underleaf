@@ -296,6 +296,30 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
     unsafe { tl_close(handle) };
 }
 
+/// So a host can tell whether a replace's edits still fit the text: typed in since, they don't.
+#[test]
+fn a_session_documents_source_answers_the_version_a_replace_is_made_against() {
+    let dir = tempfile::tempdir().unwrap();
+    let handle = open_with_project(dir.path());
+    let session = open_main(handle);
+    unsafe {
+        let source = session_source(handle, session, "main.tex");
+        edit(source, 0, 0, b"% zebra\n");
+        let args = json!({ "session": session, "query": "zebra", "replacement": "okapi" });
+        let replaced = call(handle, "session_replace", args);
+        let version = source_call(source, "version", json!({}));
+        assert_eq!(version.as_ref(), Some(&replaced["ok"]["edits"]["version"]));
+        edit(source, 0, 0, b"x");
+        assert_ne!(source_call(source, "version", json!({})), version);
+        tl_source_free(source);
+
+        let own = tl_source_new(ptr::null(), 0);
+        assert_eq!(source_call(own, "version", json!({})), None);
+        tl_source_free(own);
+        tl_close(handle);
+    }
+}
+
 #[test]
 fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
     let dir = tempfile::tempdir().unwrap();
