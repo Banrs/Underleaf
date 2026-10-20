@@ -69,7 +69,7 @@ public sealed record SnippetField(int Start, int Length, int Index);
 
 public sealed record Completion(string Label, string Text, SnippetField[] Fields);
 
-/// <param name="Kind">command, environment, label, citation or entryType.</param>
+/// <param name="Kind">command, environment, label, citation, entryType or file (a project file, in \input or \includegraphics).</param>
 public sealed record Completions(int Start, string Kind, Completion[] Items);
 
 public sealed record Insertion(TextEdit Edit, int Caret, SnippetField[] Fields);

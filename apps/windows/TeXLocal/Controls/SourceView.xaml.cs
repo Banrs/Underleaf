@@ -613,6 +613,7 @@ public sealed partial class SourceView : UserControl
             "label" => "\uE8EC",
             "citation" => "\uE8F1",
             "entryType" => "\uE8A5",
+            "file" => "\uE7C3",
             _ => "\uE943",
         };
         CompletionList.ItemsSource = found.Items.Select(i => new CompletionRow(i, s.Start - found.Start, glyph)).ToList();
