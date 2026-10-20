@@ -17,8 +17,8 @@ using VirtualKey = Windows.System.VirtualKey;
 
 namespace TeXLocal.Pages;
 
-/// An issues panel row: a build's error or warning, by its index among the build's issues.
-public sealed record IssueItem(int Index, LogItem Item)
+/// An issues panel row: a build's error or warning, by its index among the build's issues, or a bad box, which is none.
+public sealed record IssueItem(int? Index, LogItem Item)
 {
     public bool IsError => Item.Type == "error";
     public bool IsWarning => !IsError;
@@ -33,7 +33,7 @@ public sealed partial class WorkspacePage : Page
     sealed record Chosen(int Index, LogItem Issue);
 
     static ulong sessions;
-    readonly DispatcherQueueTimer searchTimer, caretTimer;
+    readonly DispatcherQueueTimer searchTimer, caretTimer, scrollTimer;
     readonly HashSet<string> unsaved = [];
     readonly Dictionary<string, IssueLine[]> issueLines = [];
     string id = "", root = "", mainFile = "", issueFilter = "", logFilter = "";
@@ -53,6 +53,7 @@ public sealed partial class WorkspacePage : Page
         NavigationCacheMode = NavigationCacheMode.Required;
         searchTimer = Timer(250, () => _ = RunSearch());
         caretTimer = Timer(150, CaretSettled);
+        scrollTimer = Timer(150, ScrollSettled);
         SetSplit(ratio);
         ShowEdge();
         ShowPage();
@@ -95,10 +96,18 @@ public sealed partial class WorkspacePage : Page
         SplitSizer.Spoken = () => $"{ratio:P0}";
         IssuesSizer.Spoken = () => $"{IssuesRow.Height.Value:0} pixels";
 
+        // A scroll within the caret's wait of a move, either side, is the caret's.
         Editor.CaretMoved += () =>
         {
             ShowCaret();
+            headingLine = Editor.Caret.Line;
+            caretScrolled |= scrollTimer.IsRunning;
             Restart(caretTimer);
+        };
+        Editor.Scrolled += () =>
+        {
+            caretScrolled |= caretTimer.IsRunning;
+            Restart(scrollTimer);
         };
         Editor.Composing += composing =>
         {
@@ -116,6 +125,7 @@ public sealed partial class WorkspacePage : Page
             var index = Array.FindIndex(BuildIssues, i => i.File == Editor.Path && i.Line == line.Line);
             if (index >= 0) GoToIssue("session_choose_issue", new { session, index });
         };
+        Editor.FilesDropped += OnFilesDropped;
         Pdf.ViewMoved += ShowPage;
         Pdf.Inverse += (page, x, y) => Run(null, async () =>
         {
@@ -310,7 +320,7 @@ public sealed partial class WorkspacePage : Page
 
     void CloseEditor()
     {
-        (analysis, caretHeading) = (null, null);
+        (analysis, currentHeading) = (null, null);
         OutlineTree.ItemsSource = null;
         Words.Text = "";
         Editor.Clear();
@@ -356,7 +366,7 @@ public sealed partial class WorkspacePage : Page
     {
         var done = result = ev.Result!;
         (ErrorCount.Text, WarningCount.Text) = ($"{done.Errors.Length}", $"{done.Warnings.Length}");
-        WarningsToggle.IsEnabled = done.Warnings.Length > 0;
+        WarningsToggle.IsEnabled = done.Warnings.Length + done.BadBoxes.Length > 0;
         WarningsLabel.Text = done.Warnings.Length == 1 ? "1 warning" : $"{done.Warnings.Length} warnings";
         ShowLog();
         ShowIssues();
@@ -370,7 +380,13 @@ public sealed partial class WorkspacePage : Page
             IssueList.SelectedIndex = IssueList.Items.Count > 0 ? 0 : -1;
         }
         if (ev.Announce) Announce(BuildState, failed ? $"Build failed, {done.Errors.Length} {(done.Errors.Length == 1 ? "error" : "errors")}" : "Build succeeded", "build");
-        if (done.Pdf is { } pdf && (done.PdfChanged || Pdf.PageCount == 0)) _ = Pdf.Load(pdf);
+        var shown = done.Pdf is { } pdf && (done.PdfChanged || Pdf.PageCount == 0) ? Pdf.Load(pdf) : Task.CompletedTask;
+        // Settings › PDF, as on the Mac: only to a PDF that shows and has the caret's text.
+        if (done.Ok && !ev.Outdated && Prefs.SyncAfterCompile && PdfItem.IsChecked && Editor.Path is not null) Run(null, async () =>
+        {
+            await shown;
+            await SyncToCaret();
+        });
         outdated = ev.Outdated;
         ShowBuild();
     }
@@ -390,9 +406,10 @@ public sealed partial class WorkspacePage : Page
         BuildState.Text = outdated && !compiling && result is not null ? $"{state} · Preview out of date" : state;
     }
 
+    /// The bad boxes after the warnings, as on the Mac; the Warnings toggle hides them too.
     void ShowIssues()
     {
-        IssueList.ItemsSource = BuildIssues.Select((item, i) => new IssueItem(i, item))
+        IssueList.ItemsSource = BuildIssues.Select((item, i) => new IssueItem(i, item)).Concat((result?.BadBoxes ?? []).Select(box => new IssueItem(null, box)))
             .Where(i => (WarningsToggle.IsChecked == true || i.IsError) && (Has(i.Item.Message, issueFilter) || Has(i.Item.File, issueFilter))).ToArray();
         ShowIssueTab();
     }
@@ -454,7 +471,14 @@ public sealed partial class WorkspacePage : Page
         if (chosen.Issue.File is { } file) await Reveal(file, chosen.Issue.Line ?? 1);
     });
 
-    void OnIssueClick(object sender, ItemClickEventArgs e) => GoToIssue("session_choose_issue", new { session, ((IssueItem)e.ClickedItem).Index });
+    /// A bad box isn't one of the session's issues, so its place is opened here.
+    void Choose(IssueItem row)
+    {
+        if (row.Index is { } index) GoToIssue("session_choose_issue", new { session, index });
+        else if (row.Item.File is { } file) _ = Reveal(file, row.Item.Line ?? 1);
+    }
+
+    void OnIssueClick(object sender, ItemClickEventArgs e) => Choose((IssueItem)e.ClickedItem);
     void OnNextIssue(object sender, RoutedEventArgs e) => GoToIssue("session_issue", new { session, next = true });
     void OnPreviousIssue(object sender, RoutedEventArgs e) => GoToIssue("session_issue", new { session, next = false });
     void OnIssueTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowIssueTab();
@@ -491,7 +515,7 @@ public sealed partial class WorkspacePage : Page
 
     void OnIssuePlace(object sender, RoutedEventArgs e)
     {
-        if (IssueList.SelectedItem is IssueItem row) GoToIssue("session_choose_issue", new { session, row.Index });
+        if (IssueList.SelectedItem is IssueItem row) Choose(row);
     }
 
     void OnCopyIssue(object sender, RoutedEventArgs e)
@@ -657,10 +681,15 @@ public sealed partial class WorkspacePage : Page
     /// Turns the PDF on if it's hidden, since that's where this goes.
     void OnForwardSync(object sender, RoutedEventArgs e)
     {
-        if (Editor.Path is not { } file || Pdf.PageCount == 0) return;
-        var (line, column) = Editor.Caret;
+        if (Editor.Path is null || Pdf.PageCount == 0) return;
         ShowPdf(true);
-        Run(null, async () => Pdf.Reveal(await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file, line, column })));
+        Run(null, SyncToCaret);
+    }
+
+    async Task SyncToCaret()
+    {
+        var (line, column) = Editor.Caret;
+        Pdf.Reveal(await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file = Editor.Path, line, column }));
     }
 
     void OnSave(object sender, RoutedEventArgs e) => Run("Can't save", () => Core.CallAsync("session_save", new { session }));
@@ -668,6 +697,8 @@ public sealed partial class WorkspacePage : Page
     void OnReplace(object sender, RoutedEventArgs e) => Editor.ShowFind(true);
     void OnFindNext(object sender, RoutedEventArgs e) => Editor.FindNext(true);
     void OnFindPrevious(object sender, RoutedEventArgs e) => Editor.FindNext(false);
+    void OnShiftRight(object sender, RoutedEventArgs e) => Editor.ShiftLines(1);
+    void OnShiftLeft(object sender, RoutedEventArgs e) => Editor.ShiftLines(-1);
     void OnMoveLineUp(object sender, RoutedEventArgs e) => Editor.MoveLines(true);
     void OnMoveLineDown(object sender, RoutedEventArgs e) => Editor.MoveLines(false);
     void OnActualSize(object sender, RoutedEventArgs e) => Pdf.ZoomTo(1);

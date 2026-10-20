@@ -109,7 +109,7 @@
                     <!-- The window handles Ctrl+, itself: the editor swallows it before accelerators. -->
                     <MenuFlyoutItem AccessKey="T" Click="{x:Bind app:App.Window.OpenSettings}" KeyboardAcceleratorTextOverride="Ctrl+," Text="Settings" />
                 </MenuBarItem>
-                <!-- The editor owns undo, the clipboard and moving lines, so their keys are only shown. -->
+                <!-- The editor owns undo, the clipboard and moving and shifting lines, so their keys are only shown. -->
                 <MenuBarItem AccessKey="E" Title="Edit">
                     <MenuFlyoutItem AccessKey="U" Click="{x:Bind Editor.Undo}" KeyboardAcceleratorTextOverride="Ctrl+Z" Text="Undo" />
                     <MenuFlyoutItem AccessKey="R" Click="{x:Bind Editor.Redo}" KeyboardAcceleratorTextOverride="Ctrl+Y" Text="Redo" />
@@ -125,6 +125,8 @@
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+F" AccessKey="J" Click="OnFindInProject" Text="Find in project…" />
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+/" AccessKey="M" Click="{x:Bind Editor.ToggleComment}" Text="Toggle comment" />
+                    <MenuFlyoutItem AccessKey="H" Click="OnShiftRight" KeyboardAcceleratorTextOverride="Ctrl+]" Text="Shift right" />
+                    <MenuFlyoutItem AccessKey="L" Click="OnShiftLeft" KeyboardAcceleratorTextOverride="Ctrl+[" Text="Shift left" />
                     <MenuFlyoutItem AccessKey="O" Click="OnMoveLineUp" KeyboardAcceleratorTextOverride="Alt+Up" Text="Move line up" />
                     <MenuFlyoutItem AccessKey="W" Click="OnMoveLineDown" KeyboardAcceleratorTextOverride="Alt+Down" Text="Move line down" />
                     <MenuFlyoutSeparator />
@@ -355,8 +357,10 @@
                         Grid.Row="2"
                         AllowDrop="True"
                         AutomationProperties.Name="Files"
+                        CanDragItems="True"
                         Collapsed="OnCollapsed"
                         ContextRequested="OnFilesContext"
+                        DragItemsStarting="OnFilesDrag"
                         DragOver="OnDragOver"
                         Drop="OnDrop"
                         Expanding="OnExpanding"

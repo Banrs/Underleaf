@@ -112,6 +112,11 @@
                         <ToggleSwitch MinWidth="0" AutomationProperties.Name="Suggest completions while typing" IsOn="{x:Bind app:Prefs.AutoComplete, Mode=TwoWay}" />
                     </controls:Card>
 
+                    <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="PDF" />
+                    <controls:Card Description="Scrolls the PDF to the line you are editing" Glyph="&#xEA90;" Header="Scroll to the cursor after compiling">
+                        <ToggleSwitch MinWidth="0" AutomationProperties.Name="Scroll to the cursor after compiling" IsOn="{x:Bind app:Prefs.SyncAfterCompile, Mode=TwoWay}" />
+                    </controls:Card>
+
                     <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="About" />
                     <controls:Card x:Name="About" Glyph="&#xE946;" Header="TeXLocal" />
                 </StackPanel>
