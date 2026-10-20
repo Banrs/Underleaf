@@ -91,6 +91,8 @@ public sealed partial class SourceView : UserControl
     Completions? offered;
     /// A drag in the gutter: what it extends, and the line it started on.
     (SourceRange Anchor, SourceRange First)? dragging;
+    /// A Ctrl+click's offset until its release.
+    int? pressedAt;
     MathPreview? shownMath;
     int? dismissedMath;
     Color[] kinds = [];
@@ -111,6 +113,8 @@ public sealed partial class SourceView : UserControl
     public event Action<IssueLine>? IssueInvoked;
     /// Files dropped on the text, by their absolute paths, and the offset they were dropped at.
     public event Action<string[], int>? FilesDropped;
+    /// The first place the project defines a name the reader asked after.
+    public event Action<Place>? DefinitionFound;
 
     /// A file dragged from the navigation pane, by its absolute path: as storage items, the pane's own drop would add it
     /// to the project again.
@@ -175,6 +179,9 @@ public sealed partial class SourceView : UserControl
         // Handled ones too, so a drag RichEdit answers for itself still reaches FilesDropped.
         AddHandler(DragOverEvent, new DragEventHandler(OnDragOver), true);
         AddHandler(DropEvent, new DragEventHandler(OnDrop), true);
+        // RichEdit marks its presses and releases handled.
+        Editor.AddHandler(PointerPressedEvent, new PointerEventHandler(OnPressed), true);
+        Editor.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnReleased), true);
         SizeChanged += (_, e) => Clip = new RectangleGeometry { Rect = new(0, 0, e.NewSize.Width, e.NewSize.Height) };
         ActualThemeChanged += (_, _) => Recolour(true);
         Loaded += (_, _) =>
@@ -656,7 +663,7 @@ public sealed partial class SourceView : UserControl
         // The surface's padding and border are the 10 past the rows; above the line when there's no room below.
         var height = Math.Min(found.Items.Length, ShownRows) * row + 10;
         CompletionPopup.VerticalOffset = at.Bottom + 4 + height <= ActualHeight || at.Y - height - 4 < 0 ? at.Bottom + 4 : at.Y - height - 4;
-        Announce(found.Items[0].Label);
+        Announce(found.Items[0]);
     }
 
     void CloseCompletions()
@@ -683,7 +690,7 @@ public sealed partial class SourceView : UserControl
             var i = CompletionList.SelectedIndex + step;
             CompletionList.SelectedIndex = Math.Abs(step) == 1 ? (i + count) % count : Math.Clamp(i, 0, count - 1);
             CompletionList.ScrollIntoView(CompletionList.SelectedItem);
-            Announce(offered.Items[CompletionList.SelectedIndex].Label);
+            Announce(offered.Items[CompletionList.SelectedIndex]);
             return true;
         }
         if (key is VirtualKey.Enter or VirtualKey.Tab) Accept(CompletionList.SelectedIndex);
@@ -708,11 +715,12 @@ public sealed partial class SourceView : UserControl
         StartSnippet(item.Fields, o.Start);
     }
 
-    /// The list never has the keyboard, so Narrator hears the chosen item from the editor.
-    void Announce(string label)
+    /// The list never has the keyboard, so Narrator hears the chosen item, and its detail, from the editor.
+    void Announce(Completion item)
     {
         var peer = FrameworkElementAutomationPeer.FromElement(Editor) ?? FrameworkElementAutomationPeer.CreatePeerForElement(Editor);
-        peer.RaiseNotificationEvent(AutomationNotificationKind.ItemAdded, AutomationNotificationProcessing.MostRecent, label, "completion");
+        peer.RaiseNotificationEvent(AutomationNotificationKind.ItemAdded, AutomationNotificationProcessing.MostRecent,
+            item.Detail is { } detail ? $"{item.Label}, {detail}" : item.Label, "completion");
     }
 
     async void PreviewMath()
@@ -850,14 +858,39 @@ public sealed partial class SourceView : UserControl
     {
         if (source is null || !HasFiles(e.DataView)) return;
         e.Handled = true;
-        var p = e.GetPosition(Editor);
-        var at = Document.GetRangeFromPoint(new Point(Math.Max(0, p.X - Editor.Padding.Left + scroller!.HorizontalOffset),
-            Math.Max(0, p.Y - Editor.Padding.Top + scroller.VerticalOffset)), PointOptions.ClientCoordinates).StartPosition;
+        var at = OffsetAt(e.GetPosition(Editor));
         var deferral = e.GetDeferral();
         var paths = e.DataView.Contains(FileFormat) ? new[] { await e.DataView.GetDataAsync(FileFormat) as string ?? "" }
             : (await e.DataView.GetStorageItemsAsync()).Select(i => i.Path).ToArray();
         deferral.Complete();
         FilesDropped?.Invoke(paths, at);
+    }
+
+    /// The text's offset at a point of the editor's: RichEdit's points are the scrolled text's, inside its padding.
+    int OffsetAt(Point p) => Document.GetRangeFromPoint(new Point(Math.Max(0, p.X - Editor.Padding.Left + scroller!.HorizontalOffset),
+        Math.Max(0, p.Y - Editor.Padding.Top + scroller.VerticalOffset)), PointOptions.ClientCoordinates).StartPosition;
+
+    /// Ctrl+click, Visual Studio's and VS Code's Go to definition, taken on a release where it was pressed, as VS Code
+    /// does: a selection made during the press would follow RichEdit's drag from it.
+    void OnPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(Editor);
+        pressedAt = e.KeyModifiers == Windows.System.VirtualKeyModifiers.Control && point.Properties.IsLeftButtonPressed ? OffsetAt(point.Position) : null;
+    }
+
+    void OnReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (pressedAt is { } at && OffsetAt(e.GetCurrentPoint(Editor).Position) == at) Define(at);
+        pressedAt = null;
+    }
+
+    /// F12, at the caret.
+    public void GoToDefinition() => Define(CaretOffset);
+
+    /// The first of the places, as Visual Studio goes with one; where nothing is defined, nothing changes.
+    void Define(int at)
+    {
+        if (source?.Call<Definition>("definition", new { at }) is { Places: [var first, ..] }) DefinitionFound?.Invoke(first);
     }
 
     /// A dropped file's text, put in where it was dropped and selected, as on the Mac. Not Drop, UIElement's event.
