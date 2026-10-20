@@ -166,6 +166,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let unwanted = [#selector(NSTextView.changeLayoutOrientation(_:)), #selector(NSTextView.startSpeaking(_:)),
                         #selector(NSResponder.uppercaseWord(_:))]
         let ours = [(true, MenuCommand.jumpToDefinition, #selector(jumpToDefinition)),
+                    (textView.isEditable && renamable != nil, MenuCommand.editRename, #selector(renameSymbol)),
                     (textView.forwardSync(false) != nil, MenuCommand.syncForward, #selector(goToPDF)),
                     (textView.isEditable, MenuCommand.editComment, #selector(toggleComment))].filter(\.0).map { _, command, action in
             let item = NSMenuItem(title: command.title, action: action, keyEquivalent: "")
@@ -184,9 +185,23 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     /// At the selection's start. The command is enabled wherever the caret is, so a name nothing defines beeps.
     @objc func jumpToDefinition() {
-        guard let place = textView.document.definition(at: textView.selectedRange().location) else { return NSSound.beep() }
+        guard let place = textView.document.definition(at: textView.selectedRange().location)?.places.first else { return NSSound.beep() }
         textView.openDefinition(place)
     }
+
+    /// The label or citation at the selection's start, which Rename renames everywhere. Read through `changes`, so a menu
+    /// showing it follows the caret.
+    var renamable: Definition? {
+        _ = changes.count
+        guard let found = textView.document.definition(at: textView.selectedRange().location),
+              ["label", "citation"].contains(found.kind) else { return nil }
+        return found
+    }
+
+    /// The project's sheet for the name.
+    var rename: (Definition) -> Void = { _ in }
+
+    @objc func renameSymbol() { renamable.map(rename) }
 
     @discardableResult
     func perform(_ command: EditorCommand) -> Bool {

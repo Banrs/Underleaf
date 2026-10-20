@@ -44,6 +44,8 @@ struct WorkspaceModals: ViewModifier {
                     GoToSheet(noun: "Line", limit: { project.editor.textView.document.lineCount }) {
                         project.editor.reveal(line: $0)
                     }
+                case .rename(let symbol):
+                    RenameSheet(name: symbol.name) { try await project.renameSymbol(symbol, to: $0) }
                 }
             }
             .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
@@ -112,6 +114,30 @@ private struct GoToSheet: View {
             if let number { go(number) }
         } fields: {
             TextField(noun, text: $text, prompt: Text(limit().map { "1–\($0)" } ?? "\(noun) number"))
+                .focused($focused)
+        }
+        .defaultFocus($focused, true)
+    }
+}
+
+/// As Xcode's Refactor ▸ Rename, for a label or a citation in every file. The field's text is selected as it takes the focus.
+private struct RenameSheet: View {
+    let name: String
+    let rename: (String) async throws -> Void
+    @State private var text: String
+    @FocusState private var focused: Bool
+
+    init(name: String, rename: @escaping (String) async throws -> Void) {
+        (self.name, self.rename) = (name, rename)
+        _text = State(initialValue: name)
+    }
+
+    var body: some View {
+        DialogSheet(title: "Rename “\(name)”", action: "Rename", enabled: !text.isEmpty && text != name,
+                    failure: { "Couldn’t Rename “\(name)”" }) {
+            try await rename(text)
+        } fields: {
+            TextField("New Name", text: $text)
                 .focused($focused)
         }
         .defaultFocus($focused, true)

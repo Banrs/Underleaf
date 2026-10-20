@@ -74,8 +74,8 @@ final class SourceDocument {
     }
     func textStyles(_ selection: NSRange) -> TextStyles { call("text_styles", ["selection": selection.json]) ?? TextStyles() }
     func mathAt(caret: Int) -> MathPreview? { call("math_at", ["caret": caret]) }
-    /// The first place the project defines the name at `offset`, where a jump goes.
-    func definition(at offset: Int) -> Definition.Place? { (call("definition", ["at": offset]) as Definition?)?.places.first }
+    /// The name at `offset` and the places the project defines it, the first where a jump goes.
+    func definition(at offset: Int) -> Definition? { call("definition", ["at": offset]) }
 
     var text: String {
         var count = 0
@@ -228,12 +228,15 @@ nonisolated struct Completion: Decodable {
     var detail: String?
 }
 
-nonisolated struct Definition: Decodable {
-    nonisolated struct Place: Decodable {
+nonisolated struct Definition: Decodable, Hashable {
+    nonisolated struct Place: Decodable, Hashable {
         var file: String
         var line, column, length: Int
     }
 
+    /// `label`, `citation`, `environment`, `command` or `file`.
+    var kind: String
+    var name: String
     var places: [Place]
 }
 

@@ -93,6 +93,31 @@ struct SourceEditorTests {
         await app.close()
     }
 
+    /// The open document's edits, the label's and its reference's, undo as one, in a group of their own: with no grouping
+    /// by event, an undo registered outside a group raises.
+    @Test func aRenamesEditsAreOneUndoStepInTheSource() async throws {
+        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        let defaults = TestDefaults(), info = try await newProject()
+        defer { try? FileManager.default.removeItem(at: info.folder) }
+        let app = AppModel(defaults: defaults.store)
+        app.autoCompile = false
+        let original = "\\label{a} see \\ref{a}"
+        try info.write(original, to: info.mainFile)
+        await app.open(info.id)
+        let project = try #require(app.project), text = project.editor.textView
+        let undo = try #require(text.undoManager)
+        undo.groupsByEvent = false
+        // In the reference: the core's `definition` answers where a name is used.
+        text.setSelectedRange(.caret(19))
+        app.perform(.editRename, on: project)
+        guard case .rename(let symbol)? = app.prompt else { Issue.record("Rename opened no sheet"); return }
+        try await project.renameSymbol(symbol, to: "b")
+        #expect(text.string == "\\label{b} see \\ref{b}" && undo.undoActionName == "Rename")
+        undo.undo()
+        #expect(text.string == original && !undo.canUndo)
+        await app.close()
+    }
+
     /// A project closing leaves its editor read-only: a key steps over no closer and offers no completions.
     @Test func aReadOnlyEditorAsksTheCoreNothing() {
         open("")

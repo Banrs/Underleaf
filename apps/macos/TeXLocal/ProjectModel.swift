@@ -222,6 +222,7 @@ final class ProjectModel {
         editor.textView.openDefinition = { [weak self] place in
             Task { await self?.open(place.file, line: place.line, column: place.column, length: place.length) }
         }
+        editor.rename = { [weak self] in self?.app?.prompt = .rename($0) }
     }
 
     func autoCompileChanged() {
@@ -442,8 +443,16 @@ final class ProjectModel {
         await search.run(in: session)
     }
 
+    /// A refusal is the core's sentence, for the sheet to show.
+    func renameSymbol(_ symbol: Definition, to name: String) async throws {
+        guard let session else { return }
+        try await editProject("session_rename_symbol", ["session": session, "kind": symbol.kind, "from": symbol.name, "to": name],
+                              named: String(localized: "Rename"))
+    }
+
     /// The core writes the other files, with no undo; the open document's edits are one undo step, as a command's, which the
     /// session saves as any.
+    @discardableResult
     private func editProject(_ command: String, _ args: [String: any Sendable], named name: String) async throws -> ProjectEdits {
         let answer = try await core.call(command, args, as: ProjectEdits.self)
         // A file shown since has text of its own.
@@ -547,7 +556,7 @@ nonisolated struct SavedWorkspace: Codable, Equatable {
 /// None: the file dropped opens.
 private nonisolated struct DropText: Decodable { let insert: String? }
 
-/// `session_replace`'s.
+/// `session_replace`'s and `session_rename_symbol`'s.
 private nonisolated struct ProjectEdits: Decodable {
     nonisolated struct Document: Decodable {
         var path: String
