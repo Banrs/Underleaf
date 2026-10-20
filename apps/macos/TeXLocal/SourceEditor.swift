@@ -165,7 +165,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
         let unwanted = [#selector(NSTextView.changeLayoutOrientation(_:)), #selector(NSTextView.startSpeaking(_:)),
                         #selector(NSResponder.uppercaseWord(_:))]
-        let ours = [(textView.forwardSync(false) != nil, MenuCommand.syncForward, #selector(goToPDF)),
+        let ours = [(true, MenuCommand.jumpToDefinition, #selector(jumpToDefinition)),
+                    (textView.forwardSync(false) != nil, MenuCommand.syncForward, #selector(goToPDF)),
                     (textView.isEditable, MenuCommand.editComment, #selector(toggleComment))].filter(\.0).map { _, command, action in
             let item = NSMenuItem(title: command.title, action: action, keyEquivalent: "")
             item.target = self
@@ -180,6 +181,12 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     @objc private func goToPDF() { textView.forwardSync(false)?() }
     @objc private func toggleComment() { perform(.comment) }
+
+    /// At the selection's start. The command is enabled wherever the caret is, so a name nothing defines beeps.
+    @objc func jumpToDefinition() {
+        guard let place = textView.document.definition(at: textView.selectedRange().location) else { return NSSound.beep() }
+        textView.openDefinition(place)
+    }
 
     @discardableResult
     func perform(_ command: EditorCommand) -> Bool {
