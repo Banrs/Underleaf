@@ -282,7 +282,7 @@ struct AppCommands: Commands {
             Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
             LivePreviewItem(app: app)
             Divider()
-            Menu("Engine") { EngineItems(project: project) }
+            Menu("Engine") { EnginePicker(project: project).pickerStyle(.inline).labelsHidden() }
             SetMainFileItem(app: app)
         }
     }
@@ -307,19 +307,20 @@ private struct CommandItem: View {
     }
 }
 
-/// Compile ▸ Engine's choices, which dim with no project rather than the submenu.
-private struct EngineItems: View {
+/// The inspector's and Compile ▸ Engine's, whose choices dim with no project rather than the submenu. A project's engine,
+/// even nil or unlisted, is a choice: a selection with no tag is a SwiftUI fault.
+struct EnginePicker: View {
     let project: ProjectModel?
 
     var body: some View {
         let engine = project?.settings?.engine
-        ForEach(TeXEngine.allCases) { choice in
-            Toggle(choice.title, isOn: Binding(get: { engine == choice.id }, set: { _ in
-                if let project { Task.immediate { await project.patchSettings(.engine(choice.id)) } }
-            }))
+        Picker("Engine", selection: Binding(get: { engine }, set: { new in
+            if let project, let new { Task.immediate { await project.patchSettings(.engine(new)) } }
+        })) {
+            ForEach(TeXEngine.allCases) { Text($0.title).tag(Optional($0.id)) }
+            if project != nil, engine.flatMap(TeXEngine.init) == nil { Text(engine ?? "").tag(engine) }
         }
         .disabled(engine == nil)
-        if let engine, TeXEngine(rawValue: engine) == nil { Toggle(engine, isOn: .constant(true)) }
     }
 }
 

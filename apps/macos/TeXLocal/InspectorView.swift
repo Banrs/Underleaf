@@ -16,13 +16,7 @@ struct InspectorView: View {
                     ForEach(texFiles, id: \.self) { Text($0).tag(Optional($0)) }
                     if !texFiles.contains(where: { $0 == main }) { Text(main ?? "").tag(main) }
                 }
-                let engine = project.settings?.engine
-                Picker("Engine", selection: Binding(get: { engine }, set: { new in
-                    if let new { Task.immediate { await project.patchSettings(.engine(new)) } }
-                })) {
-                    ForEach(TeXEngine.allCases) { Text($0.title).tag(Optional($0.id)) }
-                    if engine.flatMap(TeXEngine.init) == nil { Text(engine ?? "").tag(engine) }
-                }
+                EnginePicker(project: project)
                 toggle("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.", SettingsChange.shellEscape,
                        project.settings?.shellEscape ?? false)
                 toggle("Stop on First Error", "Ends the build at its first error, rather than showing them all.", SettingsChange.stopOnFirstError,
