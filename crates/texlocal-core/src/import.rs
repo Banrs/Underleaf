@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{self, BufWriter, Read, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -57,58 +57,10 @@ struct Incoming {
     source: Source,
 }
 
-/// What an import may still bring. `entries` are what a folder holds, hidden
-/// or not, and a zip's entries: a hollow tree costs a walk too. Bytes are
-/// taken as declared while the files are found, and again as read, since a
-/// zip's sizes can lie and a file can grow while it is read.
-///
-/// It is `Copy` on purpose: finding the files and copying them each spend
-/// their own copy of one allowance, the first on the sizes declared, the
-/// second on the bytes read.
-#[derive(Debug, Clone, Copy)]
-struct Allowance {
-    entries: u64,
-    bytes: u64,
-}
-
-const TOO_MANY: &str = "There are too many files to import.";
-const TOO_BIG: &str = "The files to import are too large.";
-
-/// What a drop or File › Open takes: far past any real project, data sets
-/// and videos included, so only a dropped home folder or a zip bomb meets it,
-/// before it has filled the disk.
-const IMPORT: Allowance = Allowance {
-    entries: 100_000,
-    bytes: 4 << 30,
-};
-
 /// A .tex brings its folder only while that is no larger than a project:
 /// Overleaf's limit on a project's files, and 100 MB.
-const TEX_FOLDER: Allowance = Allowance {
-    entries: 2000,
-    bytes: 100 << 20,
-};
-
-impl Allowance {
-    fn take_entries(&mut self, count: usize) -> Result<(), CoreError> {
-        let left = self.entries.checked_sub(count as u64);
-        self.entries = left.ok_or_else(|| CoreError::bad_request(TOO_MANY))?;
-        Ok(())
-    }
-
-    /// Take `size` bytes, as declared or as read.
-    fn take_bytes(&mut self, size: u64) -> Result<(), CoreError> {
-        let left = self.bytes.checked_sub(size);
-        self.bytes = left.ok_or_else(|| CoreError::bad_request(TOO_BIG))?;
-        Ok(())
-    }
-
-    /// Copy `source` to `sink`, taking the bytes actually read.
-    fn copy(&mut self, source: impl Read, sink: &mut impl Write) -> Result<(), CoreError> {
-        let copied = io::copy(&mut source.take(self.bytes + 1), sink)?;
-        self.take_bytes(copied)
-    }
-}
+const TEX_FOLDER_ENTRIES: usize = 2000;
+const TEX_FOLDER_BYTES: u64 = 100 << 20;
 
 /// `name` in the project folder `dir` ("" is the project's own).
 fn in_folder(dir: &str, name: &str) -> String {
@@ -120,8 +72,8 @@ fn in_folder(dir: &str, name: &str) -> String {
 }
 
 /// Files under a dropped path, with project-relative names that keep a
-/// dropped folder's own name (none for an empty `rel`), failing once
-/// `allowance` runs out. Inside a folder, what `is_litter` and symlinks stay
+/// dropped folder's own name (none for an empty `rel`), failing past
+/// `entries_left`. Inside a folder, what `is_litter` and symlinks stay
 /// behind, not followed: a drop imports what was dropped, never what a link
 /// inside it points at.
 fn collect(
@@ -129,15 +81,15 @@ fn collect(
     rel: String,
     meta: &fs::Metadata,
     files: &mut Vec<Incoming>,
-    allowance: &mut Allowance,
+    entries_left: &mut usize,
 ) -> Result<(), CoreError> {
     if meta.is_file() {
-        allowance.take_bytes(meta.len())?;
         let source = Source::File(abs.to_path_buf());
         files.push(Incoming { path: rel, source });
     } else if meta.is_dir() {
         for entry in fs::read_dir(abs).map_err(CoreError::at(abs))? {
-            allowance.take_entries(1)?;
+            *entries_left = (entries_left.checked_sub(1))
+                .ok_or_else(|| CoreError::bad_request("Too many files"))?;
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if !projects::is_litter(&name)
@@ -146,7 +98,7 @@ fn collect(
                 // DirEntry::metadata does not follow links.
                 let meta = entry.metadata()?;
                 let rel = in_folder(&rel, &name);
-                collect(&entry.path(), rel, &meta, files, allowance)?;
+                collect(&entry.path(), rel, &meta, files, entries_left)?;
             }
         }
     }
@@ -154,7 +106,7 @@ fn collect(
 }
 
 /// Import dropped files and folders into the project folder `dir`: a bad
-/// path, or more than an import takes, fails the drop before anything lands.
+/// path fails the drop before anything lands.
 /// Without `conflict`, a drop that would land on existing entries writes
 /// nothing and reports them, for the host to ask about.
 pub fn import_files(
@@ -164,27 +116,26 @@ pub fn import_files(
     paths: &[PathBuf],
     conflict: Option<Conflict>,
 ) -> Result<Imported, CoreError> {
-    import_files_within(service, id, dir, paths, conflict, IMPORT, projects::discard)
+    import_files_within(service, id, dir, paths, conflict, projects::discard)
 }
 
-/// `import_files` under `allowance`, with `trash` to discard what Replace
-/// replaces.
+/// `import_files`, with `trash` to discard what Replace replaces.
 fn import_files_within(
     service: &Service,
     id: &str,
     dir: &str,
     paths: &[PathBuf],
     conflict: Option<Conflict>,
-    mut allowance: Allowance,
     trash: Trash,
 ) -> Result<Imported, CoreError> {
     let mut files = Vec::new();
-    let mut found = allowance;
     for abs in paths {
         let name = abs.file_name().unwrap_or_default().to_string_lossy();
         // A dropped link is followed: dropping it names what it points at.
         let meta = fs::metadata(abs).map_err(CoreError::at(abs))?;
-        collect(abs, name.into_owned(), &meta, &mut files, &mut found)?;
+        collect(abs, name.into_owned(), &meta, &mut files, &mut {
+            usize::MAX
+        })?;
     }
     let root = service.project_root(id)?;
     let rels = validate(&root, dir, files.iter().map(|file| file.path.as_str()))?;
@@ -204,7 +155,7 @@ fn import_files_within(
         let Source::File(source) = file.source else {
             unreachable!("a drop is of files");
         };
-        save(service, id, &rel, &source, replace, &mut allowance)?;
+        save(service, id, &rel, &source, replace)?;
     }
     Ok(Imported { existing })
 }
@@ -293,8 +244,8 @@ fn occupant(base: &Path, rel: &str) -> Option<String> {
 }
 
 /// Write the file at `source` to the project path `rel`. It is copied to a
-/// temporary file beside the target first, so a source that fails or
-/// outgrows the allowance part-way replaces nothing, then renamed into place
+/// temporary file beside the target first, so a source that fails part-way
+/// replaces nothing, then renamed into place
 /// whole. An occupied path conflicts unless `replace`, the means of
 /// discarding it, first moves it to the Trash.
 fn save(
@@ -303,7 +254,6 @@ fn save(
     rel: &str,
     source: &Path,
     replace: Option<Trash>,
-    allowance: &mut Allowance,
 ) -> Result<(), CoreError> {
     let root = service.project_root(id)?;
     // In the target's folder, or the nearest on its way while that is to be made, so the
@@ -311,8 +261,8 @@ fn save(
     let abs = paths::safe_write_path(&root, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
     let (mut file, temp) = atomic::create_temp(folder.unwrap_or(&root))?;
-    let origin = File::open(source).map_err(CoreError::at(source))?;
-    allowance.copy(origin, &mut file)?;
+    let mut origin = File::open(source).map_err(CoreError::at(source))?;
+    io::copy(&mut origin, &mut file)?;
     file.sync_all()?;
     drop(file);
     service.with_project(id, |root| {
@@ -330,14 +280,9 @@ fn save(
 
 /// A zip's visible files; the contents of its one top folder if it has one,
 /// as a zipped project folder unpacks.
-fn zip_files(
-    archive: &mut ZipArchive<File>,
-    mut allowance: Allowance,
-) -> Result<Vec<Incoming>, CoreError> {
-    allowance.take_entries(archive.len())?;
+fn zip_files(archive: &mut ZipArchive<File>) -> Result<Vec<Incoming>, CoreError> {
     let mut files = Vec::new();
     for i in 0..archive.len() {
-        // Its name and size only: nothing is decompressed yet.
         let entry = archive.by_index_raw(i)?;
         // No folders, links or NULs, and no name that would leave the project,
         // read as a project path is ("./a" is "a"); a backslash separates, as
@@ -348,7 +293,6 @@ fn zip_files(
             _ => continue,
         };
         if !segments.iter().any(|s| projects::is_litter(s)) {
-            allowance.take_bytes(entry.size())?;
             files.push(Incoming {
                 path: segments.join("/"),
                 source: Source::Zip(i),
@@ -366,10 +310,10 @@ fn zip_files(
     Ok(files)
 }
 
-fn folder_files(dir: &Path, mut allowance: Allowance) -> Result<Vec<Incoming>, CoreError> {
+fn folder_files(dir: &Path, mut entries_left: usize) -> Result<Vec<Incoming>, CoreError> {
     let meta = fs::metadata(dir).map_err(CoreError::at(dir))?;
     let mut found = Vec::new();
-    collect(dir, String::new(), &meta, &mut found, &mut allowance)?;
+    collect(dir, String::new(), &meta, &mut found, &mut entries_left)?;
     Ok(found)
 }
 
@@ -386,7 +330,16 @@ struct Opened {
 fn tex_folder(tex: &Path) -> Option<Opened> {
     let dir = tex.parent()?;
     paths::sanitize_name(&file_name(dir)).ok()?;
-    let files = folder_files(dir, TEX_FOLDER).ok()?;
+    let files = folder_files(dir, TEX_FOLDER_ENTRIES).ok()?;
+    let bytes: u64 = (files.iter())
+        .filter_map(|file| match &file.source {
+            Source::File(path) => fs::metadata(path).ok().map(|meta| meta.len()),
+            Source::Zip(_) => None,
+        })
+        .sum();
+    if bytes > TEX_FOLDER_BYTES {
+        return None;
+    }
     let main = file_name(tex);
     files.iter().any(|file| file.path == main).then(|| Opened {
         base: file_name(dir),
@@ -396,7 +349,7 @@ fn tex_folder(tex: &Path) -> Option<Opened> {
     })
 }
 
-fn open(src: &Path, allowance: Allowance) -> Result<Opened, CoreError> {
+fn open(src: &Path) -> Result<Opened, CoreError> {
     let meta = fs::metadata(src).map_err(CoreError::at(src))?;
     let ext = src
         .extension()
@@ -407,7 +360,7 @@ fn open(src: &Path, allowance: Allowance) -> Result<Opened, CoreError> {
         .to_string_lossy()
         .into_owned();
     if meta.is_dir() {
-        let files = folder_files(src, allowance)?;
+        let files = folder_files(src, usize::MAX)?;
         return Ok(Opened {
             base: file_name(src),
             zip: None,
@@ -424,7 +377,7 @@ fn open(src: &Path, allowance: Allowance) -> Result<Opened, CoreError> {
                 CoreError::bad_request(format!("“{name}” can't be read as a zip ({err})"))
             }
         })?;
-        let files = zip_files(&mut archive, allowance)?;
+        let files = zip_files(&mut archive)?;
         return Ok(Opened {
             base: stem,
             zip: Some(archive),
@@ -465,20 +418,12 @@ fn file_name(path: &Path) -> String {
 /// The main file is the chosen .tex, else the likeliest top-level one, else the blank
 /// template's main.tex.
 pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
-    import_project_within(service, src, IMPORT)
-}
-
-fn import_project_within(
-    service: &Service,
-    src: &Path,
-    mut allowance: Allowance,
-) -> Result<ProjectInfo, CoreError> {
     let Opened {
         base,
         mut zip,
         mut files,
         main,
-    } = open(src, allowance)?;
+    } = open(src)?;
     // What an export leaves out stays behind: the project makes its own settings.
     files.retain(|file| !left_out(&file.path));
 
@@ -494,12 +439,12 @@ fn import_project_within(
         let mut dest = BufWriter::new(File::create_new(abs)?);
         match &file.source {
             Source::File(path) => {
-                let origin = File::open(path).map_err(CoreError::at(path))?;
-                allowance.copy(origin, &mut dest)?;
+                let mut origin = File::open(path).map_err(CoreError::at(path))?;
+                io::copy(&mut origin, &mut dest)?;
             }
             Source::Zip(i) => {
-                let entry = zip.as_mut().expect("a zip source").by_index(*i)?;
-                allowance.copy(entry, &mut dest)?;
+                let mut entry = zip.as_mut().expect("a zip source").by_index(*i)?;
+                io::copy(&mut entry, &mut dest)?;
             }
         }
         dest.flush()?;
@@ -543,13 +488,8 @@ mod tests {
         let source = tempfile::NamedTempFile::new().unwrap();
         fs::write(source.path(), bytes).unwrap();
         let replace = replace.then_some(remove as Trash);
-        save(service, "P", rel, source.path(), replace, &mut { IMPORT })
+        save(service, "P", rel, source.path(), replace)
     }
-
-    const SMALL: Allowance = Allowance {
-        entries: 3,
-        bytes: 25,
-    };
 
     #[test]
     fn files_are_validated_as_a_batch_before_any_write() {
@@ -640,7 +580,7 @@ mod tests {
         let paths = [drop.join("figs")];
 
         let replaced = Some(Conflict::Replace);
-        let out = import_files_within(&service, "P", "", &paths, replaced, IMPORT, remove).unwrap();
+        let out = import_files_within(&service, "P", "", &paths, replaced, remove).unwrap();
         assert_eq!(files_in(&root), ["figs/a.png", "figs/b.png", "main.tex"]);
         assert_eq!(fs::read(root.join("figs/a.png")).unwrap(), b"new");
         // The clash is reported all the same, for the host to say what it replaced.
@@ -649,7 +589,7 @@ mod tests {
         // A mover that fails leaves the old file and takes nothing in.
         fs::write(drop.join("figs/a.png"), "newer").unwrap();
         let refuse: Trash = |_| Err(CoreError::internal("no Trash"));
-        let result = import_files_within(&service, "P", "", &paths, replaced, IMPORT, refuse);
+        let result = import_files_within(&service, "P", "", &paths, replaced, refuse);
         assert!(result.is_err());
         assert_eq!(fs::read(root.join("figs/a.png")).unwrap(), b"new");
     }
@@ -678,67 +618,6 @@ mod tests {
         assert!(clashes(&root, &rels).is_empty());
         put(&service, "link/a.png", b"png", false).unwrap();
         assert_eq!(fs::read(root.join("figs/a.png")).unwrap(), b"png");
-    }
-
-    #[test]
-    fn a_zip_or_folder_past_the_entry_or_byte_limit_makes_no_project() {
-        let (dir, service) = with_project();
-        let many = dir.path().join("many.zip");
-        let files = [
-            ("a.tex", "a"),
-            ("b.tex", "b"),
-            ("c.tex", "c"),
-            ("d.tex", "d"),
-        ];
-        zip_of(&many, &files);
-        let err = import_project_within(&service, &many, SMALL).unwrap_err();
-        assert_eq!(err.message, TOO_MANY);
-
-        let large = dir.path().join("large.zip");
-        let text = "0123456789";
-        zip_of(&large, &[("a.tex", text), ("b.tex", text), ("c.tex", text)]);
-        let err = import_project_within(&service, &large, SMALL).unwrap_err();
-        assert_eq!(err.message, TOO_BIG);
-        assert_eq!(projects(&service), 1);
-
-        // Within the limits, it imports.
-        zip_of(&large, &[("a.tex", text), ("b.tex", text)]);
-        import_project_within(&service, &large, SMALL).unwrap();
-        assert_eq!(projects(&service), 2);
-
-        // A folder is held to them too, empty folders included, and so is a drop of it,
-        // which writes nothing.
-        let src = dir.path().join("Hollow");
-        for i in 0..4 {
-            fs::create_dir_all(src.join(format!("d{i}"))).unwrap();
-        }
-        fs::write(src.join("main.tex"), "x").unwrap();
-        let err = import_project_within(&service, &src, SMALL).unwrap_err();
-        assert_eq!(err.message, TOO_MANY);
-        let drop = [src];
-        let attempt = import_files_within(&service, "P", "", &drop, None, SMALL, remove);
-        assert_eq!(attempt.unwrap_err().message, TOO_MANY);
-        assert!(!service.data_dir.join("P/Hollow").exists());
-        assert_eq!(projects(&service), 2);
-    }
-
-    #[test]
-    fn a_zip_that_understates_its_sizes_stops_at_the_bytes_read() {
-        let (dir, service) = library();
-        let src = dir.path().join("lying.zip");
-        zip_of(&src, &[("a.tex", "x".repeat(40).as_str())]);
-        // Both its headers say the file is 1 byte: the uncompressed size is
-        // 22 bytes into a local header, 24 into a central one.
-        let mut bytes = fs::read(&src).unwrap();
-        for (signature, at) in [(b"PK\x03\x04", 22), (b"PK\x01\x02", 24)] {
-            let header = bytes.windows(4).position(|w| w == signature).unwrap();
-            bytes[header + at..header + at + 4].copy_from_slice(&1u32.to_le_bytes());
-        }
-        fs::write(&src, bytes).unwrap();
-        // As declared it fits the allowance; as read, it doesn't.
-        let err = import_project_within(&service, &src, SMALL).unwrap_err();
-        assert_eq!(err.message, TOO_BIG);
-        assert_eq!(projects(&service), 0);
     }
 
     #[test]
@@ -833,7 +712,7 @@ mod tests {
         // Sparse: past a project's bytes without writing them.
         let past_a_project = |path: &str| {
             let file = File::create(src.join(path)).unwrap();
-            file.set_len(TEX_FOLDER.bytes + 1).unwrap();
+            file.set_len(TEX_FOLDER_BYTES + 1).unwrap();
         };
         // Build output stays behind, and so doesn't count.
         fs::create_dir(src.join("Build")).unwrap();
