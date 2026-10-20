@@ -76,8 +76,10 @@ static BAD_BOX_LINE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:at lines|detected at line) (\d+)").unwrap());
 static BIBTEX_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.*)---line (\d+) of file (.+)$").unwrap());
-static BIBER_ERROR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\[\d+\] .*> ERROR - (.*)$").unwrap());
+static BIBTEX_WARNING_PLACE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^--line (\d+) of file (.+)$").unwrap());
+static BIBER_MESSAGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\[\d+\] .*> (ERROR|WARN) - (.*)$").unwrap());
 
 fn error_start(line: &str) -> Option<Captures<'_>> {
     ERROR
@@ -303,28 +305,45 @@ pub fn parse_log(log: &str, main_file: &str) -> (Vec<LogItem>, Vec<LogItem>) {
     (items, bad_boxes)
 }
 
-/// Errors from bibtex's or biber's .blg; bibtex names the .bib line after its message or on the line below.
+/// Errors and warnings from bibtex's or biber's .blg; bibtex names the .bib line after an
+/// error's message or on the line below it, and below a warning's.
 pub fn parse_blg(blg: &str) -> Vec<LogItem> {
-    let mut previous = "";
-    blg.lines()
-        .filter_map(|line| {
-            let above = std::mem::replace(&mut previous, line);
-            if let Some(m) = BIBTEX_ERROR.captures(line) {
-                let file = project_path(m[3].trim());
-                let message = if m[1].trim().is_empty() { above } else { &m[1] };
-                Some(LogItem::new(
-                    Severity::Error,
-                    file.clone(),
-                    file.and(m[2].parse().ok()),
-                    message.trim().to_string(),
-                ))
+    let mut items: Vec<LogItem> = Vec::new();
+    let mut above = "";
+    for line in blg.lines() {
+        if let Some(m) = BIBTEX_ERROR.captures(line) {
+            let file = project_path(m[3].trim());
+            let message = if m[1].trim().is_empty() { above } else { &m[1] };
+            items.push(LogItem::new(
+                Severity::Error,
+                file.clone(),
+                file.and(m[2].parse().ok()),
+                message.trim().to_string(),
+            ));
+        } else if let Some(message) = line.strip_prefix("Warning--") {
+            items.push(LogItem::new(
+                Severity::Warning,
+                None,
+                None,
+                message.trim().to_string(),
+            ));
+        } else if let Some(m) = BIBTEX_WARNING_PLACE.captures(line)
+            && above.starts_with("Warning--")
+            && let Some(warning) = items.last_mut()
+        {
+            warning.file = project_path(m[2].trim());
+            warning.line = warning.file.as_ref().and(m[1].parse().ok());
+        } else if let Some(m) = BIBER_MESSAGE.captures(line) {
+            let kind = if &m[1] == "WARN" {
+                Severity::Warning
             } else {
-                BIBER_ERROR
-                    .captures(line)
-                    .map(|m| LogItem::error(m[1].trim()))
-            }
-        })
-        .collect()
+                Severity::Error
+            };
+            items.push(LogItem::new(kind, None, None, m[2].trim().to_string()));
+        }
+        above = line;
+    }
+    items
 }
 
 pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
@@ -689,14 +708,20 @@ mod tests {
                    \x20:   author = {Nobody},\n\
                    I'm skipping whatever remains of this entry\n\
                    Warning--empty author in broken\n\
+                   Warning--I'm ignoring knuth's extra \"year\" field\n\
+                   --line 12 of file refs.bib\n\
                    I couldn't open database file .bib\n---line 5 of file main.aux\n\
-                   [812] Utils.pm:465> ERROR - BibTeX subsystem: syntax error\n";
+                   [812] Utils.pm:465> ERROR - BibTeX subsystem: syntax error\n\
+                   [813] Biber.pm:131> WARN - Duplicate entry key 'x' in file 'refs.bib'\n";
         assert_eq!(
             described(&parse_blg(blg)),
             [
                 "error refs.bib:7 I was expecting a `,' or a `}'",
+                "warning -:- empty author in broken",
+                "warning refs.bib:12 I'm ignoring knuth's extra \"year\" field",
                 "error main.aux:5 I couldn't open database file .bib",
                 "error -:- BibTeX subsystem: syntax error",
+                "warning -:- Duplicate entry key 'x' in file 'refs.bib'",
             ]
         );
         let output = "Latexmk: All targets (build/main.pdf) are up-to-date\n\
