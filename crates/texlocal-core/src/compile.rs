@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::error::CoreError;
-use crate::logparse::{LogItem, Severity, latexmk_errors, parse_blg, parse_log};
+use crate::logparse::{
+    LogItem, Severity, latexmk_errors, parse_blg, parse_log, point_to_shell_escape,
+};
 use crate::paths::safe_rel_file;
 use crate::process::{self, Tree, drive};
 use crate::settings::read_settings;
@@ -35,6 +37,7 @@ pub struct CompileResult {
     pub pdf_changed: bool,
     pub errors: Vec<LogItem>,
     pub warnings: Vec<LogItem>,
+    pub bad_boxes: Vec<LogItem>,
     pub log: String,
 }
 
@@ -159,8 +162,23 @@ impl CompileManager {
 
         // None is made here: one made before the stop check could ghost a project renamed meanwhile.
         let outdir_arg = format!("-outdir={BUILD_DIR}");
-        let mut args = vec![settings.engine.flag()];
+        let auxdir_arg = format!("-auxdir={BUILD_DIR}");
+        let mut args = vec![if shell_escape {
+            "-shell-escape"
+        } else {
+            "-norc"
+        }];
+        // A project's own latexmkrc runs Perl on every build, so only a trusted project's is read.
+        let user_rc = (!shell_escape)
+            .then(|| user_latexmkrc(|key| std::env::var_os(key)))
+            .flatten();
+        // latexmk obeys an rc file where it comes in the arguments, so the user's goes first
+        // and can't move the PDF out of the build folder or swap the engine.
+        if let Some(rc) = &user_rc {
+            args.extend(["-r", rc]);
+        }
         args.extend([
+            settings.engine.flag(),
             "-interaction=batchmode",
             "-file-line-error",
             "-synctex=1",
@@ -171,19 +189,8 @@ impl CompileManager {
                 "-f"
             },
             &outdir_arg,
-            if shell_escape {
-                "-shell-escape"
-            } else {
-                "-norc"
-            },
+            &auxdir_arg,
         ]);
-        // A project's own latexmkrc runs Perl on every build, so only a trusted project's is read.
-        let user_rc = (!shell_escape)
-            .then(|| user_latexmkrc(|key| std::env::var_os(key)))
-            .flatten();
-        if let Some(rc) = &user_rc {
-            args.extend(["-r", rc]);
-        }
         args.push(&main_arg);
         let outputs: HashMap<_, _> = OUTPUTS
             .into_iter()
@@ -253,13 +260,17 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
     // A no-op build keeps the PDF and its log; an old log after a new PDF is the last build's.
     let unchanged = ok && !run.wrote("pdf") && !run.wrote("log");
     let engine_log = run.read("log", unchanged);
-    let mut items = parse_log(engine_log.as_deref().unwrap_or(&output), &run.main_rel);
+    let tex_log = engine_log.as_deref().unwrap_or(&output);
+    let (mut items, bad_boxes) = parse_log(tex_log, &run.main_rel);
     if let Some(blg) = run.read("blg", unchanged) {
         items.extend(parse_blg(&blg));
     }
     let (mut errors, warnings): (Vec<_>, Vec<_>) = items
         .into_iter()
         .partition(|item| item.kind == Severity::Error);
+    if !ok {
+        point_to_shell_escape(&mut errors, tex_log);
+    }
 
     let wrote_pdf = matches!(end, End::Exited(_)) && run.wrote("pdf");
     match end {
@@ -291,6 +302,7 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
         pdf_changed: wrote_pdf,
         errors,
         warnings,
+        bad_boxes,
         log,
     }
 }

@@ -21,17 +21,26 @@ pub struct RenameResult {
     pub main_file: String,
 }
 
+/// One create that fails on anything there, so an entry another app makes meanwhile is kept.
 fn make(root: &Path, rel: &str, dir: bool) -> Result<bool, CoreError> {
     let abs = safe_write_path(root, rel)?;
-    if abs.exists() {
-        return Ok(false);
-    }
-    if dir {
-        fs::create_dir_all(&abs)?;
+    let error = |err| {
+        if dir {
+            CoreError::from(err)
+        } else {
+            write_error(&abs, err)
+        }
+    };
+    (abs.parent().map_or(Ok(()), fs::create_dir_all)).map_err(error)?;
+    let made = if dir {
+        fs::create_dir(&abs)
     } else {
-        write_creating(&abs, b"")?;
+        fs::File::create_new(&abs).map(drop)
+    };
+    match made {
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(false),
+        made => made.map(|()| true).map_err(error),
     }
-    Ok(true)
 }
 
 pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {

@@ -13,6 +13,7 @@ use tempfile::TempDir;
 use tokio::task::JoinHandle;
 
 use super::CompileResult;
+use crate::logparse::SHELL_ESCAPE;
 use crate::projects::create_project;
 use crate::projects::testing::with_project;
 use crate::service::Service;
@@ -168,7 +169,7 @@ async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
     promptly(started);
 }
 
-/// An unchanged compile lets latexmk skip the engine; builds compile past errors unless the project stops on the first; -norc is dropped only for a trusted project.
+/// An unchanged compile lets latexmk skip the engine; builds compile past errors unless the project stops on the first; -norc is dropped only for a trusted project; the user's rc comes before every option it could override.
 #[tokio::test]
 async fn latexmk_is_given_the_arguments_the_settings_call_for() {
     let (_dir, service, root) =
@@ -191,6 +192,14 @@ async fn latexmk_is_given_the_arguments_the_settings_call_for() {
         compile(&service, &root).await;
         let args = fs::read_to_string(root.join("build/args")).unwrap();
         let passed: Vec<_> = args.split_whitespace().collect();
+        let engine = passed.iter().position(|&arg| arg == "-pdf").unwrap();
+        let trusted = settings["shellEscape"] == true;
+        let mut first = vec![if trusted { "-shell-escape" } else { "-norc" }];
+        let rc = super::user_latexmkrc(|key| std::env::var_os(key));
+        if let Some(rc) = rc.as_deref().filter(|_| !trusted) {
+            first.extend(["-r", rc]);
+        }
+        assert_eq!(passed[..engine], first);
         assert!(given.iter().all(|arg| passed.contains(arg)), "{passed:?}");
         assert!(
             !not_given.iter().any(|arg| passed.contains(arg)),
@@ -223,6 +232,25 @@ async fn a_failure_the_engines_log_doesnt_explain_names_its_cause() {
         result.errors[0].message.contains("exit code 12"),
         "{result:?}"
     );
+}
+
+/// At the package's error that asks for it, else with no place when TeX refused a program.
+#[tokio::test]
+async fn a_build_failed_for_want_of_shell_escape_says_where_to_allow_it() {
+    let log = |text| format!("mkdir -p build\nprintf '{text}\\n' > build/main.log\nexit 12\n");
+    let minted =
+        "./main.tex:3: Package minted Error: You must invoke LaTeX with the -shell-escape flag.";
+    let refused = "runsystem(pygmentize -V)...disabled (restricted).";
+    for (text, place) in [
+        (minted, (Some("main.tex"), Some(3))),
+        (refused, (None, None)),
+    ] {
+        let result = built(&log(text)).await;
+        let found: Vec<_> = (result.errors.iter())
+            .map(|e| (e.message.as_str(), e.file.as_deref(), e.line))
+            .collect();
+        assert_eq!(found, [(SHELL_ESCAPE, place.0, place.1)]);
+    }
 }
 
 #[tokio::test]
