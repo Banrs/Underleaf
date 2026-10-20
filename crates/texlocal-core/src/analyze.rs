@@ -70,6 +70,7 @@ pub struct Facts {
     pub labels: Vec<String>,
     /// A .bib file's keys, or a .tex file's \bibitems.
     pub citations: Vec<String>,
+    pub class: Option<headings::DocumentClass>,
 }
 
 /// A file read in place after the first `before` headings of the file that names it.
@@ -139,6 +140,9 @@ impl Visit for Names<'_> {
     fn command(&mut self, name: &str, start: usize, name_end: usize) {
         match name {
             "bibitem" => self.1.citations.extend(braced(self.0, name_end).0),
+            "documentclass" if self.1.class.is_none() => {
+                self.1.class = headings::class_at(self.0, name_end);
+            }
             _ => self.math_command(name, start, name_end),
         }
     }
@@ -178,7 +182,7 @@ impl Files {
         Ok(facts)
     }
 
-    fn at(&self, root: &Path, rel: &str) -> Option<Arc<Facts>> {
+    pub fn at(&self, root: &Path, rel: &str) -> Option<Arc<Facts>> {
         self.facts(&paths::safe_path(root, rel).ok()?, rel).ok()
     }
 

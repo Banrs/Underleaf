@@ -26,7 +26,6 @@ use crate::projects::{self, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
-use crate::syntax::headings;
 use crate::{CoreError, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
@@ -910,17 +909,13 @@ impl Actor {
         let facts = Arc::clone(&self.facts);
         tokio::task::spawn_blocking(move || {
             let main = settings::read_settings(&root).main_file;
-            let open = paths::rel_key(&main)
-                .ok()
-                .and_then(|main| lock(&docs).get(&main).cloned());
-            let main_text = match open {
-                Some(doc) => Some(doc.snapshot().0),
-                None => paths::safe_path(&root, &main)
-                    .ok()
-                    .and_then(|path| fs::read(path).ok())
-                    .map(crate::lossy_string),
-            };
-            let class = main_text.as_deref().and_then(headings::document_class);
+            let class = paths::rel_key(&main).ok().and_then(|main| {
+                let open = lock(&docs).get(&main).cloned();
+                match open {
+                    Some(doc) => doc.with(|source| source.document_class()),
+                    None => facts.at(&root, &main)?.class.clone(),
+                }
+            });
             let analysis = analyze::analyze_project(&root, &facts, &main, &path, class.as_ref());
             let answer = out(&analysis);
             let mut kept = lock(&outline);
