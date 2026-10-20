@@ -194,14 +194,13 @@ Logic the Windows app needs that belongs in a crate, not C#. What the core alrea
 | Workspace | Inspector with the engine | Build menu toggles, no engine | Design; UI |
 | Sidebar | Drag to move, Add Files…, undoable trash; outline follows the scroll | Drop from Explorer, Recycle Bin, no undo; caret only | UI |
 | Editor | Spelling over `code_ranges`, Writing Tools | Spell check off | UI; Platform |
-| Editor | `drop_text`, gutter selection, per-file undo, double-click to the PDF | None; undo cleared on switch | UI |
-| Editor | Issue bands, underlined command (`tokens`), `compact` text | Badge and short text, first issue on the line | UI; Core 14 |
+| Editor | `drop_text`, per-file undo, double-click to the PDF | None; undo cleared on switch | UI |
 | PDF | Find, selection, copy, SyncTeX to the word | None; to the line | Core 6 |
 | PDF | A mark where SyncTeX has no box; nearest line from whitespace | Scroll only; nothing | Core 10, 30 |
 | PDF | Print, Export as PDF, Share, scroll to the caret after compiling | None | UI |
 | Panel | Filter, log find, issue menu | Copy log only | UI |
 | Live | Pane or TeXpresso window, log, restarts | None | Core 12 |
-| Settings | Template, engine, line numbers, sync after compile, Live Preview | None; raw latexmk line | Core 2, 7, 12; UI |
+| Settings | Template, engine, sync after compile, Live Preview | None; raw latexmk line | Core 2, 7, 12; UI |
 
 Windows' own: an app theme setting, the editor preview in Settings, search in the symbol palette,
 ZIP export on Home and F6 region cycling. Its tests cover the C# bridge only; `--smoke` opens Home.
