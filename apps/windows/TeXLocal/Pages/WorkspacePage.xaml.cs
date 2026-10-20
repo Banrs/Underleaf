@@ -683,12 +683,23 @@ public sealed partial class WorkspacePage : Page
     }
 
     /// Windows' share sheet, which a desktop app opens through its window.
-    void OnSharePdf(object sender, RoutedEventArgs e)
+    async void OnSharePdf(object sender, RoutedEventArgs e)
     {
         if (Pdf.FilePath is not { } path) return;
         var window = Microsoft.UI.Win32Interop.GetWindowFromWindowId(App.Window.AppWindow.Id);
-        DataTransferManagerInterop.GetForWindow(window).DataRequested += Requested;
-        DataTransferManagerInterop.ShowShareUIForWindow(window);
+        // The interop throws when Windows refuses the sheet, which unhandled would end the app.
+        DataTransferManager? sharing = null;
+        try
+        {
+            sharing = DataTransferManagerInterop.GetForWindow(window);
+            sharing.DataRequested += Requested;
+            DataTransferManagerInterop.ShowShareUIForWindow(window);
+        }
+        catch (Exception ex)
+        {
+            if (sharing is not null) sharing.DataRequested -= Requested;
+            await App.Alert("Can't share", ex.Message);
+        }
 
         // For this Share only: the manager is the window's, and outlives the page.
         async void Requested(DataTransferManager manager, DataRequestedEventArgs args)
