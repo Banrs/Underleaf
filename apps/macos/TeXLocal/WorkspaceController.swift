@@ -155,7 +155,7 @@ final class WorkspaceController: DetentSplitViewController {
     /// A pane opens at its view's frame as it's added, and a collapsed one shows there first.
     private func buildSidebar(height: CGFloat) {
         let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
-        filesItem.minimumThickness = ColumnMetrics.filesMinimum
+        filesItem.minimumThickness = 100
         // Never hidden before its first layout, when it would still inset its pane (27.2).
         let header = hostingView(OutlineHeader())
         header.translatesAutoresizingMaskIntoConstraints = false
@@ -169,8 +169,8 @@ final class WorkspaceController: DetentSplitViewController {
         // The files draw the edge (`HeaderEdge`); the accessory's own would lay AppKit's glass over them.
         outlineBar = accessory(bar, edge: .soft)
         filesItem.addBottomAlignedAccessoryViewController(outlineBar)
-        outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project), height: (height * ColumnMetrics.outlineShare).rounded()))
-        outlineItem.minimumThickness = ColumnMetrics.outlineMinimum
+        outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project), height: (height * 0.45).rounded()))
+        outlineItem.minimumThickness = 80
         // It keeps its height as the window resizes; the files take the change.
         outlineItem.holdingPriority = .defaultLow + 1
         sidebar.addSplitViewItem(filesItem)
@@ -181,7 +181,7 @@ final class WorkspaceController: DetentSplitViewController {
         sidebar.header = outlineBar
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
-        sidebarItem.minimumThickness = ColumnMetrics.sidebarMinimum
+        sidebarItem.minimumThickness = 222
         sidebarItem.isCollapsed = !app.sidebarVisible
         sidebarSearch = accessory(hostingView(SearchField(text: Bindable(project.search).query, prompt: "Search Project", handle: searchField)))
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
@@ -194,7 +194,7 @@ final class WorkspaceController: DetentSplitViewController {
         let inspectorWidth = app.inspectorVisible ? inspectorItem.minimumThickness : 0
         let panes = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
         let pdfWidth = min((panes * ColumnMetrics.pdfShare).rounded(), panes - ColumnMetrics.sourceMinimum)
-        panelHeight = max(ColumnMetrics.panelMinimum, (size.height * ColumnMetrics.panelShare).rounded())
+        panelHeight = max(ColumnMetrics.panelMinimum, (size.height * 0.25).rounded())
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
         sourceItem.minimumThickness = ColumnMetrics.sourceMinimum
@@ -235,7 +235,7 @@ final class WorkspaceController: DetentSplitViewController {
         // As Xcode's debug area: dragged under its least height it closes.
         panelItem.canCollapse = true
         let columnsItem = NSSplitViewItem(viewController: columns)
-        columnsItem.minimumThickness = ColumnMetrics.columnsMinimum
+        columnsItem.minimumThickness = 200
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         areaItem = NSSplitViewItem(viewController: area)
@@ -331,24 +331,22 @@ final class WorkspaceController: DetentSplitViewController {
             view.layoutSubtreeIfNeeded()
             return done()
         }
-        nonisolated(unsafe) let item = item
         if !collapsed { mount(item.viewController, true) }
         paneAnimation(true)
-        NSAnimationContext.runAnimationGroup { context in
-            if !animates { context.duration = 0 }
-            // One animation carries the outline's pane and its header's height.
-            if item === outlineItem {
-                context.allowsImplicitAnimation = true
-                outlineBarHeight.animator().constant = outlineBarHeight(folded: collapsed)
+        Task.immediate {
+            await NSAnimationContext.runAnimationGroup { context in
+                if !animates { context.duration = 0 }
+                // One animation carries the outline's pane and its header's height.
+                if item === outlineItem {
+                    context.allowsImplicitAnimation = true
+                    outlineBarHeight.animator().constant = outlineBarHeight(folded: collapsed)
+                }
+                item.animator().isCollapsed = collapsed
+                if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
             }
-            item.animator().isCollapsed = collapsed
-            if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
-        } completionHandler: { [weak self] in
-            MainActor.assumeIsolated {
-                if item.isCollapsed { self?.mount(item.viewController, false) }
-                self?.paneAnimation(false)
-                done()
-            }
+            if item.isCollapsed { mount(item.viewController, false) }
+            paneAnimation(false)
+            done()
         }
     }
 
@@ -393,16 +391,13 @@ final class WorkspaceController: DetentSplitViewController {
             return
         }
         paneAnimation(true)
-        NSAnimationContext.runAnimationGroup { _ in
-            accessory.animator().isHidden = hidden
-        } completionHandler: { [weak self] in
-            MainActor.assumeIsolated {
-                if hidden, accessory.isHidden {
-                    accessory.view.isHidden = true
-                    self?.mount(accessory, false)
-                }
-                self?.paneAnimation(false)
+        Task.immediate {
+            await NSAnimationContext.runAnimationGroup { _ in accessory.animator().isHidden = hidden }
+            if hidden, accessory.isHidden {
+                accessory.view.isHidden = true
+                mount(accessory, false)
             }
+            paneAnimation(false)
         }
     }
 
