@@ -272,8 +272,9 @@ public sealed partial class WorkspacePage
     void OnFilesContext(UIElement sender, ContextRequestedEventArgs args) =>
         FilesTree.SelectedItem = (args.OriginalSource as FrameworkElement)?.DataContext as NavItem;
 
-    /// The main file can't be deleted: setting another as the main file comes first.
-    void OnFileMenuOpening(object sender, object e)
+    /// The main file can't be deleted: setting another as the main file comes first. Set as the selection changes, not as
+    /// the menu opens, since a disabled item's F2 or Delete doesn't fire.
+    void ShowFileCommands()
     {
         var node = Picked;
         RenameItem.IsEnabled = RevealItem.IsEnabled = node is not null;

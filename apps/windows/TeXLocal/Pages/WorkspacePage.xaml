@@ -354,10 +354,11 @@
                         DragOver="OnDragOver"
                         Drop="OnDrop"
                         Expanding="OnExpanding"
-                        ItemInvoked="OnInvoked">
+                        ItemInvoked="OnInvoked"
+                        SelectionChanged="{x:Bind ShowFileCommands}">
                         <!-- File Explorer's menu, with its icons. -->
                         <TreeView.ContextFlyout>
-                            <MenuFlyout Opening="OnFileMenuOpening">
+                            <MenuFlyout>
                                 <MenuFlyoutItem Click="OnNewFile" Text="New file">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8A5;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
