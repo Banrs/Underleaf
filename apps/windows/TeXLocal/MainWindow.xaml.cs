@@ -191,7 +191,7 @@ public sealed partial class MainWindow : Window
             presenter.PreferredMinimumWidth = (int)(800 * scale);
             presenter.PreferredMinimumHeight = (int)(500 * scale);
         }
-        // TitleBar 2.3.9 takes the caption inset's pixels as DIPs (docs/handoff.md): the bar reaches past the edge by the difference.
+        // TitleBar 2.3.9 takes the caption inset's pixels as DIPs (docs/windows.md): the bar reaches past the edge by the difference.
         var inset = AppWindow.TitleBar.RightInset;
         Bar.Margin = new Thickness(0, 0, inset / scale - inset, 0);
     }
