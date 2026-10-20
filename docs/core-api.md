@@ -161,7 +161,7 @@ Each is `{"type", "session", …}`.
 | `document_closed` | `path`, `reason` (`gone`/`closed`/`deleted`) | Clear the editor if it shows `path`. |
 | `document_renamed` | `from`, `to` | Re-key the editor's per-file state. |
 | `conflict` | `path`, `kind` | `changed`: alert with Save Anyway, Revert, Cancel and no default button; `gone`: alert whose default saves again, Close, Cancel. Answer with `session_resolve`. |
-| `issues` | `path`, `lines: [{line, error, message, short, compact, tokens, others}]` | The gutter and line-end boxes; `[]` clears them (an edit does). `short`: the message on one line; `compact`: for an undefined command, fewer words that keep its name (“Undefined: \\foo”), else null; `tokens`: where the line has that command, `[{start, length}]` in UTF-16 units from the line's start (an edit clears the issues, so they hold). |
+| `issues` | `path`, `lines: [{line, error, message, short, compact, tokens, others}]` | The gutter and line-end boxes; `[]` clears them (an edit does). `short`: the message on one line; `compact`: for an undefined command, fewer words that keep its name (“Undefined: \\foo”), “Needs Shell Escape” for a build that needed it, else null; `tokens`: where the line has that command, `[{start, length}]` in UTF-16 units from the line's start (an edit clears the issues, so they hold). |
 | `build` | `compiling`, `auto`, `outdated` | Compile/Stop button, spinner, “Preview out of date”. Announce “Compiling” for a manual start. |
 | `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce` (a build asked for, or an automatic one whose errors changed; never one Stop ended); sync after compile if `ok` and not `outdated`. `result.badBoxes`: the overfull and underfull boxes, items as `errors` and `warnings` are, kept apart from them (not issues). |
 | `build_cleaned` | | Clear the PDF unless live. |
@@ -348,4 +348,10 @@ Every change a host follows since commit d6bee12, in the order made.
   `cargo rustc --crate-type cdylib`.
 - `heading_styles` takes no arguments, `math_svg` and `glyph_svg` answer no `baseline`, and
   `themes` answers each theme's `id` and `title` alone: what the hosts read.
-
+- `catalogue` is new: the templates and engines a new project may start from, with Home's
+  titles, so a host need not keep its own lists.
+- A build's result has `badBoxes`, apart from its issues, and BibTeX's and biber's warnings
+  among its `warnings`; a build that failed for want of shell escape has an issue whose
+  `compact` is “Needs Shell Escape”.
+- `completions` may answer `kind` `file`, the project's files in a file's argument, and
+  offers the project's own commands and environments first.
