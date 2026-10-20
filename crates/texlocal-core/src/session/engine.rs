@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::CoreError;
-use crate::compile::CompileResult;
+use crate::compile::{CompileManager, CompileResult};
 use crate::service::Service;
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
@@ -35,7 +35,6 @@ impl Engine for Arc<Service> {
     }
 
     fn clean(&self, root: PathBuf) -> Fut<Result<(), CoreError>> {
-        let service = Self::clone(self);
-        Box::pin(async move { service.compile.clean(&root).await })
+        Box::pin(async move { CompileManager::clean(&root) })
     }
 }

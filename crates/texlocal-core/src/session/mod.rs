@@ -180,7 +180,7 @@ impl Sessions {
             return Err(taken());
         }
         let project = string_arg(args, "id")?.to_owned();
-        let root = dunce::canonicalize(self.service.project_root(&project)?)?;
+        let root = self.service.project_root(&project)?;
         let auto_compile = arg::<Option<bool>>(args, "autoCompile")?.unwrap_or(false);
         let (tx, rx) = mpsc::unbounded_channel();
         let (actor, opened) = actor::Actor::new(self, id, project, root, tx.clone(), auto_compile)?;

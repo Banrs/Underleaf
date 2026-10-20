@@ -1,16 +1,14 @@
-//! Building a project with latexmk: one build at a time per project, Stop and
-//! quit, the timeout, and the stale-output guard. The process and TeX discovery
-//! it stands on are in `process` and `tex`.
+//! Building a project with latexmk: Stop and quit, the timeout, and the
+//! stale-output guard. A session runs one build at a time.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tokio::sync::OwnedMutexGuard;
 
 use crate::error::CoreError;
 use crate::logparse::{LogItem, Severity, latexmk_errors, parse_blg, parse_log};
@@ -48,93 +46,25 @@ pub struct CompileResult {
 }
 
 #[derive(Default)]
-struct RunningEntry {
-    gate: Arc<ProjectGate>,
-    /// Moved on by each Stop: a request that holds an earlier number was
-    /// stopped.
-    epoch: u64,
-    /// The requests alive, waiting for the gate or running.
-    busy: usize,
-    /// The active run's tree, for Stop and quitting to kill.
+struct Running {
+    stopped: bool,
+    /// None until latexmk starts, and once it is reaped, when its group's
+    /// number may be another's.
     tree: Option<Tree>,
-    /// The active run's latexmk record, until a good run ends. It is removed
-    /// where the run ends if it did not end ok, and by a Stop, to remove it
-    /// where it is: a rename moves the folder before the run can remove it
-    /// itself. After a fatal TeX error it holds the truncated .aux's state, so
-    /// bibtex fails on it ("no \citation") and every later run stops at "gave
-    /// an error in previous invocation", even with -g and the source fixed.
-    /// Without it the next run starts afresh.
+    /// latexmk's record, until a good run ends. After a fatal TeX error it
+    /// holds the truncated .aux's state, so every later run stops at "gave an
+    /// error in previous invocation". A Stop removes it where it is, as a
+    /// rename moves the folder before the run ends.
     record: Option<PathBuf>,
 }
 
-type Registry = HashMap<PathBuf, RunningEntry>;
-type ProjectGate = tokio::sync::Mutex<()>;
-
-/// A project's place in the registry: its root resolved, so a Stop finds the build
-/// however either spells the root (a session resolves it; a library path may not be).
-fn key(root: &Path) -> PathBuf {
-    dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
-}
-
-/// One build at a time per project, Stop, and kill-all on quit.
+/// The builds running, by project root, for Stop and quitting.
 #[derive(Default)]
 pub struct CompileManager {
-    running: Mutex<Registry>,
-    /// Set by `kill_all`, for good: a build asked for after quitting began
-    /// (a queued one, an automatic one) would start an engine nothing kills.
+    running: Mutex<HashMap<PathBuf, Running>>,
+    /// Set for good: a build asked for after quitting began would start an
+    /// engine nothing kills.
     shutdown: AtomicBool,
-}
-
-/// Keeps the project's gate alive through waiting, running, and cancellation.
-/// Dropping a live child kills its whole tree, and a run that did not end ok
-/// loses latexmk's record, before the gate is released.
-struct Registration<'a> {
-    manager: &'a CompileManager,
-    key: PathBuf,
-    gate: Arc<ProjectGate>,
-    epoch: u64,
-    gate_guard: Option<OwnedMutexGuard<()>>,
-    child: Option<(tokio::process::Child, Tree)>,
-}
-
-impl Registration<'_> {
-    /// Stop ended it, or the app is quitting.
-    /// Asked with the registry locked, as `kill_all` sets the latch.
-    fn stopped(&self, running: &Registry) -> bool {
-        self.manager.shutdown.load(Ordering::Acquire) || running[&self.key].epoch != self.epoch
-    }
-}
-
-impl Drop for Registration<'_> {
-    fn drop(&mut self) {
-        let mut running = lock(&self.manager.running);
-        let entry = running.get_mut(&self.key).expect("registered project");
-        entry.busy -= 1;
-        // Not once it is reaped, when its group's number may be another's.
-        if let Some((child, tree)) = &self.child
-            && child.id().is_some()
-        {
-            tree.kill();
-        }
-        if self.gate_guard.is_some() {
-            entry.tree = None;
-            if let Some(record) = entry.record.take() {
-                let _ = std::fs::remove_file(record);
-            }
-        }
-        self.child = None;
-        // On cancellation, Tokio reaps the killed child after this guard releases.
-        self.gate_guard = None;
-        forget_idle(&mut running, &self.key, &self.gate);
-    }
-}
-
-/// Drops a project's entry when only the registry and `gate` still own its
-/// gate: nobody is waiting, running or cleaning.
-fn forget_idle(running: &mut Registry, key: &Path, gate: &Arc<ProjectGate>) {
-    if Arc::strong_count(gate) == 2 {
-        running.remove(key);
-    }
 }
 
 #[derive(PartialEq)]
@@ -155,10 +85,6 @@ struct CompileRun {
     request_started: Instant,
 }
 
-fn stamp(path: &Path) -> Option<Stamp> {
-    std::fs::metadata(path).ok().map(|meta| Stamp::of(&meta))
-}
-
 impl CompileRun {
     fn output(&self, ext: &str) -> &Path {
         &self.outputs[ext]
@@ -167,7 +93,8 @@ impl CompileRun {
     /// Whether this run wrote an output. Its stamp (a file's length and
     /// time to the nanosecond) tells, whatever the volume's clock.
     fn wrote(&self, ext: &str) -> bool {
-        stamp(self.output(ext)).is_some_and(|now| self.before.get(ext) != Some(&now))
+        std::fs::metadata(self.output(ext))
+            .is_ok_and(|meta| self.before.get(ext) != Some(&Stamp::of(&meta)))
     }
 
     /// A fresh output, or an existing one for a successful no-op build.
@@ -221,16 +148,13 @@ impl CompileManager {
         }
     }
 
-    /// Stop a project's build, and say whether one was running. Its entry
-    /// stays, so the run and a successor waiting on it settle as usual, and
-    /// the run reports itself stopped; one that hasn't started latexmk yet
-    /// doesn't start it.
+    /// Whether a build was running.
     pub fn stop(&self, root: &Path) -> bool {
         let mut running = lock(&self.running);
-        let Some(entry) = running.get_mut(&key(root)).filter(|entry| entry.busy > 0) else {
+        let Some(entry) = running.get_mut(root) else {
             return false;
         };
-        entry.epoch += 1;
+        entry.stopped = true;
         if let Some(tree) = &entry.tree {
             tree.kill();
         }
@@ -240,35 +164,11 @@ impl CompileManager {
         true
     }
 
-    /// Removes the project's build folder, with a running build stopped and settled first. A
-    /// folder that isn't there is already clean.
-    pub async fn clean(&self, root: &Path) -> Result<(), CoreError> {
-        self.stop(root);
-        let key = key(root);
-        let gate = Arc::clone(&lock(&self.running).entry(key.clone()).or_default().gate);
-        let cleaned = {
-            let _idle = gate.lock().await;
-            std::fs::remove_dir_all(root.join(BUILD_DIR))
-        };
-        forget_idle(&mut lock(&self.running), &key, &gate);
-        match cleaned {
+    /// The session cleans only once its build has ended.
+    pub fn clean(root: &Path) -> Result<(), CoreError> {
+        match std::fs::remove_dir_all(root.join(BUILD_DIR)) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
             _ => Ok(()),
-        }
-    }
-
-    fn register(&self, root: &Path) -> Registration<'_> {
-        let key = key(root);
-        let mut running = lock(&self.running);
-        let entry = running.entry(key.clone()).or_default();
-        entry.busy += 1;
-        Registration {
-            manager: self,
-            key,
-            gate: Arc::clone(&entry.gate),
-            epoch: entry.epoch,
-            gate_guard: None,
-            child: None,
         }
     }
 
@@ -325,30 +225,19 @@ impl CompileManager {
             .map(|ext| Ok((ext, settings.output(root, ext)?)))
             .collect::<Result<_, CoreError>>()?;
 
-        let mut registration = self.register(root);
-
-        // The gate keeps a successor off the build directory until its
-        // predecessor settles, even if an intermediate request is cancelled.
-        // Cancelling the active future can only signal the tree, not await reap.
-        registration.gate_guard = Some(Arc::clone(&registration.gate).lock_owned().await);
-
-        // Capture the outputs' stamps after the predecessor has ended,
-        // otherwise its final writes can be mistaken for output from this run.
         let run = CompileRun {
             main_rel,
             before: (outputs.iter())
-                .filter_map(|(&ext, path)| Some((ext, stamp(path)?)))
+                .filter_map(|(&ext, path)| Some((ext, Stamp::of(&std::fs::metadata(path).ok()?))))
                 .collect(),
             outputs,
             request_started,
         };
-
         let spawned = {
-            // Hold the registry lock across synchronous spawn + tree publication.
-            // Stop or quitting therefore sees either no child or its tree,
-            // never an unkillable gap between the two.
+            // Spawned and published under the lock, so Stop and quitting see
+            // either no child or its tree.
             let mut running = lock(&self.running);
-            if registration.stopped(&running) {
+            if self.shutdown.load(Ordering::Acquire) {
                 return Ok(CompileResult {
                     stopped: true,
                     duration_ms: request_started.elapsed().as_millis() as u64,
@@ -356,9 +245,7 @@ impl CompileManager {
                     ..CompileResult::default()
                 });
             }
-            let entry = running
-                .get_mut(&registration.key)
-                .expect("registered project");
+            let entry = running.entry(root.to_path_buf()).or_default();
             entry.record = Some(run.output("fdb_latexmk").to_path_buf());
             process::command("latexmk", Some(root), path_env)
                 .and_then(|mut cmd| Tree::spawn(cmd.args(&args)))
@@ -366,35 +253,30 @@ impl CompileManager {
         };
         let (end, output) = match spawned {
             Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
-            Ok(spawned) => {
-                let (child, tree) = registration.child.insert(spawned);
+            Ok((mut child, tree)) => {
                 let (code, mut output, stderr, timed_out) =
-                    drive(child, tree, COMPILE_TIMEOUT).await;
-                registration.child = None;
+                    drive(&mut child, &tree, COMPILE_TIMEOUT).await;
                 output.push_str(&stderr);
-                let mut running = lock(&self.running);
-                let end = match (registration.stopped(&running), timed_out) {
-                    (true, _) => End::Stopped,
-                    (_, true) => End::TimedOut,
-                    _ => End::Exited(code),
+                let end = if timed_out {
+                    End::TimedOut
+                } else {
+                    End::Exited(code)
                 };
-                let entry = running
-                    .get_mut(&registration.key)
-                    .expect("registered project");
-                // Reaped: a Stop from here on must not signal its group, whose
-                // number may already be another process's.
-                entry.tree = None;
-                if end == End::Exited(0) && run.output("pdf").exists() {
-                    // A good run's record is kept, whatever stops it from here.
-                    entry.record = None;
-                }
                 (end, output)
             }
         };
-        // Reading and parsing the logs blocks, so not on a runtime worker. It
-        // only reads and clears what a killed run left: a build cancelled
-        // meanwhile, its gate released, leaves it nothing to change under the
-        // next build.
+        let entry = lock(&self.running).remove(root).unwrap_or_default();
+        let end = if entry.stopped || self.shutdown.load(Ordering::Acquire) {
+            End::Stopped
+        } else {
+            end
+        };
+        if let Some(record) = entry.record
+            && (end != End::Exited(0) || !run.output("pdf").exists())
+        {
+            let _ = std::fs::remove_file(record);
+        }
+        // Reading and parsing the logs blocks, so not on a runtime worker.
         tokio::task::spawn_blocking(move || finish(&run, &end, output))
             .await
             .map_err(|err| CoreError::internal(err.to_string()))
@@ -496,29 +378,16 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn a_build_stops_by_its_root_however_spelt() {
+    fn cleaning_removes_the_build_folder_and_a_missing_one_is_clean() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("P")).unwrap();
-        let root = dunce::canonicalize(dir.path().join("P")).unwrap();
-        let manager = super::CompileManager::default();
-        let _build = manager.register(&root);
-        // Through a parent's link, as the temporary folder is on macOS, or with a step back.
-        assert!(manager.stop(&dir.path().join("P/../P")));
-    }
-
-    #[tokio::test]
-    async fn cleaning_removes_the_build_folder_and_a_missing_one_is_clean() {
-        let dir = tempfile::tempdir().unwrap();
-        let manager = super::CompileManager::default();
-        manager.clean(dir.path()).await.unwrap();
+        let clean = super::CompileManager::clean;
+        clean(dir.path()).unwrap();
         std::fs::create_dir_all(dir.path().join("build/sub")).unwrap();
         std::fs::write(dir.path().join("build/main.aux"), "x").unwrap();
         std::fs::write(dir.path().join("main.tex"), "x").unwrap();
-        manager.clean(dir.path()).await.unwrap();
+        clean(dir.path()).unwrap();
         assert!(!dir.path().join("build").exists());
         assert!(dir.path().join("main.tex").exists());
-        // Nothing of the project is kept: it never built, and may be renamed.
-        assert!(crate::lock(&manager.running).is_empty());
     }
 
     #[test]

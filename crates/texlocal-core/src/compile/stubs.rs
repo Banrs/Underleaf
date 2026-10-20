@@ -3,10 +3,8 @@
 
 use std::cell::Cell;
 use std::fs;
-use std::future::Future;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -61,15 +59,6 @@ async fn built(script: &str) -> CompileResult {
 fn in_flight(service: &Arc<Service>, root: &Path) -> JoinHandle<CompileResult> {
     let (service, root) = (Arc::clone(service), root.to_path_buf());
     tokio::spawn(async move { compile(&service, &root).await })
-}
-
-/// Polls a later build just until it waits on the build before it.
-async fn waits(mut build: Pin<&mut impl Future>) {
-    std::future::poll_fn(|cx| match build.as_mut().poll(cx) {
-        std::task::Poll::Pending => std::task::Poll::Ready(()),
-        std::task::Poll::Ready(_) => panic!("a build did not wait for the one before"),
-    })
-    .await;
 }
 
 /// Waits up to five seconds for a stub to make `path`, or fails saying `what` it didn't do.
@@ -194,55 +183,6 @@ async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
     promptly(started);
 }
 
-/// A build asked for while another runs waits for it to end, though a build
-/// waiting before it is cancelled; and one still waiting when Stop comes never
-/// starts.
-#[tokio::test]
-async fn a_build_waits_for_the_one_running_and_a_stop_ends_one_waiting() {
-    let (_dir, service, root) = setup(
-        "if [ -f fast ]; then\n  if kill -0 \"$(cat first.pid)\" 2>/dev/null; then touch overlap; fi\n  echo x >> runs\n  mkdir -p build; printf 'new' > build/main.pdf\nelse\n  echo $$ > first.pid\n  sleep 20\nfi\n",
-    );
-    let first = in_flight(&service, &root);
-    appears(&root.join("first.pid"), "first latexmk did not start").await;
-    let mut cancelled = Box::pin(compile(&service, &root));
-    waits(cancelled.as_mut()).await;
-    drop(cancelled);
-    let mut waiting = Box::pin(compile(&service, &root));
-    waits(waiting.as_mut()).await;
-
-    fs::write(root.join("fast"), "").unwrap();
-    assert!(service.compile.stop(&root));
-    let (next, waiting, first) = tokio::time::timeout(Duration::from_secs(5), async {
-        let (next, waiting, first) = tokio::join!(compile(&service, &root), waiting, first);
-        (next, waiting, first.unwrap())
-    })
-    .await
-    .expect("a build waited forever");
-    assert!(first.stopped && waiting.stopped && next.ok);
-    assert_eq!(fs::read_to_string(root.join("runs")).unwrap(), "x\n");
-    assert!(!root.join("overlap").exists(), "a build overtook the first");
-}
-
-#[tokio::test]
-async fn a_cancelled_compile_takes_its_whole_tree_and_its_record_down() {
-    // Dropping the compile future kills latexmk (kill_on_drop), but the
-    // engine it started must not keep writing into the build directory.
-    let (_dir, service, root) = setup(
-        "mkdir -p build\nprintf 'record' > build/main.fdb_latexmk\n(touch started; sleep 1; touch late) &\nsleep 20\n",
-    );
-    let task = in_flight(&service, &root);
-    appears(&root.join("started"), "latexmk descendant did not start").await;
-    task.abort();
-    assert!(task.await.unwrap_err().is_cancelled());
-    assert!(!root.join("build/main.fdb_latexmk").exists());
-
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-    assert!(
-        !root.join("late").exists(),
-        "a descendant outlived the cancel"
-    );
-}
-
 /// An unchanged compile leaves latexmk free to skip the engine (no -g); a build
 /// compiles past errors unless the project stops on the first; and -norc turns
 /// off every rc file latexmk would read by itself, the project's included,
@@ -364,30 +304,10 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     assert!(!service.data_dir.join("uno/build/main.fdb_latexmk").exists());
     assert!(!three.is_finished());
 
-    // Quitting stops the rest, and they say so too.
+    // Quitting stops the rest, and they say so too, and any asked for after it.
     service.compile.kill_all();
     assert!(three.await.unwrap().stopped);
-}
-
-#[tokio::test]
-async fn quitting_stops_a_build_asked_for_after_it_and_one_waiting_to_start() {
-    // Each run of the stub adds a line to `starts`.
-    let (_dir, service, root) = setup("echo x >> starts\nsleep 20\n");
-    let first = in_flight(&service, &root);
-    appears(&root.join("starts"), "first latexmk did not start").await;
-    let mut waiting = Box::pin(compile(&service, &root));
-    waits(waiting.as_mut()).await;
-
-    service.compile.kill_all();
-
-    let started = Instant::now();
-    let (waiting, first) = tokio::join!(waiting, first);
-    assert!(first.unwrap().stopped && waiting.stopped);
-    // A build asked for once the app has begun to quit.
-    let late = compile(&service, &root).await;
-    assert!(late.stopped && !late.ok);
-    assert_eq!(fs::read_to_string(root.join("starts")).unwrap(), "x\n");
-    promptly(started);
+    assert!(build("one").await.unwrap().stopped);
 }
 
 #[tokio::test]

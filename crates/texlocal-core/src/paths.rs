@@ -31,12 +31,13 @@ pub(crate) fn normalize_segments<'a>(
 }
 
 /// A project is one folder directly under `data_dir`, as list_projects reports it.
+/// Resolved, so a build is stopped by the root it was started with.
 pub fn project_root(data_dir: &Path, id: &str) -> Result<PathBuf, CoreError> {
     let root = data_dir.join(project_name(id)?);
     if !root.is_dir() {
         return Err(CoreError::not_found(format!("No such project: {id}")));
     }
-    Ok(root)
+    Ok(dunce::canonicalize(root)?)
 }
 
 pub(crate) fn project_name(id: &str) -> Result<&str, CoreError> {
