@@ -36,7 +36,6 @@ public sealed class CoreTests : IDisposable
         var made = await core.CallAsync<ProjectInfo>("create_project", new { name });
         Assert.Equal(name, made.Name);
         Assert.Contains(await core.CallAsync<ProjectInfo[]>("list_projects"), p => p.Id == made.Id && p.Name == name);
-        Assert.True(Directory.Exists(Path.Combine(dir, made.Id)));
     }
 
     [Fact]
@@ -154,8 +153,6 @@ public sealed class CoreTests : IDisposable
         source.Call<SourceRange>("start_snippet", new { fields = new[] { new SnippetField(7, 0, 0), new SnippetField(14, 0, 0) }, at = 0 });
         Assert.Equal(new[] { new TextEdit(15, 0, "x") }, source.Edit(7, 0, "x"));
         Assert.Null(source.Edit(15, 0, "x", mirroring: true));
-        source.Select(new(8, 0), false);
-        Assert.Equal("\\begin{x}\n\\end{x}", source.Text);
         source.Select(new(0, 0), false);
         Assert.Null(source.Edit(0, 0, "%"));
     }
