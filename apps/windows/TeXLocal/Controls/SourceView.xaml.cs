@@ -660,7 +660,7 @@ public sealed partial class SourceView : UserControl
         // The surface's padding and border are the 10 past the rows; above the line when there's no room below.
         var height = Math.Min(found.Items.Length, ShownRows) * row + 10;
         CompletionPopup.VerticalOffset = at.Bottom + 4 + height <= ActualHeight || at.Y - height - 4 < 0 ? at.Bottom + 4 : at.Y - height - 4;
-        Announce(found.Items[0].Label);
+        Announce(found.Items[0]);
     }
 
     void CloseCompletions()
@@ -687,7 +687,7 @@ public sealed partial class SourceView : UserControl
             var i = CompletionList.SelectedIndex + step;
             CompletionList.SelectedIndex = Math.Abs(step) == 1 ? (i + count) % count : Math.Clamp(i, 0, count - 1);
             CompletionList.ScrollIntoView(CompletionList.SelectedItem);
-            Announce(offered.Items[CompletionList.SelectedIndex].Label);
+            Announce(offered.Items[CompletionList.SelectedIndex]);
             return true;
         }
         if (key is VirtualKey.Enter or VirtualKey.Tab) Accept(CompletionList.SelectedIndex);
@@ -712,11 +712,12 @@ public sealed partial class SourceView : UserControl
         StartSnippet(item.Fields, o.Start);
     }
 
-    /// The list never has the keyboard, so Narrator hears the chosen item from the editor.
-    void Announce(string label)
+    /// The list never has the keyboard, so Narrator hears the chosen item, and its detail, from the editor.
+    void Announce(Completion item)
     {
         var peer = FrameworkElementAutomationPeer.FromElement(Editor) ?? FrameworkElementAutomationPeer.CreatePeerForElement(Editor);
-        peer.RaiseNotificationEvent(AutomationNotificationKind.ItemAdded, AutomationNotificationProcessing.MostRecent, label, "completion");
+        peer.RaiseNotificationEvent(AutomationNotificationKind.ItemAdded, AutomationNotificationProcessing.MostRecent,
+            item.Detail is { } detail ? $"{item.Label}, {detail}" : item.Label, "completion");
     }
 
     async void PreviewMath()

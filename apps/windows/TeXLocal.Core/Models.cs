@@ -76,7 +76,8 @@ public sealed record Tabbing(SourceRange? Field, TextEdit[] Edits);
 
 public sealed record SnippetField(int Start, int Length, int Index);
 
-public sealed record Completion(string Label, string Text, SnippetField[] Fields);
+/// <param name="Detail">A citation's .bib entry: “Knuth · 1984 · The TeXbook”.</param>
+public sealed record Completion(string Label, string Text, SnippetField[] Fields, string? Detail);
 
 /// <param name="Kind">command, environment, label, citation, entryType or file (a project file, in \input or \includegraphics).</param>
 public sealed record Completions(int Start, string Kind, Completion[] Items);
