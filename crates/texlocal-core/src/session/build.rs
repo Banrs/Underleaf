@@ -1,13 +1,14 @@
 //! The session's builds: one at a time with one more queued, Clean once the build
 //! stops, and the issues of the last build on the editor's lines.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde_json::{Value, json};
 
 use super::actor::{Actor, Later, Timer};
 use super::{Msg, Reply};
 use crate::CoreError;
+use crate::analyze::disk_spelling;
 use crate::compile::CompileResult;
 use crate::logparse::{LogItem, SHELL_ESCAPE};
 use crate::syntax::TextRange;
@@ -70,10 +71,20 @@ impl Actor {
     }
 
     pub fn build_done(&mut self, result: Result<CompileResult, CoreError>) {
-        let result = result.unwrap_or_else(|err| CompileResult {
+        let mut result = result.unwrap_or_else(|err| CompileResult {
             errors: vec![LogItem::error(err.message)],
             ..CompileResult::default()
         });
+        // As the documents are kept, not as TeX wrote them.
+        let mut spelt: HashMap<String, String> = HashMap::new();
+        let items = result.errors.iter_mut().chain(&mut result.warnings);
+        for file in items
+            .chain(&mut result.bad_boxes)
+            .filter_map(|item| item.file.as_mut())
+        {
+            let disk = || disk_spelling(&self.root, file).unwrap_or_else(|| file.clone());
+            *file = spelt.entry(file.clone()).or_insert_with(disk).clone();
+        }
         if !self.closed {
             let builds = &mut self.builds;
             if result.pdf.is_some() {

@@ -355,3 +355,9 @@ Every change a host follows since commit d6bee12, in the order made.
   `compact` is “Needs Shell Escape”.
 - `completions` may answer `kind` `file`, the project's files in a file's argument, and
   offers the project's own commands and environments first.
+- A file TeX names in another case than the disk's (`\input{Chapters/Intro}` for
+  `chapters/intro.tex`) is named as the disk spells it, as the tree does: in a build's items,
+  `synctex_inverse`'s `file` and `session_analyze`'s headings. `session_open_document` keeps a
+  document by the disk's spelling too, so a save never renames the file: its events name it so,
+  and `tl_session_source` and the session's commands find it by that spelling. Both hosts open
+  the paths the tree and these answers give, so nothing changes for them.
