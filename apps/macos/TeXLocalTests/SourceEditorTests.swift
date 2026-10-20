@@ -566,8 +566,8 @@ struct SourceEditorTests {
         let string = text.string as NSString
         let begun = string.substring(with: NSRange(location: 7, length: string.range(of: "}").location - 7))
         #expect(string.hasSuffix("\\end{\(begun)}") && text.document.text == text.string)
-        // The audit's suspicion (2026-10-17): each key its own step, as the mirror edits end the typing's coalescing.
-        withKnownIssue("Typing in a mirrored field may take an Undo per key", isIntermittent: true) {
+        // One Undo should take back the word typed in the field, but the mirror edits end the typing's coalescing.
+        withKnownIssue("Typing in a mirrored field takes an Undo per key") {
             #expect(text.string == "\\begin{env}\n  \n\\end{env}")
         }
     }
