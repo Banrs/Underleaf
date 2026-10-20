@@ -73,7 +73,7 @@ class DetentSplitViewController: NSSplitViewController {
     override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
                             ofSubviewAt dividerIndex: Int) -> CGFloat {
         guard (splitView as? DraggedSplitView)?.dragging == true, let detent = detent(at: dividerIndex),
-              abs(proposedPosition - detent) <= ColumnMetrics.detentReach else { return proposedPosition }
+              abs(proposedPosition - detent) <= 8 else { return proposedPosition }
         let pane = splitView.arrangedSubviews[dividerIndex].frame
         if abs((splitView.isVertical ? pane.maxX : pane.maxY) - detent) >= 0.5 {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
