@@ -45,7 +45,6 @@ pub(crate) struct Live {
     sent_view: Option<(u32, u32)>,
     wanted: Option<(String, usize)>,
     caret: Option<(String, usize)>,
-    settling: Option<(String, usize)>,
     pub disk_paths: BTreeSet<String>,
     /// Rises with each Start the user asks for and each Stop: a restart for an older one is dropped.
     pub intent: u64,
@@ -138,7 +137,7 @@ impl Actor {
         live.synced.clear();
         live.sent.clear();
         (live.halted, live.sent_view) = (false, None);
-        (live.caret, live.settling) = (None, None);
+        live.caret = None;
     }
 
     pub fn live_cancel_work(&mut self) {
@@ -367,21 +366,19 @@ impl Actor {
     }
 
     pub fn live_caret(&mut self, path: String, offset: usize) {
-        let moved = (path, offset);
-        self.live.wanted = Some(moved.clone());
-        if self.live.phase == Phase::Running && self.live.caret.as_ref() != Some(&moved) {
-            self.live.settling = Some(moved);
+        self.live.wanted = Some((path, offset));
+        if self.live.phase == Phase::Running {
             self.after(Timer::Caret);
         }
     }
 
     pub fn caret_settled(&mut self) {
-        let Some((path, offset)) = self.live.settling.take() else {
+        let live = &mut self.live;
+        let Some((path, offset)) = live.wanted.clone() else {
             return;
         };
-        let moved = Some((path.clone(), offset));
-        if self.live.fits(&path) && self.live.caret != moved {
-            self.live.caret = moved;
+        if live.fits(&path) && live.caret != live.wanted {
+            live.caret.clone_from(&live.wanted);
             let _ = self.preview.caret(self.id, &path, offset);
         }
     }

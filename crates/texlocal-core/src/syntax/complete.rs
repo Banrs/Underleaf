@@ -1,4 +1,5 @@
-//! Completion: an argument's labels, citations or environments, a bibliography entry's type, or a command.
+//! Completion: an argument's labels, citations, environments or files, a bibliography entry's type, or a command;
+//! environments and commands the project's own first.
 //! Commands are snippets, expanded here, so an editor only places the text and its fields.
 
 use std::sync::LazyLock;
@@ -7,6 +8,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use super::{SourceDocument, Text, catalog, indentation, utf16};
+use crate::projects::file_kind;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnippetField {
@@ -30,6 +32,25 @@ pub enum CompletionKind {
     Label,
     Citation,
     EntryType,
+    File,
+}
+
+/// What the project defines that completion offers, one the session's documents share.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Symbols {
+    pub citations: Vec<String>,
+    pub labels: Vec<String>,
+    pub commands: Vec<Defined>,
+    pub environments: Vec<String>,
+    /// The project's, from its folder, to complete a file's name.
+    pub files: Vec<String>,
+}
+
+/// A command the project defines, with the arguments it takes in braces.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Defined {
+    pub name: String,
+    pub arguments: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -66,13 +87,42 @@ impl SourceDocument {
         };
 
         if let Some(c) = ARGUMENT.captures(&before) {
+            let listed: Vec<String>;
             let (names, kind): (&[String], _) = match &c[1] {
                 c if catalog.cite_commands.contains(c) => {
-                    (&self.citations, CompletionKind::Citation)
+                    (&self.symbols.citations, CompletionKind::Citation)
                 }
-                c if catalog.ref_commands.contains(c) => (&self.labels, CompletionKind::Label),
-                "begin" | "end" => (&catalog.environments, CompletionKind::Environment),
-                _ => return None,
+                c if catalog.ref_commands.contains(c) => {
+                    (&self.symbols.labels, CompletionKind::Label)
+                }
+                "begin" | "end" => {
+                    let own = &self.symbols.environments;
+                    let others = catalog.environments.iter().filter(|e| !own.contains(e));
+                    listed = own.iter().chain(others).cloned().collect();
+                    (&listed, CompletionKind::Environment)
+                }
+                command => {
+                    // \input's and \bibliography's names go without their extension, as LaTeX
+                    // takes them.
+                    let (kinds, bare): (&[&str], _) = match command {
+                        "input" | "include" | "subfile" => (&["tex"], true),
+                        "includegraphics" => (&["image", "pdf"], false),
+                        "bibliography" => (&["bib"], true),
+                        "addbibresource" => (&["bib"], false),
+                        _ => return None,
+                    };
+                    listed = self
+                        .symbols
+                        .files
+                        .iter()
+                        .filter(|file| kinds.contains(&file_kind(file)))
+                        .map(|file| match file.rsplit_once('.') {
+                            Some((stem, _)) if bare => stem.to_owned(),
+                            _ => file.clone(),
+                        })
+                        .collect();
+                    (&listed, CompletionKind::File)
+                }
             };
             let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
             let start = before.len() - before[start..].trim_start().len();
@@ -87,17 +137,27 @@ impl SourceDocument {
             return offer(at.start(), CompletionKind::EntryType, words(names, "@"));
         }
         let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
-        let items = matching(&catalog.commands, m.as_str(), |c| &c.0)
+        let complete = |name: &String, snippet: &str| {
+            let (text, fields) = expand(text, caret, snippet);
+            Completion {
+                label: name.clone(),
+                text,
+                fields,
+            }
+        };
+        let own = &self.symbols.commands;
+        let mut items: Vec<Completion> = matching(own, m.as_str(), |c| &c.name)
             .into_iter()
-            .map(|(name, snippet)| {
-                let (text, fields) = expand(text, caret, snippet);
-                Completion {
-                    label: name.clone(),
-                    text,
-                    fields,
-                }
+            .map(|c| {
+                complete(
+                    &c.name,
+                    &format!("{}{}", c.name, "{#{}}".repeat(c.arguments)),
+                )
             })
             .collect();
+        let others = matching(&catalog.commands, m.as_str(), |c| &c.0).into_iter();
+        let others = others.filter(|(name, _)| !own.iter().any(|c| c.name == *name));
+        items.extend(others.map(|(name, snippet)| complete(name, snippet)));
         offer(m.start(), CompletionKind::Command, items)
     }
 }
@@ -167,18 +227,23 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
 
 #[cfg(test)]
 mod tests {
-    use super::{Completion, SnippetField};
+    use std::sync::Arc;
+
+    use super::{Completion, Defined, SnippetField, Symbols};
     use crate::syntax::SourceDocument;
 
-    fn offered(before: &str, keys: &[String]) -> Vec<Completion> {
+    fn offered(before: &str, symbols: Symbols) -> Vec<Completion> {
         let mut doc = SourceDocument::new(before);
-        doc.set_symbols(vec![], keys.to_vec());
+        doc.set_symbols(Arc::new(symbols));
         let offer = doc.completions(before.encode_utf16().count() as u32, false);
         offer.map_or(vec![], |offer| offer.items)
     }
 
-    fn labels(before: &str, keys: &[String]) -> Vec<String> {
-        offered(before, keys).into_iter().map(|i| i.label).collect()
+    fn labels(before: &str, symbols: Symbols) -> Vec<String> {
+        offered(before, symbols)
+            .into_iter()
+            .map(|i| i.label)
+            .collect()
     }
 
     fn places(fields: &[SnippetField]) -> Vec<(u32, u32, u32)> {
@@ -190,10 +255,10 @@ mod tests {
 
     #[test]
     fn snippets_expand_with_their_fields() {
-        let begin = offered("  \\beg", &[]).remove(0);
+        let begin = offered("  \\beg", Symbols::default()).remove(0);
         assert_eq!(begin.text, "\\begin{env}\n    \n  \\end{env}");
         assert_eq!(places(&begin.fields), [(7, 3, 0), (16, 0, 1), (24, 3, 0)]);
-        let section = offered("\\sub", &[]).remove(0);
+        let section = offered("\\sub", Symbols::default()).remove(0);
         assert_eq!(
             (section.label.as_str(), section.text.as_str()),
             ("\\subsection", "\\subsection{}")
@@ -212,8 +277,58 @@ mod tests {
     }
 
     #[test]
+    fn a_files_argument_offers_the_projects_files_of_its_kind() {
+        let files = [
+            "chapters/One.TEX",
+            "figs/a.png",
+            "figs/b.pdf",
+            "main.tex",
+            "notes.txt",
+            "refs.bib",
+        ];
+        let offered = |before: &str| {
+            let symbols = Symbols {
+                files: files.map(String::from).to_vec(),
+                ..Symbols::default()
+            };
+            labels(before, symbols)
+        };
+        assert_eq!(offered("\\input{"), ["chapters/One", "main"]);
+        assert_eq!(offered("\\include{ch"), ["chapters/One"]);
+        let graphics = offered("\\includegraphics[width=0.5\\linewidth]{");
+        assert_eq!(graphics, ["figs/a.png", "figs/b.pdf"]);
+        assert_eq!(offered("\\bibliography{main,"), ["refs"]);
+        assert_eq!(offered("\\addbibresource{"), ["refs.bib"]);
+        assert!(offered("\\usepackage{").is_empty());
+    }
+
+    #[test]
+    fn the_projects_own_commands_and_environments_come_first_with_their_arguments() {
+        let defined = |name: &str, arguments| Defined {
+            name: name.into(),
+            arguments,
+        };
+        let symbols = || Symbols {
+            commands: vec![defined("\\pair", 2), defined("\\frac", 1)],
+            environments: vec!["thm".into(), "theorem".into()],
+            ..Symbols::default()
+        };
+        let pair = offered("\\pa", symbols()).remove(0);
+        assert_eq!(
+            (pair.label.as_str(), pair.text.as_str()),
+            ("\\pair", "\\pair{}{}")
+        );
+        assert_eq!(places(&pair.fields), [(6, 0, 0), (8, 0, 1)]);
+        let fracs = offered("\\fra", symbols());
+        assert_eq!(fracs.iter().filter(|c| c.label == "\\frac").count(), 1);
+        assert_eq!(fracs[0].text, "\\frac{}");
+        let names = labels("\\begin{th", symbols());
+        assert_eq!(names, ["thm", "theorem", "thebibliography"]);
+    }
+
+    #[test]
     fn case_matches_come_first() {
-        let names = labels("\\s", &[]);
+        let names = labels("\\s", Symbols::default());
         let upper = names.iter().position(|n| n == "\\Sigma").unwrap();
         assert!(names[..upper].iter().all(|n| n.starts_with("\\s")));
     }
@@ -221,7 +336,13 @@ mod tests {
     #[test]
     fn keys_match_lowercased_whole() {
         let keys = ["Knuth84", "knuth86", "Émile", "émile2", "Kn"].map(String::from);
-        let offered = |typed: &str| labels(&format!("\\cite{{{typed}"), &keys);
+        let offered = |typed: &str| {
+            let symbols = Symbols {
+                citations: keys.to_vec(),
+                ..Symbols::default()
+            };
+            labels(&format!("\\cite{{{typed}"), symbols)
+        };
         assert_eq!(offered("kn"), ["knuth86", "Knuth84", "Kn"]);
         assert_eq!(offered("KNUTH"), ["Knuth84", "knuth86"]);
         assert_eq!(offered("knu"), ["knuth86", "Knuth84"]);

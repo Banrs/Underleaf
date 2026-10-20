@@ -26,7 +26,6 @@ use crate::projects::{self, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
-use crate::syntax::headings;
 use crate::{CoreError, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
@@ -139,6 +138,7 @@ pub(crate) struct Actor {
     next_doc: u64,
     symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
+    facts: Arc<analyze::Files>,
     pub edits: u64,
     /// Kept for the session's life: a document closed since isn't marked with a build's
     /// issues on lines that may have moved.
@@ -202,6 +202,7 @@ impl Actor {
             next_doc: 1,
             symbols: Arc::default(),
             symbols_seq: 0,
+            facts: Arc::default(),
             edits: 0,
             last_edits: HashMap::new(),
             auto_compile,
@@ -869,6 +870,7 @@ impl Actor {
             return;
         }
         self.tree = index;
+        self.after(Timer::Symbols);
         self.emit("tree", json!({ "tree": tree }));
         self.live_files_changed();
     }
@@ -880,8 +882,13 @@ impl Actor {
     fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
         let (seq, root, tx) = (self.symbols_seq, self.root.clone(), self.tx.clone());
+        let facts = Arc::clone(&self.facts);
+        let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
+        files.sort_unstable();
         tokio::task::spawn_blocking(move || {
-            let _ = tx.send(Msg::Symbols(seq, projects::scan_symbols(&root)));
+            let symbols = projects::scan_symbols(&root, &facts);
+            let symbols = symbols.map(|symbols| Symbols { files, ..symbols });
+            let _ = tx.send(Msg::Symbols(seq, symbols));
         });
     }
 
@@ -904,20 +911,17 @@ impl Actor {
         self.analyses += 1;
         let (seq, root) = (self.analyses, self.root.clone());
         let (docs, outline) = (Arc::clone(&self.shared), Arc::clone(&self.outline));
+        let facts = Arc::clone(&self.facts);
         tokio::task::spawn_blocking(move || {
             let main = settings::read_settings(&root).main_file;
-            let open = paths::rel_key(&main)
-                .ok()
-                .and_then(|main| lock(&docs).get(&main).cloned());
-            let main_text = match open {
-                Some(doc) => Some(doc.snapshot().0),
-                None => paths::safe_path(&root, &main)
-                    .ok()
-                    .and_then(|path| fs::read(path).ok())
-                    .map(crate::lossy_string),
-            };
-            let class = main_text.as_deref().and_then(headings::document_class);
-            let analysis = analyze::analyze_project(&root, &main, &path, class.as_ref());
+            let class = paths::rel_key(&main).ok().and_then(|main| {
+                let open = lock(&docs).get(&main).cloned();
+                match open {
+                    Some(doc) => doc.with(|source| source.document_class()),
+                    None => facts.at(&root, &main)?.class.clone(),
+                }
+            });
+            let analysis = analyze::analyze_project(&root, &facts, &main, &path, class.as_ref());
             let answer = out(&analysis);
             let mut kept = lock(&outline);
             if seq > kept.seq {

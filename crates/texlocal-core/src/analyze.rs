@@ -1,16 +1,20 @@
-//! A document's outline and word count, read from its main file through the
-//! files it inputs.
+//! A document's outline and word count, read from its main file through the files it
+//! inputs, and what each file defines; each file is read once per change.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io;
 use std::path::Path;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use regex::Regex;
 use serde::Serialize;
 
-use crate::paths;
-use crate::syntax::{headings, prose, scan};
+use crate::projects::file_kind;
+use crate::stamp::Stamp;
+use crate::syntax::scan::{Scanner, Visit};
+use crate::syntax::{Defined, headings, prose, scan};
+use crate::{lock, paths};
 
 // What a title drops whole: \texorpdfstring's TeX argument (its PDF string is
 // the group after), labels and notes.
@@ -21,6 +25,11 @@ static TITLE_STYLE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static TITLE_BRACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([{}&%$#_])|[{}]").unwrap());
 static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+// Matched on the decoded text, not the raw bytes: in Unicode mode a byte that
+// isn't UTF-8 (a Latin-1 umlaut) drops its entry, and `(?-u)` narrows `\s` to
+// ASCII, which swallows a non-breaking space into the key.
+static BIB_KEY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"@([0-9A-Za-z_]+)\s*[{(]\s*([^,\s]+)\s*,").unwrap());
 
 /// A sectioning command's heading: depth (0 for \part to 5 for \paragraph), title as plain text, 1-based line and file. An empty title is `untitled`, shown by its level.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -36,7 +45,7 @@ pub struct Heading {
 }
 
 impl Heading {
-    fn new(depth: usize, title: Option<String>, line: usize, file: Option<String>) -> Self {
+    fn new(depth: usize, title: Option<String>, line: usize) -> Self {
         let (command, level) = headings::LEVELS[depth];
         Self {
             depth,
@@ -45,8 +54,156 @@ impl Heading {
             untitled: title.is_none(),
             title: title.unwrap_or_else(|| format!("Untitled {level}")),
             line,
-            file,
+            file: None,
         }
+    }
+}
+
+/// What one file says, each list in the file's order: the project's symbols are their union
+/// over files, its outline and word count a walk over them from the main file.
+#[derive(Default)]
+pub struct Facts {
+    /// Without their file, which is the name the walk reaches it by.
+    pub headings: Vec<Heading>,
+    pub inputs: Vec<Input>,
+    pub words: usize,
+    pub labels: Vec<String>,
+    /// A .bib file's keys, or a .tex file's \bibitems.
+    pub citations: Vec<String>,
+    pub commands: Vec<Defined>,
+    pub environments: Vec<String>,
+    pub class: Option<headings::DocumentClass>,
+}
+
+/// A file read in place after the first `before` headings of the file that names it.
+pub struct Input {
+    before: usize,
+    name: String,
+    folder: Folder,
+}
+
+/// Where an input's name is looked for, as the import package has it.
+enum Folder {
+    /// That of the file naming it if that was imported, then the main file's.
+    Inherited,
+    /// \import's, from the main file's.
+    Import(String),
+    /// \subimport's, from the naming file's.
+    Sub(String),
+}
+
+impl Facts {
+    fn read(text: &str, kind: &str) -> Self {
+        if kind == "bib" {
+            let entries = BIB_KEY.captures_iter(text).filter(|entry| {
+                let kind = entry[1].to_ascii_lowercase();
+                !matches!(kind.as_str(), "comment" | "string" | "preamble")
+            });
+            let citations = entries.map(|entry| entry[2].to_owned()).collect();
+            return Self {
+                citations,
+                ..Self::default()
+            };
+        }
+        let mut facts = Self::default();
+        // Found as the words are counted, so none is in a comment, maths or literal code.
+        let mut heading_line = None;
+        let words = prose::words(text, |text, name, name_end| {
+            let line = text.line_index(name_end as u32) + 1;
+            let units = &text.units;
+            if let Some(depth) = headings::LEVELS.iter().position(|l| l.0 == name) {
+                if heading_line != Some(line)
+                    && let (Some(title), _) = braced(units, name_end)
+                {
+                    let heading = Heading::new(depth, plain_title(&title), line);
+                    facts.headings.push(heading);
+                }
+                heading_line = Some(line);
+            } else if let Some((name, folder)) = input(units, name, name_end) {
+                let before = facts.headings.len();
+                facts.inputs.push(Input {
+                    before,
+                    name,
+                    folder,
+                });
+            }
+        });
+        let units: Vec<u16> = text.encode_utf16().collect();
+        let mut names = Names(&units, &mut facts);
+        Scanner::default().run(&units, units.len(), &[], &mut names);
+        Self { words, ..facts }
+    }
+}
+
+/// What a text names for others to refer to, outside comments and literal code.
+struct Names<'a>(&'a [u16], &'a mut Facts);
+
+impl Visit for Names<'_> {
+    fn command(&mut self, name: &str, start: usize, name_end: usize) {
+        match name {
+            "bibitem" => self.1.citations.extend(braced(self.0, name_end).0),
+            "documentclass" if self.1.class.is_none() => {
+                self.1.class = headings::class_at(self.0, name_end);
+            }
+            "newcommand" | "DeclareMathOperator" | "newenvironment" => {
+                let command = name != "newenvironment";
+                if let Some(defined) = defined(self.0, name_end)
+                    && defined.name.starts_with('\\') == command
+                {
+                    if command {
+                        self.1.commands.push(defined);
+                    } else {
+                        self.1.environments.push(defined.name);
+                    }
+                }
+            }
+            _ => self.math_command(name, start, name_end),
+        }
+    }
+
+    fn math_command(&mut self, name: &str, _: usize, name_end: usize) {
+        // One still being typed (`fig:`) isn't a label yet.
+        if name == "label"
+            && let (Some(label), _) = braced(self.0, name_end)
+            && !label.is_empty()
+            && !label.ends_with(':')
+        {
+            self.1.labels.push(label);
+        }
+    }
+}
+
+/// Each file's facts by its name as the volume compares names, with the stamp read at. An
+/// analysis and a symbol scan may read at once, so it isn't held while a file is read.
+#[derive(Default)]
+pub struct Files(Mutex<HashMap<String, (Stamp, Arc<Facts>)>>);
+
+impl Files {
+    /// Read again once the file's stamp changes, or always on a volume that keeps whole
+    /// seconds, where a write of the same length in the same second keeps the stamp.
+    pub fn facts(&self, abs: &Path, rel: &str) -> io::Result<Arc<Facts>> {
+        let stamp = Stamp::of(&fs::metadata(abs)?);
+        let key = paths::fold_case(rel);
+        if let Some((read, facts)) = lock(&self.0).get(&key)
+            && *read == stamp
+            && stamp.modified % 1_000_000_000 != 0
+        {
+            return Ok(Arc::clone(facts));
+        }
+        let text = crate::lossy_string(fs::read(abs)?);
+        let facts = Arc::new(Facts::read(&text, file_kind(rel)));
+        lock(&self.0).insert(key, (stamp, Arc::clone(&facts)));
+        Ok(facts)
+    }
+
+    pub fn at(&self, root: &Path, rel: &str) -> Option<Arc<Facts>> {
+        self.facts(&paths::safe_path(root, rel).ok()?, rel).ok()
+    }
+
+    /// Those of other files go, as a scan of the project finds them gone.
+    pub fn keep<'a>(&self, rels: impl Iterator<Item = &'a String>) {
+        let kept: HashSet<String> = rels.map(|rel| paths::fold_case(rel)).collect();
+        lock(&self.0).retain(|key, _| kept.contains(key));
     }
 }
 
@@ -125,6 +282,7 @@ pub struct Analysis {
 /// The document LaTeX reads from the main file through the files it inputs (each once, so a loop ends). `open` is the editor's file, alone when the main file doesn't reach it.
 pub fn analyze_project(
     root: &Path,
+    files: &Files,
     main: &str,
     open: &str,
     class: Option<&headings::DocumentClass>,
@@ -132,10 +290,10 @@ pub fn analyze_project(
     let mut analysis = Analysis::default();
     if let Ok(open) = paths::rel_key(open) {
         let mut seen = HashSet::new();
-        read(root, main, &mut seen, &mut analysis);
+        walk(root, files, main, "", &mut seen, &mut analysis);
         if !seen.contains(&paths::fold_case(&open)) {
             analysis = Analysis::default();
-            read(root, &open, &mut HashSet::new(), &mut analysis);
+            walk(root, files, &open, "", &mut HashSet::new(), &mut analysis);
         }
     }
     let chapters = analysis.outline.iter().any(|h| h.command == "chapter");
@@ -144,47 +302,101 @@ pub fn analyze_project(
     analysis
 }
 
-fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis) {
+/// `within` is the folder an \import gave the file, where its own inputs are looked for first.
+fn walk(
+    root: &Path,
+    files: &Files,
+    file: &str,
+    within: &str,
+    seen: &mut HashSet<String>,
+    into: &mut Analysis,
+) {
     let Ok(file) = paths::rel_key(file) else {
         return;
     };
     if !seen.insert(paths::fold_case(&file)) {
         return;
     }
-    let Some(text) = paths::safe_path(root, &file)
-        .ok()
-        .and_then(|path| fs::read(path).ok())
-    else {
+    let Some(facts) = files.at(root, &file) else {
         return;
     };
-    let text = crate::lossy_string(text);
-    // Found as the words are counted, so none is in a comment, maths or literal code.
-    let mut heading_line = None;
-    let words = prose::words(&text, |text, name, name_end| {
-        let line = text.line_index(name_end as u32) + 1;
-        let units = &text.units;
-        if let Some(depth) = headings::LEVELS.iter().position(|l| l.0 == name) {
-            if heading_line != Some(line)
-                && let (Some(title), _) = braced(units, name_end)
-            {
-                let heading = Heading::new(depth, plain_title(&title), line, Some(file.clone()));
-                into.outline.push(heading);
-            }
-            heading_line = Some(line);
-        } else if matches!(name, "input" | "include" | "subfile")
-            && let Some(name) = input_name(units, name_end, name == "input")
-        {
-            let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(&name));
-            // TeX tries name.tex before the name as written.
-            if let Some(input) = [tex, name]
+    let placed = |headings: &[Heading]| -> Vec<Heading> {
+        let file = Some(file.clone());
+        let place = |h: &Heading| Heading {
+            file: file.clone(),
+            ..h.clone()
+        };
+        headings.iter().map(place).collect()
+    };
+    let mut at = 0;
+    for input in &facts.inputs {
+        into.outline
+            .extend(placed(&facts.headings[at..input.before]));
+        at = input.before;
+        let parent = file.rsplit_once('/').map_or("", |(parent, _)| parent);
+        let folder = match &input.folder {
+            Folder::Inherited => None,
+            Folder::Import(folder) => Some(folder.clone()),
+            Folder::Sub(folder) => Some(joined(parent, folder)),
+        };
+        let folders: Vec<&str> = match &folder {
+            Some(folder) => vec![folder],
+            None => [within]
                 .into_iter()
-                .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
-            {
-                read(root, &input, seen, into);
-            }
+                .chain((!within.is_empty()).then_some(""))
+                .collect(),
+        };
+        let name = &input.name;
+        let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
+        // TeX tries name.tex before the name as written.
+        if let Some(input) = folders
+            .iter()
+            .flat_map(|folder| [joined(folder, &tex), joined(folder, name)])
+            .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
+        {
+            let within = folder.as_deref().unwrap_or(within);
+            walk(root, files, &input, within, seen, into);
+        }
+    }
+    into.outline.extend(placed(&facts.headings[at..]));
+    into.words += facts.words;
+}
+
+/// What \newcommand, \DeclareMathOperator or \newenvironment defines, named braced or not, with
+/// the arguments it takes in braces: as many as its first option counts, but for an optional one.
+fn defined(units: &[u16], name_end: usize) -> Option<Defined> {
+    let (name, stop) = match braced(units, name_end) {
+        (Some(name), stop) => (name.trim().to_owned(), stop),
+        (None, stop) if units.get(stop) == Some(&(b'\\' as u16)) => {
+            let letters = units[stop + 1..]
+                .iter()
+                .take_while(|&&u| u < 128 && (u as u8).is_ascii_alphabetic());
+            let end = stop + 1 + letters.count();
+            (String::from_utf16_lossy(&units[stop..end]), end)
+        }
+        _ => return None,
+    };
+    if name.trim_start_matches('\\').is_empty() {
+        return None;
+    }
+    let mut options = Vec::new();
+    scan::arguments(units, stop, |piece, braced| {
+        if !braced {
+            options.push(String::from_utf16_lossy(&units[piece]));
         }
     });
-    into.words += words;
+    let count = options.first().and_then(|count| count.trim().parse().ok());
+    let arguments = count
+        .unwrap_or(0_usize)
+        .saturating_sub(usize::from(options.len() > 1));
+    Some(Defined { name, arguments })
+}
+
+fn joined(folder: &str, name: &str) -> String {
+    match folder.trim_end_matches('/') {
+        "" => name.to_owned(),
+        folder => format!("{folder}/{name}"),
+    }
 }
 
 fn braced(units: &[u16], name_end: usize) -> (Option<String>, usize) {
@@ -197,16 +409,28 @@ fn braced(units: &[u16], name_end: usize) -> (Option<String>, usize) {
     (closed.then(|| String::from_utf16_lossy(&text)), stop)
 }
 
-/// The file an \input, \include or \subfile names; for \input (`bare`) also an unbraced name.
-fn input_name(units: &[u16], name_end: usize, bare: bool) -> Option<String> {
-    let name = match braced(units, name_end) {
-        (Some(name), _) => name,
-        (None, stop) if bare => char::decode_utf16(units[stop..].iter().copied())
-            .map_while(|c| c.ok().filter(|c| !"{}\\% \t\r\n".contains(*c)))
-            .collect(),
+/// The file an \input, \include, \subfile, \import or \subimport names; \input also takes an
+/// unbraced name.
+fn input(units: &[u16], command: &str, name_end: usize) -> Option<(String, Folder)> {
+    let (name, folder) = match (command, braced(units, name_end)) {
+        ("input" | "include" | "subfile", (Some(name), _)) => (name, Folder::Inherited),
+        ("input", (None, stop)) => {
+            let name = char::decode_utf16(units[stop..].iter().copied())
+                .map_while(|c| c.ok().filter(|c| !"{}\\% \t\r\n".contains(*c)))
+                .collect();
+            (name, Folder::Inherited)
+        }
+        ("import" | "subimport", (Some(folder), stop)) => {
+            let folder = folder.trim().to_owned();
+            let folder = match command {
+                "import" => Folder::Import(folder),
+                _ => Folder::Sub(folder),
+            };
+            (braced(units, stop).0?, folder)
+        }
         _ => return None,
     };
-    Some(name.trim().to_owned())
+    Some((name.trim().to_owned(), folder))
 }
 
 fn plain_title(title: &str) -> Option<String> {
@@ -238,7 +462,11 @@ mod tests {
 
     fn heading(depth: usize, title: &str, file: &str, line: usize) -> Heading {
         let title = (!title.is_empty()).then(|| title.into());
-        Heading::new(depth, title, line, Some(file.into()))
+        let file = Some(file.into());
+        Heading {
+            file,
+            ..Heading::new(depth, title, line)
+        }
     }
 
     /// Words part at Unicode spaces and TeX's special characters; only prose counts.
@@ -342,7 +570,8 @@ mod tests {
                 .iter()
                 .map(|&(depth, title, line)| heading(depth, title, "main.tex", line))
                 .collect();
-            let found = analyze_project(dir.path(), "main.tex", "main.tex", None);
+            let found =
+                analyze_project(dir.path(), &Files::default(), "main.tex", "main.tex", None);
             assert_eq!((found.outline, found.words), (expected, words), "{text}");
         }
     }
@@ -426,7 +655,13 @@ mod tests {
                 .map(|h| (h.title.as_str(), h.file.as_deref(), h.line))
                 .collect()
         }
-        let whole = analyze_project(dir.path(), "main.tex", "chapters/a.tex", None);
+        let whole = analyze_project(
+            dir.path(),
+            &Files::default(),
+            "main.tex",
+            "chapters/a.tex",
+            None,
+        );
         assert_eq!(
             headings(&whole),
             [
@@ -437,7 +672,7 @@ mod tests {
             ]
         );
         assert_eq!(whole.words, 8);
-        let loose = analyze_project(dir.path(), "main.tex", "loose.tex", None);
+        let loose = analyze_project(dir.path(), &Files::default(), "main.tex", "loose.tex", None);
         assert_eq!(headings(&loose), [("Loose", Some("loose.tex"), 1)]);
         assert_eq!(loose.words, 2);
     }
@@ -468,17 +703,36 @@ mod tests {
             ("example.tex", "\\section{Example}"),
             ("real.tex", "\\section{Real}"),
         ];
-        let cases: [(&[_], &str, &[&str]); 6] = [
+        let imported = [
+            (
+                "main.tex",
+                "\\section{Main}\n\\import{chapters/}{one}\n\\subimport{chapters}{two.tex}",
+            ),
+            (
+                "chapters/one.tex",
+                "\\section{One}\n\\input{inner}\n\\subimport{deep/}{three}",
+            ),
+            ("chapters/inner.tex", "\\section{Inner}"),
+            ("chapters/two.tex", "\\section{Two}"),
+            ("chapters/deep/three.tex", "\\section{Three}"),
+        ];
+        let cases: [(&[_], &str, &[&str]); 7] = [
             (&one, "chapters/one.tex", &["Main", "One"]),
             (&one, "./chapters/one.tex", &["Main", "One"]),
             (&one, "chapters/../chapters/one.tex", &["Main", "One"]),
             (&unbraced, "main.tex", &["Main", "Chapter", "End"]),
             (&named_tex, "main.tex", &["Part"]),
             (&literal, "main.tex", &["Main", "Real"]),
+            (
+                &imported,
+                "main.tex",
+                &["Main", "One", "Inner", "Three", "Two"],
+            ),
         ];
         for (files, open, titles) in cases {
             let dir = project(files);
-            let found = analyze_project(dir.path(), "main.tex", open, None).outline;
+            let found =
+                analyze_project(dir.path(), &Files::default(), "main.tex", open, None).outline;
             let found: Vec<_> = found.iter().map(|h| h.title.as_str()).collect();
             assert_eq!(found, titles, "{files:?} with {open} open");
         }

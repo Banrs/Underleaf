@@ -30,5 +30,3 @@ PDFKit's fade, the frame guard, PDFKit's one drawer, `constrainSplitPosition`'s 
   then the custom one stays (the look is decided).
 - The hosts trashing for Replace, dropping the core's `trash` and 7 crates (−106 lines; 10–20
   lines per host).
-- `typed_during_a_save` (session tests) waits 100 ms of paused time for the save to reach the
-  library's lock; with one lock it has no waiter to watch, so it can pass without testing the order.

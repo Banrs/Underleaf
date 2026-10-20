@@ -3,6 +3,7 @@
 
 use serde::Serialize;
 
+use super::SourceDocument;
 use super::scan::{Scanner, Visit, arguments};
 use super::scans::SPACING;
 
@@ -12,23 +13,30 @@ pub struct DocumentClass {
     pub point_size: u32,
 }
 
-pub fn document_class(text: &str) -> Option<DocumentClass> {
-    struct First(Option<usize>);
-    impl Visit for First {
-        fn command(&mut self, name: &str, _: usize, name_end: usize) {
-            if name == "documentclass" {
-                self.0 = self.0.or(Some(name_end));
+impl SourceDocument {
+    pub fn document_class(&self) -> Option<DocumentClass> {
+        struct First(Option<usize>);
+        impl Visit for First {
+            fn command(&mut self, name: &str, _: usize, name_end: usize) {
+                if name == "documentclass" {
+                    self.0 = self.0.or(Some(name_end));
+                }
             }
         }
+        let units = &self.text.units;
+        let (mut scanner, mut first) = (Scanner::default(), First(None));
+        // The class comes before the document, which isn't read for it.
+        while first.0.is_none() && scanner.i < units.len() {
+            scanner.run(units, scanner.i + SPACING, &[], &mut first);
+        }
+        class_at(units, first.0?)
     }
-    let units: Vec<u16> = text.encode_utf16().collect();
-    let (mut scanner, mut first) = (Scanner::default(), First(None));
-    // The class comes before the document, which isn't read for it.
-    while first.0.is_none() && scanner.i < units.len() {
-        scanner.run(&units, scanner.i + SPACING, &[], &mut first);
-    }
+}
+
+/// The class a \documentclass names, read from the end of its name.
+pub(crate) fn class_at(units: &[u16], name_end: usize) -> Option<DocumentClass> {
     let (mut options, mut name) = (Vec::new(), Vec::new());
-    let (_, closed) = arguments(&units, first.0?, |piece, braced| {
+    let (_, closed) = arguments(units, name_end, |piece, braced| {
         (if braced { &mut name } else { &mut options }).extend_from_slice(&units[piece]);
     });
     let size = |option: &str| match option.trim().trim_start_matches("fontsize=") {
@@ -334,7 +342,8 @@ mod tests {
     #[test]
     fn the_class_is_the_one_named_outside_comments() {
         let class = |text: &str| {
-            document_class(text).map_or(String::new(), |c| format!("{} {}pt", c.name, c.point_size))
+            let class = SourceDocument::new(text).document_class();
+            class.map_or(String::new(), |c| format!("{} {}pt", c.name, c.point_size))
         };
         assert_eq!(
             class("% \\documentclass{book}\n\\documentclass[a4paper, 12pt]{ article }"),

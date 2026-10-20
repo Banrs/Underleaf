@@ -13,7 +13,6 @@ use crate::syntax::SourceDocument;
 struct Text {
     source: SourceDocument,
     version: u64,
-    symbols: Option<Arc<Symbols>>,
 }
 
 struct Cell {
@@ -38,7 +37,6 @@ impl Document {
             text: Mutex::new(Text {
                 source: SourceDocument::new(text),
                 version: 0,
-                symbols: None,
             }),
             tx,
             symbols,
@@ -62,7 +60,6 @@ impl Document {
     pub fn reload(&self, text: &str) {
         let mut held = lock(&self.0.text);
         held.source = SourceDocument::new(text);
-        held.symbols = None;
         held.version += 1;
         let _ = self.0.tx.send(Msg::Reloaded {
             doc: self.0.id,
@@ -79,15 +76,7 @@ impl Document {
     pub fn with<T>(&self, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
         let symbols = self.symbols();
         let mut held = lock(&self.0.text);
-        if !held
-            .symbols
-            .as_ref()
-            .is_some_and(|s| Arc::ptr_eq(s, &symbols))
-        {
-            let (labels, citations) = (symbols.labels.clone(), symbols.citations.clone());
-            held.source.set_symbols(labels, citations);
-            held.symbols = Some(symbols);
-        }
+        held.source.set_symbols(symbols);
         body(&mut held.source)
     }
 
