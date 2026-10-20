@@ -225,14 +225,16 @@ pub fn search_project(
 /// `to` in place of what `found` finds in each file `chosen` takes of those a search walks,
 /// given its text with line feeds alone, each written with its lines ending as they did:
 /// `{file, count}` for each, in the order of their paths. One too large to search is left out;
-/// one that isn't UTF-8, which writing would change, refuses them all before any is written.
+/// one that isn't UTF-8, which writing would change, refuses them all before any is written,
+/// and one that can't be written puts back those written before it.
 pub(crate) fn replace_in_files(
     root: &Path,
     chosen: &dyn Fn(&str) -> bool,
     found: &dyn Fn(&str, &str) -> Vec<Place>,
     to: &str,
 ) -> Result<Vec<Value>, CoreError> {
-    let replace = |abs: &Path, rel: &str| -> Result<Option<(String, usize)>, CoreError> {
+    // The file replaced, how many, and the file as it was.
+    let replace = |abs: &Path, rel: &str| -> Result<Option<(String, usize, String)>, CoreError> {
         let Some(bytes) = read_capped(abs, rel)? else {
             return Ok(None);
         };
@@ -249,7 +251,7 @@ pub(crate) fn replace_in_files(
                 "“{rel}” isn't UTF-8 text, and writing it would change it, so nothing was changed. Convert it to UTF-8 to edit it."
             )));
         }
-        Ok(Some((replaced(&file, &places, to), places.len())))
+        Ok(Some((replaced(&file, &places, to), places.len(), file)))
     };
     let mut edited = BTreeMap::new();
     visit_files(root, &mut |abs, rel| {
@@ -260,13 +262,22 @@ pub(crate) fn replace_in_files(
     })?;
     // Each read again as it's written: another app may have written it while the rest were read.
     let mut written = Vec::new();
-    for (rel, abs) in edited {
-        if let Some((file, count)) = replace(&abs, &rel)? {
+    let writing: Result<(), CoreError> = edited.into_iter().try_for_each(|(rel, abs)| {
+        if let Some((file, count, was)) = replace(&abs, &rel)? {
             write_creating(&abs, file.as_bytes())?;
-            written.push(json!({ "file": rel, "count": count }));
+            written.push((abs, was, json!({ "file": rel, "count": count })));
         }
+        Ok(())
+    });
+    if let Err(err) = writing {
+        // Each was just written where it is, so can be again; the error to tell is the one that
+        // stopped the replace.
+        for (abs, was, _) in &written {
+            let _ = write_creating(abs, was.as_bytes());
+        }
+        return Err(err);
     }
-    Ok(written)
+    Ok(written.into_iter().map(|(.., done)| done).collect())
 }
 
 /// `to` in place of each of `places`, which are in order, in `file` as written: a place's line
@@ -349,6 +360,26 @@ mod tests {
         assert_eq!(written, [json!({ "file": "a.tex", "count": 2 })]);
         let disk = fs::read_to_string(root.join("a.tex")).unwrap();
         assert_eq!(disk, "dog, their dog");
+    }
+
+    /// A file refused partway, read only here, leaves those before it as they were.
+    #[test]
+    fn a_replace_that_cannot_write_a_file_puts_back_those_it_wrote() {
+        let (_dir, root) = project();
+        for name in ["a.tex", "b.tex"] {
+            fs::write(root.join(name), "cat").unwrap();
+        }
+        let b = root.join("b.tex");
+        let mut perms = fs::metadata(&b).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&b, perms.clone()).unwrap();
+        let found = |_: &str, text: &str| Query::new("cat", false, false).places(text);
+        let replaced = replace_in_files(&root, &|rel| rel != "main.tex", &found, "dog");
+        assert_eq!(replaced.unwrap_err().status, 403);
+        assert_eq!(fs::read_to_string(root.join("a.tex")).unwrap(), "cat");
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        fs::set_permissions(&b, perms).unwrap();
     }
 
     /// Apart from each other, in any case or in the query's, and as whole words or not; in
