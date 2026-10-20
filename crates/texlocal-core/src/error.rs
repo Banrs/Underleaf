@@ -51,7 +51,6 @@ impl fmt::Display for CoreError {
 
 impl std::error::Error for CoreError {}
 
-/// The statuses a host tells apart; anything else is the core's own fault.
 impl From<io::Error> for CoreError {
     fn from(err: io::Error) -> Self {
         let status = match err.kind() {
@@ -60,7 +59,6 @@ impl From<io::Error> for CoreError {
             ErrorKind::AlreadyExists => 409,
             _ => 500,
         };
-        // The OS appends its number to its words, "(os error 2)".
         let text = err.to_string();
         let words = text
             .split_once(" (os error ")

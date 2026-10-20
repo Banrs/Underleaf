@@ -1,5 +1,4 @@
-//! The kernel's text styles a selection is in, as a word processor's Bold,
-//! Italic and Underline show theirs, and the edits that take each away.
+//! The text styles a selection is in, as a word processor's Bold, Italic and Underline show theirs, and the edits that take each away.
 
 use std::ops::Range;
 
@@ -8,10 +7,7 @@ use serde::Serialize;
 use super::scan::{Group, Visit};
 use super::{NAME, SourceDocument, TextEdit, TextRange, ascii, clamp, splice};
 
-/// The styles the whole selection has, each as the edits that unwrap the
-/// innermost command giving it: its name and opening brace, then its closing
-/// brace. Declarations ({\bfseries …}) aren't read, and nor is a command
-/// whose argument doesn't close by the end of the selection's paragraph.
+/// Declarations ({\bfseries …}) aren't read, nor a command whose argument doesn't close by the end of the selection's paragraph.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TextStyles {
     pub bold: Option<Vec<TextEdit>>,
@@ -28,14 +24,11 @@ enum Shape {
     Italic(usize),
 }
 
-/// The groups open at the selection's ends, and how the scan saw them close.
 struct Found {
     start: usize,
     end: usize,
     open: Vec<Vec<Group>>,
-    /// Where each group that may hold the selection closes, by where it opens.
     closes: Vec<(usize, usize)>,
-    /// A command the selection is exactly, from its backslash to its brace.
     whole: Option<Group>,
 }
 
@@ -58,10 +51,6 @@ impl Visit for Found {
 }
 
 impl SourceDocument {
-    /// The bold, italic and underline the whole selection is in, each as the
-    /// edits that unwrap the command giving it, in order. The scan resumes
-    /// from a kept point before the selection, and stops once the groups open
-    /// at its end have closed, or at its paragraph's end.
     pub fn text_styles(&mut self, selection: TextRange) -> TextStyles {
         let (start, end) = clamp(selection, self.text.len()).bounds();
         let src = &self.text.units;
@@ -132,9 +121,6 @@ mod tests {
     use super::*;
     use crate::syntax::{range, utf16};
 
-    /// The styles at the selection marked by "«" and "»" (or the caret, "‸"):
-    /// bold, italic and underline, each as its command's name, "?" for one
-    /// the edits don't unwrap, or "" for a style it hasn't.
     fn styles(marked: &str) -> [String; 3] {
         let (start, end) = match marked.find('‸') {
             Some(at) => (at, at),
@@ -213,7 +199,6 @@ mod tests {
         assert_eq!(styles(r"\textbf{a«b} c»"), NONE);
         assert_eq!(styles(r"\textbf{a«b} \textbf{c»}"), NONE);
         assert_eq!(styles(r"\textit{\textbf{«a} b»}"), ["", "textit", ""]);
-        // The whole command, as a double-click and a drag select it.
         assert_eq!(styles(r"x «\textbf{ab}» c"), BOLD);
         assert_eq!(styles(r"\textit{«\textbf{ab}»}"), ["textbf", "textit", ""]);
     }
@@ -228,7 +213,6 @@ mod tests {
             styles("\\textbf{a\n\\begin{verbatim}\n}\n\\end{verbatim}\nb‸}"),
             BOLD
         );
-        // Unclosed, there's nothing to unwrap, nor closed past the paragraph.
         assert_eq!(styles(r"\textbf{a‸"), NONE);
         assert_eq!(styles("\\textbf{a‸\n\nb}"), NONE);
     }

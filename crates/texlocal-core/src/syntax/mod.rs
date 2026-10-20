@@ -1,12 +1,6 @@
-//! LaTeX editing logic for the editors: highlighting, completion and the
-//! editing commands, as ranges and edits for the editor to apply. The editor
-//! owns the text, its undo and its drawing; a `SourceDocument` mirrors the
-//! text through the editor's edits and answers in UTF-16 offsets, which
-//! NSString and WinUI both count in. A session's open file
-//! (`session::Document`) holds one, as does each of the FFI's own sources.
-//! Its commands are its methods, each in the file of its kind: typing.rs
-//! (keys and brackets), snippet.rs (the fields Tab goes through), edit.rs
-//! (the menus' and shortcuts' commands) and complete.rs.
+//! LaTeX editing logic for the editors, as ranges and edits for the editor to apply. A `SourceDocument` mirrors the
+//! editor's text and answers in UTF-16 offsets, which NSString and WinUI count in. Its commands are its methods,
+//! each in the file of its kind.
 
 mod call;
 pub(crate) mod catalog;
@@ -34,7 +28,6 @@ pub use call::call;
 use complete::SnippetField;
 use highlight::{Highlight, HighlightKind};
 
-/// A range of the text, in UTF-16 units; `TlRange` in the C ABI.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(C)]
 pub struct TextRange {
@@ -42,7 +35,6 @@ pub struct TextRange {
     pub length: u32,
 }
 
-/// Replace `length` units at `start` with `text`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextEdit {
     pub start: u32,
@@ -51,7 +43,6 @@ pub struct TextEdit {
 }
 
 impl TextRange {
-    /// Where it starts and ends, as indexes.
     fn bounds(self) -> (usize, usize) {
         let start = self.start as usize;
         (start, start + self.length as usize)
@@ -70,8 +61,6 @@ fn edit(start: u32, length: u32, text: impl Into<String>) -> TextEdit {
     }
 }
 
-/// `range` and `edit` for the commands that count in indexes: the cast to
-/// the API's UTF-16 offsets is made here, once.
 fn span(start: usize, length: usize) -> TextRange {
     range(start as u32, length as u32)
 }
@@ -80,8 +69,6 @@ fn splice(start: usize, length: usize, text: impl Into<String>) -> TextEdit {
     edit(start as u32, length as u32, text)
 }
 
-/// What asks for `SourceDocument::code_ranges`: the spelling checker or
-/// Writing Tools.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Checker {
@@ -89,20 +76,16 @@ pub enum Checker {
     WritingTools,
 }
 
-/// An edit and where the caret goes after it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Insertion {
     pub edit: TextEdit,
     pub caret: u32,
-    /// Where Tab goes in a block's text, as in a completion's.
     pub fields: Vec<SnippetField>,
 }
 
 const NEWLINE: u16 = b'\n' as u16;
 const CARRIAGE_RETURN: u16 = b'\r' as u16;
 
-/// A line's bounds in the text: where it starts, where its contents end and
-/// where the next line starts (the text's end, for the last).
 #[derive(Clone, Copy)]
 pub(crate) struct Line {
     pub start: usize,
@@ -110,13 +93,11 @@ pub(crate) struct Line {
     pub next: usize,
 }
 
-/// The editor's text and where its lines start (after each line feed).
 pub(crate) struct Text {
     pub units: Vec<u16>,
     pub lines: Vec<u32>,
 }
 
-/// Where the lines after the line feeds in `units`, put at `at`, start.
 fn line_starts(units: &[u16], at: u32) -> impl Iterator<Item = u32> + '_ {
     units
         .iter()
@@ -136,14 +117,11 @@ impl Text {
         self.units.len() as u32
     }
 
-    /// The line an offset is on, from 0.
     pub fn line_index(&self, offset: u32) -> usize {
         self.lines.partition_point(|&start| start <= offset) - 1
     }
 
-    /// Where a line starts, where its contents end and where the next line
-    /// starts. Lines end at line feeds; a carriage return before one is part
-    /// of the line break, so a CRLF file has the lines a LF file has.
+    /// A carriage return before a line feed is part of the break, so a CRLF file has a LF file's lines.
     pub fn bounds(&self, index: usize) -> Line {
         let start = self.lines[index] as usize;
         let last = index + 1 == self.lines.len();
@@ -158,19 +136,15 @@ impl Text {
         Line { start, end, next }
     }
 
-    /// The line an offset is on.
     pub fn around(&self, offset: usize) -> Line {
         self.bounds(self.line_index(offset as u32))
     }
 
-    /// A line's units, without its line break.
     pub fn line(&self, index: usize) -> &[u16] {
         let Line { start, end, .. } = self.bounds(index);
         &self.units[start..end]
     }
 
-    /// Replaces a range, keeping the line starts; returns the first line
-    /// whose start the edit may have moved.
     fn replace(&mut self, start: u32, length: u32, text: &[u16]) -> usize {
         let end = start + length;
         let first = self.lines.partition_point(|&s| s <= start);
@@ -186,16 +160,12 @@ impl Text {
     }
 }
 
-/// An open file's text, mirrored from the editor, and the answers about it.
 pub struct SourceDocument {
     text: Text,
     highlighter: highlight::Cache,
-    /// Kept for the questions that read the text from its start.
     scans: scans::Scans,
-    /// The project's, which "completions" offers in `\ref{` and `\cite{`.
     labels: Vec<String>,
     citations: Vec<String>,
-    /// The closers and snippet fields typing keeps between keys.
     typing: typing::Typing,
 }
 
@@ -211,15 +181,12 @@ impl SourceDocument {
         }
     }
 
-    /// The project's labels and citations, which `call`'s "completions"
-    /// offers until they are set again: kept here rather than sent with each
-    /// key's completions, a bibliography being thousands of keys.
+    /// Kept here rather than sent with each completions call: a bibliography is thousands of keys.
     pub fn set_symbols(&mut self, labels: Vec<String>, citations: Vec<String>) {
         (self.labels, self.citations) = (labels, citations);
     }
 
-    /// The editor replaced `length` units at `start` with `text`. A range
-    /// past the end is cut to the text: the mirror never fails the editor.
+    /// A range past the end is cut to the text: the mirror never fails the editor.
     pub fn edit(&mut self, start: u32, length: u32, text: &str) {
         let start = start.min(self.text.len());
         let length = length.min(self.text.len() - start);
@@ -233,12 +200,10 @@ impl SourceDocument {
         crate::utf16_lossy(&self.text.units)
     }
 
-    /// The line an offset is on, from 1.
     pub fn line_at(&self, offset: u32) -> u32 {
         self.text.line_index(offset) as u32 + 1
     }
 
-    /// Where a line (from 1) starts; past the last line, the last line's start.
     pub fn line_start(&self, line: u32) -> u32 {
         let index = (line.max(1) as usize - 1).min(self.text.lines.len() - 1);
         self.text.lines[index]
@@ -248,16 +213,13 @@ impl SourceDocument {
         self.text.lines.len() as u32
     }
 
-    /// The highlighted runs of the lines a range touches.
     pub fn highlights(&mut self, start: u32, length: u32) -> Vec<Highlight> {
         let end = start.saturating_add(length).min(self.text.len());
         self.highlighter.highlights(&self.text, start.min(end), end)
     }
 
-    /// Where line `line` (from 1) has `command` (with its backslash), each
-    /// time it does, in units from the line's start: not as the start of a
-    /// longer name, not after a backslash that is itself a command's (`\\foo`
-    /// is a line break and a word), and not in a comment.
+    /// Not as the start of a longer name, nor after a backslash that is itself a command's (`\\foo` is a line break
+    /// and a word), nor in a comment.
     pub fn command_ranges(&self, line: u32, command: &str) -> Vec<TextRange> {
         let index = line.max(1) as usize - 1;
         let name: Vec<u16> = command.encode_utf16().collect();
@@ -283,8 +245,7 @@ impl SourceDocument {
         found
     }
 
-    /// Forgets the closers and snippet fields typing keeps, as when the
-    /// editor shows the document again: they belong to a visit, not to the text.
+    /// They belong to a visit, not to the text.
     pub fn reset_typing(&mut self) {
         self.typing = typing::Typing::default();
     }
@@ -294,8 +255,6 @@ fn is(u: u16, c: char) -> bool {
     u == c as u16
 }
 
-/// Whether the unit at `at` follows a backslash that is not itself escaped,
-/// as the bracket of `\[` does.
 fn escaped(units: &[u16], at: usize) -> bool {
     let slashes = units[..at]
         .iter()
@@ -305,12 +264,8 @@ fn escaped(units: &[u16], at: usize) -> bool {
     slashes % 2 == 1
 }
 
-/// The longest command name `ascii` reads; longer than any in the catalog.
 const NAME: usize = 64;
 
-/// A command name's UTF-16 units as the ASCII they are, without allocating:
-/// "" for one longer than `NAME` or not ASCII, which no name it's matched
-/// against is.
 fn ascii<'a>(units: &[u16], buf: &'a mut [u8; NAME]) -> &'a str {
     if units.len() > buf.len() || units.iter().any(|&u| u > 0x7f) {
         return "";
@@ -325,7 +280,6 @@ fn letter(u: u16) -> bool {
     u < 128 && (u as u8).is_ascii_alphabetic()
 }
 
-/// How many spaces and tabs a line starts with: its indentation.
 fn indentation(line: &[u16]) -> usize {
     line.iter()
         .take_while(|&&u| is(u, ' ') || is(u, '\t'))

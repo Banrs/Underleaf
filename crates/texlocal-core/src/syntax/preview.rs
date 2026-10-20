@@ -1,6 +1,4 @@
-//! The maths at the caret, to preview: read by the scanner the spelling and
-//! symbols use, so maths in a comment, an escaped dollar or a listing is
-//! none, and display maths is paired as TeX pairs it.
+//! The maths at the caret, to preview, read by the scanner spelling and symbols use, so display maths is paired as TeX pairs it.
 
 use std::ops::Range;
 use std::sync::LazyLock;
@@ -12,8 +10,6 @@ use super::SourceDocument;
 use super::catalog::CATALOG;
 use super::scan::{Group, Visit, environment_name};
 
-/// Maths to preview: where it starts, its TeX as KaTeX reads it, and
-/// whether it's displayed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct MathPreview {
     pub start: u32,
@@ -25,10 +21,8 @@ static LABELS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\(?:label|tag)\{
 static NUMBERING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\(?:nonumber|notag)(?-u:\b)").unwrap());
 
-/// How far past the caret its maths' close is looked for.
 const AHEAD: usize = 20_000;
 
-/// Displayed maths: $$…$$, \[…\], or an environment the preview renders.
 fn display(group: &Group) -> bool {
     matches!(group.end.as_ref(), "$$" | "\\]")
         || environment(group).is_some_and(|name| CATALOG.preview_environments.contains(name))
@@ -38,14 +32,11 @@ fn inline(group: &Group) -> bool {
     matches!(group.end.as_ref(), "$" | "\\)")
 }
 
-/// An environment group's name, without its star.
 fn environment(group: &Group) -> Option<&str> {
     let name = group.end.strip_prefix("env:")?;
     Some(name.strip_suffix('*').unwrap_or(name))
 }
 
-/// The close a scan meets of the maths opened at `open`, or without one, of
-/// displayed maths whose close ends at `at`.
 struct Close {
     open: Option<usize>,
     at: usize,
@@ -65,9 +56,7 @@ impl Visit for Close {
 }
 
 impl SourceDocument {
-    /// The maths the caret is in, to preview: the outermost display that
-    /// holds it, else the innermost inline maths; or the display it is just
-    /// after. None when its close isn't within 20,000 units, or it holds no TeX.
+    /// The outermost display holding the caret, else the innermost inline maths; none when its close isn't within 20,000 units.
     pub fn math_at(&mut self, caret: u32) -> Option<MathPreview> {
         let (units, caret) = (&self.text.units, caret.min(self.text.len()) as usize);
         let ahead = (caret + AHEAD).min(units.len());
@@ -86,7 +75,6 @@ impl SourceDocument {
                 at: caret,
                 found: None,
             };
-            // In steps, to stop at the close.
             while close.found.is_none() && scanner.i < ahead {
                 scanner.run(units, (scanner.i + 1024).min(ahead), &[], &mut close);
             }
@@ -109,8 +97,6 @@ impl SourceDocument {
     }
 }
 
-/// What KaTeX shows of maths: no labels or numbering, and an environment's
-/// body as the aligned or cases block it can render.
 fn preview_tex(environment: Option<&str>, body: &str) -> String {
     let body = LABELS.replace_all(body, "");
     let body = NUMBERING.replace_all(&body, "");

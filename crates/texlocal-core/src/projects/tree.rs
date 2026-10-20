@@ -19,7 +19,6 @@ pub struct TreeNode {
     pub kind: &'static str,
     pub name: String,
     pub path: String,
-    /// A file's `file_kind`; folders have none.
     #[serde(rename = "kind", skip_serializing_if = "Option::is_none")]
     pub file_kind: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -45,11 +44,7 @@ impl Entry {
     }
 }
 
-/// Shared tree rules for file listing, search and symbols: hide dotfiles and
-/// top-level build output, and follow links to files only, as folder links
-/// can cycle. An entry that can't be read, or vanishes while the walk passes
-/// (a build's or an editor's temporary file), is left out, and so an
-/// unreadable subfolder is empty; the project root must be readable.
+/// Shared tree rules for listing, search and symbols: hide dotfiles and top-level build output, follow links to files only (folder links can cycle), and leave out entries that vanish mid-walk.
 pub(super) fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> {
     let read = if dir == root {
         fs::read_dir(dir)?
@@ -86,8 +81,6 @@ pub(super) fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> 
     Ok(out)
 }
 
-/// Every content file in the project, depth-first, with its project-relative
-/// path. The visitor returns false to stop the walk.
 pub(super) fn visit_files(
     root: &Path,
     visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
@@ -131,7 +124,6 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
                 children,
             });
         }
-        // Folders first, then by name ignoring case.
         nodes.sort_by_cached_key(|n| {
             (
                 n.kind != "dir",
@@ -145,17 +137,13 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
     walk(root, root)
 }
 
-/// What the editor edits as text, besides .tex and .bib, by extension: the
-/// rest of TeX's own files (classes, styles, bibliography and citation styles,
-/// letter classes, docstrip sources), figure sources, documents that compile
-/// to TeX, and the data and scripts that sit beside a document.
+/// What the editor edits as text besides .tex and .bib, by extension.
 const TEXT_EXTENSIONS: &[&str] = &[
     "ltx", "cls", "sty", "clo", "def", "cfg", "bst", "bbx", "cbx", "lbx", "dtx", "ins", "ist",
     "lco", "tikz", "pgf", "mf", "mp", "asy", "rnw", "rmd", "qmd", "md", "txt", "csv", "tsv", "dat",
     "json", "yaml", "yml", "toml", "ini", "xml", "lua", "py", "r", "sh",
 ];
 
-/// Files with no extension that are text all the same.
 const TEXT_NAMES: &[&str] = &["latexmkrc", "makefile", "license", "readme"];
 
 /// What a host does with a file, by its extension in any case: "tex", "bib",
@@ -178,7 +166,6 @@ pub fn file_kind(name: &str) -> &'static str {
     }
 }
 
-/// Whether a file is one the editor edits, and a search reads.
 pub(crate) fn is_text(name: &str) -> bool {
     matches!(file_kind(name), "tex" | "bib" | "text")
 }
@@ -204,7 +191,6 @@ mod tests {
         let (_dir, root) = project();
         create_free(&root, "figs/a.png", false).unwrap();
         let tree = serde_json::to_value(file_tree(&root).unwrap()).unwrap();
-        // Folders first.
         let folder = &tree[0];
         assert_eq!(folder["children"][0]["kind"], "image");
         assert!(folder["name"] == "figs" && folder.get("kind").is_none());

@@ -23,9 +23,7 @@ pub struct Symbols {
 // ASCII, which swallows a non-breaking space into the key.
 static BIB_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
-/// Not a bare prefix, as an inserted block's `fig:` is until it's filled in.
 static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\label\{([^}]*[^}:])\}").unwrap());
-/// A thebibliography entry's key, which \cite takes as a .bib key.
 static BIBITEM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\bibitem\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}").unwrap());
 
@@ -40,7 +38,6 @@ fn parse_symbols(bytes: &[u8], kind: &str) -> Symbols {
         found(&BIB_KEY, &text, &mut citations);
     } else {
         for line in text.lines().map(strip_comment) {
-            // Both start with a backslash.
             if !line.contains('\\') {
                 continue;
             }
@@ -51,8 +48,6 @@ fn parse_symbols(bytes: &[u8], kind: &str) -> Symbols {
     Symbols { citations, labels }
 }
 
-/// The labels and citations of every .tex and .bib file, in file-name order,
-/// which keeps completions stable, each at its first occurrence.
 pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
     let mut files = BTreeMap::new();
     visit_files(root, &mut |abs, rel| {

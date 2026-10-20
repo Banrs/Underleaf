@@ -1,6 +1,4 @@
-//! SyncTeX queries: editor line to PDF position, and back. SyncTeX's boxes
-//! are coarse, so a word is placed by matching the text round it
-//! (`wordmatch`).
+//! SyncTeX queries: editor line to PDF position and back; words are placed by `wordmatch`.
 
 use std::path::{Path, PathBuf};
 
@@ -21,9 +19,7 @@ pub struct ForwardLoc {
     pub v: Option<f64>,
     pub width: Option<f64>,
     pub height: Option<f64>,
-    /// All matching boxes in reading order (none in each of them). The
-    /// top-level fields retain the CLI's first match for clients that do not
-    /// refine a word selection.
+    /// All matching boxes in reading order; the top-level fields keep the CLI's first match.
     pub matches: Vec<Self>,
 }
 
@@ -31,12 +27,9 @@ pub struct ForwardLoc {
 pub struct InverseLoc {
     pub file: String,
     pub line: u32,
-    /// The clicked letter's place in the line, in UTF-16 units (the hosts'
-    /// strings), when the host sent the page text and the word was found.
     pub column: Option<u32>,
 }
 
-/// The PDF to sync with: `live`, TeXpresso's (with its live.synctex beside it), or the build's.
 fn pdf_for(root: &Path, live: Option<&Path>) -> Result<PathBuf, CoreError> {
     if let Some(live) = live {
         return Ok(live.to_path_buf());
@@ -48,7 +41,6 @@ fn pdf_for(root: &Path, live: Option<&Path>) -> Result<PathBuf, CoreError> {
     Ok(pdf)
 }
 
-/// What synctex prints for `args` ("view …" or "edit …"), run in the project.
 async fn synctex(root: &Path, args: &[&str], path_env: &str) -> Result<String, CoreError> {
     match run("synctex", args, Some(root), path_env).await {
         Ok((0, stdout)) => Ok(stdout),
@@ -74,8 +66,7 @@ pub async fn synctex_forward_at(
     path_env: &str,
 ) -> Result<ForwardLoc, CoreError> {
     let pdf = pdf_for(root, live)?;
-    // synctex expects the input path as TeX saw it (relative to cwd,
-    // ./-prefixed, forward slashes).
+    // synctex wants the input path as TeX saw it: ./-prefixed, forward slashes.
     let rel = safe_rel_file(file)?;
     if line < 1 {
         return Err(CoreError::bad_request("Invalid source line"));
@@ -87,8 +78,6 @@ pub async fn synctex_forward_at(
 }
 
 fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
-    // The box the clients draw. synctex also prints x: and y:, a point no
-    // client uses.
     const KEYS: [&str; 5] = ["Page", "h", "v", "W", "H"];
     let mut matches = Vec::new();
     let mut values = [None; 5];
@@ -123,15 +112,11 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
             .then_with(|| a.v.unwrap_or(0.0).total_cmp(&b.v.unwrap_or(0.0)))
             .then_with(|| a.h.unwrap_or(0.0).total_cmp(&b.h.unwrap_or(0.0)))
     });
-    // Each match's own matches are empty: the boxes alone compare.
     matches.dedup();
     first.matches = matches;
     Ok(first)
 }
 
-/// PDF location (page, x, y in TeX points from top-left) -> source file:line,
-/// and with `click`, the page's text and the UTF-16 index of the clicked
-/// character in it, the column of that letter (`find_in_source`).
 pub async fn synctex_inverse(
     root: &Path,
     page: f64,
@@ -156,8 +141,7 @@ pub async fn synctex_inverse(
         ));
     };
 
-    // Generated files (.toc/.aux in the build dir) and anything outside the
-    // project aren't real sources — report "no match" so the UI shows a toast.
+    // Generated files and anything outside the project report no match.
     let rel = source_rel(root, file)
         .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
     let found = click.and_then(|(text, at)| {
@@ -172,9 +156,6 @@ pub async fn synctex_inverse(
     })
 }
 
-/// Where the word at `column` (UTF-16) of a source line is in the PDF, given
-/// the pages SyncTeX's boxes are on. None when the word can't be told from its
-/// twins; the host then shows SyncTeX's own box.
 pub fn match_forward(
     root: &Path,
     file: &str,

@@ -22,7 +22,6 @@ pub(crate) fn normalize_segments<'a>(
                     return Err(CoreError::bad_request(escape_err));
                 }
             }
-            // Components of a UTF-8 input are themselves UTF-8.
             Component::Normal(segment) => segments.push(segment.to_str().unwrap()),
             _ => return Err(CoreError::bad_request(escape_err)),
         }
@@ -30,8 +29,7 @@ pub(crate) fn normalize_segments<'a>(
     Ok(segments)
 }
 
-/// A project is one folder directly under `data_dir`, as list_projects reports it.
-/// Resolved, so a build is stopped by the root it was started with.
+/// A project is one folder directly under `data_dir`, resolved so a build stops by the root it started with.
 pub fn project_root(data_dir: &Path, id: &str) -> Result<PathBuf, CoreError> {
     let [name] = normalize_segments(id, "Bad project id")?[..] else {
         return Err(CoreError::bad_request("Bad project id"));
@@ -81,8 +79,6 @@ pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     Ok(root.join(segments.join("/")))
 }
 
-/// A path as the volume compares it: macOS and Windows volumes usually
-/// ignore case.
 pub(crate) fn fold_case(path: &str) -> String {
     path.to_lowercase()
 }
@@ -108,7 +104,6 @@ pub(crate) fn within(path: &str, entry: &str) -> bool {
     after_entry(path, entry).is_some()
 }
 
-/// Whether two paths name one entry, a link itself rather than its target.
 #[cfg(unix)]
 pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -124,8 +119,6 @@ pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
     !link(a) && !link(b) && same_file::is_same_file(a, b).unwrap_or(false)
 }
 
-/// The normalized forward-slash spelling of a project path, for comparing it
-/// with a stored one such as the main file.
 pub fn rel_key(rel: &str) -> Result<String, CoreError> {
     Ok(safe_segments(rel)?.join("/"))
 }
@@ -141,7 +134,6 @@ pub fn safe_rel_file(rel: &str) -> Result<String, CoreError> {
     Ok(segments.join("/"))
 }
 
-/// A name for a new folder in the library, without what the volume refuses in it.
 pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
     let refused = |c: char| {
         std::path::is_separator(c) || (cfg!(windows) && (c.is_control() || "<>:\"|?*".contains(c)))

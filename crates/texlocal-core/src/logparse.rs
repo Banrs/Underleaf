@@ -1,10 +1,4 @@
-//! latexmk/TeX log parsing.
-//! We compile with -file-line-error, so errors look like:
-//!   ./main.tex:12: Undefined control sequence.
-//! Warnings look like:
-//!   LaTeX Warning: Reference `fig:x' on page 1 undefined on input line 10.
-//! and name no file: the file is the one TeX has open, which the log marks
-//! with "(./chapters/intro.tex" as it opens it and ")" as it closes it.
+//! latexmk/TeX log parsing. Warnings name no file, so the open file is tracked from the log's "(./x.tex" and ")" marks.
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -29,7 +23,6 @@ pub struct LogItem {
     pub message: String,
     /// `message` for a line's end: on one line, without LaTeX's own prefix.
     pub short: String,
-    /// The command an "Undefined control sequence" names, with its backslash.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
 }
@@ -60,16 +53,11 @@ impl LogItem {
 /// no other message: one from a file TeX loaded has that file's name before it.
 fn undefined_command(message: &str) -> Option<String> {
     let name = message.strip_prefix("Undefined control sequence: \\")?;
-    // TeX's two forms of name: letters (and @), or one character of any other kind.
     let letters = name.chars().all(|c| c.is_ascii_alphabetic() || c == '@');
     ((!name.is_empty() && letters) || name.chars().count() == 1).then(|| format!("\\{name}"))
 }
 
-// What -file-line-error prints for an error in any file TeX reads (a source,
-// a .bbl or .aux it wrote, a .cbx or .dat a package loads): `path:line: `. Or
-// TeX's own `! `. A path is told from a message by its colon, digits and
-// colon, so no list of file types is needed; `error_start` also asks that it
-// is a path, which a time, "built at 12:30: …", is not.
+// `path:line: ` from -file-line-error for any file TeX reads, or TeX's own `! `; `error_start` also requires a path, which a time like "12:30: " is not.
 static ERROR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^(?:(?P<file>(?:[A-Za-z]:)?[^\s:!][^:]*):(?P<line>\d+):(?:\s+|$)|! )(?P<message>.*)$",
@@ -89,21 +77,17 @@ static BIBTEX_ERROR: LazyLock<Regex> =
 static BIBER_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[\d+\] .*> ERROR - (.*)$").unwrap());
 
-/// An error's first line, `! message` or `path:line: message`.
 fn error_start(line: &str) -> Option<Captures<'_>> {
     ERROR
         .captures(line)
         .filter(|m| m.name("file").is_none_or(|f| is_path(f.as_str())))
 }
 
-/// Whether the text before "12:" is a path and not words: it has a separator,
-/// or a dot and no space. (TeX prints a file of the project's folder as
-/// "./name", so one with a space in its name has a slash too.)
+/// Whether the text before "12:" is a path and not words: TeX prints project files as "./name", so even a name with a space has a slash.
 fn is_path(text: &str) -> bool {
     text.contains(['/', '\\']) || (text.contains('.') && !text.contains(char::is_whitespace))
 }
 
-/// A warning's first line.
 fn warning_start(line: &str) -> Option<Captures<'_>> {
     line.contains(" Warning:")
         .then(|| WARNING.captures(line))
@@ -133,8 +117,6 @@ fn opens_file(token: &str) -> bool {
         }
 }
 
-/// Follow the files TeX opens and closes on a line. Each "(" pushes the path
-/// it opens, or None for a parenthesis in text, and each ")" pops.
 fn track<'a>(open: &mut Vec<Option<&'a str>>, line: &'a str) {
     let mut rest = line;
     while let Some(i) = rest.find(['(', ')']) {
@@ -144,7 +126,6 @@ fn track<'a>(open: &mut Vec<Option<&'a str>>, line: &'a str) {
             open.pop();
             continue;
         }
-        // A path with a space in it is quoted.
         let (token, after) = match rest.strip_prefix('"') {
             Some(quoted) => quoted.split_once('"').unwrap_or((quoted, "")),
             None => rest.split_at(
@@ -157,9 +138,7 @@ fn track<'a>(open: &mut Vec<Option<&'a str>>, line: &'a str) {
     }
 }
 
-/// Prefer the named file, then the innermost open file, then the main file.
-/// An absolute TeX distribution path uses any open project caller without a
-/// line number, and prefixes the message with the distribution file's name.
+/// An absolute TeX distribution path is attributed to the open project file, with no line number.
 fn locate(
     named: Option<&str>,
     line: Option<u32>,
@@ -182,9 +161,7 @@ fn locate(
     (files.find_map(project_path), None)
 }
 
-/// The name a diagnostic's continuation lines carry in parentheses, from its
-/// first line: "Package hyperref Warning:" goes on as "(hyperref) …", "LaTeX
-/// Font Warning:" as "(Font) …", "LaTeX Warning:" as "(LaTeX) …".
+/// The name a diagnostic's continuation lines carry in parentheses, e.g. "(hyperref)".
 fn continuation_tag(text: &str) -> Option<&str> {
     let mut words = text.split_whitespace();
     match (words.next()?, words.next()?) {
@@ -195,7 +172,6 @@ fn continuation_tag(text: &str) -> Option<&str> {
     }
 }
 
-/// A line that starts something of its own, which ends the message before it.
 fn starts_new(line: &str) -> bool {
     line.trim().is_empty()
         || line.starts_with(['!', '<'])
@@ -204,11 +180,7 @@ fn starts_new(line: &str) -> bool {
         || warning_start(line).is_some()
 }
 
-/// What `next` adds to a message whose last line was `prev`, and how it joins:
-/// a line led by the diagnostic's own "(name)" (a package's message breaks
-/// like that), or one indented under it (LaTeX's own). Or the rest of `prev`,
-/// when an engine wrapped it at column 79 (it does not with max_print_line
-/// set, but a distribution that ignores that does).
+/// What `next` adds to a message after `prev`: a line led by the diagnostic's own "(name)", an indented one, or the rest of a line an engine wrapped at column 79.
 fn continuation<'a>(
     prev: &str,
     next: &'a str,
@@ -224,15 +196,12 @@ fn continuation<'a>(
     }
 }
 
-/// The first blank line from `from`, or the end.
 fn blank_from(lines: &[&str], from: usize) -> usize {
     (from..lines.len())
         .find(|&j| lines[j].trim().is_empty())
         .unwrap_or(lines.len())
 }
 
-/// The line of the "l.<n>" echo of the error at `lines[i]`, if it has one
-/// before the next error.
 fn echo_of(lines: &[&str], i: usize) -> Option<usize> {
     lines[i + 1..(i + 12).min(lines.len())]
         .iter()
@@ -245,13 +214,11 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     let lines: Vec<&str> = log.lines().collect();
     let mut items: Vec<LogItem> = Vec::new();
     let mut open = Vec::new();
-    // Lines before this one echo source or a box's contents, whose
-    // parentheses needn't pair up, so they aren't tracked.
+    // Lines before this echo source whose parentheses needn't pair up.
     let mut quiet_until = 0;
 
     for (i, &line) in lines.iter().enumerate() {
-        // Skip both regexes for most lines of a long log: an error starts
-        // "! " or names its file and line with colons.
+        // Skip the regexes for most lines: an error starts "! " or has colons.
         let may_err = line.starts_with("! ") || line.contains(':');
         let diagnostic = may_err
             .then(|| error_start(line))
@@ -272,7 +239,6 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
                     break;
                 };
                 if !text.is_empty() {
-                    // A package's first line may end in a space of its own.
                     if !joiner.is_empty() {
                         message.truncate(message.trim_end().len());
                     }
@@ -286,7 +252,6 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
             if summary && items.iter().any(|item| item.kind == Severity::Error) {
                 continue;
             }
-            // TeX's context or source echo names the undefined command.
             if message
                 .trim_start()
                 .starts_with("Undefined control sequence.")
@@ -316,7 +281,6 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
                 message.trim().to_string(),
             ));
         } else if line.starts_with("Overfull \\") || line.starts_with("Underfull \\") {
-            // The box's contents follow, up to a blank line.
             quiet_until = blank_from(&lines, i + 1);
         }
         if i >= quiet_until {
@@ -330,9 +294,7 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     items
 }
 
-/// Errors from bibtex's or biber's own log (.blg). A bibtex error names the
-/// .bib line, after its message or on the line below it; biber's name none a
-/// user can open.
+/// Errors from bibtex's or biber's .blg; bibtex names the .bib line after its message or on the line below.
 pub fn parse_blg(blg: &str) -> Vec<LogItem> {
     let mut previous = "";
     blg.lines()
@@ -356,8 +318,6 @@ pub fn parse_blg(blg: &str) -> Vec<LogItem> {
         .collect()
 }
 
-/// The steps latexmk's closing "Collected error summary" lists as failed,
-/// one line each; more deeply indented lines add detail.
 pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
     output
         .lines()
@@ -373,7 +333,6 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
 mod tests {
     use super::{LogItem, Severity, latexmk_errors, parse_blg, parse_log};
 
-    /// Each item as "kind file:line message", with "-" for a place it lacks.
     fn described(items: &[LogItem]) -> Vec<String> {
         let place = |part: Option<String>| part.unwrap_or_else(|| "-".into());
         items
@@ -522,9 +481,7 @@ mod tests {
                 "error refs/my.cbx:12 Package biblatex Error: Bad style.",
                 "error data.dat:2 Missing number.",
                 "error My Chapter.tex:3 Missing $ inserted.",
-                // A distribution path: the project file that has it open, and no line.
                 "error refs/my.cbx:- a.lbx: Boom.",
-                // One TeX wrote itself, in the build folder.
                 "error build/main.bbl:5 Misplaced alignment tab character &.",
             ]
         );
@@ -532,9 +489,7 @@ mod tests {
 
     #[test]
     fn a_message_takes_the_file_tex_has_open() {
-        // Parentheses in the echoed source and in an overfull box's contents
-        // don't pair up, and mustn't close a file; nor does a command in
-        // parentheses open one, as a Windows path in full does.
+        // Parentheses in echoed source and box contents don't pair up, and a command in parentheses opens no file.
         let log = "(./main.tex\n\
                    (/usr/local/texlive/2026/texmf-dist/tex/latex/base/article.cls\n\
                    Document Class: article 2025/01/22 v1.4n Standard LaTeX document class\n\
@@ -579,7 +534,6 @@ mod tests {
                 at("main.tex", 4),
                 at("chapters/intro.tex", 3),
                 at("main.tex", 9),
-                // In a distribution file: the project file that loaded it, no line.
                 (Some("main.tex".into()), None),
                 at("chapters/a.tex", 3),
             ]
@@ -599,7 +553,6 @@ mod tests {
                     "error -:- Undefined control sequence.",
                 ],
             ),
-            // A line wrapped at 79 columns runs on without a space.
             (
                 "LaTeX Warning: Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on in\n\
                  put line 3.\n\
@@ -611,8 +564,6 @@ mod tests {
                     "error main.tex:9 Missing number, treated as zero.",
                 ],
             ),
-            // LaTeX's own continuation is indented, and a line that is neither
-            // that nor the warning's own is not part of it.
             (
                 "LaTeX Warning: You have requested package `a',\n\
                  \x20              but the package provides `b'.\n\
@@ -633,15 +584,11 @@ mod tests {
         for (log, expected) in cases {
             assert_eq!(parsed(log), expected, "{log}");
         }
-        // The 79-column line above really is 79 columns.
         let line =
             "Package microtype Warning: Unknown slot number of character 12 in font encoding";
         assert_eq!(line.chars().count(), 79);
     }
 
-    // Logs as the engines wrote them, built here with the arguments and
-    // environment of a build (tests/logs/*): pdfTeX with nested \input files,
-    // XeTeX failing on a missing font, and LuaTeX.
     const NESTED: &str = include_str!("../tests/logs/pdflatex-nested.txt");
     const FONTSPEC: &str = include_str!("../tests/logs/xelatex-fontspec-error.txt");
     const LUALATEX: &str = include_str!("../tests/logs/lualatex-warnings.txt");
@@ -657,7 +604,6 @@ mod tests {
                 "warning chapters/intro.tex:2 Reference `fig:nope' on page 1 undefined on input line 2.".into(),
                 "warning chapters/intro.tex:2 Citation `missing' on page 1 undefined on input line 2.".into(),
                 "error chapters/deep.tex:2 Undefined control sequence: \\undefinedmacroindeep".into(),
-                // Four lines in the log, to its place at the end.
                 "warning main.tex:7 First line of the warning second line of the warning third line of the warning and a fourth, which ends it on input line 7.".into(),
                 "error data.dat:2 Undefined control sequence: \\nosuchdatacommand".into(),
                 "warning -:- There were undefined references.".into(),
@@ -672,7 +618,6 @@ mod tests {
             .iter()
             .filter(|it| it.kind == Severity::Error)
             .collect();
-        // The three copies of fontspec's collapse to one, and XeTeX's own follows.
         assert_eq!(errors.len(), 2, "{errors:?}");
         assert!(
             errors[1]
@@ -689,7 +634,6 @@ mod tests {
             "bug in the underlying font loading engine (XeTeX/luaotfload).",
         );
         assert!(error.short.starts_with(start) && error.short.ends_with(end));
-        // The "Info" lines and the source echo are not part of it.
         assert!(!error.message.contains("Could not resolve") && !error.message.contains("l.4"));
     }
 
@@ -708,8 +652,6 @@ mod tests {
 
     #[test]
     fn bibliography_and_latexmk_failures_are_read_from_their_own_output() {
-        // bibtex's errors, the message before its place or on the line above
-        // it, and biber's.
         let blg = "Database file #1: refs.bib\n\
                    I was expecting a `,' or a `}'---line 7 of file refs.bib\n\
                    \x20:   author = {Nobody},\n\
@@ -725,7 +667,6 @@ mod tests {
                 "error -:- BibTeX subsystem: syntax error",
             ]
         );
-        // latexmk's summary of the steps that failed, without the detail under them.
         let output = "Latexmk: All targets (build/main.pdf) are up-to-date\n\
                       Collected error summary (may duplicate other messages):\n\
                       \x20 biber build/main: Could not open biber log file 'build/main.blg'\n\

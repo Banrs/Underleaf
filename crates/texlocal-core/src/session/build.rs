@@ -1,5 +1,5 @@
-//! The session's builds: one at a time with one more queued, Clean once the
-//! build stops, and the issues of the last build on the editor's lines.
+//! The session's builds: one at a time with one more queued, Clean once the build
+//! stops, and the issues of the last build on the editor's lines.
 
 use std::collections::BTreeMap;
 
@@ -15,24 +15,17 @@ use crate::syntax::TextRange;
 #[derive(Default)]
 pub(crate) struct Builds {
     pub compiling: bool,
-    /// One more build asked for during this one; `Some(true)` while every request was automatic.
     pub queued: Option<bool>,
     auto: bool,
-    /// The edit count when the build running began.
     built: u64,
-    /// An automatic build was skipped as TeX wasn't found: one runs once `status` finds it.
     pub waiting_for_tex: bool,
-    /// The last build left a PDF.
     pub pdf: bool,
     outdated: bool,
     issues: Vec<LogItem>,
     error_count: usize,
     chosen: Option<usize>,
-    /// The edit count when the build whose issues these are began.
     result_edits: u64,
-    /// The Cleans asked for: one runs once the build stops, and answers them all.
     pub cleaners: Vec<Reply>,
-    /// The clean running: whether live preview ran as it began, and the user's intent then.
     cleaning: Option<(bool, u64)>,
     shown: Value,
 }
@@ -42,9 +35,7 @@ impl Actor {
         self.builds.pdf || self.live.document_seen
     }
 
-    /// A request during a build queues one more. An automatic build waits
-    /// while live preview runs, and for TeX to be found (`status`). Shown only
-    /// once it runs: one whose saves can't go ahead builds nothing. Err: a save
+    /// An automatic build waits while live preview runs, and for TeX to be found. Err: a save
     /// someone asked for failed.
     pub fn compile(&mut self, auto: bool) -> Result<(), CoreError> {
         if self.closed || auto && self.live_previewing() {
@@ -100,8 +91,6 @@ impl Actor {
             builds.result_edits = builds.built;
             builds.chosen = None;
             let auto = builds.auto;
-            // A build Stop ended has nothing to say; one asked for says how it went, and an
-            // automatic one only when its errors changed.
             let announce = !result.stopped && (!auto || builds.error_count != before);
             let outdated = builds.outdated;
             self.mark_issues();
@@ -117,8 +106,7 @@ impl Actor {
         if !self.builds.cleaners.is_empty() && self.builds.cleaning.is_none() {
             self.start_clean();
         }
-        // Published once the queued build has started, if it could: builds back to
-        // back show as one, with no `compiling: false` between them.
+        // Published once the queued build has started: builds back to back show as one.
         if let Some(auto) = again {
             let _ = self.compile(auto);
         }
@@ -142,7 +130,6 @@ impl Actor {
         }
     }
 
-    /// The PDF now shows text since changed (an edit, or the disk's text reloaded).
     pub fn mark_outdated(&mut self) {
         if self.has_pdf() && !self.builds.outdated {
             self.builds.outdated = true;
@@ -150,7 +137,6 @@ impl Actor {
         }
     }
 
-    /// A Clean asked for while another waits or runs joins it, and has its answer.
     pub fn clean(&mut self, reply: Reply) {
         self.stop_compile();
         self.builds.cleaners.push(reply);
@@ -172,8 +158,6 @@ impl Actor {
             return;
         };
         if result.is_ok() && !self.closed {
-            // The preview reads the build folder: one live as the clean began starts again,
-            // unless stopped or started meanwhile.
             if live && intent == self.live.intent {
                 self.after(Timer::Restart);
             }
@@ -203,7 +187,6 @@ impl Actor {
         }
     }
 
-    /// The build's issues on the lines of each document not edited since it started.
     pub fn mark_issues(&mut self) {
         let mut changed = Vec::new();
         for (path, doc) in &mut self.docs {
@@ -235,7 +218,6 @@ impl Actor {
         json!({ "index": index, "issue": issues[index] })
     }
 
-    /// The next (or previous) issue with a place in a file, round to the first.
     pub fn next_issue(&mut self, next: bool) -> Value {
         let issues = &self.builds.issues;
         let places: Vec<usize> = (0..issues.len())
@@ -256,10 +238,8 @@ impl Actor {
     }
 }
 
-/// The build's issues on `path`'s lines, as the editor marks them: the
-/// first issue of a line with the rest after it. An undefined command's
-/// issue has where the line has the command (as `tokens` finds it, from the
-/// line's start), and a `compact` message that names it in fewer words.
+/// An undefined command's issue has where the line has the command (`tokens`), and a
+/// `compact` message that names it in fewer words.
 fn issue_lines(
     issues: &[LogItem],
     path: &str,

@@ -1,6 +1,5 @@
-//! The project folder's watcher (FSEvents or ReadDirectoryChangesW, through
-//! `notify`), and what its changes mean to a session: the listed tree changed,
-//! or a file changed in place.
+//! The project folder's watcher (through `notify`), and what its changes mean to a
+//! session: the listed tree changed, or a file changed in place.
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
@@ -14,14 +13,12 @@ use super::Msg;
 use crate::paths::within;
 use crate::projects::TreeNode;
 
-/// A path the system said changed. Structural: made, removed or renamed.
 #[derive(Debug)]
 pub(crate) struct Change {
     pub path: PathBuf,
     pub structural: bool,
 }
 
-/// Watches `root` and its folders, sending what changes to the session.
 pub(crate) fn watch(root: &Path, tx: mpsc::UnboundedSender<Msg>) -> Option<RecommendedWatcher> {
     let base = root.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
@@ -54,7 +51,6 @@ fn changes(event: notify::Event) -> Vec<Change> {
     paths.map(|path| Change { path, structural }).collect()
 }
 
-/// The project's entries as last listed (`projects::file_tree`).
 #[derive(Default, PartialEq, Eq)]
 pub(crate) struct TreeIndex {
     pub files: HashSet<String>,
@@ -86,18 +82,13 @@ impl TreeIndex {
     }
 }
 
-/// What a batch of changes means to the session.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Meaning {
-    /// The listing may differ: read the tree again.
     pub tree: bool,
-    /// Open documents whose file may have changed on disk.
     pub docs: BTreeSet<String>,
-    /// Listed entries that changed.
     pub listed: BTreeSet<String>,
 }
 
-/// `root`'s path for `path`, with forward slashes; "" for the root itself.
 fn relative(root: &Path, path: &Path) -> Option<String> {
     let rest = path.strip_prefix(root).ok()?;
     let parts: Option<Vec<&str>> = rest.components().map(|c| c.as_os_str().to_str()).collect();
@@ -116,8 +107,7 @@ pub(crate) fn classify(
             continue;
         };
         if rel.is_empty() {
-            // The folder itself moved, or the system lost count of it: any
-            // file in it may have changed unseen.
+            // The folder itself moved, or the system lost count: any file may have changed unseen.
             if change.structural {
                 meaning.tree = true;
                 meaning.docs.extend(docs.iter().cloned());
@@ -141,16 +131,15 @@ pub(crate) fn classify(
     meaning
 }
 
-/// A save, the session's or another app's, renames a new file over a listed
-/// one, which leaves the listing as it was; nor does the tree list a hidden
-/// file.
+/// A save renames a new file over a listed one, which leaves the listing as it was; nor
+/// does the tree list a hidden file.
 fn listed_as_before(root: &Path, rel: &str, index: &TreeIndex) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
     name.starts_with('.') || index.files.contains(rel) && is_file_spelt(root, rel)
 }
 
-/// A file at `rel`, spelt as the disk spells it: a rename that changes only
-/// case leaves a file at the old spelling on a volume that ignores case.
+/// A rename that changes only case leaves a file at the old spelling on a volume that
+/// ignores case.
 fn is_file_spelt(root: &Path, rel: &str) -> bool {
     let path = root.join(rel);
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {

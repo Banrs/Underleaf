@@ -1,6 +1,5 @@
-//! Completion: an argument's labels, citations or environments, a
-//! bibliography entry's type, or a command. Commands are snippets, expanded
-//! here, so an editor only places the text and its fields.
+//! Completion: an argument's labels, citations or environments, a bibliography entry's type, or a command.
+//! Commands are snippets, expanded here, so an editor only places the text and its fields.
 
 use std::sync::LazyLock;
 
@@ -9,27 +8,20 @@ use serde::{Deserialize, Serialize};
 
 use super::{SourceDocument, Text, catalog, indentation, utf16};
 
-/// A place to type in a completion's text. Fields with the same `index`
-/// are one field in several places: what's typed in one goes in all.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnippetField {
-    /// From the start of the completion's text, in UTF-16 units.
     pub start: u32,
     pub length: u32,
-    /// The field's place in the order Tab goes through them, from 0.
     pub index: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Completion {
     pub label: String,
-    /// What goes in, with the fields' defaults and the line's indentation.
     pub text: String,
-    /// In order of position.
     pub fields: Vec<SnippetField>,
 }
 
-/// What an offer's items are, all of them: the list they were drawn from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CompletionKind {
@@ -40,7 +32,6 @@ pub enum CompletionKind {
     EntryType,
 }
 
-/// Completions for the text from `start` to the caret, which they replace.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Completions {
     pub start: u32,
@@ -60,14 +51,9 @@ static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[0-9A-Za-z_]*$
 static FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#\{([^}]*)\}").unwrap());
 
 impl SourceDocument {
-    /// What to offer at the caret, if anything: commands after a backslash
-    /// (only once a letter follows unless `explicit`, asked for by the user),
-    /// the labels, citations or environments an argument takes, or a
-    /// bibliography entry's type after "@".
     pub fn completions(&self, caret: u32, explicit: bool) -> Option<Completions> {
         let (text, caret) = (&self.text, caret.min(self.text.len()));
         let line = text.line_index(caret);
-        // The caret's line, at most 250 units back.
         let from = text.lines[line].max(caret.saturating_sub(250));
         let before = String::from_utf16_lossy(&text.units[from as usize..caret as usize]);
         let catalog = &*catalog::CATALOG;
@@ -88,21 +74,18 @@ impl SourceDocument {
                 "begin" | "end" => (&catalog.environments, CompletionKind::Environment),
                 _ => return None,
             };
-            // After the brace or comma, and the blanks that usually follow a comma.
             let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
             let start = before.len() - before[start..].trim_start().len();
             let items = words(matching(names, &before[start..], |n| n), "");
             return offer(start, kind, items);
         }
-        // @article and the like, in a .bib file. `before` starts at the line's
-        // start unless the line is long, when the "@" is not known to.
+        // In a .bib file; `before` starts at the line's start unless the line is long.
         let whole_line = from == text.lines[line];
         if let Some(at) = ENTRY_TYPE.captures(&before).filter(|_| whole_line) {
             let at = at.get(1).unwrap();
             let names = matching(&catalog.bib_entry_types, &at.as_str()[1..], |t| t);
             return offer(at.start(), CompletionKind::EntryType, words(names, "@"));
         }
-        // \command, once a letter follows the backslash.
         let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
         let items = matching(&catalog.commands, m.as_str(), |c| &c.0)
             .into_iter()
@@ -119,7 +102,6 @@ impl SourceDocument {
     }
 }
 
-/// Literal names, with `@` prefixed for bibliography entry types.
 fn words(names: Vec<&String>, prefix: &str) -> Vec<Completion> {
     names
         .into_iter()
@@ -134,13 +116,10 @@ fn words(names: Vec<&String>, prefix: &str) -> Vec<Completion> {
         .collect()
 }
 
-/// The items whose names start with what's typed, those with its case first.
 fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) -> Vec<&'a T> {
     let (lower, ascii) = (typed.to_lowercase(), typed.is_ascii());
-    // ASCII names, as the catalog's and most keys are, are compared in
-    // place: lowercasing a copy of each, at every key typed, was most of a
-    // citation's offer. Others are lowercased whole, by Unicode's full
-    // mapping, which may lower a character to ASCII (the kelvin sign to k).
+    // ASCII names are compared in place: lowercasing a copy per key was most of a citation's offer. Others are
+    // lowercased by Unicode's full mapping, which may lower a character to ASCII (the kelvin sign).
     let starts = |n: &str| {
         if ascii && n.is_ascii() {
             let head = n.as_bytes().get(..typed.len());
@@ -157,14 +136,11 @@ fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) ->
     exact
 }
 
-/// A snippet's text and fields as it goes in at `at`: "#{name}" fields show
-/// their name as their text, and fields with the same name are one; a line
-/// after the first takes `at`'s line's indentation, and each leading tab one
-/// more level (two spaces, the editor's indent unit).
+/// Fields named "#{name}" show their name as text, and fields with the same name are one; later lines take `at`'s
+/// line's indentation, each leading tab one more level (two spaces).
 pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<SnippetField>) {
     let line = source.line(source.line_index(at));
     let indentation = String::from_utf16_lossy(&line[..indentation(line)]);
-    // Catalog tabs are indentation; preserve any tabs in the source's indent.
     let snippet = snippet
         .replace('\t', "  ")
         .replace('\n', &format!("\n{indentation}"));
@@ -172,7 +148,6 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
     let mut fields = Vec::new();
     let text = FIELD.replace_all(&snippet, |c: &regex::Captures| {
         let (whole, name) = (c.get_match(), &c[1]);
-        // Unnamed fields are each their own.
         let index = names
             .iter()
             .position(|previous| !name.is_empty() && previous == name)
@@ -181,7 +156,6 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
                 names.len() - 1
             });
         fields.push(SnippetField {
-            // Each earlier field lost its three delimiters: "#{" and "}".
             start: (utf16(&snippet[..whole.start()]) - 3 * fields.len()) as u32,
             length: utf16(name) as u32,
             index: index as u32,
@@ -196,7 +170,6 @@ mod tests {
     use super::{Completion, SnippetField};
     use crate::syntax::SourceDocument;
 
-    /// What's offered at the end of `before`, `keys` being the citations.
     fn offered(before: &str, keys: &[String]) -> Vec<Completion> {
         let mut doc = SourceDocument::new(before);
         doc.set_symbols(vec![], keys.to_vec());
@@ -219,7 +192,6 @@ mod tests {
     fn snippets_expand_with_their_fields() {
         let begin = offered("  \\beg", &[]).remove(0);
         assert_eq!(begin.text, "\\begin{env}\n    \n  \\end{env}");
-        // env twice (one field), then the body; the body's line is indented a level.
         assert_eq!(places(&begin.fields), [(7, 3, 0), (16, 0, 1), (24, 3, 0)]);
         let section = offered("\\sub", &[]).remove(0);
         assert_eq!(
@@ -255,7 +227,6 @@ mod tests {
         assert_eq!(offered("knu"), ["knuth86", "Knuth84"]);
         assert_eq!(offered("é"), ["émile2", "Émile"]);
         assert_eq!(offered("ÉMILE"), ["Émile", "émile2"]);
-        // The kelvin sign lowers to an ASCII k.
         assert_eq!(offered("\u{212a}n"), ["Knuth84", "knuth86", "Kn"]);
     }
 }

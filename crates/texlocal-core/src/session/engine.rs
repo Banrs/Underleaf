@@ -18,7 +18,6 @@ pub(crate) trait Engine: Send + Sync {
     fn clean(&self, root: PathBuf) -> Fut<Result<(), CoreError>>;
 }
 
-/// The engine of a real host: the service's compile manager.
 impl Engine for Arc<Service> {
     fn compile(&self, root: PathBuf) -> Fut<Result<CompileResult, CoreError>> {
         let service = Self::clone(self);

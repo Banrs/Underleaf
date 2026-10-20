@@ -1,6 +1,6 @@
 //! The session's side of live preview. Starts, stops and whole texts go one at a time; a
-//! key's edit goes on as the editor makes it; what the preview tells comes back as messages
-//! of the session's own (`Msg::Live`) and goes on to the host as events.
+//! key's edit goes on as the editor makes it; what the preview tells comes back as
+//! `Msg::Live` and goes on to the host as events.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -31,33 +31,24 @@ pub(crate) enum Phase {
 #[derive(Default)]
 pub(crate) struct Live {
     phase: Phase,
-    /// Paths to send whole: None for the document's own text when sent, else a file's text from disk.
     pending: BTreeMap<String, Option<String>>,
-    /// Paths TeXpresso has a text of. It keeps them through a rescan: only a new start drops
-    /// one whose file went.
+    /// TeXpresso keeps these through a rescan: only a new start drops one whose file went.
     synced: HashSet<String>,
-    /// The version of each document last sent whole: edits up to it are in that text.
     sent: HashMap<String, u64>,
     rejected: BTreeMap<String, String>,
     failure: Option<String>,
     reported: BTreeSet<String>,
-    /// The preview's own error, as its start or Stop left it.
     error: Option<String>,
-    /// The host shows the Live Preview Log: the `live` event carries it.
     log_shown: bool,
     halted: bool,
     view: Option<(u32, u32)>,
     sent_view: Option<(u32, u32)>,
-    /// Where the editor's caret is, for a start; where TeXpresso was last told it is; and
-    /// where it has moved to, told once it settles (`Timer::Caret`).
     wanted: Option<(String, usize)>,
     caret: Option<(String, usize)>,
     settling: Option<(String, usize)>,
     pub disk_paths: BTreeSet<String>,
     /// Rises with each Start the user asks for and each Stop: a restart for an older one is dropped.
     pub intent: u64,
-    /// TeXpresso's own window shows the document, as the user's Start asked: the host's pane
-    /// gets none.
     window: bool,
     /// Rises with each start and each end: what an earlier start's preview tells is dropped.
     generation: u64,
@@ -70,8 +61,7 @@ impl Live {
         matches!(self.phase, Phase::Starting | Phase::Running)
     }
 
-    /// Whether a key's edit or a caret at `path` may go to TeXpresso as it is: no whole text
-    /// is waiting to go before it. One its copy can't take is refused (412).
+    /// No whole text is waiting to go before it. One its copy can't take is refused (412).
     fn fits(&self, path: &str) -> bool {
         self.phase == Phase::Running && !self.pending.contains_key(path)
     }
@@ -99,8 +89,6 @@ impl Actor {
         })
     }
 
-    /// The Live Preview Log as the host shows it: what went wrong, then the preview's own
-    /// error, its log and its output.
     fn live_log(&self, failure: Option<&str>) -> String {
         let status = self.preview.status(self.id);
         let mut parts: Vec<&str> = failure.into_iter().collect();
@@ -113,13 +101,11 @@ impl Actor {
         parts.join("\n\n")
     }
 
-    /// `alert`: an error the host hasn't been shown yet.
     pub fn publish_live(&mut self, alert: bool) {
         let mut state = self.live_state();
         if state != self.live.shown || alert {
             self.live.shown = state.clone();
             state["alert"] = alert.into();
-            // The host opens the log on an alert: it comes along.
             if alert && !self.live.log_shown {
                 state["log"] = self.live_log(state["failure"].as_str()).into();
             }
@@ -127,7 +113,6 @@ impl Actor {
         }
     }
 
-    /// The host shows the Live Preview Log, or no longer does.
     pub fn show_live_log(&mut self, shown: bool) {
         self.live.log_shown = shown;
         if shown {
@@ -163,7 +148,6 @@ impl Actor {
         self.live.disk_paths.clear();
     }
 
-    /// Whether the preview runs, or is about to start again: automatic builds wait for it.
     pub fn live_previewing(&self) -> bool {
         self.live.active() || self.timers.contains_key(&Timer::Restart)
     }
@@ -184,8 +168,7 @@ impl Actor {
         }
     }
 
-    /// The user's Start, `window` choosing TeXpresso's own window. A restart still pending
-    /// gives way to it: it would stop the preview this starts.
+    /// A restart still pending gives way to a user's Start: it would stop the preview this starts.
     pub fn live_start_asked(&mut self, window: bool) -> Value {
         if self.live.phase == Phase::Stopped {
             self.live_cancel_work();
@@ -195,8 +178,6 @@ impl Actor {
         self.live_state()
     }
 
-    /// Whether a start was tried: the user's, of a stopped preview, or the session's own
-    /// `restart`.
     pub fn live_start(&mut self, restart: bool) -> bool {
         if self.closed || !restart && self.live.phase != Phase::Stopped {
             return false;
@@ -262,13 +243,10 @@ impl Actor {
 
     pub fn live_restart(&mut self) {
         if !self.live_start(true) && self.live.phase != Phase::Stopped {
-            // A restart that can't be tried leaves no preview to wait for.
             self.ended();
         }
     }
 
-    /// A Stop: the user's, or the session's as it closes. Pending live work goes with it, and
-    /// the log of a preview that has ended.
     pub fn live_stop(&mut self) {
         self.live_cancel_work();
         if self.live.phase == Phase::Stopped {
@@ -282,8 +260,6 @@ impl Actor {
         self.ended();
     }
 
-    /// A rename or a new main file changed what the preview shows, and stopped it: it starts
-    /// again once the change has settled.
     pub fn live_follow(&mut self) {
         if self.live.active() && !self.closed {
             self.after(Timer::Restart);
@@ -292,19 +268,16 @@ impl Actor {
 
     // MARK: - Edits
 
-    /// A key's edit, as the document took it: sent on at once where TeXpresso's copy fits it.
     pub fn live_edited(&mut self, path: &str, version: u64, start: u32, length: u32, text: &str) {
         if !self.live.active() || self.closed {
             return;
         }
-        // Typing takes the engine's snapshot along: the caret there is no news.
         let end = start as usize + text.encode_utf16().count();
         self.live.caret = Some((path.to_owned(), end));
         let live = &self.live;
         if live.sent.get(path).is_some_and(|sent| version <= *sent) {
             return;
         }
-        // One refused leaves the copy a step behind: the whole text puts it right, or says why not.
         if live.fits(path)
             && self
                 .preview
@@ -317,7 +290,6 @@ impl Actor {
         self.flush_pending();
     }
 
-    /// A document's whole text is to go: it opened, or the disk's replaced it.
     pub fn live_whole(&mut self, path: &str) {
         if self.live.active() && !self.closed {
             self.live.pending.insert(path.to_owned(), None);
@@ -416,8 +388,8 @@ impl Actor {
 
     // MARK: - Files on disk
 
-    /// The tree changed: TeXpresso keeps the texts it has through a rescan,
-    /// so only a new session drops one whose file went.
+    /// TeXpresso keeps the texts it has through a rescan, so only a new session drops one
+    /// whose file went.
     pub fn live_files_changed(&mut self) {
         if !self.live.active() {
             return;
@@ -431,8 +403,8 @@ impl Actor {
         }
     }
 
-    /// Files changed on disk reach TeXpresso. A save of an open document isn't news to it:
-    /// a rescan as it typesets the edit stalled it (TeXpresso e8df770).
+    /// A save of an open document isn't news to TeXpresso: a rescan as it typesets the edit
+    /// stalled it (TeXpresso e8df770).
     pub fn refresh_live_disk(&mut self) {
         let mut others = false;
         for path in std::mem::take(&mut self.live.disk_paths) {
@@ -444,7 +416,6 @@ impl Actor {
             }
             others = true;
             let file = self.root.join(&path);
-            // As the editor opens them: hidden files aren't.
             let name = path.rsplit('/').next().unwrap_or(&path);
             if !name.starts_with('.')
                 && is_text(name)
@@ -463,8 +434,6 @@ impl Actor {
 
     // MARK: - What the preview tells
 
-    /// What the preview of the start numbered `generation` told; an earlier start's is
-    /// past news.
     pub fn live_event(&mut self, generation: u64, event: LiveEvent) {
         if generation != self.live.generation {
             return;
@@ -496,13 +465,11 @@ impl Actor {
                 }
             }
             LiveEvent::Done(run) => self.run_ended(&run),
-            // Sent with the next `live` event, while the host shows the log.
             LiveEvent::Log if live.log_shown => self.soon(Timer::Log),
             LiveEvent::Log => {}
             LiveEvent::Ended(error) => {
-                // A rename, a new main file or a file gone stopped it, to start again when
-                // `Timer::Restart` comes. It stays `starting` meanwhile: a host that saw it
-                // stop would show the build's PDF until the new run's first page came.
+                // It stays `starting` meanwhile: a host that saw it stop would show the build's PDF
+                // until the new run's first page came.
                 if self.timers.contains_key(&Timer::Restart) && !self.closed {
                     self.live.phase = Phase::Starting;
                     self.live_reset();

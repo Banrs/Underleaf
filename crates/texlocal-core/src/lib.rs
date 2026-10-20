@@ -41,13 +41,10 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// The end of `text`, at most `max` bytes, from a character boundary.
 pub(crate) fn tail(text: &str, max: usize) -> &str {
     &text[text.ceil_char_boundary(text.len().saturating_sub(max))..]
 }
 
-/// Bytes as text, replacing invalid UTF-8. Valid input, the usual case,
-/// becomes the String without a second copy.
 pub(crate) fn lossy_string(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes)
         .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
@@ -80,7 +77,6 @@ mod tests {
         let cases: &[&[u16]] = &[
             &[],
             &[0x61, 0x62, 0x0a, 0x7f],
-            // Lone high and low surrogates, alone, at the ends and between ASCII.
             &[0xd800],
             &[0xdc00],
             &[0x61, 0xd83d, 0x62],
@@ -88,7 +84,6 @@ mod tests {
             &[0xdc00, 0xd800],
             &[0xd83d, 0xd83d, 0xde00],
             &[0x61, 0xd83d],
-            // BMP and astral (😀, 𝔸) mixed with ASCII.
             &[
                 0xe9, 0x4e2d, 0x61, 0xd83d, 0xde00, 0x80, 0x7f, 0xd835, 0xdd38, 0xffff,
             ],

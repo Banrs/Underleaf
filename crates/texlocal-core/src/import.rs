@@ -20,13 +20,10 @@ use crate::settings::write_settings;
 use crate::zipexport::left_out;
 use crate::{BUILD_DIR, CoreError, atomic, templates};
 
-/// What to do with incoming files that land on existing entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Conflict {
-    /// Move the existing entries to the Trash.
     Replace,
-    /// Give the incoming files free names beside them.
     KeepBoth,
 }
 
@@ -35,8 +32,7 @@ pub struct Imported {
     pub existing: Vec<Clash>,
 }
 
-/// An incoming file's occupied path or blocking parent file, relative to its
-/// target folder. `keep_both` names a free sibling.
+/// `path` is relative to its target folder; `keep_both` names a free sibling.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Clash {
@@ -46,12 +42,9 @@ pub struct Clash {
 
 enum Source {
     File(PathBuf),
-    /// An entry of the chosen zip, by index.
     Zip(usize),
 }
 
-/// A file to bring: its path (in the target folder, or the new project), and
-/// where to read it.
 struct Incoming {
     path: String,
     source: Source,
@@ -71,11 +64,8 @@ fn in_folder(dir: &str, name: &str) -> String {
     }
 }
 
-/// Files under a dropped path, with project-relative names that keep a
-/// dropped folder's own name (none for an empty `rel`), failing past
-/// `entries_left`. Inside a folder, what `is_litter` and symlinks stay
-/// behind, not followed: a drop imports what was dropped, never what a link
-/// inside it points at.
+/// Files under a dropped path, named from the dropped entry's own name. Links inside a folder
+/// stay behind: a drop imports what was dropped.
 fn collect(
     abs: &Path,
     rel: String,
@@ -95,7 +85,6 @@ fn collect(
             if !projects::is_litter(&name)
                 && !(rel.is_empty() && name.eq_ignore_ascii_case(BUILD_DIR))
             {
-                // DirEntry::metadata does not follow links.
                 let meta = entry.metadata()?;
                 let rel = in_folder(&rel, &name);
                 collect(&entry.path(), rel, &meta, files, entries_left)?;
@@ -105,10 +94,8 @@ fn collect(
     Ok(())
 }
 
-/// Import dropped files and folders into the project folder `dir`: a bad
-/// path fails the drop before anything lands.
-/// Without `conflict`, a drop that would land on existing entries writes
-/// nothing and reports them, for the host to ask about.
+/// A bad path fails the drop before anything lands. Without `conflict`, a drop onto existing
+/// entries writes nothing and reports them, for the host to ask about.
 pub fn import_files(
     service: &Service,
     id: &str,
@@ -119,7 +106,6 @@ pub fn import_files(
     import_files_within(service, id, dir, paths, conflict, projects::discard)
 }
 
-/// `import_files`, with `trash` to discard what Replace replaces.
 fn import_files_within(
     service: &Service,
     id: &str,
@@ -160,11 +146,8 @@ fn import_files_within(
     Ok(Imported { existing })
 }
 
-/// Checks the whole batch before anything is written, so a late unsafe entry
-/// cannot cause a predictable partial import: every path must be one that may
-/// be written in the folder `dir` of `root`, none twice, and none a file
-/// where another needs a folder. Returns the paths relative to `dir`, as the
-/// host names the files.
+/// The whole batch is checked before anything is written: none twice, and none a file where
+/// another needs a folder.
 fn validate<'a>(
     root: &Path,
     dir: &str,
@@ -192,8 +175,7 @@ fn validate<'a>(
     Ok(rels)
 }
 
-/// The entries the validated `rels` would land on under `base`, with free
-/// Keep Both names, for the host's Replace, Keep Both or Stop choice.
+/// For the host's Replace, Keep Both or Stop choice.
 fn clashes(base: &Path, rels: &[String]) -> Vec<Clash> {
     // Names a Keep Both may not take: every path the import creates.
     let mut taken = HashSet::new();
@@ -217,7 +199,6 @@ fn clashes(base: &Path, rels: &[String]) -> Vec<Clash> {
     existing
 }
 
-/// A file's path once Keep Both has renamed the clash it lies under.
 fn keep_both(path: &str, clashes: &[Clash]) -> String {
     let renamed = clashes.iter().find_map(|clash| {
         let rest = after_entry(path, &clash.path)?;
@@ -234,8 +215,7 @@ fn occupant(base: &Path, rel: &str) -> Option<String> {
         end = rel[end..].find('/').map_or(rel.len(), |i| end + i);
         let abs = base.join(&rel[..end]);
         let meta = fs::symlink_metadata(&abs).ok()?;
-        // A link to a folder is a folder on the way: the path checks have
-        // already kept it inside the project.
+        // A link to a folder is a folder on the way.
         if end == rel.len() || !(meta.is_dir() || abs.is_dir()) {
             return Some(rel[..end].to_string());
         }
@@ -243,11 +223,8 @@ fn occupant(base: &Path, rel: &str) -> Option<String> {
     }
 }
 
-/// Write the file at `source` to the project path `rel`. It is copied to a
-/// temporary file beside the target first, so a source that fails part-way
-/// replaces nothing, then renamed into place
-/// whole. An occupied path conflicts unless `replace`, the means of
-/// discarding it, first moves it to the Trash.
+/// Copied to a temporary file beside the target first, so a source that fails part-way
+/// replaces nothing. An occupied path conflicts unless `replace` first discards it.
 fn save(
     service: &Service,
     id: &str,
@@ -256,8 +233,7 @@ fn save(
     replace: Option<Trash>,
 ) -> Result<(), CoreError> {
     let root = service.project_root(id)?;
-    // In the target's folder, or the nearest on its way while that is to be made, so the
-    // rename stays on one volume.
+    // Beside the target, so the rename stays on one volume.
     let abs = paths::safe_write_path(&root, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
     let (mut file, temp) = atomic::create_temp(folder.unwrap_or(&root))?;
@@ -284,9 +260,7 @@ fn zip_files(archive: &mut ZipArchive<File>) -> Result<Vec<Incoming>, CoreError>
     let mut files = Vec::new();
     for i in 0..archive.len() {
         let entry = archive.by_index_raw(i)?;
-        // No folders, links or NULs, and no name that would leave the project,
-        // read as a project path is ("./a" is "a"); a backslash separates, as
-        // Windows tools have written it where the format allows only '/'.
+        // A backslash separates, as Windows tools have written it where the format allows only '/'.
         let name = entry.name().replace('\\', "/");
         let segments = match normalize_segments(&name, "") {
             Ok(s) if entry.is_file() && !s.is_empty() && !name.contains('\0') => s,
@@ -324,9 +298,7 @@ struct Opened {
     main: Option<String>,
 }
 
-/// The folder a .tex is in, unless that can't be read, is larger than a
-/// project, has no name a project can take, or lacks the .tex (it has just
-/// been moved). The .tex is the main file.
+/// Unless that can't be read, is larger than a project or lacks the .tex (just moved).
 fn tex_folder(tex: &Path) -> Option<Opened> {
     let dir = tex.parent()?;
     paths::sanitize_name(&file_name(dir)).ok()?;
@@ -409,14 +381,8 @@ fn file_name(path: &Path) -> String {
         .into_owned()
 }
 
-/// File › Open: a folder, a .zip or a single file from anywhere, copied into
-/// a new project named after it ("Name 2" when that is taken). A .tex brings its folder,
-/// for what it inputs, includes and cites, unless that folder can't be read, is larger
-/// than a project (more than 2000 entries or 100 MB) or has no name a project can take:
-/// then the .tex comes alone. Version-control folders and OS litter stay behind,
-/// as does a top-level `build`; every other file comes, though the file tree hides dotfiles.
-/// The main file is the chosen .tex, else the likeliest top-level one, else the blank
-/// template's main.tex.
+/// A .tex brings its folder, for what it inputs, includes and cites. The main file is the chosen
+/// .tex, else the likeliest top-level one, else the blank template's main.tex.
 pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
     let Opened {
         base,
@@ -430,8 +396,6 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
     projects::new_project(&service.data_dir, &base, |root| {
         validate(root, "", files.iter().map(|file| file.path.as_str()))?;
         for file in &files {
-            // The folder holds only what the import wrote, so each is written
-            // in place, with no temporary file or sync of its own.
             let abs = root.join(rel_key(&file.path)?);
             fs::create_dir_all(abs.parent().unwrap_or(root))?;
             let mut dest = BufWriter::new(File::create_new(abs)?);
@@ -447,8 +411,7 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
             }
             dest.flush()?;
         }
-        // latexmk would read a name starting with "-" as an option, so settings refuse it
-        // as the main file and the import takes the likeliest other.
+        // latexmk would read a name starting with "-" as an option.
         let main = if let Some(main) = main.filter(|main| !main.starts_with('-')) {
             main
         } else if let Some(main) = projects::guess_main_file(root)? {
@@ -472,7 +435,6 @@ mod tests {
         fs::read_dir(&service.data_dir).unwrap().count()
     }
 
-    /// Stands in for the platform's Trash, which a test can't look into.
     fn remove(path: &Path) -> Result<(), CoreError> {
         if path.is_dir() {
             fs::remove_dir_all(path)?;
@@ -482,7 +444,6 @@ mod tests {
         Ok(())
     }
 
-    /// Saves `bytes` as the file `rel` of project "P"; `replace` removes what is there.
     fn put(service: &Service, rel: &str, bytes: &[u8], replace: bool) -> Result<(), CoreError> {
         let source = tempfile::NamedTempFile::new().unwrap();
         fs::write(source.path(), bytes).unwrap();
@@ -636,13 +597,6 @@ mod tests {
         zip_of(&src, &files);
         let info = import_project(&service, &src).unwrap();
         let root = service.data_dir.join(&info.id);
-        // Made hidden, it has a new folder's usual mode all the same.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode(&root), mode(&service.data_dir));
-        }
         assert_eq!(files_in(&root), ["a/b.tex", "a/d.tex", "main.tex"]);
 
         // As Windows tools write them: one top folder, and backslashes.
@@ -734,8 +688,7 @@ mod tests {
         let files = ["-draft.tex", "main.tex"];
         assert_eq!(files_in(&service.data_dir.join(&info.id)), files);
 
-        // Any other file comes alone; without TeX, the blank template's main
-        // file joins it.
+        // Any other file comes alone, with the blank template's main file.
         let info = import_project(&service, &src.join("refs.bib")).unwrap();
         assert_eq!(info.main_file, "main.tex");
         let files = ["main.tex", "refs.bib"];

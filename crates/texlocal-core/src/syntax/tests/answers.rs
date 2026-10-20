@@ -1,8 +1,5 @@
-//! The answers that read the text from its start (maths and code to skip,
-//! name arguments, text styles, maths at a point) are the same however
-//! they're reached: resumed from kept points, after edits that forget some
-//! of them, as on a document read fresh. How far a question reads is
-//! checked beside the kept points (scans.rs).
+//! Answers that read the text from its start are the same however they are reached: resumed from kept points,
+//! after edits that forget some, or on a document read fresh.
 
 use std::fmt::Debug;
 
@@ -57,8 +54,6 @@ impl Seeded {
     }
 }
 
-/// A document of a few kept points' length from the pieces above, without
-/// `blank_lines` none at all.
 fn pieces(seed: &mut Seeded, blank_lines: bool) -> String {
     (0..3_000)
         .map(|_| {
@@ -72,8 +67,6 @@ fn pieces(seed: &mut Seeded, blank_lines: bool) -> String {
         .collect()
 }
 
-/// What the pieces above lack: CRLF line ends, characters of two units, and
-/// whole commands and environments, the document's own among them.
 const MORE: &[&str] = &[
     "\r\n",
     "\r\n\r\n",
@@ -108,10 +101,6 @@ const PROSE: &[&str] = &[
     "\n\n",
 ];
 
-/// An article of a few kept points' length: its text is in a document
-/// environment, styled groups nested in it, and a \cite's and a \ref's
-/// arguments each run over a kept point. Without `paragraphs` it has no
-/// blank line, so an argument an edit leaves open runs on over the rest.
 fn article(seed: &mut Seeded, paragraphs: bool) -> String {
     let mut prose = |pieces: usize| -> String {
         (0..pieces)
@@ -129,13 +118,10 @@ fn article(seed: &mut Seeded, paragraphs: bool) -> String {
     )
 }
 
-/// What Writing Tools leaves alone where `length` units at `start` are.
 fn code(doc: &mut SourceDocument, start: u32, length: u32) -> Vec<TextRange> {
     doc.code_ranges(range(start, length), Checker::WritingTools)
 }
 
-/// What a document answers about a selection: what isn't prose, its text
-/// styles, a symbol inserted there, and its highlighting.
 fn answers(doc: &mut SourceDocument, selection: TextRange) -> impl PartialEq + Debug {
     let TextRange { start, length } = selection;
     (
@@ -148,12 +134,10 @@ fn answers(doc: &mut SourceDocument, selection: TextRange) -> impl PartialEq + D
 
 #[test]
 fn every_answer_after_every_edit_is_a_fresh_reading() {
-    // The selections found in a text style, which the test is to ask about.
     let mut styled = 0;
     let (documents, rounds) = (4, 10);
     for document in 0..documents {
         let mut seed = Seeded(document as u32 + 1);
-        // An article and pieces, each with blank lines and without.
         let blank_lines = document < 2;
         let source = match document % 2 {
             0 => article(&mut seed, blank_lines),
@@ -163,8 +147,6 @@ fn every_answer_after_every_edit_is_a_fresh_reading() {
         let mut units: Vec<u16> = source.encode_utf16().collect();
         for round in 0..rounds {
             let len = units.len();
-            // Anywhere, a surrogate pair's middle too, or just past a kept
-            // point, where what runs over it ends.
             let at = match seed.next(2) {
                 0 => seed.next(len + 1),
                 _ => (SPACING * (1 + seed.next(2)) + seed.next(1_500)).min(len),
@@ -183,7 +165,6 @@ fn every_answer_after_every_edit_is_a_fresh_reading() {
             assert_eq!(doc.text(), text, "document {document}, round {round}");
             let mut fresh = SourceDocument::new(&text);
             let len = units.len();
-            // Half the time the text's end first, which keeps every point.
             if seed.next(2) == 0 {
                 let (from, length) = (len.saturating_sub(40) as u32, 40);
                 assert_eq!(
@@ -192,7 +173,6 @@ fn every_answer_after_every_edit_is_a_fresh_reading() {
                     "document {document}, round {round}, the end"
                 );
             }
-            // Every answer about a place anywhere, or by the edit.
             let start = [seed.next(len + 1), (at + seed.next(64)).min(len)][round % 2];
             let length = [0, 1, seed.next(400)][seed.next(3)].min(len - start);
             let selection = range(start as u32, length as u32);
@@ -202,8 +182,6 @@ fn every_answer_after_every_edit_is_a_fresh_reading() {
                 answers(&mut fresh, selection),
                 "{at}"
             );
-            // And the styles of a few units just inside a brace group, which
-            // the document's are nested in.
             let from = seed.next(len + 1);
             let brace = units[from..].iter().position(|&u| u == '{' as u16);
             let start = (from + brace.unwrap_or_default() + 1 + seed.next(3)).min(len);
@@ -222,7 +200,6 @@ fn every_answer_after_every_edit_is_a_fresh_reading() {
 
 #[test]
 fn a_kept_points_names_follow_an_edit_past_it() {
-    // A \cite argument runs over the point kept at 4096 and closes at 5000.
     let source = format!(
         "\\cite{{{}}} word \\ref{{x}} {} end",
         "a".repeat(4994),
@@ -235,8 +212,6 @@ fn a_kept_points_names_follow_an_edit_past_it() {
     assert_eq!(code(&mut doc, 9_000, 10), code(&mut fresh, 9_000, 10));
     assert_eq!(code(&mut doc, 9_000, 10), [range(6, 9_004)]);
 
-    // The mirror: an unclosed \cite{ over the point is closed by a typed brace,
-    // and a later unclosed \ref{ is a command again.
     let source = format!(
         "\\cite{{{} word \\ref{{ {} end",
         "a".repeat(5994),
@@ -272,7 +247,6 @@ fn what_runs_over_a_kept_point_keeps_its_start() {
         "from the maths' start to the question's end"
     );
 
-    // A name argument, the same: and what's in it is no command.
     let names = "key, \\label{inside} ".repeat(500);
     let source = format!("See \\cite{{{names}}} and \\ref{{fig}}.");
     let mut doc = SourceDocument::new(&source);

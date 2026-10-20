@@ -11,9 +11,7 @@ use super::skip_unreadable;
 use super::tree::{is_text, visit_files};
 use crate::error::CoreError;
 
-/// The largest file a search reads. A data set or a log that size is not
-/// where anyone looks for a word, and each search would otherwise read the
-/// whole of it into memory.
+/// The largest file a search reads; a data set or log that size isn't where anyone looks.
 const SEARCH_FILE_MAX: u64 = 8 << 20;
 
 #[derive(Debug, Serialize)]
@@ -30,15 +28,12 @@ pub struct SearchHit {
     pub after: String,
 }
 
-/// A file's search hits, in the order found.
 #[derive(Debug, Serialize)]
 pub struct SearchGroup {
     pub file: String,
     pub hits: Vec<SearchHit>,
 }
 
-/// `search_project`'s hits by file, the files in the order of their paths,
-/// as the search results list them.
 pub fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {
     let mut groups: BTreeMap<String, Vec<SearchHit>> = BTreeMap::new();
     for hit in hits {
@@ -63,14 +58,11 @@ fn lower_into(s: &str, out: &mut String) {
     }));
 }
 
-/// The text of the file at `path`, unless it is gone, unreadable or larger
-/// than a search reads.
 fn read_searchable(path: &Path) -> Result<Option<String>, CoreError> {
     let Some(file) = skip_unreadable(File::open(path))? else {
         return Ok(None);
     };
     let mut bytes = Vec::new();
-    // One past the cap, so a file that grew since it was measured is told apart.
     let Some(len) = skip_unreadable(file.take(SEARCH_FILE_MAX + 1).read_to_end(&mut bytes))? else {
         return Ok(None);
     };
@@ -142,7 +134,6 @@ mod tests {
         let hits = search_project(&root, "needle", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].file, "notes.tex");
-        // At the cap, it is read.
         big.set_len(SEARCH_FILE_MAX).unwrap();
         assert!(read_searchable(&root.join("big.csv")).unwrap().is_some());
     }

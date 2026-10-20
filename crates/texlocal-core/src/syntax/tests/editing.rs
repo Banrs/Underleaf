@@ -4,13 +4,11 @@
 use super::units;
 use crate::syntax::{Insertion, SourceDocument, range};
 
-/// The document without the "|" that marks a position, and that position.
 fn marked(source: &str) -> (SourceDocument, u32) {
     let at = units(&source[..source.find('|').unwrap()]);
     (SourceDocument::new(&source.replacen('|', "", 1)), at)
 }
 
-/// Whether a symbol goes in at the mark as it is, in maths, or between dollars.
 fn in_math(source: &str) -> bool {
     let (mut doc, at) = marked(source);
     doc.insert_symbol("\\alpha", range(at, 0)).edit.text == "\\alpha"
@@ -59,15 +57,12 @@ fn math_mode_is_known_at_a_place() {
         ("\\verb+$+ and |", false),
         ("\\verb+$|+ x", false), // inside \verb
         ("\\verb*+x+ $a|", true),
-        // An unclosed \verb ends with its line, a line feed straight after
-        // it too, but on its line it is code.
         ("a \\verb+x\n$y|", true),
         ("\\verb\n$y|", true),
         ("$ \\verb+x|", false),
         ("$ \\verb+x\ny|", true),
         ("a \\verb+x\n$y$ |", false),
         ("\\begin{verbatim}\n$x\n\\end{verbatim}\n|", false),
-        // A blank line ends a paragraph, spaces and returns and all.
         ("an unclosed $x\n\nnext paragraph |", false),
         ("an unclosed $x\nsame paragraph |", true),
         ("\\[ x\n  \n |", false),
@@ -79,7 +74,6 @@ fn math_mode_is_known_at_a_place() {
     for (source, expected) in cases {
         assert_eq!(in_math(source), expected, "{source}");
     }
-    // Each maths environment, starred or not: inside it, after it and before it.
     for name in [
         "equation", "align", "gather", "multline", "eqnarray", "alignat", "flalign",
     ] {
@@ -94,7 +88,6 @@ fn math_mode_is_known_at_a_place() {
 
 #[test]
 fn the_maths_to_preview_is_found_around_a_place() {
-    // Where it starts, its TeX and whether it's displayed.
     #[rustfmt::skip]
     let cases = [
         ("Let $x|+1$ be", Some((4, "x+1", false))),
@@ -112,13 +105,10 @@ fn the_maths_to_preview_is_found_around_a_place() {
         ("\\begin{cases} a |\\end{cases}", Some((0, "\\begin{cases}a\\end{cases}", true))),
         ("\\begin{itemize} |x \\end{itemize}", None),
         ("\\begin{equation} a |", None),
-        // Inline maths may wrap onto the next line, as TeX reads it.
         ("$a\n|b$", Some((0, "a\nb", false))),
-        // Not in a comment, nor between escaped dollars, nor in a listing.
         ("% costs $5 and $|6", None),
         ("It costs \\$5 and \\$|6", None),
         ("\\begin{lstlisting}\n$ make |all $\n\\end{lstlisting}", None),
-        // An unclosed $$ while typing goes no further than its paragraph.
         ("$$ x|\n\nprose $$ y $$", None),
     ];
     let found = |source: &str| {
@@ -129,16 +119,12 @@ fn the_maths_to_preview_is_found_around_a_place() {
         let expected = expected.map(|(start, tex, display)| (start, tex.to_owned(), display));
         assert_eq!(found(source), expected, "{source}");
     }
-    // A display block the read starts within pairs as ever: the caret
-    // between two is in prose.
     let between = format!("{}$$ a $$ prose| $$ b $$", "x ".repeat(15_000));
     assert_eq!(found(&between), None);
 }
 
 #[test]
 fn completions_are_offered_for_what_is_typed() {
-    // The text before the caret, whether asked for, and the offer's start, an
-    // item it has and its kind.
     #[rustfmt::skip]
     let cases = [
         ("\\footnote{see \\cite{kn", false, Some((20, "knuth84", "citation"))),
@@ -180,7 +166,6 @@ fn completions_are_offered_for_what_is_typed() {
 
 #[test]
 fn a_line_becomes_a_heading() {
-    // The line, the heading's command, the line after, and where the caret goes.
     #[rustfmt::skip]
     let cases = [
         ("\\section[Short]{A Long Title}", "subsection", "\\subsection[Short]{A Long Title}", 31),
@@ -210,7 +195,6 @@ fn a_line_becomes_a_heading() {
         let expected = (6, units(line), text, 6 + cursor);
         assert_eq!(found, expected, "{line} as {command}");
     }
-    // A CRLF line keeps its CR.
     let doc = SourceDocument::new("Intro\r\nbelow");
     let Insertion { edit, .. } = doc.set_heading(0, "section");
     assert_eq!(
@@ -221,7 +205,6 @@ fn a_line_becomes_a_heading() {
 
 #[test]
 fn blocks_go_in_with_their_fields() {
-    // The text before, the block, what goes in and where its fields start.
     #[rustfmt::skip]
     let cases: [(&str, &str, &str, &[u32]); 4] = [
         ("Some text", "equation", "\n\\begin{equation}\n  \n  \\label{eq:}\n\\end{equation}\n", &[20, 33]),
@@ -245,12 +228,10 @@ fn blocks_go_in_with_their_fields() {
 
 #[test]
 fn comments_and_indentation_go_by_line() {
-    // The text, the command, the selections and the edits.
     #[rustfmt::skip]
     type Case<'a> = (&'a str, &'a str, &'a [(u32, u32)], &'a [(u32, u32, &'a str)]);
     #[rustfmt::skip]
     let cases: [Case; 9] = [
-        // Blank lines stay as they are.
         ("a\n  b\n\nc", "comment", &[(0, 8)], &[(0, 0, "% "), (2, 0, "% "), (7, 0, "% ")]),
         ("% a\n  %b\n", "comment", &[(0, 9)], &[(0, 2, ""), (6, 1, "")]),
         // A selection that ends at a line's start leaves that line alone.
@@ -261,7 +242,6 @@ fn comments_and_indentation_go_by_line() {
         ("a\r\n  \r\n b", "outdent", &[(0, 9)], &[(3, 2, ""), (7, 1, "")]),
         ("a\r\n\r\nb", "comment", &[(0, 6)], &[(0, 0, "% "), (5, 0, "% ")]),
         ("a\r\n\r\nb", "outdent", &[(0, 6)], &[]),
-        // Visual columns, keeping the matching prefix.
         ("🙂\n\tb\n \tc\n    d", "outdent", &[(3, 12)], &[(3, 1, "  "), (7, 1, " "), (12, 2, "")]),
     ];
     for (text, command, selections, edits) in cases {

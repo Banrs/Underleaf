@@ -25,14 +25,10 @@ fn line_starts_follow_edits() {
     assert_eq!(doc.text(), "c");
     assert_eq!(doc.line_count(), 1);
     assert_eq!(doc.line_at(1), 1);
-    // Past the end: cut to the text, never a panic.
     doc.edit(10, 5, "!");
     assert_eq!(doc.text(), "c!");
 }
 
-/// The labels and citations are the document's, set when they change
-/// rather than sent with each completions call: offered until set again,
-/// and none on a new document.
 #[test]
 fn completions_offer_the_symbols_set_on_the_document() {
     let offered = |doc: &mut SourceDocument, caret: u32| -> Vec<String> {
@@ -54,7 +50,6 @@ fn completions_offer_the_symbols_set_on_the_document() {
     );
     assert_eq!(offered(&mut doc, 8), ["smith2020"]);
     assert_eq!(offered(&mut doc, 18), ["fig:one"]);
-    // Kept through edits, and replaced whole.
     doc.edit(0, 0, "x ");
     assert_eq!(offered(&mut doc, 10), ["smith2020"]);
     doc.set_symbols(vec![], owned(&["smyth"]));
@@ -62,8 +57,6 @@ fn completions_offer_the_symbols_set_on_the_document() {
     assert!(offered(&mut doc, 20).is_empty());
 }
 
-/// An undefined command is found where its line has it: not a longer one
-/// that starts with it, nor a comment's, nor one after an escaped backslash.
 #[test]
 fn a_command_is_found_on_its_line() {
     let found = |line: &str, command: &str| -> Vec<(u32, u32)> {

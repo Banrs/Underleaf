@@ -1,10 +1,5 @@
-//! Project ZIP export via the zip crate. The archive is completed in a sibling
-//! temporary file and moved into place only after success, so a destination
-//! inside the project cannot archive itself and failures never leave a partial
-//! ZIP at the requested path.
-//!
+//! Project ZIP export, built in a sibling temporary file and moved into place on success, so a failure leaves no partial ZIP.
 //! What goes in is what an import takes back: all but what `left_out` names.
-//! Dotfiles the file tree hides (.latexmkrc) are the author's and are archived.
 
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
@@ -24,8 +19,7 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let parent = dest.parent().expect("a file is in a folder");
     let (file, temp_path) = create_temp(parent).map_err(CoreError::at(dest))?;
 
-    // Resolve the archive folder as the walk resolves the project, so a
-    // destination spelled through a link is still recognised there.
+    // Resolved as the walk resolves the project, so a destination spelled through a link is recognised.
     let mut export = Export {
         writer: ZipWriter::new(file),
         options: SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
@@ -37,9 +31,6 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     persist(temp_path, dest).map_err(CoreError::at(dest))
 }
 
-/// The parts of an export that do not change as the walk descends: where the
-/// archive is being written, and the two entries there (the destination and
-/// its temporary sibling) that must not end up in it.
 struct Export<'a> {
     writer: ZipWriter<File>,
     options: SimpleFileOptions,
@@ -48,7 +39,6 @@ struct Export<'a> {
 }
 
 impl Export<'_> {
-    /// `prefix` is `dir`'s path in the archive, "" or ending in '/'.
     fn add_dir(&mut self, dir: &Path, prefix: &str) -> Result<(), CoreError> {
         let mut entries = fs::read_dir(dir)?.collect::<io::Result<Vec<_>>>()?;
         entries.sort_by_key(DirEntry::file_name);
@@ -60,8 +50,7 @@ impl Export<'_> {
                 continue;
             }
             match self.add_entry(&entry, prefix) {
-                // Gone since the folder was listed (an editor's or a build's
-                // temporary file): nothing left to export.
+                // Gone since the folder was listed.
                 Err(err) if err.status == 404 => {}
                 added => added?,
             }
@@ -77,8 +66,7 @@ impl Export<'_> {
         let path = entry.path();
 
         let entry_type = entry.file_type()?;
-        // As in the project walks, links are followed to files only, as
-        // folder links can cycle.
+        // Links are followed to files only, as folder links can cycle.
         if entry_type.is_symlink() {
             if path.is_file() {
                 self.add_file(&rel, &path)?;
@@ -99,8 +87,7 @@ impl Export<'_> {
         let meta = file.metadata()?;
         let options = dated(self.options, meta.modified()).large_file(needs_zip64(meta.len()));
         self.writer.start_file(rel, options)?;
-        // No flush per file: on a deflated entry that forces a sync block
-        // into the stream, and the next start_file or finish ends it anyway.
+        // No flush per file: on a deflated entry it forces a sync block into the stream.
         io::copy(&mut file, &mut self.writer)?;
         Ok(())
     }
@@ -116,9 +103,7 @@ pub(crate) fn left_out(rel: &str) -> bool {
         || rel.split('/').any(is_litter)
 }
 
-/// Past 4 GiB (a video, a data set), sizes need ZIP64's fields; and from
-/// 3 GiB a file gets them too, as one that doesn't compress is stored a
-/// little larger than it is, deflate's blocks each adding their header.
+/// Past 4 GiB sizes need ZIP64's fields, and from 3 GiB a file gets them too, since deflate can store an incompressible one larger.
 fn needs_zip64(len: u64) -> bool {
     len >= 3 << 30
 }
@@ -130,7 +115,6 @@ fn dated(options: SimpleFileOptions, modified: io::Result<SystemTime>) -> Simple
         return options;
     };
     let local = chrono::DateTime::<chrono::Local>::from(modified).naive_local();
-    // Outside ZIP's 1980–2107, the entry keeps the default.
     let date = zip::DateTime::try_from(local).ok();
     date.map_or(options, |date| options.last_modified_time(date))
 }
@@ -143,8 +127,6 @@ mod tests {
     use crate::service::Service;
     use crate::settings::{read_settings, write_settings};
 
-    /// An export leaves out what an import would, so a project exported and
-    /// opened again keeps every file the author made, and only those.
     #[test]
     fn a_project_exported_and_opened_again_keeps_every_file_the_author_made() {
         let (dir, root) = project();
@@ -152,7 +134,6 @@ mod tests {
             (".latexmkrc", "$pdf_mode = 1;"),
             (".gitignore", "build/"),
             ("chapters/intro.tex", "intro"),
-            // A nested settings file is the author's.
             ("sub/.texlocal.json", "{}"),
             (".git/HEAD", "ref"),
             ("figs/.DS_Store", "x"),
@@ -166,7 +147,6 @@ mod tests {
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(file, text).unwrap();
         }
-        // The settings file spelt in another case, as the volume still finds it.
         write_settings(&root, &serde_json::json!({ "engine": "lualatex" })).unwrap();
         fs::rename(root.join(SETTINGS_FILE), root.join(".TeXLocal.json")).unwrap();
         let dest = dir.path().join("out.zip");
@@ -183,8 +163,6 @@ mod tests {
             "sub/.texlocal.json",
         ];
         assert_eq!(zip_names(&dest), kept);
-        // A destination inside the project can replace an old file there, and
-        // neither it nor its temporary file lands in the archive.
         let inside = root.join("project.zip");
         fs::write(&inside, "old incomplete archive").unwrap();
         export_zip(&root, &inside).unwrap();
@@ -198,7 +176,6 @@ mod tests {
         assert_eq!(zip_names(&dest), kept);
         let latexmkrc = fs::read_to_string(copy.join(".latexmkrc")).unwrap();
         assert_eq!(latexmkrc, "$pdf_mode = 1;");
-        // The settings are the project's own and are not carried in the archive.
         assert_eq!(
             read_settings(&copy).engine,
             crate::settings::Engine::Pdflatex
@@ -214,7 +191,6 @@ mod tests {
         let dated = archive.by_name("main.tex").unwrap().last_modified();
         let modified = fs::metadata(root.join("main.tex")).unwrap().modified();
         let local = chrono::DateTime::<chrono::Local>::from(modified.unwrap());
-        // To the minute, as ZIP dates in steps of two seconds.
         let minute = local.format("%Y-%m-%d %H:%M").to_string();
         assert_eq!(dated.unwrap().to_string()[..16], minute);
     }
@@ -226,7 +202,6 @@ mod tests {
         fs::write(root.join("gone.tex"), "x").unwrap();
         let mut listed: Vec<_> = fs::read_dir(&root).unwrap().map(Result::unwrap).collect();
         listed.sort_by_key(DirEntry::file_name);
-        // The folder was listed; then an editor removed its temporary file.
         fs::remove_file(root.join("gone.tex")).unwrap();
 
         let dest = dir.path().join("out.zip");

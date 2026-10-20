@@ -20,17 +20,11 @@ use crate::{BUILD_DIR, lock};
 
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 const LOG_TAIL: usize = 200_000;
-/// How much of the log file is parsed. A real document's log is a few MB at
-/// most; one that loops on `\message` until the timeout can reach gigabytes.
+/// A log that loops on `\message` until the timeout can reach gigabytes.
 const LOG_READ_MAX: u64 = 16 * 1024 * 1024;
-/// The outputs a build reads, or removes: the engine's log and PDF, bibtex's
-/// or biber's log, the .aux a killed run cuts short, and latexmk's record.
 const OUTPUTS: [&str; 5] = ["log", "pdf", "blg", "aux", "fdb_latexmk"];
 
-/// A build's outcome. `ok`: latexmk finished cleanly and the PDF exists.
-/// `pdf`: the successful build's PDF, or one a failed build wrote while
-/// compiling past errors, as an absolute path. `stopped`: Stop or quitting
-/// ended it.
+/// `pdf`: the PDF a good build, or a failed one compiling past errors, wrote.
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompileResult {
@@ -38,7 +32,6 @@ pub struct CompileResult {
     pub stopped: bool,
     pub duration_ms: u64,
     pub pdf: Option<String>,
-    /// True only when this completed latexmk run wrote the PDF it returns.
     pub pdf_changed: bool,
     pub errors: Vec<LogItem>,
     pub warnings: Vec<LogItem>,
@@ -48,22 +41,17 @@ pub struct CompileResult {
 #[derive(Default)]
 struct Running {
     stopped: bool,
-    /// None until latexmk starts, and once it is reaped, when its group's
-    /// number may be another's.
+    /// None once reaped, when its group's number may be another's.
     tree: Option<Tree>,
     /// latexmk's record, until a good run ends. After a fatal TeX error it
-    /// holds the truncated .aux's state, so every later run stops at "gave an
-    /// error in previous invocation". A Stop removes it where it is, as a
-    /// rename moves the folder before the run ends.
+    /// holds the truncated .aux's state, which fails every later run.
     record: Option<PathBuf>,
 }
 
-/// The builds running, by project root, for Stop and quitting.
 #[derive(Default)]
 pub struct CompileManager {
     running: Mutex<HashMap<PathBuf, Running>>,
-    /// Set for good: a build asked for after quitting began would start an
-    /// engine nothing kills.
+    /// A build asked for after quitting began would start an engine nothing kills.
     shutdown: AtomicBool,
 }
 
@@ -77,10 +65,7 @@ enum End {
 
 struct CompileRun {
     main_rel: String,
-    /// Each of `OUTPUTS`, where this build writes it.
     outputs: HashMap<&'static str, PathBuf>,
-    /// The outputs as they were before the run: it wrote one if its stamp has
-    /// changed.
     before: HashMap<&'static str, Stamp>,
     request_started: Instant,
 }
@@ -90,14 +75,12 @@ impl CompileRun {
         &self.outputs[ext]
     }
 
-    /// Whether this run wrote an output. Its stamp (a file's length and
-    /// time to the nanosecond) tells, whatever the volume's clock.
+    /// By stamp: a file's length and time to the nanosecond, whatever the volume's clock.
     fn wrote(&self, ext: &str) -> bool {
         std::fs::metadata(self.output(ext))
             .is_ok_and(|meta| self.before.get(ext) != Some(&Stamp::of(&meta)))
     }
 
-    /// A fresh output, or an existing one for a successful no-op build.
     fn read(&self, ext: &str, allow_existing: bool) -> Option<String> {
         (allow_existing || self.wrote(ext))
             .then(|| read_tail(self.output(ext), LOG_READ_MAX).ok())
@@ -105,11 +88,7 @@ impl CompileRun {
             .map(crate::lossy_string)
     }
 
-    /// Removes the .aux and .pdf this run wrote, once it is killed: they are
-    /// cut short. The next run would read the .aux and fail on a file the
-    /// user cannot fix ("File ended while scanning"), and the project would
-    /// open on a PDF with pages missing. Outputs it never touched are the
-    /// previous build's, and whole.
+    /// The .aux and .pdf a killed run wrote are cut short: the next run would fail on the .aux.
     fn discard_cut_short(&self) {
         for ext in ["aux", "pdf"] {
             if self.wrote(ext) {
@@ -119,10 +98,7 @@ impl CompileRun {
     }
 }
 
-/// The user's own latexmkrc, found where latexmk looks for it, so that it can
-/// be named after -norc turns off the automatic ones. A relative home would
-/// find the project's own rc instead, so only absolute paths count. On
-/// Windows, without HOME, latexmk's home is the user's profile folder.
+/// Named after -norc turns off the automatic ones; a relative home would be the project's.
 fn user_latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
     let dir = |key| var(key).map(PathBuf::from).filter(|p| p.is_absolute());
     let home = dir("HOME").or_else(|| dir("USERPROFILE").filter(|_| cfg!(windows)))?;
@@ -137,7 +113,6 @@ fn user_latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
 }
 
 impl CompileManager {
-    /// Quitting: ends every build, and any asked for after it.
     pub fn kill_all(&self) {
         let running = lock(&self.running);
         self.shutdown.store(true, Ordering::Release);
@@ -148,7 +123,6 @@ impl CompileManager {
         }
     }
 
-    /// Whether a build was running.
     pub fn stop(&self, root: &Path) -> bool {
         let mut running = lock(&self.running);
         let Some(entry) = running.get_mut(root) else {
@@ -164,7 +138,6 @@ impl CompileManager {
         true
     }
 
-    /// The session cleans only once its build has ended.
     pub fn clean(root: &Path) -> Result<(), CoreError> {
         match std::fs::remove_dir_all(root.join(BUILD_DIR)) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
@@ -172,8 +145,6 @@ impl CompileManager {
         }
     }
 
-    /// Build with the project's settings, as they are when the build is asked
-    /// for, running TeX's tools from `path_env`.
     pub async fn compile(&self, root: &Path, path_env: &str) -> Result<CompileResult, CoreError> {
         let request_started = Instant::now();
         let settings = read_settings(root);
@@ -186,18 +157,14 @@ impl CompileManager {
         }
         let main_arg = format!("./{main_rel}");
 
-        // latexmk makes the folder itself, so none is made here: one made
-        // before the stop check below could be a ghost of a project renamed
-        // meanwhile.
+        // None is made here: one made before the stop check could ghost a project renamed meanwhile.
         let outdir_arg = format!("-outdir={BUILD_DIR}");
         let mut args = vec![settings.engine.flag()];
         args.extend([
             "-interaction=batchmode",
             "-file-line-error",
             "-synctex=1",
-            // By default, past errors as Overleaf compiles: TeX carries on
-            // and latexmk finishes its passes (-f), so the PDF shows all that
-            // compiled and the log every error.
+            // Past errors as Overleaf compiles, unless the project stops on the first.
             if settings.stop_on_first_error {
                 "-halt-on-error"
             } else {
@@ -210,9 +177,7 @@ impl CompileManager {
                 "-norc"
             },
         ]);
-        // A latexmkrc is Perl that runs on every build, so a project's own is
-        // honoured only in a project trusted with shell escape. -norc turns
-        // off every automatic rc file, and the user's own is named again.
+        // A project's own latexmkrc runs Perl on every build, so only a trusted project's is read.
         let user_rc = (!shell_escape)
             .then(|| user_latexmkrc(|key| std::env::var_os(key)))
             .flatten();
@@ -234,8 +199,6 @@ impl CompileManager {
             request_started,
         };
         let spawned = {
-            // Spawned and published under the lock, so Stop and quitting see
-            // either no child or its tree.
             let mut running = lock(&self.running);
             if self.shutdown.load(Ordering::Acquire) {
                 return Ok(CompileResult {
@@ -276,7 +239,6 @@ impl CompileManager {
         {
             let _ = std::fs::remove_file(record);
         }
-        // Reading and parsing the logs blocks, so not on a runtime worker.
         tokio::task::spawn_blocking(move || finish(&run, &end, output))
             .await
             .map_err(|err| CoreError::internal(err.to_string()))
@@ -288,9 +250,7 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
         run.discard_cut_short();
     }
     let ok = *end == End::Exited(0) && run.output("pdf").exists();
-    // With incremental latexmk, a clean no-op keeps both the PDF and its log.
-    // Keep the warnings from that log; after a newly written PDF, an old log
-    // still belongs to the previous build and must not be shown.
+    // A no-op build keeps the PDF and its log; an old log after a new PDF is the last build's.
     let unchanged = ok && !run.wrote("pdf") && !run.wrote("log");
     let engine_log = run.read("log", unchanged);
     let mut items = parse_log(engine_log.as_deref().unwrap_or(&output), &run.main_rel);
@@ -301,7 +261,6 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
         .into_iter()
         .partition(|item| item.kind == Severity::Error);
 
-    // Not from a build cut short, which may have left it half-written.
     let wrote_pdf = matches!(end, End::Exited(_)) && run.wrote("pdf");
     match end {
         End::TimedOut => errors.push(LogItem::error(format!(
@@ -311,8 +270,7 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
         End::Unstarted(err) => {
             errors = vec![LogItem::error(format!("Couldn't start latexmk: {err}"))];
         }
-        // A failure always names a cause: latexmk's own summary of the step
-        // that failed (bibtex, biber, makeindex), else how it ended.
+        // A failure always names a cause: latexmk's summary of the failed step, else the exit.
         &End::Exited(code) if !ok && errors.is_empty() => {
             errors = latexmk_errors(&output);
             if errors.is_empty() {
@@ -329,7 +287,6 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
         ok,
         stopped: *end == End::Stopped,
         duration_ms: run.request_started.elapsed().as_millis() as u64,
-        // A failed run can only advertise a PDF it actually wrote.
         pdf: (ok || wrote_pdf).then(|| run.output("pdf").to_string_lossy().into_owned()),
         pdf_changed: wrote_pdf,
         errors,
@@ -338,8 +295,6 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
     }
 }
 
-/// The end of the engine's log, then latexmk's account of the passes it ran,
-/// that the result shows: the log is cut to its part before it is copied.
 fn joined_log(engine_log: Option<&str>, output: String) -> String {
     let log = match engine_log {
         Some(engine_log) => format!("{}\n\n{output}", crate::tail(engine_log, LOG_TAIL)),
@@ -348,8 +303,7 @@ fn joined_log(engine_log: Option<&str>, output: String) -> String {
     crate::tail(&log, LOG_TAIL).to_owned()
 }
 
-/// A file's last `max` bytes, starting at a line when it had to cut: errors
-/// sit at the end of a log, and a cut line would parse as garbage.
+/// From a line's start when it cuts: a cut line would parse as garbage.
 fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(path)?;
@@ -403,7 +357,6 @@ mod tests {
             read_tail(&path, 1000).unwrap(),
             std::fs::read(&path).unwrap()
         );
-        // The log shown keeps its last whole characters.
         assert_eq!(tail("short", 10), "short");
         assert_eq!(tail("aébc", 3), "bc");
         assert_eq!(tail("aébc", 4), "ébc");

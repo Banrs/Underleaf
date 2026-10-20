@@ -1,26 +1,17 @@
-//! The class a main file names, and how the class sets its headings, as its
-//! class file does (TeX Live's base, amscls, koma-script, memoir, IEEEtran
-//! and llncs): the levels it has, how it numbers them, and each one's size
-//! against the text's, its weight and its shape. A class it doesn't know has
-//! every level, set as the standard classes set them, and numbers them as a
-//! book's once the document has chapters.
+//! The class a main file names, and how it sets its headings (TeX Live's base, amscls, koma-script, memoir, IEEEtran,
+//! llncs): levels, numbering, size, weight and shape. An unknown class has every level, set as the standard classes do.
 
 use serde::Serialize;
 
 use super::scan::{Scanner, Visit, arguments};
 use super::scans::SPACING;
 
-/// The class a main file's `\documentclass` names, and the type size its
-/// options set.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentClass {
     pub name: String,
-    /// 10, 11 or 12 (points): LaTeX's size options.
     pub point_size: u32,
 }
 
-/// The class the first `\documentclass` outside comments and literal code
-/// names, and the type size its options set.
 pub fn document_class(text: &str) -> Option<DocumentClass> {
     struct First(Option<usize>);
     impl Visit for First {
@@ -40,7 +31,6 @@ pub fn document_class(text: &str) -> Option<DocumentClass> {
     let (_, closed) = arguments(&units, first.0?, |piece, braced| {
         (if braced { &mut name } else { &mut options }).extend_from_slice(&units[piece]);
     });
-    // KOMA-Script's fontsize=11pt as well as the standard 11pt.
     let size = |option: &str| match option.trim().trim_start_matches("fontsize=") {
         "11pt" => Some(11),
         "12pt" => Some(12),
@@ -63,7 +53,6 @@ pub enum Shape {
     SmallCaps,
 }
 
-/// A level's look: its size as a multiple of the text's, bold or not, and its shape.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Font {
     pub scale: f64,
@@ -71,8 +60,6 @@ pub struct Font {
     pub shape: Shape,
 }
 
-/// The sectioning commands, outermost first as the outline's depths go, and
-/// their levels' names.
 pub(crate) const LEVELS: [(&str, &str); 6] = [
     ("part", "Part"),
     ("chapter", "Chapter"),
@@ -82,25 +69,20 @@ pub(crate) const LEVELS: [(&str, &str); 6] = [
     ("paragraph", "Paragraph"),
 ];
 
-/// A level the class has, as its headings are set; Normal Text first,
-/// whose `command` is empty.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Level {
     pub title: &'static str,
     pub command: &'static str,
     pub font: Font,
-    /// Its number as its heading prints it, with the class's counters.
     pub marker: Option<String>,
 }
 
-/// A level's size: a step of the class's sizes (`points`), or fixed points.
 #[derive(Clone, Copy)]
 enum Size {
     Step(usize),
     Points(f64),
 }
 
-/// A level a class has, and its look: its command, size, weight and shape.
 type Look = (&'static str, Size, bool, Shape);
 
 const NORMAL: usize = 0;
@@ -117,8 +99,6 @@ const fn plain(command: &'static str, shape: Shape) -> Look {
     (command, Size::Step(NORMAL), false, shape)
 }
 
-/// The standard classes' (book.cls, report.cls): every level bold, and so
-/// memoir's, and a class it doesn't know.
 const BOOK: &[Look] = &[
     bold("part", HUGE),
     bold("chapter", HUGE),
@@ -187,10 +167,6 @@ const BEAMER: &[Look] = &[
     bold("subsubsection", NORMAL),
 ];
 
-/// How a class sets its headings: its levels, the deepest it numbers
-/// (LaTeX's secnumdepth: chapter 0, section 1), whether its sections are
-/// numbered within chapters, and whether its numbers are IEEEtran's (I, A,
-/// 1, a).
 struct Class {
     looks: &'static [Look],
     numbered: i64,
@@ -229,8 +205,6 @@ fn known(name: &str) -> Option<Class> {
     })
 }
 
-/// size10.clo, size11.clo and size12.clo, in points: \normalsize, \large,
-/// \Large, \LARGE, \huge and \Huge.
 fn points(size: u32) -> [f64; 6] {
     match size {
         11 => [10.95, 12.0, 14.4, 17.28, 20.74, 24.88],
@@ -239,8 +213,6 @@ fn points(size: u32) -> [f64; 6] {
     }
 }
 
-/// The levels a class has, Normal Text first, as it sets and numbers them;
-/// `class` none for a document without one.
 pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<Level> {
     let sizes = points(class.map_or(10, |c| c.point_size));
     let Class {
@@ -254,7 +226,6 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
         has_chapters,
     ));
     let marker = |index: usize| {
-        // LaTeX's depths: part -1, chapter 0, section 1.
         let depth = index as i64 - 1;
         if depth < 0 {
             return Some("I".to_owned());
@@ -318,7 +289,6 @@ mod tests {
         titles.join(", ")
     }
 
-    /// The levels' markers, "-" for none.
     fn markers(levels: &[Level]) -> String {
         let markers = levels.iter().map(|l| l.marker.as_deref().unwrap_or("-"));
         markers.collect::<Vec<_>>().join(" ")
@@ -341,7 +311,6 @@ mod tests {
         let titled = "Normal Text, Part, Section, Subsection, Subsubsection";
         assert_eq!(titles(&beamer), titled);
         assert_eq!(markers(&beamer), "- I - - -");
-        // A class it doesn't know has every level, numbered as a book's once there are chapters.
         assert_eq!(markers(&styles(Some("thesis"), 10, true)), report);
         let none = "- I - 1 1.1 1.1.1 -";
         assert_eq!(markers(&styles(None, 10, false)), none);

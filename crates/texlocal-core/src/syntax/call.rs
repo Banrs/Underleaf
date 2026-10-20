@@ -1,6 +1,4 @@
-//! The commands by name, a JSON object of arguments in and the answer's JSON
-//! out, as the C ABI forwards them. An unknown command, or arguments that
-//! aren't an object with the command's, answer none.
+//! The commands by name: a JSON object of arguments in, the answer's JSON out, as the C ABI forwards them.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -15,18 +13,15 @@ fn json(value: impl Serialize) -> Option<String> {
     serde_json::to_string(&value).ok()
 }
 
-/// The argument `key`, one left out read as null: none when it isn't of its
-/// type, as a command is sent what it needs, never given the text's start for it.
+/// A command is sent what it needs, never given the text's start for an argument left out.
 fn get<T: DeserializeOwned>(args: &Value, key: &str) -> Option<T> {
     T::deserialize(args.get(key).unwrap_or(&Value::Null)).ok()
 }
 
-/// An optional argument: `default` when it is left out or null.
 fn optional<T: DeserializeOwned>(args: &Value, key: &str, default: T) -> Option<T> {
     get::<Option<T>>(args, key).map(|value| value.unwrap_or(default))
 }
 
-/// `args_json`, if it is a JSON object.
 fn object(args_json: &str) -> Option<Value> {
     serde_json::from_str(args_json)
         .ok()
@@ -34,8 +29,6 @@ fn object(args_json: &str) -> Option<Value> {
 }
 
 impl SourceDocument {
-    /// The commands on the document's text, `tl_source_call`'s, as
-    /// docs/core-api.md lists them; those that need no document are `call`'s.
     pub fn call(&mut self, command: &str, args_json: &str) -> Option<String> {
         let a = &object(args_json)?;
         let caret = || get::<u32>(a, "caret");
@@ -73,7 +66,6 @@ impl SourceDocument {
     }
 }
 
-/// An SVG, or why there's none.
 fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
     match result {
         Ok(svg) => json(svg),
@@ -81,11 +73,8 @@ fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
     }
 }
 
-/// What a file dropped on the editor does: an image or PDF dropped on a
-/// LaTeX file is `\includegraphics` to put at the caret; any other file
-/// opens, as does one whose path TeX can't read as written. `kind` is the
-/// file's `file_tree` kind, none for a folder (which does nothing); `into`
-/// the kind of the file dropped on.
+/// What a file dropped on the editor does: an image or PDF on a LaTeX file is `\includegraphics` at the caret;
+/// any other file opens.
 fn dropped(path: &str, kind: &str, into: &str) -> Value {
     match kind {
         "" => Value::Null,
@@ -110,19 +99,7 @@ fn tex_reads(path: &str) -> bool {
     }) == Some(0)
 }
 
-/// The commands that need no document: "themes", each theme's id and title;
-/// "theme_colors", a theme's (`theme`, its id) legible in an appearance
-/// (`theme::Appearance`'s fields), by highlight kind; "legible" (`color`,
-/// `background`, `fill`, `increaseContrast`, `ratio`), one colour raised to
-/// `ratio` (default 4.5, or 7 with `increaseContrast`). "menus", the
-/// catalogue's templates and symbol groups; "heading_styles", every level as
-/// the standard classes set and number them (a session's analysis answers
-/// the main file's class's). "drop_text" (`path`, `kind`, `into`,
-/// "tex" when left out), what a project file dropped on the editor does:
-/// {"insert": text} or {"open": true}, or null for a folder. "math_svg"
-/// (`tex`, `display`, `size`, 13 points, `color`, black) and "glyph_svg"
-/// (`command`, `size`, 19, `side`, 24, `color`): `render::MathSvg`, or
-/// {"error": why}.
+/// The commands that need no document; docs/core-api.md lists them.
 pub fn call(command: &str, args_json: &str) -> Option<String> {
     let a = &object(args_json)?;
     let string = |key, default: &str| optional(a, key, default.to_owned());
@@ -175,9 +152,6 @@ mod tests {
     use crate::syntax::SourceDocument;
     use crate::syntax::theme::contrast;
 
-    /// The JSON in and out. An argument a command needs is not made up when
-    /// left out, one that is optional is; following an edit or a selection
-    /// is the C ABI's own, and what needs no document is `call`'s.
     #[test]
     fn commands_answer_by_name() {
         #[rustfmt::skip]
@@ -218,12 +192,10 @@ mod tests {
         );
         let pdf = r#"{"path": "a.pdf", "kind": "pdf", "into": "tex"}"#;
         assert!(drop(pdf).unwrap().contains("includegraphics{a.pdf}"));
-        // Into any other file, or any other kind, it opens.
         let into_bib = r#"{"path": "a.pdf", "kind": "pdf", "into": "bib"}"#;
         assert_eq!(drop(into_bib).as_deref(), Some(r#"{"open":true}"#));
         let tex = r#"{"path": "ch1.tex", "kind": "tex"}"#;
         assert_eq!(drop(tex).as_deref(), Some(r#"{"open":true}"#));
-        // A path TeX reads as written goes in; one it can't opens.
         let taken = r#"{"path": "figs/a b_c&{d}~$^.png", "kind": "image"}"#;
         assert!(
             drop(taken)
@@ -234,18 +206,14 @@ mod tests {
             let args = json!({ "path": path, "kind": "image" }).to_string();
             assert_eq!(drop(&args).as_deref(), Some(r#"{"open":true}"#), "{path}");
         }
-        // A folder does nothing; a call without a path is no call.
         assert_eq!(drop(r#"{"path": "figs"}"#).as_deref(), Some("null"));
         assert_eq!(drop("{}"), None);
     }
 
-    /// The answers' shapes, and the arguments reaching what answers them: the
-    /// colours, headings and drawings themselves are tested beside them.
     #[test]
     fn the_free_commands_answer_by_name() {
         let themes = call("themes", "{}").unwrap();
         assert!(themes.starts_with(r#"[{"id":"overleaf","title":"Overleaf"},{"id":"#));
-        // A ratio asked for is the one it is raised to; without one, text's.
         let ratio_of = |extra: &str| {
             let args = format!(
                 r#"{{"color": [0.6, 0.6, 0.6, 1], "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0]{extra}}}"#

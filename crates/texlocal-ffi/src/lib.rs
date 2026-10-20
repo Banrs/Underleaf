@@ -1,6 +1,5 @@
 //! The C ABI the Mac app links and the Windows app loads; `include/texlocal.h` is its
-//! contract. A blocking call drives the handle's runtime on its caller's thread, so calls
-//! from several threads at once are fine.
+//! contract.
 
 use std::borrow::Cow;
 use std::ffi::{CStr, CString, c_char, c_void};
@@ -27,7 +26,6 @@ struct Host {
 }
 
 impl Host {
-    /// The command's answer, waited for on this thread.
     fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
         if command.starts_with("session_") {
             self.runtime.block_on(self.sessions.call(command, args))
@@ -38,13 +36,11 @@ impl Host {
 }
 
 /// `body`'s result, or none if it panicked: no panic may unwind into the
-/// host, which would abort the app and lose the user's unsaved text. Only
-/// the entry points that can't panic (making a source, freeing) go without.
+/// host, which would abort the app and lose the user's unsaved text.
 fn caught<T>(body: impl FnOnce() -> T) -> Option<T> {
     catch_unwind(AssertUnwindSafe(body)).ok()
 }
 
-/// A C function and the pointer the host passes back to it.
 #[derive(Clone, Copy)]
 struct Callback {
     call: extern "C" fn(*mut c_void, *const c_char),
@@ -61,8 +57,6 @@ impl Callback {
     }
 }
 
-/// What a call on a source answers: `none` for a null source or a panic.
-///
 /// # Safety
 /// `source` is null or came from `tl_source_new` and is not freed, and no
 /// two calls on it overlap: one thread at a time, queries included.
@@ -147,7 +141,6 @@ unsafe fn command_args<'a>(
 
 fn envelope(result: Result<Value, CoreError>) -> Value {
     match result {
-        // Moved into its envelope: `json!` would copy the whole result first.
         Ok(value) => Value::Object(Map::from_iter([("ok".to_owned(), value)])),
         Err(err) => json!({ "error": err.message, "status": err.status }),
     }
@@ -243,7 +236,6 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
         return;
     }
     let handle = unsafe { Box::from_raw(handle) };
-    // Dropping the runtime and the service is guarded too.
     caught(move || {
         let host = &handle.host;
         host.runtime.block_on(host.sessions.close_all());
@@ -267,7 +259,6 @@ pub unsafe extern "C" fn tl_session_source(
     caught(|| handle.host.sessions.document(session, path))
         .flatten()
         .map_or(std::ptr::null_mut(), |document| {
-            // A visit's closers and snippet are over with it.
             document.reset_typing();
             Box::into_raw(Box::new(TlSource(Source::Session(document))))
         })

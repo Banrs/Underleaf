@@ -3,12 +3,7 @@
 use std::fs::Metadata;
 use std::time::UNIX_EPOCH;
 
-/// A file as written: which file it is, its length, and when it was last
-/// written, in nanoseconds from 1970, as stat gives them (st_ino, st_size and
-/// st_mtime). A session that keeps it knows a change it is told of for the
-/// file is its own write's while a stat still gives the same, without reading
-/// the file back. Windows has no inode a stat gives, and the stamp none:
-/// there, length and date alone.
+/// A file as written: inode, length and mtime (nanoseconds) as stat gives them, so a session can tell a change is its own write without reading back. Windows has no inode: length and date alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stamp {
     pub inode: Option<u64>,

@@ -21,7 +21,6 @@ async fn status_of(service: &Service, command: &str, args: Value) -> u16 {
     service.call(command, &args).await.unwrap_err().status
 }
 
-/// The TeX programs folder chosen, None to find TeX automatically.
 fn tex_dir(service: &Service) -> Option<PathBuf> {
     AppSettings::read(&service.data_dir).tex_dir
 }
@@ -29,27 +28,22 @@ fn tex_dir(service: &Service) -> Option<PathBuf> {
 #[tokio::test]
 async fn a_free_project_name_is_the_next_untitled() {
     let (_dir, service) = library();
-    // Nothing made: the series starts at "Untitled".
     let name = call(&service, "free_project_name", json!({})).await;
     assert_eq!(name, json!({ "name": "Untitled" }));
     for name in ["Untitled", "Untitled 2", "Untitled 3"] {
         let args = json!({ "name": name, "template": "blank" });
         assert_eq!(call(&service, "create_project", args).await["id"], name);
     }
-    // A gap is filled first, and a name asked for is numbered the same way.
     fs::remove_dir_all(service.data_dir.join("Untitled 2")).unwrap();
     let next = call(&service, "free_project_name", json!({})).await;
     assert_eq!(next, json!({ "name": "Untitled 2" }));
     let from_taken = call(&service, "free_project_name", json!({ "name": "untitled" })).await;
     assert_eq!(from_taken["name"], "untitled 2");
-    // A new project whose name is taken is numbered past it.
     let args = json!({ "name": "Untitled 3", "template": "blank" });
     let numbered = call(&service, "create_project", args).await;
     assert_eq!(numbered["id"], "Untitled 3 2");
-    // Names the path rules refuse are refused, not numbered.
     let bad = json!({ "name": ".hidden" });
     assert_eq!(status_of(&service, "free_project_name", bad).await, 400);
-    // A new project needs its name.
     assert_eq!(status_of(&service, "create_project", json!({})).await, 400);
 }
 
@@ -68,8 +62,6 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     assert_eq!(status_of(&service, "no_such_command", json!({})).await, 404);
     let pdf = call(&service, "pdf_path", json!({ "id": "P" })).await;
     assert!(pdf.as_str().unwrap().ends_with(".pdf"), "{pdf}");
-    // Missing and mistyped arguments, and paths the boundary refuses, which
-    // apply through the dispatch exactly as through the methods.
     for (command, args) in [
         ("search_project", json!({ "id": "P" })),
         (
@@ -85,7 +77,6 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     ] {
         assert_eq!(status_of(&service, command, args).await, 400, "{command}");
     }
-    // A string required that is left out or null is refused in the argument's words.
     for args in [json!({ "id": "P" }), json!({ "id": "P", "path": null })] {
         let err = service.call("create_entry", &args).await.unwrap_err();
         let expected = "Invalid argument `path`: invalid type: null, expected a string";
@@ -113,7 +104,6 @@ fn fake_program(dir: &Path, name: &str, line: &str) -> PathBuf {
     }
 }
 
-/// A folder holding a stand-in `latexmk` that prints a version.
 fn fake_tex(dir: &Path) -> String {
     fake_program(dir, "latexmk", "Latexmk, Version 4.86a");
     dir.to_string_lossy().into_owned()
@@ -137,7 +127,6 @@ async fn the_tex_folder_holds_latexmk_or_is_a_root_above_one_and_is_kept_until_c
     assert_eq!(call(&service, "status", json!({})).await, chosen);
     assert_eq!(chosen["latexmkVersion"], "4.86a");
     assert_eq!(tex_dir(&service).unwrap().to_string_lossy(), bin);
-    // Kept beside the projects, and not listed as one.
     let listed = call(&service, "list_projects", json!({})).await;
     assert!(listed.as_array().unwrap().is_empty());
 
@@ -146,8 +135,6 @@ async fn the_tex_folder_holds_latexmk_or_is_a_root_above_one_and_is_kept_until_c
     assert_eq!(tex_dir(&service), None);
 }
 
-/// TeXpresso's folder must hold the program; it's kept beside the TeX folder and
-/// goes back to the TeX path when cleared.
 #[tokio::test]
 async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
     let (_dir, service) = library();
@@ -198,12 +185,10 @@ async fn a_rename_answers_the_moved_ui_state_and_the_main_file_it_moved() {
 
     let args = json!({ "session": 1, "patch": { "mainFile": "ch/a.tex" } });
     ask("session_set_settings", args).await;
-    // The sidebar's state moved with the folder, and the main file with it.
     let args = json!({ "session": 1, "from": "ch", "to": "chapters" });
     let renamed = ask("session_rename", args).await;
     assert_eq!(renamed["mainFile"], "chapters/a.tex");
     assert_eq!(renamed["ui"]["expandedFolders"], json!(["chapters"]));
-    // The session refuses to trash the main file it moved.
     let args = json!({ "session": 1, "path": "chapters" });
     let refused = sessions.call("session_prepare_delete", &args).await;
     assert_eq!(refused.unwrap_err().status, 409);
@@ -246,7 +231,6 @@ async fn ui_state_patches_and_main_file_renames_preserve_both_changes() {
             }
         });
         start.wait().await;
-        // As a session renames.
         service
             .with_project("P", |root| projects::rename_entry(root, from, to))
             .unwrap();

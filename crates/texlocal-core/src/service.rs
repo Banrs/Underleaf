@@ -75,9 +75,6 @@ impl Service {
         use_project(&self.project_root(id)?)
     }
 
-    // ---------- status ----------
-
-    /// Probe the current TeX choice, including installs made while the app is open.
     pub async fn status(&self) -> TexStatus {
         let app = AppSettings::read(&self.data_dir);
         let (tex_path, texpresso_path) = tex::tool_paths(&app);
@@ -90,14 +87,10 @@ impl Service {
         found
     }
 
-    // ---------- TeX folder ----------
-
-    /// The PATH for TeX's tools, and for TeXpresso's, with the folders chosen.
     pub(crate) fn tool_paths(&self) -> (String, String) {
         tex::tool_paths(&AppSettings::read(&self.data_dir))
     }
 
-    /// Choose TeXpresso's folder; None goes back to the TeX path.
     pub async fn set_texpresso_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
         let chosen = dir.map(Path::new);
         if let Some(dir) = chosen
@@ -111,8 +104,6 @@ impl Service {
         Ok(self.status().await)
     }
 
-    /// Choose the TeX folder; None goes back to automatic. A TeX Live root is
-    /// accepted and saved as its bin folder.
     pub async fn set_tex_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
         let chosen = dir
             .map(|dir| {
@@ -123,10 +114,6 @@ impl Service {
         Ok(self.status().await)
     }
 
-    // ---------- dispatch ----------
-
-    /// The JSON command table the hosts call through the FFI, but for the
-    /// sessions' (`session_*`).
     pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
         let s = |key: &str| string_arg(args, key);
         let root = || self.project_root(s("id")?);
@@ -136,8 +123,7 @@ impl Service {
             "set_texpresso_dir" => out(self.set_texpresso_dir(folder()?.as_deref()).await?),
             "set_tex_dir" => out(self.set_tex_dir(folder()?.as_deref()).await?),
             "list_projects" => out(projects::list_projects(&self.data_dir)?),
-            // The project made is answered, so its `id` is the name it got: a name taken is
-            // numbered past. It is made with its engine or not at all.
+            // The project made is answered, so its `id` is the name it got.
             "create_project" => {
                 let template = arg::<Option<String>>(args, "template")?;
                 let engine = arg::<Option<String>>(args, "engine")?;
@@ -148,8 +134,6 @@ impl Service {
                     engine.as_deref(),
                 )?)
             }
-            // The first free name of the series "Untitled", "Untitled 2", …, creating nothing:
-            // for a host to offer in its New Project field.
             "free_project_name" => Ok(json!({
                 "name": projects::free_project_name(
                     &self.data_dir,
@@ -196,7 +180,6 @@ impl Service {
             .await?),
             "synctex_inverse" => {
                 let root = root()?;
-                // `text`, the clicked page's text, and `at`, the clicked character's UTF-16 index in it.
                 let click =
                     arg::<Option<String>>(args, "text")?.zip(arg::<Option<usize>>(args, "at")?);
                 out(synctex::synctex_inverse(
@@ -210,7 +193,6 @@ impl Service {
                 )
                 .await?)
             }
-            // The word at `column` of a source line, in the `pages` ([{page, text, near}]) of a forward sync.
             "synctex_match" => out(synctex::match_forward(
                 &root()?,
                 s("file")?,
@@ -218,9 +200,7 @@ impl Service {
                 arg(args, "column")?,
                 &arg::<Vec<wordmatch::PdfPage>>(args, "pages")?,
             )?),
-            // An absolute path in the library as {id, path}; null outside every project.
             "locate" => out(projects::locate(&self.data_dir, Path::new(s("path")?))?),
-            // The compiled PDF's location; it may not exist yet.
             "pdf_path" => {
                 let root = root()?;
                 let pdf = settings::read_settings(&root).output(&root, "pdf")?;
@@ -228,9 +208,7 @@ impl Service {
             }
             "project_root" => Ok(json!(root()?.to_string_lossy())),
             "export_zip" => out(zipexport::export_zip(&root()?, Path::new(s("dest")?))?),
-            // On quit, while a compile call may still be in flight — which rules
-            // out tl_close — stop the latexmk trees that would otherwise outlive
-            // the app.
+            // On quit, while a compile may be in flight, stop the latexmk trees that would outlive the app.
             "kill_all" => {
                 self.kill_all();
                 Ok(Value::Null)
@@ -251,14 +229,11 @@ impl Service {
     }
 }
 
-/// Argument `key` of a JSON command, which a missing key reads as null.
 pub(crate) fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, CoreError> {
-    // Straight from the borrowed Value, with no intermediate clone of it.
     T::deserialize(args.get(key).unwrap_or(&Value::Null))
         .map_err(|err| CoreError::bad_request(format!("Invalid argument `{key}`: {err}")))
 }
 
-/// Borrow a required string while keeping the typed argument errors.
 pub(crate) fn string_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, CoreError> {
     args.get(key)
         .and_then(Value::as_str)

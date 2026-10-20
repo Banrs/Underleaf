@@ -1,10 +1,4 @@
-//! Project and file management. Every project is a directory under the data
-//! dir; all returned paths use forward slashes.
-//!
-//! The work is in the modules below, by what each is about: the `library` of
-//! projects, the `tree` a project shows, the `files` the author makes and
-//! moves, `search` across the text files, and the `symbols` they define. They
-//! are re-exported here, so callers name `projects::` alone.
+//! Project and file management over the modules below; all returned paths use forward slashes.
 
 mod files;
 mod library;
@@ -31,7 +25,6 @@ pub use symbols::{Symbols, scan_symbols};
 pub(crate) use tree::is_text;
 pub use tree::{TreeNode, file_kind, file_tree};
 
-/// A vanished or unreadable entry is skipped without failing a project scan.
 fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError> {
     match result {
         Err(err) if matches!(err.kind(), NotFound | PermissionDenied) => Ok(None),
@@ -39,11 +32,7 @@ fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError
     }
 }
 
-/// Names a project folder holds that are not the author's work, at any depth:
-/// version-control folders, what macOS leaves in a folder or a zip, and the
-/// temporary files the core writes beside a document. An import leaves them
-/// behind and an export doesn't take them; every other dotfile (.latexmkrc)
-/// is the author's, though the file tree hides it.
+/// Names a project folder holds that are not the author's work, at any depth: version control, what macOS leaves behind, and the core's temporary files. Other dotfiles (.latexmkrc) are the author's.
 pub(crate) fn is_litter(name: &str) -> bool {
     name.starts_with("._")
         || name.starts_with(".texlocal-")

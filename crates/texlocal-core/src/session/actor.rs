@@ -1,5 +1,5 @@
-//! One project session's task: its documents, saves, builds and the file
-//! watcher's news, handled one message at a time, so no two of them race.
+//! One project session's task: documents, saves, builds and the file watcher's news,
+//! handled one message at a time, so no two of them race.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
@@ -30,8 +30,6 @@ use crate::syntax::headings;
 use crate::{CoreError, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
-/// Not Saved after a panic ended the session (`stopped`), for a document whose text was written,
-/// and for one whose edits couldn't be.
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
 const STOPPED_UNSAVED: &str = "Saving stopped after an internal error, and this file’s edits couldn’t be saved. Copy them out, then close the project and open it again.";
 const NOT_UTF8: &str =
@@ -40,9 +38,7 @@ const NOT_UTF8: &str =
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Conflict {
-    /// Another app changed the file while it has unsaved edits here.
     Changed,
-    /// The file was moved or deleted while it has unsaved edits here.
     Gone,
 }
 
@@ -56,24 +52,16 @@ enum Reload {
 pub(crate) struct Doc {
     pub doc: Document,
     path: String,
-    /// The version the disk has, as the session last wrote or read it.
     saved: u64,
-    /// Save Anyway: written though the text is the disk's.
     force: bool,
-    /// The disk's text as the document would hold it, as the session last wrote or
-    /// read it; None while the file isn't UTF-8.
+    /// The disk's text as the document would hold it; None while the file isn't UTF-8.
     disk_text: Option<String>,
-    /// How the file ends its lines, which a save writes.
     newline: Newline,
-    /// While a stat still gives it, a change told of is the session's own save, or none;
-    /// None once the file has gone.
+    /// While a stat still gives it, a change told of is the session's own save, or none.
     disk_stamp: Option<Stamp>,
-    /// Asked about once; until answered, no save writes over the other app's change
-    /// or puts the file back.
+    /// Asked about once; until answered, no save writes over the other app's change.
     conflict: Option<Conflict>,
-    /// The conflict the host is asking about.
     asking: Option<Conflict>,
-    /// Cancel in a conflict: not saved, and the autosave stays quiet.
     held: bool,
     error: Option<String>,
     /// A `document_reload` the host has yet to apply: nothing is saved meanwhile.
@@ -88,7 +76,6 @@ impl Doc {
         self.force || self.doc.version() != self.saved
     }
 
-    /// A `document` event: what the host's Not Saved follows.
     fn state(&self) -> Value {
         json!({ "path": self.path, "error": self.error, "held": self.held })
     }
@@ -96,35 +83,24 @@ impl Doc {
 
 pub(crate) enum Later {
     Compile(bool),
-    /// Start live preview again.
     Restart,
     FlushLive,
     Rescan,
 }
 
-/// What the session waits for, each due at its time; those due together go in this order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Timer {
-    /// From the last edit to the autosave.
     Autosave,
-    /// From a save, or a change elsewhere, to the scan of labels and citations.
     Symbols,
-    /// The folder's changes, taken together once they settle.
     Fs,
-    /// The caret, told to TeXpresso where it settled.
     Caret,
-    /// A whole text TeXpresso couldn't be sent, sent again.
     Retry,
-    /// The preview, started again after a rename, a new main file or a file gone.
     Restart,
-    /// Files changed on disk, sent to TeXpresso.
     Disk,
-    /// The Live Preview Log, sent since TeX's changed.
     Log,
 }
 
 impl Timer {
-    /// How long after it is set the timer is due.
     fn wait(self) -> Duration {
         Duration::from_millis(match self {
             Self::Autosave => 700,
@@ -133,14 +109,13 @@ impl Timer {
             Self::Fs => 250,
             Self::Retry => 750,
             Self::Restart | Self::Disk => 180,
-            // The log's whole text is copied, sent and laid out again each time, beside
-            // pages that must land within a frame.
+            // The log's whole text is copied, sent and laid out again each time, beside pages that
+            // must land within a frame.
             Self::Log => 200,
         })
     }
 }
 
-/// What woke the session's task.
 enum Wake {
     Message(Msg),
     Deadline,
@@ -163,22 +138,18 @@ pub(crate) struct Actor {
     symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
     pub edits: u64,
-    /// The edit each path last had, kept for the session's life: a document closed since
-    /// isn't marked with a build's issues on lines that may have moved.
+    /// Kept for the session's life: a document closed since isn't marked with a build's
+    /// issues on lines that may have moved.
     pub last_edits: HashMap<String, u64>,
     pub auto_compile: bool,
     pub builds: Builds,
-    /// Whether the last look for TeX found it (`Service::tex_found`).
     tex: signal::Receiver<bool>,
     pub outline: Arc<Mutex<Outline>>,
-    /// The analyses asked for.
     analyses: u64,
     pub timers: BTreeMap<Timer, Instant>,
     fs_pending: Vec<Change>,
-    /// The listing as last read: the same files and folders make the same tree.
     pub tree: TreeIndex,
     _watcher: Option<RecommendedWatcher>,
-    /// The entries on their way to the Trash (`prepare_delete`): nothing saves into them.
     deleting: BTreeSet<String>,
     pub live: Live,
     pub later: VecDeque<Later>,
@@ -186,7 +157,6 @@ pub(crate) struct Actor {
 }
 
 impl Actor {
-    /// The session numbered `id`, and the answer to its open.
     pub fn new(
         sessions: &Sessions,
         id: u64,
@@ -205,7 +175,6 @@ impl Actor {
             .output(&root, "pdf")
             .ok()
             .filter(|pdf| pdf.is_file());
-        // All a host shows as the project opens, so it need ask for nothing first.
         let opened = json!({
             "session": id,
             "root": root.to_string_lossy(),
@@ -253,7 +222,6 @@ impl Actor {
         Ok((actor, opened))
     }
 
-    /// Whether the session ended by a panic, which `stopped` makes good as far as it can.
     pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) -> bool {
         let mut woken = None;
         loop {
@@ -288,7 +256,6 @@ impl Actor {
         }
     }
 
-    /// An automatic build skipped for want of TeX runs once `status` finds it.
     fn tex_changed(&mut self) {
         if *self.tex.borrow_and_update() {
             self.builds.waiting_for_tex = false;
@@ -298,9 +265,6 @@ impl Actor {
         }
     }
 
-    /// After a panic, a bug: each document's edits are written as a save would write
-    /// them, the host is told that nothing more is saved, and every command waiting is
-    /// answered so.
     fn stopped(&mut self, rx: &mut mpsc::UnboundedReceiver<Msg>) {
         self.closed = true;
         let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -357,7 +321,6 @@ impl Actor {
         }
     }
 
-    /// Each timer due, in its order: one that a timer before it changed is looked at again.
     fn fire(&mut self) {
         let now = Instant::now();
         while let Some((&timer, _)) = self.timers.iter().find(|(_, at)| **at <= now) {
@@ -375,12 +338,10 @@ impl Actor {
         }
     }
 
-    /// `timer` is due its wait from now, in place of when it was.
     pub fn after(&mut self, timer: Timer) {
         self.timers.insert(timer, Instant::now() + timer.wait());
     }
 
-    /// `timer` is due its wait from now, unless it is due already.
     pub fn soon(&mut self, timer: Timer) {
         self.timers
             .entry(timer)
@@ -422,7 +383,6 @@ impl Actor {
         }
     }
 
-    /// Commands that answer something return it; the rest answer null.
     fn answer(&mut self, name: &str, args: &Value) -> Result<Value, CoreError> {
         let path = || paths::rel_key(string_arg(args, "path")?);
         match name {
@@ -489,7 +449,6 @@ impl Actor {
         Ok(Value::Null)
     }
 
-    /// A snapshot for the tests, with what the events leave out.
     #[cfg(test)]
     fn state(&self) -> Value {
         let docs: Vec<Value> = self
@@ -523,8 +482,6 @@ impl Actor {
 
     // MARK: - Documents
 
-    /// The editor reads the text from the document's source (`tl_source_text`), as
-    /// it is once the switch to it is made.
     fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
         if self.docs.contains_key(path) {
             return Ok(());
@@ -591,7 +548,6 @@ impl Actor {
             return;
         };
         self.text_changed(&path);
-        // Its labels and citations may have changed with it.
         self.after(Timer::Symbols);
         let Some(doc) = self.docs.get_mut(&path) else {
             return;
@@ -599,7 +555,7 @@ impl Actor {
         doc.saved = version;
         let reason = doc.reload.take();
         if reason == Some(Reload::Revert) {
-            // Written back: a save under way when the change came may have written over it.
+            // A save under way when the change came may have written over it.
             doc.force = true;
         }
         self.publish_doc(&path);
@@ -615,8 +571,6 @@ impl Actor {
         }
     }
 
-    /// `path`'s text changed, by an edit or from the disk: the build's marks on it
-    /// go, and the PDF it showed is out of date.
     fn text_changed(&mut self, path: &str) {
         self.edits += 1;
         self.last_edits.insert(path.to_owned(), self.edits);
@@ -647,7 +601,6 @@ impl Actor {
         }
     }
 
-    /// The open documents at `dir` or inside it.
     fn docs_within(&self, dir: &str) -> Vec<String> {
         let docs = self.docs.keys();
         docs.filter(|p| within(p, dir)).cloned().collect()
@@ -660,13 +613,10 @@ impl Actor {
             .collect()
     }
 
-    /// Writes one document. Ok(false): not written, and not to be (a conflict,
-    /// asked about when `reporting`, or a reload or deletion under way).
+    /// Ok(false): not written, and not to be (a conflict, or a reload or deletion under way).
     ///
-    /// The disk is looked at under the project's lock first: another app's write
-    /// that the watcher hasn't told of yet (its changes settle for 250 ms) is taken
-    /// as the watcher would take it, not written over. A touch that left the text
-    /// as it was leaves nothing to ask, and the write goes on at the second look.
+    /// The disk is looked at under the project's lock first: another app's write that the
+    /// watcher hasn't told of yet is taken as the watcher would take it, not written over.
     fn save_doc(&mut self, path: &str, reporting: bool, autosave: bool) -> Result<bool, CoreError> {
         for _ in 0..2 {
             let deleting = self.deleting.iter().any(|entry| within(path, entry));
@@ -718,15 +668,11 @@ impl Actor {
         Ok(false)
     }
 
-    /// Writes every document with unsaved edits; typing during a write is
-    /// written too, so a build or a trash that follows has it.
     pub fn flush_all(&mut self, reporting: bool) -> Result<bool, CoreError> {
         self.timers.remove(&Timer::Autosave);
         self.flush(None, reporting)
     }
 
-    /// Writes the documents with unsaved edits, or `only` that one, again while
-    /// typing during a write leaves them unsaved.
     fn flush(&mut self, only: Option<&str>, reporting: bool) -> Result<bool, CoreError> {
         let mut failure = None;
         for _ in 0..3 {
@@ -755,7 +701,6 @@ impl Actor {
         Ok(true)
     }
 
-    /// A save someone asked for: a build follows when it wrote anything.
     fn save_edits(&mut self, reporting: bool) -> Result<bool, CoreError> {
         let edited = !self.dirty_paths().is_empty();
         let saved = self.flush_all(reporting)?;
@@ -785,7 +730,6 @@ impl Actor {
         };
         match (kind, answer) {
             (_, "cancel") => (doc.asking, doc.held) = (None, true),
-            // The autosave was held while asking, or the edits were saved before the other app's change.
             (Conflict::Changed, "save") => {
                 (doc.asking, doc.conflict, doc.force) = (None, None, true);
             }
@@ -808,7 +752,6 @@ impl Actor {
             "revert" => {
                 match self.docs[path].disk_text.clone() {
                     Some(text) => self.request_reload(path, &text, Reload::Revert),
-                    // The file isn't UTF-8 now, so the editor can't show it.
                     None => self.close_doc(path, "gone"),
                 }
                 Ok(Value::Null)
@@ -841,8 +784,6 @@ impl Actor {
             .iter()
             .filter(|p| !self.docs.contains_key(*p))
             .collect();
-        // Labels and citations another app wrote reach completion too; an open
-        // document's are scanned as it reloads.
         let scan = |path: &&String| matches!(file_kind(path), "tex" | "bib");
         if meaning.tree || others.iter().any(scan) {
             self.after(Timer::Symbols);
@@ -869,7 +810,6 @@ impl Actor {
         let Some(doc) = self.docs.get_mut(path) else {
             return;
         };
-        // It is there, so not gone.
         if doc.conflict == Some(Conflict::Gone) {
             doc.conflict = None;
         }
@@ -881,7 +821,6 @@ impl Actor {
         };
         doc.disk_stamp = stamp;
         let Some((text, newline)) = disk else {
-            // No longer UTF-8: the editor can't show it, nor save over it unasked.
             doc.disk_text = None;
             if !doc.dirty() {
                 return self.close_doc(path, "gone");
@@ -912,7 +851,6 @@ impl Actor {
         if !doc.dirty() {
             return self.close_doc(path, "gone");
         }
-        // Gone as the session last saw it: Save puts it back.
         doc.disk_stamp = None;
         if doc.conflict.replace(Conflict::Gone) != Some(Conflict::Gone) {
             self.ask(path, Conflict::Gone);
@@ -934,8 +872,8 @@ impl Actor {
 
     // MARK: - Symbols
 
-    /// Without the project's lock: every write replaces a file in one rename,
-    /// so a scan reads each file whole, old or new, and a save need not wait for it.
+    /// Without the project's lock: every write replaces a file in one rename, so a scan reads
+    /// each file whole, old or new.
     fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
         let (seq, root, tx) = (self.symbols_seq, self.root.clone(), self.tx.clone());
@@ -949,7 +887,6 @@ impl Actor {
         if seq != self.symbols_seq {
             return;
         }
-        // Unchanged, the documents keep the completions they made from it.
         if **self.symbols.read().unwrap_or_else(PoisonError::into_inner) == symbols {
             return;
         }
@@ -958,17 +895,13 @@ impl Actor {
 
     // MARK: - Analysis
 
-    /// The document the main file reads, as `analyze::analyze_project` finds it for
-    /// the file at `path`, and the levels the main file's class has, the class read
-    /// from its text as the editor has it; its outline is kept for `outline_current`.
-    /// Worked out beside the session, which goes on with its other commands, and
-    /// answered from there; an analysis asked for earlier keeps no outline over it.
+    /// Worked out beside the session, which goes on with its other commands. An analysis
+    /// asked for earlier keeps no outline over it.
     fn analyze(&mut self, path: String, reply: Reply) {
         self.analyses += 1;
         let (seq, root) = (self.analyses, self.root.clone());
         let (docs, outline) = (Arc::clone(&self.shared), Arc::clone(&self.outline));
         tokio::task::spawn_blocking(move || {
-            // Read each time: another app may have changed it.
             let main = settings::read_settings(&root).main_file;
             let open = paths::rel_key(&main)
                 .ok()
@@ -1001,15 +934,13 @@ impl Actor {
         let (renamed, main) = self.service.with_project(&self.project, |root| {
             let main = settings::read_settings(root).main_file;
             let renamed = projects::rename_entry(root, from, to)?;
-            // What the preview shows may have moved: it starts again after.
             self.preview.stop(root)?;
             Ok((renamed, main))
         })?;
         self.live_follow();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
-        // Whatever was open at the new name is stale: the name was free. Names
-        // compare without case, so a rename only in case leaves the entry itself
-        // at the new name: that one moves rather than closes.
+        // Names compare without case, so a rename only in case leaves the entry itself at the
+        // new name: that one moves rather than closes.
         for path in self.docs_within(to) {
             if !within(&path, from) {
                 self.close_doc(&path, "gone");
@@ -1037,7 +968,6 @@ impl Actor {
         if renamed.main_file != main {
             self.main_file_changed();
         }
-        // The sidebar's state, moved with the entry, so the host need not ask for it.
         let mut answer = out(renamed)?;
         answer["ui"] = out(settings::read_ui(&self.root))?;
         Ok(answer)
@@ -1049,7 +979,6 @@ impl Actor {
             let updated = settings::write_settings(root, patch)?;
             let main_changed = updated.main_file != main;
             if main_changed {
-                // The preview shows the old main file: it starts again after.
                 self.preview.stop(root)?;
             }
             Ok((updated, main_changed))
@@ -1062,7 +991,6 @@ impl Actor {
         out(updated)
     }
 
-    /// The build and the preview follow a new main file.
     fn main_file_changed(&mut self) {
         self.live_follow();
         let building = self.builds.compiling;
@@ -1072,8 +1000,7 @@ impl Actor {
         }
     }
 
-    /// Saved first, so no autosave can make the file again, and held until `deleted`;
-    /// the main file stays, however the settings spell it.
+    /// Saved first, so no autosave can make the file again, and held until `deleted`.
     fn prepare_delete(&mut self, path: &str) -> Result<Value, CoreError> {
         if !self.flush_all(true)? || !self.dirty_paths().is_empty() {
             return Ok(json!({ "ready": false }));
@@ -1087,9 +1014,8 @@ impl Actor {
     }
 }
 
-/// Whether the file at `abs` is as the session last wrote or read it (`stamp`,
-/// `text`), or gone as it was. A volume that keeps whole seconds could give a
-/// same-length write in the same second that stamp: there the text tells.
+/// A volume that keeps whole seconds could give a same-length write in the same second
+/// that stamp: there the text tells.
 fn as_left(abs: &Path, stamp: Option<Stamp>, text: Option<&str>) -> bool {
     let now = fs::metadata(abs).ok().map(|meta| Stamp::of(&meta));
     match (stamp, now) {
@@ -1102,9 +1028,8 @@ fn as_left(abs: &Path, stamp: Option<Stamp>, text: Option<&str>) -> bool {
     }
 }
 
-/// A file's text as a document holds it and how the file ends its lines, None for a
-/// file that isn't UTF-8, whose bytes a save would change; and its stamp from before
-/// the read: a write meanwhile gives another stamp at the next look, which reads it again.
+/// None for a file that isn't UTF-8, whose bytes a save would change; the stamp is from
+/// before the read, so a write meanwhile reads again at the next look.
 fn read_disk(path: &Path) -> Result<(Option<DiskText>, Option<Stamp>), CoreError> {
     let stamp = fs::metadata(path).ok().map(|meta| Stamp::of(&meta));
     let disk = String::from_utf8(fs::read(path)?).ok().map(|text| {
@@ -1116,9 +1041,7 @@ fn read_disk(path: &Path) -> Result<(Option<DiskText>, Option<Stamp>), CoreError
 
 type DiskText = (String, Newline);
 
-/// How a file ends its lines, as its first line break does. A document holds `\n`
-/// alone, as an editor that keeps one character per line break needs, and a save
-/// writes the file's own ending for every line break.
+/// A document holds `\n` alone, as an editor needs; a save writes the file's own ending.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Newline {
     Lf,
@@ -1138,7 +1061,6 @@ impl Newline {
         }
     }
 
-    /// `text` as the file has it: every line break, however a paste ended it, this one.
     pub fn written(self, text: &str) -> Cow<'_, str> {
         let ending = match self {
             Self::Lf if !text.contains('\r') => return Cow::Borrowed(text),
@@ -1150,7 +1072,6 @@ impl Newline {
     }
 }
 
-/// `text` with every line break `\n` alone, as a document holds it.
 pub(crate) fn lf(text: String) -> String {
     if text.contains('\r') {
         text.replace("\r\n", "\n").replace('\r', "\n")

@@ -1,8 +1,5 @@
-//! What the core tells its host unasked: one JSON object per event,
-//! `{"type": …, "session": …, …}`, handed to one listener in the order made,
-//! on a thread of the hub's own, so a slow host never holds a session up.
-//! A host numbers its sessions and listens for one before opening it, so
-//! nothing is held back. docs/core-api.md lists the events.
+//! What the core tells its host unasked: one JSON object per event, handed to one listener in order on the hub's own thread,
+//! so a slow host never holds a session up. docs/core-api.md lists the events.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc;
@@ -22,7 +19,6 @@ impl Default for Hub {
         let (queue, events) = mpsc::channel::<Value>();
         let listener: Arc<RwLock<Option<Listener>>> = Arc::default();
         let held = Arc::clone(&listener);
-        // Ends once every sender has gone: the hub's and its sessions'.
         let spawned = std::thread::Builder::new()
             .name("texlocal-events".into())
             .spawn(move || {
@@ -51,7 +47,6 @@ impl Hub {
             .unwrap_or_else(PoisonError::into_inner) = listener;
     }
 
-    /// A sender for one session's events, in the hub's order.
     pub(crate) fn emitter(&self) -> Emitter {
         Emitter(self.queue.clone())
     }

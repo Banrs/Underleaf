@@ -1,6 +1,5 @@
-//! Running TeX's tools: a command with the augmented PATH, the whole tree of
-//! processes it starts killed together, and output kept to a cap while the
-//! child runs.
+//! Running TeX's tools: a command with the augmented PATH, its whole process tree
+//! killed together, and output kept to a cap while the child runs.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -12,13 +11,11 @@ use crate::tex::find_tool;
 
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT: usize = 1_000_000;
-/// How long a finished child's pipes are read before giving up on them.
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
-/// A tool and every process it starts, the engines latexmk or TeXpresso runs
-/// among them, which stopping the tool alone would leak: a process group of
-/// its own on Unix, a Job Object on Windows. Kept apart from the child, so a
-/// Stop or quit kills the tree from any thread while another awaits the tool.
+/// A tool and every process it starts, which stopping the tool alone would leak: a process
+/// group on Unix, a Job Object on Windows. Kept apart from the child so a Stop or quit can
+/// kill the tree from any thread while another awaits the tool.
 #[derive(Clone)]
 pub(crate) struct Tree {
     #[cfg(unix)]
@@ -39,16 +36,13 @@ impl Tree {
         }
         #[cfg(windows)]
         {
-            // A console of its own that is never shown, which its engines
-            // share: a console program a windowed app starts would open a
-            // window for each pass.
+            // A console of its own that is never shown: a console program a windowed app starts
+            // would open a window for each pass.
             command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
             let mut child = command.spawn()?;
             let handle = child
                 .raw_handle()
                 .expect("a child just spawned has its handle");
-            // Joined as it starts, long before it has loaded, let alone run a
-            // program of its own.
             let job = job::Job::of(handle).inspect_err(|_| {
                 let _ = child.start_kill();
             })?;
@@ -67,9 +61,7 @@ impl Tree {
     }
 }
 
-/// A Job Object that ends every process in it when it is killed, or when its
-/// last handle closes: as the last owner of its tree here lets go, or the app
-/// quits or crashes.
+/// A Job Object that ends every process in it when it is killed or its last handle closes.
 #[cfg(windows)]
 mod job {
     use std::io;
@@ -84,7 +76,6 @@ mod job {
     pub(crate) struct Job(OwnedHandle);
 
     impl Job {
-        /// A new job holding `process`, which takes every process it starts.
         pub(crate) fn of(process: RawHandle) -> io::Result<Self> {
             // SAFETY: no name and no attributes make an unnamed job with the
             // default security; the handle is owned from here.
@@ -114,14 +105,11 @@ mod job {
         }
 
         pub(crate) fn kill(&self) {
-            // SAFETY: the handle is open while self is.
             unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) };
         }
     }
 }
 
-/// `program` as found in `path_env`, to run in `cwd` with that PATH and its
-/// output piped.
 pub(crate) fn command(
     program: &str,
     cwd: Option<&Path>,
@@ -134,9 +122,8 @@ pub(crate) fn command(
         )
     })?;
     let mut cmd = tool(&program, path_env);
-    // TeX Live's engines read texmf.cnf's variables from the environment
-    // first. Unwrapped, the log keeps each message and path on one line;
-    // wrapped at the default 79 columns, words and paths split mid-way.
+    // TeX Live's engines read texmf.cnf's variables from the environment first; unwrapped,
+    // the log keeps each message and path on one line.
     cmd.env("max_print_line", "10000").stdin(Stdio::null());
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
@@ -144,10 +131,9 @@ pub(crate) fn command(
     Ok(cmd)
 }
 
-/// The program at the full path `program`, latexmk or TeXpresso, to run with
-/// `path_env` as its PATH, its output piped, and killed if dropped. A full
-/// path avoids std's fork fallback, which can crash a child of the
-/// multithreaded Mac app before exec.
+/// The program at the full path `program`, run with `path_env` as its PATH, output piped,
+/// and killed if dropped. A full path avoids std's fork fallback, which can crash a child
+/// of the multithreaded Mac app before exec.
 pub(crate) fn tool(program: &Path, path_env: &str) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(program);
     cmd.env("PATH", path_env)
@@ -157,8 +143,6 @@ pub(crate) fn tool(program: &Path, path_env: &str) -> tokio::process::Command {
     cmd
 }
 
-/// Keep bounded output while draining to EOF, so a full pipe cannot block the
-/// child. The caller keeps what was read if it ends the drain early.
 async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R, kept: &mut Vec<u8>) {
     let mut capped = (&mut reader).take(MAX_OUTPUT as u64);
     if capped.read_to_end(kept).await.is_ok() {
@@ -166,9 +150,6 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R, kept: &mut 
     }
 }
 
-/// Spawn, collect capped output, and kill the whole tree after `PROBE_TIMEOUT`:
-/// the exit code (-1 for none, as after a timeout) and stdout. An error says
-/// why the program could not start; `NotFound` when it is not on the PATH.
 pub(crate) async fn run(
     program: &str,
     args: &[&str],
@@ -181,8 +162,6 @@ pub(crate) async fn run(
     Ok((code, stdout))
 }
 
-/// Collect capped output while the child runs. On timeout, kill its process
-/// tree before reaping; the final value reports whether it timed out.
 pub(crate) async fn drive(
     child: &mut tokio::process::Child,
     tree: &Tree,
@@ -208,8 +187,7 @@ pub(crate) async fn drive(
         tokio::pin!(readers, wait);
         tokio::select! {
             status = &mut wait => {
-                // A descendant or unrelated inherited pipe can outlive the child.
-                // Drain its buffered output briefly, then drop both read futures.
+                // A descendant or unrelated inherited pipe can outlive the child: drain briefly, then drop.
                 let _ = tokio::time::timeout(DRAIN_GRACE, readers).await;
                 status
             }

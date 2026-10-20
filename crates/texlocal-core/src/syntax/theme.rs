@@ -1,18 +1,12 @@
-//! The editor's syntax colours (Settings › Editor › Theme): Overleaf,
-//! TeXstudio and System, light and dark for each highlight kind, and WCAG's
-//! maths that raises a colour to a legible contrast on the editor's
-//! background and on its current line. Hosts resolve their backgrounds and
-//! system colours and map the sRGB answers to their own colour type.
+//! The editor's syntax colours (Overleaf, TeXstudio and System, light and dark) and WCAG's contrast maths that
+//! raises a colour to a legible contrast on the editor's background and current line.
 
 use super::HighlightKind;
 
-/// sRGB components and alpha, 0 to 1.
 pub type Rgba = [f64; 4];
 
-/// A theme's colour for a kind: sRGB in each appearance, or a system colour
-/// by its AppKit name (`systemPink`), which each host resolves in its own
-/// appearance; `light` and `dark` are then Apple's published values, for a
-/// host without such a colour.
+/// A theme's colour for a kind: sRGB in each appearance, or a system colour by its AppKit name that each host
+/// resolves itself, with Apple's published values as the fallback.
 #[derive(Clone, Copy, Debug)]
 pub struct ThemeColor {
     pub system: Option<&'static str>,
@@ -20,7 +14,6 @@ pub struct ThemeColor {
     pub dark: Rgba,
 }
 
-/// Text, braces and brackets are plain in every theme.
 #[derive(Clone, Copy, Debug)]
 pub struct Theme {
     pub id: &'static str,
@@ -62,13 +55,8 @@ const fn system(name: &'static str, light: Rgba, dark: Rgba) -> ThemeColor {
 }
 
 pub const THEMES: [Theme; 3] = [
-    // Overleaf's source editor themes (services/web/frontend/js/features/
-    // source-editor/themes/cm6/): "textmate" in Light, "overleaf_dark" in
-    // Dark, by the lezer tags it gives LaTeX's nodes. command: .tok-typeName;
-    // argument: .tok-attributeValue; maths: .tok-string; comment:
-    // .tok-comment; invalid: .tok-invalid's text. Its .tok-keyword
-    // (`\documentclass`, `\cite`, `\ref`, `\label`, `~`, `&`, `\\`) has no
-    // kind here.
+    // Overleaf's source editor themes ("textmate", "overleaf_dark"), by the lezer tags it gives LaTeX's nodes; its
+    // `.tok-keyword` has no kind here.
     Theme {
         id: "overleaf",
         title: "Overleaf",
@@ -78,12 +66,8 @@ pub const THEMES: [Theme; 3] = [
         comment: rgb(0x4C886B, 0x6272A4),
         invalid: rgb(0xFF0000, 0xFF79C6),
     },
-    // TeXstudio's formats, utilities/qxs/defaultFormats.qxf (Light) and
-    // defaultFormatsDark.qxf (Dark). command: "keyword"; argument:
-    // "referencePresent", "citationPresent" and "packagePresent", one
-    // colour; maths: "math-delimiter"; comment: "comment"; invalid:
-    // "braceMismatch", whose fill Light takes and whose text Dark takes, the
-    // fill not being drawn.
+    // TeXstudio's formats (defaultFormats.qxf, defaultFormatsDark.qxf); invalid is "braceMismatch", whose fill Light
+    // takes and whose text Dark takes, the fill not being drawn.
     Theme {
         id: "texstudio",
         title: "TeXstudio",
@@ -93,7 +77,6 @@ pub const THEMES: [Theme; 3] = [
         comment: rgb(0x808080, 0x667299),
         invalid: rgb(0xC00000, 0xF2F218),
     },
-    // The system's colours, which follow the appearance.
     Theme {
         id: "system",
         title: "System",
@@ -126,7 +109,6 @@ impl Theme {
     }
 }
 
-/// WCAG's relative luminance.
 pub fn luminance(c: Rgba) -> f64 {
     let linear = |v: f64| {
         if v <= 0.04045 {
@@ -138,28 +120,23 @@ pub fn luminance(c: Rgba) -> f64 {
     0.2126 * linear(c[0]) + 0.7152 * linear(c[1]) + 0.0722 * linear(c[2])
 }
 
-/// WCAG's contrast ratio, 1 to 21.
 pub fn contrast(a: Rgba, b: Rgba) -> f64 {
     let (a, b) = (luminance(a), luminance(b));
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
-/// `a` mixed with `fraction` of `b`, component by component.
 pub fn blend(a: Rgba, b: Rgba, fraction: f64) -> Rgba {
     std::array::from_fn(|i| a[i] * (1.0 - fraction) + b[i] * fraction)
 }
 
-/// A translucent colour as it shows on an opaque background, mixed by sRGB's
-/// components, as the window server mixes them.
+/// Mixed by sRGB's components, as the window server mixes them.
 pub fn over(color: Rgba, background: Rgba) -> Rgba {
     let mut shown = blend(background, color, color[3]);
     shown[3] = 1.0;
     shown
 }
 
-/// Mixed towards black on a light background or white on a dark one, by
-/// twentieths, as little as gives `ratio` on it, so it keeps its hue; as it
-/// is when it has that already.
+/// Towards black on a light background or white on a dark one, as little as gives `ratio`, so it keeps its hue.
 pub fn contrasting(color: Rgba, background: Rgba, ratio: f64) -> Rgba {
     // Where black and white contrast equally with a colour.
     let ink = if luminance(background) > 0.179 {
@@ -177,16 +154,12 @@ pub fn contrasting(color: Rgba, background: Rgba, ratio: f64) -> Rgba {
     mixed
 }
 
-/// The contrast text wants: the HIG's 4.5:1 for text under 18 points, or
-/// WCAG's enhanced 7:1 with Increase Contrast.
+/// The HIG's 4.5:1 for text under 18 points, or WCAG's 7:1 with Increase Contrast.
 pub fn text_contrast(increase_contrast: bool) -> f64 {
     if increase_contrast { 7.0 } else { 4.5 }
 }
 
-/// A colour on the editor's background and on its current line, the
-/// (translucent) `fill` over the background, raised to `ratio`: text's
-/// (`text_contrast`), or 3:1, the HIG's for large text and graphics, such as
-/// a border.
+/// A colour raised to `ratio` on the editor's background and its current line, over which a translucent `fill` is mixed.
 pub fn legible(color: Rgba, background: Rgba, fill: Rgba, ratio: f64) -> Rgba {
     let line = over(fill, background);
     contrasting(
@@ -196,7 +169,6 @@ pub fn legible(color: Rgba, background: Rgba, fill: Rgba, ratio: f64) -> Rgba {
     )
 }
 
-/// What the host resolved for one appearance.
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Appearance {
@@ -205,14 +177,10 @@ pub struct Appearance {
     pub increase_contrast: bool,
     pub background: Rgba,
     pub fill: Rgba,
-    /// The system theme's colours by name, as resolved; a name left out
-    /// takes its `ThemeColor`'s published value.
     #[serde(default)]
     pub system: std::collections::HashMap<String, Rgba>,
 }
 
-/// A theme's legible colours in an appearance, by highlight kind, in
-/// `HighlightKind`'s order.
 pub fn theme_colors(theme: &Theme, appearance: &Appearance) -> Vec<Rgba> {
     let ratio = text_contrast(appearance.increase_contrast);
     let colors = HighlightKind::ALL.into_iter().map(|kind| theme.color(kind));
@@ -235,8 +203,7 @@ mod tests {
     use super::*;
     use HighlightKind::Command;
 
-    /// The Mac's text background and its current line's fill, resolved in
-    /// Light and Dark (27.2): white and 30, the fill giving 235 and 48.
+    /// The Mac's text background and current line fill, resolved in Light and Dark (27.2).
     fn appearance(dark: bool, increase_contrast: bool) -> Appearance {
         let (ground, ink) = if dark {
             (30.0 / 255.0, 1.0)
@@ -269,7 +236,6 @@ mod tests {
                 }
             }
         }
-        // Overleaf's Light commands, at 8.6:1, are its own blue.
         let colors = theme_colors(theme("overleaf").unwrap(), &appearance(false, false));
         assert_eq!(colors[Command as usize], [0.0, 0.0, 1.0, 1.0]);
     }
@@ -277,12 +243,10 @@ mod tests {
     #[test]
     fn a_colour_is_raised_as_little_as_it_takes() {
         let white = [1.0; 4];
-        // Overleaf's comments, 4.2:1 on white, a twentieth towards black.
         let comment = hex(0x4C886B);
         assert!(contrast(comment, white) < 4.5);
         let raised = contrasting(comment, white, 4.5);
         assert_eq!(raised, blend(comment, [0.0, 0.0, 0.0, 1.0], 0.05));
-        // On a dark background, towards white.
         let dark = [0.1, 0.1, 0.1, 1.0];
         let raised = contrasting(hex(0x333333), dark, 4.5);
         assert!(raised[0] > 0.2 && contrast(raised, dark) >= 4.5);

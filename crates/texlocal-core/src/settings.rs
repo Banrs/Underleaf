@@ -35,9 +35,7 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Where a build writes its output with extension `ext`, named as latexmk
-    /// names it after the main file: mainFile "chapters/paper.tex" gives
-    /// "<root>/build/paper.<ext>".
+    /// Where a build writes its output with extension `ext`, named as latexmk names it after the main file.
     pub fn output(&self, root: &Path, ext: &str) -> Result<PathBuf, CoreError> {
         let main = safe_rel_file(&self.main_file)?;
         let base = Path::new(&main).file_stem().unwrap_or_default();
@@ -56,7 +54,6 @@ pub enum Engine {
 }
 
 impl Engine {
-    /// latexmk's option for it.
     pub(crate) fn flag(self) -> &'static str {
         match self {
             Self::Pdflatex => "-pdf",
@@ -110,14 +107,12 @@ fn update_project(
     Ok(file)
 }
 
-/// The defaults where the file is missing or can't be read.
 pub fn read_settings(root: &Path) -> Settings {
     load::<ProjectFile>(&root.join(SETTINGS_FILE))
         .unwrap_or_default()
         .settings
 }
 
-/// Merge `patch`'s keys over the project's settings and return them as written.
 pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError> {
     let file = update_project(root, |file| {
         let Value::Object(patch) = patch else {
@@ -137,9 +132,7 @@ pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError>
     Ok(file.settings)
 }
 
-/// The folders chosen for TeX's programs and for TeXpresso, which every
-/// project shares; None finds the program by itself. Kept beside the
-/// projects, in a file whose dot keeps it out of the project list.
+/// The folders chosen for TeX's programs and for TeXpresso, shared by every project; None finds the program itself.
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub(crate) struct AppSettings {
@@ -165,13 +158,10 @@ impl AppSettings {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct UiState {
-    /// Folders open in the file tree, by project path.
     pub expanded_folders: Vec<String>,
-    /// Outline headings folded, by `OutlineNode::fold_key`.
     pub folded_headings: Vec<String>,
 }
 
-/// Each list sent replaces the saved one.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiPatch {
@@ -250,7 +240,6 @@ mod tests {
         assert_eq!(json!(written), expected);
         assert_eq!(json!(read_settings(&root)), expected);
 
-        // A patch that fails writes nothing, its valid keys included.
         let before = fs::read(&file).unwrap();
         for (bad, why) in [
             (
@@ -269,7 +258,6 @@ mod tests {
         }
         assert_eq!(fs::read(&file).unwrap(), before);
 
-        // A nested main file names the build's output, and the library lists it.
         create_free(&root, "chapters/paper.tex", false).unwrap();
         let settings = write_settings(&root, &json!({ "mainFile": "chapters/paper.tex" })).unwrap();
         let pdf = settings.output(&root, "pdf").unwrap();
@@ -301,7 +289,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (root, file) = (dir.path(), dir.path().join(SETTINGS_FILE));
         let app_file = root.join(APP_SETTINGS_FILE);
-        // A hand edit left half-done.
         let broken = "{ \"mainFile\": \"thesis.tex\", }";
         fs::write(&file, broken).unwrap();
         fs::write(&app_file, broken).unwrap();
@@ -312,7 +299,6 @@ mod tests {
         assert_eq!(chosen.unwrap_err().status, 409);
         assert_eq!(fs::read_to_string(&file).unwrap(), broken);
         assert_eq!(fs::read_to_string(&app_file).unwrap(), broken);
-        // Reading gives the defaults: the project still opens.
         assert_eq!(read_settings(root).main_file, "main.tex");
         assert_eq!(AppSettings::read(root).tex_dir, None);
     }

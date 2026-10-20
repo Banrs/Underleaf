@@ -27,9 +27,6 @@ pub struct ProjectInfo {
 }
 
 impl ProjectInfo {
-    /// The project in folder `id` of the library, as the folder says: dated by
-    /// `newest`, its main file from its settings. A project's id is its
-    /// folder's name, and so is its name.
     fn read(data_dir: &Path, id: &str) -> io::Result<Self> {
         let root = data_dir.join(id);
         let meta = fs::metadata(&root)?;
@@ -42,8 +39,6 @@ impl ProjectInfo {
     }
 }
 
-/// Where an absolute path lies in the library: its project, and its path in it
-/// ("" for the project's folder).
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Located {
     pub id: String,
@@ -57,10 +52,7 @@ fn mtime_ms(meta: &fs::Metadata) -> u64 {
         .map_or(0, |since| since.as_millis() as u64)
 }
 
-/// A project's date as the library shows it: the newest of its folders' and top-level
-/// files', without a stat of every file. Every save the app makes renames a file into
-/// place and so moves its folder's date; a file saved in place by another app moves only
-/// its own, and in a subfolder shows once anything else moves a folder's date.
+/// A project's date: the newest of its folders' and top-level files', without a stat of every file. The app's saves rename into place and so move the folder's date; another app's in-place save moves only the file's.
 fn newest(root: &Path, meta: &fs::Metadata) -> u64 {
     fn walk(root: &Path, dir: &Path, newest: &mut u64) {
         for entry in entries(root, dir).into_iter().flatten() {
@@ -81,7 +73,6 @@ fn newest(root: &Path, meta: &fs::Metadata) -> u64 {
     newest
 }
 
-/// The projects, newest first, and by name among those of one date.
 pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
     let mut projects = Vec::new();
     for entry in fs::read_dir(data_dir)? {
@@ -96,7 +87,6 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
     Ok(projects)
 }
 
-/// A project from `template`, set to build with `engine` if given (a bad one is a 400).
 pub fn create_project(
     data_dir: &Path,
     name: &str,
@@ -124,8 +114,7 @@ pub(crate) fn new_project(
     fs::create_dir_all(data_dir)?;
     for id in project_names(&name) {
         let root = data_dir.join(&id);
-        // One create rather than a check and then a create, passing over
-        // anything already there, a dangling link or case alias too.
+        // One create, passing over anything there, a dangling link or case alias too.
         match fs::create_dir(&root) {
             Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
             created => {
@@ -141,13 +130,9 @@ pub(crate) fn new_project(
     unreachable!("a free name")
 }
 
-/// What a new project is called when the user has not said.
 pub const UNTITLED: &str = "Untitled";
 
-/// The first free name in the series "Untitled", "Untitled 2", … (from
-/// `base`, if given): one no entry of the library has, however it is spelled
-/// where the volume ignores case. It creates nothing, so a host can offer it
-/// as the name to edit; `create_project` numbers past anything taken since.
+/// The first free name in the series "Untitled", "Untitled 2", …, however the volume spells case; creates nothing, so a host can offer it as the name to edit.
 pub fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, CoreError> {
     let clean = sanitize_name(base.unwrap_or(UNTITLED))?;
     let taken: HashSet<String> = match fs::read_dir(data_dir) {
@@ -162,13 +147,10 @@ pub fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, 
         .expect("a free name"))
 }
 
-/// The names a new project takes in turn: `clean`, then "clean 2", "clean 3"…
 fn project_names(clean: &str) -> impl Iterator<Item = String> {
     std::iter::once(clean.to_owned()).chain((2..).map(move |n| format!("{clean} {n}")))
 }
 
-/// The likely main file among a project's top-level .tex files: main.tex,
-/// else the first by name that starts a document, else the first by name.
 pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> {
     let mut tex: Vec<String> = Vec::new();
     for entry in fs::read_dir(root)? {
@@ -192,8 +174,6 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
         .cloned())
 }
 
-/// Rename a project, calling `before_move` once the rename is sure to go
-/// ahead and before its folder moves.
 pub fn rename_project(
     data_dir: &Path,
     id: &str,
@@ -230,8 +210,6 @@ fn real_path(path: &Path) -> PathBuf {
     }
 }
 
-/// The project and the path in it of an absolute path in the library, or None
-/// outside every project. A project's id is its folder's name.
 pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError> {
     let library = fs::canonicalize(data_dir)?;
     let real = real_path(path);
@@ -249,7 +227,6 @@ pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError
     let Some([id, inside @ ..]) = names.as_deref() else {
         return Ok(None);
     };
-    // The folders list_projects shows.
     if id.starts_with('.') || !data_dir.join(id).is_dir() {
         return Ok(None);
     }
@@ -279,10 +256,7 @@ mod tests {
         };
         assert_eq!(at(&root.join("a/b.tex")), found("a/b.tex"));
         assert_eq!(at(&root), found(""));
-        // One not made yet, or just trashed, is where it was.
         assert_eq!(at(&root.join("a/gone.tex")), found("a/gone.tex"));
-        // Not in a project: the library, a hidden folder, a missing one, a path
-        // that leaves, a relative one.
         for outside in [
             data.to_path_buf(),
             data.join(".hidden/x"),
@@ -309,7 +283,6 @@ mod tests {
             crate::settings::Engine::Lualatex
         );
 
-        // A refusal leaves nothing behind.
         let refused = create_project(data, "Other", "blank", Some("word"));
         assert_eq!(refused.unwrap_err().status, 400);
         assert_eq!(names_in(data), ["Thesis"]);

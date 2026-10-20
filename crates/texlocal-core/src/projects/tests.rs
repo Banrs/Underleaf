@@ -20,13 +20,11 @@ fn a_rename_that_cannot_write_the_settings_is_undone_and_leaves_them_as_they_wer
     let file = root.join(".texlocal.json");
     let broken = "{ \"mainFile\": \"paper.tex\", \"engine\": \"xelatex\", }";
     fs::write(&file, broken).unwrap();
-    // A rename that moves the main file would write it, so it is undone.
     assert_eq!(
         rename_entry(&root, "main.tex", "a.tex").unwrap_err().status,
         409
     );
     assert!(root.join("main.tex").is_file() && !root.join("a.tex").exists());
-    // One that leaves it alone goes through, and the file is as it was.
     create_free(&root, "b.tex", false).unwrap();
     rename_entry(&root, "b.tex", "c.tex").unwrap();
     assert_eq!(fs::read_to_string(&file).unwrap(), broken);
@@ -37,17 +35,14 @@ fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rul
     let (_dir, root) = project();
     create_free(&root, "chapters/main.tex", false).unwrap();
     create_free(&root, "chapters2/other.tex", false).unwrap();
-    // A folder holding the main file takes it along.
     write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
     let result = rename_entry(&root, "chapters", "content").unwrap();
     assert_eq!(result.main_file, "content/main.tex");
     assert_eq!(read_settings(&root).main_file, "content/main.tex");
-    // One that merely shares a name's start with the main file's folder does not.
     create_free(&root, "chapters/x.tex", false).unwrap();
     write_settings(&root, &json!({ "mainFile": "chapters2/other.tex" })).unwrap();
     rename_entry(&root, "chapters", "moved").unwrap();
     assert_eq!(read_settings(&root).main_file, "chapters2/other.tex");
-    // A folder can't be moved into itself.
     let err = rename_entry(&root, "moved", "moved/old/moved").unwrap_err();
     assert_eq!(err.status, 400, "{}", err.message);
     assert_eq!(names_in(&root.join("moved")), ["x.tex"]);
@@ -71,7 +66,6 @@ fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
     rename_entry(&root, "Figures", "figures").unwrap();
     assert_eq!(names_in(&root), [".texlocal.json", "Main.tex", "figures"]);
 
-    // A different entry in the way is still a conflict.
     create_free(&root, "other.tex", false).unwrap();
     let err = rename_entry(&root, "other.tex", "Main.tex").unwrap_err();
     assert_eq!(err.status, 409);
@@ -129,9 +123,7 @@ fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
     for (file, text) in [
         ("ascii.tex", "One\nThe THEOREM holds\n"),
         ("accents.tex", "L'ÉCOLE Normale\nStraße\n"),
-        // An image, though SVG is text: its hits would open as a picture.
         ("figure.svg", "<text>theorem</text>\n"),
-        // An ASCII match in a file that also contains Unicode.
         ("mixed.tex", "Café\nsee Lemma 3\n"),
         ("wide.tex", "Çà İstanbul, GRÖSSE und Größe\n"),
         ("quick.tex", "the quick brown fox jumps\n"),
@@ -139,7 +131,6 @@ fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
     ] {
         fs::write(root.join(file), text).unwrap();
     }
-    // The one hit, as "file:line before[match]after".
     let hit = |query: &str| {
         let hits = search_project(&root, query, 50).unwrap();
         assert_eq!(hits.len(), 1, "{query}");
@@ -151,18 +142,14 @@ fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
     assert_eq!(hit("école"), "accents.tex:1 L'[ÉCOLE] Normale");
     assert!(search_project(&root, "zzz", 50).unwrap().is_empty());
     assert_eq!(hit("lemma"), "mixed.tex:2 see [Lemma] 3");
-    // After characters of several bytes, and one whose lowercase is two
-    // characters, the snippet still cuts at the match.
     assert_eq!(hit("größe"), "wide.tex:1 Çà İstanbul, GRÖSSE und [Größe]");
     assert_eq!(hit("brown"), "quick.tex:1 the quick [brown] fox jumps");
-    // U+0130 and the Kelvin sign both lowercase into plain ASCII.
     let files = |query: &str| -> Vec<String> {
         let hits = search_project(&root, query, 50).unwrap();
         hits.into_iter().map(|hit| hit.file).collect()
     };
     assert!(files("istanbul").contains(&"wide.tex".to_string()));
     assert!(files("k").contains(&"kelvin.tex".to_string()));
-    // The limit cuts the hits off.
     fs::write(root.join("many.tex"), "needle\n".repeat(20)).unwrap();
     let hits = search_project(&root, "needle", 5).unwrap();
     assert_eq!(hits.len(), 5);
@@ -181,13 +168,10 @@ fn a_hit_places_its_match_in_utf16_units_of_the_line() {
         let hit = hits.remove(0);
         (hit.line, hit.column, hit.length, hit.matched)
     };
-    // The first match on its line.
     let place = hit("intro\nthe brown, brown fox\n", "brown");
     assert_eq!(place, (2, 4, 5, "brown".into()));
-    // An emoji is two units; so is a match's character beyond the BMP.
     let place = hit("\u{1F600} see a\u{1D538}b\n", "a\u{1D538}b");
     assert_eq!(place, (1, 7, 4, "a\u{1D538}b".into()));
-    // İ, ẞ and the Kelvin sign shrink in UTF-8 as they lowercase.
     let place = hit("İ \u{212A} \u{1F600} GRÖẞE und\n", "größe");
     assert_eq!(place, (1, 7, 5, "GRÖẞE".into()));
 }
@@ -203,7 +187,6 @@ fn only_the_top_level_build_folder_is_the_compile_outputs() {
     fails_with(create_free(&root, "BUILD/x.tex", false), "compiled PDF");
     create_free(&root, "figs/a.png", false).unwrap();
     fails_with(rename_entry(&root, "figs", "Build"), "compiled PDF");
-    // One made elsewhere, as a build makes it.
     fs::create_dir(root.join("Build")).unwrap();
     fs::write(root.join("Build/main.tex"), "needle \\label{gen:one}\n").unwrap();
     fs::write(root.join("Build/main.log"), "needle in the build dir").unwrap();
@@ -221,7 +204,6 @@ fn only_the_top_level_build_folder_is_the_compile_outputs() {
 #[test]
 fn a_project_is_dated_by_its_newest_file() {
     let (_dir, root) = project();
-    // Saving a file in place leaves its folder's date alone.
     let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
     let main = fs::File::options().write(true).open(root.join("main.tex"));
     main.unwrap().set_modified(later).unwrap();
@@ -232,9 +214,7 @@ fn a_project_is_dated_by_its_newest_file() {
 
 #[test]
 fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
-    // Plenty of .bib and .tex files are still Latin-1. A Unicode-mode pattern
-    // run over the raw bytes cannot step across 0xFC and drops the whole entry
-    // containing it; decoding the file first keeps it, lossily.
+    // Latin-1 .bib files: a Unicode-mode pattern over raw bytes drops the whole entry; decoding first keeps it.
     let (_dir, root) = project();
     let mut bib = b"@article{m".to_vec();
     bib.push(0xFC); // 'u-umlaut' in ISO-8859-1; invalid on its own as UTF-8
@@ -246,17 +226,13 @@ fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
     tex.extend_from_slice(b"ller}\n\\label{fig:ok}\n");
     fs::write(root.join("ch.tex"), &tex).unwrap();
 
-    // Non-breaking spaces, which reference managers and PDF copy-paste emit, are
-    // the opposite trap: matching bytes with an ASCII-only `\s` swallows the
-    // NBSP into the key and drops an entry whose NBSP sits before the brace.
+    // A non-breaking space before the brace mustn't be swallowed into the key by an ASCII-only `\s`.
     fs::write(
         root.join("pasted.bib"),
         "@article{Smith2020\u{00A0},\n  title={x}\n}\n@article\u{00A0}{Jones2021,\n  title={y}\n}\n",
     )
     .unwrap();
 
-    // In file-name order: pasted.bib, then refs.bib. The byte's entries are
-    // kept, however it decodes.
     let Symbols { citations, labels } = scan_symbols(&root).unwrap();
     assert_eq!(citations.len(), 4, "{citations:?}");
     assert_eq!(citations[..2], ["Smith2020", "Jones2021"]);
@@ -278,7 +254,6 @@ fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
     assert_eq!(found.labels, ["kept", "after-percent"]);
     assert_eq!(found.citations, ["knuth", "lamport"]);
 
-    // Files come in name order, and a repeated symbol keeps its first place.
     fs::remove_file(root.join("main.tex")).unwrap();
     for (file, text) in [
         ("z.tex", "\\label{shared}\\label{last}\\bibitem{two}"),
@@ -307,7 +282,6 @@ fn new_projects_are_named_sanitized_and_stocked_with_a_template() {
     );
     let main = fs::read_to_string(root.join("main.tex")).unwrap();
     assert!(main.contains("{report}"));
-    // Never onto an existing entry, a dangling link included.
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(data.join("gone"), data.join("linked")).unwrap();

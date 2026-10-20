@@ -1,17 +1,10 @@
-//! What isn't prose: maths, literal code, command names and the names
-//! commands take (packages, citations, labels, files), including the options
-//! before them, as in `\usepackage[utf8]{inputenc}`; for Writing Tools
-//! comments too. What's left is the text's words, which the status bar counts.
+//! What isn't prose: maths, literal code, command names and the names commands take (and, for Writing Tools,
+//! comments). What's left is the text's words, which the status bar counts.
 
 use super::scan::{Scanner, Visit, arguments};
 use super::{Checker, SourceDocument, Text, TextRange, catalog::CATALOG, clamp, span};
 
 impl SourceDocument {
-    /// What a checker leaves alone where a range is, each range from its
-    /// start however far before: maths and literal code, read on from a kept
-    /// point before the range (which carries how far names have been read),
-    /// command names and name arguments, and for Writing Tools comments,
-    /// which are prose to spelling.
     pub fn code_ranges(&mut self, selection: TextRange, checker: Checker) -> Vec<TextRange> {
         let (start, end) = clamp(selection, self.text.len()).bounds();
         let (text, mut point) = (&self.text, self.scans.resume(&self.text, start, end));
@@ -37,7 +30,6 @@ impl SourceDocument {
     }
 }
 
-/// Ranges in order, overlapping and adjacent ones joined.
 fn merged(mut ranges: Vec<TextRange>) -> Vec<TextRange> {
     ranges.sort_unstable_by_key(|r| (r.start, r.start.saturating_add(r.length)));
     ranges.into_iter().fold(Vec::new(), |mut merged, range| {
@@ -46,7 +38,6 @@ fn merged(mut ranges: Vec<TextRange>) -> Vec<TextRange> {
     })
 }
 
-/// Append a range to an ordered list, joining overlap and adjacency.
 fn merge_range(ranges: &mut Vec<TextRange>, range: TextRange) {
     if let Some(last) = ranges
         .last_mut()
@@ -58,11 +49,8 @@ fn merge_range(ranges: &mut Vec<TextRange>, range: TextRange) {
     }
 }
 
-/// Where name arguments have been read to, and where the last command that
-/// takes them starts its: a reading resumed after it reads that again, as it
-/// may run on past where it resumes. A command inside another's names is
-/// none, and none is read across a blank line, so a paragraph's start needs
-/// nothing from before it.
+/// Where name arguments have been read to, and where the last command that takes them starts its: a reading resumed
+/// after it reads that again. A command inside another's names is none, and none is read across a blank line.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Names {
     from: Option<usize>,
@@ -99,10 +87,6 @@ impl Names {
     }
 }
 
-/// A reading of the text for what isn't prose: maths and code as one run
-/// while they touch, then name arguments, command names and, as asked,
-/// comments. Each command outside maths and code goes to `command` too, by
-/// name and where its name ends.
 struct Reading<'a, F> {
     text: &'a Text,
     end: usize,
@@ -148,12 +132,8 @@ impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
     }
 }
 
-/// A file's words: the runs of its prose between spaces and TeX's special
-/// characters that hold a letter, prose being what Writing Tools is given:
-/// not maths, literal code, a comment, a command's name or the names
-/// commands take. Each command outside maths and code goes to `command` as
-/// the scan meets it, so the outline finds its headings and inputs in the
-/// same reading.
+/// A file's words: runs of prose that hold a letter, prose being what Writing Tools is given. Each command outside
+/// maths and code goes to `command` too, so the outline finds its headings and inputs in the same reading.
 pub(crate) fn words(source: &str, command: impl FnMut(&Text, &str, usize)) -> usize {
     let text = Text::new(source);
     let len = text.units.len();
@@ -170,8 +150,6 @@ pub(crate) fn words(source: &str, command: impl FnMut(&Text, &str, usize)) -> us
     words
 }
 
-/// The words in a run of prose: what's between spaces and TeX's special
-/// characters, where it holds a letter.
 fn count(prose: &[u16]) -> usize {
     let (mut words, mut lettered) = (0, false);
     for c in char::decode_utf16(prose.iter().copied()) {
@@ -190,17 +168,14 @@ fn count(prose: &[u16]) -> usize {
 mod tests {
     use crate::syntax::{Checker, SourceDocument, TextRange, range, utf16};
 
-    /// What spelling leaves alone where `length` units at `start` are.
     fn code(doc: &mut SourceDocument, start: u32, length: u32) -> Vec<TextRange> {
         doc.code_ranges(range(start, length), Checker::Spelling)
     }
 
-    /// What spelling leaves alone in the whole of `text`.
     fn whole(text: &str) -> Vec<TextRange> {
         code(&mut SourceDocument::new(text), 0, utf16(text) as u32)
     }
 
-    /// What spelling leaves alone in the whole source but command names.
     fn names(source: &str) -> Vec<String> {
         let units: Vec<u16> = source.encode_utf16().collect();
         let text = |r: &TextRange| {
@@ -211,13 +186,11 @@ mod tests {
         names.filter(|name| !name.starts_with('\\')).collect()
     }
 
-    /// Where `needle` is, the first in `text`, in UTF-16 units.
     fn find(text: &str, needle: &str) -> std::ops::Range<u32> {
         let start = utf16(&text[..text.find(needle).unwrap()]) as u32;
         start..start + utf16(needle) as u32
     }
 
-    /// Whether a range holds all of `needle`.
     fn covered(ranges: &[TextRange], text: &str, needle: &str) -> bool {
         let found = find(text, needle);
         ranges
@@ -225,7 +198,6 @@ mod tests {
             .any(|r| r.start <= found.start && found.end <= r.start + r.length)
     }
 
-    /// Whether no range holds any of `needle`.
     fn prose(ranges: &[TextRange], text: &str, needle: &str) -> bool {
         let found = find(text, needle);
         ranges
@@ -331,7 +303,6 @@ mod tests {
                 .any(|r| r.start == verbatim_start && r.start + r.length == code_start + 1)
         );
 
-        // An unclosed \verb is code to its line's end, and no more.
         let text = "\\verb|Speling\nprose \\cite{key}";
         let ranges = whole(text);
         assert!(covered(&ranges, text, "Speling"));

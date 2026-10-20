@@ -10,7 +10,6 @@ use serde::Serialize;
 use crate::process::run;
 use crate::settings::AppSettings;
 
-/// What `dir` holds; nothing if it can't be read.
 fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
     std::fs::read_dir(dir)
         .into_iter()
@@ -29,7 +28,6 @@ fn texlive_root() -> PathBuf {
     }
 }
 
-/// Year/architecture-specific TeX Live bin dirs, newest year first.
 fn texlive_bins() -> impl Iterator<Item = PathBuf> {
     let mut years: Vec<_> = children(texlive_root())
         .filter(|year| {
@@ -43,11 +41,7 @@ fn texlive_bins() -> impl Iterator<Item = PathBuf> {
     years.into_iter().flat_map(children)
 }
 
-/// The PATHs for TeX's tools, and for TeXpresso's: the TeX folder chosen
-/// first, then the user's PATH, then the discovered TeX dirs; TeXpresso's
-/// with its own folder before all of them. Built per use — a couple of
-/// read_dirs — so a TeX install performed while the app runs is found without
-/// a restart.
+/// The PATHs for TeX's tools and for TeXpresso's: the chosen TeX folder, the user's PATH, then discovered TeX dirs. Built per use, so an install made while the app runs is found.
 pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
     let user = std::env::var_os("PATH").unwrap_or_default();
     let tex: Vec<PathBuf> = (app.tex_dir.iter().cloned())
@@ -95,15 +89,10 @@ fn absolute_dirs(path: &std::ffi::OsStr) -> impl Iterator<Item = PathBuf> + '_ {
     std::env::split_paths(path).filter(|dir| dir.is_absolute())
 }
 
-/// `program` as a shell finds it in `path_env`'s folders: a file it may run,
-/// by any of Windows' program extensions (.exe, .bat …) there.
 pub(crate) fn find_tool(program: &str, path_env: &str) -> Option<PathBuf> {
-    // The PATHs built here hold absolute folders only: none is found from
-    // the folder given for relative ones.
     which::which_in(program, Some(path_env), Path::new("/")).ok()
 }
 
-/// The program at the absolute `path`, by any of Windows' program extensions.
 pub(crate) fn program_at(path: &Path) -> Option<PathBuf> {
     path.is_absolute().then(|| which::which(path).ok())?
 }
@@ -124,13 +113,9 @@ static LATEXMK_VERSION: LazyLock<Regex> =
 pub struct TexStatus {
     pub available: bool,
     pub version: Option<String>,
-    /// The number latexmk's version line names ("4.86"), as Settings shows it.
     pub latexmk_version: Option<String>,
-    /// The TeX folder the user chose; None finds TeX automatically.
     pub tex_dir: Option<String>,
-    /// The folder the working latexmk runs from.
     pub found: Option<String>,
-    /// The TeXpresso program live preview would run, and the folder chosen for it.
     pub texpresso: Option<String>,
     pub texpresso_dir: Option<String>,
 }
@@ -152,7 +137,6 @@ pub async fn tex_available(path_env: &str) -> TexStatus {
     }
 }
 
-/// latexmk's own version line, falling back to the first nonempty line.
 fn version_line(stdout: &str) -> String {
     let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
     let first = lines.clone().next().unwrap_or("");
