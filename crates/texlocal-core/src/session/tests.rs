@@ -1080,6 +1080,14 @@ async fn the_caret_is_told_once_it_settles() {
     wait(200).await;
     rig.state().await;
     assert_eq!(rig.fake.called("live_caret"), 1);
+    for offset in [0, 4] {
+        let caret = json!({ "path": "main.tex", "offset": offset });
+        rig.ok("live_caret", caret).await;
+        wait(50).await;
+    }
+    wait(200).await;
+    rig.state().await;
+    assert_eq!(rig.fake.called("live_caret"), 1, "away and back is no move");
 }
 
 #[tokio::test(start_paused = true)]
