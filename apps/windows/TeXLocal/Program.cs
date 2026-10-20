@@ -35,6 +35,22 @@ public static partial class Program
         _ = CoWaitForMultipleObjects(0, uint.MaxValue, 1, [redirected.SafeWaitHandle.DangerousGetHandle()], out _);
     }
 
+    /// A launch's words, split as Windows splits a command line: an unpackaged launch's arguments are its whole command
+    /// line, the program's path first.
+    internal static string[] Arguments(AppActivationArguments activation)
+    {
+        if (activation.Data is not Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs launch) return [];
+        var argv = CommandLineToArgvW(launch.Arguments, out var count);
+        try { return [.. Enumerable.Range(0, count).Select(i => Marshal.PtrToStringUni(Marshal.ReadIntPtr(argv, i * nint.Size))!)]; }
+        finally { LocalFree(argv); }
+    }
+
+    [LibraryImport("shell32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    private static partial nint CommandLineToArgvW(string commandLine, out int count);
+
+    [LibraryImport("kernel32.dll")]
+    private static partial nint LocalFree(nint memory);
+
     [LibraryImport("ole32.dll")]
     private static partial int CoWaitForMultipleObjects(uint flags, uint timeout, uint count, nint[] handles, out uint index);
 }

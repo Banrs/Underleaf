@@ -76,7 +76,12 @@ public partial class App : Application
         Window = new MainWindow();
         Window.Activate();
         // A later launch, handed over by Program.Main.
-        AppInstance.GetCurrent().Activated += (_, _) => Window.DispatcherQueue.TryEnqueue(Window.Arrive);
+        AppInstance.GetCurrent().Activated += (_, e) =>
+        {
+            var words = Program.Arguments(e);
+            Window.DispatcherQueue.TryEnqueue(() => Window.Arrive(words));
+        };
+        _ = Window.Import(Program.Arguments(AppInstance.GetCurrent().GetActivatedEventArgs()));
         if (!Smoke) return;
         // A new blank project, opened: the workspace ends the run once its session is open.
         if (Core is null) ExitSmoke(CoreError);
