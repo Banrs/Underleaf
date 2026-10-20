@@ -100,7 +100,8 @@ struct StatusBar: View {
     }
 
     private func place(_ detail: Detail, _ full: LocalizedStringKey, short: String, spoken: LocalizedStringKey) -> some View {
-        Group { if detail == .short { Text(verbatim: short).accessibilityLabel(spoken) } else { Text(full) } }
+        Group { if detail == .short { Text(verbatim: short) } else { Text(full) } }
+        .accessibilityLabel(spoken)
         .hitTarget()
     }
 
