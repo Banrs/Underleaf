@@ -47,7 +47,11 @@ public sealed partial class WorkspacePage
     int searches;
     bool fileUnshown;
     Analysis? analysis;
-    NavItem? caretHeading;
+    NavItem? currentHeading;
+    /// The line whose heading the outline selects: the caret's, or the top line once a scroll passes a heading.
+    int headingLine = 1;
+    int? topHeading;
+    bool caretScrolled;
     Task foldsSaved = Task.CompletedTask;
 
     TreeView[] SideTrees => [FilesTree, OutlineTree, ResultsTree];
@@ -116,7 +120,7 @@ public sealed partial class WorkspacePage
         FilesTree.Visibility = Vis(tab == FilesTab);
         OutlineTree.Visibility = Vis(tab == OutlineTab && outlined);
         ResultsTree.Visibility = Vis(tab == ResultsTab && hits);
-        SelectCaretHeading();
+        SelectCurrentHeading();
         SideNote.Text = tab == OutlineTab && !outlined ? Editor.Path is null ? "Open a file to see its outline." : "No sections in this document."
             : tab != ResultsTab || hits ? ""
             : searchError ?? (searched.Length == 0 ? "Search the project with the box above (Ctrl+Shift+F)." : $"No results for “{searched}”.");
@@ -185,31 +189,47 @@ public sealed partial class WorkspacePage
         catch (CoreException) { return; }
         if (Editor.Path != path) return;
         Words.Text = analysis.Words == 1 ? "1 word" : $"{analysis.Words:N0} words";
-        (OutlineTree.ItemsSource, caretHeading) = (Headings(analysis.Tree), null);
+        (OutlineTree.ItemsSource, currentHeading) = (Headings(analysis.Tree), null);
         ShowSide();
         ShowHeadings(analysis.HeadingStyles);
         CaretSettled();
     }
 
-    /// The caret's heading, selected in the outline and checked in Insert › Heading.
+    /// The caret's heading, checked in Insert › Heading, and headingLine's, selected in the outline.
     void CaretSettled() => Run(null, async () =>
     {
         if (analysis is not { } shown || Editor.Path is not { } path) return;
         var line = Editor.Caret.Line;
         ShowInsertChecks(shown.Outline.FirstOrDefault(h => h.File == path && h.Line == line));
-        var index = await Core.CallAsync<int?>("session_outline_current", new { session, path, line });
+        var index = await Core.CallAsync<int?>("session_outline_current", new { session, path, line = headingLine });
         if (analysis != shown) return;
-        caretHeading = Find(OutlineTree.ItemsSource as List<NavItem>, i => i.Target is OutlineNode n && n.Index == index);
-        SelectCaretHeading();
+        currentHeading = Find(OutlineTree.ItemsSource as List<NavItem>, i => i.Target is OutlineNode n && n.Index == index);
+        SelectCurrentHeading();
+    });
+
+    /// As on the Mac, the outline follows a scroll of the reader's only as the top line passes a heading, so a caret
+    /// placed since keeps its heading until then.
+    void ScrollSettled() => Run(null, async () =>
+    {
+        var reader = !caretScrolled;
+        caretScrolled = false;
+        if (analysis is not { } shown || Editor.Path is not { } path) return;
+        var line = Editor.TopLine;
+        var index = await Core.CallAsync<int?>("session_outline_current", new { session, path, line });
+        if (analysis != shown || index == topHeading) return;
+        topHeading = index;
+        if (!reader) return;
+        headingLine = line;
+        CaretSettled();
     });
 
     /// Only while the outline shows: a hidden TreeView selects a row it hasn't drawn in name only, and selecting in
     /// one whose items were just replaced can crash it.
-    void SelectCaretHeading()
+    void SelectCurrentHeading()
     {
-        if (OutlineTree.Visibility != Visibility.Visible || OutlineTree.SelectedItem == caretHeading) return;
+        if (OutlineTree.Visibility != Visibility.Visible || OutlineTree.SelectedItem == currentHeading) return;
         OutlineTree.UpdateLayout();
-        OutlineTree.SelectedItem = caretHeading;
+        OutlineTree.SelectedItem = currentHeading;
     }
 
     // MARK: project search

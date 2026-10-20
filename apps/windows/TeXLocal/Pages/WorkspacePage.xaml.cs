@@ -33,7 +33,7 @@ public sealed partial class WorkspacePage : Page
     sealed record Chosen(int Index, LogItem Issue);
 
     static ulong sessions;
-    readonly DispatcherQueueTimer searchTimer, caretTimer;
+    readonly DispatcherQueueTimer searchTimer, caretTimer, scrollTimer;
     readonly HashSet<string> unsaved = [];
     readonly Dictionary<string, IssueLine[]> issueLines = [];
     string id = "", root = "", mainFile = "", issueFilter = "", logFilter = "";
@@ -53,6 +53,7 @@ public sealed partial class WorkspacePage : Page
         NavigationCacheMode = NavigationCacheMode.Required;
         searchTimer = Timer(250, () => _ = RunSearch());
         caretTimer = Timer(150, CaretSettled);
+        scrollTimer = Timer(150, ScrollSettled);
         SetSplit(ratio);
         ShowEdge();
         ShowPage();
@@ -95,10 +96,18 @@ public sealed partial class WorkspacePage : Page
         SplitSizer.Spoken = () => $"{ratio:P0}";
         IssuesSizer.Spoken = () => $"{IssuesRow.Height.Value:0} pixels";
 
+        // A scroll within the caret's wait of a move, either side, is the caret's.
         Editor.CaretMoved += () =>
         {
             ShowCaret();
+            headingLine = Editor.Caret.Line;
+            caretScrolled |= scrollTimer.IsRunning;
             Restart(caretTimer);
+        };
+        Editor.Scrolled += () =>
+        {
+            caretScrolled |= caretTimer.IsRunning;
+            Restart(scrollTimer);
         };
         Editor.Composing += composing =>
         {
@@ -311,7 +320,7 @@ public sealed partial class WorkspacePage : Page
 
     void CloseEditor()
     {
-        (analysis, caretHeading) = (null, null);
+        (analysis, currentHeading) = (null, null);
         OutlineTree.ItemsSource = null;
         Words.Text = "";
         Editor.Clear();

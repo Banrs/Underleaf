@@ -107,6 +107,7 @@ public sealed partial class SourceView : UserControl
     public event Action<bool>? Composing;
     /// Once per dispatcher turn, after the edit is mirrored, so the caret's line is the new text's.
     public event Action? CaretMoved;
+    public event Action? Scrolled;
     public event Action<IssueLine>? IssueInvoked;
     /// Files dropped on the text, by their absolute paths, and the offset they were dropped at.
     public event Action<string[], int>? FilesDropped;
@@ -167,6 +168,7 @@ public sealed partial class SourceView : UserControl
             {
                 CloseCompletions();
                 Invalidate(false);
+                Scrolled?.Invoke();
             };
             if (Editor.ActualWidth > 0) ready.TrySetResult();
         };
@@ -776,6 +778,9 @@ public sealed partial class SourceView : UserControl
 
     public int LineCount => source?.LineCount ?? 1;
 
+    /// The line at the view's top, in view in part or whole; once a file shows.
+    public int TopLine => source!.LineAt(Document.GetRangeFromPoint(new Point(0, scroller!.VerticalOffset), PointOptions.ClientCoordinates).StartPosition);
+
     public void GoTo(int line, int column = 0, int length = 0)
     {
         line = Math.Clamp(line, 1, source!.LineCount);
@@ -986,8 +991,8 @@ public sealed partial class SourceView : UserControl
         Gutter.Visibility = Backdrop.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
         if (!shown) return;
         var y = scroller!.VerticalOffset;
-        var first = source!.LineAt(Document.GetRangeFromPoint(new Point(0, y), PointOptions.ClientCoordinates).StartPosition);
-        var last = source.LineAt(Document.GetRangeFromPoint(new Point(Editor.ActualWidth, y + Editor.ActualHeight), PointOptions.ClientCoordinates).StartPosition);
+        var first = TopLine;
+        var last = source!.LineAt(Document.GetRangeFromPoint(new Point(Editor.ActualWidth, y + Editor.ActualHeight), PointOptions.ClientCoordinates).StartPosition);
         var caret = source.LineAt(CaretOffset);
         Gutter.Width = LineNumbers ? Math.Ceiling(16 + Math.Max(3, source.LineCount.ToString().Length) * advance + 8) : 16;
         // Only beside the text's viewport, so nothing shows in the find bar's band.
