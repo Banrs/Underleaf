@@ -43,6 +43,9 @@ final class WorkspaceController: DetentSplitViewController {
         buildSidebar(height: size.height)
         // Before the area, which opens in the room the side columns leave; added after it.
         inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project), mounted: app.inspectorVisible))
+        // Collapsed before they are added: collapsed only once loaded, the inspector's form loses its grouped insets and
+        // large section titles, and opens narrower.
+        inspectorItem.isCollapsed = !app.inspectorVisible
         inspectorItem.canCollapseFromWindowResize = true
         buildArea(size: size)
         addSplitViewItem(inspectorItem)
@@ -179,6 +182,7 @@ final class WorkspaceController: DetentSplitViewController {
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.minimumThickness = ColumnMetrics.sidebarMinimum
+        sidebarItem.isCollapsed = !app.sidebarVisible
         sidebarSearch = accessory(hostingView(SearchField(text: Bindable(project.search).query, prompt: "Search Project", handle: searchField)))
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
         addSplitViewItem(sidebarItem)
