@@ -1,80 +1,126 @@
+<p align="center"><img src="assets/TeXLocal.png" width="128" alt="TeXLocal's icon"></p>
+
 # Underleaf
 
-An offline LaTeX editor: an Overleaf alternative that runs entirely on your machine, with no
-accounts, cloud or network.
+TeXLocal is a LaTeX editor for macOS and Windows that works offline. This repository, Underleaf,
+is its source. It does much of what Overleaf does, but on your own computer: you don't need an
+account or a connection, and each project is an ordinary folder on your disk.
 
-The repository is **Underleaf**; the app is **TeXLocal**, and so are its names on disk
-(`~/TeXLocal`, `.texlocal.json`, `TEXLOCAL_DATA`), so existing projects keep working.
+The Mac app is the more complete of the two. The Windows app works, but it hasn't caught up yet
+and has no Live Preview. There is no Linux version.
 
-One Rust core with thin native hosts, for macOS and Windows (no Linux):
-- **macOS app** (`apps/macos`): AppKit and SwiftUI for macOS 27, with a TextKit editor and PDFKit.
-- **Windows app** (`apps/windows`): WinUI 3, in progress.
+## What it does
 
-[AGENTS.md](AGENTS.md) has the architecture and the standing decisions.
+You start a project from a template (blank, article, report or Beamer presentation), or open a
+folder, `.tex` file or `.zip` you already have. The source sits on the left and the PDF on the
+right.
 
-## Quick start
+The editor completes LaTeX commands and environments, `\cite{}` keys from your `.bib` files and
+`\ref{}` labels from the document. It closes brackets as you type and shows the maths under the
+cursor in a small preview. Its colours can follow Overleaf, TeXstudio or the system.
+
+Compiling uses latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, and reruns BibTeX or biber when they're
+needed. As on Overleaf, a build doesn't stop at the first error. You get the PDF along with every
+error and warning, each marked on its line in the source. If you'd rather it stopped, turn on Stop
+on First Error for that project. TeXLocal saves and compiles on its own when you pause typing;
+Settings can turn that off.
+
+Clicking in the PDF takes you to that place in the source, and you can go the other way too
+(SyncTeX). The Mac app finds the exact word, Windows the line. The Mac app can also search the PDF.
+
+Live Preview, on the Mac only and still experimental, updates the PDF as you type, before you
+save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background.
+
+There's also a file tree, an outline of the current file, a word count, search across the project
+and export to ZIP. Deleted files go to the Trash or the Recycle Bin.
+
+## Requirements
+
+You need a TeX distribution that includes latexmk, pdflatex and synctex. On macOS, install
+[MacTeX](https://tug.org/mactex/), or run `brew install --cask mactex-no-gui`. On Windows, install
+[TeX Live](https://tug.org/texlive/windows.html); MiKTeX's installer doesn't come with the Perl
+that latexmk needs.
+
+TeXLocal looks for TeX on your `PATH` and in the places installers usually put it:
+`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`, `C:\texlive\<year>` and MiKTeX's
+folders. If yours is somewhere else, choose its folder in Settings (on the Mac, under Compiling).
+
+On macOS 27, MacTeX 2026's biber fails with an error from `lipo`. Running
+`sudo tlmgr update biber` fixes it.
+
+## Installing
+
+There are no downloads yet, so you have to build TeXLocal yourself. Both apps need
+[Rust](https://rustup.rs).
+
+### macOS
+
+Install Xcode 27, then run:
 
 ```sh
 git clone https://github.com/Banrs/Underleaf.git
 cd Underleaf
-open apps/macos/TeXLocal.xcodeproj    # Xcode 27; the build runs cargo itself
+zsh tools/install-mac.sh
 ```
 
-On Windows, `apps/windows/install.ps1` builds the app (.NET 10 SDK and Rust) into
-`%LOCALAPPDATA%\Programs\TeXLocal` and adds it to the Start menu.
+The script builds the app, copies it to `/Applications/TeXLocal.app` and opens it. To update,
+pull and run it again; it quits TeXLocal first. If you'd rather work in Xcode, open
+`apps/macos/TeXLocal.xcodeproj` and press Run.
 
-## Features
+### Windows
 
-- **Projects** from templates (Blank, Article, Report, Presentation); the Mac app also opens a
-  folder, `.zip` or `.tex` as a new project. Projects are plain folders in `~/TeXLocal`
-  (`TEXLOCAL_DATA=/path` moves them).
-- **File tree** with folders, rename, delete to the Trash, drag-and-drop import (a taken name asks
-  Keep Both, Replace or Cancel) and ZIP export.
-- **Editor**: completion of commands, environments, `\cite{}` from your `.bib` files and `\ref{}`
-  from your `\label{}`s; closing brackets and snippets; Overleaf, TeXstudio and System colours;
-  a maths preview at the cursor, typeset by RaTeX.
-- **Compile** with latexmk (pdfLaTeX, XeLaTeX, LuaLaTeX; BibTeX and biber reruns). Builds run past
-  errors, as Overleaf's, with every issue on its line; a project can Stop on First Error. A pause
-  in typing saves and compiles.
-- **Live Preview** (experimental): edits go to a persistent TeXpresso as you type and show in the
-  PDF pane ([docs/texpresso.md](docs/texpresso.md)).
-- **PDF**: zoom, fit, find (Mac), and SyncTeX both ways, to the word.
-- **File outline**, word count and project-wide search.
-- **Settings**: General, Editor, Compiling, PDF and Live Preview; per project (the Mac's
-  inspector) the main file, engine, shell escape and Stop on First Error.
+Install the [.NET 10 SDK](https://dotnet.microsoft.com/download), then in PowerShell:
 
-## Requirements
-
-A TeX distribution with `latexmk`, `pdflatex` and `synctex`: on macOS
-`brew install --cask mactex-no-gui`, on Windows TeX Live (MiKTeX's installer lacks the Perl
-latexmk needs). TeXLocal finds TeX on `PATH`, in the usual install locations, or in a folder
-chosen in Settings. Building needs Rust stable, and Xcode 27 or the .NET 10 SDK.
-
-## Layout
-
-```
-crates/texlocal-core/  projects, builds, SyncTeX, logs, sessions, and `syntax`, the editors' logic
-crates/texlocal-ffi/   the C ABI (header in include/)
-apps/macos/            the Mac app, UI only
-apps/windows/          the Windows app, UI only
-docs/                  core-api.md (the hosts' contract), windows.md, texpresso.md,
-                       design-tokens.md, agent-code.md, handoff.md (what is open)
-tools/                 texpresso/ (the patched engine), qa/ (the Mac's QA driver), install-mac.sh
+```powershell
+git clone https://github.com/Banrs/Underleaf.git
+cd Underleaf
+apps\windows\install.ps1
 ```
 
-## Development
+This puts TeXLocal in `%LOCALAPPDATA%\Programs\TeXLocal` and adds it to the Start menu. To update,
+quit TeXLocal, pull and run the script again.
 
-Commands and checks are in [AGENTS.md](AGENTS.md) (Testing; Build and install). Keep the version
-the same in the workspace `Cargo.toml`, `apps/macos/project.yml` and the `.xcodeproj`
-(`MARKETING_VERSION`), and `apps/windows/TeXLocal/TeXLocal.csproj`.
+### Live Preview on the Mac
+
+Live Preview needs TeXpresso built with Underleaf's patch. Install
+[TeXpresso's build dependencies](https://github.com/let-def/texpresso/blob/main/INSTALL.md) with
+Homebrew, then run:
+
+```sh
+tools/texpresso/build.sh
+tools/texpresso/install.sh tools/texpresso/source/build
+```
+
+Start it from the Compile menu or the project's inspector. [docs/texpresso.md](docs/texpresso.md)
+explains how it works.
+
+## Projects
+
+Projects live in a `TeXLocal` folder in your home folder, and Settings shows the path. A project's
+own settings, like its main file and TeX engine, are kept in a `.texlocal.json` file next to your
+sources.
 
 ## Security
 
-- `-shell-escape` is off by default (it lets a document run shell commands); a project can turn it
-  on. `.texlocal.json` can't be written through the generic file commands.
-- A project's own `latexmkrc` (Perl run on every build) is read only with shell escape on; yours
-  (`~/.latexmkrc` or `~/.config/latexmk/latexmkrc`) always is.
+Shell escape (`-shell-escape`) lets a document run programs on your computer, so it's off unless
+you turn it on for a project. Only do that for documents you trust.
+
+A `latexmkrc` file is Perl that runs on every build. TeXLocal lets latexmk read a project's own
+`latexmkrc` only when that project has shell escape on. Your personal one (`~/.latexmkrc` or
+`~/.config/latexmk/latexmkrc`) is always read.
+
+## How it's built
+
+Most of the work is done by a Rust library in `crates/texlocal-core`, which both apps share. The
+Mac app (`apps/macos`) is written with SwiftUI and AppKit, and the Windows app (`apps/windows`)
+with WinUI 3. [docs/core-api.md](docs/core-api.md) describes how the apps talk to the core, and
+[docs/windows.md](docs/windows.md) covers the Windows app's design and what it still lacks.
+
+Report bugs in [Issues](https://github.com/Banrs/Underleaf/issues). [AGENTS.md](AGENTS.md) holds
+the instructions for coding agents that work on the project.
 
 ## Licence
 
-MIT. Maths and symbols are typeset by RaTeX; compiling is your TeX distribution's.
+MIT; see [LICENSE](LICENSE). Maths previews are drawn with
+[RaTeX](https://crates.io/crates/ratex-layout), and your documents are compiled by your own TeX
+distribution.
