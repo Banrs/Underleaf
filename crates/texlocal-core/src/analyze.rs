@@ -76,6 +76,17 @@ pub struct Facts {
 pub struct Input {
     before: usize,
     name: String,
+    folder: Folder,
+}
+
+/// Where an input's name is looked for, as the import package has it.
+enum Folder {
+    /// That of the file naming it if that was imported, then the main file's.
+    Inherited,
+    /// \import's, from the main file's.
+    Import(String),
+    /// \subimport's, from the naming file's.
+    Sub(String),
 }
 
 impl Facts {
@@ -105,11 +116,13 @@ impl Facts {
                     facts.headings.push(heading);
                 }
                 heading_line = Some(line);
-            } else if matches!(name, "input" | "include" | "subfile")
-                && let Some(name) = input_name(units, name_end, name == "input")
-            {
+            } else if let Some((name, folder)) = input(units, name, name_end) {
                 let before = facts.headings.len();
-                facts.inputs.push(Input { before, name });
+                facts.inputs.push(Input {
+                    before,
+                    name,
+                    folder,
+                });
             }
         });
         let units: Vec<u16> = text.encode_utf16().collect();
@@ -259,10 +272,10 @@ pub fn analyze_project(
     let mut analysis = Analysis::default();
     if let Ok(open) = paths::rel_key(open) {
         let mut seen = HashSet::new();
-        walk(root, files, main, &mut seen, &mut analysis);
+        walk(root, files, main, "", &mut seen, &mut analysis);
         if !seen.contains(&paths::fold_case(&open)) {
             analysis = Analysis::default();
-            walk(root, files, &open, &mut HashSet::new(), &mut analysis);
+            walk(root, files, &open, "", &mut HashSet::new(), &mut analysis);
         }
     }
     let chapters = analysis.outline.iter().any(|h| h.command == "chapter");
@@ -271,7 +284,15 @@ pub fn analyze_project(
     analysis
 }
 
-fn walk(root: &Path, files: &Files, file: &str, seen: &mut HashSet<String>, into: &mut Analysis) {
+/// `within` is the folder an \import gave the file, where its own inputs are looked for first.
+fn walk(
+    root: &Path,
+    files: &Files,
+    file: &str,
+    within: &str,
+    seen: &mut HashSet<String>,
+    into: &mut Analysis,
+) {
     let Ok(file) = paths::rel_key(file) else {
         return;
     };
@@ -294,18 +315,40 @@ fn walk(root: &Path, files: &Files, file: &str, seen: &mut HashSet<String>, into
         into.outline
             .extend(placed(&facts.headings[at..input.before]));
         at = input.before;
+        let parent = file.rsplit_once('/').map_or("", |(parent, _)| parent);
+        let folder = match &input.folder {
+            Folder::Inherited => None,
+            Folder::Import(folder) => Some(folder.clone()),
+            Folder::Sub(folder) => Some(joined(parent, folder)),
+        };
+        let folders: Vec<&str> = match &folder {
+            Some(folder) => vec![folder],
+            None => [within]
+                .into_iter()
+                .chain((!within.is_empty()).then_some(""))
+                .collect(),
+        };
         let name = &input.name;
         let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
         // TeX tries name.tex before the name as written.
-        if let Some(input) = [tex, name.clone()]
-            .into_iter()
+        if let Some(input) = folders
+            .iter()
+            .flat_map(|folder| [joined(folder, &tex), joined(folder, name)])
             .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
         {
-            walk(root, files, &input, seen, into);
+            let within = folder.as_deref().unwrap_or(within);
+            walk(root, files, &input, within, seen, into);
         }
     }
     into.outline.extend(placed(&facts.headings[at..]));
     into.words += facts.words;
+}
+
+fn joined(folder: &str, name: &str) -> String {
+    match folder.trim_end_matches('/') {
+        "" => name.to_owned(),
+        folder => format!("{folder}/{name}"),
+    }
 }
 
 fn braced(units: &[u16], name_end: usize) -> (Option<String>, usize) {
@@ -318,16 +361,28 @@ fn braced(units: &[u16], name_end: usize) -> (Option<String>, usize) {
     (closed.then(|| String::from_utf16_lossy(&text)), stop)
 }
 
-/// The file an \input, \include or \subfile names; for \input (`bare`) also an unbraced name.
-fn input_name(units: &[u16], name_end: usize, bare: bool) -> Option<String> {
-    let name = match braced(units, name_end) {
-        (Some(name), _) => name,
-        (None, stop) if bare => char::decode_utf16(units[stop..].iter().copied())
-            .map_while(|c| c.ok().filter(|c| !"{}\\% \t\r\n".contains(*c)))
-            .collect(),
+/// The file an \input, \include, \subfile, \import or \subimport names; \input also takes an
+/// unbraced name.
+fn input(units: &[u16], command: &str, name_end: usize) -> Option<(String, Folder)> {
+    let (name, folder) = match (command, braced(units, name_end)) {
+        ("input" | "include" | "subfile", (Some(name), _)) => (name, Folder::Inherited),
+        ("input", (None, stop)) => {
+            let name = char::decode_utf16(units[stop..].iter().copied())
+                .map_while(|c| c.ok().filter(|c| !"{}\\% \t\r\n".contains(*c)))
+                .collect();
+            (name, Folder::Inherited)
+        }
+        ("import" | "subimport", (Some(folder), stop)) => {
+            let folder = folder.trim().to_owned();
+            let folder = match command {
+                "import" => Folder::Import(folder),
+                _ => Folder::Sub(folder),
+            };
+            (braced(units, stop).0?, folder)
+        }
         _ => return None,
     };
-    Some(name.trim().to_owned())
+    Some((name.trim().to_owned(), folder))
 }
 
 fn plain_title(title: &str) -> Option<String> {
@@ -600,13 +655,31 @@ mod tests {
             ("example.tex", "\\section{Example}"),
             ("real.tex", "\\section{Real}"),
         ];
-        let cases: [(&[_], &str, &[&str]); 6] = [
+        let imported = [
+            (
+                "main.tex",
+                "\\section{Main}\n\\import{chapters/}{one}\n\\subimport{chapters}{two.tex}",
+            ),
+            (
+                "chapters/one.tex",
+                "\\section{One}\n\\input{inner}\n\\subimport{deep/}{three}",
+            ),
+            ("chapters/inner.tex", "\\section{Inner}"),
+            ("chapters/two.tex", "\\section{Two}"),
+            ("chapters/deep/three.tex", "\\section{Three}"),
+        ];
+        let cases: [(&[_], &str, &[&str]); 7] = [
             (&one, "chapters/one.tex", &["Main", "One"]),
             (&one, "./chapters/one.tex", &["Main", "One"]),
             (&one, "chapters/../chapters/one.tex", &["Main", "One"]),
             (&unbraced, "main.tex", &["Main", "Chapter", "End"]),
             (&named_tex, "main.tex", &["Part"]),
             (&literal, "main.tex", &["Main", "Real"]),
+            (
+                &imported,
+                "main.tex",
+                &["Main", "One", "Inner", "Three", "Two"],
+            ),
         ];
         for (files, open, titles) in cases {
             let dir = project(files);
