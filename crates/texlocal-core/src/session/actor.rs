@@ -26,7 +26,7 @@ use crate::projects::{self, Query, Symbols, file_kind};
 use crate::service::{SEARCH_LIMIT, Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
-use crate::syntax::{SymbolKind, Text};
+use crate::syntax::{SymbolKind, Text, TextEdit};
 use crate::{CoreError, lf, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
@@ -1002,8 +1002,20 @@ impl Actor {
             )));
         }
         let tex = |rel: &str| matches!(file_kind(rel), "tex" | "bib");
-        let found =
-            |rel: &str, text: &str| places_of(&Facts::read(text, file_kind(rel)), kind, from);
+        let found = |rel: &str, text: &str| {
+            let facts = Facts::read(text, file_kind(rel));
+            let defined = definitions(&facts, kind).iter().filter(|n| n.name == from);
+            let used = facts
+                .uses
+                .iter()
+                .filter(|u| u.kind == kind && u.name == from);
+            let mut places: Vec<Place> = defined
+                .map(|n| n.place)
+                .chain(used.map(|u| u.place))
+                .collect();
+            places.sort_by_key(|place| (place.line, place.column));
+            places
+        };
         self.edit_project(&open, &tex, &found, to)
     }
 
@@ -1041,7 +1053,13 @@ impl Actor {
         let open = open.iter().filter(|(path, ..)| chosen(path));
         let mut edits: Vec<Value> = open
             .filter_map(|(path, text, version)| {
-                let edits = projects::edits(&Text::new(text), &found(path, text), to);
+                let lines = Text::new(text).lines;
+                let edit = |place: Place| TextEdit {
+                    start: lines[place.line as usize - 1] + place.column,
+                    length: place.length,
+                    text: to.to_owned(),
+                };
+                let edits: Vec<TextEdit> = found(path, text).into_iter().map(edit).collect();
                 (!edits.is_empty())
                     .then(|| json!({ "path": path, "version": version, "edits": edits }))
             })
@@ -1157,21 +1175,6 @@ fn definitions(facts: &Facts, kind: SymbolKind) -> &[Named] {
     } else {
         &facts.citations
     }
-}
-
-/// Where `facts` defines `name` as a `kind`, and where a `\ref` or `\cite` kin names it, in order.
-fn places_of(facts: &Facts, kind: SymbolKind, name: &str) -> Vec<Place> {
-    let defined = definitions(facts, kind).iter().filter(|n| n.name == name);
-    let used = facts
-        .uses
-        .iter()
-        .filter(|u| u.kind == kind && u.name == name);
-    let mut places: Vec<Place> = defined
-        .map(|n| n.place)
-        .chain(used.map(|u| u.place))
-        .collect();
-    places.sort_by_key(|place| (place.line, place.column));
-    places
 }
 
 fn query(args: &Value) -> Result<Query, CoreError> {

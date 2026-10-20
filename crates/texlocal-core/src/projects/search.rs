@@ -15,7 +15,6 @@ use super::skip_unreadable;
 use super::tree::{file_kind, is_text, visit_files};
 use crate::analyze::Place;
 use crate::error::CoreError;
-use crate::syntax::{Text, TextEdit};
 use crate::{lf, lossy_string};
 
 /// The largest file but a .tex or .bib that a search reads; a data set or log that size isn't
@@ -221,16 +220,6 @@ pub fn search_project(
         Ok(hits.len() < limit)
     })?;
     Ok(hits)
-}
-
-/// `to` in place of each of `places`, which are in order, as edits of `text` in UTF-16 offsets.
-pub(crate) fn edits(text: &Text, places: &[Place], to: &str) -> Vec<TextEdit> {
-    let edit = |place: &Place| TextEdit {
-        start: text.lines[place.line as usize - 1] + place.column,
-        length: place.length,
-        text: to.to_owned(),
-    };
-    places.iter().map(edit).collect()
 }
 
 /// `to` in place of what `found` finds in each file `chosen` takes of those a search walks,
