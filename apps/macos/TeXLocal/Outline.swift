@@ -1,5 +1,4 @@
-/// A heading with what nests under it, as `session_analyze`'s `tree` has it; `foldKey` names its fold in the project's
-/// saved state. Equatable, so an analysis that finds the same headings changes nothing the outline shows.
+/// A heading with what nests under it (`session_analyze`'s `tree`); `foldKey` names its fold in the project's saved state.
 nonisolated struct OutlineNode: Identifiable, Equatable, Decodable, Sendable {
     let item: OutlineItem
     let children: [OutlineNode]?
@@ -10,7 +9,6 @@ nonisolated struct OutlineNode: Identifiable, Equatable, Decodable, Sendable {
 
     private enum CodingKeys: String, CodingKey { case foldKey, children }
 
-    /// The heading's fields sit beside its fold key and children.
     init(from decoder: any Decoder) throws {
         item = try OutlineItem(from: decoder)
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -19,8 +17,8 @@ nonisolated struct OutlineNode: Identifiable, Equatable, Decodable, Sendable {
     }
 }
 
-/// A heading, by its place in the outline read in order (`index`): its sectioning command without the backslash, its
-/// level's name ("Section"), and its title, its level's for one that has none (`untitled`): "Untitled Section".
+/// A heading by its place in the outline: its command without the backslash, its level's name, and its title
+/// ("Untitled Section" for one with none).
 nonisolated struct OutlineItem: Identifiable, Hashable, Decodable, Sendable {
     let id: Int
     let command, level, title: String
@@ -34,9 +32,7 @@ nonisolated struct OutlineItem: Identifiable, Hashable, Decodable, Sendable {
 nonisolated struct Analysis: Decodable, Sendable {
     let tree: [OutlineNode]
     let words: Int
-    /// The levels the main file's class has.
     let headingStyles: [HeadingStyle]
 
-    /// The tree's headings in order, each at its `id`.
     var outline: [OutlineItem] { tree.flatMap { [$0] + $0.descendants }.map(\.item) }
 }

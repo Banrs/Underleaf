@@ -1,8 +1,7 @@
 import Observation
 
-/// Applies observable state's value each time it changes to a new one, a turn later: changes made together arrive as the
-/// last of them. `initial` off skips the value it has now. A view that must draw a change in the frame it is made in (the
-/// toolbar, as a column's resize refits the PDF during layout) observes with `withObservationTracking`.
+/// Applies observable state's value as it changes, a turn later: changes made together arrive as the last. A view that
+/// must draw a change in the frame it is made in observes with `withObservationTracking`.
 func track<Value: Sendable & Equatable>(_ value: @escaping @MainActor @Sendable () -> Value, initial: Bool = true,
                                           _ apply: @escaping @MainActor (Value) -> Void) -> Task<Void, Never> {
     Task {
@@ -14,7 +13,7 @@ func track<Value: Sendable & Equatable>(_ value: @escaping @MainActor @Sendable 
     }
 }
 
-/// `work` in `slot` in place of what ran there, which is cancelled; its task, for a caller that waits for it.
+/// `work` in `slot` in place of what ran there, which is cancelled.
 func restart<T: Sendable>(_ slot: inout Task<T, Never>?, _ work: @escaping @MainActor () async -> T) -> Task<T, Never> {
     slot?.cancel()
     let task = Task { await work() }

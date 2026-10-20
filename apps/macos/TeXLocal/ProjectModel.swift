@@ -9,9 +9,9 @@ final class ProjectModel {
     let tree: FileTree
     private(set) var initialLoadComplete = false
     var openPath: String? { didSet { if openPath != oldValue { openKindChanged() } } }
-    /// The open file's, from the tree; kept while the tree hasn't the file yet (a rename) or has it no longer (gone).
+    /// Kept while the tree hasn't the file yet (a rename) or has it no longer (gone).
     private(set) var openKind: FileKind?
-    /// The outline's headings in order: `outlineTree`'s, each at its `id`.
+    /// `outlineTree`'s headings in order, each at its `id`.
     private(set) var outline: [OutlineItem] = []
     private(set) var outlineTree: [OutlineNode] = []
     private(set) var headingStyles = HeadingStyle.standard
@@ -20,20 +20,20 @@ final class ProjectModel {
     var cursorColumn = 0
     @ObservationIgnored var topLine = 1
     @ObservationIgnored private(set) var topHeading: Int?
-    /// The outline's row for where the writer is: the caret's heading, or the top line's once a scroll passes a heading.
+    /// The caret's heading, or the top line's once a scroll passes a heading.
     private(set) var currentHeading: Int?
     @ObservationIgnored private var currentLine = 1
-    /// For the rest of the turn the caret moved in, so a scroll that move made leaves the caret's heading current.
+    /// For the rest of the turn the caret moved in: a scroll that move made leaves the caret's heading current.
     @ObservationIgnored private var caretMoved = false
 
     @ObservationIgnored private(set) var session: UInt64?
     @ObservationIgnored private var root: URL?
     private var documents: [String: DocumentState] = [:]
-    /// Why a document held after Cancel in an alert isn't saved, for the status bar.
+    /// Why a document held after Cancel in an alert isn't saved.
     private var heldReasons: [String: String] = [:]
     @ObservationIgnored private var lineIssues: [String: [Int: IssuesEvent.Line]] = [:]
     @ObservationIgnored private var composingPath: String?
-    /// A `tree` event came before the answer to the session's open, whose tree is older.
+    /// A `tree` event came before the session's open answered with an older tree.
     @ObservationIgnored private var treeChanged = false
 
     var compiling = false
@@ -59,7 +59,7 @@ final class ProjectModel {
 
     var importClash: ImportClash?
 
-    /// The sidebar's, kept in the project's settings (`set_ui_state`) and moved with a rename by the core.
+    /// The sidebar's, kept in the project's settings and moved with a rename by the core.
     var expandedFolders: Set<String> = [] {
         didSet { if expandedFolders != oldValue { saveUIState(["expandedFolders": expandedFolders.sorted()]) } }
     }
@@ -67,7 +67,7 @@ final class ProjectModel {
         didSet { if foldedHeadings != oldValue { saveUIState(["foldedHeadings": foldedHeadings.sorted()]) } }
     }
     @ObservationIgnored private var showingUIState = false
-    /// Service commands, which the session doesn't order: written in turn, and a rename waits for the last.
+    /// Not the session's, so not in its order: written in turn, and a rename waits for the last.
     @ObservationIgnored var uiStateWrites: Task<Void, Never>?
 
     let search: ProjectSearch
@@ -77,12 +77,11 @@ final class ProjectModel {
     @ObservationIgnored weak var app: AppModel?
     let core = Core.shared
     @ObservationIgnored private var analysis: Task<Void, Never>?
-    /// Files open one at a time, and only the latest asked for carries on.
     @ObservationIgnored private var opens: Task<Void, Never>?
     @ObservationIgnored private var openRequests = 0
     @ObservationIgnored var syncTask: Task<Void, Never>?
     @ObservationIgnored var pdfLoad: Task<Bool, Never>?
-    /// The build's events in turn: a finished build's PDF is shown before the next event says what follows it.
+    /// A finished build's PDF is shown before the next build event.
     @ObservationIgnored private var buildLane: Task<Void, Never>?
     @ObservationIgnored private var closing: Task<Void, Never>?
     @ObservationIgnored var trashed: [UndoableTrash] = []
@@ -110,7 +109,7 @@ final class ProjectModel {
 
     var isLaTeX: Bool { openKind == .tex }
 
-    /// The level of the caret's line, as its sectioning command: empty for Normal Text.
+    /// The caret's line's sectioning command: empty for Normal Text.
     var headingCommand: String { outline.first { $0.file == openPath && $0.line == cursorLine }?.command ?? "" }
     var editsText: Bool { openKind?.isText == true }
 
@@ -121,7 +120,7 @@ final class ProjectModel {
 
     func isText(_ path: String) -> Bool { tree.node(at: path)?.kind?.isText == true }
 
-    /// After a save that failed, or Cancel in an alert about the file on disk: the status bar's Not Saved.
+    /// The status bar's Not Saved: after a failed save, or Cancel in an alert about the file on disk.
     var saveFailure: String? {
         for (path, state) in documents.sorted(by: { $0.key < $1.key }) {
             if let error = state.error { return error }
@@ -135,20 +134,10 @@ final class ProjectModel {
 
     var showsLastSuccessfulBuild: Bool { hasPDF && result?.failed == true && result?.pdf == nil }
 
-    /// Once: a failed save's document event may have shown it already.
-    func report(_ error: any Error, _ title: String) {
-        if app?.alert?.title != title { app?.alert = AppAlert(title, error) }
-    }
-
-    /// What `work` answers, or nil once its failure is reported under `title`, which a closed project doesn't report.
+    /// A closed project reports nothing.
     @discardableResult
     func alerting<T>(_ title: @autoclosure () -> String, _ work: () async throws -> T) async -> T? {
-        do {
-            return try await work()
-        } catch {
-            if !closed { report(error, title()) }
-            return nil
-        }
+        await app?.alerting(title(), unless: { closed }, work) ?? nil
     }
 
     let notices = ProjectNotices()
@@ -160,12 +149,12 @@ final class ProjectModel {
 
     // MARK: - Loading
 
-    /// Stops if the project is left meanwhile, so it never writes to the editor after the next one.
+    /// Stops if the project is left meanwhile.
     func load(restoring saved: SavedWorkspace?) async {
         connectEditor()
         if let saved { (panel.shown, pdf.restorePage, pdf.restoreZoom) = (saved.buildPanel, saved.pdfPage, saved.pdfZoom) }
         let session = core.observe { [weak self] event in self?.handle(event) }
-        // Beside the open, and shown before the workspace appears, so the pane doesn't open on its empty state.
+        // Shown before the workspace appears, so the pane doesn't open empty.
         async let pdfShown = showBuildPDF(try? await core.call("pdf_path", ["id": id], as: String.self))
         do {
             // With automatic builds and no PDF, the session starts one.
@@ -182,11 +171,11 @@ final class ProjectModel {
             await analysis?.value
         } catch {
             core.forget(session)
-            // Left meanwhile, or the core may have opened it and failed only in its answer; one it never opened is a 404, logged.
+            // The core may have opened it and failed only in its answer.
             core.send("session_close", ["session": session])
-            // Home stays, with the alert over it: a workspace would have no files to show.
+            // Home stays, with the alert over it.
             guard !closed else { return }
-            report(error, "Couldn’t Open “\(id)”")
+            app?.report(error, "Couldn’t Open “\(id)”")
             if app?.project === self { await app?.close() }
             return
         }
@@ -230,7 +219,6 @@ final class ProjectModel {
         }
     }
 
-    /// The preference changed: the session builds by itself only where `status` last found TeX.
     func autoCompileChanged() {
         guard let session, !closed else { return }
         core.send("session_set_options", ["session": session, "autoCompile": app?.autoCompile ?? false])
@@ -274,7 +262,7 @@ final class ProjectModel {
         let before = documents[state.path]
         documents[state.path] = state
         if !state.held { heldReasons[state.path] = nil }
-        // A failed autosave is told once in an alert, as NSDocument's are; Not Saved stays in the status bar until a save succeeds.
+        // A failed autosave is told once in an alert, as NSDocument's are; Not Saved stays until a save succeeds.
         if let error = state.error, before?.error == nil {
             let title = String(localized: "“\(state.path.fileName)” Wasn’t Saved")
             if let app, app.alert == nil, !closed { app.alert = AppAlert(title, error) } else { notices.announce(title) }
@@ -291,7 +279,7 @@ final class ProjectModel {
         }
     }
 
-    /// One this model closed (`closed`) has the next file shown, or is cleared already.
+    /// One this model closed has the next file shown already.
     private func documentClosed(_ event: ClosedEvent) {
         documents[event.path] = nil
         heldReasons[event.path] = nil
@@ -299,7 +287,7 @@ final class ProjectModel {
         if openPath == event.path, event.reason != "closed" { clearOpenFile() }
     }
 
-    /// The editor and the file shown follow the rename's own answer (`performRename`), which covers a file previewed too.
+    /// The editor follows the rename's own answer (`performRename`).
     private func documentRenamed(_ event: RenamedEvent) {
         documents[event.to] = documents.removeValue(forKey: event.from)
         heldReasons[event.to] = heldReasons.removeValue(forKey: event.from)
@@ -322,7 +310,7 @@ final class ProjectModel {
     private func showTree(_ event: TreeEvent) {
         treeChanged = true
         tree.show(event.tree)
-        // A file previewed, not edited, that went: the session has no document of it to close.
+        // A previewed file has no document for the session to close.
         if let openPath, !editsText, tree.node(at: openPath) == nil { clearOpenFile() }
     }
 
@@ -335,8 +323,8 @@ final class ProjectModel {
 
     // MARK: - Editing
 
-    /// After the opens asked for before it. One superseded meanwhile stops, closing the document it opened, unless it has
-    /// already closed the file shown: then it shows its own, since the editor never shows a file without its document.
+    /// After the opens asked for before it. One superseded meanwhile stops, unless it has already closed the file shown:
+    /// the editor never shows a file without its document.
     func open(_ path: String, line: Int? = nil, column: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
         openRequests += 1
         let request = openRequests
@@ -352,14 +340,14 @@ final class ProjectModel {
                     text = isText(path)
                     if text { try await core.call("session_open_document", ["session": session, "path": path]) }
                 } catch {
-                    if latest() { report(error, "Couldn’t Open “\(path.fileName)”") }
+                    if latest() { app?.report(error, "Couldn’t Open “\(path.fileName)”") }
                     return
                 }
-                // Read first and closed last, with nothing awaited between the close and the switch.
+                // Nothing awaited between the close and the switch.
                 var shows = latest()
                 if shows, let was = openPath, editsText { shows = await closeDocument(was) && !closed }
                 guard shows else {
-                    // The session keeps no document the editor doesn't show; a later open of it opens it again.
+                    // The session keeps no document the editor doesn't show.
                     if text, path != openPath, !closed { core.send("session_close_document", ["session": session, "path": path]) }
                     return
                 }
@@ -369,7 +357,7 @@ final class ProjectModel {
         }.value
     }
 
-    /// Its text as the session's document has it now, whatever reloads came while it opened.
+    /// The session's text now, whatever reloads came while it opened.
     private func show(_ path: String, focus: Bool) {
         openPath = path
         analyze()
@@ -395,7 +383,7 @@ final class ProjectModel {
 
     func url(_ path: String) -> URL? { root.map { $0.appending(path: path) } }
 
-    /// Where a file dropped on the window is in this project, as the disk spells it; asked as the drag moves, so at once.
+    /// As the disk spells it; asked as a drag moves, so at once.
     func projectPath(_ url: URL) -> String? {
         guard let located = try? core.now("locate", ["path": url.path(percentEncoded: false)], as: Located?.self),
               located.id == id, !located.path.isEmpty else { return nil }
@@ -413,19 +401,19 @@ final class ProjectModel {
         if let url = self.url(path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
 
-    /// Every document with unsaved edits; a build follows when automatic. A failure is an alert only when `reporting`.
+    /// A build follows when automatic.
     @discardableResult
     func save(reporting: Bool = true) async -> Bool {
         guard let session, !closed else { return true }
         do {
             return try await core.call("session_save", ["session": session, "reporting": reporting], as: Saved.self).saved
         } catch {
-            if reporting, !closed { report(error, String(localized: "“\((openPath ?? id).fileName)” Wasn’t Saved")) }
+            if reporting, !closed { app?.report(error, String(localized: "“\((openPath ?? id).fileName)” Wasn’t Saved")) }
             return false
         }
     }
 
-    /// The session keeps the analysis's outline, which `heading(at:)` asks about.
+    /// The session keeps the outline, which `heading(at:)` asks about.
     func analyze() {
         analysis?.cancel()
         guard isLaTeX, let path = openPath, let session else {
@@ -441,8 +429,7 @@ final class ProjectModel {
         }
     }
 
-    /// A scroll makes the top line's heading the current one only as it passes a heading, and a caret's move wins over a
-    /// scroll in the same turn.
+    /// A scroll makes the top line's heading current only as it passes one; a caret's move wins over a scroll in its turn.
     private func findHeadings() {
         let atTop = heading(at: topLine)
         if atTop != topHeading {
@@ -453,7 +440,7 @@ final class ProjectModel {
         if current != currentHeading { currentHeading = current }
     }
 
-    /// At once: the core answers it from the outline it keeps, without the session's queue (docs/core-api.md).
+    /// At once: the core answers from the outline it keeps, outside the session's queue.
     private func heading(at line: Int) -> Int? {
         guard let session, let openPath, !outline.isEmpty else { return nil }
         return try? core.now("session_outline_current", ["session": session, "path": openPath, "line": line], as: Int?.self)
@@ -461,8 +448,7 @@ final class ProjectModel {
 
     // MARK: - Changes on disk
 
-    /// `save`, `revert`, `close`, or `cancel` with the reason it is held: unsaved, the autosave quiet, until a save asks
-    /// again. A question about another file still waits for its alert.
+    /// `save`, `revert`, `close`, or `cancel` with the reason it is held, unsaved, until a save asks again.
     func answer(_ path: String, _ answer: String, holding reason: String? = nil) {
         if diskConflict == path { diskConflict = nil }
         if missingFile == path { missingFile = nil }
@@ -481,9 +467,9 @@ final class ProjectModel {
     func close() {
         guard !closed else { return }
         closed = true
-        // The old workspace can remain visible while the session closes.
+        // It can still show while the session closes.
         editor.textView.isEditable = false
-        // Its renames and its files' moves to the Trash can't be undone once it's closed; the window's stack outlives it.
+        // The window's undo stack outlives it.
         let undo = app?.undoManager
         undo?.removeAllActions(withTarget: self)
         for item in trashed { undo?.removeAllActions(withTarget: item) }
@@ -494,7 +480,6 @@ final class ProjectModel {
         tree.close()
         syncTask?.cancel()
         pdfLoad?.cancel()
-        // The session saves what it can, and stops its build and Live Preview.
         if let session {
             core.forget(session)
             closing = Task { [uiStateWrites] in
@@ -504,20 +489,20 @@ final class ProjectModel {
         }
     }
 
-    /// Once the session has stopped its build and Live Preview, so another model can't race it for the project's.
+    /// Until the session has stopped its build and Live Preview, which another model would race.
     func waitUntilClosed() async { await closing?.value }
 
     // MARK: - Settings
 
     @ObservationIgnored private var settingsPatches = 0
 
-    /// Shown at once; put back if the session refuses it. A build follows when automatic: the session's.
+    /// Shown at once; put back if the session refuses it.
     @discardableResult func patchSettings(_ change: SettingsChange) async -> Bool {
         guard let session, !closed else { return false }
         settingsPatches += 1
         let patch = settingsPatches, before = settings
         settings?.apply(change)
-        // The session takes patches in order, but its answers can come back in another: the latest's has them all.
+        // Answers can come back out of order: the latest's has them all.
         let latest = { patch == self.settingsPatches }
         guard let updated = await alerting("Couldn’t Change the Project’s Settings", {
             try await core.call("session_set_settings", ["session": session, "patch": change.patch], as: ProjectSettings.self)
@@ -531,13 +516,11 @@ final class ProjectModel {
         return true
     }
 
-    /// The session stops the build, restarts Live Preview and builds the new one; the PDF is the new main file's.
+    /// The session restarts its build and Live Preview; the PDF is the new main file's.
     func mainFileChanged() {
         analyze()
         Task { if let path = try? await core.call("pdf_path", ["id": id], as: String.self) { await showBuildPDF(path) } }
     }
-
-    // MARK: - Editor commands
 
     func reveal(_ item: OutlineItem) {
         // Already there: a click chooses the row as it goes down, then taps it.
@@ -555,5 +538,5 @@ nonisolated struct SavedWorkspace: Codable, Equatable {
     var pdfZoom: PDFController.Zoom?
 }
 
-/// What a file dropped on the open one inserts there (`drop_text`); none means it opens.
+/// None: the file dropped opens.
 private nonisolated struct DropText: Decodable { let insert: String? }

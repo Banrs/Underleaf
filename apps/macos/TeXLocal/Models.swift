@@ -1,7 +1,5 @@
 import Foundation
 
-// The Rust core's JSON shapes use camelCase keys.
-
 nonisolated struct ProjectInfo: Decodable, Identifiable {
     let id, name: String
     let mtime: Double
@@ -15,7 +13,7 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
 
     let type: Entry
     let name, path: String
-    /// A file's, as the core sorts it by its name; a folder has none.
+    /// A file's, from its name; a folder has none.
     var kind: FileKind?
     let children: [TreeNode]?
 
@@ -59,7 +57,7 @@ nonisolated extension NSRange {
 
 nonisolated struct TexStatus: Decodable {
     let available: Bool
-    /// The number latexmk's version line names: "4.86".
+    /// "4.86".
     var latexmkVersion: String?
     var texDir, found, texpresso, texpressoDir: String?
 }
@@ -100,7 +98,7 @@ nonisolated struct LogItem: Decodable, Equatable {
     var isError: Bool { type == "error" }
 }
 
-/// Builds run past errors, so a failed one may still have written a PDF; `stopped` means Stop, a newer build or quitting ended it.
+/// A failed build may still have written a PDF; `stopped`: Stop, a newer build or quitting ended it.
 nonisolated struct CompileResult: Decodable {
     let ok, stopped: Bool
     let pdf: String?
@@ -141,24 +139,21 @@ nonisolated struct ForwardLoc: Decodable {
 
 nonisolated struct InverseLoc: Decodable { let file: String, line: Int, column: Int? }
 
-/// Where a forward search began, for the core to find its word in the PDF's text (`synctex_match`); the column in UTF-16.
+/// Where a forward search began, for `synctex_match`; the column in UTF-16.
 nonisolated struct SyncSource: Sendable {
     let id, file: String
     let line, column: Int
 }
 
-/// That word in a page's text: its UTF-16 range there.
 nonisolated struct PageHit: Decodable, Sendable { let page, start, end: Int }
 
-/// A click on a page for `synctex_inverse`: the page's text, and the clicked letter's UTF-16 index in it.
+/// For `synctex_inverse`: the page's text, and the clicked letter's UTF-16 index.
 nonisolated struct PageClick: Equatable, Sendable { let text: String, at: Int }
 
-/// Asked nothing about them, it writes nothing.
 nonisolated struct Imported: Decodable { let existing: [PathEvent] }
 
 nonisolated struct RenameResult: Decodable {
     let from, to, mainFile: String
-    /// The sidebar's state, its paths moved with the entry.
     let ui: UIState
 }
 

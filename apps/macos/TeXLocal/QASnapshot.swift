@@ -1,9 +1,9 @@
 import AppKit
 
 #if DEBUG
-/// QA without the screen (debug builds): with TEXLOCAL_QA_SNAPSHOT set to a folder, the distributed notification
-/// "com.texlocal.qa.snapshot" (its object a name) writes each visible window as the app draws it, at the backing
-/// scale (<name>-<n>.png), and the window's views with their frames in window points (<name>-<n>.txt).
+/// QA without the screen: with TEXLOCAL_QA_SNAPSHOT set to a folder, "com.texlocal.qa.snapshot" (its object a name) writes
+/// each visible window as drawn (<name>-<n>.png) and its views' frames (<name>-<n>.txt); "com.texlocal.qa.resize"
+/// ("<width>x<height>") sets the main window's content size.
 enum QASnapshot {
     static func install() {
         guard let folder = ProcessInfo.processInfo.environment["TEXLOCAL_QA_SNAPSHOT"] else { return }
@@ -12,7 +12,6 @@ enum QASnapshot {
             let name = note.object as? String ?? "snapshot"
             MainActor.assumeIsolated { write(to: URL(filePath: folder), name: name) }
         }
-        // "com.texlocal.qa.resize" (its object "<width>x<height>") sets the main window's content size, as a drag's end would.
         DistributedNotificationCenter.default().addObserver(
             forName: .init("com.texlocal.qa.resize"), object: nil, queue: .main) { note in
             let size = (note.object as? String ?? "").split(separator: "x").compactMap { Double($0) }
