@@ -50,8 +50,9 @@ struct FormatPanel: View {
     @FocusState private var focused: String?
     /// The level under the pointer or last reached by the arrow keys, as a menu's highlight.
     @State private var highlighted: String?
-    /// Set while the caret's level is given the keyboard on opening, which isn't a move to highlight.
-    @State private var seeding = false
+    /// Set by the first key pressed here. SwiftUI hands the keyboard out as the popover opens, takes it back, and hands it
+    /// to the first level (27.2): only a key's move of it, as Tab's, is one to highlight.
+    @State private var keyed = false
     /// The selection's, read again as the text or the selection changes.
     @State private var styles = TextStyles()
 
@@ -98,24 +99,25 @@ struct FormatPanel: View {
             }
             .padding(.horizontal, Self.rowInset)
             .padding(.vertical, Self.gap)
-            .onKeyPress(.downArrow) { move(by: 1, in: levels) }
-            .onKeyPress(.upArrow) { move(by: -1, in: levels) }
+            .onKeyPress(.downArrow) { move(by: 1, in: levels, from: current) }
+            .onKeyPress(.upArrow) { move(by: -1, in: levels, from: current) }
             .onKeyPress(keys: [.return, .space]) { _ in chooseFocused() }
+            // At the caret's level, as a pop-up menu opens at its item.
+            .defaultFocus($focused, current)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Section Level")
         }
         .fixedSize()
+        .onKeyPress(phases: .down) { _ in
+            keyed = true
+            return .ignored
+        }
         .onKeyPress(.escape) {
             close()
             return .handled
         }
-        // At the caret's level, as a pop-up menu opens at its item.
-        .onAppear {
-            seeding = levels.contains(current)
-            focused = current
-        }
         .onChange(of: focused) { _, level in
-            if seeding { seeding = false } else { highlighted = level }
+            if keyed { highlighted = level }
         }
         .onChange(of: project.editor.changes.count, initial: true) { styles = project.editor.textStyles }
     }
@@ -194,9 +196,10 @@ struct FormatPanel: View {
         .accessibilityAddTraits(checked ? .isSelected : [])
     }
 
-    private func move(by step: Int, in levels: [String]) -> KeyPress.Result {
-        // From the highlight; with none yet, the keyboard's own level is highlighted first.
-        let next = highlighted.flatMap(levels.firstIndex).map { levels[min(max($0 + step, 0), levels.count - 1)] } ?? focused
+    private func move(by step: Int, in levels: [String], from current: String) -> KeyPress.Result {
+        // From the highlight; with none yet, the caret's level is highlighted first: the keyboard may not have reached it.
+        let next = highlighted.flatMap(levels.firstIndex).map { levels[min(max($0 + step, 0), levels.count - 1)] }
+            ?? (levels.contains(current) ? current : focused)
         highlighted = next
         focused = next
         return .handled
