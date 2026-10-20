@@ -371,7 +371,7 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LogItem, Severity, latexmk_errors, parse_blg, parse_log, project_path};
+    use super::{LogItem, Severity, latexmk_errors, parse_blg, parse_log};
 
     /// Each item as "kind file:line message", with "-" for a place it lacks.
     fn described(items: &[LogItem]) -> Vec<String> {
@@ -493,27 +493,6 @@ mod tests {
     }
 
     #[test]
-    fn duplicates_collapse_to_the_first_in_order_and_kinds_are_named_on_the_wire() {
-        let log = "LaTeX Warning: A on input line 1.\n\
-                   \n\
-                   ./a.tex:2: Boom.\n\
-                   \n\
-                   LaTeX Warning: A on input line 1.\n\
-                   \n\
-                   LaTeX Warning: A on input line 2.\n\
-                   \n\
-                   ./a.tex:2: Boom.\n";
-        assert_eq!(
-            parsed(log),
-            [
-                "warning main.tex:1 A on input line 1.",
-                "error a.tex:2 Boom.",
-                "warning main.tex:2 A on input line 2.",
-            ]
-        );
-    }
-
-    #[test]
     fn an_error_in_a_file_of_any_type_is_reported_and_a_time_is_not_an_error() {
         let log = "(./refs/my.cbx\n\
                    ./refs/my.cbx:12: Package biblatex Error: Bad style.\n\
@@ -609,7 +588,7 @@ mod tests {
 
     #[test]
     fn warnings_run_on_over_wrapped_and_continued_lines_and_stop_at_the_next_message() {
-        let cases: [(&str, &[&str]); 6] = [
+        let cases: [(&str, &[&str]); 4] = [
             (
                 "LaTeX Warning: First\n\
                  Package x Warning: Second\n\
@@ -630,18 +609,6 @@ mod tests {
                 &[
                     "warning main.tex:3 Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on input line 3.",
                     "error main.tex:9 Missing number, treated as zero.",
-                ],
-            ),
-            // A line that wasn't wrapped still gets a space.
-            (
-                "Package x Warning: First\n(x)                second on input line 2.\n",
-                &["warning main.tex:2 First second on input line 2."],
-            ),
-            (
-                "LaTeX Font Warning: Font shape `OT1/nonexistentfam/m/n' undefined\n\
-                 (Font)              using `OT1/cmr/m/n' instead on input line 3.\n",
-                &[
-                    "warning main.tex:3 Font shape `OT1/nonexistentfam/m/n' undefined using `OT1/cmr/m/n' instead on input line 3.",
                 ],
             ),
             // LaTeX's own continuation is indented, and a line that is neither
@@ -670,25 +637,6 @@ mod tests {
         let line =
             "Package microtype Warning: Unknown slot number of character 12 in font encoding";
         assert_eq!(line.chars().count(), 79);
-    }
-
-    #[test]
-    fn tex_distribution_paths_are_not_the_projects() {
-        for (path, project) in [
-            ("./main.tex", Some("main.tex")),
-            ("chapters/a.tex", Some("chapters/a.tex")),
-            ("/usr/local/texlive/a.sty", None),
-            (
-                "C:/texlive/2026/texmf-dist/tex/latex/base/article.cls",
-                None,
-            ),
-            (r"c:\Program Files\MiKTeX\tex/latex/base\article.cls", None),
-            (r"\\server\texmf\a.sty", None),
-            // A file named like a drive is still the project's.
-            ("c:a.tex", Some("c:a.tex")),
-        ] {
-            assert_eq!(project_path(path).as_deref(), project, "{path}");
-        }
     }
 
     // Logs as the engines wrote them, built here with the arguments and

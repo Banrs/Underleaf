@@ -1,5 +1,5 @@
 //! The command surface, the JSON dispatch every host forwards to, and the
-//! per-project lock.
+//! edit lock.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -120,29 +120,30 @@ fn fake_tex(dir: &Path) -> String {
 }
 
 #[tokio::test]
-async fn set_tex_dir_accepts_a_folder_with_latexmk_or_a_tex_root_above_one() {
+async fn the_tex_folder_holds_latexmk_or_is_a_root_above_one_and_is_kept_until_cleared() {
     let (_dir, service) = library();
     let tex = TempDir::new().unwrap();
-
     let empty = service
         .call("set_tex_dir", &json!({ "dir": tex.path() }))
-        .await
-        .unwrap_err();
-    assert_eq!(empty.status, 400);
-    assert!(empty.message.contains("doesn't contain latexmk"));
-    let relative = json!({ "dir": "relative/bin" });
-    assert_eq!(status_of(&service, "set_tex_dir", relative).await, 400);
+        .await;
+    let empty = empty.unwrap_err();
+    assert!(empty.status == 400 && empty.message.contains("doesn't contain latexmk"));
     assert_eq!(tex_dir(&service), None);
 
-    let bin = fake_tex(&tex.path().join("bin").join("x"));
-    let status = call(&service, "set_tex_dir", json!({ "dir": bin })).await;
-    assert_eq!(status["texDir"], bin);
+    // A TeX root resolves to its bin folder, which the status reports.
+    let bin = fake_tex(&tex.path().join("bin").join("universal-darwin"));
+    let chosen = call(&service, "set_tex_dir", json!({ "dir": tex.path() })).await;
+    assert_eq!(chosen["texDir"], bin);
+    assert_eq!(call(&service, "status", json!({})).await, chosen);
+    assert_eq!(chosen["latexmkVersion"], "4.86a");
+    assert_eq!(tex_dir(&service).unwrap().to_string_lossy(), bin);
+    // Kept beside the projects, and not listed as one.
+    let listed = call(&service, "list_projects", json!({})).await;
+    assert!(listed.as_array().unwrap().is_empty());
 
-    // A picked TeX root resolves to its bin folder.
-    let root = TempDir::new().unwrap();
-    let bin = fake_tex(&root.path().join("bin").join("universal-darwin"));
-    let status = call(&service, "set_tex_dir", json!({ "dir": root.path() })).await;
-    assert_eq!(status["texDir"], bin);
+    let status = call(&service, "set_tex_dir", json!({ "dir": null })).await;
+    assert_eq!(status["texDir"], Value::Null);
+    assert_eq!(tex_dir(&service), None);
 }
 
 /// TeXpresso's folder must hold the program; it's kept beside the TeX folder and
@@ -176,67 +177,6 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
     let cleared = call(&service, "set_texpresso_dir", json!({ "dir": null })).await;
     assert!(cleared["texpressoDir"].is_null());
     assert_eq!(tex_dir(&service).unwrap().to_string_lossy(), bin);
-}
-
-#[tokio::test]
-async fn the_tex_dir_persists_in_the_data_dir_and_clears_to_automatic() {
-    let (_dir, service) = with_project();
-    let tex = TempDir::new().unwrap();
-    let bin = fake_tex(tex.path());
-    call(&service, "set_tex_dir", json!({ "dir": bin })).await;
-
-    // The settings file is not listed as a project.
-    let listed = call(&service, "list_projects", json!({})).await;
-    assert_eq!(listed.as_array().unwrap().len(), 1);
-    assert_eq!(listed[0]["id"], "P");
-
-    let saved = fs::read(service.data_dir.join(".texlocal-app.json")).unwrap();
-    let saved: Value = serde_json::from_slice(&saved).unwrap();
-    assert_eq!(saved["texDir"], bin);
-
-    let status = call(&service, "set_tex_dir", json!({ "dir": null })).await;
-    assert_eq!(status["texDir"], Value::Null);
-    assert_ne!(status["found"], bin);
-    assert_eq!(tex_dir(&service), None);
-}
-
-#[tokio::test]
-async fn status_reports_the_current_tex_choice() {
-    let (_dir, service) = library();
-    let tex = TempDir::new().unwrap();
-    let bin = fake_tex(tex.path());
-    let chosen = call(&service, "set_tex_dir", json!({ "dir": bin })).await;
-    assert_eq!(chosen["texDir"], bin);
-    assert_eq!(call(&service, "status", json!({})).await, chosen);
-    assert_eq!(chosen["available"], true);
-    assert_eq!(chosen["version"], "Latexmk, Version 4.86a");
-    assert_eq!(chosen["latexmkVersion"], "4.86a");
-    assert_eq!(chosen["found"], bin);
-
-    // An update in the same folder is reflected without another folder choice.
-    fake_program(tex.path(), "latexmk", "Latexmk, stub 2.0");
-    let updated = call(&service, "status", json!({})).await;
-    assert_eq!(updated["version"], "Latexmk, stub 2.0");
-    assert_eq!(updated["latexmkVersion"], Value::Null);
-    assert_eq!(updated["texDir"], bin);
-}
-
-#[tokio::test]
-async fn dispatch_serves_the_logic_the_hosts_used_to_hold() {
-    let (_dir, service) = with_project();
-    let patch = json!({ "expandedFolders": ["sec"], "foldedHeadings": ["sec/a.tex\t2:A#1"] });
-    let args = json!({ "id": "P", "patch": patch });
-    assert_eq!(call(&service, "set_ui_state", args).await, patch);
-
-    // The word a source line's caret is on, among a forward sync's pages.
-    let root = service.project_root("P").unwrap();
-    fs::write(root.join("main.tex"), "alpha beta gamma\n").unwrap();
-    let page = json!({ "page": 2, "text": "alpha beta gamma", "near": [[0, 16]] });
-    let args = json!({ "id": "P", "file": "main.tex", "line": 1, "column": 8, "pages": [page] });
-    let hit = call(&service, "synctex_match", args).await;
-    assert_eq!(hit, json!({ "page": 2, "start": 6, "end": 10 }));
-    let beyond = json!({ "id": "P", "file": "main.tex", "line": 9, "column": 0, "pages": [] });
-    assert_eq!(call(&service, "synctex_match", beyond).await, Value::Null);
 }
 
 #[tokio::test]

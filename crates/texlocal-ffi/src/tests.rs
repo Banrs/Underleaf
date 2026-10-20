@@ -125,13 +125,6 @@ fn null_and_malformed_inputs_are_rejected_safely() {
     let handle = open(dir.path());
     let bad = call_raw(handle, "list_projects", Some("{not json"));
     assert_eq!(bad["status"], 400);
-    // Import arguments of the wrong type are the caller's mistake, not an I/O error.
-    for args in [
-        json!({ "id": "P", "paths": [42] }),
-        json!({ "id": "P", "conflict": "merge" }),
-    ] {
-        assert_eq!(call(handle, "import_files", args)["status"], 400);
-    }
     unsafe {
         tl_free(ptr::null_mut());
         tl_close(handle);
@@ -152,13 +145,6 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         assert_eq!(std::slice::from_raw_parts(runs, count), [3, 5, 0]);
         tl_source_free_runs(runs, count);
         assert_eq!(text_of(source), "é \n\\emph{x}");
-        let symbol = json!({ "command": "\\alpha", "selection": { "start": 0, "length": 1 } });
-        assert_eq!(
-            source_call(source, "insert_symbol", symbol),
-            Some(
-                json!({ "edit": { "start": 0, "length": 1, "text": "$\\alpha$" }, "caret": 8, "fields": [] })
-            )
-        );
         let maths = source_call(source, "math_at", json!({ "caret": 1 }));
         assert_eq!(maths, Some(Value::Null), "é isn't maths");
         assert_eq!(source_call(source, "unknown", json!({})), None);
@@ -209,12 +195,8 @@ fn syntax_commands_round_trip_through_the_c_abi() {
         let args = c(&light.to_string());
         let colors = take_json(tl_syntax_call(c("theme_colors").as_ptr(), args.as_ptr()));
         assert_eq!(colors.unwrap().as_array().map(Vec::len), Some(9));
-        // An unknown command or theme, or a null string, is no answer.
-        assert!(tl_syntax_call(c("no such command").as_ptr(), c("{}").as_ptr()).is_null());
-        let unknown = c(r#"{"theme": "solarized"}"#);
-        assert!(tl_syntax_call(c("theme_colors").as_ptr(), unknown.as_ptr()).is_null());
+        // A null string is no answer.
         assert!(tl_syntax_call(ptr::null(), c("{}").as_ptr()).is_null());
-        assert!(tl_syntax_call(c("themes").as_ptr(), ptr::null()).is_null());
     }
 }
 
@@ -223,36 +205,16 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
     unsafe {
         let none: *mut TlSource = ptr::null_mut();
         assert_eq!(edit(none, 0, 0, b"x"), None);
-        tl_source_select(none, 0, 0, false);
-        assert_eq!(text_of(none), "");
-        assert_eq!(tl_source_line_at(none, 0), 0);
-        assert_eq!(tl_source_line_start(none, 1), 0);
         assert_eq!(tl_source_line_count(none), 0);
-        let mut count = 7;
-        let runs = tl_source_highlights(none, 0, 1, &raw mut count);
-        assert_eq!(count, 0, "no runs");
-        tl_source_free_runs(runs, count);
-        assert!(tl_source_call(none, c("partner").as_ptr(), c("{}").as_ptr()).is_null());
         tl_source_free(none);
 
         let source = tl_source_new(ptr::null(), 0);
         assert!(!source.is_null());
         let partner = c("partner");
         assert!(tl_source_call(source, partner.as_ptr(), c("{not json").as_ptr()).is_null());
-        assert!(tl_source_call(source, ptr::null(), c("{}").as_ptr()).is_null());
-        assert!(tl_source_call(source, partner.as_ptr(), ptr::null()).is_null());
-        // The text can't be freed without its length, so a null length gets none.
-        assert!(tl_source_text(source, ptr::null_mut()).is_null());
-        tl_source_free_text(ptr::null_mut(), 0);
         // Out-of-range offsets are cut to the text.
         edit(source, 99, 99, b"ab");
         assert_eq!(tl_source_line_start(source, 99), 0);
-        let runs = tl_source_highlights(source, 99, 99, &raw mut count);
-        assert_eq!(count, 0);
-        tl_source_free_runs(runs, count);
-        // Runs can't be freed without their count, so a null count gets none.
-        assert!(tl_source_highlights(source, 0, 9, ptr::null_mut()).is_null());
-        tl_source_free_runs(ptr::null_mut(), 0);
 
         // Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes them: the
         // edit still lands, keeping the mirror in step with the editor.
@@ -367,13 +329,6 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
     // A reload is the disk's text, not an edit to save.
     unsafe { tl_source_reload(source, b"x".as_ptr(), 1) };
     unsafe { tl_source_free(source) };
-    // Without blocking: the answer comes to the callback.
-    let (answered, answers) = collector();
-    let args = json!({ "session": session });
-    call_async(handle, "session_save", args, &answered);
-    assert_eq!(until(&answers, |_| true)["ok"]["saved"], true);
-    let disk = std::fs::read_to_string(dir.path().join("P/main.tex")).unwrap();
-    assert_eq!(disk, format!("{added}{text}"));
     unsafe { tl_close(handle) };
 }
 

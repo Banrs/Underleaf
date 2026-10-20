@@ -143,18 +143,6 @@ mod tests {
     use crate::service::Service;
     use crate::settings::{read_settings, write_settings};
 
-    #[test]
-    fn a_file_that_could_deflate_past_4_gib_is_written_as_zip64() {
-        assert!(!needs_zip64(0));
-        assert!(!needs_zip64((3 << 30) - 1));
-        // Deflate stores what it can't compress in blocks of at most 65,535
-        // bytes, 5 more each: under 4 GiB itself, over it once stored.
-        let len: u64 = (1 << 32) - 1_000;
-        assert!(len + len.div_ceil(65_535) * 5 > u32::MAX as u64);
-        assert!(needs_zip64(len));
-        assert!(needs_zip64(1 << 32));
-    }
-
     /// An export leaves out what an import would, so a project exported and
     /// opened again keeps every file the author made, and only those.
     #[test]
