@@ -98,7 +98,7 @@ apps/windows/
 | Window | `Window`, `MicaBackdrop` (Base), WinUI's `TitleBar` holding back, icon, title, the `MenuBar` and Settings | A hand-made title bar needs its own drag regions, insets and inactive state |
 | Pages | `Frame`: Home, Workspace, Settings; the workspace stays cached under Settings | `NavigationView` switches sections, which this app hasn't |
 | Commands | The page's `MenuBar` lent to the title bar (`MainWindow.SetMenu`); a `CommandBar`, Compile in an `AppBarElementContainer` | A menu row of its own pushes the commands down a row |
-| Navigation pane | `SplitView` (inline from 1008, overlay on acrylic below) with Word's search box, a `SelectorBar` and three `TreeView`s | NavigationView is not a file tree |
+| Navigation pane | `SplitView` (inline from 1008, overlay on acrylic below) with Word's search box, VS Code's replace toggle and Replace all under it, a `SelectorBar` and three `TreeView`s | NavigationView is not a file tree |
 | Splitters | `Sizer`, ~90 lines: the gap between layers, a grip under the pointer, a thumb to UI Automation | Toolkit 8.2 pulls the 1.6 metapackage; move when 8.3 is stable |
 | Settings cards | `Card`, a `ContentControl` styled in Generic.xaml | No Community Toolkit |
 | Home | Templates an `ItemsControl` of subtle buttons with `PagePreview`; Recent a `ListView` | A `GridView` of templates would select |

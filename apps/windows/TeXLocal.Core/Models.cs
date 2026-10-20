@@ -117,6 +117,15 @@ public sealed record SearchHit(string File, int Line, int Column, int Length, st
 
 public sealed record SearchFile(string File, SearchHit[] Hits);
 
+/// The open document's edits, against the text the editor has, to apply at once as one undoable edit.
+public sealed record DocumentEdits(string Path, TextEdit[] Edits);
+
+public sealed record FileCount(string File, int Count);
+
+/// session_replace's and session_rename_symbol's answer: the open document's edits, if it has a match, and the other
+/// files, which the core has written.
+public sealed record Replaced(DocumentEdits? Edits, FileCount[] Written);
+
 /// <param name="Shape">upright, italic or smallCaps.</param>
 public sealed record HeadingFont(double Scale, bool Bold, string Shape);
 

@@ -107,6 +107,23 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_close", new { session });
     }
 
+    /// The open document's matches come back as edits for the editor; the other files are written and counted.
+    [Fact]
+    public async Task ReplaceLeavesTheOpenDocumentToTheEditor()
+    {
+        var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Replace" });
+        File.WriteAllText(Path.Combine(dir, made.Id, "notes.tex"), "a needle\n");
+        const ulong session = 4;
+        await core.CallAsync("session_open", new { id = made.Id, session });
+        await core.CallAsync("session_open_document", new { session, path = "main.tex" });
+        using (var source = core.SessionSource(session, "main.tex")) source!.Edit(0, 0, "needle ");
+        var replaced = await core.CallAsync<Replaced>("session_replace", new { session, query = "needle", replacement = "pin" });
+        Assert.Equal("main.tex", replaced.Edits?.Path);
+        Assert.Equal(new[] { new TextEdit(0, 6, "pin") }, replaced.Edits?.Edits);
+        Assert.Equal(new[] { new FileCount("notes.tex", 1) }, replaced.Written);
+        await core.CallAsync("session_close", new { session });
+    }
+
     [Fact]
     public async Task ConcurrentCallsComplete()
     {

@@ -306,6 +306,13 @@ public sealed partial class WorkspacePage : Page
         if (await OpenDocument(path, KindOf(path) ?? "tex")) Editor.GoTo(line, column, length);
     }
 
+    /// A replace's or rename's edits of the open document, at once as one undo step; not into another file shown meanwhile,
+    /// whose offsets they aren't.
+    void Apply(Replaced replaced)
+    {
+        if (replaced.Edits is { } edits && edits.Path == Editor.Path) Editor.Apply(edits.Edits);
+    }
+
     /// Another app's text, or the disk's after Revert, shown without an edit. The session holds the document's saves until
     /// its source has it, so one open but not shown takes it too.
     void Reload(string path, string text)

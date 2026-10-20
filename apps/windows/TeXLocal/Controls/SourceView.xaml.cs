@@ -478,7 +478,8 @@ public sealed partial class SourceView : UserControl
         return true;
     }
 
-    bool Apply(TextEdit[]? edits) => edits is { Length: > 0 } && Apply(new Change(edits,
+    /// Edits in the text's order, as one undo step, with the selection moved by them.
+    public bool Apply(TextEdit[]? edits) => edits is { Length: > 0 } && Apply(new Change(edits,
         source!.Call<SourceRange[]>("map_selections", new { edits, selections = new[] { Selected } }) ?? []));
 
     void Insert(Insertion? insertion)
