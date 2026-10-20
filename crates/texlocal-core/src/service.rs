@@ -174,9 +174,6 @@ impl Service {
                     Ok(json!({ "path": projects::create_free(root, path, dir)? }))
                 })?)
             }
-            // A session builds and cleans; this stops a project's build from outside it, as
-            // before the project goes to the Trash.
-            "stop_compile" => out(self.compile.stop(&root()?)),
             "synctex_forward" => out(synctex::synctex_forward_at(
                 &root()?,
                 s("file")?,

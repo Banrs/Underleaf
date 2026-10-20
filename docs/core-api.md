@@ -365,4 +365,5 @@ Every change a host follows since commit d6bee12, in the order made.
   `main`), and a session sends the tree again when the main file changes. Both hosts may adopt
   it in place of their own marks; nothing breaks meanwhile.
 - Both hosts mark the main file from the tree's `main`, not their copy of the settings, and
-  Windows keeps Delete off for that node.
+  Windows keeps Delete off for that node. The service's `stop_compile` is gone: a project's
+  build is its session's, which closing the workspace stops (`session_stop_compile` stays).

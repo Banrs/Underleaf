@@ -222,11 +222,7 @@ public sealed partial class HomePage : Page
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         }) != ContentDialogResult.Primary) return;
-        try
-        {
-            await Core.CallAsync("stop_compile", new { id = p.Id });
-            await App.Recycle(await Root(p));
-        }
+        try { await App.Recycle(await Root(p)); }
         catch (Exception ex) { await App.Alert("Can't delete this project", ex.Message); }
         Reload();
     }
