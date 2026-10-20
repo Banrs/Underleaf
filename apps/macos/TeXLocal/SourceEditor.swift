@@ -117,16 +117,21 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     var currentLine: Int { textView.document.line(at: textView.selectedRange().location) }
     var currentColumn: Int { textView.selectedRange().location - textView.document.lineStart(currentLine) }
 
-    /// The find indicator bounces, so not with Reduce Motion, where the selection is the mark.
-    func reveal(line: Int, column: Int? = nil, atTop: Bool = false, focus: Bool = true) {
+    /// The match `length` long at `column`, or the word there. The find indicator bounces, so not with Reduce Motion, where
+    /// the selection is the mark.
+    func reveal(line: Int, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true) {
         let document = textView.document
         let start = document.lineStart(line)
         let end = line < document.lineCount ? document.lineStart(line + 1) - 1 : textView.text.length
-        let word = column.map { textView.selectionRange(forProposedRange: .caret(min(start + $0, end)), granularity: .selectByWord) }
-        textView.setSelectedRange(word ?? .caret(start))
+        let found = column.map { column in
+            let at = min(start + column, end)
+            return length.map { NSRange(location: at, length: min($0, end - at)) }
+                ?? textView.selectionRange(forProposedRange: .caret(at), granularity: .selectByWord)
+        }
+        textView.setSelectedRange(found ?? .caret(start))
         atTop ? textView.scroll(toTop: start) : textView.centerSelectionInVisibleArea(nil)
         if focus { self.focus() }
-        let shown = word ?? NSRange(location: start, length: end - start)
+        let shown = found ?? NSRange(location: start, length: end - start)
         // Once the scroll's layout is done.
         if shown.length > 0, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { Task { self.textView.showFindIndicator(for: shown) } }
     }
