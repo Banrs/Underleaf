@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Navigation;
 using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
 using TeXLocal.Controls;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 
 namespace TeXLocal.Pages;
@@ -20,6 +21,7 @@ public sealed partial class HomePage : Page
 {
     static readonly ProjectTemplate[] templates = [new("blank", "Blank"), new("article", "Article"), new("report", "Report"), new("beamer", "Presentation", 160, 90)];
     readonly RenameFlyout rename = new();
+    ProjectInfo[] projects = [];
     ProjectInfo? target;
     string? focus;
     int loads;
@@ -28,13 +30,19 @@ public sealed partial class HomePage : Page
     {
         InitializeComponent();
         Templates.ItemsSource = templates;
-        var shortcut = new KeyboardAccelerator { Key = VirtualKey.N, Modifiers = VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift };
-        shortcut.Invoked += (_, e) =>
+        Accelerate(VirtualKey.N, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => New(templates[1]));
+        Accelerate(VirtualKey.F, VirtualKeyModifiers.Control, () => Search.Focus(FocusState.Keyboard));
+
+        void Accelerate(VirtualKey key, VirtualKeyModifiers modifiers, Action action)
         {
-            e.Handled = true;
-            New(templates[1]);
-        };
-        KeyboardAccelerators.Add(shortcut);
+            var shortcut = new KeyboardAccelerator { Key = key, Modifiers = modifiers };
+            shortcut.Invoked += (_, e) =>
+            {
+                e.Handled = true;
+                action();
+            };
+            KeyboardAccelerators.Add(shortcut);
+        }
     }
 
     public static string Modified(long mtime) => $"{DateTimeOffset.FromUnixTimeMilliseconds(mtime).LocalDateTime:g}";
@@ -65,30 +73,36 @@ public sealed partial class HomePage : Page
         focus = id ?? focus;
         var generation = ++loads;
         var error = App.OpenCore() ? null : App.CoreError ?? "";
-        ProjectInfo[] projects = [];
+        ProjectInfo[] listed = [];
         if (error is null)
-            try { projects = await Core.CallAsync<ProjectInfo[]>("list_projects"); }
+            try { listed = await Core.CallAsync<ProjectInfo[]>("list_projects"); }
             catch (CoreException ex) { error = ex.Message; }
         if (generation != loads) return;
         LibraryError.Message = error ?? "";
         LibraryError.IsOpen = error is not null;
-        if (error is null) Show(projects);
+        if (error is not null) return;
+        projects = listed;
+        Show();
     }
 
-    void Show(ProjectInfo[] projects)
+    /// The projects whose names hold the search's text, as on the Mac.
+    void Show()
     {
+        var query = Search.Text.Trim();
+        ProjectInfo[] shown = [.. projects.Where(p => p.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase))];
         var id = focus ?? Focused?.Id;
         focus = null;
-        if (List.ItemsSource is not ProjectInfo[] shown || !shown.SequenceEqual(projects))
+        if (List.ItemsSource is not ProjectInfo[] listed || !listed.SequenceEqual(shown))
         {
-            List.ItemsSource = projects;
-            if (projects.FirstOrDefault(p => p.Id == id) is { } p)
+            List.ItemsSource = shown;
+            if (shown.FirstOrDefault(p => p.Id == id) is { } p)
             {
                 List.UpdateLayout();
                 (List.ContainerFromItem(p) as Control)?.Focus(FocusState.Programmatic);
             }
         }
-        var empty = projects.Length == 0;
+        var empty = shown.Length == 0;
+        Empty.Text = projects.Length == 0 ? "No projects yet. Choose a template above, or open or drop a folder, .tex file or .zip." : $"No results for “{query}”.";
         Empty.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         List.Visibility = Columns.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
     }
@@ -99,6 +113,22 @@ public sealed partial class HomePage : Page
     }
 
     void OnRetry(object sender, RoutedEventArgs e) => Reload();
+
+    void OnSearch(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs e) => Show();
+
+    void OnDragOver(object sender, DragEventArgs e)
+    {
+        if (e.DataView.Contains(StandardDataFormats.StorageItems)) e.AcceptedOperation = DataPackageOperation.Copy;
+    }
+
+    /// Folders, .tex and .zip files from File Explorer, imported as from the Open menu.
+    async void OnDrop(object sender, DragEventArgs e)
+    {
+        var deferral = e.GetDeferral();
+        var dropped = await e.DataView.GetStorageItemsAsync();
+        deferral.Complete();
+        await App.Window.Import(dropped.Select(i => i.Path));
+    }
 
     void OnItemClick(object sender, ItemClickEventArgs e) => App.Window.OpenProject(((ProjectInfo)e.ClickedItem).Id);
 
