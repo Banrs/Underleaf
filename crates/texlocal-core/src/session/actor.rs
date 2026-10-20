@@ -26,7 +26,7 @@ use crate::projects::{self, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
-use crate::{CoreError, lock};
+use crate::{CoreError, lf, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
@@ -1082,13 +1082,5 @@ impl Newline {
             Self::Cr => "\r",
         };
         Cow::Owned(lf(text.to_owned()).replace('\n', ending))
-    }
-}
-
-pub(crate) fn lf(text: String) -> String {
-    if text.contains('\r') {
-        text.replace("\r\n", "\n").replace('\r', "\n")
-    } else {
-        text
     }
 }

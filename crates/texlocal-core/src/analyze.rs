@@ -424,7 +424,8 @@ impl Files {
         {
             return Ok(Arc::clone(facts));
         }
-        let text = crate::lossy_string(fs::read(abs)?);
+        // A line ends where an editor's does, at a carriage return alone too.
+        let text = crate::lf(crate::lossy_string(fs::read(abs)?));
         let facts = Arc::new(Facts::read(&text, file_kind(rel)));
         lock(&self.0).insert(key, (stamp, Arc::clone(&facts)));
         Ok(facts)
@@ -780,9 +781,9 @@ mod tests {
     fn a_file_reads_as_its_outline_and_words() {
         let cases: &[(&str, Outline, usize)] = &[
             (
-                "one\r\n\\section{Two}\r\n\\section{Three}\nfour",
-                &[(2, "Two", 2), (2, "Three", 3)],
-                4,
+                "one\r\n\\section{Two}\r\n\\section{Three}\nfour\r\\section{Five}",
+                &[(2, "Two", 2), (2, "Three", 3), (2, "Five", 5)],
+                5,
             ),
             (
                 "\\part{P}\n\\chapter{C}\n\\section{S}\n\\subsection{Sub}\n\\subsubsection{SubSub}\n\\paragraph{Para}\n\\subparagraph{Not in the outline}",

@@ -45,6 +45,14 @@ pub(crate) fn tail(text: &str, max: usize) -> &str {
     &text[text.ceil_char_boundary(text.len().saturating_sub(max))..]
 }
 
+pub(crate) fn lf(text: String) -> String {
+    if text.contains('\r') {
+        text.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        text
+    }
+}
+
 pub(crate) fn lossy_string(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes)
         .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
