@@ -80,6 +80,7 @@ public sealed partial class SourceView : UserControl
     readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly List<(IssueLine Issue, IssueMark Label, FrameworkElement Mark, FrameworkElement Band, FrameworkElement[] Underlines)> marks = [];
     readonly DispatcherQueueTimer partnerTimer;
+    readonly Windows.UI.ViewManagement.UISettings system = new();
     Source? source;
     ScrollViewer? scroller;
     bool setting, changed, undoing, restoring, composing, loading, stale, mirroring, reoffer, queued, moved, numbered = true;
@@ -168,10 +169,19 @@ public sealed partial class SourceView : UserControl
         Loaded += (_, _) =>
         {
             numbered = Prefs.LineNumbers;
+            system.ColorValuesChanged += OnColoursChanged;
             Recolour(ActualTheme != inked);
             Invalidate(false);
         };
+        Unloaded += (_, _) => system.ColorValuesChanged -= OnColoursChanged;
     }
+
+    /// Off the UI thread. A switch into, out of or between high-contrast themes may raise no ActualThemeChanged; kinds are
+    /// none in high contrast.
+    void OnColoursChanged(Windows.UI.ViewManagement.UISettings sender, object? args) => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (kinds.Length == 0 || new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast) Recolour(true);
+    });
 
     public void SetLook(string family, double size, string themeId)
     {
