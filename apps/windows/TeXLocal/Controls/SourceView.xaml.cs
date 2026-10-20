@@ -892,7 +892,19 @@ public sealed partial class SourceView : UserControl
     /// The first of the places, as Visual Studio goes with one; where nothing is defined, nothing changes.
     void Define(int at)
     {
-        if (source?.Call<Definition>("definition", new { at }) is { Places: [var first, ..] }) DefinitionFound?.Invoke(first);
+        if (DefinitionAt(at) is { Places: [var first, ..] }) DefinitionFound?.Invoke(first);
+    }
+
+    Definition? DefinitionAt(int at) => source?.Call<Definition>("definition", new { at });
+
+    /// Visual Studio's Go to definition after the text commands, which the menu makes again each time it opens.
+    void OnContextOpening(object sender, object e)
+    {
+        var commands = ((TextCommandBarFlyout)sender).SecondaryCommands;
+        var go = new AppBarButton { Label = "Go to definition", KeyboardAcceleratorTextOverride = "F12", IsEnabled = DefinitionAt(CaretOffset) is { Places.Length: > 0 } };
+        go.Click += (_, _) => GoToDefinition();
+        commands.Add(new AppBarSeparator());
+        commands.Add(go);
     }
 
     /// A dropped file's text, put in where it was dropped and selected, as on the Mac. Not Drop, UIElement's event.
