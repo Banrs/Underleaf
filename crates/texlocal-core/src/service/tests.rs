@@ -270,7 +270,7 @@ async fn a_rename_answers_the_moved_ui_state_and_the_main_file_it_moved() {
     ask("session_close", json!({ "session": 1 })).await;
 }
 
-// MARK: - The per-project lock
+// MARK: - The edit lock
 
 #[test]
 fn a_panic_during_an_edit_does_not_stop_later_edits() {
@@ -314,32 +314,4 @@ async fn ui_state_patches_and_main_file_renames_preserve_both_changes() {
         assert_eq!(settings::read_settings(&root).main_file, to);
         assert_eq!(settings::read_ui(&root).expanded_folders, [folder]);
     }
-}
-
-#[test]
-fn an_edit_waits_for_its_own_project_only() {
-    let (_dir, service) = with_project();
-    let data = &service.data_dir;
-    projects::create_project(data, "Q", "blank", None).unwrap();
-    std::thread::scope(|scope| {
-        let edit = service.with_project("P", |_| {
-            // Another project's edit goes ahead.
-            service
-                .with_project("Q", |root| {
-                    projects::write_creating(&root.join("q.tex"), b"q")
-                })
-                .unwrap();
-            // This project's waits, however its id is spelled.
-            let edit = scope.spawn(|| {
-                service.with_project("./P", |root| {
-                    projects::write_creating(&root.join("p.tex"), b"p")
-                })
-            });
-            service.wait_for_a_waiter("P");
-            assert!(!data.join("P/p.tex").exists());
-            Ok(edit)
-        });
-        edit.unwrap().join().unwrap().unwrap();
-    });
-    assert!(data.join("P/p.tex").is_file());
 }

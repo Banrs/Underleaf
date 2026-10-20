@@ -899,7 +899,8 @@ async fn typed_during_a_save(rig: &Rig, doc: &Document, typed: &str, command: &s
     held.recv().unwrap();
     let args = json!({ "session": rig.session, "path": "old.tex" });
     let answer = rig.sessions.send(&format!("session_{command}"), &args);
-    rig.sessions.service.wait_for_a_waiter("P");
+    // Time for the save to reach the lock.
+    wait(100).await;
     doc.edit(0, 0, typed);
     release.send(()).unwrap();
     holder.join().unwrap().unwrap();

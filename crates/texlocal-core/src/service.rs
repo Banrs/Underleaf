@@ -1,7 +1,6 @@
 // Shared command surface: hosts forward here so path checks and edit
 // serialization have one implementation.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -10,7 +9,6 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::compile::CompileManager;
-use crate::paths::fold_case;
 use crate::projects;
 use crate::settings::{self, AppSettings};
 use crate::synctex;
@@ -27,12 +25,8 @@ pub struct Service {
     pub data_dir: PathBuf,
     pub compile: CompileManager,
     pub texpresso: Arc<texpresso::Manager>,
-    /// One lock per project name, case-folded where the volume ignores case:
-    /// a project's edits, settings read/modify/write, renames and deletes run
-    /// one at a time, while other projects' go on. Unicode normalisation is
-    /// not folded: ids are the names list_projects read from the folder, so
-    /// every client spells a project as its folder is stored.
-    edits: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Edits, settings read/modify/write, renames and deletes run one at a time.
+    edits: Mutex<()>,
     /// Whether the last look for TeX (`status`) found it: sessions build by themselves only
     /// then, and one waiting builds once it is. None found before the first look.
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
@@ -71,40 +65,14 @@ impl Service {
         self.texpresso.live_pdf(session).map(Some)
     }
 
-    /// Run `use_project` holding the project's lock, finding the project
-    /// once it is held, so a rename or delete that held it first is seen.
-    /// Locks no one holds are dropped on the way.
+    /// Finds the project once the lock is held, so a rename or delete that held it first is seen.
     pub(crate) fn with_project<T>(
         &self,
         id: &str,
         use_project: impl FnOnce(&Path) -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
-        let key = fold_case(paths::project_name(id)?);
-        let held = {
-            let mut locks = lock(&self.edits);
-            locks.retain(|_, held| Arc::strong_count(held) > 1);
-            Arc::clone(locks.entry(key).or_default())
-        };
-        let _guard = lock(&held);
+        let _guard = lock(&self.edits);
         use_project(&self.project_root(id)?)
-    }
-
-    /// Returns once a second caller waits for the project's lock, which the test holds: the
-    /// map, the holder and the waiter then share it.
-    #[cfg(test)]
-    pub(crate) fn wait_for_a_waiter(&self, id: &str) {
-        let key = fold_case(paths::project_name(id).unwrap());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while lock(&self.edits)
-            .get(&key)
-            .is_none_or(|held| Arc::strong_count(held) < 3)
-        {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "nothing waits for {id}"
-            );
-            std::thread::yield_now();
-        }
     }
 
     // ---------- status ----------
