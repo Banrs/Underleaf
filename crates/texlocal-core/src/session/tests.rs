@@ -828,8 +828,8 @@ async fn the_main_file_cant_go_to_the_trash_and_nothing_puts_a_trashed_file_back
 }
 
 /// `command`'s answer, with `typed` put at the start of `doc` while the save before it
-/// waits for the project's lock.
-async fn typed_during_a_save(rig: &Rig, doc: &Document, typed: &str, command: &str) -> Value {
+/// waits for the project's lock: the two saves show it came after that save's snapshot.
+async fn typed_during_a_save(rig: &mut Rig, doc: &Document, typed: &str, command: &str) -> Value {
     let (held_tx, held) = std::sync::mpsc::channel();
     let (release, release_rx) = std::sync::mpsc::channel::<()>();
     let service = Arc::clone(&rig.sessions.service);
@@ -847,21 +847,24 @@ async fn typed_during_a_save(rig: &Rig, doc: &Document, typed: &str, command: &s
     doc.edit(0, 0, typed);
     release.send(()).unwrap();
     holder.join().unwrap().unwrap();
-    answer.await.unwrap()
+    let answer = answer.await.unwrap();
+    let saves = rig.of_type("saved").await;
+    assert_eq!(saves.len(), 2, "{saves:?}");
+    answer
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn text_typed_during_a_save_is_saved_before_a_build_or_a_trash_goes_on() {
-    let rig = Rig::new(false).await;
+    let mut rig = Rig::new(false).await;
     fs::write(rig.root.join("old.tex"), "old").unwrap();
     let doc = rig.open("old.tex").await;
     doc.edit(0, 0, "a");
-    typed_during_a_save(&rig, &doc, "b", "compile").await;
+    typed_during_a_save(&mut rig, &doc, "b", "compile").await;
     assert_eq!(rig.fake.called("compile"), 1);
     assert_eq!(rig.disk("old.tex"), "baold");
     rig.fake.finish_build(built(true, Vec::new()));
     doc.edit(0, 0, "c");
-    let ready = typed_during_a_save(&rig, &doc, "d", "prepare_delete").await;
+    let ready = typed_during_a_save(&mut rig, &doc, "d", "prepare_delete").await;
     assert_eq!(ready["ready"], true);
     assert_eq!(rig.disk("old.tex"), "dcbaold");
 }
