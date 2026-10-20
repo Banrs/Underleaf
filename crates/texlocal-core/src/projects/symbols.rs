@@ -11,11 +11,11 @@ use crate::error::CoreError;
 pub use crate::syntax::Symbols;
 
 /// Their union over the project's .tex and .bib files, each read again only once it changes;
-/// one an editor has open, `open`'s, as the editor has it.
+/// one an editor has open from its text in `open`.
 pub fn scan_symbols(
     root: &Path,
     facts: &Files,
-    open: &HashMap<String, Arc<Facts>>,
+    open: &HashMap<String, String>,
 ) -> Result<Symbols, CoreError> {
     let mut files = BTreeMap::new();
     visit_files(root, &mut |abs, rel| {
@@ -23,7 +23,7 @@ pub fn scan_symbols(
             return Ok(true);
         }
         let found = match open.get(rel) {
-            Some(open) => Some(Arc::clone(open)),
+            Some(text) => Some(Arc::new(Facts::read(text, file_kind(rel)))),
             None => skip_unreadable(facts.facts(abs, rel))?,
         };
         if let Some(found) = found {

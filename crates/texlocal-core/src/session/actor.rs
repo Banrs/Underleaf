@@ -889,10 +889,7 @@ impl Actor {
         files.sort_unstable();
         tokio::task::spawn_blocking(move || {
             let docs = lock(&docs).clone();
-            let open = docs.into_iter().map(|(path, doc)| {
-                let facts = analyze::Facts::read(&doc.snapshot().0, file_kind(&path));
-                (path, Arc::new(facts))
-            });
+            let open = docs.into_iter().map(|(path, doc)| (path, doc.snapshot().0));
             let symbols = projects::scan_symbols(&root, &facts, &open.collect());
             let symbols = symbols.map(|symbols| Symbols { files, ..symbols });
             let _ = tx.send(Msg::Symbols(seq, symbols));
