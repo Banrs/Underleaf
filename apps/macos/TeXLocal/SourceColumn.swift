@@ -5,7 +5,7 @@ struct SourceColumn: View {
     let project: ProjectModel
 
     var body: some View {
-        // Keep the editor under previews so it retains its text and scroll position.
+        // Under previews, so it keeps its text and scroll.
         ZStack {
             EditorView(editor: project.editor, shown: project.editsText)
                 .ignoresSafeArea(.container, edges: [.top, .bottom])

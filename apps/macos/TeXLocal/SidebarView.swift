@@ -11,23 +11,23 @@ struct FilesList: View {
     var body: some View {
         // The File Outline's header is the files' bottom bar, as high as the pane's bottom safe area.
         GeometryReader { geometry in
-            // Two lists: one list diffed from the tree to grouped hits and back keeps stale rows.
+            // Two lists: one diffed from the tree to grouped hits and back keeps stale rows.
             Group { if project.search.isSearching { results } else { files } }
                 .modifier(HeaderEdge(height: geometry.safeAreaInsets.bottom))
         }
-            // Each search reads every file in the project; it waits for typing to pause.
+            // Each search reads every file: it waits for typing to pause.
             .task(id: project.search.query) {
                 if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
                 guard !Task.isCancelled else { return }
                 await project.search.run()
-                // The list changes without a word: VoiceOver hears the count, as it does the PDF's find count.
+                // VoiceOver hears the count, as it does the PDF's find count.
                 guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
                 let count = project.search.hitCount
                 project.notices.announce(count == 0 ? String(localized: "Not found")
                     : String(AttributedString(localized: "^[\(count) match](inflect: true)").characters), queued: true)
             }
             .onChange(of: app.newEntry, initial: true) { _, entry in
-                // A project left for another still shows while the next loads: that one's list takes the entry as it appears.
+                // A project left for another still shows while the next loads, whose list takes the entry.
                 guard let entry, !project.closed else { return }
                 app.newEntry = nil
                 create(entry)
@@ -107,7 +107,7 @@ struct FilesList: View {
             }
             .focused($listFocused)
             .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in project.tree.node(at: path).map(actions) }
-            // A row named in place comes into view first: the list makes only the rows it shows.
+            // The list makes only the rows it shows.
             .onChange(of: rename.id) { _, id in if let id { Task { proxy.scrollTo(id) } } }
         }
     }
@@ -142,7 +142,7 @@ struct FilesList: View {
         List(selection: $hit) { searchResults }
             .listStyle(.sidebar)
             .accessibilityLabel("Search Results")
-            // A new query can reuse a file/line ID: clear the old selection so the first click on the new hit opens it.
+            // A new query can reuse a hit's ID: the first click on the new hit opens it.
             .onChange(of: project.search.query, initial: true) { hit = nil }
             .onChange(of: hit) { _, id in open(id, focus: false) }
             .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
@@ -215,7 +215,6 @@ struct FilesList: View {
         } icon: { Image(systemName: node.symbol) }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
-        // The star's name too: the row's label replaces its children's.
         .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
         .fileDrop(moves: { project.projectPath($0) != nil }) { urls in
             let folder = node.isDirectory ? node.path : node.path.parentFolder
@@ -226,7 +225,7 @@ struct FilesList: View {
 
     private func commitRename(_ node: TreeNode) {
         guard let name = rename.end(node.path, from: node.name) else { return }
-        // The field refuses a "/" as it is typed; this is for one that got by.
+        // The field refuses a "/" as it is typed; one may get by.
         guard !name.contains("/") else {
             app.alert = AppAlert("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
             return
@@ -270,8 +269,8 @@ private struct TreeRows<Node: Identifiable, Row: View>: View {
     }
 }
 
-/// Not a `Binding` of the set: two changes in one click would each start from the set as it was. With Option held the
-/// `subtree`'s keys go with it (HIG, Outline views).
+/// Not a `Binding` of the set: two changes in one click would each start from the set as it was. Option takes the
+/// `subtree`'s keys with it (HIG, Outline views).
 private func disclosure(_ set: ReferenceWritableKeyPath<ProjectModel, Set<String>>, of project: ProjectModel, key: String,
                         inverted: Bool = false, subtree: @autoclosure @escaping () -> [String]) -> Binding<Bool> {
     Binding(get: { project[keyPath: set].contains(key) != inverted },
@@ -279,26 +278,6 @@ private func disclosure(_ set: ReferenceWritableKeyPath<ProjectModel, Set<String
                 let keys = NSEvent.modifierFlags.contains(.option) ? [key] + subtree() : [key]
                 if on != inverted { project[keyPath: set].formUnion(keys) } else { project[keyPath: set].subtract(keys) }
             })
-}
-
-#Preview("File tree") {
-    @Previewable @State var expanded: Set<String> = ["figures"]
-    let file = { (path: String, kind: FileKind) in TreeNode(type: .file, name: path.fileName, path: path, kind: kind, children: nil) }
-    List {
-        Section("Files") {
-            TreeRows(nodes: [
-                TreeNode(type: .dir, name: "figures", path: "figures",
-                         children: [file("figures/plot.pdf", .pdf), file("figures/diagram.png", .image)]),
-                file("main.tex", .tex), file("references.bib", .bib),
-            ], children: \.children, isExpanded: { node in
-                Binding(get: { expanded.contains(node.path) }, set: { if $0 { expanded.insert(node.path) } else { expanded.remove(node.path) } })
-            }) { node in
-                Label(node.name, systemImage: node.symbol)
-            }
-        }
-    }
-    .listStyle(.sidebar)
-    .frame(width: 270, height: 240)
 }
 
 extension View {
@@ -309,7 +288,7 @@ extension View {
             if !files.isEmpty { action(files) }
         }
         .dropConfiguration { _ in
-            // AppKit's drag pasteboard: a drop session names none of its items until they're dropped.
+            // A drop session names none of its items until they're dropped.
             let urls = (NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
                                                               options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []).filter(accepts)
             var configuration = DropConfiguration(operation: urls.isEmpty ? .forbidden : urls.allSatisfy(moves) ? .move : .copy)
@@ -335,9 +314,8 @@ struct OutlineList: View {
 
     var body: some View {
         let outline = project.outline
-        // The model sets it only when the heading changes, not at each line the caret moves to.
         let current = project.currentHeading
-        // A list sends nothing for a click on the row already selected, so the rows tap for those two.
+        // A list sends nothing for a click on the row already selected, so the rows tap for it.
         let selection = Binding<Int?>(get: { chosen ?? current }, set: { id in
             guard let id, id != current, outline.indices.contains(id) else { return }
             chosen = id
@@ -349,7 +327,7 @@ struct OutlineList: View {
                     disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
                 }) { node in
                     HeadingRow(item: node.item).equatable().tag(node.id)
-                        // A click on the selected row shows it again; a double-click's second is the list's primary action, which goes into the source.
+                        // A double-click's second click is the list's primary action, into the source.
                         .simultaneousGesture(TapGesture().onEnded {
                             guard NSApp.currentEvent?.clickCount ?? 1 < 2, node.id == current || node.id == chosen else { return }
                             chosen = node.id == current ? nil : node.id
@@ -359,11 +337,11 @@ struct OutlineList: View {
             }
             .listStyle(.sidebar)
             .accessibilityLabel("File Outline")
-            // The header above stands for a section's, so the list's room over its first row goes; the scroller keeps to what shows.
+            // The header above stands for a section's: the room over the first row goes.
             .contentMargins(.top, sidebarListRoom, for: .scrollIndicators)
             .padding(.top, -sidebarListRoom)
             .clipped()
-            // A step under the files' rows: a table of contents under a list.
+            // A step under the files' rows.
             .environment(\.sidebarRowSize, rowSize == .large ? .medium : .small)
             .overlay { if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") } }
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
@@ -380,8 +358,8 @@ struct OutlineList: View {
     }
 }
 
-/// The system's collapsible sidebar section with no rows, at the files' foot so it stays put over the outline; its whole
-/// row folds and unfolds. Folded, it lines up with the status bar; open, the first heading follows at the Files' spacing.
+/// The system's collapsible sidebar section with no rows, at the files' foot; its whole row folds and unfolds, level with
+/// the status bar.
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
 
@@ -402,26 +380,24 @@ struct OutlineHeader: View {
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                // The button covers the system's disclosure, so it tells VoiceOver the state.
+                // It covers the system's disclosure.
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
             }
         }
         .listStyle(.sidebar)
         .disabled(app.project?.isLaTeX != true)
-        // The sidebar's own material shows through, as behind the lists either side.
         .scrollContentBackground(.hidden)
         .scrollDisabled(true)
         .frame(height: sidebarListRoom + Self.row + sidebarListRoom, alignment: .top)
-        // AppKit animates the bar's height with the split; the header keeps one size and one place under the line.
+        // AppKit animates the bar's height with the split; the header keeps its size and place.
         .offset(y: Self.top - sidebarListRoom)
         .frame(height: Self.openHeight, alignment: .top)
         .clipped()
     }
 }
 
-/// The room a sidebar list leaves over its first row and under its last, inside its table (measured, 27.2); `contentMargins`
-/// doesn't reach it.
+/// The room a sidebar list leaves over its first row, inside its table (27.2), which `contentMargins` doesn't reach.
 private let sidebarListRoom: CGFloat = 10
 
 /// Equatable: as a plain view, a heading that takes the place of a leaf and has subheadings opens closed (27.2).
@@ -434,16 +410,14 @@ private struct HeadingRow: View, Equatable {
             .help(item.title)
             .foregroundStyle(item.untitled ? .secondary : .primary)
             .accessibilityValue(item.level)
-            // For scrollTo, inside the row: on it, the list would take it for the row's identity, and a heading that gains subheadings would keep a leaf's closed state.
+            // For scrollTo, inside the row: on it, the list would take it for the row's identity.
             .id(item.id)
     }
 }
 
 /// The header's hard edge on the files, in place of its accessory's, which would double it. SwiftUI draws the edge only
-/// under a bar that draws something itself (measured 2026-10-06: not under `Color.clear`, a `Spacer` or a hidden view),
-/// so the bar is a fill the eye can't see.
+/// under a bar that draws something, so the bar is a fill the eye can't see.
 struct HeaderEdge: ViewModifier {
-    /// The header's; none, no edge.
     let height: CGFloat
 
     func body(content: Content) -> some View {
@@ -451,7 +425,6 @@ struct HeaderEdge: ViewModifier {
             .safeAreaBar(edge: .bottom, spacing: 0) { Rectangle().fill(.white.opacity(0.001)).frame(height: height) }
             .scrollEdgeEffectStyle(.hard, for: .bottom)
             .scrollEdgeEffectHidden(height == 0, for: .bottom)
-            // Its line is the system's, level with the status bar's.
             .ignoresSafeArea(.container, edges: .bottom)
     }
 }

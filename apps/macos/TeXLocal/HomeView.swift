@@ -8,7 +8,7 @@ struct HomeView: View {
     @FocusState private var searching: Bool
     @State private var query = ""
     @AppStorage(DefaultsKey.dismissedTeXTip) private var dismissedTeXTip = false
-    /// What was still at work 300 ms after it began: a quick open or copy shows no spinner.
+    /// Still at work 300 ms on: a quick open or copy shows no spinner.
     @State private var slowOpening: String?
     @State private var slowImports: [URL] = []
 
@@ -52,7 +52,7 @@ struct HomeView: View {
 
     private var list: some View {
         List(selection: $selection) {
-            // No section header: the list pins its first one with a rule the full width of the window.
+            // No section header: the list pins its first one with a rule the window's width.
             VStack(alignment: .leading, spacing: 8) {
                 Text("New").font(.subheadline).fontWeight(.semibold).foregroundStyle(.secondary)
                 templates
@@ -68,7 +68,7 @@ struct HomeView: View {
                     ProjectLabel(detail: Text("Copying…"), progress: "Copying") { Text(url.lastPathComponent).font(.headline) }
                 }
                 ForEach(shown) { project in
-                    // Its own view, so a row redraws only when its rename starts or ends.
+                    // Its own view, so a row redraws only as its rename starts or ends.
                     ProjectRow(project: project, working: project.id == app.opening && (project.id == slowOpening || copied),
                                rename: rename, ended: { listFocused = true }) { commitRename(project) }
                 }
@@ -111,7 +111,7 @@ struct HomeView: View {
         }
     }
 
-    /// In the projects' section, not over the list, so the templates stay in view.
+    /// In the section, not over the list, so the templates stay in view.
     @ViewBuilder private var empty: some View {
         if !query.isEmpty {
             ContentUnavailableView.search(text: query)
@@ -133,7 +133,7 @@ struct HomeView: View {
 
     private var copying: [URL] { query.isEmpty ? slowImports.filter(app.importing.contains) : [] }
 
-    /// A copy shown has ended: the project opening is its own, at work in its own row from then on.
+    /// A copy shown has ended: the project opening is at work in its own row.
     private var copied: Bool { slowImports.contains { !app.importing.contains($0) } }
 
     private var shown: [ProjectInfo] {
@@ -225,8 +225,8 @@ enum ProjectTemplate: String, CaseIterable, Identifiable {
     }
 }
 
-/// An image button (HIG, Buttons): no border at rest, 10 pt from the content to the clickable edge,
-/// and a fill under the pointer that deepens while pressed.
+/// An image button (HIG, Buttons): no border at rest, 10 pt to the clickable edge, a fill under the pointer that deepens
+/// while pressed.
 private struct TemplateButtonStyle: ButtonStyle {
     static let edge: CGFloat = 10
     @State private var hovered = false
@@ -244,10 +244,10 @@ private struct TemplateButtonStyle: ButtonStyle {
     }
 }
 
-/// A template's card: a drawing of its first page with its name under it, as in a template chooser.
+/// A drawing of the template's first page with its name under it.
 private struct TemplateCard: View {
     let template: ProjectTemplate
-    /// A US Letter page, 120 pt wide; its corner is drawn to look like paper, not to the kit.
+    /// A US Letter page, 120 pt wide, its corner drawn to look like paper.
     private static let page = CGSize(width: 120, height: 120 * 11 / 8.5)
     static let width = page.width + 2 * TemplateButtonStyle.edge
     private static let corner: CGFloat = 6
@@ -258,7 +258,7 @@ private struct TemplateCard: View {
         VStack(spacing: 8) {
             PagePreview(template: template)
                 .frame(width: Self.page.width, height: Self.page.height)
-                // White paper in either appearance, dimmed a little in dark mode; the drawing in light colours, made for paper.
+                // White paper in either appearance, dimmed a little in dark mode.
                 .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1), in: paper)
                 .overlay { paper.strokeBorder(.separator) }
                 .environment(\.colorScheme, .light)
@@ -334,8 +334,8 @@ struct NewProjectSheet: View {
                     action: "Create", enabled: !trimmed.isEmpty, failure: { "Couldn’t Create “\(trimmed)”" }) {
             try await app.create(name: trimmed, template: draft.template)
         } fields: {
-            // At a grouped form's trailing edge AppKit shows a space typed last only once a letter follows (27.2), so the text leads in
-            // a field as wide as the name: the row keeps it at its trailing edge, and each space moves the name as it is typed.
+            // 27.2: at a grouped form's trailing edge a space typed last shows only once a letter follows, so the text leads
+            // in a field as wide as the name.
             LabeledContent("Name") {
                 NameWidth {
                     TextField("Name", text: $draft.name, prompt: Text("Required"))
@@ -350,7 +350,7 @@ struct NewProjectSheet: View {
     }
 }
 
-/// Asked for its ideal it claims none, so a long name scrolls in its row and the form never moves it under its label as it is typed.
+/// Claiming no ideal, so a long name scrolls in its row and never moves under its label.
 private struct NameWidth: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let text = subviews[0].sizeThatFits(.unspecified).width
@@ -360,18 +360,4 @@ private struct NameWidth: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
-}
-
-#Preview("Template cards") {
-    HStack(alignment: .top) { ForEach(ProjectTemplate.allCases) { TemplateCard(template: $0) } }
-    .padding()
-}
-
-#Preview("Project") {
-    List {
-        ProjectRow(project: ProjectInfo(id: "thesis", name: "Thesis", mtime: Date.now.timeIntervalSince1970 * 1000 - 3_600_000,
-                                        mainFile: "main.tex"),
-                   working: false, rename: InPlaceRename(), ended: {}) {}
-    }
-    .listStyle(.inset)
 }

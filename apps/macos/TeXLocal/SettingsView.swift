@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 enum SettingsPane: String { case general, editor, compiling, pdf, livePreview }
 
-/// In a Settings scene a TabView is the window's toolbar of panes, titles the window after the pane shown and sizes it to that pane (HIG, Settings).
+/// A Settings scene's TabView is its toolbar of panes, and titles and sizes the window to the pane (HIG, Settings).
 struct SettingsView: View {
     @AppStorage(DefaultsKey.settingsPane) private var pane = SettingsPane.general
 
@@ -25,7 +25,7 @@ extension View {
     }
 }
 
-// A setting with a line under its title saying what it does, as Settings and the inspector show them.
+// A setting with a line under its title saying what it does.
 extension Toggle where Label == TupleView<(Text, Text)> {
     init(_ title: LocalizedStringKey, detail: LocalizedStringKey, isOn: Binding<Bool>) {
         self.init(isOn: isOn) { Text(title); Text(detail) }
@@ -84,7 +84,7 @@ private struct EditorSettings: View {
                     Text("System Monospaced").tag("")
                     Divider()
                     ForEach(Self.families, id: \.self) { Text($0).tag($0) }
-                    // A family since removed: a selection with no tag is a SwiftUI fault.
+                    // A family since removed: a selection with no tag is a fault.
                     if !fontName.isEmpty, !Self.families.contains(fontName) { Text(fontName).tag(fontName) }
                 }
                 Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
@@ -101,8 +101,7 @@ private struct EditorSettings: View {
         }
     }
 
-    /// Double: the stepper's formatted value takes only floating point, and the editor reads a whole number. Clamped here: the
-    /// range bounds the stepper's arrows, not a size typed into its field.
+    /// Double for the stepper's formatted value; clamped, as the range bounds its arrows and not a size typed in.
     private var size: Binding<Double> {
         Binding(get: { Double(fontSize) }, set: {
             fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
@@ -150,7 +149,6 @@ private struct LivePreviewSettings: View {
     var body: some View {
         Form {
             Section {
-                // An app opened from the Finder sees no shell PATH.
                 ProgramFolder(program: .texpresso)
                 Picker("Show Live Preview In", detail: "Takes effect the next time Live Preview starts.", selection: $viewer) {
                     ForEach(LiveViewer.allCases) { Text($0.title).tag($0) }
@@ -197,7 +195,7 @@ private struct ProgramFolder: View {
     private enum Choice: Hashable { case automatic, chosen, other }
 
     var body: some View {
-        // A spinner until the status is in, rather than a flash of "Not Found" at launch.
+        // A spinner until the status is in, not a flash of "Not Found".
         if let tex = app.tex {
             let chosen = program == .tex ? tex.texDir : tex.texpressoDir
             LabeledContent {
@@ -232,10 +230,10 @@ private struct ProgramFolder: View {
             }
             .fileDialogConfirmationLabel("Choose")
             .fileDialogMessage(program.dialogMessage)
-            // TeX lives under folders the dialog hides (/usr/local, /opt, /Library/TeX): open at the one in use, and show them.
+            // TeX lives under folders the dialog hides (/usr/local, /opt, /Library/TeX).
             .fileDialogBrowserOptions(.includeHiddenFiles)
             .fileDialogDefaultDirectory(URL(filePath: program.folder(in: tex) ?? "/usr/local", directoryHint: .isDirectory))
-            // Here, not in the project window, which Settings may cover.
+            // Not in the project window, which Settings may cover.
             .alert($alert)
         } else {
             LabeledContent(program.title) { ProgressView().controlSize(.small).accessibilityLabel("Looking for \(program.title)") }
