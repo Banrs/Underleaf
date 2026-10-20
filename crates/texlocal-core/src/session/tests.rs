@@ -1392,12 +1392,12 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
     assert_eq!(rig.disk("notes.txt"), "cat");
 }
 
-/// A citation's .bib entry and the key of a list that names it; refused for a key TeX
-/// couldn't read, one nothing defines and one taken.
+/// A citation's .bib entry, the key of a list that names it and an entry's crossref; refused
+/// for a key TeX couldn't read, one nothing defines and one taken.
 #[tokio::test(start_paused = true)]
 async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_disk() {
     let rig = Rig::new(false).await;
-    let bib = "@book{knuth,\n  title = {The {TeX}book},\n}\n@misc{lamport,}\n";
+    let bib = "@book{knuth,\n  title = {The {TeX}book},\n}\n@misc{lamport, crossref = {knuth}}\n";
     fs::write(rig.root.join("refs.bib"), bib).unwrap();
     let doc = rig.open("main.tex").await;
     doc.edit(5, 0, "\\cite{x, knuth}");
@@ -1419,10 +1419,10 @@ async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_
         renamed,
         json!({
             "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
-            "written": [{ "file": "refs.bib", "count": 1 }],
+            "written": [{ "file": "refs.bib", "count": 2 }],
         })
     );
-    assert_eq!(rig.disk("refs.bib"), bib.replace("knuth,", "knuth84,"));
+    assert_eq!(rig.disk("refs.bib"), bib.replace("knuth", "knuth84"));
 }
 
 #[tokio::test(start_paused = true)]

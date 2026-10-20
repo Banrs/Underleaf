@@ -33,6 +33,10 @@ static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
 // ASCII, which swallows a non-breaking space into the key.
 static BIB_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@([0-9A-Za-z_]+)\s*[{(]\s*([^,\s]+)\s*,").unwrap());
+// Only a field's name, in any case as BibTeX reads it: the first of an entry's fields or one
+// after a comma.
+static CROSSREF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)(?:^|,)\s*crossref\s*=\s*[{"]?\s*([^\s,{}"]+)"#).unwrap());
 
 /// A sectioning command's heading: depth (0 for \part to 5 for \paragraph), title as plain text, 1-based line and file. An empty title is `untitled`, shown by its level.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -178,29 +182,44 @@ impl Facts {
         let text = Text::new(source);
         if kind == "bib" {
             let mut entries = BIB_KEY.captures_iter(source).peekable();
-            let (mut citations, mut byte, mut unit) = (Vec::new(), 0, 0);
+            let (mut citations, mut uses, mut byte, mut unit) = (Vec::new(), Vec::new(), 0, 0);
+            // Each is after the last, so counted on from it.
+            let mut place = |at: Range<usize>| {
+                unit += source[byte..at.start].encode_utf16().count();
+                byte = at.start;
+                Place::of(&text, unit..unit + source[at].encode_utf16().count())
+            };
             while let Some(entry) = entries.next() {
                 let kind = entry[1].to_ascii_lowercase();
                 if matches!(kind.as_str(), "comment" | "string" | "preamble") {
                     continue;
                 }
                 let key = entry.get(2).expect("an entry has a key");
-                unit += source[byte..key.start()].encode_utf16().count();
-                byte = key.start();
-                let end = unit + key.as_str().encode_utf16().count();
                 // Read to the next entry at most, so one left unbalanced takes nothing of those
                 // after it.
                 let next = entries
                     .peek()
                     .map_or(source.len(), |next| next.get_match().start());
+                let start = entry.get_match().end();
+                let body = &source[start..next];
                 citations.push(Named {
                     name: key.as_str().to_owned(),
-                    place: Place::of(&text, unit..end),
-                    detail: detail(&fields(&source[entry.get_match().end()..next])),
+                    place: place(key.range()),
+                    detail: detail(&fields(body)),
                 });
+                // The entry it takes fields from, which a rename of that one must reach.
+                if let Some(parent) = CROSSREF.captures(body) {
+                    let parent = parent.get(1).expect("a crossref names a key");
+                    uses.push(Used {
+                        kind: SymbolKind::Citation,
+                        name: parent.as_str().to_owned(),
+                        place: place(start + parent.start()..start + parent.end()),
+                    });
+                }
             }
             return Self {
                 citations,
+                uses,
                 ..Self::default()
             };
         }
