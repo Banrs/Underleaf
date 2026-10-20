@@ -52,7 +52,7 @@ apps/windows/
       PDF, SyncTeX, status bar), WorkspacePage.Sidebar.cs (files, outline, project search, words),
       WorkspacePage.Insert.cs (Insert menu, symbol palette)
     Controls/Card.cs (a settings card), Shortcut.cs (accelerators as one attribute), Sizer.cs, RenameFlyout.xaml(.cs),
-      PdfView.xaml(.cs), SourceView.xaml(.cs) (typing through the core, completion, maths preview),
+      PdfView.xaml(.cs), SourceView.xaml(.cs) (typing through the core, completion, maths preview, Go to definition),
       SourceView.Find.cs (find and replace), PagePreview.cs (a template's first page in outline, for Home)
     Themes/Generic.xaml        Card's default style, section and group headers, the layer, the sizer's grip, status bar
                                styles, the template previews' bars

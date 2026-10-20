@@ -146,6 +146,15 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void DefinitionsDecode()
+    {
+        const string text = "\\label{a}\n\\ref{a}";
+        using var source = Source.New(text);
+        var places = source.Call<Definition>("definition", new { at = text.LastIndexOf('a') })?.Places;
+        Assert.Equal(new Place("", 1, 7, 1), Assert.Single(places ?? []));
+    }
+
+    [Fact]
     public void TextsPassWhole()
     {
         using var source = Source.New("a\0é");

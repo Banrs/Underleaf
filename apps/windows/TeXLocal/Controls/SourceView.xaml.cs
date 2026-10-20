@@ -111,6 +111,8 @@ public sealed partial class SourceView : UserControl
     public event Action<IssueLine>? IssueInvoked;
     /// Files dropped on the text, by their absolute paths, and the offset they were dropped at.
     public event Action<string[], int>? FilesDropped;
+    /// The first place the project defines a name the reader asked after.
+    public event Action<Place>? DefinitionFound;
 
     /// A file dragged from the navigation pane, by its absolute path: as storage items, the pane's own drop would add it
     /// to the project again.
@@ -175,6 +177,8 @@ public sealed partial class SourceView : UserControl
         // Handled ones too, so a drag RichEdit answers for itself still reaches FilesDropped.
         AddHandler(DragOverEvent, new DragEventHandler(OnDragOver), true);
         AddHandler(DropEvent, new DragEventHandler(OnDrop), true);
+        // RichEdit marks its presses handled.
+        Editor.AddHandler(PointerPressedEvent, new PointerEventHandler(OnPressed), true);
         SizeChanged += (_, e) => Clip = new RectangleGeometry { Rect = new(0, 0, e.NewSize.Width, e.NewSize.Height) };
         ActualThemeChanged += (_, _) => Recolour(true);
         Loaded += (_, _) =>
@@ -850,14 +854,32 @@ public sealed partial class SourceView : UserControl
     {
         if (source is null || !HasFiles(e.DataView)) return;
         e.Handled = true;
-        var p = e.GetPosition(Editor);
-        var at = Document.GetRangeFromPoint(new Point(Math.Max(0, p.X - Editor.Padding.Left + scroller!.HorizontalOffset),
-            Math.Max(0, p.Y - Editor.Padding.Top + scroller.VerticalOffset)), PointOptions.ClientCoordinates).StartPosition;
+        var at = OffsetAt(e.GetPosition(Editor));
         var deferral = e.GetDeferral();
         var paths = e.DataView.Contains(FileFormat) ? new[] { await e.DataView.GetDataAsync(FileFormat) as string ?? "" }
             : (await e.DataView.GetStorageItemsAsync()).Select(i => i.Path).ToArray();
         deferral.Complete();
         FilesDropped?.Invoke(paths, at);
+    }
+
+    /// The text's offset at a point of the editor's: RichEdit's points are the scrolled text's, inside its padding.
+    int OffsetAt(Point p) => Document.GetRangeFromPoint(new Point(Math.Max(0, p.X - Editor.Padding.Left + scroller!.HorizontalOffset),
+        Math.Max(0, p.Y - Editor.Padding.Top + scroller.VerticalOffset)), PointOptions.ClientCoordinates).StartPosition;
+
+    /// Ctrl+click, Visual Studio's and VS Code's Go to definition.
+    void OnPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(Editor);
+        if (e.KeyModifiers == Windows.System.VirtualKeyModifiers.Control && point.Properties.IsLeftButtonPressed) Define(OffsetAt(point.Position));
+    }
+
+    /// F12, at the caret.
+    public void GoToDefinition() => Define(CaretOffset);
+
+    /// The first of the places, as Visual Studio goes with one; where nothing is defined, nothing changes.
+    void Define(int at)
+    {
+        if (source?.Call<Definition>("definition", new { at }) is { Places: [var first, ..] }) DefinitionFound?.Invoke(first);
     }
 
     /// A dropped file's text, put in where it was dropped and selected, as on the Mac. Not Drop, UIElement's event.

@@ -85,6 +85,12 @@ public sealed record Insertion(TextEdit Edit, int Caret, SnippetField[] Fields);
 
 public sealed record MathPreview(int Start, string Tex, bool Display);
 
+/// <param name="Line">From 1; Column, from 0, and Length are UTF-16 units of the line.</param>
+public sealed record Place(string File, int Line, int Column, int Length);
+
+/// Every place the project defines the name at an offset, in the order of their files' paths.
+public sealed record Definition(Place[] Places);
+
 /// Each style the whole selection has, as the edits that would take it off.
 public sealed record TextStyles(TextEdit[]? Bold, TextEdit[]? Italic, TextEdit[]? Underline);
 
