@@ -36,7 +36,8 @@ public sealed class NavItem
 }
 
 /// The sidebar, as Word's navigation pane: Files, the Outline of the shown file's document, and project search's Results
-/// as VS Code's search view. Outline, words and hits are the core's (session_analyze, session_outline_current, search_project).
+/// as VS Code's search view. Outline, words and hits are the core's (session_analyze, session_outline_current, session_search,
+/// which finds the open document's unsaved edits).
 public sealed partial class WorkspacePage
 {
     readonly RenameFlyout rename = new();
@@ -268,7 +269,7 @@ public sealed partial class WorkspacePage
         SearchFile[] files = [];
         string? error = null;
         if (query.Length > 0)
-            try { files = await Core.CallAsync<SearchFile[]>("search_project", new { id, query }); }
+            try { files = await Core.CallAsync<SearchFile[]>("session_search", new { session, query }); }
             catch (CoreException ex) { error = ex.Message; }
         if (generation != searches) return;
         (searched, searchError) = (query, error);

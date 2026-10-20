@@ -90,15 +90,21 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_close", new { session });
     }
 
+    /// By file, with the open document's text as the editor has it.
     [Fact]
     public async Task SearchAnswersByFile()
     {
         var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Search" });
         File.WriteAllText(Path.Combine(dir, made.Id, "notes.tex"), "a needle\nNeedle b\n");
-        var notes = Assert.Single(await core.CallAsync<SearchFile[]>("search_project", new { id = made.Id, query = "needle" }));
+        const ulong session = 3;
+        await core.CallAsync("session_open", new { id = made.Id, session });
+        await core.CallAsync("session_open_document", new { session, path = "notes.tex" });
+        using (var source = core.SessionSource(session, "notes.tex")) source!.Edit(0, 0, "needle\n");
+        var notes = Assert.Single(await core.CallAsync<SearchFile[]>("session_search", new { session, query = "needle" }));
         Assert.Equal("notes.tex", notes.File);
-        Assert.Equal(new[] { 1, 2 }, notes.Hits.Select(h => h.Line));
-        Assert.Equal(("a ", "needle", 2, 6), (notes.Hits[0].Before, notes.Hits[0].Match, notes.Hits[0].Column, notes.Hits[0].Length));
+        Assert.Equal(new[] { 1, 2, 3 }, notes.Hits.Select(h => h.Line));
+        Assert.Equal(("a ", "needle", 2, 6), (notes.Hits[1].Before, notes.Hits[1].Match, notes.Hits[1].Column, notes.Hits[1].Length));
+        await core.CallAsync("session_close", new { session });
     }
 
     [Fact]
