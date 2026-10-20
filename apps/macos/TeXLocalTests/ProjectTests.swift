@@ -511,6 +511,21 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// The open document's match is an unsaved edit, which the session finds and replaces as the editor has it.
+    @Test func replaceAllReplacesInTheOpenDocumentAndOnDisk() async throws {
+        let (project, folder) = try await opened("a", with: ["b.tex": "needle b"])
+        let text = project.editor.textView
+        text.apply([TextEdit(.caret(1), " needle")], named: "Typing")
+        project.search.query = "needle"
+        await project.search.run(in: project.session)
+        project.search.replacement = "pin"
+        await project.replaceAll()
+        #expect(text.string == "a pin" && text.undoManager?.undoActionName == "Replace")
+        #expect(try String(contentsOf: folder.appending(path: "b.tex"), encoding: .utf8) == "pin b")
+        #expect(project.search.groups?.isEmpty == true && app.alert == nil)
+        await app.close()
+    }
+
     /// A rename's answer has the state the core moved, written before the rename asked for it.
     @Test func theSidebarsStateIsKeptForTheProjectAndFollowsARename() async throws {
         let project = try await opened(with: ["ch/a.tex": ""]).project

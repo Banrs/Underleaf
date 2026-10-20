@@ -6,6 +6,7 @@ final class ProjectSearch {
     private let core = Core.shared
 
     var query = ""
+    var replacement = ""
     var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
     /// Nil without a query and until its first search ends, so the pane doesn't read No Results while it runs.
     private(set) var groups: [SearchGroup]?

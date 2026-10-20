@@ -427,6 +427,30 @@ final class ProjectModel {
         return try? core.now("session_outline_current", ["session": session, "path": openPath, "line": line], as: Int?.self)
     }
 
+    /// The matches the search shows, which the field may be ahead of.
+    func replaceAll() async {
+        guard let session else { return }
+        let query = search.searched
+        guard let answer = await alerting("Couldn’t Replace “\(query)”", {
+            try await editProject("session_replace", ["session": session, "query": query, "replacement": search.replacement],
+                                  named: String(localized: "Replace"))
+        }) else { return }
+        let count = (answer.edits?.edits.count ?? 0) + answer.written.reduce(0) { $0 + $1.count }
+        let files = answer.written.count + (answer.edits == nil ? 0 : 1)
+        notices.note(String(AttributedString(localized: "Replaced ^[\(count) match](inflect: true) in ^[\(files) file](inflect: true)")
+            .characters))
+        await search.run(in: session)
+    }
+
+    /// The core writes the other files, with no undo; the open document's edits are one undo step, as a command's, which the
+    /// session saves as any.
+    private func editProject(_ command: String, _ args: [String: any Sendable], named name: String) async throws -> ProjectEdits {
+        let answer = try await core.call(command, args, as: ProjectEdits.self)
+        // A file shown since has text of its own.
+        if let edits = answer.edits, edits.path == editor.path { editor.textView.apply(edits.edits, named: name) }
+        return answer
+    }
+
     // MARK: - Changes on disk
 
     /// `save`, `revert`, `close`, or `cancel` with the reason it is held, unsaved, until a save asks again.
@@ -522,3 +546,16 @@ nonisolated struct SavedWorkspace: Codable, Equatable {
 
 /// None: the file dropped opens.
 private nonisolated struct DropText: Decodable { let insert: String? }
+
+/// `session_replace`'s.
+private nonisolated struct ProjectEdits: Decodable {
+    nonisolated struct Document: Decodable {
+        var path: String
+        var edits: [TextEdit]
+    }
+
+    nonisolated struct Written: Decodable { var count: Int }
+
+    var edits: Document?
+    var written: [Written]
+}
