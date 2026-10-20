@@ -88,27 +88,13 @@ fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
     assert_eq!(err.status, 409);
 }
 
-/// `before_move` runs once the rename is sure to go ahead: a project made
-/// then gets another name, not the one the rename is taking.
 #[test]
-fn a_project_made_while_a_rename_is_under_way_gets_another_name() {
+fn a_rename_that_doesnt_go_ahead_leaves_no_folder_of_the_new_name() {
     let (_dir, root) = project();
     let data = root.parent().unwrap();
-    fs::write(root.join("main.tex"), "the user's").unwrap();
-    let mut made = None;
-    let renamed = rename_project(data, "P", "R", |_| {
-        made = Some(create_project(data, "R", "blank", None)?.name);
-        Ok(())
-    });
-    assert_eq!(renamed.unwrap().name, "R");
-    assert_eq!(made.as_deref(), Some("R 2"));
-    let text = fs::read_to_string(data.join("R/main.tex")).unwrap();
-    assert_eq!(text, "the user's");
-
-    // A rename that doesn't go ahead leaves no folder of the new name.
-    let stopped = rename_project(data, "R", "S", |_| Err(CoreError::conflict("no")));
+    let stopped = rename_project(data, "P", "S", |_| Err(CoreError::conflict("no")));
     assert_eq!(stopped.unwrap_err().status, 409);
-    assert_eq!(names_in(data), ["R", "R 2"]);
+    assert_eq!(names_in(data), ["P"]);
 }
 
 #[cfg(unix)]

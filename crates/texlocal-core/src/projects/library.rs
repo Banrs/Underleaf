@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 use serde_json::json;
@@ -96,22 +96,49 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
     Ok(projects)
 }
 
-/// A project from `template`, set to build with `engine` if given (a bad one is a 400). The
-/// project is made whole or not at all: its files and settings are written in
-/// a hidden folder and moved into the library in one step.
+/// A project from `template`, set to build with `engine` if given (a bad one is a 400).
 pub fn create_project(
     data_dir: &Path,
     name: &str,
     template: &str,
     engine: Option<&str>,
 ) -> Result<ProjectInfo, CoreError> {
-    let staging = Staging::new(data_dir, name)?;
-    for (file, content) in templates::files(template) {
-        fs::write(staging.path().join(file), content)?;
+    new_project(data_dir, name, |root| {
+        for (file, content) in templates::files(template) {
+            fs::write(root.join(file), content)?;
+        }
+        let settings = engine.map_or_else(|| json!({}), |engine| json!({ "engine": engine }));
+        write_settings(root, &settings)?;
+        Ok(())
+    })
+}
+
+/// A project in a new folder named `name`, or "name 2" and so on when that is
+/// taken, as Finder numbers copies, filled by `fill`; removed if that fails.
+pub(crate) fn new_project(
+    data_dir: &Path,
+    name: &str,
+    fill: impl FnOnce(&Path) -> Result<(), CoreError>,
+) -> Result<ProjectInfo, CoreError> {
+    let name = sanitize_name(name)?;
+    fs::create_dir_all(data_dir)?;
+    for id in project_names(&name) {
+        let root = data_dir.join(&id);
+        // One create rather than a check and then a create, passing over
+        // anything already there, a dangling link or case alias too.
+        match fs::create_dir(&root) {
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+            created => {
+                created?;
+                if let Err(err) = fill(&root) {
+                    let _ = fs::remove_dir_all(&root);
+                    return Err(err);
+                }
+                return Ok(ProjectInfo::read(data_dir, &id)?);
+            }
+        }
     }
-    let settings = engine.map_or_else(|| json!({}), |engine| json!({ "engine": engine }));
-    write_settings(staging.path(), &settings)?;
-    staging.publish()
+    unreachable!("a free name")
 }
 
 /// What a new project is called when the user has not said.
@@ -138,87 +165,6 @@ pub fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, 
 /// The names a new project takes in turn: `clean`, then "clean 2", "clean 3"…
 fn project_names(clean: &str) -> impl Iterator<Item = String> {
     std::iter::once(clean.to_owned()).chain((2..).map(move |n| format!("{clean} {n}")))
-}
-
-/// A new, empty project folder for the clean name `name`, or "name 2" and so
-/// on when that is taken, as Finder numbers copies; and the name it got.
-fn new_project_dir(data_dir: &Path, name: &str) -> Result<(String, PathBuf), CoreError> {
-    fs::create_dir_all(data_dir)?;
-    for name in project_names(name) {
-        let root = data_dir.join(&name);
-        // One create rather than a check and then a create: it cannot race,
-        // and it passes over anything already there, a dangling link or case
-        // alias too.
-        match fs::create_dir(&root) {
-            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
-            created => return Ok(created.map(|()| (name, root))?),
-        }
-    }
-    unreachable!("a free name")
-}
-
-const STAGING: &str = ".texlocal-staging-";
-
-/// A project being made, in a hidden folder beside the projects, which no
-/// listing or scan shows. `publish` moves it into the library whole, so a
-/// failure or panic, which drops the folder, leaves no project behind. A
-/// crash leaves a hidden folder only, which a later one sweeps away.
-pub(crate) struct Staging<'a> {
-    folder: tempfile::TempDir,
-    data_dir: &'a Path,
-    name: String,
-}
-
-impl<'a> Staging<'a> {
-    /// A folder for a project that will be called `name`, or numbered past
-    /// it; a bad name fails now, before the project is made.
-    pub(crate) fn new(data_dir: &'a Path, name: &str) -> Result<Self, CoreError> {
-        let name = sanitize_name(name)?;
-        fs::create_dir_all(data_dir)?;
-        sweep_staging(data_dir);
-        let mut folder = tempfile::Builder::new();
-        folder.prefix(STAGING);
-        // A new folder's usual mode, not tempfile's private one.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            folder.permissions(fs::Permissions::from_mode(0o777));
-        }
-        Ok(Self {
-            folder: folder.tempdir_in(data_dir)?,
-            data_dir,
-            name,
-        })
-    }
-
-    pub(crate) fn path(&self) -> &Path {
-        self.folder.path()
-    }
-
-    /// Move the project into the library: the name is held by an empty
-    /// folder, which the project takes the place of in one rename.
-    pub(crate) fn publish(self) -> Result<ProjectInfo, CoreError> {
-        let (id, root) = new_project_dir(self.data_dir, &self.name)?;
-        if let Err(err) = fs::rename(self.path(), &root) {
-            let _ = fs::remove_dir(&root);
-            return Err(err.into());
-        }
-        Ok(ProjectInfo::read(self.data_dir, &id)?)
-    }
-}
-
-/// Removes the staging folders that crashed leave behind. A folder untouched
-/// for a day is no running import's, whose allowance is minutes of writing.
-fn sweep_staging(data_dir: &Path) {
-    const STALE: Duration = Duration::from_secs(24 * 60 * 60);
-    for entry in fs::read_dir(data_dir).into_iter().flatten().flatten() {
-        let age = entry.metadata().and_then(|meta| meta.modified()).ok();
-        if entry.file_name().to_string_lossy().starts_with(STAGING)
-            && age.and_then(|time| time.elapsed().ok()) > Some(STALE)
-        {
-            let _ = fs::remove_dir_all(entry.path());
-        }
-    }
 }
 
 /// The likely main file among a project's top-level .tex files: main.tex,
@@ -257,29 +203,14 @@ pub fn rename_project(
     let root = project_root(data_dir, id)?;
     let clean = sanitize_name(new_name)?;
     let dest = data_dir.join(&clean);
-    // The new name is taken as a new project's is, by making its folder, and
-    // the project moves onto that empty folder: after a check alone, a new
-    // project could take the name before the move and then fill the renamed
-    // project with its own files. A case-only rename's destination is the
-    // project itself.
-    let reserved = !same_entry(&root, &dest);
-    if reserved {
-        match fs::create_dir(&dest) {
-            Err(err) if err.kind() == ErrorKind::AlreadyExists => {
-                return Err(CoreError::conflict(
-                    "A project with that name already exists",
-                ));
-            }
-            made => made?,
-        }
+    // A case-only rename's destination is the project itself.
+    if fs::symlink_metadata(&dest).is_ok() && !same_entry(&root, &dest) {
+        return Err(CoreError::conflict(
+            "A project with that name already exists",
+        ));
     }
-    let moved = before_move(&root).and_then(|()| Ok(fs::rename(&root, &dest)?));
-    if let Err(err) = moved {
-        if reserved {
-            let _ = fs::remove_dir(&dest);
-        }
-        return Err(err);
-    }
+    before_move(&root)?;
+    fs::rename(&root, &dest)?;
     Ok(ProjectInfo::read(data_dir, &clean)?)
 }
 
@@ -378,7 +309,7 @@ mod tests {
             "lualatex"
         );
 
-        // A refusal leaves nothing behind, not even the folder it was built in.
+        // A refusal leaves nothing behind.
         let refused = create_project(data, "Other", "blank", Some("word"));
         assert_eq!(refused.unwrap_err().status, 400);
         assert_eq!(names_in(data), ["Thesis"]);
@@ -391,47 +322,13 @@ mod tests {
         assert_eq!(names_in(data), ["Thesis"]);
     }
 
-    #[test]
-    fn a_stale_staging_folder_is_swept_and_a_fresh_one_is_left() {
-        let dir = tempfile::tempdir().unwrap();
-        let data = dir.path();
-        let staged = |name: &str, age: u64| {
-            let folder = data.join(name);
-            fs::create_dir_all(folder.join("sub")).unwrap();
-            fs::write(folder.join("sub/main.tex"), "x").unwrap();
-            let when = std::time::SystemTime::now() - Duration::from_secs(age);
-            // Windows opens a folder only for its backup semantics, and to
-            // date it, for its attributes.
-            #[cfg(windows)]
-            let handle = {
-                use std::os::windows::fs::OpenOptionsExt;
-                fs::OpenOptions::new()
-                    .access_mode(0x100)
-                    .custom_flags(0x0200_0000)
-                    .open(&folder)
-            };
-            #[cfg(not(windows))]
-            let handle = fs::File::open(&folder);
-            handle.unwrap().set_modified(when).unwrap();
-            folder
-        };
-        let crashed = staged(".texlocal-staging-crashed", 25 * 60 * 60);
-        let running = staged(".texlocal-staging-running", 23 * 60 * 60);
-        let other = staged(".hidden", 25 * 60 * 60);
-
-        create_project(data, "P", "blank", None).unwrap();
-        assert!(!crashed.exists());
-        assert!(running.exists() && other.exists());
-        assert!(data.join("P/main.tex").exists());
-    }
-
     // Windows opens a folder only for its backup semantics, so its date is set here alone.
     #[cfg(unix)]
     #[test]
     fn projects_of_one_date_are_listed_by_name() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path();
-        let date = std::time::SystemTime::now() - Duration::from_secs(3600);
+        let date = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
         for name in ["b", "c", "a"] {
             create_project(data, name, "blank", None).unwrap();
             for entry in [".", "main.tex", ".texlocal.json"] {

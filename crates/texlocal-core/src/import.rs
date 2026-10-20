@@ -14,7 +14,7 @@ use zip::ZipArchive;
 use zip::result::ZipError;
 
 use crate::paths::{self, after_entry, fold_case, normalize_segments, rel_key};
-use crate::projects::{self, ProjectInfo, Staging, Trash};
+use crate::projects::{self, ProjectInfo, Trash};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::zipexport::left_out;
@@ -427,41 +427,40 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
     // What an export leaves out stays behind: the project makes its own settings.
     files.retain(|file| !left_out(&file.path));
 
-    let staging = Staging::new(&service.data_dir, &base)?;
-    let staged = staging.path();
-    validate(staged, "", files.iter().map(|file| file.path.as_str()))?;
-    for file in &files {
-        // The folder holds only what the import wrote, so there is no clash
-        // or file to replace: each is written in place, with no temporary
-        // file or sync of its own, and gets a new file's usual mode.
-        let abs = staged.join(rel_key(&file.path)?);
-        fs::create_dir_all(abs.parent().unwrap_or(staged))?;
-        let mut dest = BufWriter::new(File::create_new(abs)?);
-        match &file.source {
-            Source::File(path) => {
-                let mut origin = File::open(path).map_err(CoreError::at(path))?;
-                io::copy(&mut origin, &mut dest)?;
+    projects::new_project(&service.data_dir, &base, |root| {
+        validate(root, "", files.iter().map(|file| file.path.as_str()))?;
+        for file in &files {
+            // The folder holds only what the import wrote, so each is written
+            // in place, with no temporary file or sync of its own.
+            let abs = root.join(rel_key(&file.path)?);
+            fs::create_dir_all(abs.parent().unwrap_or(root))?;
+            let mut dest = BufWriter::new(File::create_new(abs)?);
+            match &file.source {
+                Source::File(path) => {
+                    let mut origin = File::open(path).map_err(CoreError::at(path))?;
+                    io::copy(&mut origin, &mut dest)?;
+                }
+                Source::Zip(i) => {
+                    let mut entry = zip.as_mut().expect("a zip source").by_index(*i)?;
+                    io::copy(&mut entry, &mut dest)?;
+                }
             }
-            Source::Zip(i) => {
-                let mut entry = zip.as_mut().expect("a zip source").by_index(*i)?;
-                io::copy(&mut entry, &mut dest)?;
-            }
+            dest.flush()?;
         }
-        dest.flush()?;
-    }
-    // latexmk would read a name starting with "-" as an option, so settings refuse it as
-    // the main file and the import takes the likeliest other.
-    let main = if let Some(main) = main.filter(|main| !main.starts_with('-')) {
-        main
-    } else if let Some(main) = projects::guess_main_file(staged)? {
-        main
-    } else {
-        let (file, content) = templates::files("blank")[0];
-        fs::write(staged.join(file), content)?;
-        file.to_string()
-    };
-    write_settings(staged, &json!({ "mainFile": main }))?;
-    staging.publish()
+        // latexmk would read a name starting with "-" as an option, so settings refuse it
+        // as the main file and the import takes the likeliest other.
+        let main = if let Some(main) = main.filter(|main| !main.starts_with('-')) {
+            main
+        } else if let Some(main) = projects::guess_main_file(root)? {
+            main
+        } else {
+            let (file, content) = templates::files("blank")[0];
+            fs::write(root.join(file), content)?;
+            file.to_string()
+        };
+        write_settings(root, &json!({ "mainFile": main }))?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]

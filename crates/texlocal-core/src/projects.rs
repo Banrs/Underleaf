@@ -25,7 +25,7 @@ pub use files::{create_free, rename_entry};
 pub use library::{
     ProjectInfo, create_project, free_project_name, list_projects, locate, rename_project,
 };
-pub(crate) use library::{Staging, guess_main_file};
+pub(crate) use library::{guess_main_file, new_project};
 pub use search::{search_groups, search_project};
 pub use symbols::{SymbolScan, Symbols};
 pub(crate) use tree::is_text;
