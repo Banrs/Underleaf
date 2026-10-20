@@ -157,8 +157,6 @@ templates) is `core-api.md`'s. The numbers are the ones the app's comments cite,
 17. **Casing**: `menus` and `heading_styles` take a casing argument ("sentence" for Windows), and
     the host's `Sentence()` goes.
 20. **The caret's heading**: `text_styles` also returns the caret line's heading command.
-22. **Main file in the tree**: `TreeNode.main`, and a `tree` event when the main file changes
-    (settings, renames above it); the host's `mainFile` mirror goes.
 23. **Editable files**: `TreeNode.editable`, and `session_open_document` returns the kind; the
     host's kind list and `.tex` test go.
 24. **Paths after a change**: `create_entry {dir, name}` and `session_rename {from, name}` answer

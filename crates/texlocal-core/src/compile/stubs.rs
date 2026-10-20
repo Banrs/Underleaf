@@ -270,12 +270,8 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     }
 
     let started = Instant::now();
-    let stop = |id: &str| {
-        let service = Arc::clone(&service);
-        let args = json!({ "id": id });
-        async move { service.call("stop_compile", &args).await }
-    };
-    assert_eq!(stop("one").await.unwrap(), true);
+    let stop = |id: &str| service.compile.stop(&service.project_root(id).unwrap());
+    assert!(stop("one"));
     let one = one.await.unwrap();
     assert!(one.stopped && !one.ok);
     promptly(started);
@@ -287,7 +283,7 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     fs::write(service.data_dir.join("one/fast"), "").unwrap();
     let again = build("one").await.unwrap();
     assert!(again.ok && !again.stopped);
-    assert_eq!(stop("one").await.unwrap(), false, "nothing is running");
+    assert!(!stop("one"), "nothing is running");
 
     // A rename refused leaves the build running; one that goes ahead stops it,
     // and its record goes before the folder moves, where the build can't reach it.

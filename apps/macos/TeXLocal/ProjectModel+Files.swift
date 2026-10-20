@@ -77,7 +77,7 @@ extension ProjectModel {
         } catch {
             guard !closed else { return false }
             app?.report(error, title)
-            // Another window may have made it the main file.
+            // An edit of `.texlocal.json` outside the app may have made it the main file, and the session doesn't watch it.
             if (error as? CoreError)?.status == 409, let read = try? await core.call("get_settings", ["id": id], as: ProjectSettings.self) {
                 settings = read
             }

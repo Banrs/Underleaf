@@ -61,7 +61,7 @@ public sealed partial class WorkspacePage
 
     List<NavItem> Files(TreeNode[] nodes) => [.. nodes.Select(n => new NavItem
     {
-        Lead = n.Name, Glyph = Glyph(n.Kind), Tip = n.Path, Key = n.Path, IsMain = n.Path == mainFile,
+        Lead = n.Name, Glyph = Glyph(n.Kind), Tip = n.Path, Key = n.Path, IsMain = n.Main,
         IsExpanded = expanded.Contains(n.Path), Target = n, Children = n.Children is { } c ? Files(c) : null,
     })];
 
@@ -299,8 +299,8 @@ public sealed partial class WorkspacePage
     {
         var node = Picked;
         RenameItem.IsEnabled = RevealItem.IsEnabled = node is not null;
-        DeleteItem.IsEnabled = node is not null && node.Path != mainFile;
-        MainItem.IsEnabled = node is { Kind: "tex" } && node.Path != mainFile;
+        DeleteItem.IsEnabled = node is { Main: false };
+        MainItem.IsEnabled = node is { Kind: "tex", Main: false };
     }
 
     /// A new entry beside the selection, named in place as File Explorer's New folder is.
@@ -322,11 +322,7 @@ public sealed partial class WorkspacePage
     void OnSetMain(object sender, RoutedEventArgs e)
     {
         if (Picked is not { Kind: "tex" } node) return;
-        Run("Can't set the main file", async () =>
-        {
-            mainFile = MainFile(await Core.CallAsync("session_set_settings", new { session, patch = new { mainFile = node.Path } }));
-            ShowTree(tree, true);
-        });
+        Run("Can't set the main file", () => Core.CallAsync("session_set_settings", new { session, patch = new { mainFile = node.Path } }));
     }
 
     void OnRename(object sender, RoutedEventArgs e)
@@ -343,10 +339,7 @@ public sealed partial class WorkspacePage
         // write that failed doesn't stop it.
         await Task.WhenAny(foldsSaved);
         if (await Core.CallAsync("session_rename", new { session, from = node.Path, to }) is { ValueKind: JsonValueKind.Object } renamed)
-        {
-            mainFile = MainFile(renamed);
             ReadFolds(renamed.GetProperty("ui"));
-        }
         await RefreshTree();
         Select(FilesTree, i => i.Key == to);
     });
@@ -358,7 +351,7 @@ public sealed partial class WorkspacePage
 
     void OnDelete(object sender, RoutedEventArgs e)
     {
-        if (Picked is not { } node || node.Path == mainFile) return;
+        if (Picked is not { Main: false } node) return;
         Run("Can't delete this", async () =>
         {
             // Not ready: a save it needed is asked about, and nothing is deleted.
