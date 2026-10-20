@@ -72,6 +72,8 @@ static WARNING: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 static ON_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"on input line (\d+)").unwrap());
+static BAD_BOX_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:at lines|detected at line) (\d+)").unwrap());
 static BIBTEX_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.*)---line (\d+) of file (.+)$").unwrap());
 static BIBER_ERROR: LazyLock<Regex> =
@@ -210,9 +212,11 @@ fn echo_of(lines: &[&str], i: usize) -> Option<usize> {
         .map(|k| i + 1 + k)
 }
 
-pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
+/// The log's errors and warnings, and apart from them its overfull and underfull boxes.
+pub fn parse_log(log: &str, main_file: &str) -> (Vec<LogItem>, Vec<LogItem>) {
     let lines: Vec<&str> = log.lines().collect();
     let mut items: Vec<LogItem> = Vec::new();
+    let mut bad_boxes = Vec::new();
     let mut open = Vec::new();
     // Lines before this echo source whose parentheses needn't pair up.
     let mut quiet_until = 0;
@@ -282,6 +286,10 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
             ));
         } else if line.starts_with("Overfull \\") || line.starts_with("Underfull \\") {
             quiet_until = blank_from(&lines, i + 1);
+            let line_no = BAD_BOX_LINE.captures(line).and_then(|m| m[1].parse().ok());
+            let mut message = line.trim().to_string();
+            let (file, line_no) = locate(None, line_no, &open, main_file, &mut message);
+            bad_boxes.push(LogItem::new(Severity::Warning, file, line_no, message));
         }
         if i >= quiet_until {
             track(&mut open, line);
@@ -291,7 +299,8 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     // Reruns duplicate messages; keep the first in order.
     let mut seen = HashSet::new();
     items.retain(|item| seen.insert(item.clone()));
-    items
+    bad_boxes.retain(|item| seen.insert(item.clone()));
+    (items, bad_boxes)
 }
 
 /// Errors from bibtex's or biber's .blg; bibtex names the .bib line after its message or on the line below.
@@ -349,7 +358,7 @@ mod tests {
     }
 
     fn parsed(log: &str) -> Vec<String> {
-        described(&parse_log(log, "main.tex"))
+        described(&parse_log(log, "main.tex").0)
     }
 
     #[test]
@@ -423,7 +432,7 @@ mod tests {
                    \n\
                    See the LaTeX manual or LaTeX Companion for explanation.\n\
                    l.3 \\newcommand\\a{y}\n";
-        let items = parse_log(log, "main.tex");
+        let (items, _) = parse_log(log, "main.tex");
         let found: Vec<_> = items
             .iter()
             .map(|it| (it.short.as_str(), it.command.as_deref()))
@@ -524,6 +533,7 @@ mod tests {
                    \n\
                    \x20)\n";
         let places: Vec<_> = parse_log(log, "other.tex")
+            .0
             .into_iter()
             .map(|it| (it.file, it.line))
             .collect();
@@ -612,8 +622,30 @@ mod tests {
     }
 
     #[test]
+    fn bad_boxes_are_kept_apart_from_the_issues_at_their_first_line() {
+        let log = format!(
+            "{NESTED}\n(./chapters/intro.tex\n\
+             Underfull \\hbox (badness 10000) in paragraph at lines 12--14\n\
+             []\\OT1/cmr/m/n/10 x\n\
+             \n\
+             Overfull \\vbox (3.0pt too high) has occurred while \\output is active\n\
+             \n)"
+        );
+        let (items, bad_boxes) = parse_log(&log, "main.tex");
+        assert_eq!(described(&items), parsed(NESTED));
+        assert_eq!(
+            described(&bad_boxes),
+            [
+                "warning main.tex:8 Overfull \\hbox (216.66702pt too wide) detected at line 8",
+                "warning chapters/intro.tex:12 Underfull \\hbox (badness 10000) in paragraph at lines 12--14",
+                "warning -:- Overfull \\vbox (3.0pt too high) has occurred while \\output is active",
+            ]
+        );
+    }
+
+    #[test]
     fn a_missing_font_in_xetex_gives_one_error_with_the_whole_message() {
-        let items = parse_log(FONTSPEC, "main.tex");
+        let (items, _) = parse_log(FONTSPEC, "main.tex");
         let errors: Vec<_> = items
             .iter()
             .filter(|it| it.kind == Severity::Error)

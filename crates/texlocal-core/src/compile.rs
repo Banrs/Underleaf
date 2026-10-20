@@ -35,6 +35,7 @@ pub struct CompileResult {
     pub pdf_changed: bool,
     pub errors: Vec<LogItem>,
     pub warnings: Vec<LogItem>,
+    pub bad_boxes: Vec<LogItem>,
     pub log: String,
 }
 
@@ -257,7 +258,7 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
     // A no-op build keeps the PDF and its log; an old log after a new PDF is the last build's.
     let unchanged = ok && !run.wrote("pdf") && !run.wrote("log");
     let engine_log = run.read("log", unchanged);
-    let mut items = parse_log(engine_log.as_deref().unwrap_or(&output), &run.main_rel);
+    let (mut items, bad_boxes) = parse_log(engine_log.as_deref().unwrap_or(&output), &run.main_rel);
     if let Some(blg) = run.read("blg", unchanged) {
         items.extend(parse_blg(&blg));
     }
@@ -295,6 +296,7 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
         pdf_changed: wrote_pdf,
         errors,
         warnings,
+        bad_boxes,
         log,
     }
 }
