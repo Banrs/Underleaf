@@ -10,17 +10,19 @@ using Windows.System;
 
 namespace TeXLocal.Pages;
 
-/// A template the core makes projects from (create_project's `template`), as the gallery shows it.
-public sealed record ProjectTemplate(string Id, string Title, double Width = 120, double Height = 156)
+/// A template of the core's catalogue (create_project's `template`), as the gallery shows it: a slide's page is landscape.
+public sealed record ProjectTemplate(string Id, string Title)
 {
     public string Spoken => $"New {Title.ToLowerInvariant()} project";
     public string Tip => Id == "article" ? $"{Spoken} (Ctrl+Shift+N)" : Spoken;
+    public double Width => Id == "beamer" ? 160 : 120;
+    public double Height => Id == "beamer" ? 90 : 156;
 }
 
 public sealed partial class HomePage : Page
 {
-    static readonly ProjectTemplate[] templates = [new("blank", "Blank"), new("article", "Article"), new("report", "Report"), new("beamer", "Presentation", 160, 90)];
     readonly RenameFlyout rename = new();
+    ProjectTemplate[] templates = [];
     ProjectInfo[] projects = [];
     ProjectInfo? target;
     string? focus;
@@ -29,8 +31,10 @@ public sealed partial class HomePage : Page
     public HomePage()
     {
         InitializeComponent();
-        Templates.ItemsSource = templates;
-        Accelerate(VirtualKey.N, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => New(templates[1]));
+        Accelerate(VirtualKey.N, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () =>
+        {
+            if (templates.FirstOrDefault(t => t.Id == "article") is { } article) New(article);
+        });
         Accelerate(VirtualKey.F, VirtualKeyModifiers.Control, () => Search.Focus(FocusState.Keyboard));
 
         void Accelerate(VirtualKey key, VirtualKeyModifiers modifiers, Action action)
@@ -67,7 +71,7 @@ public sealed partial class HomePage : Page
     }
 
     /// Lists the projects again, keeping keyboard focus on its row (or moving it to project `id`); a later call's answer
-    /// wins over an earlier one's.
+    /// wins over an earlier one's. The templates come with the first list, once the library has opened.
     async void Reload(string? id = null)
     {
         focus = id ?? focus;
@@ -75,7 +79,12 @@ public sealed partial class HomePage : Page
         var error = App.OpenCore() ? null : App.CoreError ?? "";
         ProjectInfo[] listed = [];
         if (error is null)
-            try { listed = await Core.CallAsync<ProjectInfo[]>("list_projects"); }
+            try
+            {
+                listed = await Core.CallAsync<ProjectInfo[]>("list_projects");
+                if (templates.Length == 0)
+                    Templates.ItemsSource = templates = [.. (await Core.CallAsync<Catalogue>("catalogue")).Templates.Select(t => new ProjectTemplate(t.Id, t.Title))];
+            }
             catch (CoreException ex) { error = ex.Message; }
         if (generation != loads) return;
         LibraryError.Message = error ?? "";

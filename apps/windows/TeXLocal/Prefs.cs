@@ -4,8 +4,6 @@ using Windows.Foundation.Collections;
 
 namespace TeXLocal;
 
-public sealed record SyntaxTheme(string Id, string Title);
-
 /// The host's preferences, typed, in LocalSettings (the registry, under HKCU\Software\Classes\Local Settings\Software\TeXLocal)
 /// until the core keeps validated shared ones; a run on a scratch library (TEXLOCAL_DATA) keeps its own, as "TeXLocal Dev".
 /// Settings › Editor's six raise EditorChanged.
@@ -32,7 +30,7 @@ public static unsafe partial class Prefs
 
     public static event Action? EditorChanged;
 
-    public static SyntaxTheme[] Themes => field ??= Source.SyntaxCall<SyntaxTheme[]>("themes", new { }) ?? [];
+    public static Choice[] Themes => field ??= Source.SyntaxCall<Choice[]>("themes", new { }) ?? [];
 
     static T Get<T>(string key, T fallback) => values.TryGetValue(key, out var v) && v is T t ? t : fallback;
 

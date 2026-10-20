@@ -128,13 +128,10 @@ bar past the window's edge by the difference until a later WindowsAppSDK.
 ## Core gaps
 
 Logic the Windows app needs that belongs in a crate, not C#. What the core already has
-(sessions, the outline, typing, themes, menus, heading styles, maths as SVG, absolute PDF paths) is
-`core-api.md`'s. The numbers are the ones the app's comments cite, so the landed gaps (1, 3, 4, 5, 8, 15, 18, 19,
-21) leave holes.
+(sessions, the outline, typing, themes, menus, heading styles, maths as SVG, absolute PDF paths, the catalogue of
+templates) is `core-api.md`'s. The numbers are the ones the app's comments cite, so the landed gaps (1, 2, 3, 4, 5, 8,
+15, 18, 19, 21) leave holes.
 
-2. **Catalogue command**: the project templates (Blank, Article, Report, Presentation) with their
-   labels, for Home's gallery; `create_project` takes a `template` id but nothing lists them. Until then Home names the four ids the core makes (blank,
-   article, report, beamer) and draws their pages itself.
 6. **PDF in the core**: PDFium (`pdfium-render` 0.9.4, `pdfium-win-x64` chromium/7881) giving page
    text with UTF-16 character boxes (search, selection, `synctex_match`, word-precise inverse),
    then rendered tiles as BGRA.
@@ -190,7 +187,7 @@ Logic the Windows app needs that belongs in a crate, not C#. What the core alrea
 |---|---|---|---|
 | App | Reopens the last project at its file, caret, panel, page and zoom | Home, main file, Fit width | Core 29 |
 | App | Open Recent, Dock menu, opens files from Finder | Open with and the command line; no jump list | UI |
-| Home | Engine for new projects, search, drop to import | No engine | Core 2, 7 |
+| Home | Engine for new projects, search, drop to import | No engine | Core 7 |
 | Workspace | Inspector with the engine | Build menu toggles, no engine | Design; UI |
 | Sidebar | Drag to move, undoable trash; outline follows the scroll | Drop from Explorer, Recycle Bin, no undo; caret only | UI |
 | Editor | Spelling over `code_ranges`, Writing Tools | Spell check off | UI; Platform |
@@ -200,7 +197,7 @@ Logic the Windows app needs that belongs in a crate, not C#. What the core alrea
 | PDF | Print, scroll to the caret after compiling | None | UI |
 | Panel | Log find | The filter keeps matching lines | UI |
 | Live | Pane or TeXpresso window, log, restarts | None | Core 12 |
-| Settings | Template, engine, sync after compile, Live Preview | None; raw latexmk line | Core 2, 7, 12; UI |
+| Settings | Template, engine, sync after compile, Live Preview | None; raw latexmk line | Core 7, 12; UI |
 
 Windows' own: an app theme setting, the editor preview in Settings, search in the symbol palette,
 ZIP export on Home and F6 region cycling. Its tests cover the C# bridge only; `--smoke` opens a new blank project.

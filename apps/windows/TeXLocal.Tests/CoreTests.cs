@@ -38,6 +38,15 @@ public sealed class CoreTests : IDisposable
         Assert.Contains(await core.CallAsync<ProjectInfo[]>("list_projects"), p => p.Id == made.Id && p.Name == name);
     }
 
+    /// Home draws a page for each of these ids (PagePreview).
+    [Fact]
+    public async Task CatalogueNamesHomesTemplates()
+    {
+        var templates = (await core.CallAsync<Catalogue>("catalogue")).Templates;
+        Assert.Equal(new[] { "blank", "article", "report", "beamer" }, templates.Select(t => t.Id));
+        Assert.Equal("Presentation", templates[3].Title);
+    }
+
     [Fact]
     public async Task SessionEditSavesAndReports()
     {
