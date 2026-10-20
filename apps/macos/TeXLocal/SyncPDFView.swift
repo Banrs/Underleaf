@@ -307,8 +307,13 @@ extension NSMenu {
     func keep(_ actions: Set<Selector>) {
         func kept(_ item: NSMenuItem) -> Bool { item.action.map(actions.contains) == true || item.submenu?.items.contains(where: kept) == true }
         let word = items.firstIndex { $0.action == #selector(NSText.cut(_:)) || $0.action == #selector(NSText.copy(_:)) } ?? 0
-        var shown = Array(items[..<word])
-        for item in items[word...] where item.isSeparatorItem ? shown.last?.isSeparatorItem == false : kept(item) { shown.append(item) }
+        tidy(items[..<word] + items[word...].filter { $0.isSeparatorItem || kept($0) })
+    }
+
+    /// Shows these items with a separator only between two groups.
+    func tidy(_ list: [NSMenuItem]) {
+        var shown: [NSMenuItem] = []
+        for item in list where !item.isSeparatorItem || shown.last?.isSeparatorItem == false { shown.append(item) }
         if shown.last?.isSeparatorItem == true { shown.removeLast() }
         items = shown
     }
