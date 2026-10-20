@@ -1027,9 +1027,9 @@ impl Actor {
 
     /// `to` in place of what `found` finds in each file `chosen` takes, given its text with line
     /// feeds alone. An open document isn't written: its edits are answered against its version,
-    /// for the host to apply as one edit that the session saves as any other, so the answer has
-    /// room for one. The other files are read again, written and counted under the project's
-    /// lock, but for those on their way to the Trash.
+    /// for the host to apply as one edit that the session saves as any other, and the answer
+    /// holds one document's. The other files are read again, written and counted under the
+    /// project's lock, but for those on their way to the Trash.
     fn edit_project(
         &self,
         open: &[(String, String, u64)],

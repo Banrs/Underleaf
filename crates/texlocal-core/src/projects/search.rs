@@ -225,10 +225,10 @@ pub(crate) fn edits(text: &Text, places: &[Place], to: &str) -> Vec<TextEdit> {
     places.iter().map(edit).collect()
 }
 
-/// `to` in place of what `found` finds in each text file `chosen` takes, given its text with
-/// line feeds alone, each read again and written keeping its line ends: `{file, count}` for
-/// each, in the order of their paths. One too large to search is left out; one that isn't
-/// UTF-8, which writing would change, refuses them all before any is written.
+/// `to` in place of what `found` finds in each file `chosen` takes of those a search walks,
+/// given its text with line feeds alone, each read again and written keeping its line ends:
+/// `{file, count}` for each, in the order of their paths. One too large to search is left out;
+/// one that isn't UTF-8, which writing would change, refuses them all before any is written.
 pub(crate) fn replace_in_files(
     root: &Path,
     chosen: &dyn Fn(&str) -> bool,
