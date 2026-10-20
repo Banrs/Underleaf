@@ -1,15 +1,22 @@
-//! Search across a project's text files.
+//! Search across a project's text files, and replacing what is found in them.
 
-use std::collections::BTreeMap;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use serde_json::{Value, json};
 
+use super::files::{Newline, write_creating};
 use super::skip_unreadable;
 use super::tree::{is_text, visit_files};
+use crate::analyze::Place;
 use crate::error::CoreError;
+use crate::syntax::{Text, TextEdit};
+use crate::{lf, lossy_string, utf16_lossy};
 
 /// The largest file a search reads; a data set or log that size isn't where anyone looks.
 const SEARCH_FILE_MAX: u64 = 8 << 20;
@@ -58,7 +65,93 @@ fn lower_into(s: &str, out: &mut String) {
     }));
 }
 
-fn read_searchable(path: &Path) -> Result<Option<String>, CoreError> {
+/// What a search or a replace looks for: `text`, in any case unless `match_case`, and with
+/// `whole_word` only where neither end runs on into a letter, digit or underscore.
+pub struct Query {
+    /// Folded as each line is, unless the case must match.
+    text: String,
+    chars: usize,
+    match_case: bool,
+    whole_word: bool,
+}
+
+impl Query {
+    pub fn new(text: &str, match_case: bool, whole_word: bool) -> Self {
+        let mut folded = String::new();
+        if match_case {
+            folded.push_str(text);
+        } else {
+            lower_into(text, &mut folded);
+        }
+        Self {
+            chars: folded.chars().count(),
+            text: folded,
+            match_case,
+            whole_word,
+        }
+    }
+
+    /// Each match in `line`, left to right and none inside another, as the chars it spans;
+    /// `folded` is room for the line in any case.
+    fn in_line(&self, line: &str, folded: &mut String) -> Vec<Range<usize>> {
+        let mut found = Vec::new();
+        if self.text.is_empty() {
+            return found;
+        }
+        let line = if self.match_case {
+            line
+        } else {
+            lower_into(line, folded);
+            folded.as_str()
+        };
+        let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        let apart = |outside, inside| !(word(outside) && word(inside));
+        let (first, last) = (self.text.chars().next(), self.text.chars().next_back());
+        let (mut from, mut chars) = (0, 0);
+        while let Some(at) = line[from..].find(&self.text) {
+            let (at, end) = (from + at, from + at + self.text.len());
+            chars += line[from..at].chars().count();
+            if !self.whole_word
+                || apart(line[..at].chars().next_back(), first)
+                    && apart(line[end..].chars().next(), last)
+            {
+                found.push(chars..chars + self.chars);
+                (from, chars) = (end, chars + self.chars);
+            } else {
+                // A match that stands alone may start inside this one.
+                from = at + first.map_or(1, char::len_utf8);
+                chars += 1;
+            }
+        }
+        found
+    }
+
+    /// Every match in `text`: its line, from 1, and its column and length in UTF-16 units of
+    /// the line, as the editors count them.
+    pub fn places(&self, text: &str) -> Vec<Place> {
+        let (mut places, mut folded) = (Vec::new(), String::new());
+        for (i, line) in text.split('\n').enumerate() {
+            let found = self.in_line(line, &mut folded);
+            if found.is_empty() {
+                continue;
+            }
+            let chars: Vec<char> = line.chars().collect();
+            places.extend(found.into_iter().map(|at| Place {
+                line: i as u32 + 1,
+                column: utf16(&chars[..at.start]),
+                length: utf16(&chars[at]),
+            }));
+        }
+        places
+    }
+}
+
+fn utf16(chars: &[char]) -> u32 {
+    chars.iter().map(|c| c.len_utf16() as u32).sum()
+}
+
+/// A file's bytes, or None if it can't be read or is too large to be where anyone looks.
+fn read_capped(path: &Path) -> Result<Option<Vec<u8>>, CoreError> {
     let Some(file) = skip_unreadable(File::open(path))? else {
         return Ok(None);
     };
@@ -66,55 +159,122 @@ fn read_searchable(path: &Path) -> Result<Option<String>, CoreError> {
     let Some(len) = skip_unreadable(file.take(SEARCH_FILE_MAX + 1).read_to_end(&mut bytes))? else {
         return Ok(None);
     };
-    Ok((len as u64 <= SEARCH_FILE_MAX).then(|| crate::lossy_string(bytes)))
+    Ok((len as u64 <= SEARCH_FILE_MAX).then_some(bytes))
 }
 
-pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
-    let mut q = String::new();
-    lower_into(query, &mut q);
-    if q.is_empty() {
+/// The first `limit` lines with a match, each with its first; a file `open` holds is read
+/// as the editor has it there. A line ends where the editor's does, at a carriage return
+/// alone too.
+pub fn search_project(
+    root: &Path,
+    query: &Query,
+    open: &HashMap<String, String>,
+    limit: usize,
+) -> Result<Vec<SearchHit>, CoreError> {
+    if query.text.is_empty() {
         return Ok(Vec::new());
     }
-    let q_len = q.chars().count();
-    let mut hits: Vec<SearchHit> = Vec::new();
-    let mut lower = String::new();
+    let (mut hits, mut folded) = (Vec::new(), String::new());
     visit_files(root, &mut |abs, rel| {
         if !is_text(rel) {
             return Ok(true);
         }
-        let Some(text) = read_searchable(abs)? else {
-            return Ok(true);
+        let text = match open.get(rel) {
+            Some(text) => Cow::Borrowed(text.as_str()),
+            None => match read_capped(abs)? {
+                Some(bytes) => Cow::Owned(lf(lossy_string(bytes))),
+                None => return Ok(true),
+            },
         };
         for (i, line) in text.split('\n').enumerate() {
             if hits.len() >= limit {
                 break;
             }
-            lower_into(line, &mut lower);
-            let Some(at) = lower.find(&q) else {
+            let Some(at) = query.in_line(line, &mut folded).into_iter().next() else {
                 continue;
             };
-            let col = lower[..at].chars().count();
             let chars: Vec<char> = line.chars().collect();
-            let start = col.saturating_sub(24);
+            let start = at.start.saturating_sub(24);
             let ellipsis = if start > 0 { "…" } else { "" };
-            let before: String = chars[start..col].iter().collect();
-            let matched: String = chars[col..col + q_len].iter().collect();
-            let after_end = (col + q_len + 60).min(chars.len());
-            let after: String = chars[col + q_len..after_end].iter().collect();
-            let utf16 = |cs: &[char]| -> u32 { cs.iter().map(|c| c.len_utf16() as u32).sum() };
+            let before: String = chars[start..at.start].iter().collect();
+            let after: String = chars[at.end..(at.end + 60).min(chars.len())]
+                .iter()
+                .collect();
             hits.push(SearchHit {
                 file: rel.to_owned(),
-                line: (i + 1) as u32,
-                column: utf16(&chars[..col]),
-                length: utf16(&chars[col..col + q_len]),
+                line: i as u32 + 1,
+                column: utf16(&chars[..at.start]),
+                length: utf16(&chars[at.clone()]),
                 before: format!("{ellipsis}{before}").trim_start().to_string(),
-                matched,
+                matched: chars[at].iter().collect(),
                 after: after.trim_end().to_string(),
             });
         }
         Ok(hits.len() < limit)
     })?;
     Ok(hits)
+}
+
+/// `to` in place of each of `places`, which are in order, as edits of `text` in UTF-16 offsets.
+pub(crate) fn edits(text: &Text, places: &[Place], to: &str) -> Vec<TextEdit> {
+    let edit = |place: &Place| TextEdit {
+        start: text.lines[place.line as usize - 1] + place.column,
+        length: place.length,
+        text: to.to_owned(),
+    };
+    places.iter().map(edit).collect()
+}
+
+/// `to` in place of what `found` finds in each text file `chosen` takes, given its text with
+/// line feeds alone, each read again and written keeping its line ends: `{file, count}` for
+/// each, in the order of their paths. One too large to search is left out; one that isn't
+/// UTF-8, which writing would change, refuses them all before any is written.
+pub(crate) fn replace_in_files(
+    root: &Path,
+    chosen: &dyn Fn(&str) -> bool,
+    found: &dyn Fn(&str, &str) -> Vec<Place>,
+    to: &str,
+) -> Result<Vec<Value>, CoreError> {
+    let mut edited = BTreeMap::new();
+    visit_files(root, &mut |abs, rel| {
+        if !chosen(rel) {
+            return Ok(true);
+        }
+        let Some(bytes) = read_capped(abs)? else {
+            return Ok(true);
+        };
+        let (file, utf8) = match String::from_utf8(bytes) {
+            Ok(file) => (file, true),
+            Err(err) => (String::from_utf8_lossy(err.as_bytes()).into_owned(), false),
+        };
+        let newline = Newline::of(&file);
+        let text = lf(file);
+        let places = found(rel, &text);
+        if places.is_empty() {
+            return Ok(true);
+        }
+        if !utf8 {
+            return Err(CoreError::bad_request(format!(
+                "“{rel}” isn't UTF-8 text, and writing it would change it, so nothing was changed. Convert it to UTF-8 to edit it."
+            )));
+        }
+        let text = Text::new(&text);
+        let (mut units, mut at) = (Vec::with_capacity(text.units.len()), 0);
+        for edit in edits(&text, &places, to) {
+            units.extend_from_slice(&text.units[at..edit.start as usize]);
+            units.extend(edit.text.encode_utf16());
+            at = (edit.start + edit.length) as usize;
+        }
+        units.extend_from_slice(&text.units[at..]);
+        let file = newline.written(&utf16_lossy(&units)).into_owned();
+        edited.insert(rel.to_owned(), (abs.to_owned(), file, places.len()));
+        Ok(true)
+    })?;
+    let write = |(file, (abs, text, count)): (String, (PathBuf, String, usize))| {
+        write_creating(&abs, text.as_bytes())?;
+        Ok(json!({ "file": file, "count": count }))
+    };
+    edited.into_iter().map(write).collect()
 }
 
 #[cfg(test)]
@@ -131,10 +291,38 @@ mod tests {
         // line break splits.
         let big = fs::File::create(root.join("big.csv")).unwrap();
         big.set_len(SEARCH_FILE_MAX + 1).unwrap();
-        let hits = search_project(&root, "needle", 10).unwrap();
+        let needle = Query::new("needle", false, false);
+        let hits = search_project(&root, &needle, &HashMap::new(), 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].file, "notes.tex");
         big.set_len(SEARCH_FILE_MAX).unwrap();
-        assert!(read_searchable(&root.join("big.csv")).unwrap().is_some());
+        assert!(read_capped(&root.join("big.csv")).unwrap().is_some());
+    }
+
+    /// Apart from each other, in any case or in the query's, and as whole words or not; in
+    /// UTF-16 units, where the emoji is two.
+    #[test]
+    fn the_matcher_finds_every_match_on_a_line() {
+        let text = "😀 Cat cat catalogue\nCAT_cat cat\naaaa";
+        let places = |query: &str, match_case, whole_word| -> Vec<(u32, u32)> {
+            let found = Query::new(query, match_case, whole_word).places(text);
+            assert!(
+                found
+                    .iter()
+                    .all(|place| place.length as usize == query.len())
+            );
+            found
+                .iter()
+                .map(|place| (place.line, place.column))
+                .collect()
+        };
+        let every = [(1, 3), (1, 7), (1, 11), (2, 0), (2, 4), (2, 8)];
+        assert_eq!(places("cat", false, false), every);
+        assert_eq!(
+            places("cat", true, false),
+            [(1, 7), (1, 11), (2, 4), (2, 8)]
+        );
+        assert_eq!(places("cat", false, true), [(1, 3), (1, 7), (2, 8)]);
+        assert_eq!(places("aa", false, false), [(3, 0), (3, 2)]);
     }
 }

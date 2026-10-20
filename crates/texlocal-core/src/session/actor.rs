@@ -18,13 +18,14 @@ use super::build::Builds;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
-use crate::analyze;
+use crate::analyze::{self, Place};
 use crate::events::Emitter;
 use crate::paths::{self, within};
-use crate::projects::{self, Newline, Symbols, file_kind};
-use crate::service::{Service, arg, out, string_arg};
+use crate::projects::{self, Newline, Query, Symbols, file_kind};
+use crate::service::{SEARCH_LIMIT, Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
+use crate::syntax::Text;
 use crate::{CoreError, lf, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
@@ -377,6 +378,10 @@ impl Actor {
                 Ok(path) => self.analyze(path, reply),
                 Err(err) => reply.send(Err(err)),
             },
+            "search" => match query(args) {
+                Ok(query) => self.search(query, reply),
+                Err(err) => reply.send(Err(err)),
+            },
             #[cfg(test)]
             "panic" => panic!("a bug in the session"),
             _ => {
@@ -421,6 +426,7 @@ impl Actor {
                 let from = paths::rel_key(string_arg(args, "from")?)?;
                 return self.rename(&from, string_arg(args, "to")?);
             }
+            "replace" => return self.replace(args),
             "set_settings" => return self.set_settings(&arg(args, "patch")?),
             "prepare_delete" => return self.prepare_delete(&path()?),
             "deleted" => {
@@ -887,9 +893,7 @@ impl Actor {
         let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
         files.sort_unstable();
         tokio::task::spawn_blocking(move || {
-            let docs = lock(&docs).clone();
-            let open = docs.into_iter().map(|(path, doc)| (path, doc.snapshot().0));
-            let symbols = projects::scan_symbols(&root, &facts, &open.collect());
+            let symbols = projects::scan_symbols(&root, &facts, &texts(&docs));
             let symbols = symbols.map(|symbols| Symbols { files, ..symbols });
             let _ = tx.send(Msg::Symbols(seq, symbols));
         });
@@ -930,6 +934,80 @@ impl Actor {
             drop(kept);
             reply.send(answer);
         });
+    }
+
+    // MARK: - Search and replace
+
+    /// Worked out beside the session, as an analysis is: it reads every text file.
+    fn search(&self, query: Query, reply: Reply) {
+        let (root, docs) = (self.root.clone(), Arc::clone(&self.shared));
+        tokio::task::spawn_blocking(move || {
+            let hits = projects::search_project(&root, &query, &texts(&docs), SEARCH_LIMIT);
+            reply.send(hits.and_then(|hits| out(projects::search_groups(hits))));
+        });
+    }
+
+    fn replace(&self, args: &Value) -> Result<Value, CoreError> {
+        let (query, to) = (query(args)?, string_arg(args, "replacement")?);
+        let files = arg::<Option<Vec<String>>>(args, "files")?;
+        let open = self.texts_to_edit("replaced")?;
+        let chosen = |rel: &str| {
+            let listed = files.as_ref();
+            projects::is_text(rel) && listed.is_none_or(|files| files.iter().any(|f| f == rel))
+        };
+        self.edit_project(&open, &chosen, &|_, text| query.places(text), to)
+    }
+
+    /// The open documents' paths, text and versions, unless one has a change on disk still to
+    /// settle, when nothing is edited, as nothing is saved.
+    fn texts_to_edit(&self, done: &str) -> Result<Vec<(String, String, u64)>, CoreError> {
+        let docs = self.docs.values();
+        let unsettled =
+            |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some() || doc.reload.is_some();
+        if let Some(doc) = docs.clone().find(unsettled) {
+            return Err(CoreError::conflict(format!(
+                "“{}” changed on disk, so nothing was {done}. Keep your edits or the disk’s first, then try again.",
+                doc.path
+            )));
+        }
+        let text = |doc: &Doc| {
+            let (text, version) = doc.doc.snapshot();
+            (doc.path.clone(), text, version)
+        };
+        Ok(docs.map(text).collect())
+    }
+
+    /// `to` in place of what `found` finds in each file `chosen` takes, given its text with line
+    /// feeds alone. An open document isn't written: its edits are answered against its version,
+    /// for the host to apply as one edit that the session saves as any other, so the answer has
+    /// room for one. The other files are read again, written and counted under the project's
+    /// lock, but for those on their way to the Trash.
+    fn edit_project(
+        &self,
+        open: &[(String, String, u64)],
+        chosen: &dyn Fn(&str) -> bool,
+        found: &dyn Fn(&str, &str) -> Vec<Place>,
+        to: &str,
+    ) -> Result<Value, CoreError> {
+        let open = open.iter().filter(|(path, ..)| chosen(path));
+        let mut edits: Vec<Value> = open
+            .filter_map(|(path, text, version)| {
+                let edits = projects::edits(&Text::new(text), &found(path, text), to);
+                (!edits.is_empty())
+                    .then(|| json!({ "path": path, "version": version, "edits": edits }))
+            })
+            .collect();
+        if edits.len() > 1 {
+            return Err(CoreError::conflict(
+                "Only one open document can be edited at once: close the others first.",
+            ));
+        }
+        let deleting = |rel: &str| self.deleting.iter().any(|entry| within(rel, entry));
+        let others = |rel: &str| chosen(rel) && !self.docs.contains_key(rel) && !deleting(rel);
+        let written = self.service.with_project(&self.project, |root| {
+            projects::replace_in_files(root, &others, found, to)
+        })?;
+        Ok(json!({ "edits": edits.pop(), "written": written }))
     }
 
     // MARK: - Files
@@ -1021,6 +1099,20 @@ impl Actor {
         self.deleting.insert(path.to_owned());
         Ok(json!({ "ready": true }))
     }
+}
+
+fn query(args: &Value) -> Result<Query, CoreError> {
+    let option = |key| arg::<Option<bool>>(args, key).map(Option::unwrap_or_default);
+    let text = string_arg(args, "query")?;
+    Ok(Query::new(text, option("matchCase")?, option("wholeWord")?))
+}
+
+/// The open documents' text as the editor has it, each taken without holding the others.
+fn texts(docs: &Mutex<HashMap<String, Document>>) -> HashMap<String, String> {
+    let docs = lock(docs).clone();
+    docs.into_iter()
+        .map(|(path, doc)| (path, doc.snapshot().0))
+        .collect()
 }
 
 /// A volume that keeps whole seconds could give a same-length write in the same second

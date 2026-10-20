@@ -37,8 +37,9 @@ the call.
   that came before it is the newer tree.
 - `tl_call` may be called from any thread, several at once. `session_*` commands are quick
   (they never wait for a build or TeXpresso to finish), but go through the session's queue:
-  keep them off the UI thread or use `tl_call_async`. `session_analyze` is taken in its turn
-  but worked out beside the session, which goes on with the commands after it meanwhile;
+  keep them off the UI thread or use `tl_call_async`. `session_analyze` and `session_search`
+  are taken in their turn but worked out beside the session, which goes on with the commands
+  after them meanwhile;
   `session_outline_current` is answered at once from the outline kept, from no queue, so a host
   may call it with `tl_call` on the UI thread; so may `locate`, which reads only the path's
   folders, for a drag that asks it as it moves.
@@ -85,6 +86,8 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_stop_compile` | | null | Drops the queued build too. |
 | `session_clean` | | null | Stops the build, waits for it, removes `build/`; answers when done. Cleans asked together share one answer. |
 | `session_analyze` | `path` | `{tree, words, headingStyles}` | The document the main file reads, from the disk, with the file shown (`path`): when the main file doesn't reach it, the document is that file alone. `tree`: the outline's headings, each `{index, depth, command, level, title, untitled, line, file, foldKey, children?}`; `index` is its place in the outline read in order, `command` its sectioning command without the backslash, `level` that level's name (“Section”), `title` its title as plain text or, `untitled: true`, its level's (“Untitled Section”); `foldKey` names its fold in the ui state; a title that wraps onto the next line (up to a blank line) is still a heading. `words` counts prose only: headings' titles and text, not maths, code, comments, command names or commands' name arguments such as `\include`'s file name or `\usepackage`'s package. `headingStyles`: the levels the main file's class has (Normal Text first, `{title, command, font: {scale, bold, shape}, marker}`), the class read from the main file as the editor has it. The session keeps the outline for `session_outline_current`. Ask again after each `saved`, a tree or a file changed, and when another file is shown. |
+| `session_search` | `query`, `matchCase?` (false), `wholeWord?` (false) | as `search_project` | The open document as the editor has it, the rest from the disk. With `matchCase` only in the query's case; with `wholeWord` only where neither end runs on into a letter, digit or underscore. |
+| `session_replace` | `query`, `replacement`, `matchCase?`, `wholeWord?`, `files?` | `{edits, written}` | `replacement` in place of every match `session_search` would find (all on a line) in every text file, or in those `files` lists. `edits`: the open document's, `{path, version, edits: [{start, length, text}]}` in UTF-16 against its text at `version`, or null; the host applies them at once as one undoable edit, as `toggle_style`'s, and the session saves it as any: the core doesn't write that file. `written`: `[{file, count}]`, the other files changed, by path, each read again and written under the project's lock keeping its line ends. 409 while the open document's change on disk isn't settled (its `conflict` asked or cancelled, a `document_reload` not yet applied), as saves wait then, and with two open documents to edit; 400, writing nothing, for a file with a match that isn't UTF-8. There is no undo across files. |
 | `session_outline_current` | `path`, `line` | index or null | The heading a line of `path` is under, as its `index` in the outline of the last `session_analyze` sent of those answered: the file's last at or above the line; null above its first. Ask once the analysis it should read has answered. |
 | `session_issue` | `next` | `{index, issue}` or null | The next or previous issue with a place, round the ends; the host opens `issue.file` at `issue.line`. |
 | `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter. |
@@ -136,7 +139,7 @@ Service commands (`tl_call`):
 | `create_project` | `name`, `template?` (article), `engine?` | the project (`{id, name, mtime, mainFile}`) | A name taken is numbered past (“Paper 2”); `id`/`name` say which. A name the path rules refuse is 400. With `engine`, the project is made with it; an unknown engine is 400, and nothing is made. |
 | `free_project_name` | `name?` (“Untitled”) | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
 | `create_entry` | `id`, `path`, `dir?` (false) | `{path}` | Makes an empty file, or with `dir` a folder, at `path`; a name taken is numbered past (“untitled 2.tex”), and `path` says which. A path outside the project, or the project's `.texlocal.json`, is 400. |
-| `search_project` | `id`, `query` | `[{file, hits: [{file, line, column, length, before, match, after}]}]` | The first 100 lines that have `query` (in any case), by file, the files in order of their paths. `line` counts from 1; `column` (from 0) and `length` place a line's first match in UTF-16 units of the line as written, for the editor to select. |
+| `search_project` | `id`, `query` | `[{file, hits: [{file, line, column, length, before, match, after}]}]` | The first 100 lines that have `query` (in any case), by file, the files in order of their paths. `line` counts from 1, a line ending where the editor's does (at a carriage return alone too); `column` (from 0) and `length` place a line's first match in UTF-16 units of the line as written, for the editor to select. |
 | `kill_all` | | null | Stops every build and live preview at once, on no session's queue: for a host's quit while calls are in flight, when `tl_close` can't be used. |
 | `locate` | `path` | `{id, path}` or null | The project an absolute path is in, as its folder's name, and the path in it, spelt as the disk spells it; null outside every project. |
 | `status` | | `{available, version, latexmkVersion, texDir, found, texpresso, texpressoDir}` | `latexmkVersion`: the number latexmk's version line names (“4.86”), or null. `set_tex_dir` and `set_texpresso_dir` answer the same. |
@@ -376,3 +379,10 @@ Every change a host follows since commit d6bee12, in the order made.
 - A `completions` item may have a `detail`: a citation's .bib entry, “Knuth · 1984 · The
   TeXbook”, for a host to show beside its key as Xcode shows a completion's description.
   Items without one have no `detail`, so a host that doesn't read it changes nothing.
+- `session_search {query, matchCase?, wholeWord?}` answers as `search_project` does, but finds
+  the open document's unsaved edits, which Replace would otherwise miss: both hosts move their
+  search to it, and `search_project` goes once they have. Both end a line where the editor
+  does, at a carriage return alone too.
+- `session_replace` is new, for Replace All: a host applies its `edits` to the open document as
+  one undoable edit, at once, and may show `written`'s counts; the core has written the other
+  files.

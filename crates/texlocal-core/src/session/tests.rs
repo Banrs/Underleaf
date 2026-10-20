@@ -1307,6 +1307,59 @@ async fn an_open_documents_definitions_are_placed_under_its_name_once_it_moves()
     assert_eq!(answer["places"][0]["file"], "b.tex");
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_search_reads_the_open_document_as_the_editor_has_it() {
+    let rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    // Marked text holds the autosave, so the word never reaches the disk.
+    let composing = json!({ "path": "main.tex", "composing": true });
+    rig.ok("composing", composing).await;
+    doc.edit(5, 0, " needle");
+    let found = rig.ok("search", json!({ "query": "needle" })).await;
+    assert_eq!(found[0]["hits"][0]["file"], "main.tex");
+    assert_eq!(found[0]["hits"][0]["column"], 6);
+    assert_eq!(rig.disk("main.tex"), "Hello");
+}
+
+/// Every match in a file goes, and only in the files asked for; one that isn't UTF-8 refuses
+/// them all, as writing it would change its bytes.
+#[tokio::test(start_paused = true)]
+async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_their_line_ends() {
+    let rig = Rig::new(false).await;
+    fs::write(rig.root.join("ch.tex"), "a cat\r\nand a cat\r\n").unwrap();
+    fs::write(rig.root.join("notes.txt"), "cat").unwrap();
+    fs::write(rig.root.join("latin.tex"), b"cat caf\xe9").unwrap();
+    let doc = rig.open("main.tex").await;
+    doc.edit(5, 0, " cat");
+    let replace = |files: Value| {
+        let args = json!({ "query": "Cat", "replacement": "dog", "files": files });
+        rig.call("replace", args)
+    };
+    let refused = replace(Value::Null).await.unwrap_err();
+    assert!(refused.status == 400 && refused.message.contains("latin.tex"));
+    assert_eq!(rig.disk("ch.tex"), "a cat\r\nand a cat\r\n");
+    let replaced = replace(json!(["ch.tex", "main.tex"])).await.unwrap();
+    let edit = json!({ "start": 6, "length": 3, "text": "dog" });
+    assert_eq!(
+        replaced,
+        json!({
+            "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
+            "written": [{ "file": "ch.tex", "count": 2 }],
+        })
+    );
+    assert_eq!(rig.disk("ch.tex"), "a dog\r\nand a dog\r\n");
+    assert_eq!(rig.disk("notes.txt"), "cat");
+}
+
+#[tokio::test(start_paused = true)]
+async fn nothing_is_replaced_while_a_change_on_disk_is_unsettled() {
+    let rig = Rig::new(false).await;
+    in_conflict(&rig).await;
+    let replace = json!({ "query": "Hello", "replacement": "Bye" });
+    let refused = rig.call("replace", replace).await.unwrap_err();
+    assert!(refused.status == 409 && refused.message.contains("changed on disk"));
+}
+
 /// Two files on their way to the Trash at once: the first's end leaves the second held.
 #[tokio::test(start_paused = true)]
 async fn two_trashes_under_way_each_keep_their_file_from_being_saved_again() {

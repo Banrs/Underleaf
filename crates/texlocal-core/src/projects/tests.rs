@@ -3,17 +3,25 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 
 use serde_json::json;
 
 use crate::CoreError;
 use crate::analyze::Files;
+use crate::projects::search::SearchHit;
 use crate::projects::testing::{fails_with, library, names_in, project};
 use crate::projects::{
-    Symbols, create_free, create_project, file_tree, list_projects, rename_entry, rename_project,
-    scan_symbols, search_project,
+    Query, Symbols, create_free, create_project, file_tree, list_projects, rename_entry,
+    rename_project, scan_symbols, search_project,
 };
 use crate::settings::{read_settings, write_settings};
+
+/// In any case and in part of a word, with nothing open, as the service searches.
+fn search(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
+    let query = Query::new(query, false, false);
+    search_project(root, &query, &HashMap::new(), limit)
+}
 
 #[test]
 fn a_rename_that_cannot_write_the_settings_is_undone_and_leaves_them_as_they_were() {
@@ -106,7 +114,7 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
     }
 
     let tree = file_tree(&root);
-    let hits = search_project(&root, "needle", 100);
+    let hits = search(&root, "needle", 100);
     let symbols = scan_symbols(&root, &Files::default(), &HashMap::new());
     lock(&root.join("locked"), 0o755).unwrap();
 
@@ -134,7 +142,7 @@ fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
         fs::write(root.join(file), text).unwrap();
     }
     let hit = |query: &str| {
-        let hits = search_project(&root, query, 50).unwrap();
+        let hits = search(&root, query, 50).unwrap();
         assert_eq!(hits.len(), 1, "{query}");
         let hit = &hits[0];
         let (file, line) = (&hit.file, hit.line);
@@ -142,18 +150,18 @@ fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
     };
     assert_eq!(hit("theorem"), "ascii.tex:2 The [THEOREM] holds");
     assert_eq!(hit("école"), "accents.tex:1 L'[ÉCOLE] Normale");
-    assert!(search_project(&root, "zzz", 50).unwrap().is_empty());
+    assert!(search(&root, "zzz", 50).unwrap().is_empty());
     assert_eq!(hit("lemma"), "mixed.tex:2 see [Lemma] 3");
     assert_eq!(hit("größe"), "wide.tex:1 Çà İstanbul, GRÖSSE und [Größe]");
     assert_eq!(hit("brown"), "quick.tex:1 the quick [brown] fox jumps");
     let files = |query: &str| -> Vec<String> {
-        let hits = search_project(&root, query, 50).unwrap();
+        let hits = search(&root, query, 50).unwrap();
         hits.into_iter().map(|hit| hit.file).collect()
     };
     assert!(files("istanbul").contains(&"wide.tex".to_string()));
     assert!(files("k").contains(&"kelvin.tex".to_string()));
     fs::write(root.join("many.tex"), "needle\n".repeat(20)).unwrap();
-    let hits = search_project(&root, "needle", 5).unwrap();
+    let hits = search(&root, "needle", 5).unwrap();
     assert_eq!(hits.len(), 5);
     assert!(hits.iter().all(|h| h.file == "many.tex"));
 }
@@ -165,7 +173,7 @@ fn a_hit_places_its_match_in_utf16_units_of_the_line() {
     let (_dir, root) = project();
     let hit = |text: &str, query: &str| {
         fs::write(root.join("main.tex"), text).unwrap();
-        let mut hits = search_project(&root, query, 50).unwrap();
+        let mut hits = search(&root, query, 50).unwrap();
         assert_eq!(hits.len(), 1, "{text:?}");
         let hit = hits.remove(0);
         (hit.line, hit.column, hit.length, hit.matched)
@@ -197,7 +205,7 @@ fn only_the_top_level_build_folder_is_the_compile_outputs() {
     fs::write(root.join("chapters/build/notes.tex"), notes).unwrap();
 
     assert!(file_tree(&root).unwrap().iter().all(|n| n.name != "Build"));
-    let hits = search_project(&root, "needle", 10).unwrap();
+    let hits = search(&root, "needle", 10).unwrap();
     let files: Vec<_> = hits.iter().map(|h| h.file.as_str()).collect();
     assert_eq!(files, ["chapters/build/notes.tex"]);
     assert_eq!(
@@ -396,7 +404,7 @@ fn the_tree_scans_and_zip_follow_links_to_files_only() {
             "source.txt"
         ]
     );
-    let hits = search_project(&root, "needle", 10).unwrap();
+    let hits = search(&root, "needle", 10).unwrap();
     let mut hits: Vec<_> = hits.into_iter().map(|hit| hit.file).collect();
     hits.sort();
     assert_eq!(hits, ["linked.tex", "source.txt"]);
