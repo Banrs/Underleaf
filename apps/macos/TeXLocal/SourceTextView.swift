@@ -26,6 +26,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
     enum FileDrop { case open(() -> Void), insert(String) }
     var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
+    var openDefinition: (Definition.Place) -> Void = { _ in }
     private(set) var loading = false
 
     /// `source` is the session's document holding `text`.
@@ -461,25 +462,32 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func mouseDown(with event: NSEvent) {
         if event.type == .leftMouseDown, inGutter(event) { return selectLines(with: event) }
-        if event.type == .leftMouseDown, let row = issue(at: event), clicked(row, with: event) { return }
+        let held = event.modifierFlags.intersection([.shift, .control, .option, .command])
+        if event.type == .leftMouseDown, held.isEmpty, let row = issue(at: event), let up = release(of: event) {
+            if row.message?.rect.contains(convert(up.locationInWindow, from: nil)) == true { issueClicked(row.line) }
+            return
+        }
+        // ⌘-click, as Xcode's: asked before the release, so a name nothing defines leaves the click to the text view.
+        if event.type == .leftMouseDown, held == .command,
+           let place = document.definition(at: characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))),
+           release(of: event) != nil {
+            return openDefinition(place)
+        }
         super.mouseDown(with: event)
         if event.type == .leftMouseDown, event.clickCount == 2 { forwardSync(true)?() }
     }
 
-    /// False for a drag, Shift-click and double-click, which are the text view's.
-    private func clicked(_ issue: IssueOverlay.Row, with down: NSEvent) -> Bool {
-        guard down.clickCount == 1, down.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]) else { return false }
+    /// A single click's release; nil for a drag, reposted, and a double-click, which are the text view's.
+    private func release(of down: NSEvent) -> NSEvent? {
+        guard down.clickCount == 1 else { return nil }
         while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
-            if next.type == .leftMouseUp {
-                if issue.message?.rect.contains(convert(next.locationInWindow, from: nil)) == true { issueClicked(issue.line) }
-                return true
-            }
+            if next.type == .leftMouseUp { return next }
             if hypot(next.locationInWindow.x - down.locationInWindow.x, next.locationInWindow.y - down.locationInWindow.y) > 3 {
                 window?.postEvent(next, atStart: true)
-                return false
+                return nil
             }
         }
-        return true
+        return nil
     }
 
     private func selectLines(with event: NSEvent) {

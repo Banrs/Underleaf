@@ -220,6 +220,9 @@ final class ProjectModel {
         editor.textView.forwardSync = { [weak self] quietly in
             self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync(quietly: quietly) } } : nil
         }
+        editor.textView.openDefinition = { [weak self] place in
+            Task { await self?.open(place.file, line: place.line, column: place.column, length: place.length) }
+        }
     }
 
     func autoCompileChanged() {

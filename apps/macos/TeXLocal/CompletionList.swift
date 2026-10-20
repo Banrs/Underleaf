@@ -86,7 +86,8 @@ final class CompletionList {
         guard reload else { return place(under: start, in: shown) }
         let count = rows.labels.count
         let font = editor.font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        (rows.labels, rows.typed, rows.kind, rows.font) = (offered.items.map(\.label), editor.caret - offered.start, offered.kind, font)
+        (rows.labels, rows.details, rows.typed, rows.kind, rows.font) =
+            (offered.items.map(\.label), offered.items.map(\.detail), editor.caret - offered.start, offered.kind, font)
         rows.boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         rows.height = (font.ascender - font.descender + font.leading).rounded(.up) + 8
         rows.selection = 0
@@ -105,7 +106,8 @@ final class CompletionList {
         let selection = rows.selection
         guard rows.labels.indices.contains(selection) else { return }
         let position = String(localized: "\(selection + 1) of \(rows.labels.count)")
-        var announcement = AttributedString([rows.labels[selection], rows.kind.name, position].formatted(.list(type: .and, width: .narrow)))
+        var announcement = AttributedString([rows.labels[selection], rows.details[selection], rows.kind.name, position].compactMap { $0 }
+            .formatted(.list(type: .and, width: .narrow)))
         announcement.accessibilitySpeechAnnouncementPriority = interrupting ? .high : .low
         AccessibilityNotification.Announcement(announcement).post()
     }
@@ -120,7 +122,11 @@ final class CompletionList {
         var measured = labels.indices.filter { !isASCII($0) }
         if let longest = labels.indices.filter(isASCII).max(by: { labels[$0].utf8.count < labels[$1].utf8.count }) { measured.append(longest) }
         let widest = measured.map { width(of: labels[$0]) }.max() ?? 0
-        size = NSSize(width: (widest + 2 * Self.textStart).rounded(.up),
+        // Details are a column beside the labels', as a menu's key equivalents beside its titles. Only the longest is measured,
+        // not a bibliography's thousands: a row truncates a wider one.
+        let details = rows.details.compactMap { $0 }.max { $0.utf16.count < $1.utf16.count }
+            .map { ($0 as NSString).size(withAttributes: [.font: rows.detailFont]).width + CompletionRowsView.detailSpacing } ?? 0
+        size = NSSize(width: (widest + details + 2 * Self.textStart).rounded(.up),
                       height: CGFloat(min(labels.count, 8)) * rows.height + 2 * CompletionRowsView.margin)
     }
 
@@ -167,11 +173,13 @@ final class CompletionList {
 
 @Observable final class CompletionRows {
     var labels: [String] = []
+    var details: [String?] = []
     /// The UTF-16 units typed, which are bold.
     var typed = 0
     var kind = CompletionKind.command
     var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
     var boldFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .bold)
+    var detailFont: NSFont { .systemFont(ofSize: font.pointSize) }
     var height: CGFloat = 24
     var selection = 0
     /// Bumped to scroll the chosen row into view.
@@ -185,27 +193,38 @@ struct CompletionRowsView: View {
     let rows: CompletionRows
     let clicked: (Int) -> Void
 
-    static let margin: CGFloat = 5, textInset: CGFloat = 10
+    static let margin: CGFloat = 5, textInset: CGFloat = 10, detailSpacing: CGFloat = 20
 
     var body: some View {
         ScrollViewReader { scroller in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows.labels.indices, id: \.self) { row in
-                        let chosen = row == rows.selection
-                        Text(label(row))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .foregroundStyle(Color(nsColor: chosen ? .alternateSelectedControlTextColor : .labelColor))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, Self.textInset)
-                            .frame(height: rows.height)
-                            .background(chosen ? Color(nsColor: .controlAccentColor) : .clear, in: .rect(cornerRadius: 8))
-                            .padding(.horizontal, Self.margin)
-                            .contentShape(.rect)
-                            .onTapGesture { clicked(row) }
-                            .accessibilityAddTraits(chosen ? .isSelected : [])
-                            .id(row)
+                        let chosen = row == rows.selection, detail = rows.details[row]
+                        HStack(spacing: Self.detailSpacing) {
+                            // The key whole, while its detail truncates.
+                            Text(label(row)).layoutPriority(1)
+                            if let detail {
+                                Text(detail)
+                                    .font(Font(rows.detailFont))
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
+                            }
+                        }
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .foregroundStyle(Color(nsColor: chosen ? .alternateSelectedControlTextColor : .labelColor))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, Self.textInset)
+                        .frame(height: rows.height)
+                        .background(chosen ? Color(nsColor: .controlAccentColor) : .clear, in: .rect(cornerRadius: 8))
+                        .padding(.horizontal, Self.margin)
+                        .contentShape(.rect)
+                        .onTapGesture { clicked(row) }
+                        .help(detail ?? "")
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(chosen ? .isSelected : [])
+                        .id(row)
                     }
                 }
             }

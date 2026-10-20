@@ -72,6 +72,27 @@ struct SourceEditorTests {
         #expect(text.string == "  x" && text.document.text == text.string)
     }
 
+    /// Jump to Definition at a \ref opens the file its label is in, with the label selected; what defines a name is the
+    /// core's (complete.rs).
+    @Test func jumpAtARefOpensItsLabelsFileAtTheLabel() async throws {
+        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        let defaults = TestDefaults(), info = try await newProject()
+        defer { try? FileManager.default.removeItem(at: info.folder) }
+        let app = AppModel(defaults: defaults.store)
+        app.autoCompile = false
+        try info.write("See \\ref{fig:a}.", to: info.mainFile)
+        try info.write("Figures.\n\\label{fig:a}\n", to: "figures.tex")
+        await app.open(info.id)
+        let project = try #require(app.project), text = project.editor.textView
+        // Once the session's first scan of the project's files has reached the document.
+        try await waitUntil(timeout: .seconds(5)) { project.editor.path == info.mainFile && text.document.definition(at: 10) != nil }
+        text.setSelectedRange(.caret(10))
+        app.perform(.jumpToDefinition, on: project)
+        try await waitUntil(timeout: .seconds(5)) { project.editor.path == "figures.tex" }
+        #expect(project.editor.currentLine == 2 && (text.string as NSString).substring(with: text.selectedRange()) == "fig:a")
+        await app.close()
+    }
+
     /// A project closing leaves its editor read-only: a key steps over no closer and offers no completions.
     @Test func aReadOnlyEditorAsksTheCoreNothing() {
         open("")
@@ -156,7 +177,8 @@ struct SourceEditorTests {
         let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
                                                     context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
         let shown = try #require(editor.textView(text, menu: menu, for: event, at: 0))
-        #expect(shown.items.map { $0.isSeparatorItem ? "-" : $0.title } == ["Go to PDF Position", "Comment Selection", "-", "Cut"])
+        #expect(shown.items.map { $0.isSeparatorItem ? "-" : $0.title }
+            == ["Jump to Definition", "Go to PDF Position", "Comment Selection", "-", "Cut"])
     }
 
     /// TextKit 2 estimates what's above a revealed line, and a new width changes that; lines wrap at once, at the width AppKit's tracking gives as a live resize ends.

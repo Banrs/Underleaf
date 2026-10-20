@@ -5,7 +5,7 @@ enum MenuCommand: CaseIterable {
     case projectNew, projectOpen, projectClose, projectExport, projectSearch
     case fileNew, fileNewFolder, fileUpload, fileSave, pdfSave, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
-    case editGotoLine
+    case editGotoLine, jumpToDefinition
     case pdfFind, pdfGotoPage
     case viewToggleSidebar, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage, viewTextBigger, viewTextSmaller
@@ -39,6 +39,7 @@ enum MenuCommand: CaseIterable {
         case .editMoveLineUp: ("Move Line Up", KeyboardShortcut(.upArrow, modifiers: [.command, .control]))
         case .editMoveLineDown: ("Move Line Down", KeyboardShortcut(.downArrow, modifiers: [.command, .control]))
         case .editGotoLine: ("Go to Line…", KeyboardShortcut("l"))
+        case .jumpToDefinition: ("Jump to Definition", KeyboardShortcut("j", modifiers: [.command, .control]))
         case .pdfFind: ("Find in PDF…", nil)
         case .pdfGotoPage: ("Go to Page…", KeyboardShortcut("g", modifiers: [.command, .option]))
         case .viewToggleSidebar: ("Sidebar", KeyboardShortcut("s", modifiers: [.command, .control]))
@@ -68,7 +69,7 @@ enum MenuCommand: CaseIterable {
     var editsSelection: Bool {
         switch self {
         case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp,
-             .editMoveLineDown: true
+             .editMoveLineDown, .jumpToDefinition: true
         default: false
         }
     }
@@ -107,8 +108,8 @@ extension AppModel {
         switch command {
         case .projectNew, .projectOpen: libraryProblem == nil
         case .projectSearch: project != nil || (self.project == nil && mainWindowIsKey)
-        case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .viewTextBigger,
-             .viewTextSmaller:
+        case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .jumpToDefinition,
+             .viewTextBigger, .viewTextSmaller:
             project?.editsText == true
         case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
         case .compileRun: tex?.available == true && project?.compiling == false
@@ -179,6 +180,7 @@ extension AppModel {
         case .editMoveLineUp: project?.editor.perform(.moveLineUp)
         case .editMoveLineDown: project?.editor.perform(.moveLineDown)
         case .editGotoLine: prompt = .gotoLine
+        case .jumpToDefinition: project?.editor.jumpToDefinition()
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarShown.toggle()
@@ -272,6 +274,8 @@ struct AppCommands: Commands {
         }
         CommandMenu("Go") {
             items(.editGotoLine, .pdfGotoPage)
+            Divider()
+            items(.jumpToDefinition)
             Divider()
             items(.syncForward, .syncInverse)
             Divider()
