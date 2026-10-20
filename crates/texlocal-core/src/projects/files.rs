@@ -21,8 +21,6 @@ pub struct RenameResult {
     pub main_file: String,
 }
 
-/// Make the file or folder `rel`, unless something is there already: whether
-/// it was made.
 fn make(root: &Path, rel: &str, dir: bool) -> Result<bool, CoreError> {
     let abs = safe_write_path(root, rel)?;
     if abs.exists() {
@@ -36,16 +34,6 @@ fn make(root: &Path, rel: &str, dir: bool) -> Result<bool, CoreError> {
     Ok(true)
 }
 
-pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
-    if make(root, rel, dir)? {
-        Ok(())
-    } else {
-        Err(CoreError::conflict("Already exists"))
-    }
-}
-
-/// `create_file`, numbered past the names taken as Finder numbers copies
-/// ("untitled.tex", "untitled 2.tex"); the path made.
 pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {
     for path in copy_paths(rel) {
         if make(root, &path, dir)? {
@@ -95,7 +83,6 @@ fn write_error(abs: &Path, err: std::io::Error) -> CoreError {
     }
 }
 
-/// Whether `path` lies inside the folder `dir`, not as `dir` itself.
 fn is_under(path: &str, dir: &str) -> bool {
     after_entry(path, dir).is_some_and(|rest| !rest.is_empty())
 }
@@ -110,8 +97,6 @@ fn occupied(src: &Path, dest: &Path) -> bool {
 pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, CoreError> {
     let src = safe_path(root, from)?;
     let dest = safe_write_path(root, to)?;
-    // Only compared with the main file, never passed to a tool, so a name
-    // starting with "-" is as renameable here as create_entry made it.
     let from_rel = rel_key(from)?;
     let to_rel = rel_key(to)?;
     if fs::symlink_metadata(&src).is_err() {
@@ -130,7 +115,6 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
     }
 
     let main_file = read_settings(root).main_file;
-    // Each project path's new one, None for one the rename leaves.
     let moved = |path: &str| after_entry(path, &from_rel).map(|rest| format!("{to_rel}{rest}"));
     let moved_main = moved(&main_file);
     fs::rename(&src, &dest)?;
@@ -154,18 +138,11 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
     })
 }
 
-/// How an entry is discarded: to the platform's Trash, or in a test, wherever
-/// the test says.
 pub(crate) type Trash = fn(&Path) -> Result<(), CoreError>;
 
-/// Delete to the platform's trash, so a mis-click is recoverable. A trash
-/// failure is reported and the original is left in place; it must never become
-/// an implicit permanent-delete request.
+/// Delete to the platform's trash, so a mis-click is recoverable; a trash failure is reported and never becomes a permanent delete.
 pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
-    // On macOS the crate asks Finder over Apple Events by default, which needs
-    // the Automation permission; the system's file manager moves it instead, as
-    // the Mac app's own Move to Trash does (`FileManager.trashItem`), though
-    // Finder then offers no Put Back for it.
+    // The system's file manager moves it, as the Mac app does; the crate's Finder-over-Apple-Events default needs the Automation permission.
     #[cfg(target_os = "macos")]
     let trashed = {
         use trash::macos::{DeleteMethod, TrashContextExtMacos};
@@ -190,8 +167,6 @@ pub(crate) fn discard_replaced(root: &Path, rel: &str, trash: Trash) -> Result<(
     trash(&safe_path(root, rel)?)
 }
 
-/// The paths an entry's copies take in turn in its folder, as Finder numbers
-/// them: `rel`, then "main 2.tex", "main 3.tex"… or "figures 2", "figures 3"…
 pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> {
     let (parent, name) = rel.rsplit_once('/').unwrap_or(("", rel));
     let numbered = move |n: u32| match name.rsplit_once('.') {
@@ -249,11 +224,9 @@ mod tests {
             .collect();
         assert_eq!(folders, ["untitled folder", "untitled folder 2"]);
         assert!(root.join("untitled folder 2").is_dir());
-        // Names the path rules refuse are refused, not numbered.
         for bad in [".texlocal.json", "../x.tex"] {
             assert_eq!(create_free(&root, bad, false).unwrap_err().status, 400);
         }
-        // So is a folder where the path wants a file's: not numbered past.
         fs::write(root.join("plain"), "a file").unwrap();
         assert!(create_free(&root, "plain/x.tex", false).is_err());
     }
@@ -261,7 +234,7 @@ mod tests {
     #[test]
     fn a_renamed_entry_takes_its_saved_interface_state_along() {
         let (_dir, root) = project();
-        create_file(&root, "chapters/a.tex", false).unwrap();
+        create_free(&root, "chapters/a.tex", false).unwrap();
         let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
         write_ui(
             &root,
@@ -279,7 +252,6 @@ mod tests {
                 folded_headings: list(&["content/a.tex\t1:Intro#1", "main.tex\t1:Intro#1"]),
             }
         );
-        // A file's fold follows it alone.
         rename_entry(&root, "content/a.tex", "content/b.tex").unwrap();
         let folds = read_ui(&root).folded_headings;
         assert_eq!(

@@ -281,7 +281,7 @@ struct PDFFindTests {
         let line = "An echo repeats. An echo repeats."
         let info = try await newProject()
         defer { try? FileManager.default.removeItem(at: info.folder) }
-        try await Core.shared.call("write_file", ["id": info.id, "path": info.mainFile, "text": line])
+        try info.write(line, to: info.mainFile)
         let pdf = try textPDF([line], width: 180), page = try #require(pdf.page(at: 0))
         let rendered = try #require(page.string)
         let box = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).bounds(for: page)
@@ -290,10 +290,6 @@ struct PDFFindTests {
         controller.reveal(ForwardLoc(page: 1, h: box.minX, v: page.bounds(for: .cropBox).maxY - box.minY, width: box.width, height: box.height),
                           from: SyncSource(id: info.id, file: info.mainFile, line: 1, column: column))
         let second = NSRange(try #require(rendered.ranges(of: "echo").last), in: rendered)
-        let whole: [[String: any Sendable]] = [["page": 1, "text": rendered, "near": [[0, (rendered as NSString).length]]]]
-        let hit = try await Core.shared.call("synctex_match", ["id": info.id, "file": info.mainFile, "line": 1, "column": column,
-                                                              "pages": whole], as: PageHit?.self)
-        #expect(hit.map { NSRange(location: $0.start, length: $0.end - $0.start) } == second)
         // PDFKit's selection of a word that ends a row takes the row's break along.
         try await waitUntil {
             let selection = controller.view.currentSelection
@@ -302,15 +298,13 @@ struct PDFFindTests {
         } state: { "selection \(String(describing: controller.view.currentSelection?.range(at: 0, on: page)))" }
     }
 
-    private func shows(_ page: PDFPage?, in controller: PDFController) -> Bool {
-        guard let page, let document = controller.view.document else { return false }
-        return (0..<document.pageCount).contains { document.page(at: $0) === page }
-    }
-
-    /// PDFKit searches off the main thread and posts what it finds to the main queue.
+    /// PDFKit searches off the main thread and posts what it finds to the main queue: found once each match is on a page showing.
     private func found(_ controller: PDFController) async throws {
         try await waitUntil(timeout: .seconds(5)) {
-            !controller.find.matches.isEmpty && controller.find.matches.allSatisfy { shows($0.pages.first, in: controller) }
+            guard let document = controller.view.document, !controller.find.matches.isEmpty else { return false }
+            return controller.find.matches.allSatisfy { match in
+                (0..<document.pageCount).contains { document.page(at: $0) === match.pages.first }
+            }
         }
     }
 

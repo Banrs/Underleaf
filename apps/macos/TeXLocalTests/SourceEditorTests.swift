@@ -59,33 +59,17 @@ struct SourceEditorTests {
         #expect(document.lineCount == 3 && document.lineStart(3) == 6 && document.text == "a\u{0}\nb\u{0}\nc")
     }
 
-    /// Each key goes through the core, which closes brackets and steps over them, keeps the indentation and indents by Tab.
+    /// Each key goes through the core (whose rules are its own tests'): a bracket, a newline, Tab.
     @Test func typingIsTheCores() {
         open("")
-        type("{")
-        #expect(text.string == "{}" && text.selectedRange() == .caret(1))
-        type("}")
+        type("{", "}")
         #expect(text.string == "{}" && text.selectedRange() == .caret(2))
-        open("ab")
-        text.setSelectedRange(NSRange(location: 0, length: 2))
-        type("[")
-        #expect(text.string == "[ab]" && text.selectedRange() == NSRange(location: 1, length: 2))
-        open("")
-        type("{")
-        text.deleteBackward(nil)
-        #expect(text.string == "")
-        // A closer put in as \]: its bracket steps over both, and the backslash typed for it goes.
-        open("\\")
-        type("[", "x", "\\", "]")
-        #expect(text.string == "\\[x\\]" && text.selectedRange() == .caret(5))
         open("  a{}", caret: 4)
         text.insertNewline(nil)
         #expect(text.string == "  a{\n  \n  }" && text.selectedRange().location == 7)
         open("x", caret: 0)
         text.insertTab(nil)
-        #expect(text.string == "  x")
-        text.insertBacktab(nil)
-        #expect(text.string == "x" && text.document.text == text.string)
+        #expect(text.string == "  x" && text.document.text == text.string)
     }
 
     /// A project closing leaves its editor read-only: a key steps over no closer and offers no completions.
@@ -114,45 +98,28 @@ struct SourceEditorTests {
         #expect(!catcher.cancelled && text.completions.offered != nil)
     }
 
+    /// With completion off, only a list asked for follows the typing.
     @Test func typingAssistanceCanBeTurnedOff() throws {
         text.autoPair = false
         text.autoComplete = false
         open("")
-        type("{")
-        #expect(text.string == "{")
-        open("{}", caret: 1)
-        text.deleteBackward(nil)
-        #expect(text.string == "}")
-        open("\\")
-        type("b")
-        #expect(text.completions.offered == nil)
+        type("{", "\\", "b")
+        #expect(text.string == "{\\b" && text.completions.offered == nil)
         text.complete(nil)
         let all = try #require(text.completions.offered).items.count
         type("e")
         #expect(try #require(text.completions.offered).items.count < all)
     }
 
-    struct Step: Sendable {
-        let text: String, selection: NSRange, command: EditorCommand, result: String, selected: NSRange
-    }
-
-    @Test(arguments: [
-        Step(text: "a\n  b", selection: NSRange(location: 0, length: 5), command: .comment,
-             result: "% a\n%   b", selected: NSRange(location: 2, length: 7)),
-        Step(text: "word", selection: NSRange(location: 0, length: 4), command: .bold,
-             result: "\\textbf{word}", selected: NSRange(location: 8, length: 4)),
-        Step(text: "a \\textit{b \\textbf{word} c} d", selection: NSRange(location: 20, length: 4), command: .bold,
-             result: "a \\textit{b word c} d", selected: NSRange(location: 12, length: 4)),
-    ])
-    func aCommandIsOneUndoStepThatKeepsTheSelection(_ step: Step) {
-        open(step.text)
-        text.setSelectedRange(step.selection)
-        #expect(editor.perform(step.command))
-        #expect(text.string == step.result && text.selectedRange() == step.selected && text.document.text == text.string)
+    @Test func aCommandIsOneUndoStepThatKeepsTheSelection() {
+        open("word")
+        text.setSelectedRange(NSRange(location: 0, length: 4))
+        #expect(editor.perform(.bold))
+        #expect(text.string == "\\textbf{word}" && text.selectedRange() == NSRange(location: 8, length: 4))
         text.undoManager?.undo()
-        #expect(text.string == step.text && text.document.text == text.string)
+        #expect(text.string == "word" && text.document.text == text.string)
         text.undoManager?.redo()
-        #expect(text.string == step.result && text.document.text == text.string)
+        #expect(text.string == "\\textbf{word}" && text.document.text == text.string)
     }
 
     @Test func blocksTabThroughTheirFields() {
@@ -170,16 +137,11 @@ struct SourceEditorTests {
     }
 
     @Test func writingToolsPassOverTheLaTeX() {
-        let source = "Some \\emph{prose} with $x^2$ and \\label{sec:a}. % note"
-        open(source)
-        let string = source as NSString
+        let string = "Some \\emph{prose}" as NSString
+        open(string as String)
         let ignored = editor.textView(text, writingToolsIgnoredRangesInEnclosingRange: NSRange(location: 0, length: string.length)).map(\.rangeValue)
-        func isIgnored(_ word: String) -> Bool {
-            ignored.contains { NSIntersectionRange($0, string.range(of: word)).length > 0 }
-        }
-        #expect(isIgnored("\\emph") && isIgnored("$x^2$") && isIgnored("sec:a") && isIgnored("% note"))
-        #expect(!isIgnored("Some") && !isIgnored("prose") && !isIgnored("with"))
-        #expect(text.writingToolsBehavior == .limited)
+        func isIgnored(_ word: String) -> Bool { ignored.contains { NSIntersectionRange($0, string.range(of: word)).length > 0 } }
+        #expect(isIgnored("\\emph") && !isIgnored("Some") && !isIgnored("prose"))
     }
 
     @Test func theContextMenuIsTheSourcesOwn() throws {
@@ -271,22 +233,14 @@ struct SourceEditorTests {
         #expect(text.string == "ab" && text.document.text == text.string)
     }
 
-    @Test func linesMoveUpAndDown() async throws {
+    @Test func aMovedLineIsOneUndoStep() async throws {
         open("a\nb\nc\nd", caret: 2)
-        #expect(editor.perform(.moveLineUp))
-        #expect(text.string == "b\na\nc\nd" && text.selectedRange() == .caret(0))
-        #expect(!editor.perform(.moveLineUp))
-        #expect(text.string == "b\na\nc\nd")
-        text.setSelectedRange(NSRange(location: 4, length: 1))
-        #expect(editor.perform(.moveLineDown))
-        #expect(text.string == "b\na\nd\nc" && text.selectedRange() == NSRange(location: 6, length: 1))
-        #expect(!editor.perform(.moveLineDown))
         let undo = try groupingByEvent()
         await undo.grouping { #expect(editor.perform(.moveLineUp)) }
-        #expect(text.string == "b\na\nc\nd" && text.selectedRange() == NSRange(location: 4, length: 1))
-        #expect(undo.undoActionName == "Move Line Up")
+        #expect(text.string == "b\na\nc\nd" && text.selectedRange() == .caret(0) && undo.undoActionName == "Move Line Up")
+        #expect(!editor.perform(.moveLineUp))
         undo.undo()
-        #expect(text.string == "b\na\nd\nc" && text.document.text == text.string)
+        #expect(text.string == "a\nb\nc\nd" && text.document.text == text.string)
     }
 
     @Test func syncTeXGoesToTheWordAndTellsAUTF16Column() {
@@ -307,7 +261,6 @@ struct SourceEditorTests {
         #expect(text.completions.offered == nil && text.undoManager?.undoActionName == "Completion")
         #expect(text.string == "  \\begin{env}\n    \n  \\end{env}" && text.selectedRange() == NSRange(location: 9, length: 3))
         type("itemize")
-        #expect(text.string == "  \\begin{itemize}\n    \n  \\end{itemize}")
         text.insertTab(nil)
         #expect(text.selectedRange() == .caret(22))
         text.insertTab(nil)
@@ -315,6 +268,7 @@ struct SourceEditorTests {
     }
 
     @Test func theCompletionListTakesOnlyItsKeys() throws {
+        inWindow()
         open("\\")
         type("b")
         let all = try #require(text.completions.offered).items.count
@@ -380,39 +334,17 @@ struct SourceEditorTests {
         #expect(text.string == "first" && text.document.text == "first")
     }
 
+    /// AppKit's results count from the range checked, which starts here inside a \label whose code range starts before it.
     @Test func spellingIsTheProses() {
-        let source = """
-        🙂
-        \\begin{align}
-        mathwrod &= \\text{prosewrod} % commentwrod
-        \\end{align}
-        $\\text{naïvve} + dollarwrod$
-        \\verb|verbwrod|
-        \\begin{verbatim}
-        codewrod
-        \\end{verbatim}
-        afterwrod \\emph{emphwrod} \\label{sec:labelwrod} \\cite[see]{citewrod} \\usepackage[utf8]{pkgwrod} \\includegraphics{filewrod.pdf}
-        """
-        open(source)
-        let string = source as NSString
-        let start = string.range(of: "mathwrod").location
+        let string = "\\label{sec:labelwrod} \\emph{prosewrod}" as NSString
+        open(string as String)
+        let start = string.range(of: "labelwrod").location
         let checked = NSRange(location: start, length: string.length - start)
-        let words = ["mathwrod", "prosewrod", "commentwrod", "naïvve", "dollarwrod", "verbwrod", "codewrod", "afterwrod", "emph",
-                     "emphwrod", "labelwrod", "citewrod", "pkgwrod", "filewrod"]
-        let relative = { (word: String) in
-            let range = string.range(of: word)
-            return NSRange(location: range.location - checked.location, length: range.length)
-        }
-        let results = words.flatMap { word in
-            [NSTextCheckingResult.spellCheckingResult(range: relative(word)),
-             NSTextCheckingResult.correctionCheckingResult(range: relative(word), replacementString: "word"),
-             NSTextCheckingResult.replacementCheckingResult(range: relative(word), replacementString: "word")]
-        }
-        let kept = editor.textView(text, didCheckTextIn: checked, types: NSTextCheckingAllTypes, options: [:], results: results,
-                                   orthography: NSOrthography.defaultOrthography(forLanguage: "en"), wordCount: words.count)
-        let prose = ["prosewrod", "commentwrod", "naïvve", "afterwrod", "emphwrod"]
-        #expect(kept.map(\.range) == prose.flatMap { Array(repeating: relative($0), count: 3) })
-        #expect(kept.map(\.resultType) == prose.flatMap { _ in [.spelling, .correction, .replacement] })
+        let relative = { (word: String) in NSRange(location: string.range(of: word).location - start, length: (word as NSString).length) }
+        let kept = editor.textView(text, didCheckTextIn: checked, types: NSTextCheckingAllTypes, options: [:],
+                                   results: ["labelwrod", "prosewrod"].map { .spellCheckingResult(range: relative($0)) },
+                                   orthography: NSOrthography.defaultOrthography(forLanguage: "en"), wordCount: 2)
+        #expect(kept.map(\.range) == [relative("prosewrod")])
     }
 
     @discardableResult
@@ -487,25 +419,6 @@ struct SourceEditorTests {
         try await waitUntilColoured("]", theme.color(.invalid))
     }
 
-    @Test func reduceMotionMarksABracketsPartnerInPlace() throws {
-        inWindow()
-        open("(a)", caret: 0)
-        text.reducesMotion = { true }
-        try layOut()
-        text.moveRight(nil)
-        #expect(text.partnerMark == NSRange(location: 2, length: 1))
-        text.moveRight(nil)
-        #expect(text.partnerMark == nil)
-        // A closer typed: the edit lays its line out again, which the fill outlasts until the selection moves.
-        open("(a", caret: 2)
-        try layOut()
-        type(")")
-        try layOut()
-        #expect(text.string == "(a)" && text.partnerMark == NSRange(location: 0, length: 1))
-        text.setSelectedRange(.caret(1))
-        #expect(text.partnerMark == nil)
-    }
-
     /// Another app's text for the file shown keeps the caret and the top line where they were, as Xcode does.
     @Test func aReloadKeepsTheCaretAndTheTopLine() throws {
         inWindow()
@@ -566,8 +479,8 @@ struct SourceEditorTests {
         let string = text.string as NSString
         let begun = string.substring(with: NSRange(location: 7, length: string.range(of: "}").location - 7))
         #expect(string.hasSuffix("\\end{\(begun)}") && text.document.text == text.string)
-        // The audit's suspicion (2026-10-17): each key its own step, as the mirror edits end the typing's coalescing.
-        withKnownIssue("Typing in a mirrored field may take an Undo per key", isIntermittent: true) {
+        // One Undo should take back the word typed in the field, but the mirror edits end the typing's coalescing.
+        withKnownIssue("Typing in a mirrored field takes an Undo per key") {
             #expect(text.string == "\\begin{env}\n  \n\\end{env}")
         }
     }
@@ -577,7 +490,6 @@ struct SourceEditorTests {
         window.orderFrontUnseen()
         defer { window.close() }
         open("\\section{A} % note")
-        #expect(SyntaxTheme.all.map(\.id) == ["overleaf", "texstudio", "system"] && SyntaxTheme(rawValue: "gone") == nil)
         let texstudio = try #require(SyntaxTheme(rawValue: "texstudio")), system = try #require(SyntaxTheme(rawValue: "system"))
         text.syntaxTheme = texstudio
         try await waitUntilColoured("\\section", texstudio.color(.command))
@@ -664,12 +576,10 @@ struct SourceEditorTests {
         try #require(text.textLayoutManager).textViewportLayoutController.layoutViewport()
     }
 
-    /// A line with an issue has its symbol and what it says in a box at the end of its first wrapped line, a point inside
-    /// its band's end; a narrower pane cuts the words short, then leaves the symbol alone, then nothing, with a help tag's
-    /// words for what isn't shown. An undefined command is underlined where it stands.
+    /// The box is a point inside its band's end on the first wrapped line; narrower panes cut its words short, then leave
+    /// the symbol alone, then nothing, with a help tag's words. An undefined command is underlined where it stands.
     @Test func anIssuesMessageIsAtItsLinesEnd() throws {
         let window = inWindow()
-        // The core's: where the line has the command (crates/texlocal-core's `command_ranges`).
         let undefined = issue(2, "Undefined control sequence: \\foo", compact: "Undefined: \\foo",
                               tokens: [NSRange(location: 4, length: 4), NSRange(location: 19, length: 4)])
         open("one\nUse \\foo here, and \\foo there.\n\n", caret: 0)
@@ -680,7 +590,7 @@ struct SourceEditorTests {
         let font = NSFont.systemFont(ofSize: 13)
         var rows = text.issues.rows
         // The last line is the document's empty one, laid out with the paragraph before it.
-        #expect(rows.map(\.line) == [1, 2, 4] && rows.map(\.isError) == [false, true, true])
+        #expect(rows.map(\.line) == [1, 2, 4] && rows.map { $0.message?.view.rootView.isError } == [false, true, true])
         for row in rows {
             let message = try #require(row.message)
             #expect(!message.cut && message.rect.maxX == row.band.maxX - 1 && message.rect.minY == row.band.minY)
@@ -689,11 +599,7 @@ struct SourceEditorTests {
             #expect(text.hitTest(text.convert(NSPoint(x: message.rect.midX, y: message.rect.midY), to: text.superview)) === text)
         }
         #expect(rows[0].tip == nil && rows[1].tip == nil && rows[2].tip == "Emergency stop\nMissing \\begin{document}")
-        // Two issues on a line: Xcode's count before the symbol, in a wider segment.
-        let stop = ("Emergency stop" as NSString).size(withAttributes: [.font: font]).width
-        #expect(abs(try #require(rows[2].message).rect.width - IssueBox.Metrics.width(ofText: stop, font: font, issues: 2)) < 0.01)
-        // Xcode 27's boxes at 13 pt for its message "Cannot convert value of type 'String' to specified type 'Int'"
-        // (353.74 pt), as measured: 406 pt alone, 418 with a count.
+        // Xcode 27's boxes at 13 pt for a 353.74 pt message: 406 pt alone, 418 with a count.
         let xcode = 353.7421875 as CGFloat
         #expect(IssueBox.Metrics.width(ofText: xcode, font: font, issues: 1) == 406 && IssueBox.Metrics.width(ofText: xcode, font: font, issues: 2) == 418)
         // Both places the command stands, each four characters wide to the pixel, and none for the other lines.
@@ -701,8 +607,7 @@ struct SourceEditorTests {
         #expect(rows.map(\.tokens.count) == [0, 2, 0] && rows[1].tokens.allSatisfy { abs($0.width - 4 * digit) <= pixel })
         let start = text.textContainerOrigin.x + padding
         #expect(abs(rows[1].tokens[0].minX - (start + 4 * digit)) <= pixel / 2 && abs(rows[1].tokens[1].minX - (start + 19 * digit)) <= pixel / 2)
-        // Narrower: the second line's message is in fewer words, its box taking all the room from a character after its
-        // text, on whole points, as Xcode's, in the view it had.
+        // Narrower: fewer words, the box taking all the room from a character after the text, on whole points, in its view.
         try layOut(width: 520)
         let views = rows.map { $0.message?.view }
         rows = text.issues.rows

@@ -1,8 +1,6 @@
 import Foundation
 
-// The session's answers and events (docs/core-api.md).
-
-/// What a session's event says, decoded once, on the core's event thread (`Core`).
+/// A session's event (docs/core-api.md), decoded on the core's event thread (`Core`).
 nonisolated enum SessionEvent: Sendable {
     case document(DocumentState)
     case saved
@@ -19,9 +17,8 @@ nonisolated enum SessionEvent: Sendable {
     case live(LiveState)
     /// A `live_document` or `live_page`, its PDF read already.
     case livePDF(LiveRead)
-    case liveRestarted
 
-    /// The event of `type`, its fields read from `decoder`; nil for a type the app has no use for.
+    /// Nil for a type the app has no use for.
     init?(_ type: String, _ decoder: any Decoder) throws {
         func fields<T: Decodable>(_: T.Type = T.self) throws -> T { try T(from: decoder) }
         switch type {
@@ -40,7 +37,6 @@ nonisolated enum SessionEvent: Sendable {
         case "live": self = .live(try fields())
         case "live_document": self = .livePDF(LiveRead(try fields(LiveDocumentEvent.self)))
         case "live_page": self = .livePDF(LiveRead(try fields(LivePageEvent.self)))
-        case "live_restarted": self = .liveRestarted
         default: return nil
         }
     }
@@ -48,8 +44,6 @@ nonisolated enum SessionEvent: Sendable {
 
 nonisolated struct SessionOpened: Decodable, Sendable {
     let root: String
-    /// The last build's, if it has one.
-    let pdf: String?
     let tree: [TreeNode]
     let settings: ProjectSettings
     let ui: UIState

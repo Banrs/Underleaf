@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::CoreError;
-use crate::compile::CompileResult;
+use crate::compile::{CompileManager, CompileResult};
 use crate::service::Service;
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
@@ -18,12 +18,9 @@ pub(crate) trait Engine: Send + Sync {
     fn clean(&self, root: PathBuf) -> Fut<Result<(), CoreError>>;
 }
 
-/// The engine of a real host: the service's compile manager.
-pub(crate) struct ServiceEngine(pub Arc<Service>);
-
-impl Engine for ServiceEngine {
+impl Engine for Arc<Service> {
     fn compile(&self, root: PathBuf) -> Fut<Result<CompileResult, CoreError>> {
-        let service = Arc::clone(&self.0);
+        let service = Self::clone(self);
         Box::pin(async move {
             service
                 .compile
@@ -33,11 +30,10 @@ impl Engine for ServiceEngine {
     }
 
     fn stop_compile(&self, root: &Path) {
-        self.0.compile.stop(root);
+        self.compile.stop(root);
     }
 
     fn clean(&self, root: PathBuf) -> Fut<Result<(), CoreError>> {
-        let service = Arc::clone(&self.0);
-        Box::pin(async move { service.compile.clean(&root).await })
+        Box::pin(async move { CompileManager::clean(&root) })
     }
 }

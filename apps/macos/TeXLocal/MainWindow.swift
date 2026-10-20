@@ -2,21 +2,15 @@ import AppKit
 import PDFKit
 import SwiftUI
 
-/// The one main window: Home, or the open project's workspace, with Back between them. Opening a project is a cut, once
-/// it has loaded; a project opened over another keeps the other's workspace until then (`AppModel.workspaceProject`).
+/// The one main window: Home, or the open project's workspace once it has loaded (`AppModel.workspaceProject`).
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindowRestoration, NSMenuItemValidation {
     static let identifier = NSUserInterfaceItemIdentifier("main")
 
     private let app: AppModel
-    /// Made each time the projects show and let go when a project opens, so one screen's alerts and sheets never wait in another's views.
+    /// Made each time the projects show, so one screen's alerts and sheets never wait in another's views.
     private var home: NSViewController?
     private(set) var workspace: WorkspaceController?
-    /// The window's sheets, alerts and file dialogs, and its workspace's: one host, carried into whichever content shows.
-    private lazy var modals: NSHostingView<WindowModals> = {
-        let host = NSHostingView(rootView: WindowModals(app: app, project: nil))
-        host.sizingOptions = []
-        return host
-    }()
+    private let modals: NSHostingView<WindowModals>
     private var restored: SavedWorkspace?
     private var watches: [Task<Void, Never>] = []
     private var titleWatch: Task<Void, Never>?
@@ -24,6 +18,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     init(app: AppModel) {
         self.app = app
+        modals = NSHostingView(rootView: WindowModals(app: app, project: nil))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
@@ -35,6 +30,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.autorecalculatesKeyViewLoop = true
         super.init(window: window)
         window.delegate = self
+        modals.sizingOptions = []
         findEditor.isFieldEditor = true
         showHome()
         window.center()
@@ -61,7 +57,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
             await tex
             let saved = restored.flatMap { saved in app.projects.contains { $0.id == saved.project } ? saved : nil }
             restored = nil
-            if let id = app.takeLaunchProject() ?? saved?.project, app.project == nil, !app.isOpening {
+            if let id = app.launchProject.take() ?? saved?.project, app.project == nil, !app.isOpening {
                 await app.open(id, restoring: saved)
             }
         }
@@ -75,15 +71,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         workspace?.close()
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
         setContent(workspace, project: project)
+        window.contentMinSize = ColumnMetrics.contentMinimum
+        // The toolbar's ground over the source is the editor's surface.
+        window.backgroundColor = .untintedTextBackground
         window.toolbar = workspace.toolbar.toolbar
+        // Compile's form goes by the toolbar's tools, which the workspace could not read before the window had them.
+        workspace.toolbarItemsChanged()
         self.workspace = workspace
         home = nil
         titleWatch?.cancel()
-        titleWatch = track({ [project] in OpenFile(path: project.openPath, url: project.openURL) }) { [weak self, project] file in
+        titleWatch = track({ [project] in project.openPath }) { [weak self, project] path in
             guard let window = self?.window else { return }
-            window.title = file.path?.fileName ?? project.id
-            window.subtitle = file.path == nil ? "" : project.id
-            window.representedURL = file.url
+            window.title = path?.fileName ?? project.id
+            window.subtitle = path == nil ? "" : project.id
+            window.representedURL = path.flatMap { project.url($0) }
         }
     }
 
@@ -93,15 +94,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         workspace?.close()
         workspace = nil
         window.toolbar = nil
+        window.backgroundColor = .windowBackgroundColor
         window.subtitle = ""
         window.representedURL = nil
-        let home = NSHostingController(rootView: HomeView().environment(app))
+        // SwiftUI sets the window's minimum from its content's: the workspace's narrowest.
+        let home = NSHostingController(rootView: HomeView()
+            .frame(minWidth: ColumnMetrics.contentMinimum.width, minHeight: ColumnMetrics.contentMinimum.height)
+            .environment(app))
         home.sceneBridgingOptions = [.title, .toolbars]
         setContent(home, project: nil)
         self.home = home
     }
 
-    /// A new content view controller resets the window's frame.
+    /// A new content view controller would reset the window's frame.
     private func setContent(_ controller: NSViewController, project: ProjectModel?) {
         guard let window else { return }
         controller.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
@@ -117,7 +122,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     // MARK: - Find
 
-    /// The PDF find bar's field passes Find on to here, as the editor would answer it (`FindPassingTextView`).
+    /// The PDF find bar's field passes Find on to here (`FindPassingTextView`).
     func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
         guard let field = client as? NSTextField, field === workspace?.pdf.find.field.field else { return nil }
         return findEditor
@@ -172,11 +177,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     override func centerSelectionInVisibleArea(_ sender: Any?) { workspace?.pdf.view.jumpToSelection() }
 
-    /// Answered here only while the PDF's pages have the keyboard. Elsewhere it stays unanswered: its menu item is off, and its key
-    /// binding (⌃L) falls off the responder chain, where NSResponder beeps (27.2) and a controller that always answered would take it in silence.
+    /// Only while the PDF's pages have the keyboard: elsewhere ⌃L falls off the responder chain, which beeps, where a
+    /// controller that always answered would take it in silence. The responder chain asks on the main thread.
     override nonisolated func responds(to selector: Selector!) -> Bool {
         guard selector == #selector(centerSelectionInVisibleArea(_:)) else { return super.responds(to: selector) }
-        // The responder chain asks on the main thread.
         return MainActor.assumeIsolated { pdfPagesHaveKeyboard }
     }
 
@@ -202,9 +206,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private static let workspaceKey = "workspace"
 }
 
-private nonisolated struct OpenFile: Equatable { let path: String?, url: URL? }
-
-/// The Open panel, the New Project sheet and the app's alerts, and while a workspace shows, its project's sheets and alerts.
 private struct WindowModals: View {
     let app: AppModel
     let project: ProjectModel?

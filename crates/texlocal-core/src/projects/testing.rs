@@ -7,9 +7,15 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use super::{create_project, file_tree};
+use crate::CoreError;
 use crate::service::Service;
 
-/// An empty library, and the service over it.
+#[track_caller]
+pub(crate) fn fails_with<T: std::fmt::Debug>(result: Result<T, CoreError>, text: &str) {
+    let message = result.unwrap_err().message;
+    assert!(message.contains(text), "{message:?} lacks {text:?}");
+}
+
 pub(crate) fn library() -> (TempDir, Service) {
     let dir = tempfile::tempdir().unwrap();
     let service = Service::new(dir.path().join("data"));
@@ -17,21 +23,18 @@ pub(crate) fn library() -> (TempDir, Service) {
     (dir, service)
 }
 
-/// A library with one blank project, "P".
 pub(crate) fn with_project() -> (TempDir, Service) {
     let (dir, service) = library();
-    create_project(&service.data_dir, "P", "blank").unwrap();
+    create_project(&service.data_dir, "P", "blank", None).unwrap();
     (dir, service)
 }
 
-/// A library with one blank project, "P", and the project's folder.
 pub(crate) fn project() -> (TempDir, PathBuf) {
     let (dir, service) = with_project();
     let root = service.project_root("P").unwrap();
     (dir, root)
 }
 
-/// What a folder holds, by name.
 pub(crate) fn names_in(dir: &Path) -> Vec<String> {
     let mut names: Vec<_> = fs::read_dir(dir)
         .unwrap()
@@ -41,7 +44,6 @@ pub(crate) fn names_in(dir: &Path) -> Vec<String> {
     names
 }
 
-/// A project's files as its tree shows them, by path.
 pub(crate) fn files_in(root: &Path) -> Vec<String> {
     fn walk(nodes: Vec<super::TreeNode>, out: &mut Vec<String>) {
         for node in nodes {
@@ -57,7 +59,6 @@ pub(crate) fn files_in(root: &Path) -> Vec<String> {
     out
 }
 
-/// A zip of `files`, deflated as most are.
 pub(crate) fn zip_of(path: &Path, files: &[(&str, &str)]) {
     zip_with(path, files, zip::CompressionMethod::Deflated);
 }
@@ -74,7 +75,6 @@ pub(crate) fn zip_with(path: &Path, files: &[(&str, &str)], method: zip::Compres
     zip.finish().unwrap();
 }
 
-/// The names of a zip's entries, in order.
 pub(crate) fn zip_names(path: &Path) -> Vec<String> {
     let archive = zip::ZipArchive::new(File::open(path).unwrap()).unwrap();
     archive.file_names().map(str::to_owned).collect()

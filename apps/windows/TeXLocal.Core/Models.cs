@@ -8,6 +8,9 @@ public sealed record ProjectInfo(string Id, string Name, long Mtime, string Main
     public override string ToString() => Name;
 }
 
+/// <param name="Path">"" for the project's folder.</param>
+public sealed record Located(string Id, string Path);
+
 /// <param name="Type">file or dir.</param>
 /// <param name="Kind">tex, bib, image, pdf, text or other; null for a folder.</param>
 public sealed record TreeNode(string Type, string Name, string Path, string? Kind, TreeNode[]? Children);
@@ -16,8 +19,7 @@ public sealed record TreeNode(string Type, string Name, string Path, string? Kin
 public sealed record TexStatus(bool Available, string? Version, string? TexDir, string? Found);
 
 /// <param name="Pdf">The last build's, absolute, if it is on disk.</param>
-/// <param name="Settings">As get_settings.</param>
-/// <param name="Ui">As get_ui_state.</param>
+/// <param name="Ui">The project's UI state, as set_ui_state patches it.</param>
 public sealed record SessionOpened(ulong Session, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, JsonElement Ui);
 
 public sealed record Clash(string Path);
@@ -34,9 +36,7 @@ public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, strin
 /// An `issues` event's line: the first issue on it, and the messages of the rest.
 public sealed record IssueLine(int Line, bool Error, string Message, string Short, string[] Others);
 
-/// A session event's fields, each type setting its own (docs/core-api.md, Events): document (Path, Error, Held), saved,
-/// document_reload (Path, Text), document_closed, document_renamed (From, To), conflict (Path, Kind), issues (Path, Lines),
-/// build (Compiling, Auto, Outdated), build_finished (Auto, Announce, Outdated, Result) and tree (Tree).
+/// A session event's fields, each type setting its own (docs/core-api.md, Events).
 public sealed record DocEvent(string? Path, string? Error, bool Held, string? Text, string? From, string? To, string? Kind,
     IssueLine[]? Lines, bool Compiling, bool Auto, bool Outdated, bool Announce, CompileResult? Result, TreeNode[]? Tree);
 
@@ -80,8 +80,7 @@ public sealed record TextStyles(TextEdit[]? Bold, TextEdit[]? Italic, TextEdit[]
 /// RaTeX's SVG and its size in the points of the size asked for, or why there's none.
 public sealed record MathSvg(string? Svg, double Width, double Height, string? Error);
 
-/// A heading and what nests under it, by its place in the outline read in order; FoldKey names its fold in the
-/// project's UI state.
+/// Index: its place in the outline read in order; FoldKey names its fold in the project's UI state.
 /// <param name="Command">Its sectioning command without the backslash: "section".</param>
 /// <param name="Title">Plain text; untitled, its level's: "Untitled Section".</param>
 public sealed record OutlineNode(int Index, string Command, string Title, bool Untitled, int Line, string? File, string FoldKey,
@@ -90,17 +89,14 @@ public sealed record OutlineNode(int Index, string Command, string Title, bool U
     public IEnumerable<OutlineNode> AndBelow => [this, .. (Children ?? []).SelectMany(c => c.AndBelow)];
 }
 
-/// session_analyze: the outline as a tree, the words, and the levels the main file's class has.
 public sealed record Analysis(OutlineNode[] Tree, int Words, HeadingStyle[] HeadingStyles)
 {
-    /// The headings in reading order.
     public IEnumerable<OutlineNode> Outline => Tree.SelectMany(n => n.AndBelow);
 }
 
 /// <param name="Column">Where the match starts in its line, in UTF-16 units from 0.</param>
 public sealed record SearchHit(string File, int Line, int Column, int Length, string Before, string Match, string After);
 
-/// A file's hits, as search_project answers them.
 public sealed record SearchFile(string File, SearchHit[] Hits);
 
 /// <param name="Shape">upright, italic or smallCaps.</param>
@@ -118,5 +114,4 @@ public sealed record MathSymbol(string Command);
 
 public sealed record SymbolGroup(string Title, MathSymbol[] Symbols);
 
-/// The catalogue the Insert menu and the palette are made from.
 public sealed record Menus(Templates Templates, SymbolGroup[] SymbolGroups);

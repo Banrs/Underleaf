@@ -1,7 +1,7 @@
-//! The session's builds: one at a time with one more queued, Clean once the
-//! build stops, and the issues of the last build on the editor's lines.
+//! The session's builds: one at a time with one more queued, Clean once the build
+//! stops, and the issues of the last build on the editor's lines.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
@@ -15,27 +15,17 @@ use crate::syntax::TextRange;
 #[derive(Default)]
 pub(crate) struct Builds {
     pub compiling: bool,
-    /// One more build asked for during this one; `Some(true)` while every request was automatic.
     pub queued: Option<bool>,
     auto: bool,
-    /// The edit count when the build running began.
     built: u64,
-    /// The version of each open document it builds (by id): an edit the session hears of
-    /// after it began is in it all the same when the document had it by then.
-    versions: HashMap<u64, u64>,
-    /// An automatic build was skipped as TeX wasn't found: one runs once `status` finds it.
     pub waiting_for_tex: bool,
-    /// The last build left a PDF.
     pub pdf: bool,
     outdated: bool,
     issues: Vec<LogItem>,
     error_count: usize,
     chosen: Option<usize>,
-    /// The edit count when the build whose issues these are began.
     result_edits: u64,
-    /// The Cleans asked for: one runs once the build stops, and answers them all.
     pub cleaners: Vec<Reply>,
-    /// The clean running: whether live preview ran as it began, and the user's intent then.
     cleaning: Option<(bool, u64)>,
     shown: Value,
 }
@@ -45,15 +35,13 @@ impl Actor {
         self.builds.pdf || self.live.document_seen
     }
 
-    /// A request during a build queues one more. An automatic build waits
-    /// while live preview runs, and for TeX to be found (`status`). Shown only
-    /// once it runs: one whose saves can't go ahead builds nothing. Err: a save
+    /// An automatic build waits while live preview runs, and for TeX to be found. Err: a save
     /// someone asked for failed.
     pub fn compile(&mut self, auto: bool) -> Result<(), CoreError> {
         if self.closed || auto && self.live_previewing() {
             return Ok(());
         }
-        if auto && !self.service.tex_found() {
+        if auto && !*self.service.tex_found.borrow() {
             self.builds.waiting_for_tex = true;
             return Ok(());
         }
@@ -66,30 +54,12 @@ impl Actor {
         }
         (self.builds.compiling, self.builds.auto) = (true, auto);
         self.builds.built = self.edits;
-        self.builds.versions = self.saved_versions();
         self.publish_build();
         let (build, tx) = (self.engine.compile(self.root.clone()), self.tx.clone());
         tokio::spawn(async move {
             let _ = tx.send(Msg::BuildDone(build.await));
         });
         Ok(())
-    }
-
-    /// Whether an edit heard of only now, which made `version` of the document `doc`,
-    /// was made before the build running saved it, and so is in it.
-    pub fn in_build(&self, doc: u64, version: u64) -> bool {
-        self.builds.compiling
-            && self.builds.built == self.edits
-            && self
-                .builds
-                .versions
-                .get(&doc)
-                .is_some_and(|&had| version <= had)
-    }
-
-    /// The edit just counted is in the build running.
-    pub fn took_edit(&mut self) {
-        self.builds.built = self.edits;
     }
 
     pub fn stop_compile(&mut self) {
@@ -121,7 +91,7 @@ impl Actor {
             builds.result_edits = builds.built;
             builds.chosen = None;
             let auto = builds.auto;
-            let announce = !auto || builds.error_count != before;
+            let announce = !result.stopped && (!auto || builds.error_count != before);
             let outdated = builds.outdated;
             self.mark_issues();
             let fields = json!({ "auto": auto, "announce": announce, "outdated": outdated, "result": result });
@@ -136,8 +106,7 @@ impl Actor {
         if !self.builds.cleaners.is_empty() && self.builds.cleaning.is_none() {
             self.start_clean();
         }
-        // Published once the queued build has started, if it could: builds back to
-        // back show as one, with no `compiling: false` between them.
+        // Published once the queued build has started: builds back to back show as one.
         if let Some(auto) = again {
             let _ = self.compile(auto);
         }
@@ -161,7 +130,6 @@ impl Actor {
         }
     }
 
-    /// The PDF now shows text since changed (an edit, or the disk's text reloaded).
     pub fn mark_outdated(&mut self) {
         if self.has_pdf() && !self.builds.outdated {
             self.builds.outdated = true;
@@ -169,7 +137,6 @@ impl Actor {
         }
     }
 
-    /// A Clean asked for while another waits or runs joins it, and has its answer.
     pub fn clean(&mut self, reply: Reply) {
         self.stop_compile();
         self.builds.cleaners.push(reply);
@@ -190,12 +157,10 @@ impl Actor {
         let Some((live, intent)) = self.builds.cleaning.take() else {
             return;
         };
-        // The preview reads the build folder: one live as the clean began starts again,
-        // unless stopped or started meanwhile.
-        if result.is_ok() && live && intent == self.live.intent && !self.closed {
-            self.after(Timer::Restart, self.t.live_follow);
-        }
         if result.is_ok() && !self.closed {
+            if live && intent == self.live.intent {
+                self.after(Timer::Restart);
+            }
             let builds = &mut self.builds;
             (builds.pdf, builds.outdated) = (false, false);
             (builds.issues, builds.error_count, builds.chosen) = (Vec::new(), 0, None);
@@ -222,7 +187,6 @@ impl Actor {
         }
     }
 
-    /// The build's issues on the lines of each document not edited since it started.
     pub fn mark_issues(&mut self) {
         let mut changed = Vec::new();
         for (path, doc) in &mut self.docs {
@@ -247,18 +211,13 @@ impl Actor {
 
     pub fn choose_issue(&mut self, index: Option<usize>) -> Value {
         self.builds.chosen = index;
-        self.chosen_issue()
-    }
-
-    fn chosen_issue(&self) -> Value {
         let issues = &self.builds.issues;
-        let Some(index) = self.builds.chosen.filter(|i| *i < issues.len()) else {
+        let Some(index) = index.filter(|i| *i < issues.len()) else {
             return Value::Null;
         };
         json!({ "index": index, "issue": issues[index] })
     }
 
-    /// The next (or previous) issue with a place in a file, round to the first.
     pub fn next_issue(&mut self, next: bool) -> Value {
         let issues = &self.builds.issues;
         let places: Vec<usize> = (0..issues.len())
@@ -279,31 +238,30 @@ impl Actor {
     }
 }
 
-/// The build's issues on `path`'s lines, as the editor marks them: the
-/// first issue of a line with the rest after it. An undefined command's
-/// issue has where the line has the command (as `tokens` finds it, from the
-/// line's start), and a `compact` message that names it in fewer words.
+/// An undefined command's issue has where the line has the command (`tokens`), and a
+/// `compact` message that names it in fewer words.
 fn issue_lines(
     issues: &[LogItem],
     path: &str,
     tokens: impl Fn(u32, &str) -> Vec<TextRange>,
 ) -> Vec<Value> {
     let mut lines: BTreeMap<u32, (&LogItem, Vec<String>)> = BTreeMap::new();
-    for item in issues.iter().rev() {
-        let (Some(file), Some(line)) = (&item.file, item.line) else {
+    for item in issues
+        .iter()
+        .rev()
+        .filter(|item| item.file.as_deref() == Some(path))
+    {
+        let Some(line) = item.line else {
             continue;
         };
-        if file != path {
-            continue;
-        }
         let others = lines.remove(&line).map(|(later, mut others)| {
             others.insert(0, later.message.clone());
             others
         });
         lines.insert(line, (item, others.unwrap_or_default()));
     }
-    let lines = lines.into_iter();
     lines
+        .into_iter()
         .map(|(line, (item, others))| {
             let command = item.command.as_deref();
             json!({

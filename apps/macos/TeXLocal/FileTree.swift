@@ -13,7 +13,7 @@ final class FileTree {
 
     init(id: String) { self.id = id }
 
-    /// Down the folders on its way only: the open file's kind is asked for as views draw.
+    /// Down the folders on its way only: views ask as they draw.
     func node(at path: String) -> TreeNode? {
         var level = nodes
         while let next = level.first(where: { path == $0.path || path.hasPrefix($0.path + "/") }) {
@@ -23,9 +23,7 @@ final class FileTree {
         return nil
     }
 
-    /// A read that started before the last one taken is dropped: a folder change's read ending after a new file's would
-    /// take away the row its name is being typed in. A failed read keeps the tree as it was, and the folder's next change
-    /// reads again.
+    /// A read older than the last taken is dropped: it would take away a new file's row as its name is typed.
     func reload() async {
         reads += 1
         let read = reads
@@ -34,13 +32,12 @@ final class FileTree {
         if !Task.isCancelled { take(files) }
     }
 
-    /// The tree as the session's watcher read it: a read started before is older.
+    /// The session watcher's: a read started before is older.
     func show(_ files: [TreeNode]) {
         taken = reads
         take(files)
     }
 
-    /// A change in a folder can leave its files as they were.
     private func take(_ files: [TreeNode]) {
         guard files != nodes, !closed else { return }
         nodes = files

@@ -6,16 +6,14 @@ final class MathPopover {
     private let popover = NSPopover()
     private let content = NSHostingController(rootView: MathView())
     private var wanted: (maths: MathPreview, size: CGFloat, rect: NSRect, view: NSView, edge: NSRectEdge)?
-    /// What the content shows.
     private var rendered: (maths: MathPreview, size: CGFloat)?
-    /// One drawing at a time, which draws what's wanted until it's what the content shows.
+    /// One drawing at a time, until it's what's wanted.
     private var rendering: Task<Void, Never>?
 
     init() {
         popover.behavior = .applicationDefined
-        // It follows the caret in and out of maths as the person types: no motion as it shows, closes or moves.
+        // It follows the caret in and out of maths as the person types.
         popover.animates = false
-        // The popover takes its size from what the content draws.
         content.sizingOptions = .preferredContentSize
         popover.contentViewController = content
     }
@@ -41,17 +39,14 @@ final class MathPopover {
         if popover.isShown { popover.close() }
     }
 
-    /// What was wanted as a drawing began and isn't by its end is skipped.
     private func render() async {
         defer { rendering = nil }
         while let asked = wanted, !isRendered {
-            // The maths a little larger than the text, at 1.21 times its size.
             let em = asked.size * 1.21
             let drawing = await Self.draw(asked.maths.tex, display: asked.maths.display, size: Double(em))
             guard wanted?.maths == asked.maths, wanted?.size == asked.size else { continue }
             rendered = (asked.maths, asked.size)
-            // Only a change of size between two drawings is eased, so it isn't taken for a new popover (HIG, Popovers). The
-            // content reports its size as the drawing is set, and the popover follows it then.
+            // Only a change of size between two drawings is eased, so it isn't taken for a new popover (HIG, Popovers).
             popover.animates = popover.isShown
             content.rootView = MathView(tex: asked.maths.tex, em: em, image: drawing.flatMap { NSImage(drawing: $0) })
             popover.animates = false
@@ -65,7 +60,7 @@ final class MathPopover {
 }
 
 extension NSImage {
-    /// The core's SVG at its size in points: its paths are drawn at the screen's scale, so they stay sharp.
+    /// The core's SVG at its size in points, drawn sharp at the screen's scale.
     convenience init?(drawing: Syntax.Drawing) {
         guard let svg = drawing.svg, let width = drawing.width, let height = drawing.height else { return nil }
         self.init(data: Data(svg.utf8))
@@ -79,11 +74,10 @@ struct MathView: View {
     var em: CGFloat = 0
     var image: NSImage?
 
-    /// The widest a preview goes: longer maths is shown smaller.
+    /// Longer maths is shown smaller.
     private static let widest: CGFloat = 560
 
     var body: some View {
-        // At least a line of text high.
         let line = (em * 1.2).rounded(.up)
         Group {
             if let image {

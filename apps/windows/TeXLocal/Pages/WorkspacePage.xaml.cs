@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
@@ -16,15 +17,13 @@ using VirtualKey = Windows.System.VirtualKey;
 namespace TeXLocal.Pages;
 
 /// An issues panel row: a build's error or warning, by its index among the build's issues.
-public sealed class IssueItem(int index, LogItem item)
+public sealed record IssueItem(int Index, LogItem Item)
 {
-    public int Index => index;
-    public string Message => item.Message;
-    public bool IsError => item.Type == "error";
+    public bool IsError => Item.Type == "error";
     public bool IsWarning => !IsError;
-    public bool HasPlace => item.File is not null;
-    public string Place => item.Line is { } line ? $"{item.File}:{line}" : item.File ?? "";
-    public override string ToString() => $"{(IsError ? "Error" : "Warning")}: {Message}{(HasPlace ? $", {Place}" : "")}";
+    public bool HasPlace => Item.File is not null;
+    public string Place => Item.Line is { } line ? $"{Item.File}:{line}" : Item.File ?? "";
+    public override string ToString() => $"{(IsError ? "Error" : "Warning")}: {Item.Message}{(HasPlace ? $", {Place}" : "")}";
 }
 
 /// A project: the sidebar, the editor and the PDF, builds and their issues, all through the project's session.
@@ -40,7 +39,7 @@ public sealed partial class WorkspacePage : Page
     readonly Dictionary<string, IssueLine[]> issueLines = [];
     string id = "", root = "", mainFile = "";
     ulong session;
-    bool texAvailable, compiling, outdated, sidebarWanted = true;
+    bool texAvailable, compiling, outdated, zooming, sidebarWanted = true;
     double ratio = Prefs.SplitRatio;
     CompileResult? result;
     UIElement? beforeMenu;
@@ -53,11 +52,22 @@ public sealed partial class WorkspacePage : Page
     {
         InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Required;
-        searchTimer = Timer(250, () => _ = Search());
+        searchTimer = Timer(250, () => _ = RunSearch());
         caretTimer = Timer(150, CaretSettled);
         SetSplit(ratio);
         ShowEdge();
+        ShowPage();
+        // A layer's content scrolls under its rounded corners.
+        foreach (var layer in (FrameworkElement[])[EditorClip, PdfClip, IssuesClip])
+        {
+            var visual = ElementCompositionPreview.GetElementVisual(layer);
+            var shape = visual.Compositor.CreateRoundedRectangleGeometry();
+            shape.CornerRadius = new(7, 7);
+            visual.Clip = visual.Compositor.CreateGeometricClip(shape);
+            layer.SizeChanged += (_, e) => shape.Size = new((float)e.NewSize.Width, (float)e.NewSize.Height);
+        }
         // Wide, the pane is as the reader last left it there; narrow, it opens over the content only when asked.
+        SizeChanged += (_, e) => WideTrigger.IsActive = e.NewSize.Width >= 1008;
         Split.RegisterPropertyChangedCallback(SplitView.DisplayModeProperty, (_, _) =>
         {
             Split.IsPaneOpen = Inline && sidebarWanted;
@@ -68,6 +78,9 @@ public sealed partial class WorkspacePage : Page
             if (Inline || Split.IsPaneOpen) sidebarWanted = Split.IsPaneOpen;
             ShowEdge();
         });
+        Split.PaneOpened += (_, _) => Remeasure(SideTabs);
+        // An overlaid pane open as the window widens is light-dismissed after it has become inline; it stays.
+        Split.PaneClosing += (_, e) => e.Cancel = Inline;
         PaneSizer.Delta += d => Split.OpenPaneLength = Math.Clamp(Split.OpenPaneLength + d, 200, 480);
         PaneSizer.Released += () => Prefs.SidebarWidth = Split.OpenPaneLength;
         SplitSizer.Delta += d =>
@@ -107,8 +120,7 @@ public sealed partial class WorkspacePage : Page
             await Reveal(at.File, at.Line, at.Column ?? 0);
         });
         foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem]) Shortcut.SetScope(item, Editor);
-        Shortcut.SetScope(RenameItem, FilesTree);
-        Shortcut.SetScope(DeleteItem, FilesTree);
+        foreach (var item in (UIElement[])[RenameItem, DeleteItem]) Shortcut.SetScope(item, FilesTree);
         DeleteItem.KeyboardAcceleratorTextOverride = "Del";
         SetUpInsert();
         SetUpMenuFocus();
@@ -126,15 +138,15 @@ public sealed partial class WorkspacePage : Page
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
-        id = (string)e.Parameter;
-        App.Window.SetProject(id);
-        var search = App.Window.Search;
-        search.TextChanged += OnSearchChanged;
-        search.QuerySubmitted += OnSearchSubmitted;
-        search.KeyDown += OnSearchKey;
+        (id, var file) = ((string, string?))e.Parameter;
+        MenuSlot.Child = null;
+        App.Window.SetMenu(MainMenu);
+        App.Window.SetTitle(id, Editor.Path);
+        Search.PlaceholderText = $"Search {id}";
+        CheckTex();
         if (session != 0) return;
         Core.Event += OnEvent;
-        try { await OpenSession(); }
+        try { await OpenSession(file); }
         catch (CoreException ex)
         {
             session = 0;
@@ -151,25 +163,30 @@ public sealed partial class WorkspacePage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
-        var search = App.Window.Search;
-        search.TextChanged -= OnSearchChanged;
-        search.QuerySubmitted -= OnSearchSubmitted;
-        search.KeyDown -= OnSearchKey;
+        App.Window.SetMenu(null);
         if (e.SourcePageType == typeof(SettingsPage)) return;
-        search.Text = "";
         Prefs.EditorChanged -= ShowLook;
         Core.Event -= OnEvent;
         if (session != 0) _ = Core.CallAsync("session_close", new { session });
     }
 
-    public void TogglePane() => Split.IsPaneOpen = !Split.IsPaneOpen;
+    /// Before the project goes, as on the Mac: session_close saves quietly, so edits a conflict's Cancel held or a write
+    /// refused would be lost. False, staying, when this save is asked about or fails.
+    public async Task<bool> Save()
+    {
+        if (session == 0) return true;
+        try { return (await Core.CallAsync("session_save", new { session })).GetProperty("saved").GetBoolean(); }
+        catch (CoreException ex)
+        {
+            await App.Alert("Can't save", ex.Message);
+            return false;
+        }
+    }
 
     /// The session is numbered before it opens, so the events that come before its answer are this page's too; a tree
     /// or a build among them is newer than the answer's.
-    async Task OpenSession()
+    async Task OpenSession(string? file)
     {
-        texAvailable = (await Core.CallAsync<TexStatus>("status")).Available;
-        CompileButton.IsEnabled = CompileItem.IsEnabled = texAvailable;
         session = ++sessions;
         var opened = await Core.CallAsync<SessionOpened>("session_open", new { id, session, autoCompile = Prefs.AutoCompile });
         root = opened.Root;
@@ -180,7 +197,7 @@ public sealed partial class WorkspacePage : Page
         ShowTree(treeJson.Length > 0 ? tree : opened.Tree, true);
         if (opened.Pdf is { } pdf && result is null) await Pdf.Load(pdf);
         ShowBuild();
-        Select(FilesTree, i => i.Key == mainFile);
+        Select(FilesTree, i => i.Key == (file ?? mainFile));
         if (Picked is { Type: not "dir" } main) await OpenDocument(main.Path, main.Kind);
     }
 
@@ -192,9 +209,12 @@ public sealed partial class WorkspacePage : Page
         {
             case "tree": ShowTree(ev.Tree!); break;
             case "saved": _ = Analyze(); break;
-            case "document_reload" when ev.Path == Editor.Path: Editor.Reload(ev.Text ?? ""); break;
+            case "document_reload": Reload(ev.Path!, ev.Text ?? ""); break;
             case "document_closed" when ev.Path == Editor.Path: CloseEditor(); break;
-            case "document_renamed" when ev.From == Editor.Path: Editor.Rename(ev.To!); break;
+            case "document_renamed" when ev.From == Editor.Path:
+                Editor.Path = ev.To;
+                App.Window.SetTitle(id, ev.To);
+                break;
             case "conflict": Conflict(ev.Path!, ev.Kind!); break;
             case "build_cleaned": Pdf.Clear(); break;
             case "document":
@@ -237,10 +257,15 @@ public sealed partial class WorkspacePage : Page
             // Opened first and the shown one closed after, so a file that won't open leaves the editor as it was.
             await Core.CallAsync("session_open_document", new { session, path });
             if (Editor.Path is { } shown && !(await Core.CallAsync("session_close_document", new { session, path = shown })).GetProperty("closed").GetBoolean())
+            {
+                // The session keeps no document the editor doesn't show; a later open of it opens it again.
+                Run(null, () => Core.CallAsync("session_close_document", new { session, path }));
                 return false;
+            }
             if (Core.SessionSource(session, path) is not { } source) return false;
             (Editor.Visibility, NoFile.Visibility) = (Visibility.Visible, Visibility.Collapsed);
             await Editor.Show(path, source);
+            App.Window.SetTitle(id, path);
             Editor.SetIssues(issueLines.GetValueOrDefault(path, []));
             ShowSaved();
             ShowCaret();
@@ -261,12 +286,26 @@ public sealed partial class WorkspacePage : Page
         if (await OpenDocument(path)) Editor.GoTo(line, column, length);
     }
 
+    /// Another app's text, or the disk's after Revert, shown without an edit. The session holds the document's saves until
+    /// its source has it, so one open but not shown takes it too.
+    void Reload(string path, string text)
+    {
+        if (path == Editor.Path)
+        {
+            Editor.Reload(text);
+            return;
+        }
+        using var source = Core.SessionSource(session, path);
+        source?.Reload(text);
+    }
+
     void CloseEditor()
     {
         (analysis, caretHeading) = (null, null);
         OutlineTree.ItemsSource = null;
         Words.Text = "";
         Editor.Clear();
+        App.Window.SetTitle(id);
         (Editor.Visibility, NoFile.Visibility) = (Visibility.Collapsed, Visibility.Visible);
         ShowSide();
         ShowSaved();
@@ -309,6 +348,7 @@ public sealed partial class WorkspacePage : Page
         var done = result = ev.Result!;
         (ErrorCount.Text, WarningCount.Text) = ($"{done.Errors.Length}", $"{done.Warnings.Length}");
         WarningsToggle.IsEnabled = done.Warnings.Length > 0;
+        WarningsLabel.Text = done.Warnings.Length == 1 ? "1 warning" : $"{done.Warnings.Length} warnings";
         Log.Text = done.Log.ReplaceLineEndings("\r");
         ShowIssues();
         var failed = !done.Ok && !done.Stopped;
@@ -331,7 +371,7 @@ public sealed partial class WorkspacePage : Page
         CompileIcon.Glyph = compiling ? "\uE71A" : "\uE768";
         CompileLabel.Text = compiling ? "Stop" : "Compile";
         AutomationProperties.SetName(CompileButton, CompileLabel.Text);
-        ToolTipService.SetToolTip(CompileButton, !texAvailable ? "TeX isn't installed" : compiling ? "Stop (Shift+F5)" : "Compile (Ctrl+Enter)");
+        ToolTipService.SetToolTip(CompileButton, compiling ? "Stop (Shift+F5)" : "Compile (Ctrl+Enter)");
         StopItem.IsEnabled = Pdf.Compiling = compiling;
         var state = compiling ? "Compiling…"
             : result is null ? (Pdf.PageCount > 0 ? "" : "No build yet")
@@ -385,6 +425,7 @@ public sealed partial class WorkspacePage : Page
     void OnIssueTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowIssueTab();
     void OnIssuesPane(object sender, RoutedEventArgs e) => ShowPanel(IssuesItem.IsChecked);
     void OnIssueCounts(object sender, RoutedEventArgs e) => ShowPanel(!IssuesItem.IsChecked);
+    void OnCloseIssues(object sender, RoutedEventArgs e) => ShowPanel(false);
 
     /// Checked and Unchecked rather than Click, which a toggle through UI Automation doesn't raise; the first comes during
     /// InitializeComponent.
@@ -410,7 +451,16 @@ public sealed partial class WorkspacePage : Page
 
     void OnCompileButton(object sender, RoutedEventArgs e) => (compiling ? (RoutedEventHandler)OnStop : OnCompile)(sender, e);
 
-    /// Compile and its keys are disabled while TeX is missing.
+    /// TeX installed while the app runs is found as the window comes to the front or the page back from Settings, as on
+    /// the Mac.
+    public async void CheckTex()
+    {
+        if (texAvailable) return;
+        texAvailable = (await Core.CallAsync<TexStatus>("status")).Available;
+        CompileButton.IsEnabled = CompileItem.IsEnabled = texAvailable;
+        Pdf.TexMissing = !texAvailable;
+    }
+
     void OnCompile(object sender, RoutedEventArgs e) => Run("Can't compile", () => Core.CallAsync("session_compile", new { session }));
     void OnStop(object sender, RoutedEventArgs e) => Run("Can't stop the build", () => Core.CallAsync("session_stop_compile", new { session }));
     void OnClean(object sender, RoutedEventArgs e) => Run("Can't clean the build folder", () => Core.CallAsync("session_clean", new { session }));
@@ -432,16 +482,29 @@ public sealed partial class WorkspacePage : Page
 
     void ShowPage()
     {
-        PageText.Text = Pdf.PageCount == 0 ? "No PDF" : $"Page {Pdf.CurrentPage} of {Pdf.PageCount}";
+        var shown = Pdf.PageCount > 0;
+        PageText.Text = shown ? $"Page {Pdf.CurrentPage} of {Pdf.PageCount}" : "No PDF";
         ZoomText.Text = $"{Pdf.Zoom * 100:0}%";
+        foreach (var control in ZoomBar.Children.OfType<Control>()) control.IsEnabled = shown;
+        zooming = true;
+        ZoomSlider.Value = Math.Log2(Pdf.Zoom);
+        zooming = false;
     }
 
-    /// NavigationView's content layer: its rounded corner sits by an open inline pane, else it meets the window square.
-    void ShowEdge()
+    /// Word's slider: 100% at its middle, each step either side doubling or halving.
+    void OnZoomSlider(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        var beside = Inline && Split.IsPaneOpen;
-        ContentCard.BorderThickness = new(beside ? 1 : 0, 1, 0, 0);
-        ContentCard.CornerRadius = new(beside ? 8 : 0, 0, 0, 0);
+        if (!zooming && Pdf.PageCount > 0) Pdf.ZoomTo(Math.Pow(2, e.NewValue));
+    }
+
+    /// The layers keep 8 from the window's edge; beside an open inline pane, its splitter is that gap.
+    void ShowEdge() => Body.Margin = new(Inline && Split.IsPaneOpen ? 0 : 8, 0, 8, 0);
+
+    /// Laid out off-screen as the pane slides in, the tabs' repeater realizes only the first until measured again.
+    static void Remeasure(DependencyObject element)
+    {
+        if (element is ItemsRepeater repeater) repeater.InvalidateMeasure();
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(element); i++) Remeasure(VisualTreeHelper.GetChild(element, i));
     }
 
     void SetSplit(double to)
@@ -459,13 +522,14 @@ public sealed partial class WorkspacePage : Page
 
     void ShowPdf(bool show)
     {
-        PdfItem.IsChecked = show;
-        Pdf.Visibility = SplitSizer.Visibility = Vis(show);
+        (PdfItem.IsChecked, PdfButton.IsChecked) = (show, show);
+        PdfLayer.Visibility = SplitSizer.Visibility = Vis(show);
         PdfColumn.MinWidth = show ? 240 : 0;
         PdfColumn.Width = new(show ? 1 - ratio : 0, GridUnitType.Star);
     }
 
     void OnPdfPane(object sender, RoutedEventArgs e) => ShowPdf(PdfItem.IsChecked);
+    void OnPdfButton(object sender, RoutedEventArgs e) => ShowPdf(PdfButton.IsChecked == true);
 
     /// F6 and Shift+F6: the sidebar, the editor, the PDF and the issues panel in turn, each that is shown.
     void OnNextRegion(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)

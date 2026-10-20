@@ -6,13 +6,9 @@ final class ProjectSearch {
     private let id: String
     private let core = Core.shared
 
-    /// How long typing pauses before a search.
-    static let debounce: Duration = .milliseconds(200)
-
     var query = ""
     var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
-    /// The hits by file. Nil without a query and until the first search for one ends, so its results pane doesn't read No
-    /// Results while it runs.
+    /// Nil without a query and until its first search ends, so the pane doesn't read No Results while it runs.
     private(set) var groups: [SearchGroup]?
     private(set) var searched = ""
     private(set) var failure: String?

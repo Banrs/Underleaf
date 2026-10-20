@@ -69,11 +69,14 @@ enum MenuCommand: CaseIterable {
         }
     }
 
-    var symbol: String? {
+    var symbol: String? { style?.symbol }
+
+    /// The format toggles' symbol, and what they do (HIG, Offering help).
+    var style: (symbol: String, help: String)? {
         switch self {
-        case .editBold: "bold"
-        case .editItalic: "italic"
-        case .editUnderline: "underline"
+        case .editBold: ("bold", String(localized: "Make text bold"))
+        case .editItalic: ("italic", String(localized: "Make text italic"))
+        case .editUnderline: ("underline", String(localized: "Underline text"))
         default: nil
         }
     }

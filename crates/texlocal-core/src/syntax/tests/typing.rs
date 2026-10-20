@@ -1,28 +1,17 @@
-//! Typing, as the Mac's source editor did it in Swift (its SourceEditorTests'
-//! cases), through an editor that applies the answers as a text view does:
-//! each change reported back (`follow`), each selection (`select`), and a
-//! snippet's field mirrored once the text has changed.
+//! Typing, through an editor that applies the answers as a text view does: each change reported back (`follow`),
+//! each selection (`select`), and a snippet's field mirrored once the text has changed.
 
-use texlocal_core::syntax::{
-    Change, Completing, Keystroke, SnippetField, SourceDocument, Style, TextEdit, TextRange,
-    map_selections,
-};
+use crate::syntax::complete::SnippetField;
+use crate::syntax::edit::{Change, Style, map_selections};
+use crate::syntax::typing::{Completing, Keystroke};
+use crate::syntax::{SourceDocument, TextEdit, TextRange, edit, range};
 
-use super::{range, units};
+use super::units;
 
 fn caret(at: u32) -> TextRange {
     range(at, 0)
 }
 
-fn edit(start: u32, length: u32, text: &str) -> TextEdit {
-    TextEdit {
-        start,
-        length,
-        text: text.into(),
-    }
-}
-
-/// An empty field at `start`, `index`th in Tab's order.
 fn field(start: u32, index: u32) -> SnippetField {
     SnippetField {
         start,
@@ -60,7 +49,6 @@ impl Editor {
         self.selections[0]
     }
 
-    /// The text and the selection are these.
     #[track_caller]
     fn shows(&self, text: &str, selection: TextRange) {
         assert_eq!((self.string(), self.selection()), (text.into(), selection));
@@ -75,9 +63,6 @@ impl Editor {
         self.set_selections(vec![selection]);
     }
 
-    /// The text storage's change, which the storage's delegate reports; the
-    /// text view's selection follows it, or goes to `after`, before the
-    /// change is done.
     fn replace(&mut self, e: &TextEdit, after: Option<TextRange>) {
         let new: Vec<u16> = e.text.encode_utf16().collect();
         let (start, end) = (e.start as usize, (e.start + e.length) as usize);
@@ -91,7 +76,6 @@ impl Editor {
         self.did_change_text();
     }
 
-    /// What's typed in a field goes in its other places too.
     fn did_change_text(&mut self) {
         if self.mirroring {
             return;
@@ -109,7 +93,6 @@ impl Editor {
         self.set_selection(selection);
     }
 
-    /// Typed as a key types: in place of its range, the caret after it.
     fn type_edit(&mut self, e: &TextEdit) {
         self.replace(e, Some(range(e.start + units(&e.text), 0)));
     }
@@ -167,8 +150,6 @@ impl Editor {
         self.apply_key(key, |_| unreachable!());
     }
 
-    /// Edits from the last, as one step, the selections following them
-    /// unless the change gives its own.
     fn apply(&mut self, change: Change) {
         let selections = change.selections.clone();
         for e in change.edits.iter().rev() {
@@ -177,13 +158,11 @@ impl Editor {
         self.set_selections(selections);
     }
 
-    /// The change the document answers for the selections, applied.
     fn change(&mut self, answer: impl FnOnce(&mut SourceDocument, &[TextRange]) -> Change) {
         let change = answer(&mut self.doc, &self.selections);
         self.apply(change);
     }
 
-    /// One edit, the caret going to `at`.
     fn put(&mut self, e: TextEdit, at: u32) {
         self.apply(Change {
             edits: vec![e],
@@ -205,20 +184,16 @@ impl Editor {
     }
 }
 
-/// Keys in a text with a selection, and the text and the selection after.
 #[test]
 fn keys_type_as_the_editor_assists() {
     let cases = [
-        // Brackets close and are stepped over; before a word, only the one typed.
         ("", caret(0), "{", "{}", caret(1)),
         ("", caret(0), "{}", "{}", caret(2)),
         ("x", caret(0), "(", "(x", caret(1)),
-        // Round a selection, which stays selected.
         ("ab", range(0, 2), "[", "[ab]", range(1, 2)),
         // An empty pair the editor closed goes as one; one that was there loses only its bracket.
         ("", caret(0), "{⌫", "", caret(0)),
         ("{}", caret(1), "⌫", "}", caret(0)),
-        // Escaped brackets close escaped.
         ("\\", caret(1), "[", "\\[\\]", caret(2)),
         ("\\", caret(1), "[x\\]", "\\[x\\]", caret(5)),
         // A command typed inside keeps the closer whole, and the bracket alone steps over it.
@@ -232,14 +207,12 @@ fn keys_type_as_the_editor_assists() {
         // with a mark on it is no bracket.
         ("😀", caret(0), "(", "(😀", caret(1)),
         ("}\u{301}", caret(0), "{", "{}\u{301}", caret(1)),
-        // New lines keep the indentation; between brackets, the closing one a
-        // line further down.
         ("  a", caret(3), "⏎", "  a\n  ", caret(6)),
         ("  a{}", caret(4), "⏎", "  a{\n  \n  }", caret(7)),
-        // The spaces after the caret go; a caret in the indentation takes it down.
         ("\ta  b", caret(2), "⏎", "\ta\n\tb", caret(4)),
         ("    x", caret(2), "⏎", "\n    x", caret(5)),
-        // Tab and Shift-Tab indent by two spaces; Delete in the indentation back to a stop.
+        ("\ta\t b", caret(2), "⏎", "\ta\n\tb", caret(4)),
+        ("\t\tx", caret(1), "⏎", "\n\t\tx", caret(3)),
         ("x", caret(0), "⇥", "  x", caret(2)),
         ("x", caret(0), "⇥⇤", "x", caret(0)),
         ("     y", caret(5), "⌫", "    y", caret(4)),
@@ -293,7 +266,6 @@ fn keys_say_what_the_completion_list_does() {
     );
     let key = doc.type_text(caret(1), "{", true);
     assert_eq!(key.completions, Completing::Offer);
-    // A closing bracket typed shows its partner.
     assert_eq!(doc.type_text(caret(1), ")", true).partner, Some(1));
 }
 
@@ -305,7 +277,6 @@ fn wrapping_keeps_the_selection() {
     e.shows("\\textbf{word}", range(8, 4));
     e.change(|doc, s| doc.wrap(s, "\\ref{$0}"));
     assert_eq!(e.string(), "\\textbf{\\ref{word}}");
-    // Inline and display maths, and a template without "$0".
     let mut e = Editor::open("x", None);
     e.set_selection(range(0, 1));
     e.change(|doc, s| doc.wrap(s, "$$0$"));
@@ -326,7 +297,6 @@ fn a_style_the_selection_is_in_unwraps() {
     e.shows("a \\textit{b word c} d", range(word - 8, 4));
     e.change(|doc, s| doc.toggle_style(s, Style::Underline));
     assert_eq!(e.string(), "a \\textit{b \\underline{word} c} d");
-    // The caret in it, the whole command goes.
     e.set_selection(caret(11));
     e.change(|doc, s| doc.toggle_style(s, Style::Italic));
     e.shows("a b \\underline{word} c d", caret(3));
@@ -359,8 +329,6 @@ fn blocks_tab_through_their_fields() {
     assert_eq!(e.selection(), caret(at("\\caption{") + 9));
     e.tab(1);
     assert_eq!(e.selection(), caret(at("fig:") + 4));
-    // The last field keeps the snippet, so Shift-Tab goes back; Tab from it
-    // ends the snippet, and indents again.
     e.tab(-1);
     assert_eq!(e.selection(), caret(at("\\caption{") + 9));
     e.tab(1);
@@ -372,7 +340,7 @@ fn blocks_tab_through_their_fields() {
 #[test]
 fn a_field_in_two_places_is_typed_in_both() {
     let mut e = Editor::open("\\beg", None);
-    let offer = e.doc.completions(4, false, &[], &[]).unwrap();
+    let offer = e.doc.completions(4, false).unwrap();
     let item = &offer.items[0];
     let end = offer.start + units(&item.text);
     e.put(edit(offer.start, 4 - offer.start, &item.text), end);
@@ -385,7 +353,6 @@ fn a_field_in_two_places_is_typed_in_both() {
     assert_eq!(e.string(), "\\begin{fi}\n  \n\\end{fi}");
     e.tab(1);
     assert_eq!(e.selection(), caret(13));
-    // Selecting outside the fields ends the snippet.
     let mut e = Editor::open("\\beg", None);
     e.put(edit(0, 4, &item.text), 0);
     let first = e.doc.start_snippet(&item.fields, 0).unwrap();
@@ -395,14 +362,12 @@ fn a_field_in_two_places_is_typed_in_both() {
     e.set_selection(caret(8));
     e.type_text("y");
     assert_eq!(e.string(), "x\\begin{yenv}\n  \n\\end{env}");
-    // Escape ends one.
     let mut doc = SourceDocument::new("ab");
     assert!(doc.start_snippet(&[field(0, 0), field(1, 1)], 0).is_some());
     assert!(doc.end_snippet());
     assert!(!doc.end_snippet());
 }
 
-/// Fields that are empty, `index` being each one's in Tab's order.
 fn snippet(e: &mut Editor, places: &[(u32, u32)]) {
     let fields: Vec<_> = places
         .iter()
@@ -415,17 +380,14 @@ fn snippet(e: &mut Editor, places: &[(u32, u32)]) {
 #[test]
 fn the_last_field_is_mirrored_and_left_by_shift_tab() {
     let mut e = Editor::open("   ", Some(0));
-    // The second field is in two places, and the last.
     snippet(&mut e, &[(0, 0), (1, 1), (2, 1)]);
     e.tab(1);
     e.keys("z");
     e.shows(" z z ", caret(2));
     e.tab(-1);
     assert_eq!(e.selection(), caret(0));
-    // Before the first field there is nowhere to go, and nothing is outdented.
     e.tab(-1);
     e.shows(" z z ", caret(0));
-    // Tab to the last field, and from it: the lines are indented.
     e.tab(1);
     assert_eq!(e.selection(), range(1, 1));
     e.tab(1);
@@ -435,7 +397,7 @@ fn the_last_field_is_mirrored_and_left_by_shift_tab() {
 #[test]
 fn a_completions_own_bracket_is_stepped_over() {
     let mut e = Editor::open("\\textb", None);
-    let offer = e.doc.completions(6, false, &[], &[]).unwrap();
+    let offer = e.doc.completions(6, false).unwrap();
     let item = &offer.items[0];
     assert_eq!(item.text, "\\textbf{}");
     e.put(edit(offer.start, 6, &item.text), 9);
@@ -463,20 +425,17 @@ fn the_range_an_editor_says_it_changes_stands_for_the_edit() {
 
 #[test]
 fn resetting_typing_forgets_the_closers_and_the_snippet() {
-    // The closer put in is stepped over by the bracket typed...
     let mut e = Editor::open("", None);
     e.type_text("(");
     e.set_selection(caret(1));
     e.type_text(")");
     e.shows("()", caret(2));
-    // ...but not once the document is shown again.
     let mut e = Editor::open("", None);
     e.type_text("(");
     e.set_selection(caret(1));
     e.doc.reset_typing();
     e.type_text(")");
     e.shows("())", caret(2));
-    // A snippet is over.
     let mut doc = SourceDocument::new("ab");
     assert!(doc.start_snippet(&[field(0, 0), field(1, 1)], 0).is_some());
     doc.reset_typing();
@@ -489,7 +448,6 @@ fn lines_move_up_and_down() {
     e.change(|doc, s| doc.move_lines(s, true).unwrap());
     e.shows("b\na\nc\nd", caret(0));
     assert_eq!(e.doc.move_lines(&e.selections, true), None);
-    // Down to the end: the moved line takes the last one's place, without its break.
     e.set_selection(range(4, 1));
     e.change(|doc, s| doc.move_lines(s, false).unwrap());
     e.shows("b\na\nd\nc", range(6, 1));
@@ -497,14 +455,11 @@ fn lines_move_up_and_down() {
     e.change(|doc, s| doc.move_lines(s, true).unwrap());
     e.shows("b\na\nc\nd", range(4, 1));
     assert_eq!(e.doc.text(), e.string());
-    // The empty line after a final line break has nothing to move.
     let e = Editor::open("a\n", None);
     assert_eq!(e.doc.move_lines(&e.selections, true), None);
-    // CRLF ends a line as one.
     let mut e = Editor::open("a\r\nb", None);
     e.change(|doc, s| doc.move_lines(s, true).unwrap());
     e.shows("b\r\na", caret(1));
-    // Counted in UTF-16 units: an emoji is two.
     let mut e = Editor::open("😀\nb", Some(3));
     e.change(|doc, s| doc.move_lines(s, true).unwrap());
     e.shows("b\n😀", caret(0));
@@ -517,27 +472,19 @@ fn lines_move_up_and_down() {
 #[test]
 fn several_selections_move_together() {
     let cases = [
-        // Lines 2–3 (selected up to line 4's start) and line 5.
         (
             vec![range(2, 4), range(8, 1)],
             "2\n3\n1\n5\n4\n6",
             vec![range(0, 4), range(6, 1)],
         ),
-        // In any order: line 5, line 2, and line 5 again.
         (
             vec![range(8, 1), range(2, 1), caret(8)],
             "2\n1\n3\n5\n4\n6",
             vec![range(6, 1), range(0, 1), caret(6)],
         ),
-        // Given last first, they move as the same lines.
         (
             vec![range(8, 1), range(2, 4)],
-            "2
-3
-1
-5
-4
-6",
+            "2\n3\n1\n5\n4\n6",
             vec![range(6, 1), range(0, 4)],
         ),
     ];
@@ -567,16 +514,13 @@ fn a_bracket_finds_its_partner() {
 
 #[test]
 fn a_partner_is_not_an_escaped_bracket_nor_one_in_a_comment() {
-    // The escaped brace is no one's partner for the plain ones.
     let doc = SourceDocument::new("{a \\} b}");
     assert_eq!(doc.partner(0), Some(7));
     assert_eq!(doc.partner(7), Some(0));
-    // The escaped pair is a pair of its own.
     let doc = SourceDocument::new("\\{ {a} \\}");
     assert_eq!(doc.partner(1), Some(8));
     assert_eq!(doc.partner(8), Some(1));
     assert_eq!(doc.partner(3), Some(5));
-    // A double backslash escapes nothing.
     assert_eq!(SourceDocument::new("{a \\\\}").partner(0), Some(5));
     // A bracket in a comment is passed over, and has no partner of its own;
     // the next line is no comment, nor is an escaped percent one.
@@ -585,35 +529,4 @@ fn a_partner_is_not_an_escaped_bracket_nor_one_in_a_comment() {
     assert_eq!(doc.partner(7), None);
     let doc = SourceDocument::new("(a 5\\% )");
     assert_eq!(doc.partner(0), Some(7));
-}
-
-#[test]
-fn typing_answers_by_name() {
-    let mut doc = SourceDocument::new("");
-    let key = doc.call(
-        "type",
-        r#"{"selection": {"start": 0, "length": 0}, "text": "{"}"#,
-    );
-    assert_eq!(
-        key.as_deref(),
-        Some(
-            r#"{"edit":{"start":0,"length":0,"text":"{}"},"selection":{"start":1,"length":0},"partner":null,"completions":"offer"}"#
-        )
-    );
-    let off = r#"{"selection": {"start": 0, "length": 0}, "text": "{", "autoPair": false}"#;
-    assert!(doc.call("type", off).unwrap().contains(r#""edit":null"#));
-    // An edit's following and a selection's are the C ABI's own.
-    let follow = r#"{"old": {"start": 0, "length": 0}, "delta": 2}"#;
-    assert_eq!(doc.call("follow", follow), None);
-    assert_eq!(doc.call("toggle_style", r#"{"style": "strong"}"#), None);
-    let edits = r#"{"edits": [{"start": 0, "length": 0, "text": "ab"}], "selections": [{"start": 0, "length": 1}]}"#;
-    assert_eq!(
-        doc.call("map_selections", edits).as_deref(),
-        Some(r#"[{"start":2,"length":1}]"#)
-    );
-    assert_eq!(
-        doc.call("tab", r#"{"selections": [{"start": 0, "length": 0}]}"#)
-            .as_deref(),
-        Some(r#"{"field":null,"edits":[{"start":0,"length":0,"text":"  "}]}"#)
-    );
 }

@@ -24,10 +24,10 @@ nonisolated enum DefaultsKey {
     static let editorAutoPair = "editorAutoPair"
     static let editorAutoComplete = "editorAutoComplete"
     static let editorSpellCheck = "editorSpellCheck"
+    static let pdfPaper = "pdfPaper"
     static let liveViewer = "liveViewer"
 }
 
-/// The pages the app points to; each is a constant that parses.
 enum Links {
     static let repository = URL(string: "https://github.com/Banrs/Underleaf")!
     static let issues = repository.appending(path: "issues")
@@ -57,13 +57,13 @@ struct ExportFile: Transferable {
     }
 }
 
-/// The File Outline: open in its pane, folded to its header, or hidden with its header while the sidebar shows search results.
+/// The File Outline: open, folded to its header, or hidden with its header for search results.
 nonisolated enum OutlineState { case open, folded, hidden }
 
-/// What the New Project sheet opens with: the template, and the first of "Untitled", "Untitled 2", and so on that no project has.
+/// What the New Project sheet opens with: the template, and a free name.
 struct NewProjectDraft: Identifiable {
-    let template: ProjectTemplate
-    let name: String
+    var template: ProjectTemplate
+    var name: String
 
     var id: ProjectTemplate { template }
 }
@@ -89,16 +89,15 @@ final class AppModel {
     var exporting: ExportFile?
     var searchFocusToken = 0
     @ObservationIgnored var performPDF: ((PDFAction) -> Void)?
-    /// Where the settings below are kept: the user's defaults, or a test's own.
+    /// The user's defaults, or a test's own.
     @ObservationIgnored let defaults: UserDefaults
-    /// AppKit keeps the window's split positions and toolbar in the standard defaults itself: only with the user's settings.
+    /// AppKit keeps the window's split positions and toolbar in the standard defaults itself.
     var savesLayout: Bool { defaults === UserDefaults.standard }
 
-    // Stored here rather than as @AppStorage so the menus and models observe them.
+    // Not @AppStorage, so the menus and models observe them.
     var sidebarVisible: Bool { didSet { defaults.set(sidebarVisible, forKey: DefaultsKey.sidebarVisible) } }
     var inspectorVisible: Bool { didSet { defaults.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) } }
-    /// Folded by a window too narrow for them, which brings them back as it widens: not hidden,
-    /// and not saved (`sidebarShown`, `inspectorShown`).
+    /// Folded by a window too narrow for them, which brings them back as it widens: neither hidden nor saved.
     var sidebarFolded = false
     var inspectorFolded = false
     /// The side columns as the window has them: the user's choice, unless the window folded one. Showing a folded one unfolds it.
@@ -117,19 +116,18 @@ final class AppModel {
         }
     }
     var showWordCount: Bool { didSet { defaults.set(showWordCount, forKey: DefaultsKey.showWordCount) } }
-    /// View › Show PDF and the toolbar keep the choice for later launches; a PDF command or Go to PDF Position shows it for now.
+    /// Kept by View › Show PDF and the toolbar; a PDF command shows it for now.
     var showPDF: Bool
     var outlineCollapsed: Bool { didSet { defaults.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) } }
-    /// The menus act on the project only while its window is key, not behind Settings or a sheet.
+    /// The menus act on the project only while its window is key.
     var mainWindowIsKey = false
     var commandProject: ProjectModel? { mainWindowIsKey && project?.closed != true ? project : nil }
     var chosenItem: ItemActions?
     var recentProjects: [String] { didSet { defaults.set(recentProjects, forKey: DefaultsKey.recentProjects) } }
-    /// Filtered, not pruned on refresh: a library that lists empty (another TEXLOCAL_DATA, a missing folder) would wipe them.
+    /// Filtered, not pruned: a library that lists empty would wipe them.
     var recents: [ProjectInfo] { recentProjects.compactMap { id in projects.first { $0.id == id } } }
 
-    /// The launch arguments the QA scripts pass (-openProject, -sidebarVisible, -showPDF and the like) are read from the
-    /// standard defaults' argument domain.
+    /// QA's launch arguments come in through the standard defaults' argument domain.
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         defaults.register(defaults: [DefaultsKey.sidebarVisible: true, DefaultsKey.autoCompile: true,
@@ -144,8 +142,7 @@ final class AppModel {
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
     }
 
-    /// Without a template, the one Settings names for new projects. The sheet opens once the core has named the project,
-    /// a moment later: not awaited, as the menus and buttons that ask don't wait.
+    /// The sheet opens once the core has named the project.
     func newProject(_ template: ProjectTemplate? = nil) {
         guard libraryProblem == nil else { return }
         let template = template ?? defaults.string(forKey: DefaultsKey.newProjectTemplate)
@@ -156,8 +153,7 @@ final class AppModel {
         }
     }
 
-    /// A file that isn't LaTeX has no outline to open: the header stays, folded and dim (`OutlineHeader`), and the sidebar keeps
-    /// its foot from one file to the next.
+    /// A file that isn't LaTeX has no outline: its header stays, folded and dim.
     func outlineOpen(of project: ProjectModel?) -> Bool { project?.isLaTeX == true && !outlineCollapsed }
 
     func outlineState(of project: ProjectModel) -> OutlineState {
@@ -176,22 +172,18 @@ final class AppModel {
 
     nonisolated enum SideColumn { case sidebar, inspector }
 
-    /// A side column the split opened or shut. Shut by the window, for want of room, it stays the user's shown column,
-    /// unsaved, and the split brings it back as the window widens. Shut by the user, with its toggle or on its divider,
-    /// it is hidden, and saved so.
+    /// Shut by the window, for want of room, a column stays shown, unsaved, and comes back as the window widens; shut by
+    /// the user, with its toggle or on its divider, it is hidden, and saved so.
     func sideColumn(_ column: SideColumn, shown: Bool, byWindow: Bool) {
-        let (visible, folded): (ReferenceWritableKeyPath<AppModel, Bool>, ReferenceWritableKeyPath<AppModel, Bool>) =
-            column == .sidebar ? (\.sidebarVisible, \.sidebarFolded) : (\.inspectorVisible, \.inspectorFolded)
-        if shown || !byWindow {
-            if self[keyPath: folded] { self[keyPath: folded] = false }
-            if self[keyPath: visible] != shown { self[keyPath: visible] = shown }
-        } else if self[keyPath: visible], !self[keyPath: folded] {
-            self[keyPath: folded] = true
+        switch (column, shown || !byWindow) {
+        case (.sidebar, true): sidebarShown = shown
+        case (.sidebar, false): sidebarFolded = sidebarVisible
+        case (.inspector, true): inspectorShown = shown
+        case (.inspector, false): inspectorFolded = inspectorVisible
         }
     }
 
-    /// The project the window's workspace shows: the open one once it has loaded, and until then the one it showed, so a
-    /// switch from one project to the next never passes through Home. None, Home.
+    /// Until the open project has loaded, the one shown, so a switch never passes through Home.
     func workspaceProject(after shown: ProjectModel?) -> ProjectModel? {
         guard let project else { return nil }
         return project.initialLoadComplete ? project : shown
@@ -202,12 +194,11 @@ final class AppModel {
 
     func retryLibrary() async {
         core.reopen()
-        if core.isOpen { libraryProblem = nil }
         await refresh()
         await refreshTeXStatus()
     }
 
-    /// TeX is read apart (`refreshTeXStatus`), as the probe starts a process.
+    /// TeX is read apart, as its probe starts a process.
     func refresh() async {
         guard core.isOpen else { return }
         do {
@@ -219,7 +210,7 @@ final class AppModel {
         projectsLoaded = true
     }
 
-    /// `status` searches the disk for latexmk, so not while a TeX folder is being chosen.
+    /// Not while a TeX folder is being chosen.
     func refreshTeXStatus() async {
         guard !settingTeX else { return }
         await restart(&texCheck) { [self] in
@@ -233,22 +224,20 @@ final class AppModel {
         texCheck?.cancel()
         defer { settingTeX = false }
         do {
-            // A nil path bridges as null, which the core reads as none.
             tex = try await core.call(texpresso ? "set_texpresso_dir" : "set_tex_dir", ["dir": path], as: TexStatus.self)
         } catch {
-            // A status read started before this choice was discarded: refresh after the check ends, even if the chosen folder was refused.
+            // The status read this choice cancelled.
             Task { await refreshTeXStatus() }
             throw error
         }
     }
 
-    /// With the engine Settings names for new projects: the core makes the project with it or not at all.
     func create(name: String, template: ProjectTemplate) async throws {
         let engine = defaults.string(forKey: DefaultsKey.newProjectEngine).flatMap(TeXEngine.init(rawValue:))
         let info = try await core.call("create_project", ["name": name, "template": template.rawValue, "engine": engine?.rawValue],
                                        as: ProjectInfo.self)
         await refresh()
-        // Not awaited: the sheet goes as the project opens, not after its first build.
+        // The sheet goes as the project opens, not after its first build.
         Task { await open(info.id) }
     }
 
@@ -257,18 +246,18 @@ final class AppModel {
     static func canOpen(_ url: URL) -> Bool {
         guard url.isFileURL else { return false }
         var directory: ObjCBool = false
+        // Follows a symlinked folder, as the URL's resource values don't.
         if url.hasDirectoryPath || (FileManager.default.fileExists(atPath: url.path(percentEncoded: false), isDirectory: &directory)
                                    && directory.boolValue) { return true }
-        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
-        return openableTypes.contains { type.conforms(to: $0) }
+        return UTType(filenameExtension: url.pathExtension).map { type in openableTypes.contains { type.conforms(to: $0) } } ?? false
     }
 
-    /// Several at once are only copied in; one alone opens.
+    /// One alone opens.
     func importProjects(_ urls: [URL]) async {
         for url in urls { await importProject(from: url, open: urls.count == 1) }
     }
 
-    /// Without asking, as the copy goes to the Trash like any project. The core removes a project it couldn't finish, so a bad zip leaves none.
+    /// Without asking: the copy goes to the Trash like any project.
     func importProject(from url: URL, open: Bool = true) async {
         if await isInLibrary(url, open: open) { return }
         // A second Return while it copies would make a second project.
@@ -280,7 +269,7 @@ final class AppModel {
         }) else { return }
         await refresh()
         guard open else { return }
-        // Its own row takes over from the copy's as it opens.
+        // Its own row takes over from the copy's.
         importing.removeAll { $0 == url }
         await self.open(info.id)
     }
@@ -358,31 +347,29 @@ final class AppModel {
         await alerting(title) { URL(fileURLWithPath: try await core.call("project_root", ["id": project.id], as: String.self)) }
     }
 
-    private func alerting<T>(_ title: String, _ work: () async throws -> T) async -> T? {
+    /// What `work` answers, or nil once its failure is an alert under `title`, unless `quiet` by then.
+    func alerting<T>(_ title: @autoclosure () -> String, unless quiet: () -> Bool = { false },
+                     _ work: () async throws -> T) async -> T? {
         do {
             return try await work()
         } catch {
-            alert = AppAlert(title, error)
+            if !quiet() { report(error, title()) }
             return nil
         }
     }
 
-    /// Bumped by each open and close, so only the latest carries on: the restored project and an Open With import can
-    /// overlap at launch.
+    /// Once: a failed save's document event may have shown it already.
+    func report(_ error: any Error, _ title: String) { if alert?.title != title { alert = AppAlert(title, error) } }
+
+    /// Only the latest open or close carries on: a restored project and an Open With import can overlap.
     @ObservationIgnored private var openGeneration = 0
-    /// The id of the project loading, for Home to show at work, before `project` may name it. A superseded open lets go
-    /// of it as it gives up, unless a later one has taken it.
+    /// For Home to show at work.
     private(set) var opening: String?
-    /// What is being copied into the library, for Home to show at work.
     private(set) var importing: [URL] = []
     var isOpening: Bool { opening != nil || !importing.isEmpty }
+    @ObservationIgnored var launchProject: String?
 
-    @ObservationIgnored private var launchProject: String?
-
-    func takeLaunchProject() -> String? { launchProject.take() }
-
-    /// `project` goes straight from one to the next, never nil between, so the window keeps the workspace
-    /// (`workspaceProject`).
+    /// `project` goes from one to the next, never nil between, so the window keeps the workspace.
     func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {
         openGeneration += 1
         let generation = openGeneration
@@ -391,7 +378,7 @@ final class AppModel {
         defer { if opening == id { opening = nil } }
         guard await leave(generation) else { return }
         dropRequests()
-        // Home's renames and moves to the Trash can't be undone under a project: Undo from the sidebar could rename the open project's folder under it.
+        // Home's renames and moves to the Trash can't be undone under a project, whose folder they could move.
         undoManager?.removeAllActions()
         recentProjects = Array(([id] + recentProjects.filter { $0 != id })
             .prefix(NSDocumentController.shared.maximumRecentDocumentCount))
@@ -405,7 +392,7 @@ final class AppModel {
     func close() async -> Bool {
         openGeneration += 1
         guard project != nil else { return true }
-        // False too when an open took over while this saved: its project stays.
+        // False too when an open took over while this saved.
         guard await leave(openGeneration) else { return false }
         project = nil
         dropRequests()
@@ -426,7 +413,6 @@ final class AppModel {
             guard await project.save(), generation == openGeneration else { return false }
             project.close()
         }
-        // Its session's Live Preview stopped before another model can start the project's.
         await project.waitUntilClosed()
         return generation == openGeneration
     }

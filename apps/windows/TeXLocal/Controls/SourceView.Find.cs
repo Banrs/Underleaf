@@ -7,8 +7,7 @@ using VirtualKey = Windows.System.VirtualKey;
 
 namespace TeXLocal.Controls;
 
-/// Find and replace in the file, as Notepad's bar over the text with VS Code's find widget's behaviour: RichEdit finds
-/// (FindText), and replacements are the session's edits like any other.
+/// RichEdit finds; replacements are the session's edits like any other.
 public sealed partial class SourceView
 {
     const int Forward = 0x3FFFFFFF, MostCounted = 999;
@@ -53,7 +52,6 @@ public sealed partial class SourceView
         Editor.Focus(FocusState.Programmatic);
     }
 
-    /// The next match after the selection, or the one before it, round the ends.
     public void FindNext(bool forward)
     {
         if (source is null) return;
@@ -77,7 +75,6 @@ public sealed partial class SourceView
         return found;
     }
 
-    /// "1 of 5" while a match is selected, Replace only while there's one, and Narrator hears the count.
     void Count()
     {
         List<SourceRange> matches = FindBox.Text.Length == 0 || source is null ? [] : Matches(MostCounted + 1);
@@ -88,7 +85,6 @@ public sealed partial class SourceView
         FrameworkElementAutomationPeer.FromElement(FindCount)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
     }
 
-    /// The first match from the selection's start is selected as you type.
     void OnFindChanged(object sender, object e)
     {
         if (source is not null && FindBox.Text.Length > 0 && (Search(Selected.Start, true) ?? Search(0, true)) is { } found) Place(found);
@@ -109,7 +105,6 @@ public sealed partial class SourceView
         e.Handled = true;
     }
 
-    /// The selected match is replaced, and the next one selected.
     void OnReplace(object sender, RoutedEventArgs e)
     {
         if (source is null || FindBox.Text.Length == 0) return;
@@ -118,7 +113,6 @@ public sealed partial class SourceView
         FindNext(true);
     }
 
-    /// Every match, uncounted, as one undo step.
     void OnReplaceAll(object sender, RoutedEventArgs e)
     {
         if (source is null || FindBox.Text.Length == 0) return;

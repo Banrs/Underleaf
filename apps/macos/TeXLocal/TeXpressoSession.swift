@@ -1,14 +1,13 @@
 import Observation
 import PDFKit
 
-/// The session's `live` event, and its answer to Start and Stop.
 nonisolated struct LiveState: Decodable, Sendable {
     let phase: TeXpressoSession.Phase
     let halted: Bool
     let failure, error: String?
-    /// The Live Preview Log's whole text, while the window shows it (`session_live_log`) and with an alert; nil otherwise.
+    /// The Live Preview Log's whole text, while the window shows it (`session_live_log`) and with an alert.
     let log: String?
-    /// An error the window hasn't been shown yet: the Live Preview Log opens on it. Start's and Stop's answers have none.
+    /// An error not shown yet, which the Live Preview Log opens on.
     let alert: Bool?
 }
 
@@ -16,7 +15,7 @@ nonisolated struct LiveState: Decodable, Sendable {
 nonisolated struct LiveDocumentEvent: Decodable, Sendable {
     let path: String
     var changed: [[Int]]?
-    /// TeX reached the document's end: pages past this document's last are gone. Otherwise they stay, as a construct half typed stops TeX short of them.
+    /// TeX reached the document's end, so pages past its last are gone; a construct half typed stops TeX short of them.
     let complete: Bool
 }
 
@@ -24,15 +23,12 @@ nonisolated struct LiveDocumentEvent: Decodable, Sendable {
 /// pages a document has, so a page is newer than any document before it.
 nonisolated struct LivePageEvent: Decodable, Sendable { let page: Int, path: String }
 
-/// A live event's PDF, read on the core's event thread as the event is decoded, so the main actor gets it ready to draw:
-/// the page's one-page PDF, or the whole document; nil inside where the file couldn't be read.
+/// Read on the core's event thread as the event is decoded, so the main actor gets it ready to draw.
 nonisolated enum LiveRead: Sendable {
     case document(LiveDocument?)
     case page(LivePage?)
 
-    /// The file is complete when it is named, and replaced by another of its name, never rewritten: mapped, it is read as its
-    /// pages are drawn and stays whole when its name goes. It has no links to see to: the engine writes its pages through
-    /// MuPDF's PDF device, which carries no annotations.
+    /// Mapped: the file is replaced, never rewritten, so it stays whole when its name goes. It has no links to see to.
     init(_ event: LiveDocumentEvent) {
         let url = URL(filePath: event.path)
         guard let document = Self.mapped(url), document.pageCount > 0 else {
@@ -62,7 +58,6 @@ nonisolated struct LiveDocument: @unchecked Sendable { let url: URL, document: P
 
 nonisolated struct LivePage: @unchecked Sendable { let index: Int, page: PDFPage }
 
-/// Live Preview as the window shows it: the core's session runs it and says how it goes. Its PDFs go to the PDF pane.
 @Observable
 final class TeXpressoSession {
     nonisolated enum Phase: String, Decodable, Sendable { case stopped, starting, running, stopping }
@@ -73,9 +68,7 @@ final class TeXpressoSession {
     private(set) var failure: String?
     private var error: String?
     private(set) var halted = false
-    /// The Live Preview Log as the session last sent it.
     private(set) var log = ""
-    /// Whether Live Preview has started in this window.
     private(set) var used = false
     private var acknowledged = false
     @ObservationIgnored var onAlert: () -> Void = {}
@@ -83,7 +76,6 @@ final class TeXpressoSession {
     @ObservationIgnored private var logWatch: Task<Void, Never>?
 
     var active: Bool { phase == .starting || phase == .running }
-    var canStart: Bool { phase == .stopped }
     var needsAttention: Bool { halted || !acknowledged && (failure != nil || error != nil) }
     var title: LocalizedStringResource {
         switch phase {
@@ -94,8 +86,7 @@ final class TeXpressoSession {
         }
     }
 
-    /// The session sends the log while the panel shows it, as `tell` says, and the trouble of a session that has ended counts
-    /// as seen once the log closes.
+    /// The session sends the log while the panel shows it, and an ended session's trouble counts as seen once the log closes.
     func watchLog(_ shows: @escaping @MainActor @Sendable () -> Bool, tell: @escaping @MainActor (Bool) -> Void) {
         logWatch = track(shows, initial: false) { [weak self] shows in
             guard let self else { return }
@@ -108,16 +99,15 @@ final class TeXpressoSession {
 
     // MARK: - The session's state
 
-    /// Shown at once, not when the session says so: the toggle that asked follows the click.
+    /// At once, not when the session says so: the toggle that asked follows the click.
     func starting() {
-        guard phase == .stopped else { return }
         phase = .starting
         acknowledged = false
     }
 
     func stopping() { if active { phase = .stopping } }
 
-    /// Stop's answer, for a preview that had ended already, which sends no event.
+    /// Stop's answer, for a preview that had ended already and sends no event.
     func stopped(_ state: LiveState) {
         if state.phase == .stopped, phase == .stopping { receive(state) }
     }
@@ -126,7 +116,6 @@ final class TeXpressoSession {
         let was = phase
         if state.phase == .starting, was == .stopped { acknowledged = false }
         (phase, halted, failure, error) = (state.phase, state.halted, state.failure, state.error)
-        // A log not sent is the one before.
         if let log = state.log { self.log = log }
         if state.alert == true {
             acknowledged = false
@@ -136,7 +125,7 @@ final class TeXpressoSession {
     }
 }
 
-/// Where live preview shows the document: the PDF pane, or TeXpresso's own window. Read as a session starts.
+/// Read as a session starts.
 nonisolated enum LiveViewer: String, CaseIterable, Identifiable {
     case pane, window
 

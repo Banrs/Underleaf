@@ -86,7 +86,8 @@ char *_Nullable tl_source_edit(TlSource *source, uint32_t start, uint32_t length
                                const TlRange *_Nullable changing, bool mirroring);
 
 /* The editor's (first) selection moved: a snippet ends once it leaves the
- * fields, unless mirroring. */
+ * fields, unless mirroring, and the closers before its line are no longer
+ * stepped over. */
 void tl_source_select(TlSource *source, uint32_t start, uint32_t length, bool mirroring);
 
 /* The whole text as *len bytes of UTF-8, with no NUL after them (the text
@@ -125,8 +126,8 @@ char *_Nullable tl_source_call(TlSource *source, const char *command, const char
  * folder), and maths as SVG:
  * "math_svg" {"tex", "display", "size" (points, default 13), "color" ([r, g,
  * b, a], 0-1, default black)} and "glyph_svg" {"command", "size" (19),
- * "side" (24), "color"} answer {"svg", "width", "height", "baseline"} in
- * points (baseline from the top) or {"error": why}; the SVG holds only
+ * "side" (24), "color"} answer {"svg", "width", "height"} in points or
+ * {"error": why}; the SVG holds only
  * <path> and <rect>. Returns the result's JSON, or NULL for an unknown
  * command or arguments; free it with tl_free. */
 char *_Nullable tl_syntax_call(const char *command, const char *args_json);

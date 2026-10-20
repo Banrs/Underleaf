@@ -13,17 +13,16 @@ public partial class App : Application
     public static MainWindow Window { get; private set; } = null!;
     public static readonly bool Smoke = Environment.GetCommandLineArgs().Contains("--smoke");
 
-    /// Why the core didn't open, for Home's error bar.
     internal static string? CoreError { get; private set; }
 
     public App()
     {
         InitializeComponent();
+        // Written to stderr in any run, for a run whose stderr is redirected; a smoke run fails on it.
         UnhandledException += (_, e) =>
         {
-            if (!Smoke) return;
             Console.Error.WriteLine(e.Exception);
-            Environment.Exit(1);
+            if (Smoke) Environment.Exit(1);
         };
     }
 
@@ -36,25 +35,24 @@ public partial class App : Application
         return Core is not null;
     }
 
-    public static void ExitSmoke(int code, string? why = null)
+    public static void ExitSmoke(string? error)
     {
-        if (why is not null) Console.Error.WriteLine(why);
+        if (error is not null) Console.Error.WriteLine(error);
         Core?.Dispose();
-        Environment.Exit(code);
+        Environment.Exit(error is null ? 0 : 1);
     }
 
     /// Opens a folder in File Explorer, or with `select` its parent with the item selected.
     public static void Reveal(string path, bool select = false) =>
         Process.Start("explorer.exe", select ? $"/select,\"{path}\"" : $"\"{path}\"");
 
-    /// Moves a file or folder to the Recycle Bin (Windows.Storage's DeleteAsync deletes outright when unpackaged).
+    /// Windows.Storage's DeleteAsync deletes outright when unpackaged.
     public static Task Recycle(string path) => Task.Run(() =>
     {
         if (Directory.Exists(path)) FileSystem.DeleteDirectory(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
         else FileSystem.DeleteFile(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
     });
 
-    /// Shows a dialog over the window, in the window's theme and WinUI's dialog style.
     public static Task<ContentDialogResult> Show(ContentDialog dialog)
     {
         var root = (FrameworkElement)Window.Content;

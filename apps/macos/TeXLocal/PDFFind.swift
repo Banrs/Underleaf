@@ -1,7 +1,6 @@
 import PDFKit
 import SwiftUI
 
-/// Find in the PDF pane: the bar's text, PDFKit's search of the document showing, and its matches, which the view marks.
 @Observable
 final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     static let maxQuery = 256
@@ -17,8 +16,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         return String(localized: "\(index) of \(count)")
     }
 
-    /// The find text every app shares (the find pasteboard), so ⌘E in one pane and ⌘G in the other find the same;
-    /// the tests' own leaves the user's alone.
+    /// The find text every app shares, so ⌘E in one pane and ⌘G in the other find the same; the tests use their own.
     static var board = NSPasteboard(name: .find)
 
     static var shared: String? {
@@ -31,7 +29,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     }
 
     private let view: SyncPDFView
-    /// Whether the bar is open.
     var isOpen = false { didSet { if isOpen, !oldValue, text.isEmpty { text = Self.shared ?? "" } } }
     /// What the field holds, which can be ahead of `query`.
     var text = ""
@@ -42,7 +39,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     private(set) var matchIndex = 0
     private(set) var limited = false
 
-    /// PDFKit searches off the main thread; the first query extracts page text.
     @ObservationIgnored private var running: (document: PDFDocument, query: String, keepingPlace: Bool, found: [PDFSelection])?
     @ObservationIgnored private var startFrom: (anchor: Position, step: Int)?
     @ObservationIgnored private var rerunning: Task<Void, Never>?
@@ -58,7 +54,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
 
     // MARK: - Searching
 
-    /// The field's text once its typing delay ends.
     func typed() {
         guard Self.normalize(text) != running?.query ?? query else { return }
         Self.shared = Self.normalize(text)
@@ -78,7 +73,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         document.beginFindString(query, withOptions: [.caseInsensitive, .diacriticInsensitive])
     }
 
-    /// The bar's text again over the document as it now is, where the pane left off.
     func rerun() { if isOpen { search(text, keepingPlace: true) } }
 
     /// Cancelling posts its end at once, unheard as `running` is cleared first.
@@ -89,14 +83,13 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         document?.cancelFindString()
     }
 
-    /// The bar closed and its matches gone, as for a pane with no document.
     func reset() {
         (isOpen, text) = (false, "")
         cancel()
         (query, matches, matchIndex, limited, startFrom) = ("", [], 0, false, nil)
     }
 
-    // PDFKit delivers document-find delegate callbacks on the main thread.
+    // On the main thread, as PDFKit posts them.
     func documentDidFindMatch(_ note: Notification) {
         guard note.object as? PDFDocument === running?.document,
               let match = note.userInfo?[PDFDocumentFoundSelectionKey] as? PDFSelection else { return }
@@ -124,8 +117,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         if !keepingPlace || view.currentSelection == nil { select(scrolling: start.map { $0.step != 0 } ?? !keepingPlace) }
     }
 
-    /// Pages that live preview or a rebuild replaced: their matches go at once, and the search runs again over what is there
-    /// once the pages stop coming, so a burst of keys in Live Preview costs one search of the whole document.
+    /// Their matches go at once, and the search runs again once pages stop coming: a burst of keys costs one search.
     func pagesReplaced(_ gone: Set<PDFPage>) {
         let kept = matches.filter { !$0.pages.contains(where: gone.contains) }
         if kept.count != matches.count {
@@ -136,10 +128,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         }
         guard isOpen else { return }
         cancel()
-        restart(&rerunning, after: Self.rerunDelay) { [weak self] in
-            guard let self else { return }
-            search(text, keepingPlace: true)
-        }
+        restart(&rerunning, after: Self.rerunDelay) { [weak self] in self?.rerun() }
     }
 
     // MARK: - Where the next match is

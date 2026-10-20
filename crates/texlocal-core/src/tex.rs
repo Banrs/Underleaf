@@ -2,13 +2,14 @@
 //! it, and whether latexmk runs.
 
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::Serialize;
 
-use crate::process::{PROBE_TIMEOUT, run};
+use crate::process::run;
 use crate::settings::AppSettings;
 
-/// What `dir` holds; nothing if it can't be read.
 fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
     std::fs::read_dir(dir)
         .into_iter()
@@ -27,7 +28,6 @@ fn texlive_root() -> PathBuf {
     }
 }
 
-/// Year/architecture-specific TeX Live bin dirs, newest year first.
 fn texlive_bins() -> impl Iterator<Item = PathBuf> {
     let mut years: Vec<_> = children(texlive_root())
         .filter(|year| {
@@ -41,11 +41,7 @@ fn texlive_bins() -> impl Iterator<Item = PathBuf> {
     years.into_iter().flat_map(children)
 }
 
-/// The PATHs for TeX's tools, and for TeXpresso's: the TeX folder chosen
-/// first, then the user's PATH, then the discovered TeX dirs; TeXpresso's
-/// with its own folder before all of them. Built per use — a couple of
-/// read_dirs — so a TeX install performed while the app runs is found without
-/// a restart.
+/// The PATHs for TeX's tools and for TeXpresso's: the chosen TeX folder, the user's PATH, then discovered TeX dirs. Built per use, so an install made while the app runs is found.
 pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
     let user = std::env::var_os("PATH").unwrap_or_default();
     let tex: Vec<PathBuf> = (app.tex_dir.iter().cloned())
@@ -93,15 +89,10 @@ fn absolute_dirs(path: &std::ffi::OsStr) -> impl Iterator<Item = PathBuf> + '_ {
     std::env::split_paths(path).filter(|dir| dir.is_absolute())
 }
 
-/// `program` as a shell finds it in `path_env`'s folders: a file it may run,
-/// by any of Windows' program extensions (.exe, .bat …) there.
 pub(crate) fn find_tool(program: &str, path_env: &str) -> Option<PathBuf> {
-    // The PATHs built here hold absolute folders only: none is found from
-    // the folder given for relative ones.
     which::which_in(program, Some(path_env), Path::new("/")).ok()
 }
 
-/// The program at the absolute `path`, by any of Windows' program extensions.
 pub(crate) fn program_at(path: &Path) -> Option<PathBuf> {
     path.is_absolute().then(|| which::which(path).ok())?
 }
@@ -114,38 +105,38 @@ pub(crate) fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
         .find(|c| program_at(&c.join("latexmk")).is_some())
 }
 
+static LATEXMK_VERSION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Version (\d[\w.]*)").unwrap());
+
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TexStatus {
     pub available: bool,
     pub version: Option<String>,
-    /// The TeX folder the user chose; None finds TeX automatically.
+    pub latexmk_version: Option<String>,
     pub tex_dir: Option<String>,
-    /// The folder the working latexmk runs from.
     pub found: Option<String>,
-    /// The TeXpresso program live preview would run, and the folder chosen for it.
     pub texpresso: Option<String>,
     pub texpresso_dir: Option<String>,
 }
 
 pub async fn tex_available(path_env: &str) -> TexStatus {
-    let probe = run("latexmk", &["-version"], None, PROBE_TIMEOUT, path_env).await;
-    let (available, stdout) = match probe {
-        Ok((0, stdout)) => (true, stdout),
-        _ => (false, String::new()),
+    let Ok((0, stdout)) = run("latexmk", &["-version"], None, path_env).await else {
+        return TexStatus::default();
     };
+    let version = version_line(&stdout);
     TexStatus {
-        available,
-        version: available.then(|| version_line(&stdout)),
-        found: available
-            .then(|| find_tool("latexmk", path_env))
-            .flatten()
+        available: true,
+        latexmk_version: LATEXMK_VERSION
+            .captures(&version)
+            .map(|found| found[1].to_owned()),
+        version: Some(version),
+        found: find_tool("latexmk", path_env)
             .and_then(|latexmk| Some(latexmk.parent()?.to_string_lossy().into_owned())),
         ..TexStatus::default()
     }
 }
 
-/// latexmk's own version line, falling back to the first nonempty line.
 fn version_line(stdout: &str) -> String {
     let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
     let first = lines.clone().next().unwrap_or("");

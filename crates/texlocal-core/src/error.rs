@@ -51,8 +51,6 @@ impl fmt::Display for CoreError {
 
 impl std::error::Error for CoreError {}
 
-/// What the file system said, in the statuses a host can tell apart: not
-/// there, not allowed, already there; anything else is the core's own fault.
 impl From<io::Error> for CoreError {
     fn from(err: io::Error) -> Self {
         let status = match err.kind() {
@@ -61,7 +59,6 @@ impl From<io::Error> for CoreError {
             ErrorKind::AlreadyExists => 409,
             _ => 500,
         };
-        // The OS appends its number to its words, "(os error 2)".
         let text = err.to_string();
         let words = text
             .split_once(" (os error ")
@@ -86,8 +83,7 @@ mod tests {
 
     #[test]
     fn file_system_errors_keep_their_kind_and_lose_the_os_number() {
-        let missing = std::fs::read("/no/such/file/at/all").unwrap_err();
-        let err = CoreError::from(missing);
+        let err = CoreError::from(std::fs::read("/no/such/file/at/all").unwrap_err());
         assert_eq!(err.status, 404);
         assert!(!err.message.contains("os error"), "{}", err.message);
         for (kind, status) in [
@@ -98,11 +94,9 @@ mod tests {
             assert_eq!(CoreError::from(io::Error::from(kind)).status, status);
         }
         let named = CoreError::at(Path::new("/a/b.tex"))(io::Error::from(ErrorKind::NotFound));
-        assert_eq!(named.status, 404);
-        assert!(
-            named.message.starts_with("“/a/b.tex”: "),
-            "{}",
-            named.message
+        assert_eq!(
+            (named.status, named.message.as_str()),
+            (404, "“/a/b.tex”: entity not found")
         );
     }
 }

@@ -20,6 +20,7 @@ public sealed partial class MainWindow : Window
 {
     RectInt32 restored;
     double scale;
+    WorkspacePage? project;
 
     public MainWindow()
     {
@@ -36,14 +37,27 @@ public sealed partial class MainWindow : Window
         {
             if (e.Key == (VirtualKey)188 && InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(CoreVirtualKeyStates.Down)) OpenSettings();
         }), true);
-        Root.Loaded += (_, _) =>
+        // The mouse's back button, as in File Explorer and Settings.
+        Root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, e) =>
         {
-            Fit();
-            Root.XamlRoot.Changed += (_, _) => Fit();
-        };
+            if (e.GetCurrentPoint(Root).Properties.IsXButton1Pressed) GoBack();
+        }), true);
+        Root.Loaded += (_, _) => Root.XamlRoot.Changed += (_, _) => Fit();
         Activated += (_, e) =>
         {
-            if (e.WindowActivationState != WindowActivationState.Deactivated) (Pages.Content as HomePage)?.Refresh();
+            if (e.WindowActivationState == WindowActivationState.Deactivated) return;
+            (Pages.Content as HomePage)?.Refresh();
+            (Pages.Content as WorkspacePage)?.CheckTex();
+        };
+        // Held until the project's save answers, as the Mac's quit; one that fails keeps the window, and closing again
+        // saves again.
+        AppWindow.Closing += async (_, e) =>
+        {
+            if (project is null) return;
+            e.Cancel = true;
+            if (!await Leave()) return;
+            project = null;
+            Close();
         };
         Closed += (_, _) =>
         {
@@ -54,12 +68,15 @@ public sealed partial class MainWindow : Window
         Pages.Navigate(typeof(HomePage));
     }
 
-    /// The project in the caption (taskbar, Alt+Tab) and the search box, as Notepad and VS Code name theirs.
-    public void SetProject(string? name)
+    /// The project's menus in the title bar; null takes them away.
+    public void SetMenu(MenuBar? menu) => Bar.Content = menu;
+
+    /// The title bar names the project, as Visual Studio's names the solution; the caption (taskbar, Alt+Tab) adds
+    /// the file, "main.tex - Thesis - TeXLocal", as Word and Notepad name theirs.
+    public void SetTitle(string? project, string? file = null)
     {
-        Title = name is null ? "TeXLocal" : $"{name} - TeXLocal";
-        Search.Visibility = name is null ? Visibility.Collapsed : Visibility.Visible;
-        if (name is not null) Search.PlaceholderText = $"Search {name}";
+        Bar.Title = project ?? "TeXLocal";
+        Title = project is null ? "TeXLocal" : file is null ? $"{project} - TeXLocal" : $"{System.IO.Path.GetFileName(file)} - {project} - TeXLocal";
     }
 
     public void ApplyTheme(ElementTheme theme)
@@ -73,10 +90,12 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    public void OpenProject(string id)
+    /// With `file`, the project shows that file instead of its main file.
+    public async void OpenProject(string id, string? file = null)
     {
-        GoHome();
-        Pages.Navigate(typeof(WorkspacePage), id, new DrillInNavigationTransitionInfo());
+        if (!await Leave()) return;
+        ShowHome();
+        Pages.Navigate(typeof(WorkspacePage), (id, file), new DrillInNavigationTransitionInfo());
     }
 
     public async void OpenFolder()
@@ -90,10 +109,15 @@ public sealed partial class MainWindow : Window
         if (await picker.PickSingleFileAsync() is { } picked) await Import(picked.Path);
     }
 
+    /// What's already in the library opens its project, and a file in it, as on the Mac; anything else is imported.
     async Task Import(string src)
     {
         if (App.Core is null) return;
-        try { OpenProject((await App.Core.CallAsync<ProjectInfo>("import_project", new { src })).Id); }
+        try
+        {
+            if (await App.Core.CallAsync<Located?>("locate", new { path = src }) is { } at) OpenProject(at.Id, File.Exists(src) ? at.Path : null);
+            else OpenProject((await App.Core.CallAsync<ProjectInfo>("import_project", new { src })).Id);
+        }
         catch (CoreException ex) { await App.Alert("Can't open this", ex.Message); }
     }
 
@@ -103,24 +127,38 @@ public sealed partial class MainWindow : Window
             Pages.Navigate(typeof(SettingsPage), null, new SlideNavigationTransitionInfo { Effect = SlideNavigationTransitionEffect.FromRight });
     }
 
-    public void GoHome()
+    public async void GoHome()
+    {
+        if (await Leave()) ShowHome();
+    }
+
+    void ShowHome()
     {
         while (Pages.CanGoBack && Pages.Content is not HomePage) Pages.GoBack();
     }
 
-    void OnBackRequested(TitleBar sender, object args)
+    /// Back from Settings returns to the project; back from the project leaves it.
+    async void GoBack()
     {
-        if (Pages.CanGoBack) Pages.GoBack();
+        if (Pages.CanGoBack && (Pages.Content is not WorkspacePage || await Leave())) Pages.GoBack();
     }
 
-    void OnPaneToggleRequested(TitleBar sender, object args) => (Pages.Content as WorkspacePage)?.TogglePane();
+    /// False, staying, when the open project's save fails or is asked about: the editor holds the only copy.
+    async Task<bool> Leave() => project is null || await project.Save();
 
+    /// Back shows only where there is somewhere to go back to, as in Windows Settings.
     void OnNavigated(object sender, NavigationEventArgs e)
     {
         Bar.IsBackButtonVisible = Pages.CanGoBack;
-        Bar.IsPaneToggleButtonVisible = e.Content is WorkspacePage;
         SettingsButton.Visibility = e.Content is SettingsPage ? Visibility.Collapsed : Visibility.Visible;
-        if (e.Content is not WorkspacePage) SetProject(null);
+        if (e.Content is WorkspacePage page)
+        {
+            project = page;
+            return;
+        }
+        if (e.Content is HomePage) project = null;
+        SetMenu(null);
+        SetTitle(null);
     }
 
     /// The saved bounds while they're on a display, else 1280 × 800 centred; they're saved on Closed.
@@ -153,8 +191,7 @@ public sealed partial class MainWindow : Window
             presenter.PreferredMinimumWidth = (int)(800 * scale);
             presenter.PreferredMinimumHeight = (int)(500 * scale);
         }
-        // WinUI's TitleBar reserves the caption buttons' inset in pixels as if they were DIPs, which above 100% leaves
-        // the gear a caption-width short of them: the bar reaches past the window's edge by the difference.
+        // TitleBar 2.3.9 takes the caption inset's pixels as DIPs (docs/windows.md): the bar reaches past the edge by the difference.
         var inset = AppWindow.TitleBar.RightInset;
         Bar.Margin = new Thickness(0, 0, inset / scale - inset, 0);
     }

@@ -47,6 +47,7 @@ public sealed partial class WorkspacePage
     bool fileUnshown;
     Analysis? analysis;
     NavItem? caretHeading;
+    Task foldsSaved = Task.CompletedTask;
 
     TreeView[] SideTrees => [FilesTree, OutlineTree, ResultsTree];
     TreeNode? Picked => (FilesTree.SelectedItem as NavItem)?.Target as TreeNode;
@@ -117,7 +118,7 @@ public sealed partial class WorkspacePage
         SelectCaretHeading();
         SideNote.Text = tab == OutlineTab && !outlined ? Editor.Path is null ? "Open a file to see its outline." : "No sections in this document."
             : tab != ResultsTab || hits ? ""
-            : searchError ?? (searched.Length == 0 ? "Search the project with the box in the title bar (Ctrl+Shift+F)." : $"No results for “{searched}”.");
+            : searchError ?? (searched.Length == 0 ? "Search the project with the box above (Ctrl+Shift+F)." : $"No results for “{searched}”.");
         SideNote.Visibility = Vis(SideNote.Text.Length > 0);
     }
 
@@ -144,20 +145,19 @@ public sealed partial class WorkspacePage
         (OutlineTree.Visibility == Visibility.Visible ? (Control)OutlineTree : SideTabs).Focus(FocusState.Keyboard);
     }
 
-    void OnExpanding(TreeView sender, TreeViewExpandingEventArgs args) => Fold(sender, args.Item, true);
-    void OnCollapsed(TreeView sender, TreeViewCollapsedEventArgs args) => Fold(sender, args.Item, false);
+    void OnExpanding(TreeView sender, TreeViewExpandingEventArgs args) => Fold(sender, (NavItem)args.Item, true);
+    void OnCollapsed(TreeView sender, TreeViewCollapsedEventArgs args) => Fold(sender, (NavItem)args.Item, false);
 
     /// Folders open and headings folded, kept together in the project's UI state.
-    void Fold(TreeView view, object item, bool open)
+    void Fold(TreeView view, NavItem row, bool open)
     {
-        if (item is not NavItem row) return;
         row.IsExpanded = open;
         var changed = view == FilesTree ? (open ? expanded.Add(row.Key) : expanded.Remove(row.Key))
             : view == OutlineTree && (open ? folded.Remove(row.Key) : folded.Add(row.Key));
         if (changed) SaveFolds();
     }
 
-    void SaveFolds() => _ = Core.CallAsync("set_ui_state", new { id, patch = new { expandedFolders = expanded.Order(), foldedHeadings = folded.Order() } });
+    void SaveFolds() => foldsSaved = Core.CallAsync("set_ui_state", new { id, patch = new { expandedFolders = expanded.Order(), foldedHeadings = folded.Order() } });
 
     /// The project's UI state: as it opens, and after a rename, which moves the entry's paths.
     void ReadFolds(JsonElement ui)
@@ -221,24 +221,28 @@ public sealed partial class WorkspacePage
     async void OnSearchSubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs e)
     {
         searchTimer.Stop();
-        await Search();
+        await RunSearch();
         if (ResultsTree.Visibility == Visibility.Visible) ResultsTree.Focus(FocusState.Keyboard);
     }
 
     void OnSearchKey(object sender, KeyRoutedEventArgs e)
     {
-        if (e.Key != Windows.System.VirtualKey.Escape || App.Window.Search.Text.Length == 0) return;
-        App.Window.Search.Text = "";
-        _ = Search();
+        if (e.Key != Windows.System.VirtualKey.Escape || Search.Text.Length == 0) return;
+        Search.Text = "";
+        _ = RunSearch();
         e.Handled = true;
     }
 
-    void OnFindInProject(object sender, RoutedEventArgs e) => App.Window.Search.Focus(FocusState.Keyboard);
+    void OnFindInProject(object sender, RoutedEventArgs e)
+    {
+        Split.IsPaneOpen = true;
+        Search.Focus(FocusState.Keyboard);
+    }
 
     /// The hits by file; a later search's answer wins over an earlier one's.
-    async Task Search()
+    async Task RunSearch()
     {
-        var query = App.Window.Search.Text.Trim();
+        var query = Search.Text.Trim();
         var generation = ++searches;
         SearchFile[] files = [];
         string? error = null;
@@ -252,7 +256,7 @@ public sealed partial class WorkspacePage
         {
             Split.IsPaneOpen = true;
             SideTabs.SelectedItem = ResultsTab;
-            Announce(App.Window.Search, files.Sum(f => f.Hits.Length) switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" }, "search");
+            Announce(Search, files.Sum(f => f.Hits.Length) switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" }, "search");
         }
         ShowSide();
     }
@@ -281,7 +285,7 @@ public sealed partial class WorkspacePage
     void Create(string name, bool dir) => Run("Can't create this", async () =>
     {
         var parent = TargetDir(FilesTree.SelectedItem as NavItem);
-        var made = (await Core.CallAsync("create_entry", new { id, path = Join(parent, name), dir, free = true })).GetProperty("path").GetString()!;
+        var made = (await Core.CallAsync("create_entry", new { id, path = Join(parent, name), dir })).GetProperty("path").GetString()!;
         if (parent.Length > 0 && expanded.Add(parent)) SaveFolds();
         await RefreshTree();
         DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
@@ -313,6 +317,9 @@ public sealed partial class WorkspacePage
     void Rename(TreeNode node, FrameworkElement row) => rename.Show(row, node.Name, async name =>
     {
         var to = Join(ParentOf(node.Path), name);
+        // The core takes a session's service commands in no set order, and the rename moves the folds this wrote; a
+        // write that failed doesn't stop it.
+        await Task.WhenAny(foldsSaved);
         if (await Core.CallAsync("session_rename", new { session, from = node.Path, to }) is { ValueKind: JsonValueKind.Object } renamed)
         {
             mainFile = MainFile(renamed);

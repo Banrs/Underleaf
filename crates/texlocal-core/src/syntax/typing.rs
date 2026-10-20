@@ -1,9 +1,5 @@
-//! Typing as the source editor assists it: brackets that close and are
-//! stepped over, Delete back to an indent stop, Return keeping the line's
-//! indentation, and a bracket's partner. The editor applies the answers and
-//! reports back each change (`follow`) and each selection (`select`): the
-//! closers it put in are kept here, between keys, with the snippet's fields
-//! (snippet.rs).
+//! Typing as the source editor assists it: brackets that close and are stepped over, Delete back to an indent stop,
+//! Return keeping indentation, and a bracket's partner. The closers put in are kept between keys, as the snippet's fields are.
 
 use std::collections::BTreeSet;
 
@@ -15,86 +11,62 @@ use super::{
     SourceDocument, TextEdit, TextRange, clamp, escaped, indentation, is, span, splice, utf16,
 };
 
-/// What a key does instead of what the editor would: an edit, typed as a
-/// key types (so it undoes with the typing around it), and where the
-/// selection goes. Neither: the editor handles the key itself.
+/// What a key does instead of the editor: an edit typed as a key types (so it undoes with the typing around it),
+/// and where the selection goes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Keystroke {
     pub edit: Option<TextEdit>,
-    /// Once the edit is in, if not where the edit leaves it.
     pub selection: Option<TextRange>,
-    /// A bracket whose partner to show once the edit is in (`partner`).
     pub partner: Option<u32>,
     pub completions: Completing,
 }
 
-/// What the completion list does after a key.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Completing {
-    /// As it is.
     #[default]
     Keep,
-    /// Offered for the text as typed: an open list filters, or one opens.
     Offer,
     Close,
 }
 
-/// What typing keeps between keys.
 #[derive(Default)]
 pub(crate) struct Typing {
-    /// Closing brackets put in for the user, which typing one steps over.
     pub(super) closers: BTreeSet<usize>,
     pub(super) snippet: Option<Snippet>,
-    /// A closer a key put in, kept once its edit, at `start`, is followed.
     pending: Option<(usize, usize)>,
 }
-
-const PAIRS: [(&str, &str); 3] = [("(", ")"), ("[", "]"), ("{", "}")];
 
 /// An opening bracket is closed for the user before these, or space, or the end.
 const CLOSE_BEFORE: [&str; 6] = [")", "]", "}", ":", ";", ">"];
 
-/// How far a bracket's partner is looked for, either way.
 const PARTNER_WITHIN: usize = 10_000;
 
-fn closing_of(c: &str) -> Option<&'static str> {
-    PAIRS
-        .iter()
-        .find(|(open, _)| *open == c)
-        .map(|&(_, close)| close)
-}
-
-fn is_closing(c: &str) -> bool {
-    PAIRS.iter().any(|&(_, close)| close == c)
-}
-
-/// Whether a unit is a closing bracket.
-pub(super) fn closing_unit(u: u16) -> bool {
-    bracket(u).is_some_and(|(_, opens)| !opens)
-}
-
-/// If the unit is a bracket, its partner and whether it opens.
-fn bracket(u: u16) -> Option<(u16, bool)> {
-    let (partner, opens) = match u8::try_from(u).ok()? {
-        b'(' => (b')', true),
-        b'[' => (b']', true),
-        b'{' => (b'}', true),
-        b')' => (b'(', false),
-        b']' => (b'[', false),
-        b'}' => (b'{', false),
+fn bracket(c: &str) -> Option<(&'static str, bool)> {
+    Some(match c {
+        "(" => (")", true),
+        "[" => ("]", true),
+        "{" => ("}", true),
+        ")" => ("(", false),
+        "]" => ("[", false),
+        "}" => ("{", false),
         _ => return None,
-    };
-    Some((partner.into(), opens))
+    })
 }
 
-/// The character (grapheme cluster) a unit is in, as NSString's composed
-/// character sequence there.
+fn closing_of(c: &str) -> Option<&'static str> {
+    bracket(c).and_then(|(close, opens)| opens.then_some(close))
+}
+
+pub(super) fn is_closing(c: &str) -> bool {
+    bracket(c).is_some_and(|(_, opens)| !opens)
+}
+
+/// As NSString's composed character sequence.
 fn character(units: &[u16], at: usize) -> Option<String> {
     if at >= units.len() {
         return None;
     }
-    // A window wide enough for any cluster but a pathological one.
     let mut from = at.saturating_sub(32);
     while from > 0 && (0xdc00..0xe000).contains(&units[from]) {
         from -= 1;
@@ -112,13 +84,10 @@ fn character(units: &[u16], at: usize) -> Option<String> {
     None
 }
 
-/// Swift's Character.isWhitespace: its first scalar's.
 fn whitespace(c: &str) -> bool {
     c.chars().next().is_some_and(char::is_whitespace)
 }
 
-/// How long the closer after the caret is, between an empty pair: 1, or 2
-/// between `\[` and `\]`.
 fn closer_after(units: &[u16], caret: usize) -> Option<usize> {
     let opener = caret.checked_sub(1)?;
     let close = character(units, opener).and_then(|c| closing_of(&c))?;
@@ -133,8 +102,6 @@ fn closer_after(units: &[u16], caret: usize) -> Option<usize> {
 }
 
 impl SourceDocument {
-    /// A character typed in place of the selection: a bracket closed for the
-    /// user (`auto_pair`) or stepped over, or none of that.
     pub fn type_text(&mut self, selection: TextRange, typed: &str, auto_pair: bool) -> Keystroke {
         let typing = &mut self.typing;
         typing.pending = None;
@@ -190,7 +157,6 @@ impl SourceDocument {
                 .as_deref()
                 .is_none_or(|n| whitespace(n) || CLOSE_BEFORE.contains(&n))
             {
-                // \[ closes with \], \{ with \} and \( with \).
                 let pair = if escaped(units, start) {
                     format!("{typed}\\{close}")
                 } else {
@@ -212,8 +178,6 @@ impl SourceDocument {
         }
     }
 
-    /// Delete at the caret: an empty pair put in for the user goes whole,
-    /// and in a line's indentation it goes back to the last two-column stop.
     pub fn delete_backward(&mut self, selection: TextRange, auto_pair: bool) -> Keystroke {
         self.typing.pending = None;
         let units = &self.text.units[..];
@@ -226,7 +190,6 @@ impl SourceDocument {
             completions: Completing::Close,
             ..Keystroke::default()
         };
-        // Only a closer put in for the user goes with its bracket.
         if auto_pair
             && self.typing.closers.contains(&caret)
             && let Some(closer) = closer_after(units, caret)
@@ -241,9 +204,6 @@ impl SourceDocument {
         Keystroke::default()
     }
 
-    /// Return: the line's indentation on the new line, and between an empty
-    /// pair its closer on a line of its own below; the spaces after the caret
-    /// go, and a caret in the indentation takes it down.
     pub fn insert_newline(&mut self, selection: TextRange) -> Keystroke {
         self.typing.pending = None;
         let units = &self.text.units[..];
@@ -257,7 +217,9 @@ impl SourceDocument {
             insert.push('\n');
             insert.push_str(&indented);
         } else {
-            while start + length < line.end && is(units[start + length], ' ') {
+            while start + length < line.end
+                && (is(units[start + length], ' ') || is(units[start + length], '\t'))
+            {
                 length += 1;
             }
             let before = &units[line.start..start];
@@ -274,12 +236,7 @@ impl SourceDocument {
         }
     }
 
-    /// The editor replaced `old` (before the change), its length changing by
-    /// `delta`; `changing`, the range it said it would change, stands for
-    /// `old` when it's within it from the same start. Closers after it move
-    /// with the text and those in it go; a snippet's fields move, the one
-    /// typed in grows (each mirrored place, while `mirroring`), and an edit
-    /// anywhere else ends the snippet.
+    /// `changing`, the range the editor said it would change, stands for `old` when it is within it from the same start.
     pub fn follow(
         &mut self,
         old: TextRange,
@@ -316,9 +273,6 @@ impl SourceDocument {
         }
     }
 
-    /// The editor's selection (its first) moved: a snippet ends once it's
-    /// outside the fields (unless the editor is mirroring one), and closers
-    /// before its line are no longer stepped over.
     pub fn select(&mut self, selection: TextRange, mirroring: bool) {
         let typing = &mut self.typing;
         let (start, end) = selection.bounds();
@@ -334,17 +288,15 @@ impl SourceDocument {
         typing.closers.retain(|&p| p >= line);
     }
 
-    /// Where the bracket at `at` is matched, within 10,000 units either way.
-    /// Brackets in comments are no one's, and an escaped one (`\{`, `\]`)
-    /// pairs only with the escaped.
+    /// Brackets in comments are no one's, and an escaped one pairs only with the escaped.
     pub fn partner(&self, at: u32) -> Option<u32> {
         let at = at as usize;
         let units = &self.text.units[..];
         let start = *units.get(at)?;
-        let (partner, opens) = bracket(start)?;
+        let (partner, opens) = bracket(&String::from_utf16_lossy(&[start]))?;
+        let partner = u16::from(partner.as_bytes()[0]);
         let near = at.saturating_sub(PARTNER_WITHIN)..(at + PARTNER_WITHIN + 1).min(units.len());
-        // The brackets outside comments and whether each is escaped, in the
-        // range; a comment is known from its line's start, so reading starts there.
+        // A comment is known from its line's start, so reading starts there.
         let mut brackets = Vec::new();
         let (mut comment, mut slashes) = (false, 0);
         let from = self.text.around(near.start).start;
@@ -372,18 +324,14 @@ impl SourceDocument {
     }
 }
 
-/// Where the depth returns to zero, from the first of `brackets` (the one
-/// matched): each `start` deepens it and each other lessens it.
 fn matched<'a>(
     brackets: impl Iterator<Item = &'a (usize, u16, bool)>,
     start: u16,
 ) -> Option<usize> {
-    let mut depth = 0;
-    for &(i, u, _) in brackets {
-        depth = if u == start { depth + 1 } else { depth - 1 };
-        if depth == 0 {
-            return Some(i);
-        }
-    }
-    None
+    brackets
+        .scan(0, |depth, &(i, u, _)| {
+            *depth += if u == start { 1 } else { -1 };
+            Some((i, *depth))
+        })
+        .find_map(|(i, depth)| (depth == 0).then_some(i))
 }

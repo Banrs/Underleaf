@@ -6,16 +6,12 @@ struct EditorGutter {
     static let bandStart: CGFloat = 14
     /// The room after the text and the bands.
     static let trailingMargin: CGFloat = 8
-    /// Where a number's first digit ends: Xcode's four-digit numbers end 39.7 pt in at 13 pt (fitted to its gutter as drawn).
-    private static let firstDigitEnd: CGFloat = 19.8
-    /// From the numbers to the text, which starts on a whole point, as Xcode's does (51 at 13 pt).
-    private static let numbersToText: CGFloat = 11
+    /// Xcode's: four-digit numbers end 39.7 pt in at 13 pt, and the text starts on a whole point, 51 pt in.
+    private static let firstDigitEnd: CGFloat = 19.8, numbersToText: CGFloat = 11
 
     /// From the view's edge to the text container, less its line fragment padding.
     private(set) var width: CGFloat = 0
-    /// The digits the gutter has room for: four at least.
     private(set) var digits = 0
-    /// Where the numbers end.
     private(set) var numbersEnd: CGFloat = 0
     var font = NSFont.systemFont(ofSize: NSFont.systemFontSize) {
         didSet {
@@ -48,8 +44,7 @@ struct EditorGutter {
         return line
     }
 
-    /// Xcode's numbers: SF at the issue symbol's size, a little narrower than semi-condensed (74 on SF's width axis to its
-    /// 80), tabular, with the open 4, 6 and 9 (SF's first two stylistic sets), never under the HIG's 10 points.
+    /// Xcode's numbers: SF at the issue symbol's size, 74 on its width axis, tabular, with the open 4, 6 and 9, at least 10 pt.
     static func font(forText size: CGFloat) -> NSFont {
         let numbers = NSFont.systemFont(ofSize: max(10, IssueBox.Metrics.small(size)), weight: .regular, width: NSFont.Width(rawValue: -0.1))
         var axes = CTFontCopyVariation(numbers) as? [NSNumber: NSNumber] ?? [:]
@@ -63,7 +58,7 @@ struct EditorGutter {
             size: 0) ?? numbers
     }
 
-    /// The numbers' grey, raised with Increase Contrast as the syntax colours are (`displayOptionsWatch` redraws them).
+    /// Raised with Increase Contrast, as the syntax colours are.
     static let numberColor: NSColor = {
         let raised: [NSAppearance.Name] = [.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
         return .adapting(Dictionary(uniqueKeysWithValues: raised.map { ($0, NSColor.tertiaryLabelColor.legibleAsText(in: $0)) }),
@@ -76,7 +71,6 @@ extension SourceTextView {
     func updateGutterWidth() {
         guard gutter.fit(lineCount: document.lineCount, numbered: showsLineNumbers, padding: textContainer?.lineFragmentPadding ?? 0)
         else { return }
-        // The container tracks the view's width less twice this: the gutter and the margin after the text.
         textContainerInset.width = (gutter.width + EditorGutter.trailingMargin) / 2
         needsDisplay = true
     }
@@ -100,8 +94,7 @@ extension SourceTextView {
         return (document.line(at: selection.location), band(lines, of: entry.fragment))
     }
 
-    /// The band of the current line or an issue over these lines. `rowShift` can leave its edges between two of the
-    /// display's pixels, so they are snapped to one.
+    /// The current line's or an issue's band over these lines, on the display's pixels.
     func band(_ lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment) -> NSRect {
         let frame = fragment.layoutFragmentFrame
         let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) + rowShift)
@@ -134,9 +127,8 @@ extension SourceTextView {
         context.saveGState()
         defer { context.restoreGState() }
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        let origin = textContainerOrigin
         for (offset, fragment) in fragments {
-            let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: origin.y)
+            let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: textContainerOrigin.y)
             guard frame.maxY >= rect.minY, frame.minY <= rect.maxY, let line = fragment.textLineFragments.first else { continue }
             let lineNumber = document.line(at: offset)
             func draw(_ lineNumber: Int, on line: NSTextLineFragment) {

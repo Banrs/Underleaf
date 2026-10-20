@@ -1,11 +1,14 @@
 import SwiftUI
 
-/// The status bar's height, which the File Outline's folded header beside it shares, and the build panel's console bar's
-/// insets.
+/// Xcode's editor bar's measures, which the File Outline's folded header shares.
 enum BarMetrics {
     static let height: CGFloat = 36
-    static let consoleLeading: CGFloat = 12
-    static let consoleTrailing: CGFloat = 17
+    static let leading: CGFloat = 14
+    static let trailing: CGFloat = 16.5
+    static let spacing: CGFloat = 9
+    static let groupSpacing: CGFloat = 16
+    static let target: CGFloat = 20
+    static let dividerHeight: CGFloat = 12
 }
 
 /// Page uses PDFKit numbering, which can differ from LaTeX.
@@ -20,9 +23,7 @@ struct StatusBar: View {
             content(.symbols).labelStyle(.iconOnly)
             content(.short).labelStyle(.iconOnly)
         }
-        .barRow()
-        // Its ground and line are AppKit's hard scroll edge under each pane (`WorkspaceController.buildStatusBar`), the line
-        // level with the File Outline header's beside it (`HeaderEdge`).
+        .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
         // Clicks between its controls stay with the bar, not the text or pages scrolled beneath it.
         .contentShape(.rect)
         .monospacedDigit()
@@ -33,16 +34,17 @@ struct StatusBar: View {
     private enum Detail { case full, symbols, short }
 
     private func content(_ detail: Detail) -> some View {
-        HStack {
-            // A button, not a toggle: the panel's own toggle is the one place its open state shows.
+        HStack(spacing: BarMetrics.spacing) {
+            // A button: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.panel.shown && project.panel.tab == .issues
             Button {
                 if showingIssues { project.panel.shown = false } else { project.panel.show(.issues) }
-            } label: { buildStatus.fixedSize(horizontal: detail != .short, vertical: true) }
+            } label: { buildStatus.fixedSize(horizontal: detail != .short, vertical: true).hitTarget() }
             .help(showingIssues ? "Hide issues" : "Show issues")
             if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
                 Button { project.panel.show(.texpresso) } label: {
                     Label(project.texpresso.title, systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
+                        .hitTarget()
                 }
                 .help("Show the Live Preview log")
             }
@@ -50,6 +52,7 @@ struct StatusBar: View {
                 Button { Task { await project.save() } } label: {
                     Label("Not Saved", systemImage: "exclamationmark.triangle.fill")
                         .symbolRenderingMode(.multicolor)
+                        .hitTarget()
                 }
                 .help("\(reason.hasSuffix(".") ? String(reason.dropLast()) : reason); save again")
             }
@@ -57,7 +60,7 @@ struct StatusBar: View {
             Spacer(minLength: 0)
             let words = detail == .full && project.editsText && app.showWordCount ? project.words : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
-            HStack {
+            HStack(spacing: BarMetrics.groupSpacing) {
                 if project.editsText {
                     Button { app.perform(.editGotoLine, on: project) } label: {
                         place(detail, "Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)",
@@ -82,12 +85,13 @@ struct StatusBar: View {
                 }
             }
             .fixedSize()
-            if project.editsText || pages { Divider().padding(.vertical) }
+            if project.editsText || pages { Divider().frame(height: BarMetrics.dividerHeight) }
             Toggle(isOn: Bindable(project.panel).shown) {
-                // Its state is the accent colour alone: with Differentiate Without Colour the off state is the plain square, without the panel's filled third.
+                // With Differentiate Without Colour, off is the plain square.
                 Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
                       ? "square" : "inset.filled.bottomthird.square")
                     .font(.body)
+                    .frame(minHeight: BarMetrics.target)
             }
             .labelStyle(.iconOnly)
             .toggleStyle(.button)
@@ -97,17 +101,18 @@ struct StatusBar: View {
 
     private func place(_ detail: Detail, _ full: LocalizedStringKey, short: String, spoken: LocalizedStringKey) -> some View {
         Group { if detail == .short { Text(verbatim: short).accessibilityLabel(spoken) } else { Text(full) } }
+        .hitTarget()
     }
 
     @ViewBuilder private var freshness: some View {
         if project.showsLastSuccessfulBuild {
             Button { project.panel.show(.issues) } label: {
-                Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill")
+                Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill").hitTarget()
             }
             .help("The latest build failed, so this is the last PDF that built")
         } else if project.outdated, !project.livePDF {
             Button { app.perform(.compileRun, on: project) } label: {
-                Label("PDF Out of Date", systemImage: "arrow.clockwise")
+                Label("PDF Out of Date", systemImage: "arrow.clockwise").hitTarget()
             }
             .help(project.texpresso.active
                 ? "Live Preview updates its own window; compile to refresh this PDF"
@@ -140,11 +145,11 @@ struct StatusBar: View {
                 badge("\(project.warningCount)", "exclamationmark.triangle.fill", spoken: "^[\(project.warningCount) warning](inflect: true)")
             }
         }
-        // A build starting or ending crossfades its status, the system's way.
-        .animation(.default, value: project.compiling)
+        // A crossfade, which the HIG keeps under Reduce Motion.
+        .animation(.easeInOut(duration: 0.2), value: project.compiling)
     }
 
-    /// `spoken` is what the short `title` stands for, so VoiceOver and Voice Control name the badge "3 errors", not "3".
+    /// `spoken` names the badge "3 errors" to VoiceOver and Voice Control, not "3".
     private func badge(_ title: LocalizedStringKey, _ systemImage: String, _ color: Color? = nil,
                        spoken: LocalizedStringKey? = nil) -> some View {
         Label {
@@ -160,9 +165,10 @@ struct StatusBar: View {
 }
 
 extension View {
-    /// The status bar's row, at the system's padding, and the build panel's console bar's.
-    func barRow(leading: CGFloat? = nil, trailing: CGFloat? = nil) -> some View {
+    func barRow(leading: CGFloat, trailing: CGFloat) -> some View {
         font(.subheadline).controlSize(.small).lineLimit(1)
             .padding(.leading, leading).padding(.trailing, trailing).frame(height: BarMetrics.height)
     }
+
+    fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect) }
 }

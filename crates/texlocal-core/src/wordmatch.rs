@@ -1,15 +1,10 @@
-//! Placing a word by the text round it. SyncTeX's boxes are coarse (a line, a
-//! paragraph), so the matcher compares letters: forward, a source word's place
-//! in the PDF's page text; inverse, a clicked letter's place in the source.
-//! Pure text: nothing here runs a program or reads a file.
+//! Placing a word by the text round it: SyncTeX's boxes are coarse, so letters are compared, forward in the PDF's page text and inverse in the source. Pure text.
 
 use std::cmp::Reverse;
 use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
-/// One page of a forward match: its number and text, and the UTF-16 ranges of
-/// that text which lie in SyncTeX's boxes.
 #[derive(Debug, Deserialize)]
 pub struct PdfPage {
     pub page: u32,
@@ -18,7 +13,6 @@ pub struct PdfPage {
     pub near: Vec<(usize, usize)>,
 }
 
-/// The word's place in a page's text, in UTF-16 units.
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct PdfHit {
     pub page: u32,
@@ -42,8 +36,6 @@ const BOX_REACH: usize = 150;
 /// The distance from no box at all, far enough to lose to any box.
 const FAR: usize = usize::MAX / 4;
 
-/// A letter's place: its text (a source line number, or a PDF page's index)
-/// and its UTF-16 range there.
 #[derive(Clone, Copy)]
 struct Span {
     group: u32,
@@ -51,10 +43,7 @@ struct Span {
     end: u32,
 }
 
-/// What the matcher compares of a text: its letters and digits in order, with
-/// ligatures spelt out and everything else (spaces, line breaks, hyphens,
-/// punctuation, and in TeX source commands and comments) dropped. PDF text
-/// spaces words, wraps lines and hyphenates unlike the source, but not its letters.
+/// What the matcher compares of a text: its letters and digits, ligatures spelt out; PDF text spaces, wraps and hyphenates unlike the source, but not its letters.
 #[derive(Default)]
 struct Letters {
     chars: Vec<char>,
@@ -72,7 +61,6 @@ impl Letters {
                 break;
             }
             if tex && c == '\\' {
-                // A command's name, or the one symbol it escapes.
                 let name = chars.peek().is_some_and(|n| n.is_alphabetic());
                 while let Some(n) = chars.next_if(|n| !name || n.is_alphabetic()) {
                     at += n.len_utf16() as u32;
@@ -96,7 +84,6 @@ impl Letters {
         }
     }
 
-    /// Whether letter `i + 1` follows `i` with nothing between: one word's.
     fn joined(&self, i: usize) -> bool {
         self.spans.get(i + 1).is_some_and(|b| {
             let a = self.spans[i];
@@ -104,7 +91,6 @@ impl Letters {
         })
     }
 
-    /// The word round letter `i`.
     fn run(&self, i: usize) -> Range<usize> {
         let (mut start, mut end) = (i, i + 1);
         while start > 0 && self.joined(start - 1) {
@@ -116,8 +102,6 @@ impl Letters {
         start..end
     }
 
-    /// The letter at UTF-16 index `pos` of a one-text `Letters`, or the word
-    /// the index follows, or the next letter after it.
     fn at(&self, pos: usize) -> Option<usize> {
         let i = self
             .spans
@@ -132,7 +116,6 @@ impl Letters {
         })
     }
 
-    /// The letters of text `group` within UTF-16 range `from..to`.
     fn between(&self, group: u32, from: usize, to: usize) -> Range<usize> {
         let lo = self
             .spans
@@ -143,8 +126,6 @@ impl Letters {
         lo..hi
     }
 
-    /// How many of the occurrence of `n` letters at `k` have a word's edge
-    /// at their ends (0 to 2).
     fn edges(&self, k: usize, n: usize) -> usize {
         usize::from(k == 0 || !self.joined(k - 1)) + usize::from(!self.joined(k + n - 1))
     }
@@ -155,8 +136,6 @@ fn occurrences<'a>(text: &'a [char], word: &'a [char]) -> impl Iterator<Item = u
         .filter(move |&k| text.len() >= word.len() && text[k..k + word.len()] == *word)
 }
 
-/// How many letters either side of `word` in `from` repeat in `to` round the
-/// occurrence at `k`, and the occurrence's word edges (`Letters::edges`).
 fn evidence(from: &Letters, word: &Range<usize>, to: &Letters, k: usize) -> (usize, usize, usize) {
     let before = from.chars[..word.start]
         .iter()
@@ -184,10 +163,7 @@ fn unique<K: Ord, T>(mut ranked: Vec<(K, T)>) -> Option<T> {
         .then_some(found)
 }
 
-/// Forward: the word at UTF-16 `column` of a source `line`, found in the
-/// `pages`. A candidate ranks by how much of the line's text surrounds it, then
-/// by its word edges, then by nearness to the boxes: the whole line's text
-/// settles it wherever it stands; a partial match only close to a box.
+/// Forward: the word at UTF-16 `column` of a source `line`, found in `pages`. Candidates rank by surrounding text, then word edges, then nearness to the boxes.
 pub(crate) fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Option<PdfHit> {
     let mut source = Letters::default();
     source.push(line, 0, true);
@@ -202,7 +178,6 @@ pub(crate) fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Optio
             .map(|&(from, to)| pdf.between(group, from, to));
         boxes.extend(near.filter(|r| r.start < r.end));
     }
-    // Letters between a letter and the nearest box.
     let dist = |i: usize| {
         let gap = |r: &Range<usize>| r.start.saturating_sub(i).max((i + 1).saturating_sub(r.end));
         boxes.iter().map(gap).min().unwrap_or(FAR)
@@ -229,11 +204,7 @@ pub(crate) fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Optio
     })
 }
 
-/// Inverse: the letter at UTF-16 index `at` of a PDF page's text, found in
-/// `source` as (line, UTF-16 column). SyncTeX records a line, not always the
-/// word's own, so the word is looked for a few lines either side too, ranked
-/// by the text round it, then its word edges, then nearness to the recorded
-/// line, earlier first. Words the PDF runs together are found as one.
+/// Inverse: the letter at UTF-16 index `at` of a PDF page's text, found in `source` as (line, UTF-16 column). SyncTeX's line isn't always the word's own, so a few lines either side are searched too.
 pub(crate) fn find_in_source(
     source: &str,
     line: u32,
@@ -258,13 +229,8 @@ pub(crate) fn find_in_source(
         .map(|k| {
             let (before, after, edges) = evidence(&pdf, &word, &src, k);
             let n = src.spans[k].group;
-            let rank = (
-                Reverse(before + after),
-                Reverse(edges),
-                n.abs_diff(line),
-                n > line,
-            );
-            (rank, k)
+            let near = (n.abs_diff(line), n > line);
+            ((Reverse(before + after), Reverse(edges), near), k)
         })
         .collect();
     let found = src.spans[unique(ranked)? + clicked - word.start];
@@ -275,8 +241,6 @@ pub(crate) fn find_in_source(
 mod tests {
     use super::*;
 
-    /// The inverse hit for `word` clicked `offset` letters in, where the page
-    /// text is `pdf` and `pdf_at` is where the word starts there.
     fn inverse(source: &str, line: u32, pdf: &str, pdf_at: usize) -> Option<(u32, u32)> {
         let at = pdf[..pdf_at].encode_utf16().count();
         find_in_source(source, line, pdf, at)
@@ -288,8 +252,6 @@ mod tests {
 
     #[test]
     fn inverse_tells_repeated_words_apart_across_pdf_line_wraps_and_formatting() {
-        // The source and the page text it comes out as: the same, wrapped, or
-        // with commands that print nothing and columns of UTF-16 units.
         let same = "echo first, echo second, echo third.";
         let cases = [
             (same, same),
@@ -307,7 +269,6 @@ mod tests {
                 assert_eq!(inverse(source, 1, pdf, p), Some((1, column(source, s))));
             }
         }
-        // Nothing round the word to tell the copies apart.
         assert_eq!(inverse("echo echo", 1, "echo", 0), None);
     }
 
@@ -319,14 +280,12 @@ mod tests {
             inverse(source, 1, pdf, pdf.rfind("oﬃce").unwrap()),
             Some((1, 14))
         );
-        // A hyphen the PDF breaks a line at, and one the source has.
         let source = "well-known first. well-known second.";
         let pdf = "well-\nknown first. well-known second.";
         assert_eq!(
             inverse(source, 1, pdf, pdf.rfind("second").unwrap()),
             Some((1, source.find("second").unwrap() as u32))
         );
-        // Past the text, or in none.
         assert_eq!(find_in_source(source, 1, pdf, pdf.len() + 5), None);
     }
 
@@ -351,7 +310,6 @@ mod tests {
             let in_pdf: Vec<_> = pdf.match_indices(word).collect();
             assert_eq!((in_source.len(), in_pdf.len()), (8, 8));
             for ((s, _), (p, _)) in in_source.into_iter().zip(in_pdf) {
-                // A click midway through the word.
                 let mid = word.len() / 2;
                 let at = pdf[..p + mid].encode_utf16().count();
                 assert_eq!(
@@ -365,8 +323,6 @@ mod tests {
 
     #[test]
     fn inverse_finds_the_clicked_letter_near_the_recorded_line() {
-        // Whole words, not a command's name, run together with neighbours as
-        // PDF text may be; on the line TeX recorded (7) or one near it.
         let source = "\n\n\n\nÜnï words \\word, the\nword next\nfinal\n";
         for (pdf, at, found) in [
             ("“word,”", 0, Some((6, 0))),
@@ -389,7 +345,6 @@ mod tests {
         }
     }
 
-    /// The UTF-16 range of the `n`th (from 0) `needle` in `text`.
     fn nth(text: &str, needle: &str, n: usize) -> (usize, usize) {
         let at = text.match_indices(needle).nth(n).unwrap().0;
         let start = text[..at].encode_utf16().count();
@@ -400,7 +355,6 @@ mod tests {
     fn forward_picks_the_copy_whose_surroundings_match_the_source_line() {
         let text =
             "Intro. The echo repeats. Next, the echo repeats here. Last: the echo repeats there.";
-        // The source line has more than the PDF's sentence in common with the second copy.
         let line = "Next, the \\emph{echo} repeats here.";
         for near in [vec![], vec![nth(text, "Last", 0)]] {
             let hit = find_in_pdf(line, 16, &[page(3, text, &near)]).unwrap();
@@ -411,8 +365,6 @@ mod tests {
 
     #[test]
     fn forward_uses_the_boxes_for_a_partial_match_and_gives_up_on_a_tie() {
-        // The line has a citation the PDF prints differently: only "echo" and
-        // its edges are left to match, so the copy nearest a box wins.
         let text = format!("echo a. {}echo b.", "filler ".repeat(60));
         let line = "echo \\cite{k} tw";
         for n in [0, 1] {
@@ -420,10 +372,8 @@ mod tests {
             let hit = find_in_pdf(line, 1, &[page(1, &text, &[near])]).unwrap();
             assert_eq!((hit.start, hit.end), near);
         }
-        // Far from every box, a partial match is not trusted.
         let middle = nth(&text, "filler", 30);
         assert_eq!(find_in_pdf(line, 1, &[page(1, &text, &[middle])]), None);
-        // Two copies equally near, the same all round: no guess.
         let twins = "same words here. same words here.";
         let both = page(1, twins, &[(0, 33)]);
         assert_eq!(find_in_pdf("same words here.", 1, &[both]), None);
@@ -434,10 +384,8 @@ mod tests {
         let first = "Nothing like it here.";
         let second = "🙂 Some echo in the middle.";
         let line = "Some \\textbf{echo} in the middle.";
-        // The word is found on the second page, whole-line evidence needing no box.
         let hit = find_in_pdf(line, 14, &[page(4, first, &[]), page(5, second, &[])]).unwrap();
         assert_eq!((hit.page, hit.start, hit.end), (5, 8, 12));
-        // A caret in a command's name, or on no word, finds none; after a word, that word.
         assert_eq!(find_in_pdf("\\emph", 2, &[page(1, "emph", &[])]), None);
         let hit = find_in_pdf("say echo", 8, &[page(1, "say echo", &[])]).unwrap();
         assert_eq!((hit.start, hit.end), (4, 8));

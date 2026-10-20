@@ -1,7 +1,4 @@
-//! Writing a file whole or not at all: the new contents go to a temporary file
-//! beside it, reach the disk, then take its place in one rename. A full disk
-//! or a crash part-way leaves the old file as it was, where writing in place
-//! would leave it empty or cut short.
+//! Writing a file whole or not at all: a temporary file beside it, then one rename, so a crash leaves the old file.
 
 use std::fs::{self, File};
 use std::io::{self, Write};
@@ -10,11 +7,8 @@ use tempfile::TempPath;
 
 use crate::stamp::Stamp;
 
-/// A new, empty temporary file in `dir`, removed if it is not persisted, with
-/// a new file's mode (0666 less the umask), as any other way of making a file
-/// gives it. tempfile's own 0600 would leave every file the app made
-/// unreadable to the accounts and tools a project is shared with.
-pub(crate) fn create_temp(dir: &Path) -> io::Result<(TempPath, File)> {
+/// A new, empty temporary file in `dir` with a new file's mode (0666 less the umask); tempfile's 0600 would leave files unreadable to the accounts a project is shared with.
+pub(crate) fn create_temp(dir: &Path) -> io::Result<(File, TempPath)> {
     let mut builder = tempfile::Builder::new();
     builder.prefix(".texlocal-");
     #[cfg(unix)]
@@ -22,15 +16,10 @@ pub(crate) fn create_temp(dir: &Path) -> io::Result<(TempPath, File)> {
         use std::os::unix::fs::PermissionsExt;
         builder.permissions(fs::Permissions::from_mode(0o666));
     }
-    let (file, temp_path) = builder.tempfile_in(dir)?.into_parts();
-    Ok((temp_path, file))
+    Ok(builder.tempfile_in(dir)?.into_parts())
 }
 
-/// The extended attributes of `from` (a Finder tag, "where from", the
-/// quarantine flag) copied onto `to`. The rename that follows a save gives the
-/// file a new inode, which would otherwise start with none: a tagged file
-/// would lose its tag on the first autosave. A volume without them, or a file
-/// that can't be read, copies none, which a save need not fail for.
+/// The extended attributes of `from` (Finder tags, quarantine) copied onto `to`, since the rename gives the file a new inode. Failure copies none and doesn't fail the save.
 #[cfg(target_os = "macos")]
 fn copy_xattrs(from: &Path, to: &File) {
     use std::os::fd::AsRawFd;
@@ -48,23 +37,14 @@ fn copy_xattrs(from: &Path, to: &File) {
     }
 }
 
-/// Moves a finished temporary file into `path`'s place in one rename. std's
-/// rather than tempfile's, which on Windows reaches no path past 260
-/// characters.
+/// Moves a finished temporary file into place with std's rename; tempfile's reaches no path past 260 characters on Windows.
 pub(crate) fn persist(temp: TempPath, path: &Path) -> io::Result<()> {
     fs::rename(&temp, path)?;
-    // Renamed, it is no longer there to remove.
     let _ = temp.keep();
     Ok(())
 }
 
-/// Replace `path`'s contents with `bytes`, or create it. A symlinked file is
-/// written through, so the link stays a link, and the file keeps its
-/// permissions, and on macOS its extended attributes; a read-only file is
-/// refused, as writing it in place would be. The stamp is the temporary
-/// file's, which the rename keeps: one taken after it could be another app's
-/// write landing in between. It is taken once the file is closed, as Windows
-/// dates the last write then.
+/// Replace `path`'s contents with `bytes`, or create it. A symlink is written through and permissions and xattrs kept; a read-only file is refused. The stamp is the temporary file's, taken once it is closed (Windows dates the last write then).
 pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     let target = match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => dunce::canonicalize(path)?,
@@ -74,10 +54,8 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     if permissions.as_ref().is_some_and(fs::Permissions::readonly) {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
-    let dir = target.parent().filter(|p| !p.as_os_str().is_empty());
-    let (temp, mut file) = create_temp(dir.unwrap_or(Path::new(".")))?;
-    // Before the contents, so a private file's text is never readable
-    // under a new file's mode.
+    let (mut file, temp) = create_temp(target.parent().expect("a file is in a folder"))?;
+    // Before the contents, so a private file's text is never readable under a new file's mode.
     if let Some(permissions) = permissions {
         file.set_permissions(permissions)?;
         #[cfg(target_os = "macos")]
@@ -94,79 +72,38 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
 #[cfg(test)]
 mod tests {
     use super::{Stamp, write};
+    use crate::projects::testing::names_in;
     use std::fs;
 
-    fn names(dir: &std::path::Path) -> Vec<String> {
-        let mut names: Vec<_> = fs::read_dir(dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        names
-    }
-
     #[test]
-    fn a_save_creates_and_replaces_leaving_no_temporary_file() {
+    fn a_save_creates_and_replaces_leaving_no_temporary_file_and_answers_the_files_stamp() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("main.tex");
         write(&file, b"one").unwrap();
-        write(&file, b"two").unwrap();
+        let written = write(&file, b"two").unwrap();
         assert_eq!(fs::read(&file).unwrap(), b"two");
-        assert_eq!(names(dir.path()), ["main.tex"]);
-    }
-
-    #[test]
-    fn a_save_answers_the_stamp_the_file_then_has() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("main.tex");
-        let written = write(&file, b"one").unwrap();
+        assert_eq!(names_in(dir.path()), ["main.tex"]);
         assert_eq!(written, Stamp::of(&fs::metadata(&file).unwrap()));
-        // Another app's write in place keeps the file but not the stamp, once
-        // the clock has moved: Windows dates writes in steps of up to 16 ms.
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        fs::write(&file, b"two").unwrap();
+        fs::write(&file, b"three").unwrap();
         assert_ne!(written, Stamp::of(&fs::metadata(&file).unwrap()));
     }
 
     #[cfg(target_os = "macos")]
     #[test]
     fn a_save_keeps_the_extended_attributes_of_the_file_it_replaces() {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("tagged.tex");
         fs::write(&file, "one").unwrap();
-        let path = CString::new(file.as_os_str().as_bytes()).unwrap();
-        // A Finder tag is one of these; any name stands for it.
-        let (name, value) = (c"com.example.texlocal-test", b"Red");
-        // SAFETY: a NUL-terminated path and name, and a value of the length given.
-        let set = unsafe {
-            libc::setxattr(
-                path.as_ptr(),
-                name.as_ptr(),
-                value.as_ptr().cast(),
-                value.len(),
-                0,
-                0,
-            )
+        let xattr = |args: &[&str]| {
+            let mut command = std::process::Command::new("/usr/bin/xattr");
+            let out = command.args(args).arg(&file).output().unwrap();
+            assert!(out.status.success(), "{out:?}");
+            out.stdout
         };
-        assert_eq!(set, 0);
-
+        let name = "com.example.texlocal-test";
+        xattr(&["-w", name, "Red"]);
         write(&file, b"two").unwrap();
-
-        let mut got = [0u8; 16];
-        // SAFETY: as above, into a buffer of the length given.
-        let len = unsafe {
-            libc::getxattr(
-                path.as_ptr(),
-                name.as_ptr(),
-                got.as_mut_ptr().cast(),
-                got.len(),
-                0,
-                0,
-            )
-        };
-        assert_eq!(&got[..len.max(0) as usize], value);
+        assert_eq!(xattr(&["-p", name]).trim_ascii(), b"Red");
         assert_eq!(fs::read(&file).unwrap(), b"two");
     }
 
@@ -175,7 +112,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("locked.tex");
         fs::write(&file, "keep").unwrap();
-        // A read-only file is refused, as writing it in place would be.
         let mut perms = fs::metadata(&file).unwrap().permissions();
         perms.set_readonly(true);
         fs::set_permissions(&file, perms.clone()).unwrap();
@@ -185,7 +121,6 @@ mod tests {
         perms.set_readonly(false);
         fs::set_permissions(&file, perms).unwrap();
 
-        // No temporary file can be made beside it.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -194,7 +129,7 @@ mod tests {
             fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
             assert!(result.is_err());
             assert_eq!(fs::read_to_string(&file).unwrap(), "keep");
-            assert_eq!(names(dir.path()), ["locked.tex"]);
+            assert_eq!(names_in(dir.path()), ["locked.tex"]);
         }
     }
 
@@ -220,7 +155,6 @@ mod tests {
         let file = dir.path().join("main.tex");
         write(&file, b"new").unwrap();
         assert_eq!(mode(&file), mode(&usual));
-        // A private file stays private when it is saved again.
         fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
         write(&file, b"again").unwrap();
         assert_eq!(mode(&file), 0o600);

@@ -19,7 +19,6 @@ pub struct TreeNode {
     pub kind: &'static str,
     pub name: String,
     pub path: String,
-    /// A file's `file_kind`; folders have none.
     #[serde(rename = "kind", skip_serializing_if = "Option::is_none")]
     pub file_kind: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -45,11 +44,7 @@ impl Entry {
     }
 }
 
-/// Shared tree rules for file listing, search and symbols: hide dotfiles and
-/// top-level build output, and follow only links to files within the
-/// project. An entry that can't be read, or vanishes while the walk passes
-/// (a build's or an editor's temporary file), is left out, and so an
-/// unreadable subfolder is empty; the project root must be readable.
+/// Shared tree rules for listing, search and symbols: hide dotfiles and top-level build output, follow links to files only (folder links can cycle), and leave out entries that vanish mid-walk.
 pub(super) fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> {
     let read = if dir == root {
         fs::read_dir(dir)?
@@ -73,9 +68,8 @@ pub(super) fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> 
             continue;
         };
         let path = entry.path();
-        // No directory links (cycles), nor any without a proven in-project target.
         let shown = if kind.is_symlink() {
-            dunce::canonicalize(&path).is_ok_and(|t| t.starts_with(root) && t.is_file())
+            path.is_file()
         } else {
             kind.is_file() || kind.is_dir()
         };
@@ -87,8 +81,6 @@ pub(super) fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> 
     Ok(out)
 }
 
-/// Every content file in the project, depth-first, with its project-relative
-/// path. The visitor returns false to stop the walk.
 pub(super) fn visit_files(
     root: &Path,
     visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
@@ -111,8 +103,7 @@ pub(super) fn visit_files(
         Ok(true)
     }
 
-    let root = dunce::canonicalize(root)?;
-    walk(&root, &root, visit)?;
+    walk(root, root, visit)?;
     Ok(())
 }
 
@@ -133,7 +124,6 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
                 children,
             });
         }
-        // Folders first, then by name ignoring case.
         nodes.sort_by_cached_key(|n| {
             (
                 n.kind != "dir",
@@ -144,21 +134,16 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
         Ok(nodes)
     }
 
-    let root = dunce::canonicalize(root)?;
-    walk(&root, &root)
+    walk(root, root)
 }
 
-/// What the editor edits as text, besides .tex and .bib, by extension: the
-/// rest of TeX's own files (classes, styles, bibliography and citation styles,
-/// letter classes, docstrip sources), figure sources, documents that compile
-/// to TeX, and the data and scripts that sit beside a document.
+/// What the editor edits as text besides .tex and .bib, by extension.
 const TEXT_EXTENSIONS: &[&str] = &[
     "ltx", "cls", "sty", "clo", "def", "cfg", "bst", "bbx", "cbx", "lbx", "dtx", "ins", "ist",
     "lco", "tikz", "pgf", "mf", "mp", "asy", "rnw", "rmd", "qmd", "md", "txt", "csv", "tsv", "dat",
     "json", "yaml", "yml", "toml", "ini", "xml", "lua", "py", "r", "sh",
 ];
 
-/// Files with no extension that are text all the same.
 const TEXT_NAMES: &[&str] = &["latexmkrc", "makefile", "license", "readme"];
 
 /// What a host does with a file, by its extension in any case: "tex", "bib",
@@ -181,15 +166,14 @@ pub fn file_kind(name: &str) -> &'static str {
     }
 }
 
-/// Whether a file is one the editor edits, and a search reads.
-pub(super) fn is_text(name: &str) -> bool {
+pub(crate) fn is_text(name: &str) -> bool {
     matches!(file_kind(name), "tex" | "bib" | "text")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projects::create_file;
+    use crate::projects::create_free;
     use crate::projects::testing::project;
 
     #[test]
@@ -205,9 +189,8 @@ mod tests {
             ]
         );
         let (_dir, root) = project();
-        create_file(&root, "figs/a.png", false).unwrap();
+        create_free(&root, "figs/a.png", false).unwrap();
         let tree = serde_json::to_value(file_tree(&root).unwrap()).unwrap();
-        // Folders first.
         let folder = &tree[0];
         assert_eq!(folder["children"][0]["kind"], "image");
         assert!(folder["name"] == "figs" && folder.get("kind").is_none());
@@ -247,7 +230,7 @@ mod tests {
     fn the_file_tree_lists_folders_first_then_names_ignoring_case() {
         let (_dir, root) = project();
         for file in ["c.tex", "B.tex", "Zeta/z.tex", "beta/y.tex", ".hidden.tex"] {
-            create_file(&root, file, false).unwrap();
+            create_free(&root, file, false).unwrap();
         }
         let tree = file_tree(&root).unwrap();
         let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();

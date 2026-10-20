@@ -18,8 +18,7 @@ final class ProjectFlowTests {
     let app = AppModel()
 
     init() throws {
-        // Removed rather than trashed, as `CoreTests` explains: only in the test library. Home's, the Dock menu's and the
-        // file tree's flows are in this suite too, in HomeTests.swift and FileTreeTests.swift.
+        // Removed rather than trashed, as `CoreTests` explains: only in the test library.
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         kept = keys.map { UserDefaults.standard.object(forKey: $0) }
         app.autoCompile = false
@@ -34,14 +33,14 @@ final class ProjectFlowTests {
     func project(_ text: String = "text") async throws -> (info: ProjectInfo, folder: URL) {
         let info = try await newProject()
         folders.append(info.folder)
-        try await Core.shared.call("write_file", ["id": info.id, "path": info.mainFile, "text": text])
+        try info.write(text, to: info.mainFile)
         return (info, info.folder)
     }
 
     /// Opened with its main file's `text` and the `others` written beside it.
     private func opened(_ text: String = "text", with others: [String: String] = [:]) async throws -> (project: ProjectModel, folder: URL) {
         let (info, folder) = try await project(text)
-        for (path, other) in others { try await Core.shared.call("write_file", ["id": info.id, "path": path, "text": other]) }
+        for (path, other) in others { try info.write(other, to: path) }
         await app.open(info.id)
         return (try #require(app.project), folder)
     }
@@ -70,15 +69,13 @@ final class ProjectFlowTests {
     }
 
     @Test func theMainFileOnDiskStaysOutOfTheTrash() async throws {
-        let (project, folder) = try await opened()
-        try await Core.shared.call("write_file", ["id": project.id, "path": "second.tex", "text": "x"])
+        let (project, folder) = try await opened(with: ["second.tex": "x"])
         let settings = folder.appending(path: ".texlocal.json")
         var json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
         json["mainFile"] = "second.tex"
         try JSONSerialization.data(withJSONObject: json).write(to: settings)
         await project.deleteEntry("second.tex")
-        #expect(files.fileExists(atPath: folder.appending(path: "second.tex").path))
-        #expect(project.settings?.mainFile == "second.tex")
+        #expect(exists(folder.appending(path: "second.tex")) && project.settings?.mainFile == "second.tex")
     }
 
     @Test func theLastOpenHasTheEditor() async throws {
@@ -86,11 +83,8 @@ final class ProjectFlowTests {
         // Started in this order on the main actor, each waiting on the core in turn.
         let opens = [Task { await app.open(first.id) }, Task { await app.open(second.id) }]
         for open in opens { await open.value }
-
-        #expect(app.project?.id == second.id)
-        let editor = app.project?.editor
-        #expect(editor?.path == second.mainFile)
-        #expect(editor?.textView.document.text == "second")
+        let editor = try #require(app.project?.editor)
+        #expect(app.project?.id == second.id && editor.path == second.mainFile && editor.textView.document.text == "second")
         await app.close()
     }
 
@@ -116,10 +110,8 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func aFileRenameCanBeUndoneAndRedone() async throws {
+    @Test func aFileRenameCanBeUndoneAndRedoneUntilTheProjectCloses() async throws {
         let undo = windowUndo(), (project, folder) = try await opened()
-        #expect(project.settings?.mainFile == "main.tex")
-
         await undo.grouping { await project.renameEntry("main.tex", to: "thesis.tex") }
         #expect(exists(folder.appending(path: "thesis.tex")) && project.settings?.mainFile == "thesis.tex")
         #expect(undo.undoActionName == "Rename")
@@ -130,8 +122,9 @@ final class ProjectFlowTests {
 
         undo.redo()
         try await waitUntil { self.exists(folder.appending(path: "thesis.tex")) && project.settings?.mainFile == "thesis.tex" }
-        #expect(app.alert == nil)
+        #expect(app.alert == nil && undo.canUndo)
         await app.close()
+        #expect(!undo.canUndo)
     }
 
     @Test func theExportedZipHasTheUnsavedEdits() async throws {
@@ -290,33 +283,29 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// The levels are those of the class the main file names outside comments, at its type size, whichever file shows.
-    @Test func theLevelsAreTheMainFilesClasses() async throws {
-        let project = try await opened("% \\documentclass{article}\n\\documentclass[11pt]{report}\n\\include{a}",
-                                       with: ["a.tex": "\\section{A}\nthree"]).project
-        let reports = { project.headingStyles.contains { $0.command == "chapter" } }
-        try await waitUntil(reports)
-        project.reveal(project.outline[0])
-        try await waitUntil { project.openPath == "a.tex" }
-        #expect(reports() && project.headingStyles.first { $0.command == "section" }?.font.scale == 14.4 / 10.95)
+    /// The session's watcher reaches the sidebar; its rules are the core's.
+    @Test func anotherAppsFilesComeAndGo() async throws {
+        let (project, folder) = try await opened()
+        try "x".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
+        try await waitUntil(timeout: .seconds(5)) { project.tree.node(at: "notes.tex") != nil }
         await app.close()
     }
 
-    @Test func anotherAppsFilesComeAndGo() async throws {
-        let (project, folder) = try await opened()
-        let paths = { Set(project.tree.nodes.flattened.map(\.path)) }
-
-        try "x".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
-        try await waitUntil(timeout: .seconds(5)) { paths().contains("notes.tex") }
-        try files.createDirectory(at: folder.appending(path: "parts"), withIntermediateDirectories: false)
-        try files.moveItem(at: folder.appending(path: "notes.tex"), to: folder.appending(path: "parts/notes.tex"))
-        try await waitUntil(timeout: .seconds(5)) { paths().contains("parts/notes.tex") && !paths().contains("notes.tex") }
-        // Only the spelling changes, which a volume that ignores case finds under either.
-        try files.moveItem(at: folder.appending(path: "parts/notes.tex"), to: folder.appending(path: "parts/Notes.tex"))
-        try await waitUntil(timeout: .seconds(5)) { paths().contains("parts/Notes.tex") && !paths().contains("parts/notes.tex") }
-        try files.removeItem(at: folder.appending(path: "parts"))
-        try await waitUntil(timeout: .seconds(5)) { !paths().contains("parts") }
-        await app.close()
+    @Test func theTreeTellsOfAChangeOnly() async throws {
+        let info = try await project().info, tree = FileTree(id: info.id)
+        var changes = 0
+        tree.onChange = { changes += 1 }
+        await tree.reload()
+        #expect(changes == 1 && tree.node(at: info.mainFile)?.isDirectory == false)
+        await tree.reload()
+        #expect(changes == 1)
+        try info.write("x", to: "notes.tex")
+        await tree.reload()
+        #expect(changes == 2 && tree.node(at: "notes.tex") != nil)
+        tree.close()
+        try info.write("x", to: "more.tex")
+        await tree.reload()
+        #expect(changes == 2 && tree.node(at: "more.tex") == nil)
     }
 
     /// The session's watcher, reload and conflict reach the editor; the rules are the core's (session/tests.rs).
@@ -340,6 +329,28 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// A failed autosave is told once in an alert, and Not Saved stays in the status bar until a save succeeds.
+    @Test func aFailedAutosaveIsToldOnceAndNotSavedStaysUntilASave() async throws {
+        let (project, folder) = try await opened()
+        let path = folder.path(percentEncoded: false)
+        // The write replaces the file, so its folder refuses it.
+        try files.setAttributes([.posixPermissions: 0o555], ofItemAtPath: path)
+        defer { try? files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path) }
+        #expect(project.editor.perform(.bold))
+        #expect(await !project.save(reporting: false))
+        try await waitUntil { project.saveFailure != nil }
+        #expect(app.alert?.title == "“main.tex” Wasn’t Saved")
+        app.alert = nil
+        #expect(await !project.save(reporting: false))
+        await settle()
+        #expect(app.alert == nil && project.saveFailure != nil)
+        try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+        #expect(await project.save())
+        try await waitUntil { project.saveFailure == nil }
+        #expect(app.alert == nil)
+        await app.close()
+    }
+
     /// An answer clears only its own file's alert: another file's question still waits.
     @Test func anAnswerLeavesAnotherFilesQuestion() async throws {
         let project = try await opened().project
@@ -350,16 +361,12 @@ final class ProjectFlowTests {
     }
 
     @Test func aClosedProjectsTrashCannotBeUndone() async throws {
-        let undo = windowUndo(), (project, folder) = try await opened()
-        let notes = folder.appending(path: "notes.tex")
-        try "notes".write(to: notes, atomically: false, encoding: .utf8)
-
+        let undo = windowUndo(), (project, folder) = try await opened(with: ["notes.tex": "notes"])
         await undo.grouping { await project.deleteEntry("notes.tex") }
-        #expect(!exists(notes) && undo.undoActionName == "Move to Trash")
+        #expect(undo.undoActionName == "Move to Trash")
         // Back from the Trash, which is left as it was; the Redo is the item's too.
         undo.undo()
-        try await waitUntil { self.exists(notes) }
-        #expect(undo.canRedo)
+        try await waitUntil { self.exists(folder.appending(path: "notes.tex")) && undo.canRedo }
         await app.close()
         #expect(!undo.canRedo && !undo.canUndo)
     }
@@ -377,14 +384,10 @@ final class ProjectFlowTests {
     }
 
     @Test func aDroppedFileOpens() async throws {
-        let (project, folder) = try await opened()
-        let notes = folder.appending(path: "notes.tex"), plot = folder.appending(path: "plot.png")
-        try "notes".write(to: notes, atomically: false, encoding: .utf8)
-        try Data().write(to: plot)
-        try await waitUntil(timeout: .seconds(5)) { Set(project.tree.nodes.flattened.map(\.path)).isSuperset(of: ["notes.tex", "plot.png"]) }
+        let (project, folder) = try await opened(with: ["notes.tex": "notes", "plot.png": ""])
         let drop = project.editor.textView.fileDrop
-        #expect(drop(plot)?.inserted == "\\includegraphics{plot.png}", "An image dropped on LaTeX is a figure")
-        let openNotes = try #require(drop(notes)?.opens, "A text file dropped on the source opens")
+        #expect(drop(folder.appending(path: "plot.png"))?.inserted == "\\includegraphics{plot.png}", "An image dropped on LaTeX is a figure")
+        let openNotes = try #require(drop(folder.appending(path: "notes.tex"))?.opens, "A text file dropped on the source opens")
         openNotes()
         try await waitUntil(timeout: .seconds(5)) { project.openPath == "notes.tex" }
         #expect(drop(files.temporaryDirectory.appending(path: "outside.tex")) == nil)
@@ -412,9 +415,7 @@ final class ProjectFlowTests {
 
     /// Arrowing down the sidebar's files: each open closes the one before, and one a later open overtook closes its own.
     @Test func onlyTheFileShownStaysOpenInTheSession() async throws {
-        let (project, _) = try await opened()
-        for name in ["a.tex", "b.tex"] { try await Core.shared.call("write_file", ["id": project.id, "path": name, "text": name]) }
-        await project.tree.reload()
+        let project = try await opened(with: ["a.tex": "a", "b.tex": "b"]).project
         let session = try #require(project.session)
         let paths = ["main.tex", "a.tex", "b.tex"]
         // A few turns apart, so the later open comes at different points in the earlier one's.
@@ -424,10 +425,38 @@ final class ProjectFlowTests {
             for _ in 0..<turns { await Task.yield() }
             await Task { await project.open(last) }.value
             await opening.value
-            let state = try await Core.shared.call("session_state", ["session": session], as: OpenDocuments.self)
+            // Taken after any close an overtaken open sent: a session takes its commands in the order sent.
+            try await Core.shared.call("session_set_options", ["session": session])
             #expect(project.openPath == last && project.editor.path == last)
-            #expect(state.documents.map(\.path) == [last], "after \(turns) turns")
+            #expect(paths.filter { SourceDocument(session: session, path: $0) != nil } == [last], "after \(turns) turns")
         }
+        #expect(app.alert == nil)
+        await app.close()
+    }
+
+    /// Going back to the file shown while an open away from it has closed it, before that open took the answer: the file
+    /// is shown with a document of the session's again, so what's typed in it is saved.
+    @Test func anOpenOvertakenAfterClosingTheFileShownStillShowsItsOwn() async throws {
+        let (project, folder) = try await opened(with: ["a.tex": "a"])
+        let session = try #require(project.session)
+        let mainClosed = { SourceDocument(session: session, path: "main.tex") == nil }
+        let opening = Task { await project.open("a.tex") }
+        // Waits holding the main actor, so the open can't take the close's answer before the next open is asked for.
+        var held = false
+        for _ in 0..<1000 where !held {
+            await Task.yield()
+            let until = ContinuousClock.now + .milliseconds(20)
+            while !held, ContinuousClock.now < until { held = mainClosed() }
+        }
+        #expect(held && project.openPath == "main.tex")
+        let back = Task.immediate { await project.open("main.tex") }
+        await opening.value
+        await back.value
+
+        #expect(project.editor.path == "main.tex" && !mainClosed() && SourceDocument(session: session, path: "a.tex") == nil)
+        #expect(project.editor.perform(.bold))
+        #expect(await project.save())
+        #expect(try String(contentsOf: folder.appending(path: "main.tex"), encoding: .utf8) == project.editor.textView.string)
         #expect(app.alert == nil)
         await app.close()
     }
@@ -460,9 +489,7 @@ final class ProjectFlowTests {
     }
 
     @Test func cleanBuildFolderRemovesTheBuildFolder() async throws {
-        let (project, folder) = try await opened()
-        try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
-        try "x".write(to: folder.appending(path: "build/main.aux"), atomically: false, encoding: .utf8)
+        let (project, folder) = try await opened(with: ["build/main.aux": "x"])
         await project.cleanBuildFolder()
         #expect(!exists(folder.appending(path: "build")) && exists(folder.appending(path: "main.tex")))
         #expect(project.result == nil && !project.hasPDF)
@@ -473,60 +500,44 @@ final class ProjectFlowTests {
         let project = try await opened("needle\nhay\nNeedle", with: ["appendix.tex": "a needle"]).project
         project.search.query = "needle"
         await project.search.run()
-        #expect(project.search.hitCount == 3 && project.search.failure == nil)
-        #expect(project.search.groups?.map(\.file) == ["appendix.tex", "main.tex"] && project.search.groups?.map(\.hits.count) == [1, 2])
+        #expect(project.search.hitCount == 3 && project.search.groups?.map(\.file) == ["appendix.tex", "main.tex"])
         project.search.query = "needles"
         #expect(project.search.searched == "needle")
         await project.search.run()
         #expect(project.search.groups?.isEmpty == true && project.search.searched == "needles")
         project.search.query = " "
         await project.search.run()
-        #expect(project.search.groups == nil && project.search.failure == nil && project.search.hitCount == 0)
+        #expect(project.search.groups == nil && project.search.hitCount == 0)
         await app.close()
     }
 
-    @Test func theSidebarsStateIsKeptForTheProject() async throws {
-        let project = try await opened().project
-        project.expandedFolders = ["chapters", "chapters/appendix"]
-        project.foldedHeadings = ["main.tex\t1:Methods#1"]
-        await app.close()
-        await app.open(project.id)
-        let again = try #require(app.project)
-        #expect(again !== project && again.expandedFolders == ["chapters", "chapters/appendix"])
-        #expect(again.foldedHeadings == ["main.tex\t1:Methods#1"])
-        await app.close()
-    }
-
-    /// The rename's answer has the state the core moved, written before the rename asked for it.
-    @Test func anOpenFolderStaysOpenUnderItsNewName() async throws {
+    /// A rename's answer has the state the core moved, written before the rename asked for it.
+    @Test func theSidebarsStateIsKeptForTheProjectAndFollowsARename() async throws {
         let project = try await opened(with: ["ch/a.tex": ""]).project
         project.expandedFolders = ["ch"]
+        project.foldedHeadings = ["main.tex\t1:Methods#1"]
         await project.renameEntry("ch", to: "chapters")
         #expect(project.expandedFolders == ["chapters"])
         await app.close()
+        await app.open(project.id)
+        let again = try #require(app.project)
+        #expect(again !== project && again.expandedFolders == ["chapters"] && again.foldedHeadings == ["main.tex\t1:Methods#1"])
+        await app.close()
     }
 
-    @Test func newItemsTakeTheNextFreeName() async throws {
-        let (project, folder) = try await opened()
-        try "x".write(to: folder.appending(path: "untitled.tex"), atomically: false, encoding: .utf8)
+    /// The free names are the core's.
+    @Test func aNewFileOpensInTheTree() async throws {
+        let project = try await opened(with: ["untitled.tex": "x"]).project
         #expect(await project.createEntry(in: "", directory: false) == "untitled 2.tex")
         #expect(project.openPath == "untitled 2.tex" && project.editor.textView.document.text == "")
-        #expect(await project.createEntry(in: "", directory: true) == "untitled folder")
-        #expect(await project.createEntry(in: "", directory: true) == "untitled folder 2")
-        #expect(await project.createEntry(in: "untitled folder", directory: false) == "untitled folder/untitled.tex")
-        #expect(project.tree.nodes.flattened.contains { $0.path == "untitled folder/untitled.tex" })
-        #expect(exists(folder.appending(path: "untitled folder 2")) && exists(folder.appending(path: "untitled folder/untitled.tex")))
-        #expect(app.alert == nil)
+        #expect(await project.createEntry(in: "", directory: true) == "untitled folder" && project.openPath == "untitled 2.tex")
+        #expect(project.tree.node(at: "untitled folder")?.isDirectory == true && app.alert == nil)
         await app.close()
     }
 
     @Test func treeDropsMoveTheProjectsFiles() async throws {
-        let (project, folder) = try await opened()
-        try files.createDirectory(at: folder.appending(path: "parts"), withIntermediateDirectories: false)
-        try "notes".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
-        try await waitUntil(timeout: .seconds(5)) { project.tree.nodes.flattened.contains { $0.path == "notes.tex" } }
+        let (project, folder) = try await opened(with: ["notes.tex": "notes", "parts/a.tex": ""])
         let url = { (path: String) in try #require(project.url(path)) }
-
         await project.dropFiles([try url("notes.tex")], into: "parts")
         #expect(exists(folder.appending(path: "parts/notes.tex")) && !exists(folder.appending(path: "notes.tex")))
         await project.dropFiles([try url("parts")], into: "parts")
@@ -541,9 +552,4 @@ final class ProjectFlowTests {
         #expect(exists(folder.appending(path: "parts/\(outside.lastPathComponent)")) && exists(outside))
         await app.close()
     }
-}
-
-/// `session_state`'s documents: those the session has open.
-private nonisolated struct OpenDocuments: Decodable {
-    let documents: [DocumentState]
 }

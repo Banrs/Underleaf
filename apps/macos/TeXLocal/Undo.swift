@@ -1,9 +1,8 @@
 import Foundation
 
 extension UndoManager {
-    /// An Undo, or a Redo, that does asynchronous work. `reversal` registers its opposite as the work starts, as an
-    /// undo manager expects, so a stack's other entries survive the work that follows; work that fails (false) takes
-    /// away every action of `target`. The handlers hold their closures: an undo manager doesn't retain its targets.
+    /// An Undo or Redo that does asynchronous work: `reversal` registers its opposite as the work starts, as an undo manager
+    /// expects, and work that fails takes away every action of `target`.
     func registerAsyncUndo<Target: AnyObject>(withTarget target: Target, actionName: String,
                                               reversal: @escaping @MainActor () -> Void,
                                               work: @escaping @MainActor () async -> Bool) {
@@ -15,8 +14,7 @@ extension UndoManager {
     }
 }
 
-/// The move goes through `FileManager`, which says where the Trash put the item (the core's trash doesn't). Undo puts
-/// the item back and Redo trashes it again, each registering the other (`registerAsyncUndo`).
+/// Through `FileManager`, which says where the Trash put the item. Undo puts it back and Redo trashes it again.
 final class UndoableTrash {
     let original: URL
     let name: String
@@ -25,7 +23,7 @@ final class UndoableTrash {
     private let trash: (UndoableTrash) async -> Bool
     private let changed: () async -> Void
     private let failed: (String, any Error) -> Void
-    /// One asked while the last is still moving the item waits for it, so an Undo can't find the item not yet back in the Trash (#36).
+    /// A step waits for the last, so an Undo can't find the item not yet in the Trash (#36).
     private var last: Task<Bool, Never>?
 
     init(original: URL, name: String, undoManager: UndoManager?,

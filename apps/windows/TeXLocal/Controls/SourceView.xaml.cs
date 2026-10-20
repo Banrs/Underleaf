@@ -22,16 +22,12 @@ using VirtualKey = Windows.System.VirtualKey;
 
 namespace TeXLocal.Controls;
 
-/// A completion as the list shows it: what's typed of it in SemiBold.
-public sealed class CompletionRow(Completion item, int typed, string glyph)
+public sealed record CompletionRow(Completion Item, int Count, string Glyph)
 {
-    public Completion Item => item;
-    public string Typed => item.Label[..Math.Clamp(typed, 0, item.Label.Length)];
-    public string Rest => item.Label[Math.Clamp(typed, 0, item.Label.Length)..];
-    public string Glyph => glyph;
+    public string Typed => Item.Label[..Math.Clamp(Count, 0, Item.Label.Length)];
+    public string Rest => Item.Label[Math.Clamp(Count, 0, Item.Label.Length)..];
 }
 
-/// A line's issues at its end, as Visual Studio's inline diagnostics: the first one's badge and short text.
 public sealed class IssueMark(IssueLine issue)
 {
     public string Label => (issue.Short.Length > 0 ? issue.Short : issue.Message) + (issue.Others.Length > 0 ? $" +{issue.Others.Length}" : "");
@@ -39,11 +35,9 @@ public sealed class IssueMark(IssueLine issue)
     public Style Badge => (Style)Application.Current.Resources[issue.Error ? "CriticalIconInfoBadgeStyle" : "CautionIconInfoBadgeStyle"];
 }
 
-/// The source editor: a RichEditBox whose text and highlighting are the session document's, and whose typing the core
-/// assists (brackets, indentation, snippets, completion) through its syntax module.
 public sealed partial class SourceView : UserControl
 {
-    // The completion list: rows, rows shown, and its labels' inset from its edge (border, padding, glyph, spacing).
+    // LabelInset: the list's border, padding, glyph and spacing before a label.
     const int RowHeight = 32, ShownRows = 8, LabelInset = 1 + 12 + 16 + 12;
     // Asynchronous, so the first text goes in after the layout pass that completes it.
     readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -64,9 +58,8 @@ public sealed partial class SourceView : UserControl
     ElementTheme inked;
     string theme = "overleaf";
 
-    public string? Path { get; private set; }
+    public string? Path { get; set; }
     public string Text { get; private set; } = "";
-    /// The text colour as drawn, for what is drawn to match it.
     public Color Ink { get; private set; }
     public bool AutoPair { get; set; } = true;
     public bool AutoComplete { get; set; } = true;
@@ -83,8 +76,6 @@ public sealed partial class SourceView : UserControl
         partnerTimer = DispatcherQueue.CreateTimer();
         partnerTimer.Interval = TimeSpan.FromSeconds(1);
         partnerTimer.Tick += (_, _) => HidePartner();
-        if (new Windows.UI.ViewManagement.UISettings().AnimationsEnabled)
-            PartnerBox.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(250) };
         Editor.TextChanging += (_, e) =>
         {
             if (setting || !e.IsContentChanging) return;
@@ -113,7 +104,7 @@ public sealed partial class SourceView : UserControl
         };
         Editor.SizeChanged += (_, e) =>
         {
-            FindBar.Width = Math.Clamp(e.NewSize.Width - 40, 0, 480);
+            FindBar.Width = Math.Clamp(ActualWidth - 40, 0, 480);
             if (scroller is not null && e.NewSize.Width > 0) ready.TrySetResult();
             Invalidate(false);
         };
@@ -137,7 +128,6 @@ public sealed partial class SourceView : UserControl
         Loaded += (_, _) => Recolour(ActualTheme != inked);
     }
 
-    /// The font, its size and the syntax theme (the core's id); the text is coloured again for them.
     public void SetLook(string family, double size, string themeId)
     {
         var font = new FontFamily($"{family}, Cascadia Mono, Consolas");
@@ -169,21 +159,9 @@ public sealed partial class SourceView : UserControl
         });
     }
 
-    /// A theme brush's colour as RichEdit can draw it, over the editor's background.
     Color Of(Rectangle r) => Over(((SolidColorBrush)r.Fill).Color, ((SolidColorBrush)PaperInk.Fill).Color);
 
-    /// The theme's colours raised by the core to legibility on this background and current line, by highlight kind.
-    /// Text set with them keeps them unless it is set off screen.
-    void Inks()
-    {
-        (Ink, inked, stale) = (Of(TextInk), ActualTheme, !IsLoaded);
-        kinds = SyntaxColors(theme, ActualTheme == ElementTheme.Dark, ((SolidColorBrush)PaperInk.Fill).Color,
-            ((SolidColorBrush)CurrentLine.Fill).Color, Of(SecondaryInk));
-    }
-
-    /// A syntax theme's colours by highlight kind, made legible by the core on the editor's paper and current line;
-    /// none in a high-contrast theme, which draws every kind in the window text colour. The System theme's secondary
-    /// text is Windows' (`secondary`, opaque).
+    /// None in high contrast, where every kind is drawn in the window's text colour.
     public static Color[] SyntaxColors(string theme, bool dark, Color paper, Color line, Color secondary)
     {
         static byte Byte(double v) => (byte)Math.Round(Math.Clamp(v, 0, 1) * 255);
@@ -201,28 +179,24 @@ public sealed partial class SourceView : UserControl
 
     public static double[] Rgba(Color c) => [c.R / 255.0, c.G / 255.0, c.B / 255.0, c.A / 255.0];
 
-    /// A translucent colour laid over an opaque one: RichEdit ignores alpha.
+    /// RichEdit ignores alpha.
     public static Color Over(Color c, Color under)
     {
         byte Mix(byte a, byte b) => (byte)((a * c.A + b * (255 - c.A)) / 255);
         return Color.FromArgb(255, Mix(c.R, under.R), Mix(c.G, under.G), Mix(c.B, under.B));
     }
 
-    /// Completes once the whole text is in. RichEdit drops the text's colours if it gets them before
-    /// its template is applied and it has been laid out, so the first file waits for both, then reads
-    /// the document's text, with any reload that came meanwhile. The core's documents end every line
-    /// with \n alone, as RichEdit's paragraphs read back, and save the file's own line ends.
+    /// RichEdit drops the text's colours if it gets them before its template is applied and it has
+    /// been laid out, so the first file waits for both.
     public async Task Show(string path, Source src)
     {
         await ready.Task;
         source?.Dispose();
         (Path, source) = (path, src);
         SetIssues([]);
-        scroller?.ChangeView(0, 0, null, true);
+        scroller!.ChangeView(0, 0, null, true);
         await SetText(src.Text);
     }
-
-    public void Rename(string path) => Path = path;
 
     public void Clear()
     {
@@ -234,9 +208,8 @@ public sealed partial class SourceView : UserControl
 
     public async void Reload(string content)
     {
-        if (source is null) return;
         var (line, column) = Caret;
-        source.Reload(content);
+        source!.Reload(content);
         await SetText(content);
         if (source is null) return;
         line = Math.Min(line, source.LineCount);
@@ -254,9 +227,11 @@ public sealed partial class SourceView : UserControl
         HidePartner();
         (lastMath, shownMath, dismissedMath) = (null, null, null);
         MathPopup.IsOpen = false;
-        source?.Call("end_snippet", new { });
+        source?.Call<bool>("end_snippet", new { });
         Document.EndUndoGroup();
-        Inks();
+        (Ink, inked, stale) = (Of(TextInk), ActualTheme, !IsLoaded);
+        kinds = SyntaxColors(theme, ActualTheme == ElementTheme.Dark, ((SolidColorBrush)PaperInk.Fill).Color,
+            ((SolidColorBrush)CurrentLine.Fill).Color, Of(SecondaryInk));
         var split = source is { LineCount: > 200 } s ? s.LineStart(201) : content.Length;
         setting = true;
         Document.SetText(TextSetOptions.FormatRtf, Rtf(content, 0, split));
@@ -288,8 +263,7 @@ public sealed partial class SourceView : UserControl
 
     string Rtf(string content, int from, int to)
     {
-        var rtf = new StringBuilder(to - from + (to - from) / 4 + 128);
-        rtf.Append(@"{\rtf1\ansi{\colortbl;");
+        var rtf = new StringBuilder(@"{\rtf1\ansi{\colortbl;");
         foreach (var c in kinds.Append(Ink)) rtf.Append($@"\red{c.R}\green{c.G}\blue{c.B};");
         // Plain text in the ink, not RichEdit's automatic colour, which follows the control's state.
         rtf.Append($@"}}\cf{kinds.Length + 1} ");
@@ -327,8 +301,6 @@ public sealed partial class SourceView : UserControl
         Document.BeginUndoGroup();
     }
 
-    // MARK: keys: the core's typing, then RichEdit's
-
     [LibraryImport("user32.dll")]
     private static unsafe partial int ToUnicodeEx(uint key, uint scan, byte* state, char* buffer, int size, uint flags, nint layout);
 
@@ -339,8 +311,7 @@ public sealed partial class SourceView : UserControl
     [LibraryImport("user32.dll")]
     private static partial nint GetKeyboardLayout(uint thread);
 
-    /// The text a key types in the keyboard layout, without disturbing a dead key's state (flag 4); null for a dead key,
-    /// a control character or no text.
+    /// Flag 4 leaves a dead key's state alone.
     static unsafe string? Typed(KeyRoutedEventArgs e)
     {
         var state = stackalloc byte[256];
@@ -367,7 +338,6 @@ public sealed partial class SourceView : UserControl
         else if (alt && !ctrl && !shift && e.Key is VirtualKey.Up or VirtualKey.Down) MoveLines(e.Key == VirtualKey.Up);
         else
         {
-            // The first that takes the key; RichEdit has the rest.
             e.Handled = offered is not null && plain && Completing(e.Key)
                 || plain && !shift && e.Key == VirtualKey.Escape && Escape()
                 || plain && e.Key == VirtualKey.Enter && Newline()
@@ -389,7 +359,6 @@ public sealed partial class SourceView : UserControl
         Document.Selection.ScrollIntoView(PointOptions.None);
     }
 
-    /// The one write to RichEdit's text: an edit of the core's, into RichEdit and the session's document at once.
     void Put(int start, int length, string inserted)
     {
         setting = true;
@@ -398,8 +367,7 @@ public sealed partial class SourceView : UserControl
         Mirror(start, length, inserted, true);
     }
 
-    /// The document takes an edit RichEdit has made; typing's closers and a snippet's fields move with it, and what's
-    /// typed in a field goes in its other places.
+    /// What's typed in a snippet's field goes in its other places too.
     void Mirror(int start, int removed, string inserted, bool colour)
     {
         var mirrors = source!.Edit(start, removed, inserted, mirroring);
@@ -423,7 +391,6 @@ public sealed partial class SourceView : UserControl
         lastEnd = end;
     }
 
-    /// One undo step: the edits from the last, then the first selection after them.
     bool Apply(Change? change)
     {
         if (change is not { Edits.Length: > 0 }) return false;
@@ -435,11 +402,9 @@ public sealed partial class SourceView : UserControl
         return true;
     }
 
-    /// The selection follows the edits.
     bool Apply(TextEdit[]? edits) => edits is { Length: > 0 } && Apply(new Change(edits,
         source!.Call<SourceRange[]>("map_selections", new { edits, selections = new[] { Selected } }) ?? []));
 
-    /// A block or a symbol, then its snippet's first field.
     void Insert(Insertion? insertion)
     {
         if (insertion is null) return;
@@ -452,7 +417,7 @@ public sealed partial class SourceView : UserControl
         if (source!.Call<SourceRange>("start_snippet", new { fields, at }) is { } first) Place(first);
     }
 
-    /// A word's letters are one undo step; anything else ends it.
+    /// A word's letters are one undo step.
     static bool EndsWord(string typed) => typed.Length != 1 || !char.IsLetterOrDigit(typed[0]);
 
     bool Type(string typed)
@@ -468,7 +433,6 @@ public sealed partial class SourceView : UserControl
         return true;
     }
 
-    /// What follows a key's edit: the bracket's partner and the completion list.
     void Finish(Keystroke? stroke)
     {
         if (stroke?.Partner is { } partner) ShowPartner(partner);
@@ -476,7 +440,6 @@ public sealed partial class SourceView : UserControl
         else if (stroke?.Completions == "close") CloseCompletions();
     }
 
-    /// Return keeps the line's indentation; between an empty pair the closer goes on a line of its own.
     bool Newline()
     {
         if (source!.Call<Keystroke>("insert_newline", new { selection = Selected }) is not { Edit: { } edit } stroke) return false;
@@ -485,7 +448,6 @@ public sealed partial class SourceView : UserControl
         return true;
     }
 
-    /// An empty pair put in for the user goes whole, and indentation back to a stop; otherwise RichEdit deletes.
     bool DeleteBackward()
     {
         var completing = offered is not null;
@@ -500,7 +462,6 @@ public sealed partial class SourceView : UserControl
         return true;
     }
 
-    /// A snippet's next field, or the lines indented.
     bool Tab(int step)
     {
         var answer = source!.Call<Tabbing>("tab", new { selections = new[] { Selected }, step });
@@ -509,7 +470,6 @@ public sealed partial class SourceView : UserControl
         return true;
     }
 
-    /// A snippet, then the maths preview, then the find bar (the completion list goes before).
     bool Escape()
     {
         if (source!.Call<bool>("end_snippet", new { })) return true;
@@ -527,10 +487,8 @@ public sealed partial class SourceView : UserControl
 
     public void ToggleComment() => Command(() => Apply(source!.Call<TextEdit[]>("toggle_comment", new { selections = new[] { Selected } })));
 
-    /// bold, italic or underline.
     public void ToggleStyle(string style) => Command(() => Apply(source!.Call<Change>("toggle_style", new { selections = new[] { Selected }, style })));
 
-    /// The selection round a template's "$0"; with nothing selected, an argument's completions after.
     public void Wrap(string template, bool complete = false) => Command(() =>
     {
         var empty = Selected.Length == 0;
@@ -544,7 +502,6 @@ public sealed partial class SourceView : UserControl
 
     public void InsertBlock(string id) => Command(() => Insert(source!.Call<Insertion>("insert_block", new { id, selection = Selected })));
 
-    /// The styles the whole selection has, for Bold, Italic and Underline's checks.
     public TextStyles Styles => source?.Call<TextStyles>("text_styles", new { selection = Selected }) ?? new(null, null, null);
 
     void Command(Action action)
@@ -553,8 +510,6 @@ public sealed partial class SourceView : UserControl
         action();
         Editor.Focus(FocusState.Programmatic);
     }
-
-    // MARK: the selection
 
     /// RichEdit moves the selection while an edit of ours goes in and before its own edit is mirrored; the core hears
     /// the selection once the text is the document's.
@@ -579,7 +534,7 @@ public sealed partial class SourceView : UserControl
 
     void ShowPartner(int at)
     {
-        if (source is null || at < 0 || at >= Text.Length || source.Call<int?>("partner", new { at }) is not { } match
+        if (at < 0 || at >= Text.Length || source!.Call<int?>("partner", new { at }) is not { } match
             || RectOf(match, match + 1) is not { } r) return;
         (PartnerBox.Width, PartnerBox.Height) = (Math.Max(r.Width, 4) + 2, r.Height);
         Canvas.SetLeft(PartnerBox, r.X - 1);
@@ -594,8 +549,6 @@ public sealed partial class SourceView : UserControl
         partnerTimer.Stop();
         PartnerBox.Opacity = 0;
     }
-
-    // MARK: completion: the core's items in a list under the caret
 
     void Complete(bool explicitly)
     {
@@ -662,15 +615,15 @@ public sealed partial class SourceView : UserControl
 
     void OnCompletionClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is CompletionRow row && offered is { } o) Accept(Array.IndexOf(o.Items, row.Item));
+        Accept(Array.IndexOf(offered!.Items, ((CompletionRow)e.ClickedItem).Item));
         Editor.Focus(FocusState.Programmatic);
     }
 
     void Accept(int index)
     {
-        var (o, caret) = (offered, CaretOffset);
+        var (o, caret) = (offered!, CaretOffset);
         CloseCompletions();
-        if (o is null || index < 0 || index >= o.Items.Length || caret < o.Start) return;
+        if (caret < o.Start) return;
         var item = o.Items[index];
         Apply(new Change([new(o.Start, caret - o.Start, item.Text)], [new(o.Start + item.Text.Length, 0)]));
         StartSnippet(item.Fields, o.Start);
@@ -682,8 +635,6 @@ public sealed partial class SourceView : UserControl
         var peer = FrameworkElementAutomationPeer.FromElement(Editor) ?? FrameworkElementAutomationPeer.CreatePeerForElement(Editor);
         peer.RaiseNotificationEvent(AutomationNotificationKind.ItemAdded, AutomationNotificationProcessing.MostRecent, label, "completion");
     }
-
-    // MARK: the maths preview: RaTeX's SVG of the maths the caret is in, above its line
 
     MathPreview? MathAt(int caret)
     {
@@ -750,9 +701,6 @@ public sealed partial class SourceView : UserControl
         (MathImage.Visibility, MathError.Visibility) = (Visibility.Collapsed, Visibility.Visible);
     }
 
-    // MARK: undo, the caret and the clipboard
-
-    /// The caret's line (from 1) and column (UTF-16, from 0).
     public (int Line, int Column) Caret
     {
         get
@@ -768,20 +716,17 @@ public sealed partial class SourceView : UserControl
 
     public int LineCount => source?.LineCount ?? 1;
 
-    /// A line from 1 and a column from 0, selecting `length` units from there.
     public void GoTo(int line, int column = 0, int length = 0)
     {
-        if (source is null) return;
-        line = Math.Clamp(line, 1, source.LineCount);
+        line = Math.Clamp(line, 1, source!.LineCount);
         var at = Math.Min(source.LineStart(line) + column, End(line));
         Document.Selection.SetRange(at, Math.Min(at + length, End(line)));
         Document.Selection.ScrollIntoView(PointOptions.None);
         Editor.Focus(FocusState.Programmatic);
     }
 
-    /// The caret's row from the caret to the text's right edge, in this view's coordinates: where a flyout for the
-    /// text opens, below the row and never over it.
-    public Rect CaretRect => source is not null && RectOf(CaretOffset, CaretOffset) is { } r
+    /// Where a flyout for the text opens: below the caret's row, never over it.
+    public Rect CaretRect => RectOf(CaretOffset, CaretOffset) is { } r
         ? new Rect(Gutter.ActualWidth + r.X, r.Y, Math.Max(0, Editor.ActualWidth - r.X), r.Height)
         : new Rect(Gutter.ActualWidth + 16, 0, 0, 16);
 
@@ -799,7 +744,7 @@ public sealed partial class SourceView : UserControl
         Document.BeginUndoGroup();
     }
 
-    /// After the view shrinks (the issues panel opening), once it has laid out.
+    /// Once the view has laid out again.
     public void ScrollToCaret() => DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => Document.Selection.ScrollIntoView(PointOptions.None));
 
     public void Cut() => Document.Selection.Cut();
@@ -818,8 +763,6 @@ public sealed partial class SourceView : UserControl
     }
 
     int End(int line) => line < source!.LineCount ? source.LineStart(line + 1) - 1 : Text.Length;
-
-    // MARK: RichEdit's own edits
 
     /// Input methods, Delete, Cut, undo, drops: what changed, read from the text. The selection before it tells where
     /// in a run of the same characters the change was.
@@ -870,17 +813,14 @@ public sealed partial class SourceView : UserControl
     void Colour(int first, int last)
     {
         int a = source!.LineStart(first), b = End(last);
-        var runs = source.Highlights(a, Math.Max(b - a, 0));
         setting = true;
         Document.BatchDisplayUpdates();
         Document.GetRange(a, b).CharacterFormat.ForegroundColor = Ink;
-        foreach (var run in runs)
+        foreach (var run in source.Highlights(a, Math.Max(b - a, 0)))
             if (InkOf(run.Kind) is { } c) Document.GetRange(run.Start, run.Start + run.Length).CharacterFormat.ForegroundColor = c;
         Document.ApplyDisplayUpdates();
         setting = false;
     }
-
-    // MARK: what's drawn beside and over the text
 
     /// A range's rectangle in the view's coordinates (RichEdit's are the scrolled text's); null before it's laid out.
     Rect? RectOf(int start, int end)
@@ -888,14 +828,6 @@ public sealed partial class SourceView : UserControl
         Document.GetRange(start, end).GetRect(PointOptions.None, out var r, out _);
         return r.IsEmpty || !(r.Height >= 0) || scroller is null ? null
             : new Rect(r.X + Editor.Padding.Left - scroller.HorizontalOffset, r.Y + Editor.Padding.Top - scroller.VerticalOffset, Math.Max(r.Width, 0), r.Height);
-    }
-
-    (int First, int Last) VisibleLines()
-    {
-        var y = scroller!.VerticalOffset;
-        var top = Document.GetRangeFromPoint(new Point(0, y), PointOptions.ClientCoordinates).StartPosition;
-        var bottom = Document.GetRangeFromPoint(new Point(Editor.ActualWidth, y + Editor.ActualHeight), PointOptions.ClientCoordinates).StartPosition;
-        return (source!.LineAt(top), source.LineAt(bottom));
     }
 
     /// One refresh, CaretMoved and maths preview per dispatcher turn. RichEdit can raise TextChanged after
@@ -919,14 +851,15 @@ public sealed partial class SourceView : UserControl
         });
     }
 
-    /// The gutter's numbers, the current line and the line-end issues for the lines in view.
     void Refresh()
     {
         var shown = source is not null && scroller is not null;
         Gutter.Visibility = Backdrop.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
         if (!shown) return;
-        var (first, last) = VisibleLines();
-        var caret = source!.LineAt(CaretOffset);
+        var y = scroller!.VerticalOffset;
+        var first = source!.LineAt(Document.GetRangeFromPoint(new Point(0, y), PointOptions.ClientCoordinates).StartPosition);
+        var last = source.LineAt(Document.GetRangeFromPoint(new Point(Editor.ActualWidth, y + Editor.ActualHeight), PointOptions.ClientCoordinates).StartPosition);
+        var caret = source.LineAt(CaretOffset);
         Gutter.Width = Math.Ceiling(16 + Math.Max(3, source.LineCount.ToString().Length) * advance + 8);
         // Only beside the text's viewport, so nothing shows in the find bar's band.
         var view = new Rect(0, Editor.Padding.Top, Gutter.Width + Editor.ActualWidth, Math.Max(0, Editor.ActualHeight - Editor.Padding.Top - Editor.Padding.Bottom));

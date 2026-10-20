@@ -6,8 +6,6 @@ use std::sync::Arc;
 
 #[cfg(test)]
 thread_local! {
-    /// Frames made and visited on this thread: what deep stacks cost, counted
-    /// rather than timed.
     pub(crate) static WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -53,7 +51,6 @@ impl<T> Stack<T> {
         self.0.as_deref().map(|frame| &frame.item)
     }
 
-    /// The top item, copied out of frames other stacks share.
     pub fn top_mut(&mut self) -> Option<&mut T>
     where
         T: Clone,
@@ -69,13 +66,10 @@ impl<T> Stack<T> {
             .inspect(|_| work(1))
     }
 
-    /// From the top down.
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.frames().map(|frame| &frame.item)
     }
 
-    /// Take off the innermost item `pick` takes (the outermost, given
-    /// `outermost`) and all above it, handing it to `taken` first.
     pub fn pop_to(&mut self, outermost: bool, pick: impl Fn(&T) -> bool, taken: impl FnOnce(&T)) {
         let mut found = None;
         for frame in self.frames() {

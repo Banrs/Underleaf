@@ -5,10 +5,9 @@ struct SectionLevelItems: View {
     let project: ProjectModel?
 
     var body: some View {
-        // The levels the class has, by name: the numbers are Aa's (`FormatPanel`).
+        // By name: the numbers are Aa's.
         let styles = project?.headingStyles ?? HeadingStyle.standard
         ForEach(styles, id: \.command) { style in
-            // The run-in levels apart, as in Aa.
             if style == styles.first(where: \.isRunIn) { Divider() }
             Toggle(style.title,
                    isOn: Binding(get: { project?.headingCommand == style.command },
@@ -107,18 +106,16 @@ struct InsertMenuItems: View {
 /// The symbols as the core draws them (`glyph_svg`): each one's ink centred in a square, as TeX sets it in text.
 enum MathGlyphs {
     private static var images: [String: NSImage] = [:]
-    /// AppKit selects a palette's item as it's chosen (27.2), and these insert, they don't select.
+    /// 27.2: AppKit selects a palette's item as it's chosen, and these insert, they don't select.
     private static let unmark = NotificationCenter.default.addObserver(
         forName: NSMenu.didSendActionNotification, object: nil, queue: .main) { note in
-        // Posted on the main thread, which has the menu.
         nonisolated(unsafe) let item = note.userInfo?["MenuItem"] as? NSMenuItem
         MainActor.assumeIsolated {
             guard let item, let image = item.image, images.values.contains(where: { $0 === image }) else { return }
             item.state = .off
         }
     }
-    /// AppKit lays a palette's cells 13 pt inside both edges of its menu, yet sizes a menu of palettes alone
-    /// 5 pt past the last cell (27.2), so a grid sat to the right: its menu takes the difference.
+    /// 27.2: AppKit sizes a menu of palettes alone 8 pt short of centring them.
     private static let centre = NotificationCenter.default.addObserver(
         forName: NSMenu.didAddItemNotification, object: nil, queue: .main) { note in
         nonisolated(unsafe) let menu = note.object as? NSMenu

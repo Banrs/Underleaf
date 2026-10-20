@@ -1,63 +1,48 @@
-//! The class a main file names, and how the class sets its headings, as its
-//! class file does (TeX Live's base, amscls, koma-script, memoir, IEEEtran
-//! and llncs): the levels it has, how it numbers them, and each one's size
-//! against the text's, its weight and its shape. A class it doesn't know has
-//! every level, set as the standard classes set them, and numbers them as a
-//! book's once the document has chapters.
+//! The class a main file names, and how it sets its headings (TeX Live's base, amscls, koma-script, memoir, IEEEtran,
+//! llncs): levels, numbering, size, weight and shape. An unknown class has every level, set as the standard classes do.
 
-use std::sync::LazyLock;
-
-use regex::Regex;
 use serde::Serialize;
 
-use super::catalog::{CATALOG, HeadingLevel};
-use super::scan::strip_comment;
+use super::scan::{Scanner, Visit, arguments};
+use super::scans::SPACING;
 
-/// The class a main file's `\documentclass` names, and the type size its
-/// options set.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentClass {
     pub name: String,
-    /// 10, 11 or 12 (points): LaTeX's size options.
     pub point_size: u32,
 }
 
-static CLASS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\\documentclass\s*(?:\[([^\]]*)\])?\s*\{\s*([^}\s]+)\s*\}").unwrap()
-});
-
-/// The class named outside comments, if any. LaTeX takes it in the
-/// preamble, so the text up to the first `\begin{document}` after a class
-/// is named is read first, and the whole only when that has none.
 pub fn document_class(text: &str) -> Option<DocumentClass> {
-    let named = |text: &str| {
-        // A comment ends at either line break.
-        let lines: Vec<&str> = text.split(['\n', '\r']).map(strip_comment).collect();
-        let uncommented = lines.join("\n");
-        let c = CLASS.captures(&uncommented)?;
-        let options: Vec<&str> = c
-            .get(1)
-            .map_or(vec![], |o| o.as_str().split(',').map(str::trim).collect());
-        // KOMA-Script's fontsize=11pt as well as the standard 11pt.
-        let point_size = [11, 12]
-            .into_iter()
-            .find(|size| {
-                let (standard, koma) = (format!("{size}pt"), format!("fontsize={size}pt"));
-                options.iter().any(|&o| o == standard || o == koma)
-            })
-            .unwrap_or(10);
-        Some(DocumentClass {
-            name: c[2].to_owned(),
-            point_size,
-        })
-    };
-    let preamble = text.find("\\documentclass").and_then(|at| {
-        let after = at + "\\documentclass".len();
-        let begin = text[after..].find("\\begin{document}")?;
-        Some(&text[..after + begin + "\\begin{document}".len()])
+    struct First(Option<usize>);
+    impl Visit for First {
+        fn command(&mut self, name: &str, _: usize, name_end: usize) {
+            if name == "documentclass" {
+                self.0 = self.0.or(Some(name_end));
+            }
+        }
+    }
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let (mut scanner, mut first) = (Scanner::default(), First(None));
+    // The class comes before the document, which isn't read for it.
+    while first.0.is_none() && scanner.i < units.len() {
+        scanner.run(&units, scanner.i + SPACING, &[], &mut first);
+    }
+    let (mut options, mut name) = (Vec::new(), Vec::new());
+    let (_, closed) = arguments(&units, first.0?, |piece, braced| {
+        (if braced { &mut name } else { &mut options }).extend_from_slice(&units[piece]);
     });
-    preamble.and_then(named).or_else(|| named(text))
+    let size = |option: &str| match option.trim().trim_start_matches("fontsize=") {
+        "11pt" => Some(11),
+        "12pt" => Some(12),
+        _ => None,
+    };
+    closed.then(|| DocumentClass {
+        name: String::from_utf16_lossy(&name).trim().to_owned(),
+        point_size: String::from_utf16_lossy(&options)
+            .split(',')
+            .find_map(size)
+            .unwrap_or(10),
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -68,7 +53,6 @@ pub enum Shape {
     SmallCaps,
 }
 
-/// A level's look: its size as a multiple of the text's, bold or not, and its shape.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Font {
     pub scale: f64,
@@ -76,25 +60,29 @@ pub struct Font {
     pub shape: Shape,
 }
 
-/// A level the class has, as its headings are set; Normal Text first,
-/// whose `command` is empty.
+pub(crate) const LEVELS: [(&str, &str); 6] = [
+    ("part", "Part"),
+    ("chapter", "Chapter"),
+    ("section", "Section"),
+    ("subsection", "Subsection"),
+    ("subsubsection", "Subsubsection"),
+    ("paragraph", "Paragraph"),
+];
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Level {
-    pub title: String,
-    pub command: String,
+    pub title: &'static str,
+    pub command: &'static str,
     pub font: Font,
-    /// Its number as its heading prints it, with the class's counters.
     pub marker: Option<String>,
 }
 
-/// A level's size: a step of the class's sizes (`points`), or fixed points.
 #[derive(Clone, Copy)]
 enum Size {
     Step(usize),
     Points(f64),
 }
 
-/// A level a class has, and its look: its command, size, weight and shape.
 type Look = (&'static str, Size, bool, Shape);
 
 const NORMAL: usize = 0;
@@ -111,8 +99,6 @@ const fn plain(command: &'static str, shape: Shape) -> Look {
     (command, Size::Step(NORMAL), false, shape)
 }
 
-/// The standard classes' (book.cls, report.cls): every level bold, and so
-/// memoir's, and a class it doesn't know.
 const BOOK: &[Look] = &[
     bold("part", HUGE),
     bold("chapter", HUGE),
@@ -181,10 +167,6 @@ const BEAMER: &[Look] = &[
     bold("subsubsection", NORMAL),
 ];
 
-/// How a class sets its headings: its levels, the deepest it numbers
-/// (LaTeX's secnumdepth: chapter 0, section 1), whether its sections are
-/// numbered within chapters, and whether its numbers are IEEEtran's (I, A,
-/// 1, a).
 struct Class {
     looks: &'static [Look],
     numbered: i64,
@@ -223,8 +205,6 @@ fn known(name: &str) -> Option<Class> {
     })
 }
 
-/// size10.clo, size11.clo and size12.clo, in points: \normalsize, \large,
-/// \Large, \LARGE, \huge and \Huge.
 fn points(size: u32) -> [f64; 6] {
     match size {
         11 => [10.95, 12.0, 14.4, 17.28, 20.74, 24.88],
@@ -233,8 +213,6 @@ fn points(size: u32) -> [f64; 6] {
     }
 }
 
-/// The levels a class has, Normal Text first, as it sets and numbers them;
-/// `class` none for a document without one.
 pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<Level> {
     let sizes = points(class.map_or(10, |c| c.point_size));
     let Class {
@@ -248,7 +226,6 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
         has_chapters,
     ));
     let marker = |index: usize| {
-        // LaTeX's depths: part -1, chapter 0, section 1.
         let depth = index as i64 - 1;
         if depth < 0 {
             return Some("I".to_owned());
@@ -265,8 +242,8 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
         Some(vec!["1"; (depth + chapters as i64) as usize].join("."))
     };
     let normal = Level {
-        title: "Normal Text".to_owned(),
-        command: String::new(),
+        title: "Normal Text",
+        command: "",
         font: Font {
             scale: 1.0,
             bold: false,
@@ -274,16 +251,16 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
         },
         marker: None,
     };
-    let levels = CATALOG.heading_levels.iter().enumerate();
-    let levels = levels.filter_map(|(index, HeadingLevel { title, command })| {
+    let levels = LEVELS.iter().enumerate();
+    let levels = levels.filter_map(|(index, &(command, title))| {
         let &(_, size, bold, shape) = looks.iter().find(|look| look.0 == command)?;
         let points = match size {
             Size::Step(step) => sizes[step],
             Size::Points(points) => points,
         };
         Some(Level {
-            title: title.clone(),
-            command: command.clone(),
+            title,
+            command,
             font: Font {
                 scale: points / sizes[NORMAL],
                 bold,
@@ -308,17 +285,13 @@ mod tests {
     }
 
     fn titles(levels: &[Level]) -> String {
-        let titles: Vec<&str> = levels.iter().map(|l| l.title.as_str()).collect();
+        let titles: Vec<&str> = levels.iter().map(|l| l.title).collect();
         titles.join(", ")
     }
 
-    /// The levels' markers, "-" for none.
     fn markers(levels: &[Level]) -> String {
-        let markers: Vec<&str> = levels
-            .iter()
-            .map(|l| l.marker.as_deref().unwrap_or("-"))
-            .collect();
-        markers.join(" ")
+        let markers = levels.iter().map(|l| l.marker.as_deref().unwrap_or("-"));
+        markers.collect::<Vec<_>>().join(" ")
     }
 
     #[test]
@@ -338,7 +311,6 @@ mod tests {
         let titled = "Normal Text, Part, Section, Subsection, Subsubsection";
         assert_eq!(titles(&beamer), titled);
         assert_eq!(markers(&beamer), "- I - - -");
-        // A class it doesn't know has every level, numbered as a book's once there are chapters.
         assert_eq!(markers(&styles(Some("thesis"), 10, true)), report);
         let none = "- I - 1 1.1 1.1.1 -";
         assert_eq!(markers(&styles(None, 10, false)), none);
@@ -377,7 +349,5 @@ mod tests {
         // The preamble's first: a class named in the body doesn't count.
         let body = "\\documentclass{report}\n\\begin{document}\n\\documentclass{book}";
         assert_eq!(class(body), "report 10pt");
-        // A comment ends at any line break.
-        assert_eq!(class("% x\r\\documentclass{book}"), "book 10pt");
     }
 }

@@ -1,15 +1,14 @@
 import Foundation
 
-/// The project's files: the session moves and holds documents as they are renamed or trashed; the Trash and undo are the app's.
+/// The session moves and holds documents as they are renamed or trashed; the Trash and undo are the app's.
 extension ProjectModel {
     func createEntry(in folder: String, directory: Bool) async -> String? {
         let name = directory ? "untitled folder" : "untitled.tex"
-        // A taken name is numbered on ("untitled 2.tex").
         guard let made = await alerting("Couldn’t Create “\(name)”", {
-            try await core.call("create_entry", ["id": id, "path": folder.isEmpty ? name : "\(folder)/\(name)", "dir": directory,
-                                                "free": true], as: PathEvent.self).path
+            try await core.call("create_entry", ["id": id, "path": folder.isEmpty ? name : "\(folder)/\(name)", "dir": directory],
+                                as: PathEvent.self).path
         }), !closed else { return nil }
-        // For the sidebar's rename that follows: the open below can be overtaken by a later one, which reads no tree for it.
+        // For the sidebar's rename that follows, whether or not the open below is overtaken.
         await tree.reload()
         if !directory { await open(made, focus: false) }
         return made
@@ -27,8 +26,8 @@ extension ProjectModel {
         })
     }
 
-    /// The session saves first and moves its open documents, and the sidebar's state, written first, with them; the
-    /// editor keeps its text and undo under the new name.
+    /// The session saves first and moves its documents and the sidebar's state, written first; the editor keeps its text
+    /// and undo under the new name.
     private func performRename(_ from: String, to: String) async -> RenameResult? {
         guard to != from, let session, !closed else { return nil }
         let (before, wasText) = (openPath, editsText)
@@ -42,11 +41,9 @@ extension ProjectModel {
         if moved { openPath = now }
         let mainChanged = result.mainFile != settings?.mainFile
         settings?.mainFile = result.mainFile
-        // The new name's kind is the tree's.
         await tree.reload()
         showUIState(result.ui)
         if moved, let now, openPath == now, !closed {
-            // A text file now previewed, or the other way: shown afresh.
             if isText(now) != wasText {
                 if wasText { _ = await closeDocument(now) }
                 if openPath == now { clearOpenFile() }
@@ -65,14 +62,12 @@ extension ProjectModel {
             original: original, name: path.fileName, undoManager: app?.undoManager,
             trash: { [weak self] item in await self?.trashEntry(path, item) ?? false },
             changed: { [weak self] in await self?.tree.reload() },
-            failed: { [weak self] title, error in self?.report(error, title) })
+            failed: { [weak self] title, error in self?.app?.report(error, title) })
         trashed.append(item)
-        // The session's `tree` event follows the move.
         await item.moveToTrash()
     }
 
-    /// The session saves and holds its saves under `path`, so no autosave makes the file again, and refuses the main file;
-    /// the Trash is the app's, so the move can be undone.
+    /// The session saves and holds its saves under `path`, so no autosave makes the file again, and refuses the main file.
     private func trashEntry(_ path: String, _ item: UndoableTrash) async -> Bool {
         guard let session, !closed else { return false }
         let title = "Couldn’t Move “\(path.fileName)” to the Trash"
@@ -81,7 +76,7 @@ extension ProjectModel {
                   !closed else { return false }
         } catch {
             guard !closed else { return false }
-            report(error, title)
+            app?.report(error, title)
             // Another window may have made it the main file.
             if (error as? CoreError)?.status == 409, let read = try? await core.call("get_settings", ["id": id], as: ProjectSettings.self) {
                 settings = read
@@ -92,7 +87,7 @@ extension ProjectModel {
             try item.recycle()
         } catch {
             core.send("session_deleted", ["session": session, "path": path, "trashed": false])
-            report(error, title)
+            app?.report(error, title)
             return false
         }
         core.send("session_deleted", ["session": session, "path": path])
@@ -122,15 +117,15 @@ extension ProjectModel {
             let clashes = try await core.call("import_files", args, as: Imported.self).existing.map(\.path)
             if conflict == nil, !clashes.isEmpty { importClash = ImportClash(urls: urls, dir: dir, names: clashes) }
         } catch {
-            report(error, "Couldn’t Add the Files")
+            app?.report(error, "Couldn’t Add the Files")
         }
-        // After a failure too: the files copied before it are there.
+        // After a failure too: files copied before it are there.
         await tree.reload()
     }
 
     // MARK: - Export
 
-    /// The core archives the files on disk, so the edits are saved first: an archive without them would be a stale copy reported as a good one.
+    /// The core archives the files on disk, so the edits are saved first.
     func exportZip() async throws -> URL {
         guard await save() else {
             let name = openPath?.fileName ?? id

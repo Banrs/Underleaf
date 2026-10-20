@@ -9,7 +9,7 @@ struct TeXLocalApp: App {
         .commands {
             AppCommands(app: delegate.app)
             ToolbarCommands()
-            // The app has no help book; the default item would only say so.
+            // No help book: the default item would only say so.
             CommandGroup(replacing: .help) {
                 Link("Visit TeXLocal on GitHub", destination: Links.repository)
                 Link("Report Issue", destination: Links.issues)
@@ -29,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Self.shared = self
     }
 
-    /// After state restoration, which may have made the window already.
+    /// After state restoration, which may have made the window.
     func applicationDidFinishLaunching(_ notification: Notification) {
         mainWindow.start()
         #if DEBUG
@@ -60,20 +60,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { dockMenu.menu }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // A clean editor can still have a settings change or rename in flight.
-        guard let project = app.project else { return .terminateNow }
         Task {
-            let saved = await project.save()
-            // Not saved, the quit stops: the window its alert shows in comes back if closing it began the quit.
-            if !saved, mainWindow.window?.isVisible != true { mainWindow.showWindow(nil) }
+            let saved = await app.project?.save() ?? true
+            if saved {
+                // Compiles run in their own process groups; nothing else stops them.
+                try? await Core.shared.call("kill_all", [:])
+            } else if mainWindow.window?.isVisible != true {
+                // The window its alert shows in comes back if closing it began the quit.
+                mainWindow.showWindow(nil)
+            }
             sender.reply(toApplicationShouldTerminate: saved)
         }
         return .terminateLater
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        // Compiles run in their own process groups; nothing else stops them.
-        Core.shared.killAll()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -106,8 +104,7 @@ final class DockMenu: NSObject {
     }
 
     @objc private func open(_ item: NSMenuItem) {
-        guard let id = item.representedObject as? String else { return }
         show()
-        Task { await app.open(id) }
+        Task { await app.open(item.representedObject as! String) }
     }
 }

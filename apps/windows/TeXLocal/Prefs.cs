@@ -7,11 +7,12 @@ namespace TeXLocal;
 public sealed record SyntaxTheme(string Id, string Title);
 
 /// The host's preferences, typed, in LocalSettings (the registry, under HKCU\Software\Classes\Local Settings\Software\TeXLocal)
-/// until the core keeps validated shared ones. Settings › Editor's five raise EditorChanged.
+/// until the core keeps validated shared ones; a run on a scratch library (TEXLOCAL_DATA) keeps its own, as "TeXLocal Dev".
+/// Settings › Editor's five raise EditorChanged.
 public static unsafe partial class Prefs
 {
-    static readonly IPropertySet values =
-        Microsoft.Windows.Storage.ApplicationData.GetForUnpackaged("TeXLocal", "TeXLocal").LocalSettings.Values;
+    static readonly IPropertySet values = Microsoft.Windows.Storage.ApplicationData.GetForUnpackaged("TeXLocal",
+        Environment.GetEnvironmentVariable("TEXLOCAL_DATA") is null ? "TeXLocal" : "TeXLocal Dev").LocalSettings.Values;
     static string[]? families;
 
     public static double SidebarWidth { get => Get("sidebarWidth", 280.0); set => values["sidebarWidth"] = value; }

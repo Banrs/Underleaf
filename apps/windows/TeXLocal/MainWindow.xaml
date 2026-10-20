@@ -11,34 +11,24 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Invoked="{x:Bind GoBack}" Key="Left" Modifiers="Menu" />
+        </Grid.KeyboardAccelerators>
 
-        <TitleBar
-            x:Name="Bar"
-            Height="48"
-            Title="TeXLocal"
-            BackRequested="OnBackRequested"
-            PaneToggleRequested="OnPaneToggleRequested">
+        <!-- A project's menus are its content, after the title, as Paint's and Visual Studio's sit in their title bars. -->
+        <TitleBar x:Name="Bar" BackRequested="{x:Bind GoBack}" Title="TeXLocal">
+            <TitleBar.Resources>
+                <HorizontalAlignment x:Key="TitleBarContentHorizontalAlignment">Left</HorizontalAlignment>
+            </TitleBar.Resources>
             <TitleBar.IconSource>
-                <ImageIconSource ImageSource="ms-appx:///Assets/TeXLocal.png" />
+                <ImageIconSource ImageSource="ms-appx:///Assets/TeXLocal.ico" />
             </TitleBar.IconSource>
-            <!-- The project's search, as VS Code's Command Center. A fixed width rather than Stretch: the bar lets clicks
-                 through its whole content presenter, and it drops the title (compact) when the box doesn't fit. -->
-            <TitleBar.Content>
-                <AutoSuggestBox
-                    x:Name="Search"
-                    Width="440"
-                    x:FieldModifier="public"
-                    AutomationProperties.Name="Search in project">
-                    <AutoSuggestBox.QueryIcon>
-                        <FontIcon Glyph="&#xE721;" />
-                    </AutoSuggestBox.QueryIcon>
-                </AutoSuggestBox>
-            </TitleBar.Content>
             <TitleBar.RightHeader>
                 <Button
                     x:Name="SettingsButton"
                     Width="40"
                     Height="32"
+                    Padding="0"
                     AutomationProperties.Name="Settings"
                     Click="{x:Bind OpenSettings}"
                     Style="{StaticResource SubtleButtonStyle}"

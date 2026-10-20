@@ -5,32 +5,32 @@
 // Path convention: every project-relative path this crate RETURNS or STORES
 // uses forward slashes — the hosts and SyncTeX both expect '/'.
 
-pub mod analyze;
+mod analyze;
 mod atomic;
-pub mod compile;
-pub mod error;
+mod compile;
+mod error;
 pub mod events;
-pub mod import;
-pub mod logparse;
-pub mod paths;
+mod import;
+mod logparse;
+mod paths;
 mod process;
-pub mod projects;
+mod projects;
 pub mod service;
 pub mod session;
-pub mod settings;
+mod settings;
 mod stamp;
-pub mod synctex;
+mod synctex;
 pub mod syntax;
-pub mod templates;
-pub mod tex;
-pub mod texpresso;
+mod templates;
+mod tex;
+mod texpresso;
 mod wordmatch;
-pub mod zipexport;
+mod zipexport;
 
 pub use error::CoreError;
 
-pub const BUILD_DIR: &str = "build";
-pub const SETTINGS_FILE: &str = ".texlocal.json";
+pub(crate) const BUILD_DIR: &str = "build";
+pub(crate) const SETTINGS_FILE: &str = ".texlocal.json";
 
 /// The crate's mutexes guard bookkeeping that no panic leaves half-written,
 /// or nothing at all, so a poisoned one is still good: it must not fail
@@ -41,13 +41,10 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// The end of `text`, at most `max` bytes, from a character boundary.
 pub(crate) fn tail(text: &str, max: usize) -> &str {
     &text[text.ceil_char_boundary(text.len().saturating_sub(max))..]
 }
 
-/// Bytes as text, replacing invalid UTF-8. Valid input, the usual case,
-/// becomes the String without a second copy.
 pub(crate) fn lossy_string(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes)
         .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
@@ -80,7 +77,6 @@ mod tests {
         let cases: &[&[u16]] = &[
             &[],
             &[0x61, 0x62, 0x0a, 0x7f],
-            // Lone high and low surrogates, alone, at the ends and between ASCII.
             &[0xd800],
             &[0xdc00],
             &[0x61, 0xd83d, 0x62],
@@ -88,7 +84,6 @@ mod tests {
             &[0xdc00, 0xd800],
             &[0xd83d, 0xd83d, 0xde00],
             &[0x61, 0xd83d],
-            // BMP and astral (😀, 𝔸) mixed with ASCII.
             &[
                 0xe9, 0x4e2d, 0x61, 0xd83d, 0xde00, 0x80, 0x7f, 0xd835, 0xdd38, 0xffff,
             ],

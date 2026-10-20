@@ -24,20 +24,15 @@ unchecked_time_subtraction = "warn"
 unused_self = "warn"
 use_self = "warn"
 
-# LTO reaches the Windows app's DLL, which `cargo rustc --crate-type cdylib`
-# builds as the unit's one crate type, but not the Mac app's archive: Cargo
-# runs it for no crate type of a unit unless it can for all, and
-# texlocal-ffi's rlib, which its tests link, cannot. Measured in October 2026
-# through the C ABI, an LTO archive was no faster on the editor's calls, and
-# left a stripped binary that linked it 1.5 MB smaller.
+# Measured in October 2026, LTO left a stripped binary linking texlocal-ffi
+# 1.5 MB smaller, and the editor's calls through the C ABI no faster.
 [profile.release]
 codegen-units = 1
 lto = true
 strip = true
 
-# Proc macros and build scripts only run on the build machine. Stripped by
-# the macOS 27 toolchain for a deployment target, as Xcode hands cargo the
-# app's 27.0, their dylibs fail to load ("mis-aligned LINKEDIT string pool"),
-# which breaks the app's release build.
+# Proc macros and build scripts run only on the build machine, and stripped by
+# the macOS 27 toolchain for the app's deployment target their dylibs fail to
+# load ("mis-aligned LINKEDIT string pool"), breaking the app's release build.
 [profile.release.build-override]
 strip = false

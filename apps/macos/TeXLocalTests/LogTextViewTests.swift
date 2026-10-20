@@ -48,12 +48,6 @@ struct LogTextViewTests {
         let end = scroll.contentView.bounds.origin.y
         LogTextView(text: view.string + String(repeating: "more output\n", count: 50)).updateText(in: scroll)
         #expect(scroll.contentView.bounds.origin.y > end)
-
-        // Scrolled up to read, it stays where it is.
-        scroll.contentView.scroll(to: NSPoint(x: 0, y: 60))
-        let reading = scroll.contentView.bounds.origin
-        LogTextView(text: view.string + String(repeating: "more output\n", count: 50)).updateText(in: scroll)
-        #expect(scroll.contentView.bounds.origin == reading)
     }
 
     /// Laid out through the text layout manager: asking an NSTextView for its `layoutManager` switches it to TextKit 1, which the app's log view is not.

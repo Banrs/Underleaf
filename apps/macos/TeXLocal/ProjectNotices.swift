@@ -18,7 +18,7 @@ final class ProjectNotices {
 
     @ObservationIgnored private var announced: (text: String, at: ContinuousClock.Instant)?
 
-    /// Not within 0.3 s of the last announcement, nor the same one again within a few seconds: VoiceOver would cut one short or repeat itself.
+    /// Not within 0.3 s of the last, nor the same again within 3 s: VoiceOver would cut one short or repeat itself.
     func announce(_ text: String, queued: Bool = false) {
         let now = ContinuousClock.now
         if let announced, now - announced.at < (text == announced.text ? .seconds(3) : .milliseconds(300)) { return }

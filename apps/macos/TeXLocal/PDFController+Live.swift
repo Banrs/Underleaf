@@ -2,19 +2,16 @@ import PDFKit
 
 /// Live Preview's pages: drawn over PDFKit's at once, then taken into its document a few at a time.
 extension PDFController {
-    /// How long a page drawn over PDFKit's waits for its whole document, which comes 300 ms after the last key and brings
-    /// it first, before PDFKit's document takes it alone.
+    /// A page drawn over PDFKit's waits this long for its whole document, which comes 300 ms after the last key.
     private static let liveSettleDelay: Duration = .seconds(1)
     /// PDFKit fades a page it is given in over about 240 ms (27.2); the layers over its pages go after that.
     private static let liveClearDelay: Duration = .milliseconds(400)
 
-    /// A live PDF as `Core` read it where the event arrived, in the order the session sent them.
     func showLive(_ read: LiveRead) {
         switch read {
         case .document(let live?):
-            var changed = live.changed
             // After a document that wasn't read, any page may differ from what shows.
-            if liveMissed, changed != nil { changed = IndexSet(integersIn: 0..<live.document.pageCount) }
+            let changed = liveMissed && live.changed != nil ? IndexSet(integersIn: 0..<live.document.pageCount) : live.changed
             liveMissed = false
             showLive(live.document, changed: changed, complete: live.complete)
             liveShown = true
@@ -27,18 +24,15 @@ extension PDFController {
         }
     }
 
-    /// A run of Live Preview ended, or another began: nothing of the last run's counts in the next.
     func endLiveRun() { (liveMissed, liveShown) = (false, false) }
 
-    /// Drawn over PDFKit's page; PDFKit's document takes it once the typing pauses, so a key costs one drawing. A page
-    /// past the document showing goes: the next document has it.
+    /// Over PDFKit's page until its document takes it as the typing pauses, so a key costs one drawing.
     func showLive(_ page: PDFPage, at index: Int) {
         guard let shown = view.document?.page(ifAt: index) else { return }
         liveWaiting[index] = page
         liveBacklog?.pages.remove(index)
         guard view.showLive(page, over: shown, at: index) else { return settleLive() }
         liveClearing?.cancel()
-        // Only if the whole document doesn't bring this page first: it would go into PDFKit's document twice.
         restart(&liveSettling, after: Self.liveSettleDelay) { [weak self] in self?.settleLive() }
     }
 
@@ -59,9 +53,8 @@ extension PDFController {
         Task { [weak self] in self?.settleLive() }
     }
 
-    /// Only the pages in `changed` differ (nil: any may); PDFKit's document takes those a few milliseconds' worth at a time so a long document doesn't stop the typing.
+    /// `changed` nil: any page may differ.
     func showLive(_ document: PDFDocument, changed: IndexSet?, complete: Bool) {
-        // Whole too once the pages taken hold too much (`memoryAtWhole`), if it is all there.
         guard let shown = view.document, var pages = changed, !(complete && hasGrown) else { return show(document) }
         if let liveBacklog { pages.formUnion(liveBacklog.pages) }
         if shown.pageCount < document.pageCount { pages.insert(integersIn: shown.pageCount..<document.pageCount) }
@@ -70,8 +63,7 @@ extension PDFController {
         takeLive()
     }
 
-    /// The first share at once, in the event's own turn; the rest a share a turn, so the typing goes on between them. A
-    /// document that comes meanwhile has its first share at once too, and the turns go on with what it leaves.
+    /// A few milliseconds' worth a turn, the first at once, so a long document doesn't stop the typing.
     private func takeLive() {
         guard takeLiveShare(), liveTaking == nil else { return }
         liveTaking = Task { [weak self] in
@@ -121,7 +113,7 @@ extension PDFController {
         find.pagesReplaced(gone)
     }
 
-    /// The layers go once PDFKit has drawn its own pages' tiles and faded them in beneath (27.2).
+    /// Once PDFKit has drawn its own pages' tiles and faded them in beneath (27.2).
     func clearLiveLater() {
         restart(&liveClearing, after: Self.liveClearDelay) { [weak self] in
             if let self, liveWaiting.isEmpty { view.removeLive() }
@@ -135,7 +127,6 @@ extension PDFController {
         view.removeLive()
     }
 
-    /// Nothing of the pages before goes into the next document, which is shown whole or replaces them.
     func resetLive() {
         liveWaiting.removeAll()
         (liveBacklog, liveMissed, liveShown) = (nil, false, false)

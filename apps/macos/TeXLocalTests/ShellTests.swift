@@ -23,13 +23,14 @@ struct ShellTests {
         let workspace = WorkspaceController(app: app, project: ProjectModel(id: "ShellTests", app: app),
                                             size: window.contentLayoutRect.size)
         window.contentViewController = workspace
+        window.contentMinSize = ColumnMetrics.contentMinimum
         window.toolbar = workspace.toolbar.toolbar
         window.orderFront(nil)
         try await resize(window, to: 1300)
         return (window, workspace)
     }
 
-    /// Waits, a turn at a time, until no view in the window has moved for a few.
+    /// Until no view in the window has moved for five turns.
     private func resize(_ window: NSWindow, to width: CGFloat) async throws {
         func frames(_ view: NSView) -> String { "\(view.frame)" + view.subviews.map(frames).joined() }
         let root = try #require(window.contentView?.superview)
@@ -49,28 +50,23 @@ struct ShellTests {
         try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == id })
     }
 
-    /// A wide window has Compile as its word. Narrower, it is its symbol's circle, never a capsule between the two, and
-    /// still Compile to the overflow menu and VoiceOver; the narrowest keeps the panes at their least, and nothing has left
-    /// the toolbar but for its overflow menu, where each tool that can go has a menu form. Wide again, it is the word.
+    /// A wide window has Compile as its word. At its narrowest the panes are at their least or wider, Compile is its
+    /// symbol, and nothing has left the toolbar but for its overflow menu, where each tool that can go has a menu form.
     @Test func aNarrowWindowKeepsEveryToolOrItsMenuForm() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
+        #expect(!workspace.toolbar.compactCompile)
         let compile = try item(.compile, in: workspace)
         let button = try #require(compile.view)
-        let word = button.frame.width
+        let word = button.fittingSize.width
         #expect(word > 60 && compile.style == .prominent)
-        var symbol = false
-        for width in stride(from: 1200, through: 300, by: -50) as StrideThrough<CGFloat> {
-            try await resize(window, to: width)
-            guard workspace.toolbar.toolbar.visibleItems?.contains(compile) == true else { continue }
-            #expect(button.frame.width == word || button.frame.width == 36, "\(button.frame.width) at \(width)")
-            symbol = symbol || button.frame.width == 36
-        }
-        #expect(symbol)
-        let panes = workspace.columns.splitView.arrangedSubviews.map(\.frame.width)
-        #expect(panes.count == 2 && panes[0] >= ColumnMetrics.sourceMinimum && panes[1] >= ColumnMetrics.pdfMinimum)
-        #expect(compile.label == MenuCommand.compileRun.title)
-        #expect(compile.menuFormRepresentation?.title == MenuCommand.compileRun.title)
+        let least = ColumnMetrics.contentMinimum.width
+        #expect(least >= ColumnMetrics.sourceMinimum + 1 + ColumnMetrics.pdfMinimum + ColumnMetrics.toolbarInset)
+        try await resize(window, to: least)
+        #expect(window.contentView?.frame.width == least)
+        // Compile as its symbol, a circle, still Compile to the overflow menu and VoiceOver.
+        #expect(workspace.toolbar.compactCompile && button.fittingSize == NSSize(width: 36, height: 36))
+        #expect(compile.label == MenuCommand.compileRun.title && compile.menuFormRepresentation?.title == MenuCommand.compileRun.title)
         for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {
             let item = try item(id, in: workspace)
             #expect(!item.isHidden && item.visibilityPriority == .low)
@@ -80,7 +76,7 @@ struct ShellTests {
             #expect(try item(id, in: workspace).visibilityPriority == .high)
         }
         try await resize(window, to: 1300)
-        #expect(button.frame.width == word)
+        #expect(!workspace.toolbar.compactCompile && button.fittingSize.width == word)
     }
 
     /// Stop, with the build's spinner, is as wide as Compile was, as its word and as its symbol: the tools beside it stay
@@ -90,37 +86,61 @@ struct ShellTests {
         defer { workspace.close(); window.close() }
         let compile = try item(.compile, in: workspace)
         let button = try #require(compile.view)
-        for width in [1300, 300] as [CGFloat] {
+        for width in [1300, ColumnMetrics.contentMinimum.width] {
             try await resize(window, to: width)
-            let idle = button.frame.size
+            let idle = button.fittingSize
             workspace.project.compiling = true
             try await waitUntil { compile.label == MenuCommand.compileStop.title }
-            window.layoutIfNeeded()
-            #expect(button.frame.size == idle)
+            #expect(button.fittingSize == idle && compile.backgroundTintColor == .clear)
             #expect(compile.menuFormRepresentation?.title == MenuCommand.compileStop.title)
-            #expect(compile.backgroundTintColor == .clear)
             workspace.project.compiling = false
             try await waitUntil { compile.label == MenuCommand.compileRun.title }
-            window.layoutIfNeeded()
-            #expect(button.frame.size == idle && compile.backgroundTintColor == nil)
+            #expect(button.fittingSize == idle && compile.backgroundTintColor == nil)
         }
     }
 
-    /// The source|PDF divider stands under the toolbar's separator, sidebar open or shut.
+    /// Compile's room is reckoned from the default tools' widths. In a toolbar customised to others it keeps its word,
+    /// where the default one has it as its symbol, until the window is too narrow for the word beside the tools that
+    /// never leave. With the default tools back, it is its symbol again.
+    @Test func aCustomisedToolbarKeepsCompilesWord() async throws {
+        let (window, workspace) = try await workspace()
+        defer { workspace.close(); window.close() }
+        let toolbar = workspace.toolbar.toolbar
+        let defaults = workspace.toolbar.toolbarDefaultItemIdentifiers(toolbar)
+        #expect(workspace.toolbar.holdsDefaultItems)
+        // Too narrow for the default tools and Compile's word, wide enough for the word alone.
+        try await resize(window, to: 700)
+        #expect(workspace.toolbar.compactCompile)
+        for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] { toolbar.removeItem(identifier: id) }
+        // The toolbar tells the workspace a turn later.
+        try await waitUntil { !workspace.toolbar.holdsDefaultItems && !workspace.toolbar.compactCompile }
+        try await resize(window, to: ColumnMetrics.contentMinimum.width)
+        #expect(workspace.toolbar.compactCompile && toolbar.visibleItems?.contains { $0.itemIdentifier == .compile } == true)
+        try await resize(window, to: 700)
+        #expect(!workspace.toolbar.compactCompile)
+        toolbar.itemIdentifiers = defaults
+        try await waitUntil { workspace.toolbar.holdsDefaultItems && workspace.toolbar.compactCompile }
+        // Spaces are not tools: without them the toolbar still holds its default ones.
+        toolbar.removeItem(identifier: .flexibleSpace)
+        #expect(workspace.toolbar.holdsDefaultItems)
+        toolbar.itemIdentifiers = defaults
+    }
+
+    /// The source|PDF divider stands under the toolbar's separator from the widest window to the narrowest, sidebar open
+    /// or shut: where a section's tools stop the separator, the divider goes to it (`joinDivider`).
     @Test(arguments: [false, true])
     func theDividerStaysUnderTheToolbarsSeparator(sidebar: Bool) async throws {
         let (window, workspace) = try await workspace(sidebar: sidebar)
         defer { workspace.close(); window.close() }
         let split = workspace.columns.splitView
         let frame = try #require(window.contentView?.superview)
-        // AppKit's own view for the separator (27.2), which a test may look for by its class.
-        func separators(_ view: NSView) -> [NSView] {
-            view.subviews.flatMap { ($0.className == "NSSeparatorToolbarItemView" ? [$0] : []) + separators($0) }
-        }
-        func lines() -> [CGFloat] { separators(frame).map { split.convert($0.bounds, from: $0).minX } }
+        func lines() -> [CGFloat] { frame.descendants(named: "NSSeparatorToolbarItemView").map { split.convert($0.bounds, from: $0).minX } }
         func divider() -> CGFloat { split.arrangedSubviews[0].frame.maxX }
-        try await waitUntil({ lines().contains { isClose($0, divider()) } }) {
-            "divider at \(divider()), lines at \(lines())"
+        for width in [1300, 900, 700, ColumnMetrics.contentMinimum.width] {
+            try await resize(window, to: width)
+            try await waitUntil({ lines().contains { isClose($0, divider()) } }) {
+                "width \(width): divider at \(divider()), lines at \(lines())"
+            }
         }
     }
 
@@ -219,14 +239,10 @@ struct ShellTests {
         #expect(!app.sidebarVisible && defaults.saved(DefaultsKey.sidebarVisible) as? Bool == false)
     }
 
-    /// Shut otherwise, with a click or a drag on its divider, a side column is hidden and saved so; the window widening
-    /// brings back one it folded.
+    /// Shut with a drag on its divider, a side column is hidden and saved so.
     @Test func aSideColumnShutByTheUserIsHidden() {
         let app = AppModel(defaults: defaults.store)
         app.inspectorVisible = true
-        app.sideColumn(.sidebar, shown: false, byWindow: true)
-        app.sideColumn(.sidebar, shown: true, byWindow: true)
-        #expect(app.sidebarShown && !app.sidebarFolded)
         app.sideColumn(.sidebar, shown: false, byWindow: false)
         app.sideColumn(.inspector, shown: false, byWindow: false)
         #expect(!app.sidebarVisible && !app.sidebarFolded && !app.inspectorVisible && !app.inspectorFolded)

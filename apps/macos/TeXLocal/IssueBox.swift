@@ -1,9 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// 27.2: TextKit draws a selection in a view above the text view's background (`_NSTextSelectionView`), which would
-/// cover a box drawn there; this view sits above the text's views, takes no click, and the text view answers for it.
-/// Placed by frame, it sizes nothing itself and has no safe area under the toolbar.
+/// 27.2: TextKit's selection view would cover a box drawn in the text view's background, so the box is a view above the
+/// text's, which takes no click.
 final class IssueMessageView: NSHostingView<IssueBox> {
     convenience init(_ box: IssueBox) {
         self.init(rootView: box)
@@ -14,30 +13,15 @@ final class IssueMessageView: NSHostingView<IssueBox> {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-/// An issue at its line's end, as Xcode sets it: a box in the text's background edged in the separators' colour, the
-/// symbol in a segment of its own, a divider and the message on the source line's baseline, or the symbol alone where
-/// the line has no room for words. VoiceOver has the issues from the text view's rotor.
+/// An issue at its line's end, as Xcode sets it: the symbol in a segment of its own, a divider and the message on the
+/// source line's baseline, or the symbol alone. VoiceOver has the issues from the text view's rotor.
 struct IssueBox: View, Equatable {
-    /// Every measure of the box. Fractions of the text's size are rounded to whole points, so its edges are the band's pixels.
+    /// Xcode 27's at 13 pt: the symbol's segment twice the text's size, 5 pt after the divider, 20 after a whole message, 12
+    /// more for a count; on whole points, so the box's edges are the band's pixels.
     nonisolated enum Metrics {
-        /// The symbol's segment, as a fraction of the text's size.
-        static let segment: CGFloat = 2
-        /// The room before the message: Xcode 27's after its divider, at 13 pt.
-        static let padding: CGFloat = 5
-        /// The room after a message that is all there, as Xcode 27 leaves it at 13 pt.
-        static let trailing: CGFloat = 20
-        /// What the symbol's segment gains for the count of a line's issues before the symbol, as Xcode's.
-        static let count: CGFloat = 12
-        /// How far the count reaches into the symbol's segment, as Xcode's.
-        static let countOverlap: CGFloat = 1
-        static let symbolScale = Image.Scale.small
-        static let cornerRadius: CGFloat = 4
-        static let border: CGFloat = 1
-        static let divider: CGFloat = 1
-        /// From the band's end.
-        static let endInset: CGFloat = 1
+        static let segment: CGFloat = 2, padding: CGFloat = 5, trailing: CGFloat = 20, count: CGFloat = 12, divider: CGFloat = 1
 
-        /// The size of the symbol and of the line numbers: Xcode's 12.35 pt at 13 pt.
+        /// The symbol's and the line numbers' size: Xcode's 12.35 pt at 13 pt.
         static func small(_ size: CGFloat) -> CGFloat { size * 0.95 }
 
         static func segment(_ font: NSFont, issues: Int) -> CGFloat { (segment * font.pointSize).rounded() + (issues > 1 ? count : 0) }
@@ -49,10 +33,8 @@ struct IssueBox: View, Equatable {
     }
 
     let isError: Bool
-    /// The line's issues, counted before the symbol where there are more than one.
     let issues: Int
     let text: String?
-    /// The message cut at its tail, with an ellipsis, to the room the box has.
     let cutAtTail: Bool
     let font: NSFont
     let fill: Color
@@ -60,17 +42,17 @@ struct IssueBox: View, Equatable {
     let baseline: CGFloat
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Metrics.cornerRadius)
+        let shape = RoundedRectangle(cornerRadius: 4)
         let separator = Color(nsColor: .separatorColor)
         HStack(spacing: 0) {
             if issues > 1 {
                 onBaseline(Text(verbatim: "\(issues)"))
                     .frame(width: Metrics.count, alignment: .trailing)
-                    .offset(x: Metrics.countOverlap)
+                    .offset(x: 1)
             }
             Image(systemName: isError ? "exclamationmark.octagon" : "exclamationmark.triangle")
                 .font(.system(size: Metrics.small(font.pointSize)))
-                .imageScale(Metrics.symbolScale)
+                .imageScale(.small)
                 .foregroundStyle(isError ? .red : .yellow)
                 .frame(width: Metrics.segment(font, issues: 1))
             if let text {
@@ -83,11 +65,10 @@ struct IssueBox: View, Equatable {
         .font(Font(font as CTFont))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(fill, in: shape)
-        .overlay(shape.strokeBorder(separator, lineWidth: Metrics.border))
+        .overlay(shape.strokeBorder(separator, lineWidth: 1))
         .accessibilityHidden(true)
     }
 
-    /// On the source line's baseline, and as wide as it is unless it's to be `cut` to the room.
     private func onBaseline(_ text: Text, cut: Bool = false) -> some View {
         text.lineLimit(1).truncationMode(.tail)
             .fixedSize(horizontal: !cut, vertical: true)
@@ -96,19 +77,13 @@ struct IssueBox: View, Equatable {
     }
 }
 
-/// An issue's message for its line's end, from the core's one-line form: whole where there is room for it, then for an
-/// undefined command in the core's fewer words that keep its name ("Undefined: \name"), then cut at the tail with an
-/// ellipsis, and not at all where fewer than ten of its characters would show. The line's issues are counted in the
-/// box's symbol segment, as Xcode counts them.
+/// An issue's message for its line's end: whole where there is room, then the core's fewer words that keep an undefined
+/// command's name, then cut at the tail, and not at all where fewer than ten of its characters would show.
 struct IssueLabel {
     private let whole: String
     private let short: (text: String, width: CGFloat)?
-    /// The narrowest room for a message cut at its tail: its first ten characters and the ellipsis.
     private let leastWidth: CGFloat
-    /// The whole message's width.
     let width: CGFloat
-
-    /// The fewest of a message's characters worth showing before the ellipsis.
     static let least = 10
 
     init(_ message: String, compact: String?, font: NSFont) {
@@ -121,8 +96,7 @@ struct IssueLabel {
             : typeset(most.substring(with: least).trimmingCharacters(in: .whitespaces) + "…", in: font).width
     }
 
-    /// The message for a room this wide, or nil where it has none; `cut` where it isn't all there, and with no width
-    /// where it is to be cut at its tail to the room.
+    /// Nil where the room has none; `cut` where it isn't all there, with no width where the box cuts it at its tail.
     func text(in room: CGFloat) -> (text: String, width: CGFloat?, cut: Bool)? {
         if width <= room { return (whole, width, false) }
         if let short, short.width <= room { return (short.text, short.width, true) }
@@ -130,7 +104,7 @@ struct IssueLabel {
     }
 }
 
-/// One line of `string` in `font`, coloured as the context draws, and its width: the issues' messages and the gutter's numbers.
+/// One line of `string` in `font`, coloured as the context draws, and its width.
 func typeset(_ string: String, in font: NSFont) -> (line: CTLine, width: CGFloat) {
     let line = CTLineCreateWithAttributedString(NSAttributedString(string: string, attributes: [
         .font: font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true]))

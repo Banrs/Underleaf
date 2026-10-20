@@ -1,11 +1,7 @@
-// qa: on-screen QA driver for macOS apps (AX + CGEvent + screencapture + ScreenCaptureKit).
+// qa: on-screen QA driver for macOS apps (AX + CGEvent + screencapture).
 // Build: xcrun swiftc -O -o qa qa.swift
 import Cocoa
 import ApplicationServices
-import ScreenCaptureKit
-import CoreMedia
-import CoreImage
-import UniformTypeIdentifiers
 
 @_silgen_name("_AXUIElementGetWindow")
 func _AXUIElementGetWindow(_ e: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
@@ -49,7 +45,7 @@ let bundleID = takeOpt("--bundle") ?? env["QA_BUNDLE"] ?? "com.texlocal.mac.qa"
 let appPath = takeOpt("--app") ?? env["QA_APP"] ?? "\(SCR)/dd-frontend/Build/Products/Debug/TeXLocal.app"
 
 guard !args.isEmpty else {
-    fail("usage: qa <launch|quit|front|window|resize|move|shot|screen|menu|menus|key|type|click|move-mouse|drag|scroll|tree|find|press|set|get|toolbar|wait|wait-for|frames|lock|check> …")
+    fail("usage: qa <launch|quit|front|window|resize|move|shot|screen|menu|menus|key|type|click|move-mouse|drag|scroll|tree|find|press|set|get|toolbar|wait|wait-for|lock|check> …")
 }
 let cmd = args.removeFirst()
 
@@ -550,64 +546,6 @@ func launch() {
     emit(["pid": Int(needApp().processIdentifier), "windows": windowList()])
 }
 
-// MARK: - frames (ScreenCaptureKit)
-
-final class Sink: NSObject, SCStreamOutput {
-    var images: [(Double, CGImage)] = []
-    let ctx = CIContext()
-    let t0 = CACurrentMediaTime()
-    func stream(_ s: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, sb.isValid else { return }
-        guard let atts = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
-              let st = atts.first?[.status] as? Int, st == SCFrameStatus.complete.rawValue,
-              let pb = CMSampleBufferGetImageBuffer(sb) else { return }
-        let ci = CIImage(cvPixelBuffer: pb)
-        if let cg = ctx.createCGImage(ci, from: ci.extent) { images.append((CACurrentMediaTime() - t0, cg)) }
-    }
-}
-func recordFrames(outDir: String, seconds: Double, fps: Int) {
-    let w = mainWindow()
-    guard let wid = windowID(w) else { fail("no window id") }
-    try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
-    let sink = Sink()
-    let done = DispatchSemaphore(value: 0)
-    var err: String?
-    Task {
-        do {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            guard let sw = content.windows.first(where: { $0.windowID == wid }) else { err = "window not in shareable content"; done.signal(); return }
-            let cfg = SCStreamConfiguration()
-            let scale = NSScreen.main?.backingScaleFactor ?? 2
-            cfg.width = Int(sw.frame.width * scale); cfg.height = Int(sw.frame.height * scale)
-            cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
-            cfg.pixelFormat = kCVPixelFormatType_32BGRA
-            cfg.queueDepth = 8
-            cfg.showsCursor = false
-            let stream = SCStream(filter: SCContentFilter(desktopIndependentWindow: sw), configuration: cfg, delegate: nil)
-            try stream.addStreamOutput(sink, type: .screen, sampleHandlerQueue: DispatchQueue(label: "qa.frames"))
-            try await stream.startCapture()
-            try await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
-            try await stream.stopCapture()
-        } catch { err = "\(error)" }
-        done.signal()
-    }
-    // pump the main run loop so SCK can deliver
-    while done.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01)) }
-    if let err { fail("frames: \(err)") }
-    var stamps: [[String: Any]] = []
-    for (i, (t, img)) in sink.images.enumerated() {
-        let name = String(format: "frame-%04d.png", i)
-        let url = URL(fileURLWithPath: "\(outDir)/\(name)")
-        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { continue }
-        CGImageDestinationAddImage(dest, img, nil)
-        CGImageDestinationFinalize(dest)
-        stamps.append(["file": name, "t": (t * 1000).rounded() / 1000])
-    }
-    let d = try! JSONSerialization.data(withJSONObject: stamps, options: [.prettyPrinted])
-    try? d.write(to: URL(fileURLWithPath: "\(outDir)/frames.json"))
-    emit(["frames": stamps.count, "dir": outDir, "seconds": seconds])
-}
-
 // MARK: - commands
 
 func printTree() {
@@ -804,17 +742,14 @@ case "menu":
     guard let top = tops.first(where: { (attrStr($0, "AXTitle") ?? "").lowercased() == args[0].lowercased() }) else { fail("no menu '\(args[0])'") }
     pressAsync(top, timeout: 1.5)
     var cur = top
-    var pressedLast = false
-    for (i, name) in args.dropFirst().enumerated() {
+    for name in args.dropFirst() {
         sleepS(0.25)
         guard let menu = attrEls(cur, "AXChildren").first else { closeMenus(); fail("'\(attrStr(cur, "AXTitle") ?? "")' has no menu") }
         guard let item = findMenuItem(in: menu, name) else { closeMenus(); fail("no menu item '\(name)'") }
         if (attr(item, "AXEnabled") as? NSNumber)?.boolValue == false { closeMenus(); fail("menu item '\(name)' is disabled") }
         pressAsync(item, timeout: 1.5)
         cur = item
-        pressedLast = i == args.count - 2
     }
-    _ = pressedLast
     emit(["menu": args])
 
 case "key":
@@ -948,13 +883,11 @@ case "set":
 // qa text                     the editor's whole text
 case "caret", "insert", "text":
     checkAX()
-    let areas = search("", roots: [pickWindow(nil)], role: "AXTextArea")
     var area: AXUIElement?
     walk(pickWindow(nil)) { el, _, _ in
         if area == nil, el.role == "AXTextArea" { area = el.ref }
         return area == nil
     }
-    _ = areas
     guard let area else { fail("no text area in the window") }
     if cmd == "text" { emit(["value": attrStr(area, "AXValue") ?? ""]); break }
     if cmd == "insert" {
@@ -1033,13 +966,6 @@ case "wait-for":
         sleepS(0.3)
     }
     fail("timeout waiting for '\(t)'")
-
-case "frames":
-    checkAX(); checkScreen()
-    let secs = Double(takeOpt("--seconds") ?? "2") ?? 2
-    let fps = Int(takeOpt("--fps") ?? "60") ?? 60
-    guard let dir = args.first else { fail("usage: qa frames <out_dir> --seconds n [--fps 60]") }
-    recordFrames(outDir: dir, seconds: secs, fps: fps)
 
 default:
     fail("unknown subcommand '\(cmd)'")

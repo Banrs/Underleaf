@@ -77,9 +77,7 @@ targets:
         # actor unless it says otherwise (WWDC25 268, 270).
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
       # The core's archive by path rather than -ltexlocal_ffi: for a -l, ld64
-      # prefers a dylib of that name, and the app would then load the core
-      # from target/ on the machine that built it. The crate no longer builds
-      # one, but a checkout keeps the last it built there until cargo clean.
+      # prefers a dylib of that name, which an old checkout's target/ may hold.
       configs:
         Debug:
           OTHER_LDFLAGS: $(SRCROOT)/../../target/debug/libtexlocal_ffi.a -liconv

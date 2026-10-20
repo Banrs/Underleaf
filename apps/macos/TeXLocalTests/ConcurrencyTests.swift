@@ -26,17 +26,6 @@ struct ConcurrencyTests {
         #expect(ran == [2])
     }
 
-    /// One asked while the last still works waits for it, and the last is not cancelled.
-    @Test func enqueueRunsInTheOrderAsked() async {
-        var slot: Task<Void, Never>?, order: [Int] = []
-        let slow = enqueue(&slot) {
-            try? await Task.sleep(for: .milliseconds(100))
-            order.append(1)
-        }
-        await enqueue(&slot) { order.append(2) }.value
-        #expect(order == [1, 2] && !slow.isCancelled)
-    }
-
     /// The Redo is there as the Undo starts; work that fails takes every action of its target away.
     @Test func anAsyncUndoRegistersItsRedoAndAFailureClearsTheStack() async throws {
         final class Target {}

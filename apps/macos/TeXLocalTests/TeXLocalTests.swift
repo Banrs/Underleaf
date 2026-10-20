@@ -43,10 +43,16 @@ func newProject() async throws -> ProjectInfo {
 
 extension ProjectInfo {
     var folder: URL { Core.libraryFolder.appending(path: id) }
+
+    /// Writes `text` to the project's file at `path`, making its folders, as another app would.
+    func write(_ text: String, to path: String) throws {
+        let file = folder.appending(path: path)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try text.write(to: file, atomically: true, encoding: .utf8)
+    }
 }
 
 extension [TreeNode] {
-    /// A main file and a bibliography, as the core lists them.
     static var sources: [TreeNode] {
         [TreeNode(type: .file, name: "main.tex", path: "main.tex", kind: .tex, children: nil),
          TreeNode(type: .file, name: "references.bib", path: "references.bib", kind: .bib, children: nil)]
@@ -71,21 +77,18 @@ extension NSWindow {
     }
 }
 
-/// A controller at 600 by 500.
 func sizedController() -> PDFController {
     let controller = PDFController()
     controller.view.setFrameSize(NSSize(width: 600, height: 500))
     return controller
 }
 
-/// A controller at 600 by 500 showing `document`.
 func showing(_ document: PDFDocument) -> PDFController {
     let controller = sizedController()
     controller.show(document)
     return controller
 }
 
-/// The find bar open on `query`, and its search started.
 func openFind(_ query: String, in controller: PDFController) {
     controller.find.isOpen = true
     controller.find.text = query

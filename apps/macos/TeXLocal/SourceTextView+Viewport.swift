@@ -2,19 +2,18 @@ import AppKit
 
 /// What of the text shows and where it scrolls to, from the fragments TextKit 2 last laid out in the viewport.
 extension SourceTextView {
-    // 27.2: the top paragraph stays put: TextKit 2 keeps the offset, over heights a new width re-estimates.
+    /// 27.2: TextKit 2 re-estimates the heights above for a new width, so the top paragraph is put back; and scrolled
+    /// down, AppKit's width tracking waits for a live resize's end, so the width follows as it goes.
     override func setFrameSize(_ size: NSSize) {
         guard size.width != frame.width else { return super.setFrameSize(size) }
         let top = shownTop
         super.setFrameSize(size)
-        // 27.2: scrolled down, AppKit's tracking waits for a live resize's end, so the width follows as it goes.
         textContainer?.size.width = max(0, size.width - gutter.width - EditorGutter.trailingMargin)
         top.map(scroll(toShownTop:))
         layOutViewportOnceSettled()
     }
 
-    /// 27.2: widths changing faster than a frame (a divider dragged quickly) can leave the viewport's text gone
-    /// until it next scrolls; once they settle, TextKit lays the shown text out for the last.
+    /// 27.2: widths changing faster than a frame can leave the viewport's text gone until it next scrolls.
     func layOutViewportOnceSettled() {
         guard !viewportPending else { return }
         viewportPending = true
@@ -24,7 +23,7 @@ extension SourceTextView {
         }
     }
 
-    /// What of the text shows: the clip view's bounds less the scroll view's insets for the bars over it.
+    /// The clip view's bounds less the scroll view's insets for the bars over it.
     var shownRect: NSRect {
         guard let scroll = enclosingScrollView else { return visibleRect }
         let insets = scroll.contentInsets
@@ -40,8 +39,7 @@ extension SourceTextView {
         return (offset(top.rangeInElement.location), top.layoutFragmentFrame.minY + textContainerOrigin.y - clip.bounds.minY)
     }
 
-    /// The line half a line under the shown text's top, from the fragments last laid out as `shownTop` is; nil while
-    /// they don't reach there, which the viewport's next layout does (`laidOut`).
+    /// The line half a line under the shown text's top; nil until the fragments laid out reach there (`laidOut`).
     var topLine: Int? {
         let y = shownRect.minY + (font?.boundingRectForFont.height ?? 0) / 2
         guard let top = fragment(under: y), top.layoutFragmentFrame.minY + textContainerOrigin.y <= y else { return nil }
@@ -58,7 +56,6 @@ extension SourceTextView {
         guard let clip = enclosingScrollView?.contentView, let manager = textLayoutManager,
               let location = textRange(.caret(selectedRange().location))?.location
         else { return super.centerSelectionInVisibleArea(sender) }
-        // The shown text's middle, under the clip view's top.
         let middle = shownRect.midY - clip.bounds.minY
         scroll(location) { [unowned self] paragraph in
             guard let fragment = manager.textLayoutFragment(for: location) else { return paragraph.midY - middle }
@@ -68,19 +65,13 @@ extension SourceTextView {
         }
     }
 
-    /// Laid out first: far from the viewport the range has no rect yet, and TextKit 2's estimates above it settle as it's shown.
+    /// Laid out first: far from the viewport the range has no rect yet, and the estimates above it settle as it's shown.
     override func scrollRangeToVisible(_ range: NSRange) {
         guard let manager = textLayoutManager, enclosingScrollView != nil, let target = textRange(range)
         else { return super.scrollRangeToVisible(range) }
         for _ in 0..<2 {
             manager.ensureLayout(for: target)
-            var rect = NSRect.null
-            manager.enumerateTextSegments(in: target, type: .standard, options: .rangeNotRequired) { _, frame, _, _ in
-                rect = rect.union(frame)
-                return true
-            }
-            guard !rect.isNull else { return }
-            guard scrollToVisible(rect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)) else { return }
+            guard let rect = segments(range), scrollToVisible(rect) else { return }
             manager.textViewportLayoutController.layoutViewport()
         }
     }
@@ -90,7 +81,7 @@ extension SourceTextView {
         scroll(location) { $0.minY - top.below }
     }
 
-    /// The paragraph at `offset` at the shown text's top, which is the scroll view's top inset under the clip view's.
+    /// The paragraph at `offset` at the shown text's top.
     func scroll(toTop offset: Int) {
         guard let clip = enclosingScrollView?.contentView else { return }
         scroll(toShownTop: (offset, shownRect.minY - clip.bounds.minY))
@@ -110,8 +101,7 @@ extension SourceTextView {
         }
     }
 
-    /// The clip view scrolled: what floats over the text follows it, as a layout's end has it follow (below). TextKit
-    /// lays the viewport out again only for a scroll past what it had laid out.
+    /// What floats over the text follows a scroll: TextKit lays the viewport out again only past what it had laid out.
     func scrolled() {
         completions.follow()
         previewMath()
@@ -128,11 +118,9 @@ extension SourceTextView {
         fragments.append((offset(fragment.rangeInElement.location), fragment))
     }
 
-    /// Each time TextKit lays out the viewport: a scroll past what it had laid out, an edit, a new width.
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
-        // 27.2: until a scroll prepares content, as after a launch or a resize, TextKit's content view ends where the scroll
-        // view's insets start, so the lines it lays out under the status bar aren't drawn there.
+        // 27.2: until a scroll prepares content, the lines laid out under the status bar's inset aren't drawn.
         if !visibleRect.isEmpty, !preparedContentRect.contains(visibleRect) { prepareContent(in: visibleRect) }
         fragments.sort { $0.offset < $1.offset }
         if let from = staleColours { colour(from: from) }

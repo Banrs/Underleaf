@@ -21,7 +21,6 @@
             <Setter Property="Padding" Value="12,0,16,0" />
             <Setter Property="AllowFocusOnInteraction" Value="False" />
         </Style>
-        <!-- Visual Studio's inline diagnostics: past the end of the line, never over its text. -->
         <DataTemplate x:Key="IssueTemplate" x:DataType="local:IssueMark">
             <Grid ColumnSpacing="8" ToolTipService.ToolTip="{x:Bind Tip}">
                 <Grid.ColumnDefinitions>
@@ -77,7 +76,6 @@
             </RichEditBox.Resources>
         </RichEditBox>
         <Canvas x:Name="Overlay" Grid.Column="1">
-            <!-- The bracket a closer matches, for a moment. -->
             <Border
                 x:Name="PartnerBox"
                 BorderBrush="{ThemeResource ControlStrongStrokeColorDefaultBrush}"
@@ -87,10 +85,10 @@
                 Opacity="0" />
         </Canvas>
 
-        <!-- Notepad's find bar over the text, with VS Code's find widget's behaviour. -->
+        <!-- Notepad's find bar over the text, with VS Code's find widget's behaviour; narrow, it may cover the gutter. -->
         <Border
             x:Name="FindBar"
-            Grid.Column="1"
+            Grid.ColumnSpan="2"
             Margin="0,8,24,0"
             Padding="4"
             HorizontalAlignment="Right"
@@ -108,7 +106,7 @@
                 </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="32" />
-                    <ColumnDefinition Width="*" MinWidth="120" />
+                    <ColumnDefinition Width="*" MinWidth="64" />
                     <ColumnDefinition Width="88" />
                     <ColumnDefinition Width="32" />
                     <ColumnDefinition Width="32" />
