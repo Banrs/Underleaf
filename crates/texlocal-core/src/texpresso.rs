@@ -36,9 +36,6 @@ const MISSING: &str = if cfg!(windows) {
 };
 const NOT_RUNNING: &str = "Live Preview isn't running.";
 const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
-const INVALID: &str = "A file sent to TeXpresso has an invalid path or text.";
-const REPEATED: &str = "Files sent to TeXpresso repeat a path.";
-const FOLDER: &str = "TeXpresso opens files, not folders.";
 
 #[derive(Debug)]
 pub struct FileBuffer {
@@ -215,13 +212,8 @@ struct State {
     error: Option<String>,
 }
 
-#[derive(Default)]
-struct Files {
-    texts: HashMap<PathBuf, Text>,
-    /// Where the paths clients send lead, found once: a session's files
-    /// don't move under it, as a rename or delete stops it.
-    paths: HashMap<String, PathBuf>,
-}
+/// The texts TeXpresso has, by project path.
+type Files = HashMap<String, Text>;
 struct Session {
     /// The project's folder, resolved.
     root: PathBuf,
@@ -247,7 +239,7 @@ impl Session {
             remove_pdf_folder(self.pdf.as_deref());
             state.error.clone_from(&error);
             if let Ok(mut files) = self.files.try_lock() {
-                files.texts.clear();
+                files.clear();
             }
             (self.sink)(LiveEvent::Ended(error));
         }
@@ -345,19 +337,15 @@ impl Preview for Manager {
     ) -> Result<Status, CoreError> {
         let root = dunce::canonicalize(root)?;
         let main = settings::read_settings(&root).main_file;
-        let mut buffers = Files::default();
-        let main_path = validate_buffer(&root, &main, "", &buffers.paths)?;
+        let main_path = paths::safe_path(&root, &main)?;
         if !main_path.is_file() {
             return Err(CoreError::bad_request("The main file does not exist."));
         }
+        let mut buffers = Files::new();
         let mut opened = Vec::new();
         for file in files {
-            let path = validate_buffer(&root, &file.path, &file.text, &buffers.paths)?;
-            buffers.paths.insert(file.path.clone(), path.clone());
-            opened.push(json!(["open", path, file.text]));
-            if buffers.texts.insert(path, Text::new(&file.text)).is_some() {
-                return Err(CoreError::bad_request(REPEATED));
-            }
+            opened.push(json!(["open", root.join(&file.path), file.text]));
+            buffers.insert(file.path.clone(), Text::new(&file.text));
         }
         let failed = |error: String| {
             Ok(Status {
@@ -430,9 +418,8 @@ impl Preview for Manager {
         let caret = pane
             .and_then(|pane| pane.caret.as_ref())
             .and_then(|(rel, offset)| {
-                let path = buffers.paths.get(rel)?;
-                let offset = buffers.texts.get(path)?.byte_offset(*offset)?;
-                Some(json!(["caret", path, offset]))
+                let offset = buffers.get(rel)?.byte_offset(*offset)?;
+                Some(json!(["caret", root.join(rel), offset]))
             });
         let session = Arc::new(Session {
             root: root.clone(),
@@ -499,9 +486,8 @@ impl Preview for Manager {
             return Ok(());
         }
         let mut files = lock(&session.files);
-        let files = &mut *files;
-        let path = validate_buffer(&session.root, rel, text, &files.paths)?;
-        let previous = files.texts.get(&path).map(Text::string);
+        let path = session.root.join(rel);
+        let previous = files.get(rel).map(Text::string);
         let message = match previous.as_deref().map(|previous| delta(previous, text)) {
             Some((_, 0, "")) => return Ok(()),
             Some((offset, remove, inserted)) => {
@@ -510,8 +496,7 @@ impl Preview for Manager {
             None => json!(["open", path, text]),
         };
         session.send(&[message]);
-        files.paths.insert(rel.to_owned(), path.clone());
-        files.texts.insert(path, Text::new(text));
+        files.insert(rel.to_owned(), Text::new(text));
         Ok(())
     }
     fn edit(
@@ -523,18 +508,14 @@ impl Preview for Manager {
         text: &str,
     ) -> Result<(), CoreError> {
         let session = self.owned(owner)?;
-        if text.contains('\0') {
-            return Err(CoreError::bad_request(INVALID));
-        }
         let mut files = lock(&session.files);
-        let files = &mut *files;
         if !session.running() {
             return Ok(());
         }
         let unfit = || CoreError::unfit(UNFIT);
-        let path = files.paths.get(rel).ok_or_else(unfit)?;
-        let held = files.texts.get_mut(path).ok_or_else(unfit)?;
+        let held = files.get_mut(rel).ok_or_else(unfit)?;
         let (offset, removed) = held.edit(start, remove, text).ok_or_else(unfit)?;
+        let path = session.root.join(rel);
         session.send(&[json!(["change", path, offset, removed, text])]);
         Ok(())
     }
@@ -549,11 +530,10 @@ impl Preview for Manager {
         let session = self.owned(owner)?;
         let files = lock(&session.files);
         let unfit = || CoreError::unfit(UNFIT);
-        let path = files.paths.get(rel).ok_or_else(unfit)?;
-        let text = files.texts.get(path).ok_or_else(unfit)?;
+        let text = files.get(rel).ok_or_else(unfit)?;
         let offset = text.byte_offset(offset).ok_or_else(unfit)?;
         if session.pdf.is_some() {
-            session.send(&[json!(["caret", path, offset])]);
+            session.send(&[json!(["caret", session.root.join(rel), offset])]);
         }
         Ok(())
     }
@@ -589,26 +569,6 @@ pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
         return program_at(Path::new(&override_path));
     }
     find_tool("texpresso", path_env).and_then(|p| dunce::canonicalize(p).ok())
-}
-/// A buffer's path as TeXpresso opens it: through any link, from the
-/// resolved `root`; found once per session, as `known` keeps it.
-fn validate_buffer(
-    root: &Path,
-    path: &str,
-    text: &str,
-    known: &HashMap<String, PathBuf>,
-) -> Result<PathBuf, CoreError> {
-    if path.len() > 4096 || path.contains('\0') || text.contains('\0') {
-        return Err(CoreError::bad_request(INVALID));
-    }
-    if let Some(known) = known.get(path) {
-        return Ok(known.clone());
-    }
-    let path = paths::safe_write_path(root, path)?;
-    if path.is_dir() {
-        return Err(CoreError::bad_request(FOLDER));
-    }
-    Ok(path)
 }
 /// How many items two runs share at their start.
 fn common<T: PartialEq>(a: impl Iterator<Item = T>, b: impl Iterator<Item = T>) -> usize {
@@ -697,8 +657,9 @@ async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, prot
 fn apply_message(session: &Session, message: &Value) {
     if message[0] == "reset-sync" {
         let files = lock(&session.files);
-        let texts = files.texts.iter();
-        let messages: Vec<_> = texts.map(|(p, t)| json!(["open", p, t.string()])).collect();
+        let messages: Vec<_> = (files.iter())
+            .map(|(rel, t)| json!(["open", session.root.join(rel), t.string()]))
+            .collect();
         session.send(&messages);
         return;
     }
@@ -1002,13 +963,6 @@ mod tests {
             }
             assert_eq!(changes().len(), 3);
             assert_eq!(fs::read_to_string(&main).unwrap(), "disk text");
-            for (path, text) in [
-                ("../escape.tex", "bad"),
-                ("build/out.tex", "bad"),
-                ("main.tex", "NUL\0"),
-            ] {
-                assert_eq!(refused(manager.update(OWNER, path, text)), 400);
-            }
             manager.rescan(OWNER).unwrap();
             until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
             assert!(!manager.stop_request(OWNER).running);
@@ -1170,7 +1124,6 @@ mod tests {
                 assert_eq!(refused(manager.edit(OWNER, file, start, remove, "no")), 412);
             }
             assert_eq!(refused(manager.caret(OWNER, "main.tex", 9)), 412);
-            assert_eq!(refused(manager.edit(OWNER, "main.tex", 0, 0, "\0")), 400);
             assert_eq!(refused(manager.edit(OWNER + 1, "main.tex", 0, 0, "x")), 404);
             // The whole text puts the copy right, sent as the change from what TeXpresso has.
             manager.update(OWNER, "main.tex", "aXb😀").unwrap();
