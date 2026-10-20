@@ -169,7 +169,6 @@ Each is `{"type", "session", …}`.
 | `live` | `phase` (`stopped`/`starting`/`running`/`stopping`), `halted`, `failure`, `error`, `log`, `alert` | Title and toolbar; `alert`: show the Live Preview Log. `phase: stopped` ends the live PDF (show the build's); the session's own planned restart stays `starting` throughout, with no `stopped` between. `log`: the Live Preview Log's whole text (what went wrong, TeXpresso's error, TeX's log and output) with `alert` and while `session_live_log` says it shows, else null: keep the last one. While it shows, the log comes at most every 200 ms. |
 | `live_document` | `path`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
 | `live_page` | `page`, `path` | Draw over that page now if a live document shows and has it; otherwise drop it. The session forwards pages and documents one at a time, in the order TeXpresso writes them, and drops nothing: a page can come before its run's `live_document`. |
-| `live_restarted` | | Note “Live Preview Restarted”. |
 
 ## The editor's source
 
@@ -246,8 +245,8 @@ editor's thread.
 - **Live preview**: keys go to TeXpresso as made; one its copy can't take sends the whole text
   (retried after 750 ms if TeXpresso couldn't be asked). A rename, a new main file or a file
   gone from the tree restarts it 180 ms later; files changed on disk are sent and rescanned.
-  A preview that ends by itself with an error after more than 10 s of running restarts; otherwise
-  the error is reported. A stopped run shows `halted` once it has lasted 1 s.
+  A preview that ends by itself reports its error and stays stopped. A stopped run shows
+  `halted` until a run completes.
 - **Symbols** (labels and citations) are scanned when the session opens and 150 ms after a
   save or another app's change; the session's documents complete from them.
 

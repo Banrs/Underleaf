@@ -3,11 +3,9 @@
 //! of the session's own (`Msg::Live`) and goes on to the host as events.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::time::Instant;
 
 use super::Msg;
 use super::actor::{Actor, Later, Timer};
@@ -19,8 +17,6 @@ use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
 const DIDNT_START: &str =
     "TeXpresso didn’t start. Check its location in Settings and the log below.";
-/// A preview that ends by itself after running this long is started again.
-const RESTARTABLE_AFTER: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -50,7 +46,6 @@ pub(crate) struct Live {
     /// The host shows the Live Preview Log: the `live` event carries it.
     log_shown: bool,
     halted: bool,
-    started: Option<Instant>,
     view: Option<(u32, u32)>,
     sent_view: Option<(u32, u32)>,
     /// Where the editor's caret is, for a start; where TeXpresso was last told it is; and
@@ -149,7 +144,7 @@ impl Actor {
     }
 
     pub fn live_reset(&mut self) {
-        for timer in [Timer::Halting, Timer::Caret, Timer::Retry] {
+        for timer in [Timer::Caret, Timer::Retry] {
             self.timers.remove(&timer);
         }
         let live = &mut self.live;
@@ -157,7 +152,7 @@ impl Actor {
         live.pending.clear();
         live.synced.clear();
         live.sent.clear();
-        (live.halted, live.started, live.sent_view) = (false, None, None);
+        (live.halted, live.sent_view) = (false, None);
         (live.caret, live.settling) = (None, None);
     }
 
@@ -189,19 +184,16 @@ impl Actor {
         }
     }
 
-    /// A preview that ended for the session to start again, at once (`now`) or when its
-    /// `Timer::Restart` comes. It stays `starting` meanwhile: a host that saw it stop would
-    /// show the build's PDF in place of the live document until the new run's first one came.
-    fn restarting(&mut self, now: bool) {
+    /// A preview that ended for the session to start again when its `Timer::Restart` comes.
+    /// It stays `starting` meanwhile: a host that saw it stop would show the build's PDF in
+    /// place of the live document until the new run's first one came.
+    fn restarting(&mut self) {
         if self.closed {
             return self.ended();
         }
         self.live.phase = Phase::Starting;
         self.live_reset();
         self.publish_live(false);
-        if now {
-            self.later.push_back(Later::Restart(true));
-        }
     }
 
     /// The user's Start, `window` choosing TeXpresso's own window. A restart still pending
@@ -259,7 +251,6 @@ impl Actor {
                 let running = status.running;
                 if running {
                     self.live.phase = Phase::Running;
-                    self.live.started = Some(Instant::now());
                 } else if status.error.is_none() {
                     self.live.failure = Some(DIDNT_START.into());
                 }
@@ -281,12 +272,8 @@ impl Actor {
         true
     }
 
-    pub fn live_restart(&mut self, ended: bool) {
-        if self.live_start(true) {
-            if ended && self.live.active() {
-                self.emit("live_restarted", json!({}));
-            }
-        } else if self.live.phase != Phase::Stopped {
+    pub fn live_restart(&mut self) {
+        if !self.live_start(true) && self.live.phase != Phase::Stopped {
             // A restart that can't be tried leaves no preview to wait for.
             self.ended();
         }
@@ -522,14 +509,9 @@ impl Actor {
             LiveEvent::Log if live.log_shown => self.soon(Timer::Log),
             LiveEvent::Log => {}
             LiveEvent::Ended(error) => {
-                let restartable = error.is_some()
-                    && live
-                        .started
-                        .is_some_and(|at| at.elapsed() > RESTARTABLE_AFTER);
                 // A rename, a new main file or a file gone stopped it, to start again after.
-                let planned = self.timers.contains_key(&Timer::Restart);
-                if restartable || planned {
-                    return self.restarting(restartable);
+                if self.timers.contains_key(&Timer::Restart) {
+                    return self.restarting();
                 }
                 if let Some(error) = error {
                     live.failure = Some(error);
@@ -540,30 +522,11 @@ impl Actor {
         }
     }
 
-    /// A brace or a dollar half typed stops TeX for a moment at every other key,
-    /// so a stopped run is said so only once it has lasted a while (`live_halted`).
     fn run_ended(&mut self, run: &str) {
-        match run {
-            "partial" => {}
-            "stopped" => {
-                if !self.live.halted {
-                    self.soon(Timer::Halting);
-                }
-            }
-            _ => {
-                self.timers.remove(&Timer::Halting);
-                if self.live.halted {
-                    self.live.halted = false;
-                    self.publish_live(false);
-                }
-            }
+        if run != "partial" && self.live.halted != (run == "stopped") {
+            self.live.halted = run == "stopped";
+            self.publish_live(false);
         }
-    }
-
-    /// A stopped run has lasted: it shows as halted.
-    pub fn live_halted(&mut self) {
-        self.live.halted = true;
-        self.publish_live(false);
     }
 }
 

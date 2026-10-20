@@ -96,8 +96,8 @@ impl Doc {
 
 pub(crate) enum Later {
     Compile(bool),
-    /// Start live preview again; true: because it ended by itself.
-    Restart(bool),
+    /// Start live preview again.
+    Restart,
     FlushLive,
     Rescan,
 }
@@ -111,8 +111,6 @@ pub(crate) enum Timer {
     Symbols,
     /// The folder's changes, taken together once they settle.
     Fs,
-    /// A stopped run, shown as halted once it has lasted.
-    Halting,
     /// The caret, told to TeXpresso where it settled.
     Caret,
     /// A whole text TeXpresso couldn't be sent, sent again.
@@ -133,7 +131,6 @@ impl Timer {
             Self::Symbols | Self::Caret => 150,
             // FSEvents' latency: changes this close together are taken together.
             Self::Fs => 250,
-            Self::Halting => 1000,
             Self::Retry => 750,
             Self::Restart | Self::Disk => 180,
             // The log's whole text is copied, sent and laid out again each time, beside
@@ -369,10 +366,9 @@ impl Actor {
                 Timer::Autosave => self.autosave(),
                 Timer::Symbols => self.scan_symbols(),
                 Timer::Fs => self.files_changed_on_disk(),
-                Timer::Halting => self.live_halted(),
                 Timer::Caret => self.caret_settled(),
                 Timer::Retry => self.flush_pending(),
-                Timer::Restart => self.later.push_back(Later::Restart(false)),
+                Timer::Restart => self.later.push_back(Later::Restart),
                 Timer::Disk => self.refresh_live_disk(),
                 Timer::Log => self.publish_live(false),
             }
@@ -401,7 +397,7 @@ impl Actor {
                 Later::Compile(auto) => {
                     let _ = self.compile(auto);
                 }
-                Later::Restart(ended) => self.live_restart(ended),
+                Later::Restart => self.live_restart(),
                 Later::FlushLive => self.flush_pending(),
                 Later::Rescan => self.live_rescan(),
             }

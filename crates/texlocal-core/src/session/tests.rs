@@ -959,19 +959,16 @@ async fn a_file_changed_on_disk_goes_to_texpresso_unless_too_large_to_send() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_stopped_run_is_halted_only_once_it_has_lasted_a_second() {
-    let mut rig = Rig::new(false).await;
+async fn a_stopped_run_is_halted_until_a_run_completes() {
+    let rig = Rig::new(false).await;
     live(&rig).await;
-    let stopped = |run: &str| LiveEvent::Done(run.into());
-    rig.fake.tell(stopped("stopped"));
-    wait(500).await;
-    rig.fake.tell(stopped("complete"));
-    wait(1000).await;
+    let ended = |run: &str| LiveEvent::Done(run.into());
+    rig.fake.tell(ended("stopped"));
+    wait(1).await;
+    assert_eq!(rig.state().await["live"]["halted"], true);
+    rig.fake.tell(ended("complete"));
+    wait(1).await;
     assert_eq!(rig.state().await["live"]["halted"], false);
-    rig.fake.tell(stopped("stopped"));
-    wait(1100).await;
-    let lives = rig.of_type("live").await;
-    assert_eq!(lives.last().unwrap()["halted"], true);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1007,24 +1004,15 @@ async fn documents_and_pages_go_to_the_host_as_they_come_and_none_of_a_start_bef
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_preview_that_ends_after_ten_seconds_restarts_and_a_new_one_reports() {
-    let mut rig = Rig::new(false).await;
+async fn a_preview_that_ends_by_itself_is_reported_and_not_started_again() {
+    let rig = Rig::new(false).await;
     live(&rig).await;
-    wait(11_000).await;
-    rig.events().await;
-    rig.fake.tell(exited());
-    wait(1).await;
-    assert_eq!(rig.fake.starts.lock().unwrap().len(), 2);
-    let events = rig.events().await;
-    assert_eq!(phases(&events), ["starting", "running"]);
-    assert!(events.iter().any(|e| e["type"] == "live_restarted"));
-    // At once after its start, the end is reported.
     rig.fake.tell(exited());
     wait(1).await;
     let state = rig.state().await;
     assert_eq!(state["live"]["phase"], "stopped");
     assert_eq!(state["live"]["failure"], "TeXpresso exited");
-    assert_eq!(rig.fake.starts.lock().unwrap().len(), 2);
+    assert_eq!(rig.fake.starts.lock().unwrap().len(), 1);
 }
 
 #[tokio::test(start_paused = true)]
