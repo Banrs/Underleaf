@@ -12,13 +12,14 @@ use serde_json::{Value, json};
 
 use super::files::write_creating;
 use super::skip_unreadable;
-use super::tree::{is_text, visit_files};
+use super::tree::{file_kind, is_text, visit_files};
 use crate::analyze::Place;
 use crate::error::CoreError;
 use crate::syntax::{Text, TextEdit};
 use crate::{lf, lossy_string};
 
-/// The largest file a search reads; a data set or log that size isn't where anyone looks.
+/// The largest file but a .tex or .bib that a search reads; a data set or log that size isn't
+/// where anyone looks.
 const SEARCH_FILE_MAX: u64 = 8 << 20;
 
 #[derive(Debug, Serialize)]
@@ -150,16 +151,23 @@ fn utf16(chars: &[char]) -> u32 {
     chars.iter().map(|c| c.len_utf16() as u32).sum()
 }
 
-/// A file's bytes, or None if it can't be read or is too large to be where anyone looks.
-fn read_capped(path: &Path) -> Result<Option<Vec<u8>>, CoreError> {
-    let Some(file) = skip_unreadable(File::open(path))? else {
+/// A file's bytes, or None if it can't be read or is too large to be where anyone looks; a
+/// .tex or .bib file is read at any size, as the symbols are, since a shared bibliography can
+/// be larger and a rename must reach its keys.
+fn read_capped(abs: &Path, rel: &str) -> Result<Option<Vec<u8>>, CoreError> {
+    let Some(file) = skip_unreadable(File::open(abs))? else {
         return Ok(None);
+    };
+    let cap = match file_kind(rel) {
+        "tex" | "bib" => u64::MAX,
+        _ => SEARCH_FILE_MAX,
     };
     let mut bytes = Vec::new();
-    let Some(len) = skip_unreadable(file.take(SEARCH_FILE_MAX + 1).read_to_end(&mut bytes))? else {
+    let Some(len) = skip_unreadable(file.take(cap.saturating_add(1)).read_to_end(&mut bytes))?
+    else {
         return Ok(None);
     };
-    Ok((len as u64 <= SEARCH_FILE_MAX).then_some(bytes))
+    Ok((len as u64 <= cap).then_some(bytes))
 }
 
 /// The first `limit` lines with a match, each with its first; a file `open` holds is read
@@ -181,7 +189,7 @@ pub fn search_project(
         }
         let text = match open.get(rel) {
             Some(text) => Cow::Borrowed(text.as_str()),
-            None => match read_capped(abs)? {
+            None => match read_capped(abs, rel)? {
                 Some(bytes) => Cow::Owned(lf(lossy_string(bytes))),
                 None => return Ok(true),
             },
@@ -236,7 +244,7 @@ pub(crate) fn replace_in_files(
     to: &str,
 ) -> Result<Vec<Value>, CoreError> {
     let replace = |abs: &Path, rel: &str| -> Result<Option<(String, usize)>, CoreError> {
-        let Some(bytes) = read_capped(abs)? else {
+        let Some(bytes) = read_capped(abs, rel)? else {
             return Ok(None);
         };
         let (file, utf8) = match String::from_utf8(bytes) {
@@ -314,15 +322,26 @@ mod tests {
         let (_dir, root) = project();
         fs::write(root.join("notes.tex"), "a needle\n").unwrap();
         // Sparse: past the cap without writing it, and made of NULs that no
-        // line break splits.
+        // line break splits. A bibliography that large is read, as the symbols are, so a rename
+        // finds its keys.
         let big = fs::File::create(root.join("big.csv")).unwrap();
         big.set_len(SEARCH_FILE_MAX + 1).unwrap();
+        fs::write(root.join("big.bib"), "@misc{needle,}\n").unwrap();
+        let bib = fs::OpenOptions::new()
+            .write(true)
+            .open(root.join("big.bib"));
+        bib.unwrap().set_len(SEARCH_FILE_MAX + 1).unwrap();
         let needle = Query::new("needle", false, false);
         let hits = search_project(&root, &needle, &HashMap::new(), 10).unwrap();
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].file, "notes.tex");
+        let mut files: Vec<&str> = hits.iter().map(|hit| hit.file.as_str()).collect();
+        files.sort_unstable();
+        assert_eq!(files, ["big.bib", "notes.tex"]);
         big.set_len(SEARCH_FILE_MAX).unwrap();
-        assert!(read_capped(&root.join("big.csv")).unwrap().is_some());
+        assert!(
+            read_capped(&root.join("big.csv"), "big.csv")
+                .unwrap()
+                .is_some()
+        );
     }
 
     /// Another app's write while the replace reads the project is kept, not written over.
