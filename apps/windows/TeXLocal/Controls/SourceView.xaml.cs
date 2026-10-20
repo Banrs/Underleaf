@@ -22,12 +22,10 @@ using VirtualKey = Windows.System.VirtualKey;
 
 namespace TeXLocal.Controls;
 
-public sealed class CompletionRow(Completion item, int typed, string glyph)
+public sealed record CompletionRow(Completion Item, int Count, string Glyph)
 {
-    public Completion Item => item;
-    public string Typed => item.Label[..Math.Clamp(typed, 0, item.Label.Length)];
-    public string Rest => item.Label[Math.Clamp(typed, 0, item.Label.Length)..];
-    public string Glyph => glyph;
+    public string Typed => Item.Label[..Math.Clamp(Count, 0, Item.Label.Length)];
+    public string Rest => Item.Label[Math.Clamp(Count, 0, Item.Label.Length)..];
 }
 
 public sealed class IssueMark(IssueLine issue)
@@ -60,7 +58,7 @@ public sealed partial class SourceView : UserControl
     ElementTheme inked;
     string theme = "overleaf";
 
-    public string? Path { get; private set; }
+    public string? Path { get; set; }
     public string Text { get; private set; } = "";
     public Color Ink { get; private set; }
     public bool AutoPair { get; set; } = true;
@@ -199,8 +197,6 @@ public sealed partial class SourceView : UserControl
         scroller!.ChangeView(0, 0, null, true);
         await SetText(src.Text);
     }
-
-    public void Rename(string path) => Path = path;
 
     public void Clear()
     {
@@ -834,14 +830,6 @@ public sealed partial class SourceView : UserControl
             : new Rect(r.X + Editor.Padding.Left - scroller.HorizontalOffset, r.Y + Editor.Padding.Top - scroller.VerticalOffset, Math.Max(r.Width, 0), r.Height);
     }
 
-    (int First, int Last) VisibleLines()
-    {
-        var y = scroller!.VerticalOffset;
-        var top = Document.GetRangeFromPoint(new Point(0, y), PointOptions.ClientCoordinates).StartPosition;
-        var bottom = Document.GetRangeFromPoint(new Point(Editor.ActualWidth, y + Editor.ActualHeight), PointOptions.ClientCoordinates).StartPosition;
-        return (source!.LineAt(top), source.LineAt(bottom));
-    }
-
     /// One refresh, CaretMoved and maths preview per dispatcher turn. RichEdit can raise TextChanged after
     /// SelectionChanged, so an edit of its own is mirrored first.
     void Invalidate(bool caret = true)
@@ -868,8 +856,10 @@ public sealed partial class SourceView : UserControl
         var shown = source is not null && scroller is not null;
         Gutter.Visibility = Backdrop.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
         if (!shown) return;
-        var (first, last) = VisibleLines();
-        var caret = source!.LineAt(CaretOffset);
+        var y = scroller!.VerticalOffset;
+        var first = source!.LineAt(Document.GetRangeFromPoint(new Point(0, y), PointOptions.ClientCoordinates).StartPosition);
+        var last = source.LineAt(Document.GetRangeFromPoint(new Point(Editor.ActualWidth, y + Editor.ActualHeight), PointOptions.ClientCoordinates).StartPosition);
+        var caret = source.LineAt(CaretOffset);
         Gutter.Width = Math.Ceiling(16 + Math.Max(3, source.LineCount.ToString().Length) * advance + 8);
         // Only beside the text's viewport, so nothing shows in the find bar's band.
         var view = new Rect(0, Editor.Padding.Top, Gutter.Width + Editor.ActualWidth, Math.Max(0, Editor.ActualHeight - Editor.Padding.Top - Editor.Padding.Bottom));

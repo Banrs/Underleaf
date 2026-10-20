@@ -544,7 +544,7 @@
                                         </Grid.ColumnDefinitions>
                                         <FontIcon VerticalAlignment="Top" FontSize="16" Foreground="{ThemeResource SystemFillColorCriticalBrush}" Glyph="&#xEB90;" Visibility="{x:Bind IsError}" />
                                         <FontIcon VerticalAlignment="Top" FontSize="16" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" Visibility="{x:Bind IsWarning}" />
-                                        <TextBlock Grid.Column="1" MaxLines="2" Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Message}" />
+                                        <TextBlock Grid.Column="1" MaxLines="2" Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Item.Message}" />
                                         <TextBlock
                                             Grid.Column="2"
                                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"

@@ -17,15 +17,13 @@ using VirtualKey = Windows.System.VirtualKey;
 namespace TeXLocal.Pages;
 
 /// An issues panel row: a build's error or warning, by its index among the build's issues.
-public sealed class IssueItem(int index, LogItem item)
+public sealed record IssueItem(int Index, LogItem Item)
 {
-    public int Index => index;
-    public string Message => item.Message;
-    public bool IsError => item.Type == "error";
+    public bool IsError => Item.Type == "error";
     public bool IsWarning => !IsError;
-    public bool HasPlace => item.File is not null;
-    public string Place => item.Line is { } line ? $"{item.File}:{line}" : item.File ?? "";
-    public override string ToString() => $"{(IsError ? "Error" : "Warning")}: {Message}{(HasPlace ? $", {Place}" : "")}";
+    public bool HasPlace => Item.File is not null;
+    public string Place => Item.Line is { } line ? $"{Item.File}:{line}" : Item.File ?? "";
+    public override string ToString() => $"{(IsError ? "Error" : "Warning")}: {Item.Message}{(HasPlace ? $", {Place}" : "")}";
 }
 
 /// A project: the sidebar, the editor and the PDF, builds and their issues, all through the project's session.
@@ -214,7 +212,7 @@ public sealed partial class WorkspacePage : Page
             case "document_reload": Reload(ev.Path!, ev.Text ?? ""); break;
             case "document_closed" when ev.Path == Editor.Path: CloseEditor(); break;
             case "document_renamed" when ev.From == Editor.Path:
-                Editor.Rename(ev.To!);
+                Editor.Path = ev.To;
                 App.Window.SetTitle(id, ev.To);
                 break;
             case "conflict": Conflict(ev.Path!, ev.Kind!); break;
@@ -509,6 +507,7 @@ public sealed partial class WorkspacePage : Page
         if (element is ItemsRepeater repeater) repeater.InvalidateMeasure();
         for (var i = 0; i < VisualTreeHelper.GetChildrenCount(element); i++) Remeasure(VisualTreeHelper.GetChild(element, i));
     }
+
     void SetSplit(double to)
     {
         ratio = Math.Clamp(to, 0.1, 0.9);
