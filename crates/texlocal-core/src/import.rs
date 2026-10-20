@@ -5,9 +5,11 @@
 
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use zip::ZipArchive;
@@ -54,6 +56,10 @@ struct Incoming {
 /// Overleaf's limit on a project's files, and 100 MB.
 const TEX_FOLDER_ENTRIES: usize = 2000;
 const TEX_FOLDER_BYTES: u64 = 100 << 20;
+
+static MAGIC_COMMENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*%\s*!\s*TeX\s+(root|(?:TS-)?program)\s*=\s*(.*?)\s*$").unwrap()
+});
 
 /// `name` in the project folder `dir` ("" is the project's own).
 fn in_folder(dir: &str, name: &str) -> String {
@@ -381,8 +387,33 @@ fn file_name(path: &Path) -> String {
         .into_owned()
 }
 
-/// A .tex brings its folder, for what it inputs, includes and cites. The main file is the chosen
-/// .tex, else the likeliest top-level one, else the blank template's main.tex.
+/// What a file's first lines say as TeXShop, TeXstudio and VS Code read them, in any case:
+/// `% !TEX root = …` and `% !TEX program = …` (or `TS-program`).
+fn magic_comments(file: &Path) -> (Option<String>, Option<String>) {
+    let mut found = (None, None);
+    let Ok(file) = File::open(file) else {
+        return found;
+    };
+    for line in io::BufReader::new(file)
+        .lines()
+        .take(20)
+        .map_while(Result::ok)
+    {
+        if let Some(m) = MAGIC_COMMENT.captures(&line) {
+            let slot = if m[1].eq_ignore_ascii_case("root") {
+                &mut found.0
+            } else {
+                &mut found.1
+            };
+            slot.get_or_insert_with(|| m[2].to_string());
+        }
+    }
+    found
+}
+
+/// A .tex brings its folder, for what it inputs, includes and cites. The main file is the root
+/// the chosen .tex names, else that .tex, else the likeliest top-level one, else the blank
+/// template's main.tex; the engine is the one the chosen .tex or the main file names.
 pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
     let Opened {
         base,
@@ -412,7 +443,15 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
             dest.flush()?;
         }
         // latexmk would read a name starting with "-" as an option.
-        let main = if let Some(main) = main.filter(|main| !main.starts_with('-')) {
+        let chosen = main.filter(|main| !main.starts_with('-'));
+        let (named_root, program) = (chosen.as_deref())
+            .map(|chosen| magic_comments(&root.join(chosen)))
+            .unwrap_or_default();
+        // The chosen .tex is at the project's top, so the root it names is relative to that.
+        let named_root = named_root
+            .and_then(|named| paths::safe_rel_file(&named).ok())
+            .filter(|rel| root.join(rel).is_file());
+        let main = if let Some(main) = named_root.or(chosen) {
             main
         } else if let Some(main) = projects::guess_main_file(root)? {
             main
@@ -421,7 +460,17 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
             fs::write(root.join(file), content)?;
             file.to_string()
         };
-        write_settings(root, &json!({ "mainFile": main }))?;
+        let program = program.or_else(|| magic_comments(&root.join(&main)).1);
+        let mut settings = json!({ "mainFile": main });
+        if let Some(engine) = program.and_then(|program| {
+            let program = program.to_lowercase();
+            ["xelatex", "lualatex", "pdflatex"]
+                .into_iter()
+                .find(|engine| program.contains(engine))
+        }) {
+            settings["engine"] = engine.into();
+        }
+        write_settings(root, &settings)?;
         Ok(())
     })
 }
@@ -430,6 +479,7 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
 mod tests {
     use super::*;
     use crate::projects::testing::{files_in, library, with_project, zip_of, zip_with};
+    use crate::settings::{Engine, read_settings};
 
     fn projects(service: &Service) -> usize {
         fs::read_dir(&service.data_dir).unwrap().count()
@@ -693,6 +743,39 @@ mod tests {
         assert_eq!(info.main_file, "main.tex");
         let files = ["main.tex", "refs.bib"];
         assert_eq!(files_in(&service.data_dir.join(&info.id)), files);
+    }
+
+    #[test]
+    fn a_tex_naming_its_root_and_program_imports_with_them_where_they_hold() {
+        let (dir, service) = library();
+        let src = dir.path().join("Book");
+        fs::create_dir_all(src.join("parts")).unwrap();
+        fs::write(src.join("parts/book.tex"), "\\documentclass{book}").unwrap();
+        fs::write(dir.path().join("main.tex"), "\\documentclass{book}").unwrap();
+        for (chapter_head, main, engine) in [
+            (
+                "%!TEX TS-program = LuaLaTeX\n% !TeX root = parts/../parts/book.tex\n",
+                "parts/book.tex",
+                Engine::Lualatex,
+            ),
+            // A root outside what comes, or not there, is ignored; the program still holds.
+            (
+                "% !TEX root = ../main.tex\n% !tex program = xelatex\n",
+                "chapter.tex",
+                Engine::Xelatex,
+            ),
+            ("% !TEX root = gone.tex\n", "chapter.tex", Engine::Pdflatex),
+        ] {
+            fs::write(
+                src.join("chapter.tex"),
+                format!("{chapter_head}\\chapter{{A}}"),
+            )
+            .unwrap();
+            let info = import_project(&service, &src.join("chapter.tex")).unwrap();
+            assert_eq!(info.main_file, main);
+            let root = service.data_dir.join(&info.id);
+            assert_eq!(read_settings(&root).engine, engine);
+        }
     }
 
     #[test]
