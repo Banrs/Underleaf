@@ -71,9 +71,6 @@ final class TeXpressoSession {
     private(set) var log = ""
     private(set) var used = false
     private var acknowledged = false
-    @ObservationIgnored var onAlert: () -> Void = {}
-    @ObservationIgnored var onEnded: () -> Void = {}
-    @ObservationIgnored private var logWatch: Task<Void, Never>?
 
     var active: Bool { phase == .starting || phase == .running }
     var needsAttention: Bool { halted || !acknowledged && (failure != nil || error != nil) }
@@ -86,17 +83,6 @@ final class TeXpressoSession {
         }
     }
 
-    /// The session sends the log while the panel shows it, and an ended session's trouble counts as seen once the log closes.
-    func watchLog(_ shows: @escaping @MainActor @Sendable () -> Bool, tell: @escaping @MainActor (Bool) -> Void) {
-        logWatch = track(shows, initial: false) { [weak self] shows in
-            guard let self else { return }
-            tell(shows)
-            if !shows, phase == .stopped { acknowledged = true }
-        }
-    }
-
-    isolated deinit { logWatch?.cancel() }
-
     // MARK: - The session's state
 
     /// At once, not when the session says so: the toggle that asked follows the click.
@@ -107,21 +93,14 @@ final class TeXpressoSession {
 
     func stopping() { if active { phase = .stopping } }
 
-    /// Stop's answer, for a preview that had ended already and sends no event.
-    func stopped(_ state: LiveState) {
-        if state.phase == .stopped, phase == .stopping { receive(state) }
-    }
+    /// An ended session's trouble counts as seen once its log closes.
+    func logClosed() { if phase == .stopped { acknowledged = true } }
 
     func receive(_ state: LiveState) {
-        let was = phase
-        if state.phase == .starting, was == .stopped { acknowledged = false }
+        if state.phase == .starting, phase == .stopped { acknowledged = false }
         (phase, halted, failure, error) = (state.phase, state.halted, state.failure, state.error)
         if let log = state.log { self.log = log }
-        if state.alert == true {
-            acknowledged = false
-            onAlert()
-        }
-        if phase == .stopped, was != .stopped { onEnded() }
+        if state.alert == true { acknowledged = false }
     }
 }
 

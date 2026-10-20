@@ -16,7 +16,9 @@ extension ProjectModel {
         guard let session else { return }
         texpresso.stopping()
         Task {
-            if let state = try? await core.call("session_live_stop", ["session": session], as: LiveState.self) { texpresso.stopped(state) }
+            // A preview that had ended already sends no event.
+            if let state = try? await core.call("session_live_stop", ["session": session], as: LiveState.self), state.phase == .stopped,
+               texpresso.phase == .stopping { liveChanged(state) }
         }
         // Its pages go now, not as the stop ends.
         Task { await endLivePDF() }
@@ -43,7 +45,10 @@ extension ProjectModel {
 
     /// A run's PDFs start afresh.
     func liveChanged(_ state: LiveState) {
+        let was = texpresso.phase
         texpresso.receive(state)
+        if state.alert == true { panel.show(.texpresso) }
+        if state.phase == .stopped, was != .stopped { Task { await endLivePDF() } }
         if state.phase != .running { pdf.endLiveRun() }
     }
 

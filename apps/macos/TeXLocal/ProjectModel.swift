@@ -84,6 +84,7 @@ final class ProjectModel {
     /// A finished build's PDF is shown before the next build event.
     @ObservationIgnored private var buildLane: Task<Void, Never>?
     @ObservationIgnored private var closing: Task<Void, Never>?
+    @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
     @ObservationIgnored var trashed: [UndoableTrash] = []
     @ObservationIgnored var exportFolder: URL?
     private(set) var closed = false
@@ -93,12 +94,12 @@ final class ProjectModel {
         self.app = app
         search = ProjectSearch(id: id)
         tree = FileTree(id: id)
-        texpresso.watchLog { [panel] in panel.showsLiveLog } tell: { [weak self] shown in
-            guard let self, let session else { return }
-            core.send("session_live_log", ["session": session, "shown": shown])
+        // The session sends the log while the panel shows it.
+        liveLogWatch = track({ [panel] in panel.showsLiveLog }, initial: false) { [weak self] shown in
+            guard let self else { return }
+            if let session { core.send("session_live_log", ["session": session, "shown": shown]) }
+            if !shown { texpresso.logClosed() }
         }
-        texpresso.onAlert = { [weak self] in self?.panel.show(.texpresso) }
-        texpresso.onEnded = { [weak self] in Task { await self?.endLivePDF() } }
         tree.onChange = { [weak self] in
             self?.openKindChanged()
             self?.analyze()
@@ -456,6 +457,7 @@ final class ProjectModel {
         tree.close()
         syncTask?.cancel()
         pdfLoad?.cancel()
+        liveLogWatch?.cancel()
         if let session {
             core.forget(session)
             closing = Task { [uiStateWrites] in
