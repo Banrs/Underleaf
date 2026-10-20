@@ -99,7 +99,7 @@ apps/windows/
 | Pages | `Frame`: Home, Workspace, Settings; the workspace stays cached under Settings | `NavigationView` switches sections, which this app hasn't |
 | Commands | The page's `MenuBar` lent to the title bar (`MainWindow.SetMenu`); a `CommandBar`, Compile in an `AppBarElementContainer` | A menu row of its own pushes the commands down a row |
 | Navigation pane | `SplitView` (inline from 1008, overlay on acrylic below) with Word's search box, a `SelectorBar` and three `TreeView`s | NavigationView is not a file tree |
-| Splitters | `Sizer`, ~70 lines: the gap between layers, a grip under the pointer | Toolkit 8.2 pulls the 1.6 metapackage; move when 8.3 is stable |
+| Splitters | `Sizer`, ~90 lines: the gap between layers, a grip under the pointer, a thumb to UI Automation | Toolkit 8.2 pulls the 1.6 metapackage; move when 8.3 is stable |
 | Settings cards | `Card`, a `ContentControl` styled in Generic.xaml | No Community Toolkit |
 | Home | Templates an `ItemsControl` of subtle buttons with `PagePreview`; Recent a `ListView` | A `GridView` of templates would select |
 | Accelerators | `Shortcut.Keys`/`Scope` attached properties | OEM keys have no XAML name |
@@ -192,14 +192,14 @@ Logic the Windows app needs that belongs in a crate, not C#. What the core alrea
 | App | Open Recent, Dock menu, opens files from Finder | None (a jump list, file associations) | UI |
 | Home | Engine for new projects, search, drop to import | None | Core 2, 7; UI |
 | Workspace | Inspector with the engine | Build menu toggles, no engine | Design; UI |
-| Sidebar | Drag to move, Add Files…, undoable trash; outline follows the scroll | Drop from Explorer, Recycle Bin, no undo; caret only | UI |
+| Sidebar | Drag to move, undoable trash; outline follows the scroll | Drop from Explorer, Recycle Bin, no undo; caret only | UI |
 | Editor | Spelling over `code_ranges`, Writing Tools | Spell check off | UI; Platform |
 | Editor | `drop_text`, gutter selection, per-file undo, double-click to the PDF | None; undo cleared on switch | UI |
 | Editor | Issue bands, underlined command (`tokens`), `compact` text | Badge and short text, first issue on the line | UI; Core 14 |
 | PDF | Find, selection, copy, SyncTeX to the word | None; to the line | Core 6 |
 | PDF | A mark where SyncTeX has no box; nearest line from whitespace | Scroll only; nothing | Core 10, 30 |
-| PDF | Print, Export as PDF, Share, scroll to the caret after compiling | None | UI |
-| Panel | Filter, log find, issue menu | Copy log only | UI |
+| PDF | Print, scroll to the caret after compiling | None | UI |
+| Panel | Log find | The filter keeps matching lines | UI |
 | Live | Pane or TeXpresso window, log, restarts | None | Core 12 |
 | Settings | Template, engine, line numbers, sync after compile, Live Preview | None; raw latexmk line | Core 2, 7, 12; UI |
 
