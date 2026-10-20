@@ -271,7 +271,6 @@ final class ProjectModel {
             if changed.paths.contains(where: { tree.node(at: $0)?.kind == .tex }) { analyze() }
         case .live(let state): liveChanged(state)
         case .livePDF(let read): showLive(read)
-        case .liveRestarted: notices.note(String(localized: "Live Preview Restarted"))
         }
     }
 

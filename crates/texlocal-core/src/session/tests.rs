@@ -919,12 +919,17 @@ async fn a_file_changed_on_disk_goes_to_texpresso_unless_too_large_to_send() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_stopped_run_is_halted_until_a_run_completes() {
+async fn a_stopped_run_is_halted_only_once_it_has_lasted_a_second() {
     let rig = Rig::new(false).await;
     live(&rig).await;
     let ended = |run: &str| LiveEvent::Done(run.into());
     rig.fake.tell(ended("stopped"));
-    wait(1).await;
+    wait(500).await;
+    rig.fake.tell(ended("complete"));
+    wait(1000).await;
+    assert_eq!(rig.state().await["live"]["halted"], false);
+    rig.fake.tell(ended("stopped"));
+    wait(1100).await;
     assert_eq!(rig.state().await["live"]["halted"], true);
     rig.fake.tell(ended("complete"));
     wait(1).await;

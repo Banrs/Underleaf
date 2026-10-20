@@ -129,7 +129,7 @@ impl Actor {
     }
 
     pub fn live_reset(&mut self) {
-        for timer in [Timer::Caret, Timer::Retry] {
+        for timer in [Timer::Caret, Timer::Halting, Timer::Retry] {
             self.timers.remove(&timer);
         }
         let live = &mut self.live;
@@ -485,8 +485,21 @@ impl Actor {
     }
 
     fn run_ended(&mut self, run: &str) {
-        if run != "partial" && self.live.halted != (run == "stopped") {
-            self.live.halted = run == "stopped";
+        match run {
+            "partial" => {}
+            // A brace or a dollar half typed stops TeX for a moment at every other key, so a
+            // stopped run shows as halted only once it has lasted.
+            "stopped" => self.soon(Timer::Halting),
+            _ => {
+                self.timers.remove(&Timer::Halting);
+                self.live_halted(false);
+            }
+        }
+    }
+
+    pub fn live_halted(&mut self, halted: bool) {
+        if self.live.halted != halted {
+            self.live.halted = halted;
             self.publish_live(false);
         }
     }

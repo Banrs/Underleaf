@@ -94,6 +94,7 @@ pub(crate) enum Timer {
     Symbols,
     Fs,
     Caret,
+    Halting,
     Retry,
     Restart,
     Disk,
@@ -108,6 +109,7 @@ impl Timer {
             // FSEvents' latency: changes this close together are taken together.
             Self::Fs => 250,
             Self::Retry => 750,
+            Self::Halting => 1000,
             Self::Restart | Self::Disk => 180,
             // The log's whole text is copied, sent and laid out again each time, beside pages that
             // must land within a frame.
@@ -330,6 +332,7 @@ impl Actor {
                 Timer::Symbols => self.scan_symbols(),
                 Timer::Fs => self.files_changed_on_disk(),
                 Timer::Caret => self.caret_settled(),
+                Timer::Halting => self.live_halted(true),
                 Timer::Retry => self.flush_pending(),
                 Timer::Restart => self.later.push_back(Later::Restart),
                 Timer::Disk => self.refresh_live_disk(),

@@ -17,7 +17,6 @@ nonisolated enum SessionEvent: Sendable {
     case live(LiveState)
     /// A `live_document` or `live_page`, its PDF read already.
     case livePDF(LiveRead)
-    case liveRestarted
 
     /// Nil for a type the app has no use for.
     init?(_ type: String, _ decoder: any Decoder) throws {
@@ -38,7 +37,6 @@ nonisolated enum SessionEvent: Sendable {
         case "live": self = .live(try fields())
         case "live_document": self = .livePDF(LiveRead(try fields(LiveDocumentEvent.self)))
         case "live_page": self = .livePDF(LiveRead(try fields(LivePageEvent.self)))
-        case "live_restarted": self = .liveRestarted
         default: return nil
         }
     }
