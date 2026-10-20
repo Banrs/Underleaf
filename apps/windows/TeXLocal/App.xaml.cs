@@ -3,6 +3,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.VisualBasic.FileIO;
+using Microsoft.Windows.AppLifecycle;
 using TeXLocal.Bridge;
 
 namespace TeXLocal;
@@ -74,6 +75,8 @@ public partial class App : Application
         OpenCore();
         Window = new MainWindow();
         Window.Activate();
+        // A later launch, handed over by Program.Main.
+        AppInstance.GetCurrent().Activated += (_, _) => Window.DispatcherQueue.TryEnqueue(Window.Arrive);
         if (!Smoke) return;
         // A new blank project, opened: the workspace ends the run once its session is open.
         if (Core is null) ExitSmoke(CoreError);

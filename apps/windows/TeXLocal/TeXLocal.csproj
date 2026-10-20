@@ -13,6 +13,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\TeXLocal.ico</ApplicationIcon>
     <Version>0.2.0</Version>
+    <!-- Program.cs's Main, which hands a later launch to the first. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

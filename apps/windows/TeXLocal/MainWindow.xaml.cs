@@ -68,6 +68,13 @@ public sealed partial class MainWindow : Window
         Pages.Navigate(typeof(HomePage));
     }
 
+    /// A later launch brings the window forward; its process has let this one take the foreground.
+    public void Arrive()
+    {
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter) presenter.Restore();
+        Activate();
+    }
+
     /// The project's menus in the title bar; null takes them away.
     public void SetMenu(MenuBar? menu) => Bar.Content = menu;
 
