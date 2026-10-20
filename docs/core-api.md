@@ -196,7 +196,7 @@ editor's thread.
   | `delete_backward` | `selection`, [`autoPair` true] | as `type` |
   | `insert_newline` | `selection` | as `type` |
   | `partner` | `at` | the matching bracket's offset, or null |
-  | `completions` | `caret`, [`explicit` false] | the offered completions; in a file's argument (`\input`, `\includegraphics`, `\bibliography`) the project's files, of `kind` `file` |
+  | `completions` | `caret`, [`explicit` false] | the offered completions; in a file's argument (`\input`, `\includegraphics`, `\bibliography`) the project's files, of `kind` `file`; the project's own commands and environments come first |
   | `start_snippet` | `fields`, `at` | the first field's range |
   | `end_snippet` | | whether one was open |
   | `tab` | `selections`, [`step` 1] | the next field, or the indent |

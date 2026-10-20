@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 pub use call::call;
 use complete::SnippetField;
-pub use complete::Symbols;
+pub use complete::{Defined, Symbols};
 use highlight::{Highlight, HighlightKind};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -21,13 +21,20 @@ pub fn scan_symbols(root: &Path, facts: &Files) -> Result<Symbols, CoreError> {
         Ok(true)
     })?;
     facts.keep(files.keys());
-    fn dedup<'a>(symbols: impl Iterator<Item = &'a String>) -> Vec<String> {
+    /// The first of each name.
+    fn dedup<'a, T: Clone>(
+        symbols: impl Iterator<Item = &'a T>,
+        name: fn(&'a T) -> &'a str,
+    ) -> Vec<T> {
         let mut seen = HashSet::new();
-        symbols.filter(|s| seen.insert(*s)).cloned().collect()
+        symbols.filter(|s| seen.insert(name(s))).cloned().collect()
     }
+    let all = files.values();
     Ok(Symbols {
-        citations: dedup(files.values().flat_map(|f| &f.citations)),
-        labels: dedup(files.values().flat_map(|f| &f.labels)),
+        citations: dedup(all.clone().flat_map(|f| &f.citations), String::as_str),
+        labels: dedup(all.clone().flat_map(|f| &f.labels), String::as_str),
+        commands: dedup(all.clone().flat_map(|f| &f.commands), |c| &c.name),
+        environments: dedup(all.flat_map(|f| &f.environments), String::as_str),
         ..Symbols::default()
     })
 }

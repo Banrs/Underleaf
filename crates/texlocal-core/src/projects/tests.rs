@@ -279,6 +279,27 @@ fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
 }
 
 #[test]
+fn the_symbol_scan_reads_the_commands_and_environments_a_project_defines() {
+    let (_dir, root) = project();
+    let main = "\\newcommand{\\R}{\\mathbb{R}}\n\\newcommand*\\pair[2]{(#1, #2)}\n\
+        \\newcommand{\\opt}[2][x]{#1#2} \\DeclareMathOperator*{\\argmax}{arg\\,max}\n\
+        \\newenvironment{thm}[1]{}{} % \\newcommand{\\gone}{}\n\
+        \\newenvironment{\\bad}{}{} \\newcommand{}{} \\newcommand{\\R}[1]{}\n";
+    fs::write(root.join("main.tex"), main).unwrap();
+    let found = scan_symbols(&root, &Files::default()).unwrap();
+    let commands: Vec<_> = found
+        .commands
+        .iter()
+        .map(|c| (c.name.as_str(), c.arguments))
+        .collect();
+    assert_eq!(
+        commands,
+        [("\\R", 0), ("\\pair", 2), ("\\opt", 1), ("\\argmax", 0)]
+    );
+    assert_eq!(found.environments, ["thm"]);
+}
+
+#[test]
 fn the_symbol_scan_reads_a_file_again_only_once_its_stamp_changes() {
     let (_dir, root) = project();
     let file = root.join("main.tex");

@@ -13,7 +13,7 @@ use serde::Serialize;
 use crate::projects::file_kind;
 use crate::stamp::Stamp;
 use crate::syntax::scan::{Scanner, Visit};
-use crate::syntax::{headings, prose, scan};
+use crate::syntax::{Defined, headings, prose, scan};
 use crate::{lock, paths};
 
 // What a title drops whole: \texorpdfstring's TeX argument (its PDF string is
@@ -70,6 +70,8 @@ pub struct Facts {
     pub labels: Vec<String>,
     /// A .bib file's keys, or a .tex file's \bibitems.
     pub citations: Vec<String>,
+    pub commands: Vec<Defined>,
+    pub environments: Vec<String>,
     pub class: Option<headings::DocumentClass>,
 }
 
@@ -142,6 +144,18 @@ impl Visit for Names<'_> {
             "bibitem" => self.1.citations.extend(braced(self.0, name_end).0),
             "documentclass" if self.1.class.is_none() => {
                 self.1.class = headings::class_at(self.0, name_end);
+            }
+            "newcommand" | "DeclareMathOperator" | "newenvironment" => {
+                let command = name != "newenvironment";
+                if let Some(defined) = defined(self.0, name_end)
+                    && defined.name.starts_with('\\') == command
+                {
+                    if command {
+                        self.1.commands.push(defined);
+                    } else {
+                        self.1.environments.push(defined.name);
+                    }
+                }
             }
             _ => self.math_command(name, start, name_end),
         }
@@ -346,6 +360,36 @@ fn walk(
     }
     into.outline.extend(placed(&facts.headings[at..]));
     into.words += facts.words;
+}
+
+/// What \newcommand, \DeclareMathOperator or \newenvironment defines, named braced or not, with
+/// the arguments it takes in braces: as many as its first option counts, but for an optional one.
+fn defined(units: &[u16], name_end: usize) -> Option<Defined> {
+    let (name, stop) = match braced(units, name_end) {
+        (Some(name), stop) => (name.trim().to_owned(), stop),
+        (None, stop) if units.get(stop) == Some(&(b'\\' as u16)) => {
+            let letters = units[stop + 1..]
+                .iter()
+                .take_while(|&&u| u < 128 && (u as u8).is_ascii_alphabetic());
+            let end = stop + 1 + letters.count();
+            (String::from_utf16_lossy(&units[stop..end]), end)
+        }
+        _ => return None,
+    };
+    if name.trim_start_matches('\\').is_empty() {
+        return None;
+    }
+    let mut options = Vec::new();
+    scan::arguments(units, stop, |piece, braced| {
+        if !braced {
+            options.push(String::from_utf16_lossy(&units[piece]));
+        }
+    });
+    let count = options.first().and_then(|count| count.trim().parse().ok());
+    let arguments = count
+        .unwrap_or(0_usize)
+        .saturating_sub(usize::from(options.len() > 1));
+    Some(Defined { name, arguments })
 }
 
 fn joined(folder: &str, name: &str) -> String {
