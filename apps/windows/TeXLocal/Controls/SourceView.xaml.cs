@@ -29,8 +29,9 @@ public sealed record CompletionRow(Completion Item, int Count, string Glyph)
     public string Rest => Item.Label[Math.Clamp(Count, 0, Item.Label.Length)..];
 }
 
-/// An issue's box at its line's end, as the Mac's: the message where there is room, then the core's fewer words that keep
-/// an undefined command's name, then cut at the tail, and the badge alone where fewer than ten characters would show.
+/// An issue's label at its line's end, as Visual Studio 2022's inline diagnostics: the message where there is room, then
+/// the core's fewer words that keep an undefined command's name, then cut at the tail, and the badge alone where fewer
+/// than ten characters would show.
 public sealed class IssueMark(IssueLine issue) : INotifyPropertyChanged
 {
     const int Least = 10;
@@ -78,7 +79,7 @@ public sealed partial class SourceView : UserControl
     const int RowHeight = 32, ShownRows = 8, LabelInset = 1 + 12 + 16 + 12, Badge = 16;
     // Asynchronous, so the first text goes in after the layout pass that completes it.
     readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    readonly List<(IssueLine Issue, IssueMark Label, FrameworkElement Mark, FrameworkElement Band, FrameworkElement[] Underlines)> marks = [];
+    readonly List<(IssueLine Issue, IssueMark Label, FrameworkElement Mark, Polyline[] Squiggles)> marks = [];
     readonly DispatcherQueueTimer partnerTimer;
     readonly Windows.UI.ViewManagement.UISettings system = new();
     Source? source;
@@ -1067,26 +1068,19 @@ public sealed partial class SourceView : UserControl
         }
 
         var right = Overlay.ActualWidth - Editor.Padding.Right;
-        foreach (var (issue, label, mark, band, underlines) in marks)
+        foreach (var (issue, label, mark, squiggles) in marks)
         {
             var seen = issue.Line >= first && issue.Line <= last;
             var start = seen ? source.LineStart(issue.Line) : 0;
-            // The caret's line has the current line's fill in place of its band, as on the Mac.
-            var paragraph = seen && issue.Line != caret ? RectOf(start, End(issue.Line)) : null;
-            band.Visibility = paragraph is null ? Visibility.Collapsed : Visibility.Visible;
-            if (paragraph is { } p)
-            {
-                (band.Width, band.Height) = (Backdrop.ActualWidth, p.Height);
-                Canvas.SetTop(band, p.Y);
-            }
-            for (var i = 0; i < underlines.Length; i++)
+            for (var i = 0; i < squiggles.Length; i++)
             {
                 var token = seen ? RectOf(start + issue.Tokens[i].Start, start + issue.Tokens[i].End) : null;
-                underlines[i].Visibility = token is null ? Visibility.Collapsed : Visibility.Visible;
+                squiggles[i].Visibility = token is null ? Visibility.Collapsed : Visibility.Visible;
                 if (token is not { } t) continue;
-                underlines[i].Width = t.Width;
-                Canvas.SetLeft(underlines[i], t.X);
-                Canvas.SetTop(underlines[i], t.Bottom - underlines[i].Height);
+                Squiggle(squiggles[i].Points, t.Width);
+                Canvas.SetLeft(squiggles[i], t.X);
+                // In the line's descent, under the baseline, as Visual Studio draws it.
+                Canvas.SetTop(squiggles[i], t.Bottom - 3);
             }
             var end = seen ? RectOf(End(issue.Line), End(issue.Line)) : null;
             var x = (end?.X ?? 0) + 16;
@@ -1104,28 +1098,30 @@ public sealed partial class SourceView : UserControl
         }
     }
 
+    /// A zigzag 2 px deep every 4 px, redrawn only when the token's width changes.
+    static void Squiggle(PointCollection points, double width)
+    {
+        if (points.Count > 0 && points[points.Count - 1].X == width) return;
+        points.Clear();
+        for (var x = 0.0; x < width; x += 2) points.Add(new Point(x, x % 4));
+        points.Add(new Point(width, 2 - Math.Abs(width % 4 - 2)));
+    }
+
     public void SetIssues(IssueLine[] lines)
     {
-        foreach (var (_, _, mark, band, underlines) in marks)
-        {
-            Backdrop.Children.Remove(band);
-            foreach (var shown in (FrameworkElement[])[mark, .. underlines]) Overlay.Children.Remove(shown);
-        }
+        foreach (var (_, _, mark, squiggles) in marks)
+            foreach (var shown in (FrameworkElement[])[mark, .. squiggles]) Overlay.Children.Remove(shown);
         marks.Clear();
-        FrameworkElement Load(string template, Canvas layer)
-        {
-            var made = (FrameworkElement)((DataTemplate)Resources[template]).LoadContent();
-            made.Visibility = Visibility.Collapsed;
-            layer.Children.Add(made);
-            return made;
-        }
         foreach (var issue in lines)
         {
             var label = new IssueMark(issue);
-            var mark = Load("IssueTemplate", Overlay);
-            mark.DataContext = label;
+            var mark = (FrameworkElement)((DataTemplate)Resources["IssueTemplate"]).LoadContent();
+            (mark.DataContext, mark.Visibility) = (label, Visibility.Collapsed);
             mark.Tapped += (_, _) => IssueInvoked?.Invoke(issue);
-            marks.Add((issue, label, mark, Load("IssueBandTemplate", Backdrop), issue.Tokens.Select(_ => Load("IssueTokenTemplate", Overlay)).ToArray()));
+            var style = (Style)Resources[issue.Error ? "ErrorSquiggleStyle" : "WarningSquiggleStyle"];
+            Polyline[] squiggles = [.. issue.Tokens.Select(_ => new Polyline { Style = style, Visibility = Visibility.Collapsed })];
+            foreach (var shown in (FrameworkElement[])[mark, .. squiggles]) Overlay.Children.Add(shown);
+            marks.Add((issue, label, mark, squiggles));
         }
         Invalidate(false);
     }
