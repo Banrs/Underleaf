@@ -697,6 +697,8 @@ public sealed partial class WorkspacePage : Page
     void OnReplace(object sender, RoutedEventArgs e) => Editor.ShowFind(true);
     void OnFindNext(object sender, RoutedEventArgs e) => Editor.FindNext(true);
     void OnFindPrevious(object sender, RoutedEventArgs e) => Editor.FindNext(false);
+    void OnShiftRight(object sender, RoutedEventArgs e) => Editor.ShiftLines(1);
+    void OnShiftLeft(object sender, RoutedEventArgs e) => Editor.ShiftLines(-1);
     void OnMoveLineUp(object sender, RoutedEventArgs e) => Editor.MoveLines(true);
     void OnMoveLineDown(object sender, RoutedEventArgs e) => Editor.MoveLines(false);
     void OnActualSize(object sender, RoutedEventArgs e) => Pdf.ZoomTo(1);

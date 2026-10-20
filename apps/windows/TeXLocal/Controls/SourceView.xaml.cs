@@ -402,6 +402,8 @@ public sealed partial class SourceView : UserControl
         else if (source is null || composing) return;
         else if (ctrl && !alt && !shift && e.Key == VirtualKey.Space) Complete(true);
         else if (alt && !ctrl && !shift && e.Key is VirtualKey.Up or VirtualKey.Down) MoveLines(e.Key == VirtualKey.Up);
+        // Ctrl+] and Ctrl+[: the keys of ] and [ on a US layout (VK_OEM_6, VK_OEM_4), as Visual Studio reads them.
+        else if (ctrl && !alt && !shift && (int)e.Key is 219 or 221) ShiftLines((int)e.Key == 221 ? 1 : -1);
         else
         {
             e.Handled = offered is not null && plain && Completing(e.Key)
@@ -547,6 +549,13 @@ public sealed partial class SourceView : UserControl
         else return false;
         return true;
     }
+
+    /// Shift right and Shift left: the lines, even from within a snippet's field, which Tab would leave for the next.
+    public void ShiftLines(int step) => Command(() =>
+    {
+        source!.Call<bool>("end_snippet", new { });
+        Tab(step);
+    });
 
     public bool MoveLines(bool up) => Apply(source?.Call<Change>("move_lines", new { selections = new[] { Selected }, up }));
 
