@@ -117,7 +117,7 @@ nonisolated struct CompileResult: Decodable {
 
 nonisolated struct SearchHit: Decodable, Identifiable {
     let file: String
-    let line: Int
+    let line, column: Int
     let before, match, after: String
 
     var id: String { "\(file):\(line):\(before.count)" }
