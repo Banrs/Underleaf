@@ -169,12 +169,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let kept = menu.items.filter { item in
             !unwanted.contains { action in item.action == action || item.submenu?.items.contains { $0.action == action } == true }
         }
-        menu.removeAllItems()
-        // A separator only between two groups.
-        for item in ours + [.separator()] + kept where !item.isSeparatorItem || menu.items.last?.isSeparatorItem == false {
-            menu.addItem(item)
-        }
-        if menu.items.last?.isSeparatorItem == true { menu.removeItem(at: menu.numberOfItems - 1) }
+        menu.tidy(ours + [.separator()] + kept)
         return menu
     }
 

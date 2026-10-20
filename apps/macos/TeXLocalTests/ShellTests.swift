@@ -273,6 +273,18 @@ struct ShellTests {
         #expect(app.showPDF && asked == 2 && defaults.saved(DefaultsKey.showPDF) == nil)
     }
 
+    /// On Home, Find focuses the projects' search field.
+    @Test func findOnHomeSearchesTheProjects() {
+        let app = AppModel(defaults: defaults.store)
+        let controller = MainWindowController(app: app)
+        defer { controller.window?.close() }
+        let find = NSMenuItem(title: "Find…", action: #selector(MainWindowController.performFindPanelAction(_:)), keyEquivalent: "f")
+        find.tag = NSTextFinder.Action.showFindInterface.rawValue
+        #expect(controller.validateMenuItem(find))
+        controller.performFindPanelAction(find)
+        #expect(app.searchFocusToken == 1)
+    }
+
     /// What the tests set goes to their own defaults, not the user's.
     @Test func theModelsSettingsGoWhereTheyAreKept() {
         let user = UserDefaults.standard.object(forKey: DefaultsKey.showWordCount) as? Bool

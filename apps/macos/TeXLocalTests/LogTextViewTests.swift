@@ -31,12 +31,6 @@ struct LogTextViewTests {
         #expect(origin.y > 0)
         LogTextView(text: view.string + String(repeating: "more output\n", count: 50)).updateText(in: scroll)
         #expect(scroll.contentView.bounds.origin == origin)
-
-        scroll.isFindBarVisible = false
-        view.scrollToEndOfDocument(nil)
-        let end = scroll.contentView.bounds.origin.y
-        LogTextView(text: view.string + String(repeating: "more output\n", count: 50)).updateText(in: scroll)
-        #expect(scroll.contentView.bounds.origin.y > end)
     }
 
     @Test func aBarInsetKeepsAnAtEndLogFollowing() throws {

@@ -3,12 +3,7 @@ import SwiftUI
 /// Xcode's editor bar's measures, which the File Outline's folded header shares.
 enum BarMetrics {
     static let height: CGFloat = 36
-    static let leading: CGFloat = 14
-    static let trailing: CGFloat = 16.5
-    static let spacing: CGFloat = 9
-    static let groupSpacing: CGFloat = 16
     static let target: CGFloat = 20
-    static let dividerHeight: CGFloat = 12
 }
 
 /// Page uses PDFKit numbering, which can differ from LaTeX.
@@ -23,7 +18,7 @@ struct StatusBar: View {
             content(.symbols).labelStyle(.iconOnly)
             content(.short).labelStyle(.iconOnly)
         }
-        .barRow(leading: BarMetrics.leading, trailing: BarMetrics.trailing)
+        .barRow(leading: 14, trailing: 16.5)
         // Clicks between its controls stay with the bar, not the text or pages scrolled beneath it.
         .contentShape(.rect)
         .monospacedDigit()
@@ -34,7 +29,7 @@ struct StatusBar: View {
     private enum Detail { case full, symbols, short }
 
     private func content(_ detail: Detail) -> some View {
-        HStack(spacing: BarMetrics.spacing) {
+        HStack(spacing: 9) {
             // A button: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.panel.shown && project.panel.tab == .issues
             Button {
@@ -60,7 +55,7 @@ struct StatusBar: View {
             Spacer(minLength: 0)
             let words = detail == .full && project.editsText && app.showWordCount ? project.words : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
-            HStack(spacing: BarMetrics.groupSpacing) {
+            HStack(spacing: 16) {
                 if project.editsText {
                     Button { app.perform(.editGotoLine, on: project) } label: {
                         place(detail, "Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)",
@@ -85,7 +80,7 @@ struct StatusBar: View {
                 }
             }
             .fixedSize()
-            if project.editsText || pages { Divider().frame(height: BarMetrics.dividerHeight) }
+            if project.editsText || pages { Divider().frame(height: 12) }
             Toggle(isOn: Bindable(project.panel).shown) {
                 // With Differentiate Without Colour, off is the plain square.
                 Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
@@ -100,7 +95,8 @@ struct StatusBar: View {
     }
 
     private func place(_ detail: Detail, _ full: LocalizedStringKey, short: String, spoken: LocalizedStringKey) -> some View {
-        Group { if detail == .short { Text(verbatim: short).accessibilityLabel(spoken) } else { Text(full) } }
+        Group { if detail == .short { Text(verbatim: short) } else { Text(full) } }
+        .accessibilityLabel(spoken)
         .hitTarget()
     }
 

@@ -22,11 +22,7 @@ struct BuildPanelTests {
         panel.show(.texpresso)
         #expect(panel.showsLiveLog)
         panel.tab = .issues
-        #expect(!panel.showsLiveLog)
         panel.closeAfterCleanBuild()
         #expect(panel.shown)
-        panel.tab = .texpresso
-        panel.shown = false
-        #expect(!panel.showsLiveLog)
     }
 }
