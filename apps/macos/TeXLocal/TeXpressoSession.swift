@@ -65,15 +65,14 @@ final class TeXpressoSession {
     private(set) var phase = Phase.stopped {
         didSet { if phase != .stopped { used = true } }
     }
-    private(set) var failure: String?
-    private var error: String?
+    private var failed = false
     private(set) var halted = false
     private(set) var log = ""
     private(set) var used = false
     private var acknowledged = false
 
     var active: Bool { phase == .starting || phase == .running }
-    var needsAttention: Bool { halted || !acknowledged && (failure != nil || error != nil) }
+    var needsAttention: Bool { halted || !acknowledged && failed }
     var title: LocalizedStringResource {
         switch phase {
         case .stopped: needsAttention ? "Live Preview Needs Attention" : "Live Preview Stopped"
@@ -98,7 +97,7 @@ final class TeXpressoSession {
 
     func receive(_ state: LiveState) {
         if state.phase == .starting, phase == .stopped { acknowledged = false }
-        (phase, halted, failure, error) = (state.phase, state.halted, state.failure, state.error)
+        (phase, halted, failed) = (state.phase, state.halted, state.failure != nil || state.error != nil)
         if let log = state.log { self.log = log }
         if state.alert == true { acknowledged = false }
     }
