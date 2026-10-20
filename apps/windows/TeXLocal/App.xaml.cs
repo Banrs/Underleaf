@@ -3,6 +3,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.VisualBasic.FileIO;
+using Microsoft.Windows.AppLifecycle;
 using TeXLocal.Bridge;
 
 namespace TeXLocal;
@@ -12,6 +13,7 @@ public partial class App : Application
     public static Core? Core { get; private set; }
     public static MainWindow Window { get; private set; } = null!;
     public static readonly bool Smoke = Environment.GetCommandLineArgs().Contains("--smoke");
+    static readonly TaskCompletionSource<MainWindow> shown = new();
 
     internal static string? CoreError { get; private set; }
 
@@ -62,13 +64,33 @@ public partial class App : Application
         return dialog.ShowAsync().AsTask();
     }
 
-    public static Task Alert(string title, string message) =>
-        Show(new ContentDialog { Title = title, Content = message, CloseButtonText = "OK", DefaultButton = ContentDialogButton.Close });
+    /// In a smoke run, which no one reads, an alert is its failure.
+    public static Task Alert(string title, string message)
+    {
+        if (Smoke) ExitSmoke($"{title}: {message}");
+        return Show(new ContentDialog { Title = title, Content = message, CloseButtonText = "OK", DefaultButton = ContentDialogButton.Close });
+    }
 
-    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    /// A later launch handed over by Program.Main, heard on a pool thread from before the window is made: AppInstance
+    /// drops one that arrives with no handler, as Explorer's several files opened at once would.
+    internal static async void Arrived(object? sender, AppActivationArguments e)
+    {
+        var words = Program.Arguments(e);
+        var window = await shown.Task;
+        window.DispatcherQueue.TryEnqueue(() => window.Arrive(words));
+    }
+
+    protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
         OpenCore();
         Window = new MainWindow();
         Window.Activate();
+        shown.SetResult(Window);
+        _ = Window.Import(Program.Arguments(AppInstance.GetCurrent().GetActivatedEventArgs()));
+        if (!Smoke) return;
+        // A new blank project, opened: the workspace ends the run once its session is open.
+        if (Core is null) ExitSmoke(CoreError);
+        try { Window.OpenProject((await Core!.CallAsync<ProjectInfo>("create_project", new { name = "Smoke", template = "blank" })).Id); }
+        catch (CoreException ex) { ExitSmoke(ex.Message); }
     }
 }

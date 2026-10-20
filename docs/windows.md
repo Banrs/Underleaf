@@ -189,8 +189,8 @@ Logic the Windows app needs that belongs in a crate, not C#. What the core alrea
 | Area | Mac | Windows | Why |
 |---|---|---|---|
 | App | Reopens the last project at its file, caret, panel, page and zoom | Home, main file, Fit width | Core 29 |
-| App | Open Recent, Dock menu, opens files from Finder | None (a jump list, file associations) | UI |
-| Home | Engine for new projects, search, drop to import | None | Core 2, 7; UI |
+| App | Open Recent, Dock menu, opens files from Finder | Open with and the command line; no jump list | UI |
+| Home | Engine for new projects, search, drop to import | No engine | Core 2, 7 |
 | Workspace | Inspector with the engine | Build menu toggles, no engine | Design; UI |
 | Sidebar | Drag to move, undoable trash; outline follows the scroll | Drop from Explorer, Recycle Bin, no undo; caret only | UI |
 | Editor | Spelling over `code_ranges`, Writing Tools | Spell check off | UI; Platform |
@@ -203,7 +203,7 @@ Logic the Windows app needs that belongs in a crate, not C#. What the core alrea
 | Settings | Template, engine, sync after compile, Live Preview | None; raw latexmk line | Core 2, 7, 12; UI |
 
 Windows' own: an app theme setting, the editor preview in Settings, search in the symbol palette,
-ZIP export on Home and F6 region cycling. Its tests cover the C# bridge only; `--smoke` opens Home.
+ZIP export on Home and F6 region cycling. Its tests cover the C# bridge only; `--smoke` opens a new blank project.
 Still to check by eye: a high-contrast theme, touch, and a real pointer over the sizers' grips.
 
 ## Live preview on Windows
@@ -237,11 +237,11 @@ dotnet test TeXLocal.Tests -c Debug
 ```
 
 `install.ps1` publishes a self-contained Release build to `%LOCALAPPDATA%\Programs\TeXLocal` and
-adds it to the Start menu, until the zip and winget release replace it.
+adds it to the Start menu and to Open with for .tex and .zip, until the zip and winget release replace it.
 
-Run dev builds with a scratch `TEXLOCAL_DATA`, never next to an installed copy (with it set, their
+Run dev builds with a scratch `TEXLOCAL_DATA`, never next to an installed copy (one copy runs per library, so without it a dev build hands its launch to the installed one; with it set, their
 preferences are "TeXLocal Dev", apart from the installed app's); drive them with UI Automation,
-not clicks. `TeXLocal.exe --smoke` opens Home, lists projects and exits 0 (CI); a
+not clicks. `TeXLocal.exe --smoke` opens a new blank project and exits 0 once its session is open (CI); a
 failure exits 1 and writes the reason to stderr. With the display asleep, a newly opened WinUI
 window never presents and captures come out black: wake it (`SetThreadExecutionState` with
 `ES_DISPLAY_REQUIRED`) before taking screenshots. Flyouts and dialogs are separate windows, which
