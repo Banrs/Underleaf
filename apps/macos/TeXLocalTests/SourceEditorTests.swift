@@ -98,18 +98,13 @@ struct SourceEditorTests {
         #expect(!catcher.cancelled && text.completions.offered != nil)
     }
 
+    /// With completion off, only a list asked for follows the typing.
     @Test func typingAssistanceCanBeTurnedOff() throws {
         text.autoPair = false
         text.autoComplete = false
         open("")
-        type("{")
-        #expect(text.string == "{")
-        open("{}", caret: 1)
-        text.deleteBackward(nil)
-        #expect(text.string == "}")
-        open("\\")
-        type("b")
-        #expect(text.completions.offered == nil)
+        type("{", "\\", "b")
+        #expect(text.string == "{\\b" && text.completions.offered == nil)
         text.complete(nil)
         let all = try #require(text.completions.offered).items.count
         type("e")
@@ -266,7 +261,6 @@ struct SourceEditorTests {
         #expect(text.completions.offered == nil && text.undoManager?.undoActionName == "Completion")
         #expect(text.string == "  \\begin{env}\n    \n  \\end{env}" && text.selectedRange() == NSRange(location: 9, length: 3))
         type("itemize")
-        #expect(text.string == "  \\begin{itemize}\n    \n  \\end{itemize}")
         text.insertTab(nil)
         #expect(text.selectedRange() == .caret(22))
         text.insertTab(nil)

@@ -13,9 +13,9 @@ struct UndoableTrashTests {
         let undo = UndoManager()
         undo.groupsByEvent = false
         var listed = 0
-        // Not kept here: the undo manager's entries keep it, as in the app. Slow, as the project's lane can be behind a save.
+        // Not kept here: the undo manager's entries keep it, as in the app. A turn late, as the project's lane can be.
         var item: UndoableTrash? = UndoableTrash(original: url, name: url.lastPathComponent, undoManager: undo,
-                                 trash: { item in try? await Task.sleep(for: .milliseconds(200)); return (try? item.recycle()) != nil },
+                                 trash: { item in await Task.yield(); return (try? item.recycle()) != nil },
                                  changed: { listed += 1 }, failed: { title, _ in Issue.record("\(title)") })
         undo.beginUndoGrouping()
         await item?.moveToTrash()

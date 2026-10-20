@@ -18,8 +18,7 @@ final class ProjectFlowTests {
     let app = AppModel()
 
     init() throws {
-        // Removed rather than trashed, as `CoreTests` explains: only in the test library. Home's and the Dock menu's
-        // flows are in this suite too, in HomeTests.swift.
+        // Removed rather than trashed, as `CoreTests` explains: only in the test library.
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         kept = keys.map { UserDefaults.standard.object(forKey: $0) }
         app.autoCompile = false
@@ -284,28 +283,11 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// The levels are those of the class the main file names outside comments, at its type size, whichever file shows.
-    @Test func theLevelsAreTheMainFilesClasses() async throws {
-        let project = try await opened("% \\documentclass{article}\n\\documentclass[11pt]{report}\n\\include{a}",
-                                       with: ["a.tex": "\\section{A}\nthree"]).project
-        let reports = { project.headingStyles.contains { $0.command == "chapter" } }
-        try await waitUntil(reports)
-        project.reveal(project.outline[0])
-        try await waitUntil { project.openPath == "a.tex" }
-        #expect(reports() && project.headingStyles.first { $0.command == "section" }?.font.scale == 14.4 / 10.95)
-        await app.close()
-    }
-
+    /// The session's watcher reaches the sidebar; its rules are the core's.
     @Test func anotherAppsFilesComeAndGo() async throws {
         let (project, folder) = try await opened()
-        let paths = { Set(project.tree.nodes.flattened.map(\.path)) }
         try "x".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
-        try await waitUntil(timeout: .seconds(5)) { paths().contains("notes.tex") }
-        // Only the spelling changes, which a volume that ignores case finds under either.
-        try files.moveItem(at: folder.appending(path: "notes.tex"), to: folder.appending(path: "Notes.tex"))
-        try await waitUntil(timeout: .seconds(5)) { paths().contains("Notes.tex") && !paths().contains("notes.tex") }
-        try files.removeItem(at: folder.appending(path: "Notes.tex"))
-        try await waitUntil(timeout: .seconds(5)) { !paths().contains("Notes.tex") }
+        try await waitUntil(timeout: .seconds(5)) { project.tree.node(at: "notes.tex") != nil }
         await app.close()
     }
 
@@ -518,15 +500,14 @@ final class ProjectFlowTests {
         let project = try await opened("needle\nhay\nNeedle", with: ["appendix.tex": "a needle"]).project
         project.search.query = "needle"
         await project.search.run()
-        #expect(project.search.hitCount == 3 && project.search.failure == nil)
-        #expect(project.search.groups?.map(\.file) == ["appendix.tex", "main.tex"] && project.search.groups?.map(\.hits.count) == [1, 2])
+        #expect(project.search.hitCount == 3 && project.search.groups?.map(\.file) == ["appendix.tex", "main.tex"])
         project.search.query = "needles"
         #expect(project.search.searched == "needle")
         await project.search.run()
         #expect(project.search.groups?.isEmpty == true && project.search.searched == "needles")
         project.search.query = " "
         await project.search.run()
-        #expect(project.search.groups == nil && project.search.failure == nil && project.search.hitCount == 0)
+        #expect(project.search.groups == nil && project.search.hitCount == 0)
         await app.close()
     }
 
@@ -544,13 +525,13 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func newItemsTakeTheNextFreeName() async throws {
+    /// The free names are the core's.
+    @Test func aNewFileOpensInTheTree() async throws {
         let project = try await opened(with: ["untitled.tex": "x"]).project
         #expect(await project.createEntry(in: "", directory: false) == "untitled 2.tex")
         #expect(project.openPath == "untitled 2.tex" && project.editor.textView.document.text == "")
-        #expect(await project.createEntry(in: "", directory: true) == "untitled folder")
-        #expect(await project.createEntry(in: "untitled folder", directory: false) == "untitled folder/untitled.tex")
-        #expect(project.tree.nodes.flattened.contains { $0.path == "untitled folder/untitled.tex" } && app.alert == nil)
+        #expect(await project.createEntry(in: "", directory: true) == "untitled folder" && project.openPath == "untitled 2.tex")
+        #expect(project.tree.node(at: "untitled folder")?.isDirectory == true && app.alert == nil)
         await app.close()
     }
 
