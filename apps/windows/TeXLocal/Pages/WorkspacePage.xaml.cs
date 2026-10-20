@@ -31,8 +31,6 @@ public sealed partial class WorkspacePage : Page
 {
     sealed record Chosen(int Index, LogItem Issue);
 
-    static readonly string[] shownEvents = ["tree", "document", "saved", "document_reload", "document_closed", "document_renamed",
-        "conflict", "issues", "build", "build_finished", "build_cleaned"];
     static ulong sessions;
     readonly DispatcherQueueTimer searchTimer, caretTimer;
     readonly HashSet<string> unsaved = [];
@@ -203,7 +201,7 @@ public sealed partial class WorkspacePage : Page
 
     void OnEvent(CoreEvent e)
     {
-        if (e.Session != session || !shownEvents.Contains(e.Type)) return;
+        if (e.Session != session) return;
         var ev = e.Json.Deserialize<DocEvent>(Core.Json)!;
         switch (e.Type)
         {
