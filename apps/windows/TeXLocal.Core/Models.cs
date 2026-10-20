@@ -37,7 +37,9 @@ public sealed record LogItem(string Type, string? File, int? Line, string Messag
 
 /// <param name="Pdf">Absolute.</param>
 /// <param name="PdfChanged">True only when this run finished and wrote the PDF it returns.</param>
-public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, string? Pdf, LogItem[] Errors, LogItem[] Warnings, string Log, bool PdfChanged);
+/// <param name="BadBoxes">Overfull and underfull boxes, warnings kept apart from the issues.</param>
+public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, string? Pdf, LogItem[] Errors, LogItem[] Warnings, LogItem[] BadBoxes,
+    string Log, bool PdfChanged);
 
 /// An `issues` event's line: the first issue on it, and the messages of the rest.
 /// <param name="Compact">For an undefined command, fewer words that keep its name.</param>

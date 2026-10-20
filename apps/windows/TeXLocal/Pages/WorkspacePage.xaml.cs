@@ -17,8 +17,8 @@ using VirtualKey = Windows.System.VirtualKey;
 
 namespace TeXLocal.Pages;
 
-/// An issues panel row: a build's error or warning, by its index among the build's issues.
-public sealed record IssueItem(int Index, LogItem Item)
+/// An issues panel row: a build's error or warning, by its index among the build's issues, or a bad box, which is none.
+public sealed record IssueItem(int? Index, LogItem Item)
 {
     public bool IsError => Item.Type == "error";
     public bool IsWarning => !IsError;
@@ -356,7 +356,7 @@ public sealed partial class WorkspacePage : Page
     {
         var done = result = ev.Result!;
         (ErrorCount.Text, WarningCount.Text) = ($"{done.Errors.Length}", $"{done.Warnings.Length}");
-        WarningsToggle.IsEnabled = done.Warnings.Length > 0;
+        WarningsToggle.IsEnabled = done.Warnings.Length + done.BadBoxes.Length > 0;
         WarningsLabel.Text = done.Warnings.Length == 1 ? "1 warning" : $"{done.Warnings.Length} warnings";
         ShowLog();
         ShowIssues();
@@ -390,9 +390,10 @@ public sealed partial class WorkspacePage : Page
         BuildState.Text = outdated && !compiling && result is not null ? $"{state} · Preview out of date" : state;
     }
 
+    /// The bad boxes after the warnings, as on the Mac; the Warnings toggle hides them too.
     void ShowIssues()
     {
-        IssueList.ItemsSource = BuildIssues.Select((item, i) => new IssueItem(i, item))
+        IssueList.ItemsSource = BuildIssues.Select((item, i) => new IssueItem(i, item)).Concat((result?.BadBoxes ?? []).Select(box => new IssueItem(null, box)))
             .Where(i => (WarningsToggle.IsChecked == true || i.IsError) && (Has(i.Item.Message, issueFilter) || Has(i.Item.File, issueFilter))).ToArray();
         ShowIssueTab();
     }
@@ -454,7 +455,14 @@ public sealed partial class WorkspacePage : Page
         if (chosen.Issue.File is { } file) await Reveal(file, chosen.Issue.Line ?? 1);
     });
 
-    void OnIssueClick(object sender, ItemClickEventArgs e) => GoToIssue("session_choose_issue", new { session, ((IssueItem)e.ClickedItem).Index });
+    /// A bad box isn't one of the session's issues, so its place is opened here.
+    void Choose(IssueItem row)
+    {
+        if (row.Index is { } index) GoToIssue("session_choose_issue", new { session, index });
+        else if (row.Item.File is { } file) _ = Reveal(file, row.Item.Line ?? 1);
+    }
+
+    void OnIssueClick(object sender, ItemClickEventArgs e) => Choose((IssueItem)e.ClickedItem);
     void OnNextIssue(object sender, RoutedEventArgs e) => GoToIssue("session_issue", new { session, next = true });
     void OnPreviousIssue(object sender, RoutedEventArgs e) => GoToIssue("session_issue", new { session, next = false });
     void OnIssueTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowIssueTab();
@@ -491,7 +499,7 @@ public sealed partial class WorkspacePage : Page
 
     void OnIssuePlace(object sender, RoutedEventArgs e)
     {
-        if (IssueList.SelectedItem is IssueItem row) GoToIssue("session_choose_issue", new { session, row.Index });
+        if (IssueList.SelectedItem is IssueItem row) Choose(row);
     }
 
     void OnCopyIssue(object sender, RoutedEventArgs e)
