@@ -239,10 +239,14 @@ struct SourceEditorTests {
         #expect(text.string == "a\nb\nc\nd" && text.document.text == text.string)
     }
 
-    @Test func syncTeXGoesToTheWordAndTellsAUTF16Column() {
+    @Test func syncTeXGoesToTheWordASearchToItsMatchAndBothTellAUTF16Column() {
         open("Ünï words \\word, the word\nnext", caret: 1)
         editor.reveal(line: 1, column: 21, focus: false)
         #expect(text.selectedRange() == NSRange(location: 21, length: 4))
+        editor.reveal(line: 1, column: 22, length: 2, focus: false)
+        #expect(text.selectedRange() == NSRange(location: 22, length: 2))
+        editor.reveal(line: 1, column: 22, length: 9, focus: false)
+        #expect(text.selectedRange() == NSRange(location: 22, length: 3))
         open("before\n😀 echo echo echo\n", caret: 22, path: "b.tex")
         #expect(editor.currentLine == 2 && editor.currentColumn == 15)
     }

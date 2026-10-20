@@ -158,7 +158,7 @@ struct FilesList: View {
 
     private func open(_ id: SearchHit.ID?, focus: Bool) {
         if let found = project.search.groups?.lazy.flatMap(\.hits).first(where: { $0.id == id }) {
-            Task { await project.open(found.file, line: found.line, column: found.column, focus: focus) }
+            Task { await project.open(found.file, line: found.line, column: found.column, length: found.length, focus: focus) }
         }
     }
 
