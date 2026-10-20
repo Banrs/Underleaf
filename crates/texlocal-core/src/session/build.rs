@@ -1,7 +1,7 @@
 //! The session's builds: one at a time with one more queued, Clean once the
 //! build stops, and the issues of the last build on the editor's lines.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
@@ -20,9 +20,6 @@ pub(crate) struct Builds {
     auto: bool,
     /// The edit count when the build running began.
     built: u64,
-    /// The version of each open document it builds (by id): an edit the session hears of
-    /// after it began is in it all the same when the document had it by then.
-    versions: HashMap<u64, u64>,
     /// An automatic build was skipped as TeX wasn't found: one runs once `status` finds it.
     pub waiting_for_tex: bool,
     /// The last build left a PDF.
@@ -66,30 +63,12 @@ impl Actor {
         }
         (self.builds.compiling, self.builds.auto) = (true, auto);
         self.builds.built = self.edits;
-        self.builds.versions = self.saved_versions();
         self.publish_build();
         let (build, tx) = (self.engine.compile(self.root.clone()), self.tx.clone());
         tokio::spawn(async move {
             let _ = tx.send(Msg::BuildDone(build.await));
         });
         Ok(())
-    }
-
-    /// Whether an edit heard of only now, which made `version` of the document `doc`,
-    /// was made before the build running saved it, and so is in it.
-    pub fn in_build(&self, doc: u64, version: u64) -> bool {
-        self.builds.compiling
-            && self.builds.built == self.edits
-            && self
-                .builds
-                .versions
-                .get(&doc)
-                .is_some_and(|&had| version <= had)
-    }
-
-    /// The edit just counted is in the build running.
-    pub fn took_edit(&mut self) {
-        self.builds.built = self.edits;
     }
 
     pub fn stop_compile(&mut self) {

@@ -574,26 +574,6 @@ async fn a_document_edited_since_the_build_shows_no_marks_when_it_opens_again() 
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_edit_heard_of_after_its_build_began_is_in_it() {
-    let mut rig = Rig::new(false).await;
-    let doc = rig.open("main.tex").await;
-    // Typed after Compile was asked for, before the session took the request.
-    let args = json!({ "session": rig.session, "auto": false });
-    let compile = rig.sessions.send("session_compile", &args);
-    doc.edit(5, 0, "!");
-    compile.await.unwrap();
-    assert_eq!(rig.disk("main.tex"), "Hello!");
-    rig.state().await;
-    rig.fake.finish_build(built(true, vec![issue(1, "a")]));
-    wait(1).await;
-    let events = rig.events().await;
-    let finished = events.iter().find(|e| e["type"] == "build_finished");
-    assert_eq!(finished.unwrap()["outdated"], false);
-    let issues = events.iter().rfind(|e| e["type"] == "issues");
-    assert_eq!(issues.unwrap()["lines"][0]["line"], 1);
-}
-
-#[tokio::test(start_paused = true)]
 async fn an_automatic_build_announces_only_when_its_errors_change_and_a_stopped_one_never() {
     let mut rig = Rig::new(false).await;
     rig.ok("compile", json!({ "auto": true })).await;

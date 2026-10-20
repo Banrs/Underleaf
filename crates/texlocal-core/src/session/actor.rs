@@ -587,12 +587,7 @@ impl Actor {
         let Some(path) = self.by_id.get(&doc).cloned() else {
             return;
         };
-        // Made before the build running saved it, though heard of only now.
-        let built = self.in_build(doc, version);
         self.text_changed(&path);
-        if built {
-            self.took_edit();
-        }
         self.publish_doc(&path);
         self.after(Timer::Autosave);
         self.live_edited(&path, version, start, length, text);
@@ -634,12 +629,6 @@ impl Actor {
         self.last_edits.insert(path.to_owned(), self.edits);
         self.clear_issues(path);
         self.mark_outdated();
-    }
-
-    /// The version each open document's file has, by the document's id.
-    pub fn saved_versions(&self) -> HashMap<u64, u64> {
-        let docs = self.docs.values();
-        docs.map(|doc| (doc.doc.id(), doc.saved)).collect()
     }
 
     pub fn publish_doc(&mut self, path: &str) {
