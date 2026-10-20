@@ -50,7 +50,6 @@ final class PDFController: NSObject {
     @ObservationIgnored var restoreZoom: Zoom?
     @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
     @ObservationIgnored private var toldPages: ClosedRange<Int>?
-    @ObservationIgnored var buildBehindLive: () -> URL? = { nil }
     @ObservationIgnored private(set) var shownVersion = 0
     /// PDFKit keeps every replaced page's objects for its document's life (27.2): past this footprint the next is shown whole.
     @ObservationIgnored var wholeAt = UInt64.max
@@ -173,10 +172,11 @@ final class PDFController: NSObject {
         fit = .page
     }
 
-    /// During Live Preview the build's file, since the document showing is TeXpresso's. The operation keeps the document (27.2).
-    func print(title: String) {
+    /// The file given (the build's during Live Preview, as the document showing is TeXpresso's), or the document showing.
+    /// The operation keeps the document (27.2).
+    func print(title: String, file: URL?) {
         Task {
-            let document = if let url = buildBehindLive() { await Self.loadDocument(url) } else { view.document }
+            let document = if let file { await Self.loadDocument(file) } else { view.document }
             // The build's file can be half-written while the next build runs.
             guard let operation = document?.printOperation(for: .shared, scalingMode: .pageScaleDownToFit, autoRotate: true),
                   let window = view.window ?? NSApp.mainWindow else { return NSSound.beep() }

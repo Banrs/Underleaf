@@ -105,7 +105,6 @@ final class ProjectModel {
             self?.analyze()
         }
         pdf.onVisiblePages = { [weak self] in self?.liveView($0) }
-        pdf.buildBehindLive = { [weak self] in self.flatMap { $0.livePDF ? $0.buildPDF : nil } }
     }
 
     var isLaTeX: Bool { openKind == .tex }

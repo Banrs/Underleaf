@@ -163,7 +163,7 @@ extension AppModel {
         case .fileSave: Task { await project?.save() }
         case .pdfSave: if let project, let url = project.buildPDF { exporting = ExportFile(name: "\(project.id).pdf", type: .pdf) { url } }
         // The PDF, not the first responder (usually the source), and whether or not its pane shows.
-        case .filePrint: if let project { project.pdf.print(title: project.id) }
+        case .filePrint: if let project { project.pdf.print(title: project.id, file: project.livePDF ? project.buildPDF : nil) }
         case .editBold: project?.editor.perform(.bold)
         case .editItalic: project?.editor.perform(.italic)
         case .editUnderline: project?.editor.perform(.underline)
