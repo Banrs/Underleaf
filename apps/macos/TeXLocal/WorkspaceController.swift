@@ -1,8 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// A project's workspace in AppKit's splits, with SwiftUI in the panes: only AppKit's give the editor and PDFKit's view the
-/// system's scroll edges under one status bar.
+/// AppKit's splits, as only they give the editor and PDFKit's view the system's scroll edges under one status bar.
 final class WorkspaceController: DetentSplitViewController {
     let app: AppModel
     let project: ProjectModel
@@ -55,8 +54,7 @@ final class WorkspaceController: DetentSplitViewController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// The models, not the autosave, say what shows, and at once: left to the tracks, a pane the autosave had shut would
-    /// open with AppKit's animation as the project appears. The nested splits have loaded and restored by now.
+    /// The models overrule the autosave at once: left to the tracks, a pane would open with AppKit's animation.
     override func viewDidLoad() {
         super.viewDidLoad()
         sidebarItem.isCollapsed = !app.sidebarVisible
@@ -83,8 +81,7 @@ final class WorkspaceController: DetentSplitViewController {
         }
     }
 
-    /// Folded by the split for want of room unless a divider was dragged shut: a column AppKit folds as a toggle opens the
-    /// other still has the click as its event.
+    /// Unless a divider was dragged shut: a column AppKit folds as a toggle opens the other has the click as its event.
     private var foldedByWindow: Bool { NSApp.currentEvent?.type != .leftMouseDragged || view.window?.inLiveResize == true }
 
     override func viewDidAppear() {
@@ -119,10 +116,8 @@ final class WorkspaceController: DetentSplitViewController {
         }
     }
 
-    /// The source|PDF divider goes to the toolbar's separator where the two have parted. The separator follows the divider
-    /// only as far as each section's tools leave it room (27.2), so the divider keeps to where the separator can be, which
-    /// only the toolbar knows. It has no API for its separator's place: its line is found by its class, among the toolbar's
-    /// views beside the content view, and without it nothing moves.
+    /// The separator follows the divider only as far as each section's tools leave it room (27.2), so the divider goes to
+    /// it. No API tells its place: its view is found by class, and without it nothing moves.
     private func joinDivider() {
         guard paneAnimations == 0, !pdfItem.isCollapsed, let content = view.window?.contentView, let frame = content.superview else { return }
         let split = columns.splitView, divider = split.arrangedSubviews[0].frame.maxX
@@ -135,10 +130,8 @@ final class WorkspaceController: DetentSplitViewController {
     /// Customize Toolbar changed the tools, which Compile's form goes by.
     func toolbarItemsChanged() { if appeared { fitToolbar() } }
 
-    /// Compile gives up its word where that is the first tool without room, reckoned from the default tools' widths
-    /// (`ColumnMetrics`), and takes it back once no pane is moving: an animation can widen the room on its way to less. In a
-    /// toolbar customised to others, whose widths aren't known, it keeps the word until the tools that never leave have no
-    /// room for it, since AppKit's overflow menu would take Compile itself next (27.2).
+    /// Compile's word goes where it is the first tool without room, and comes back once no pane moves. With other tools
+    /// than the default, whose widths aren't known, it goes only before AppKit would take Compile itself (27.2).
     private func fitToolbar() {
         func edges(_ item: NSSplitViewItem) -> NSRect { item.viewController.view.convert(item.viewController.view.bounds, to: splitView) }
         let source = edges(sourceItem), area = edges(areaItem)
@@ -160,8 +153,7 @@ final class WorkspaceController: DetentSplitViewController {
     private func buildSidebar(height: CGFloat) {
         let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
         filesItem.minimumThickness = ColumnMetrics.filesMinimum
-        // Hidden before its first layout, a bottom accessory still insets its pane (27.2): only search results hide it,
-        // and a workspace opens with none.
+        // Never hidden before its first layout, when it would still inset its pane (27.2).
         let header = hostingView(OutlineHeader())
         header.translatesAutoresizingMaskIntoConstraints = false
         let bar = NSView()
@@ -213,12 +205,10 @@ final class WorkspaceController: DetentSplitViewController {
         columns.addSplitViewItem(pdfItem)
         // The last toolbar section's edge effect needs a safe area ending where the section does (27.2).
         columns.view.additionalSafeAreaInsets.right = ColumnMetrics.toolbarInset
-        // 27.2: shown, whatever the autosave says, until the workspace appears: with the PDF collapsed as the window first
-        // lays out the columns, the source never gets the toolbar's scroll edge.
+        // 27.2: collapsed at the first layout, it leaves the source without the toolbar's scroll edge.
         pdfItem.isCollapsed = false
 
-        // One bar across both panes, over an empty bottom accessory in each with AppKit's hard scroll edge, as Xcode's
-        // editor bar. 27.2: one accessory across the columns gave its edge to one pane only.
+        // As Xcode's editor bar, over an empty accessory in each pane. 27.2: one across both gave its edge to one only.
         for item in [sourceItem!, pdfItem!] {
             let space = NSView()
             space.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
@@ -358,8 +348,7 @@ final class WorkspaceController: DetentSplitViewController {
         }
     }
 
-    /// 27.2: AppKit's split animation doesn't always reach the screen: with nothing else waking the run loop, a pane would
-    /// hold still, then jump to its end.
+    /// 27.2: with nothing else waking the run loop, a split's animation holds still, then jumps to its end.
     private func paneAnimation(_ running: Bool) {
         // It puts every pane in live resize, which shows their overlay scrollers too.
         quiet(running)
@@ -378,8 +367,7 @@ final class WorkspaceController: DetentSplitViewController {
 
     private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
 
-    /// Scroll bars come with scrolling (HIG, Scroll views): panes resized by a drag or an animation keep their overlay
-    /// scrollers out of sight until the last ends.
+    /// Scroll bars come with scrolling (HIG, Scroll views), not with a drag's or animation's live resize.
     func quiet(_ resizing: Bool) {
         quieting += resizing ? 1 : -1
         guard quieting == (resizing ? 1 : 0) else { return }
@@ -414,8 +402,7 @@ final class WorkspaceController: DetentSplitViewController {
         }
     }
 
-    /// AppKit's animation brings it back at its hosted view's height, and unanimated at its minimum, so the height it was
-    /// hidden at is kept here.
+    /// AppKit brings it back at its hosted view's height, or unanimated at its minimum, so its height is kept here.
     private func setPanelShown(_ shown: Bool) {
         guard shown == panelItem.isCollapsed else { return }
         let split = area.splitView, panel = panelItem.viewController.view
@@ -476,8 +463,7 @@ final class WorkspaceController: DetentSplitViewController {
     }
 }
 
-/// The build panel resizes and opens from the status bar's line, as Xcode's debug area. A split view is flipped; a thin
-/// divider takes presses 2 pt either side of its line.
+/// The build panel opens and resizes from the status bar's line, as Xcode's debug area. A split view is flipped.
 private final class AreaSplitViewController: DetentSplitViewController {
     override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
         let line = splitView.arrangedSubviews[0].frame.maxY - BarMetrics.height
@@ -485,14 +471,13 @@ private final class AreaSplitViewController: DetentSplitViewController {
     }
 }
 
-/// 27.2: hidden, a hosting view still updates all its content for every appearance or environment change (20 ms for the
-/// folded inspector), so a hidden pane's content goes.
+/// 27.2: a hidden hosting view still updates its content for every environment change (20 ms for the inspector).
 @Observable final class Mount {
     var shown: Bool
     init(_ shown: Bool) { self.shown = shown }
 }
 
-/// A pane's content: off while a project opened over this one loads, which keeps this one in the window until then.
+/// Off while a project opened over this one loads.
 private struct Pane<Content: View>: View {
     let project: ProjectModel
     let mount: Mount?

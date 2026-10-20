@@ -2,8 +2,7 @@ import AppKit
 import PDFKit
 
 extension NSView {
-    /// TextKit and PDFKit still take tracking events just inside the panes and replace the divider's cursor, so only the
-    /// divider's own hit target chooses the resize cursor.
+    /// TextKit and PDFKit take tracking events just inside the panes and replace the divider's cursor.
     @discardableResult
     func updateDividerCursor(with event: NSEvent) -> Bool {
         guard let window, window.isKeyWindow, let workspace = window.contentView, let content = workspace.superview,
@@ -57,8 +56,7 @@ class DraggedSplitView: NSSplitView {
     }
 }
 
-/// Thin dividers, and the detents AppKit's splits lack: a drag that comes near a divider's opening position stops there,
-/// with the alignment haptic as it arrives.
+/// Thin dividers, and the detents AppKit lacks: a drag near a divider's opening position stops there, with the haptic.
 class DetentSplitViewController: NSSplitViewController {
     init(splitView: DraggedSplitView = DraggedSplitView(), isVertical: Bool = true) {
         super.init(nibName: nil, bundle: nil)
@@ -71,8 +69,7 @@ class DetentSplitViewController: NSSplitViewController {
 
     func detent(at divider: Int) -> CGFloat? { (splitView as? ColumnsSplitView)?.openingPosition }
 
-    /// Only while a divider is dragged: a position set in code goes where it is set. 27.2: NSSplitViewController
-    /// declares this without implementing it, so there is no super to call.
+    /// Only while dragged: a position set in code goes where it is set. 27.2: NSSplitViewController has no super for this.
     override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
                             ofSubviewAt dividerIndex: Int) -> CGFloat {
         guard (splitView as? DraggedSplitView)?.dragging == true, let detent = detent(at: dividerIndex),
@@ -85,8 +82,7 @@ class DetentSplitViewController: NSSplitViewController {
     }
 }
 
-/// Files over the File Outline. AppKit has no thin divider without a line, so the divider isn't drawn: the files' scroll
-/// edge over the outline's header stands for it, and takes its drags.
+/// Files over the File Outline. AppKit has no thin divider without a line: the files' scroll edge stands for it.
 final class SidebarSplitViewController: DetentSplitViewController {
     weak var header: NSSplitViewItemAccessoryViewController?
 
@@ -111,8 +107,7 @@ final class ColumnsSplitView: DraggedSplitView {
         super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
     }
 
-    /// A double-click on the divider, which takes presses 2 pt either side of its line, restores the even split. 27.2: the
-    /// items' preferred fractions land it somewhere else each time.
+    /// A double-click on the divider (2 pt either side) restores the even split. 27.2: preferred fractions land it elsewhere.
     override func mouseDown(with event: NSEvent) {
         let past = convert(event.locationInWindow, from: nil).x - (arrangedSubviews.first?.frame.maxX ?? 0)
         guard event.clickCount == 2, -2...dividerThickness + 2 ~= past, arrangedSubviews.allSatisfy({ !isSubviewCollapsed($0) }) else {

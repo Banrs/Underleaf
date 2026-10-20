@@ -87,8 +87,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         return tools(toolbar.itemIdentifiers) == tools(toolbarDefaultItemIdentifiers(toolbar))
     }
 
-    /// The system's toggles go to the window's split, not the nested ones, which would answer first, and stay out of the
-    /// overflow menu, as the edges' items do (HIG, Toolbars).
+    /// To the window's split, not the nested ones, which would answer first, and out of the overflow menu (HIG, Toolbars).
     func toolbarWillAddItem(_ notification: Notification) {
         guard let item = notification.userInfo?[NSToolbarUserInfoKey.itemKey] as? NSToolbarItem,
               [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
@@ -142,8 +141,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             share.toolTip = "Share the PDF"
             item = share
         case .compile:
-            // The one prominent action, as a word: a play symbol reads as media. Customize Toolbar gets a title, as it
-            // draws custom views without their style.
+            // A word: a play symbol reads as media. Customize Toolbar draws custom views without their style, so a title.
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.compileRun.title
             if flag { item.view = NSHostingView(rootView: compileButton(state)) } else { item.title = MenuCommand.compileRun.title }
@@ -241,8 +239,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                      compiling: project.compiling, canCompile: canCompile, compactCompile: compactCompile)
     }
 
-    /// As the models change, not a turn later as a `track` would: a column resizing refits the PDF during layout, and
-    /// the toolbar would draw each frame of a sidebar's animation twice.
+    /// Not a turn later as a `track` would: the toolbar would draw each frame of a sidebar's animation twice.
     private func watch() {
         guard !closed else { return }
         apply(withObservationTracking(options: .didSet) { state } onChange: { [weak self] _ in
@@ -368,10 +365,8 @@ private final class ZoomControl: NSSegmentedControl {
     }
 }
 
-/// Compile as its word, or its symbol where the word has no room, and Stop with the build's spinner in the width Compile
-/// has there. It fills the item's glass, which doesn't pass clicks on to an undersized custom view. It changes form as
-/// AppKit's search item does (27.2): the width in one step, the symbol fading in, or out over the word, in a fifth of a
-/// second on Core Animation's default curve.
+/// Stop in Compile's width. It fills the item's glass, which doesn't pass clicks to an undersized view, and changes form
+/// as AppKit's search item does (27.2).
 private struct CompileButton: View {
     let compiling, compact, enabled: Bool
     let action: () -> Void
@@ -387,8 +382,7 @@ private struct CompileButton: View {
             // Faint in a window that isn't the active one, as AppKit's own items.
             .foregroundStyle(appearsActive ? .primary : .tertiary)
             .animation(.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2), value: compact)
-            // As AppKit draws a titled item's glass and a symbol's: 36 points high, a title 12 points in from each end,
-            // and a circle for a symbol (27.2).
+            // AppKit's glass for a title and for a symbol (27.2).
             .padding(.horizontal, compact ? 0 : 12)
             .frame(minWidth: 36, minHeight: 36)
             .contentShape(.capsule)
@@ -407,8 +401,7 @@ private struct CompileButton: View {
         }
     }
 
-    /// The spinner beside Stop's word, or round its symbol: the regular spinner, 32 points, would touch the circle's edge,
-    /// and the small one has no room inside it.
+    /// Round the symbol: the regular spinner touches the circle's edge, and the small one has no room inside.
     @ViewBuilder private var busy: some View {
         if compact {
             ZStack {
