@@ -197,7 +197,7 @@ templates) is `core-api.md`'s. The numbers are the ones the app's comments cite,
 | PDF | Print, scroll to the caret after compiling | Scroll to the caret after compiling; no print | UI |
 | Panel | Log find | The filter keeps matching lines | UI |
 | Live | Pane or TeXpresso window, log, restarts | None | Core 12 |
-| Settings | Template, engine, sync after compile, Live Preview | Sync after compile; raw latexmk line | Core 7, 12 |
+| Settings | Template, engine, sync after compile, Live Preview | Sync after compile; raw latexmk line | Core 7, 12; UI |
 
 Windows' own: an app theme setting, the editor preview in Settings, search in the symbol palette,
 ZIP export on Home and F6 region cycling. Its tests cover the C# bridge only; `--smoke` opens a new blank project.
