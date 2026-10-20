@@ -42,7 +42,7 @@ impl Settings {
     /// names it after the main file: mainFile "chapters/paper.tex" gives
     /// "<root>/build/paper.<ext>". A main file the path rules refuse has none.
     pub fn output(&self, root: &Path, ext: &str) -> Result<PathBuf, CoreError> {
-        let main = safe_rel_file(root, &self.main_file)?;
+        let main = safe_rel_file(&self.main_file)?;
         let base = Path::new(&main).file_stem().unwrap_or_default();
         let name = format!("{}.{ext}", base.to_string_lossy());
         Ok(root.join(BUILD_DIR).join(name))
@@ -170,14 +170,14 @@ struct SettingsPatch {
 impl SettingsPatch {
     /// The keys sent, to store: the types have checked the flags, and this
     /// checks the engine and the main file, stored as `safe_rel_file` spells it.
-    fn checked(mut self, root: &Path) -> Result<Map<String, Value>, CoreError> {
+    fn checked(mut self) -> Result<Map<String, Value>, CoreError> {
         if let Some(engine) = &self.engine
             && Engine::named(engine).is_none()
         {
             return Err(CoreError::bad_request(format!("Unknown engine: {engine}")));
         }
         if let Some(main_file) = &self.main_file {
-            self.main_file = Some(safe_rel_file(root, main_file)?);
+            self.main_file = Some(safe_rel_file(main_file)?);
         }
         let Value::Object(mut keys) = json!(self) else {
             unreachable!("a patch serializes as an object");
@@ -193,7 +193,7 @@ pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError>
     let patch = SettingsPatch::deserialize(patch)
         .map_err(|err| CoreError::bad_request(format!("Invalid settings: {err}")))?;
     // What was just written, without reading it back.
-    Ok(lenient(&update_project(root, patch.checked(root)?)?))
+    Ok(lenient(&update_project(root, patch.checked()?)?))
 }
 
 /// The folders chosen for TeX's programs and for TeXpresso, which every

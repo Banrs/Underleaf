@@ -340,15 +340,14 @@ fn new_projects_are_named_sanitized_and_stocked_with_a_template() {
 
 #[cfg(unix)]
 #[test]
-fn the_tree_scans_and_zip_follow_only_links_to_files_inside_the_project_however_it_is_reached() {
-    // A link to a file inside is content. One to a folder, outside, broken or
-    // in a loop is not, and must not turn the tree, the scans or the ZIP
-    // export into an error, however the project's folder is reached.
+fn the_tree_scans_and_zip_follow_links_to_files_only() {
+    // A link to a file, inside or out (a shared .bib), is content. One to a
+    // folder, broken or in a loop is not, and is no error.
     use crate::{projects::testing::zip_names, zipexport::export_zip};
     let (_dir, root) = project();
     let outside = tempfile::tempdir().unwrap();
-    let secret = outside.path().join("secret.tex");
-    fs::write(&secret, "needle\n\\label{outside-secret}\n").unwrap();
+    let shared = outside.path().join("shared.tex");
+    fs::write(&shared, "\\label{shared}\n").unwrap();
     fs::write(root.join("source.txt"), "needle \\label{linked}").unwrap();
     fs::create_dir(root.join("figures")).unwrap();
     fs::write(root.join("figures/a.txt"), "figure").unwrap();
@@ -356,7 +355,7 @@ fn the_tree_scans_and_zip_follow_only_links_to_files_inside_the_project_however_
         std::os::unix::fs::symlink(target, root.join(name)).unwrap();
     };
     link(&root.join("source.txt"), "linked.tex");
-    link(&secret, "external.tex");
+    link(&shared, "external.tex");
     link(&root.join("figures"), "linked-dir");
     link(&root, "loop");
     link(&root.join("gone.tex"), "broken.tex");
@@ -365,21 +364,31 @@ fn the_tree_scans_and_zip_follow_only_links_to_files_inside_the_project_however_
     let alias = root.with_file_name("alias");
     std::os::unix::fs::symlink(&root, &alias).unwrap();
 
-    for base in [&root, &alias] {
-        let tree = file_tree(base).unwrap();
-        let top: Vec<_> = tree.iter().map(|n| n.path.as_str()).collect();
-        assert_eq!(top, ["figures", "linked.tex", "main.tex", "source.txt"]);
-        let hits = search_project(base, "needle", 10).unwrap();
-        let mut hits: Vec<_> = hits.into_iter().map(|hit| hit.file).collect();
-        hits.sort();
-        assert_eq!(hits, ["linked.tex", "source.txt"]);
-        assert_eq!(scan_symbols(base).unwrap().labels, ["linked"]);
-    }
+    let tree = file_tree(&root).unwrap();
+    let top: Vec<_> = tree.iter().map(|n| n.path.as_str()).collect();
+    assert_eq!(
+        top,
+        [
+            "figures",
+            "external.tex",
+            "linked.tex",
+            "main.tex",
+            "source.txt"
+        ]
+    );
+    let hits = search_project(&root, "needle", 10).unwrap();
+    let mut hits: Vec<_> = hits.into_iter().map(|hit| hit.file).collect();
+    hits.sort();
+    assert_eq!(hits, ["linked.tex", "source.txt"]);
+    let mut labels = scan_symbols(&root).unwrap().labels;
+    labels.sort();
+    assert_eq!(labels, ["linked", "shared"]);
     let dest = root.with_file_name("out.zip");
     export_zip(&root, &dest).unwrap();
     assert_eq!(
         zip_names(&dest),
         [
+            "external.tex",
             "figures/",
             "figures/a.txt",
             "linked.tex",

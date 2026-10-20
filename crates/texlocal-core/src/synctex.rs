@@ -76,7 +76,7 @@ pub async fn synctex_forward_at(
     let pdf = pdf_for(root, live)?;
     // synctex expects the input path as TeX saw it (relative to cwd,
     // ./-prefixed, forward slashes).
-    let rel = safe_rel_file(root, file)?;
+    let rel = safe_rel_file(file)?;
     if line < 1 {
         return Err(CoreError::bad_request("Invalid source line"));
     }

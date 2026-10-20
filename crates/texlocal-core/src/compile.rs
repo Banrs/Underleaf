@@ -278,7 +278,7 @@ impl CompileManager {
         let request_started = Instant::now();
         let settings = read_settings(root);
         let shell_escape = settings.shell_escape;
-        let main_rel = safe_rel_file(root, &settings.main_file)?;
+        let main_rel = safe_rel_file(&settings.main_file)?;
         if !root.join(&main_rel).exists() {
             return Err(CoreError::bad_request(format!(
                 "Main file not found: {main_rel}"

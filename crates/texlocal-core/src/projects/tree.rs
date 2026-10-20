@@ -46,8 +46,8 @@ impl Entry {
 }
 
 /// Shared tree rules for file listing, search and symbols: hide dotfiles and
-/// top-level build output, and follow only links to files within the
-/// project. An entry that can't be read, or vanishes while the walk passes
+/// top-level build output, and follow links to files only, as folder links
+/// can cycle. An entry that can't be read, or vanishes while the walk passes
 /// (a build's or an editor's temporary file), is left out, and so an
 /// unreadable subfolder is empty; the project root must be readable.
 pub(super) fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> {
@@ -73,9 +73,8 @@ pub(super) fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> 
             continue;
         };
         let path = entry.path();
-        // No directory links (cycles), nor any without a proven in-project target.
         let shown = if kind.is_symlink() {
-            dunce::canonicalize(&path).is_ok_and(|t| t.starts_with(root) && t.is_file())
+            path.is_file()
         } else {
             kind.is_file() || kind.is_dir()
         };
@@ -111,8 +110,7 @@ pub(super) fn visit_files(
         Ok(true)
     }
 
-    let root = dunce::canonicalize(root)?;
-    walk(&root, &root, visit)?;
+    walk(root, root, visit)?;
     Ok(())
 }
 
@@ -144,8 +142,7 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
         Ok(nodes)
     }
 
-    let root = dunce::canonicalize(root)?;
-    walk(&root, &root)
+    walk(root, root)
 }
 
 /// What the editor edits as text, besides .tex and .bib, by extension: the

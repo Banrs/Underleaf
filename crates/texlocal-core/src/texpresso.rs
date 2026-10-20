@@ -604,7 +604,7 @@ fn validate_buffer(
     if let Some(known) = known.get(path) {
         return Ok(known.clone());
     }
-    let path = root.join(paths::write_paths(root, path)?.1);
+    let path = paths::safe_write_path(root, path)?;
     if path.is_dir() {
         return Err(CoreError::bad_request(FOLDER));
     }

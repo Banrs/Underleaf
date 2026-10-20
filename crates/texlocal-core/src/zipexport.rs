@@ -21,7 +21,6 @@ use crate::projects::is_litter;
 use crate::{BUILD_DIR, SETTINGS_FILE};
 
 pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
-    let root_canonical = dunce::canonicalize(root)?;
     let parent = dest.parent().expect("a file is in a folder");
     let (file, temp_path) = create_temp(parent).map_err(CoreError::at(dest))?;
 
@@ -30,11 +29,10 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let mut export = Export {
         writer: ZipWriter::new(file),
         options: SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
-        root_canonical: &root_canonical,
         archive_dir: dunce::canonicalize(parent).map_err(CoreError::at(dest))?,
         archive_names: [dest.file_name(), temp_path.file_name()],
     };
-    export.add_dir(root, &root_canonical, "")?;
+    export.add_dir(root, "")?;
     export.writer.finish()?.sync_all()?;
     persist(temp_path, dest).map_err(CoreError::at(dest))
 }
@@ -45,18 +43,16 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
 struct Export<'a> {
     writer: ZipWriter<File>,
     options: SimpleFileOptions,
-    root_canonical: &'a Path,
     archive_dir: PathBuf,
     archive_names: [Option<&'a OsStr>; 2],
 }
 
 impl Export<'_> {
-    /// `dir_canonical` is `dir` resolved, for excluding the archive itself, and
-    /// `prefix` its path in the archive, "" or ending in '/'.
-    fn add_dir(&mut self, dir: &Path, dir_canonical: &Path, prefix: &str) -> Result<(), CoreError> {
+    /// `prefix` is `dir`'s path in the archive, "" or ending in '/'.
+    fn add_dir(&mut self, dir: &Path, prefix: &str) -> Result<(), CoreError> {
         let mut entries = fs::read_dir(dir)?.collect::<io::Result<Vec<_>>>()?;
         entries.sort_by_key(DirEntry::file_name);
-        let holds_archive = dir_canonical == self.archive_dir;
+        let holds_archive = dunce::canonicalize(dir)? == self.archive_dir;
 
         for entry in entries {
             let file_name = entry.file_name();
@@ -81,25 +77,17 @@ impl Export<'_> {
         let path = entry.path();
 
         let entry_type = entry.file_type()?;
+        // As in the project walks, links are followed to files only, as
+        // folder links can cycle.
         if entry_type.is_symlink() {
-            // Unresolvable (dangling, a loop), there is nothing to export, as
-            // in the project walks; and never data reached through a link
-            // outside the project.
-            let inside =
-                dunce::canonicalize(&path).is_ok_and(|t| t.starts_with(self.root_canonical));
-            // Directory links are deliberately skipped. Following them creates
-            // cycles and duplicates; regular directories below are still walked.
-            if inside && fs::metadata(&path)?.is_file() {
+            if path.is_file() {
                 self.add_file(&rel, &path)?;
             }
         } else if entry_type.is_dir() {
-            let canonical = dunce::canonicalize(&path)?;
-            if canonical.starts_with(self.root_canonical) {
-                let options = dated(self.options, entry.metadata().and_then(|m| m.modified()));
-                let dir = format!("{rel}/");
-                self.writer.add_directory(dir.clone(), options)?;
-                self.add_dir(&path, &canonical, &dir)?;
-            }
+            let options = dated(self.options, entry.metadata().and_then(|m| m.modified()));
+            let dir = format!("{rel}/");
+            self.writer.add_directory(dir.clone(), options)?;
+            self.add_dir(&path, &dir)?;
         } else if entry_type.is_file() {
             self.add_file(&rel, &path)?;
         }
@@ -245,7 +233,6 @@ mod tests {
         let (dir, root) = project();
         fs::write(root.join("a.tex"), "a").unwrap();
         fs::write(root.join("gone.tex"), "x").unwrap();
-        let canonical = dunce::canonicalize(&root).unwrap();
         let mut listed: Vec<_> = fs::read_dir(&root).unwrap().map(Result::unwrap).collect();
         listed.sort_by_key(DirEntry::file_name);
         // The folder was listed; then an editor removed its temporary file.
@@ -256,7 +243,6 @@ mod tests {
         let mut export = Export {
             writer: ZipWriter::new(file),
             options: SimpleFileOptions::default(),
-            root_canonical: &canonical,
             archive_dir: dir.path().to_path_buf(),
             archive_names: [None, None],
         };
