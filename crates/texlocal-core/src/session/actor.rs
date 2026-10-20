@@ -870,6 +870,7 @@ impl Actor {
             return;
         }
         self.tree = index;
+        self.after(Timer::Symbols);
         self.emit("tree", json!({ "tree": tree }));
         self.live_files_changed();
     }
@@ -882,8 +883,12 @@ impl Actor {
         self.symbols_seq += 1;
         let (seq, root, tx) = (self.symbols_seq, self.root.clone(), self.tx.clone());
         let facts = Arc::clone(&self.facts);
+        let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
+        files.sort_unstable();
         tokio::task::spawn_blocking(move || {
-            let _ = tx.send(Msg::Symbols(seq, projects::scan_symbols(&root, &facts)));
+            let symbols = projects::scan_symbols(&root, &facts);
+            let symbols = symbols.map(|symbols| Symbols { files, ..symbols });
+            let _ = tx.send(Msg::Symbols(seq, symbols));
         });
     }
 

@@ -1,4 +1,4 @@
-//! Completion: an argument's labels, citations or environments, a bibliography entry's type, or a command.
+//! Completion: an argument's labels, citations, environments or files, a bibliography entry's type, or a command.
 //! Commands are snippets, expanded here, so an editor only places the text and its fields.
 
 use std::sync::LazyLock;
@@ -7,6 +7,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use super::{SourceDocument, Text, catalog, indentation, utf16};
+use crate::projects::file_kind;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnippetField {
@@ -30,6 +31,7 @@ pub enum CompletionKind {
     Label,
     Citation,
     EntryType,
+    File,
 }
 
 /// What the project defines that completion offers, one the session's documents share.
@@ -37,6 +39,8 @@ pub enum CompletionKind {
 pub struct Symbols {
     pub citations: Vec<String>,
     pub labels: Vec<String>,
+    /// The project's, from its folder, to complete a file's name.
+    pub files: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -73,6 +77,7 @@ impl SourceDocument {
         };
 
         if let Some(c) = ARGUMENT.captures(&before) {
+            let files: Vec<String>;
             let (names, kind): (&[String], _) = match &c[1] {
                 c if catalog.cite_commands.contains(c) => {
                     (&self.symbols.citations, CompletionKind::Citation)
@@ -81,7 +86,28 @@ impl SourceDocument {
                     (&self.symbols.labels, CompletionKind::Label)
                 }
                 "begin" | "end" => (&catalog.environments, CompletionKind::Environment),
-                _ => return None,
+                command => {
+                    // \input's and \bibliography's names go without their extension, as LaTeX
+                    // takes them.
+                    let (kinds, bare): (&[&str], _) = match command {
+                        "input" | "include" | "subfile" => (&["tex"], true),
+                        "includegraphics" => (&["image", "pdf"], false),
+                        "bibliography" => (&["bib"], true),
+                        "addbibresource" => (&["bib"], false),
+                        _ => return None,
+                    };
+                    files = self
+                        .symbols
+                        .files
+                        .iter()
+                        .filter(|file| kinds.contains(&file_kind(file)))
+                        .map(|file| match file.rsplit_once('.') {
+                            Some((stem, _)) if bare => stem.to_owned(),
+                            _ => file.clone(),
+                        })
+                        .collect();
+                    (&files, CompletionKind::File)
+                }
             };
             let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
             let start = before.len() - before[start..].trim_start().len();
@@ -223,6 +249,37 @@ mod tests {
             places(&fields),
             [(0, 2, 0), (6, 0, 1), (6, 1, 2), (7, 2, 0), (9, 0, 3)]
         );
+    }
+
+    #[test]
+    fn a_files_argument_offers_the_projects_files_of_its_kind() {
+        let files = [
+            "chapters/One.TEX",
+            "figs/a.png",
+            "figs/b.pdf",
+            "main.tex",
+            "notes.txt",
+            "refs.bib",
+        ];
+        let mut doc = SourceDocument::new("");
+        doc.set_symbols(Arc::new(Symbols {
+            files: files.map(String::from).to_vec(),
+            ..Symbols::default()
+        }));
+        let mut offered = |before: &str| -> Vec<String> {
+            doc.edit(0, u32::MAX, before);
+            let offer = doc.completions(before.encode_utf16().count() as u32, false);
+            offer.map_or(vec![], |offer| {
+                offer.items.into_iter().map(|i| i.label).collect()
+            })
+        };
+        assert_eq!(offered("\\input{"), ["chapters/One", "main"]);
+        assert_eq!(offered("\\include{ch"), ["chapters/One"]);
+        let graphics = offered("\\includegraphics[width=0.5\\linewidth]{");
+        assert_eq!(graphics, ["figs/a.png", "figs/b.pdf"]);
+        assert_eq!(offered("\\bibliography{main,"), ["refs"]);
+        assert_eq!(offered("\\addbibresource{"), ["refs.bib"]);
+        assert!(offered("\\usepackage{").is_empty());
     }
 
     #[test]

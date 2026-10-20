@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 nonisolated enum CompletionKind: String, Decodable {
-    case command, environment, label, citation, entryType
+    case command, environment, label, citation, entryType, file
 
     var name: String {
         switch self {
@@ -11,6 +11,7 @@ nonisolated enum CompletionKind: String, Decodable {
         case .label: String(localized: "Label")
         case .citation: String(localized: "Citation")
         case .entryType: String(localized: "Entry Type")
+        case .file: String(localized: "File")
         }
     }
 }

@@ -28,5 +28,6 @@ pub fn scan_symbols(root: &Path, facts: &Files) -> Result<Symbols, CoreError> {
     Ok(Symbols {
         citations: dedup(files.values().flat_map(|f| &f.citations)),
         labels: dedup(files.values().flat_map(|f| &f.labels)),
+        ..Symbols::default()
     })
 }

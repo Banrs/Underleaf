@@ -237,7 +237,9 @@ fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
     )
     .unwrap();
 
-    let Symbols { citations, labels } = scan_symbols(&root, &Files::default()).unwrap();
+    let Symbols {
+        citations, labels, ..
+    } = scan_symbols(&root, &Files::default()).unwrap();
     assert_eq!(citations.len(), 4, "{citations:?}");
     assert_eq!(citations[..2], ["Smith2020", "Jones2021"]);
     assert!(citations[2].contains("ller2020") && citations[3] == "ok2021");

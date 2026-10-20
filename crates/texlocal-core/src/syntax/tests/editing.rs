@@ -154,6 +154,7 @@ fn completions_are_offered_for_what_is_typed() {
         doc.set_symbols(std::sync::Arc::new(Symbols {
             labels: vec!["sec:intro".into()],
             citations: vec!["knuth84".into()],
+            ..Symbols::default()
         }));
         let found = doc.completions(units(before), explicit);
         let place = found

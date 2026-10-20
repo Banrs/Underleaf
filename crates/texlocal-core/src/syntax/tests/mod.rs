@@ -47,6 +47,7 @@ fn completions_offer_the_symbols_set_on_the_document() {
     doc.set_symbols(std::sync::Arc::new(Symbols {
         labels: owned(&["fig:one", "sec:two"]),
         citations: owned(&["smith2020", "jones"]),
+        ..Symbols::default()
     }));
     assert_eq!(offered(&mut doc, 8), ["smith2020"]);
     assert_eq!(offered(&mut doc, 18), ["fig:one"]);

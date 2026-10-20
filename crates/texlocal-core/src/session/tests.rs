@@ -1222,12 +1222,13 @@ async fn until_cited(doc: &Document, key: &str) -> bool {
 }
 
 #[tokio::test(start_paused = true)]
-async fn citations_another_app_writes_reach_completion() {
+async fn citations_and_files_another_app_writes_reach_completion() {
     let rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
     fs::write(rig.root.join("refs.bib"), "@book{first,").unwrap();
     rig.changed("refs.bib", true);
     assert!(until_cited(&doc, "first").await, "a new file's");
+    assert_eq!(doc.symbols().files, ["main.tex", "refs.bib"]);
     rig.write_elsewhere("refs.bib", "@book{second,");
     assert!(until_cited(&doc, "second").await, "a listed file's");
 }
