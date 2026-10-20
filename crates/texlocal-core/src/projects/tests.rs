@@ -1,6 +1,7 @@
 //! Tests across the projects module's parts: renames under the settings' and
 //! the paths' rules, the library, search, the symbol scan, and links.
 
+use std::collections::HashMap;
 use std::fs;
 
 use serde_json::json;
@@ -106,7 +107,7 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
 
     let tree = file_tree(&root);
     let hits = search_project(&root, "needle", 100);
-    let symbols = scan_symbols(&root, &Files::default());
+    let symbols = scan_symbols(&root, &Files::default(), &HashMap::new());
     lock(&root.join("locked"), 0o755).unwrap();
 
     let tree = tree.unwrap();
@@ -200,7 +201,9 @@ fn only_the_top_level_build_folder_is_the_compile_outputs() {
     let files: Vec<_> = hits.iter().map(|h| h.file.as_str()).collect();
     assert_eq!(files, ["chapters/build/notes.tex"]);
     assert_eq!(
-        scan_symbols(&root, &Files::default()).unwrap().labels,
+        scan_symbols(&root, &Files::default(), &HashMap::new())
+            .unwrap()
+            .labels,
         ["deep:one"]
     );
 }
@@ -239,7 +242,7 @@ fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
 
     let Symbols {
         citations, labels, ..
-    } = scan_symbols(&root, &Files::default()).unwrap();
+    } = scan_symbols(&root, &Files::default(), &HashMap::new()).unwrap();
     assert_eq!(citations.len(), 4, "{citations:?}");
     assert_eq!(citations[..2], ["Smith2020", "Jones2021"]);
     assert!(citations[2].contains("ller2020") && citations[3] == "ok2021");
@@ -258,7 +261,7 @@ fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
          \\begin{thebibliography}{9}\n\\bibitem[K]{knuth} Knuth.\n\\bibitem {lamport} Lamport.\n",
     )
     .unwrap();
-    let found = scan_symbols(&root, &Files::default()).unwrap();
+    let found = scan_symbols(&root, &Files::default(), &HashMap::new()).unwrap();
     assert_eq!(found.labels, ["kept", "after-percent", "spaced", "eq:one"]);
     assert_eq!(found.citations, ["knuth", "lamport"]);
 
@@ -273,7 +276,7 @@ fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
     ] {
         fs::write(root.join(file), text).unwrap();
     }
-    let found = scan_symbols(&root, &Files::default()).unwrap();
+    let found = scan_symbols(&root, &Files::default(), &HashMap::new()).unwrap();
     assert_eq!(found.labels, ["first", "shared", "last"]);
     assert_eq!(found.citations, ["one", "three", "two"]);
 }
@@ -286,7 +289,7 @@ fn the_symbol_scan_reads_the_commands_and_environments_a_project_defines() {
         \\newenvironment{thm}[1]{}{} % \\newcommand{\\gone}{}\n\
         \\newenvironment{\\bad}{}{} \\newcommand{}{} \\newcommand{\\R}[1]{}\n";
     fs::write(root.join("main.tex"), main).unwrap();
-    let found = scan_symbols(&root, &Files::default()).unwrap();
+    let found = scan_symbols(&root, &Files::default(), &HashMap::new()).unwrap();
     let commands: Vec<_> = found
         .commands
         .iter()
@@ -305,15 +308,24 @@ fn the_symbol_scan_reads_a_file_again_only_once_its_stamp_changes() {
     let file = root.join("main.tex");
     fs::write(&file, "\\label{one}").unwrap();
     let facts = Files::default();
-    assert_eq!(scan_symbols(&root, &facts).unwrap().labels, ["one"]);
+    assert_eq!(
+        scan_symbols(&root, &facts, &HashMap::new()).unwrap().labels,
+        ["one"]
+    );
     let modified = fs::metadata(&file).unwrap().modified().unwrap();
     // Written in place at the same length and dated back, it stamps as before.
     fs::write(&file, "\\label{two}").unwrap();
     let written = fs::File::options().write(true).open(&file).unwrap();
     written.set_modified(modified).unwrap();
-    assert_eq!(scan_symbols(&root, &facts).unwrap().labels, ["one"]);
+    assert_eq!(
+        scan_symbols(&root, &facts, &HashMap::new()).unwrap().labels,
+        ["one"]
+    );
     fs::write(&file, "\\label{three}").unwrap();
-    assert_eq!(scan_symbols(&root, &facts).unwrap().labels, ["three"]);
+    assert_eq!(
+        scan_symbols(&root, &facts, &HashMap::new()).unwrap().labels,
+        ["three"]
+    );
 }
 
 #[test]
@@ -384,7 +396,9 @@ fn the_tree_scans_and_zip_follow_links_to_files_only() {
     let mut hits: Vec<_> = hits.into_iter().map(|hit| hit.file).collect();
     hits.sort();
     assert_eq!(hits, ["linked.tex", "source.txt"]);
-    let mut labels = scan_symbols(&root, &Files::default()).unwrap().labels;
+    let mut labels = scan_symbols(&root, &Files::default(), &HashMap::new())
+        .unwrap()
+        .labels;
     labels.sort();
     assert_eq!(labels, ["linked", "shared"]);
     let dest = root.with_file_name("out.zip");

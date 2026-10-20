@@ -883,11 +883,16 @@ impl Actor {
     fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
         let (seq, root, tx) = (self.symbols_seq, self.root.clone(), self.tx.clone());
-        let facts = Arc::clone(&self.facts);
+        let (facts, docs) = (Arc::clone(&self.facts), Arc::clone(&self.shared));
         let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
         files.sort_unstable();
         tokio::task::spawn_blocking(move || {
-            let symbols = projects::scan_symbols(&root, &facts);
+            let docs = lock(&docs).clone();
+            let open = docs.into_iter().map(|(path, doc)| {
+                let facts = analyze::Facts::read(&doc.snapshot().0, file_kind(&path));
+                (path, Arc::new(facts))
+            });
+            let symbols = projects::scan_symbols(&root, &facts, &open.collect());
             let symbols = symbols.map(|symbols| Symbols { files, ..symbols });
             let _ = tx.send(Msg::Symbols(seq, symbols));
         });

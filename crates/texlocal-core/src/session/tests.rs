@@ -16,6 +16,7 @@ use super::watch::Change;
 use super::{Document, Engine, Msg, Preview, Sessions};
 use crate::compile::CompileResult;
 use crate::logparse::LogItem;
+use crate::projects::Symbols;
 use crate::projects::testing::names_in;
 use crate::service::Service;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane, Sink, Status};
@@ -1265,12 +1266,10 @@ async fn cleans_asked_for_together_are_all_answered() {
     assert_eq!(rig.fake.called("clean"), 1);
 }
 
-/// Until the document's symbols hold `key` and the file list `files`, which the tree's own
-/// rescan brings, perhaps one symbol scan after the key.
-async fn until_cited(doc: &Document, key: &str, files: &[&str]) -> bool {
+/// Until the document's symbols pass `test`, perhaps a scan or two later.
+async fn until(doc: &Document, test: impl Fn(&Symbols) -> bool) -> bool {
     for _ in 0..500 {
-        let symbols = doc.symbols();
-        if symbols.citations.iter().any(|cited| cited == key) && symbols.files == files {
+        if test(&doc.symbols()) {
             return true;
         }
         wait(10).await;
@@ -1285,10 +1284,28 @@ async fn citations_and_files_another_app_writes_reach_completion() {
     let doc = rig.open("main.tex").await;
     fs::write(rig.root.join("refs.bib"), "@book{first,").unwrap();
     rig.changed("refs.bib", true);
-    let files = ["main.tex", "refs.bib"];
-    assert!(until_cited(&doc, "first", &files).await, "a new file's");
+    // The file list comes with the tree's own rescan, perhaps one scan after the key.
+    let cited = |symbols: &Symbols, key| {
+        symbols.citations.iter().any(|cited| cited == key)
+            && symbols.files == ["main.tex", "refs.bib"]
+    };
+    assert!(until(&doc, |s| cited(s, "first")).await, "a new file's");
     rig.write_elsewhere("refs.bib", "@book{second,");
-    assert!(until_cited(&doc, "second", &files).await, "a listed file's");
+    assert!(until(&doc, |s| cited(s, "second")).await, "a listed file's");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_symbol_scan_reads_an_open_document_as_the_editor_has_it() {
+    let rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    // Marked text holds the autosave, so the label never reaches the disk.
+    let composing = json!({ "path": "main.tex", "composing": true });
+    rig.ok("composing", composing).await;
+    doc.edit(5, 0, "\\label{typed}");
+    fs::write(rig.root.join("b.tex"), "").unwrap();
+    rig.changed("b.tex", true);
+    assert!(until(&doc, |symbols| symbols.labels == ["typed"]).await);
+    assert_eq!(rig.disk("main.tex"), "Hello");
 }
 
 /// Two files on their way to the Trash at once: the first's end leaves the second held.

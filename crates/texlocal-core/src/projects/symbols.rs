@@ -1,21 +1,32 @@
 //! The labels and citation keys a project defines, for completion.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use super::skip_unreadable;
 use super::tree::{file_kind, visit_files};
-use crate::analyze::Files;
+use crate::analyze::{Facts, Files};
 use crate::error::CoreError;
 pub use crate::syntax::Symbols;
 
-/// Their union over the project's .tex and .bib files, each read again only once it changes.
-pub fn scan_symbols(root: &Path, facts: &Files) -> Result<Symbols, CoreError> {
+/// Their union over the project's .tex and .bib files, each read again only once it changes;
+/// one an editor has open, `open`'s, as the editor has it.
+pub fn scan_symbols(
+    root: &Path,
+    facts: &Files,
+    open: &HashMap<String, Arc<Facts>>,
+) -> Result<Symbols, CoreError> {
     let mut files = BTreeMap::new();
     visit_files(root, &mut |abs, rel| {
-        if matches!(file_kind(rel), "tex" | "bib")
-            && let Some(found) = skip_unreadable(facts.facts(abs, rel))?
-        {
+        if !matches!(file_kind(rel), "tex" | "bib") {
+            return Ok(true);
+        }
+        let found = match open.get(rel) {
+            Some(open) => Some(Arc::clone(open)),
+            None => skip_unreadable(facts.facts(abs, rel))?,
+        };
+        if let Some(found) = found {
             files.insert(rel.to_owned(), found);
         }
         Ok(true)

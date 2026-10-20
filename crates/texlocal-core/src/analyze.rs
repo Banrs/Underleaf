@@ -93,7 +93,7 @@ enum Folder {
 }
 
 impl Facts {
-    fn read(text: &str, kind: &str) -> Self {
+    pub(crate) fn read(text: &str, kind: &str) -> Self {
         if kind == "bib" {
             let entries = BIB_KEY.captures_iter(text).filter(|entry| {
                 let kind = entry[1].to_ascii_lowercase();
