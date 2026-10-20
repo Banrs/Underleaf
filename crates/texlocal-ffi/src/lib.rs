@@ -115,7 +115,7 @@ pub unsafe extern "C" fn tl_call(
         let (command, args) = unsafe { command_args(command, args_json) }?;
         handle.host.call(command, &args)
     });
-    json_string(envelope(answer.unwrap_or_else(|| Err(panicked()))))
+    c_json(envelope(answer.unwrap_or_else(|| Err(panicked()))).to_string()).into_raw()
 }
 
 fn panicked() -> CoreError {
