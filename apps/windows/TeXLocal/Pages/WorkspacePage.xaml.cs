@@ -36,7 +36,7 @@ public sealed partial class WorkspacePage : Page
     readonly DispatcherQueueTimer searchTimer, caretTimer, scrollTimer;
     readonly HashSet<string> unsaved = [];
     readonly Dictionary<string, IssueLine[]> issueLines = [];
-    string id = "", root = "", mainFile = "", issueFilter = "", logFilter = "";
+    string id = "", root = "", issueFilter = "", logFilter = "";
     ulong session;
     bool texAvailable, compiling, outdated, zooming, sidebarWanted = true;
     double ratio = Prefs.SplitRatio;
@@ -209,14 +209,13 @@ public sealed partial class WorkspacePage : Page
             else Loaded += (_, _) => App.ExitSmoke(null);
         }
         root = opened.Root;
-        mainFile = MainFile(opened.Settings);
         ShellEscapeItem.IsChecked = opened.Settings.GetProperty("shellEscape").GetBoolean();
         StopOnErrorItem.IsChecked = opened.Settings.GetProperty("stopOnFirstError").GetBoolean();
         ReadFolds(opened.Ui);
         ShowTree(treeJson.Length > 0 ? tree : opened.Tree, true);
         if (opened.Pdf is { } pdf && result is null) await Pdf.Load(pdf);
         ShowBuild();
-        Select(FilesTree, i => i.Key == (file ?? mainFile));
+        Select(FilesTree, i => i.Key == (file ?? opened.Settings.GetProperty("mainFile").GetString()));
         if (Picked is { Type: not "dir" } main) await OpenDocument(main.Path, main.Kind);
     }
 
@@ -780,6 +779,4 @@ public sealed partial class WorkspacePage : Page
     static Visibility Vis(bool shown) => shown ? Visibility.Visible : Visibility.Collapsed;
 
     string Full(string path) => System.IO.Path.Combine(root, path.Replace('/', '\\'));
-
-    static string MainFile(JsonElement settings) => settings.GetProperty("mainFile").GetString() ?? "";
 }

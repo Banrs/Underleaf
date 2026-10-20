@@ -364,3 +364,5 @@ Every change a host follows since commit d6bee12, in the order made.
 - `file_tree` and the `tree` event mark the main file's node `main: true` (other nodes have no
   `main`), and a session sends the tree again when the main file changes. Both hosts may adopt
   it in place of their own marks; nothing breaks meanwhile.
+- Both hosts mark the main file from the tree's `main`, not their copy of the settings, and
+  Windows keeps Delete off for that node.

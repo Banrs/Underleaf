@@ -16,6 +16,8 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
     /// A file's, from its name; a folder has none.
     var kind: FileKind?
     let children: [TreeNode]?
+    /// The core's mark, as latexmk finds the main file.
+    var main: Bool?
 
     var id: String { path }
     var isDirectory: Bool { type == .dir }

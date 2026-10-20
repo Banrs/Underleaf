@@ -19,7 +19,8 @@ public sealed record Located(string Id, string Path);
 
 /// <param name="Type">file or dir.</param>
 /// <param name="Kind">tex, bib, image, pdf, text or other; null for a folder.</param>
-public sealed record TreeNode(string Type, string Name, string Path, string? Kind, TreeNode[]? Children);
+/// <param name="Main">The core's mark, as latexmk finds the main file.</param>
+public sealed record TreeNode(string Type, string Name, string Path, string? Kind, TreeNode[]? Children, bool Main);
 
 /// <param name="Found">The folder the working latexmk runs from.</param>
 public sealed record TexStatus(bool Available, string? Version, string? TexDir, string? Found);

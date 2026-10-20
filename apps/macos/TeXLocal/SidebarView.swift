@@ -72,7 +72,7 @@ struct FilesList: View {
                         Divider()
                     } else if node.kind == .tex {
                         Button("Set as Main File") { Task { await project.patchSettings(.mainFile(node.path)) } }
-                            .disabled(node.path == project.settings?.mainFile)
+                            .disabled(node.main == true)
                         Divider()
                     }
                     ItemMenuItems(actions: actions(node))
@@ -191,7 +191,7 @@ struct FilesList: View {
     }
 
     private func row(_ node: TreeNode) -> some View {
-        let isMain = node.path == project.settings?.mainFile
+        let isMain = node.main == true
         return Label {
             HStack {
                 if rename.id == node.path {
