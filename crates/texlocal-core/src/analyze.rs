@@ -351,21 +351,21 @@ fn detail(fields: &[(String, String)]) -> Option<String> {
             .find(|(n, _)| n == name)
             .map(|(_, v)| v.as_str())
     };
-    // A last name comes first before a comma, else last, and a braced name is one.
+    // A last name comes first before a comma, else last.
     let last = |name: &str| {
         let name = name.trim();
-        let last = if name.starts_with('{') && name.ends_with('}') {
-            name
-        } else if let Some((last, _)) = name.split_once(',') {
-            last
-        } else {
-            name.rsplit_once(' ').map_or(name, |(_, last)| last)
+        let last = match parted(name, ",").as_slice() {
+            [last, _, ..] => *last,
+            _ => *parted(name, " ").last().expect("a part at least"),
         };
         plain_title(last)
     };
     let authors = field("author").and_then(|authors| {
         let authors = SPACES.replace_all(authors, " ");
-        let names: Vec<String> = authors.split(" and ").filter_map(last).collect();
+        let names: Vec<String> = parted(&authors, " and ")
+            .into_iter()
+            .filter_map(last)
+            .collect();
         match names.as_slice() {
             [] => None,
             [one] => Some(one.clone()),
@@ -381,6 +381,30 @@ fn detail(fields: &[(String, String)]) -> Option<String> {
     ];
     let parts: Vec<String> = parts.into_iter().flatten().collect();
     (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// `text` parted at each `at` outside braces, which hold a name's own spaces, commas and
+/// `and`s, as BibTeX parts names; `and` in any case.
+fn parted<'a>(text: &'a str, at: &str) -> Vec<&'a str> {
+    let (mut parts, mut depth, mut from) = (Vec::new(), 0_usize, 0);
+    for (i, c) in text.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ if depth == 0
+                && i >= from
+                && text
+                    .get(i..i + at.len())
+                    .is_some_and(|s| s.eq_ignore_ascii_case(at)) =>
+            {
+                parts.push(&text[from..i]);
+                from = i + at.len();
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[from..]);
+    parts
 }
 
 /// Each file's facts by its name as the volume compares names, with the stamp read at. An
@@ -872,13 +896,14 @@ mod tests {
         );
     }
 
-    /// Through braces and quotes, a biblatex date, `#` and a name in braces; an entry left open
-    /// reads to the next one, not past it.
+    /// Through braces and quotes, a biblatex date, `#`, names in braces and an `AND`; an entry
+    /// left open reads to the next one, not past it.
     #[test]
     fn a_bib_entry_tells_its_authors_year_and_title() {
         let bib = "@book{knuth,\n  author = {Knuth, Donald E.},\n  title = \"The {TeX}book, \" # {Vol. A},\n  year = 1984,\n}\n\
             @article{two, title = {On {\\em Two}}, author = {A. One and\n B. {Two}}, date = {2020-05-01}}\n\
             @misc(many, author = \"A and B and {World Health Organization}\")\n\
+            @misc{corp, author = {{Procter and Gamble} AND Jean {de La Fontaine}}}\n\
             @misc{open, title = {Never {closed},\n  year = 1999\n\
             @misc{after, author = {Last, First}, year = {2001}}\n@misc{bare,}";
         let read = Facts::read(bib, "bib").citations.into_iter();
@@ -890,6 +915,7 @@ mod tests {
                 detail("knuth", Some("Knuth · 1984 · The TeXbook, Vol. A")),
                 detail("two", Some("One and Two · 2020 · On Two")),
                 detail("many", Some("A et al.")),
+                detail("corp", Some("Procter and Gamble and de La Fontaine")),
                 detail("open", Some("Never closed, year = 1999")),
                 detail("after", Some("Last · 2001")),
                 detail("bare", None),
