@@ -49,11 +49,11 @@ apps/windows/
     Prefs.cs                   the host's preferences, typed: window, panes, Compile automatically, Settings › Editor
                                (EditorChanged) and › PDF; the core's themes; monospace families by GDI
     Pages/HomePage, WorkspacePage, SettingsPage (.xaml/.cs); WorkspacePage.xaml.cs (the session: editor, builds, issues,
-      PDF, SyncTeX, status bar), WorkspacePage.Sidebar.cs (files, outline, project search, words),
+      PDF, SyncTeX, status bar), WorkspacePage.Sidebar.cs (files, outline, project search and replace, words),
       WorkspacePage.Insert.cs (Insert menu, symbol palette)
     Controls/Card.cs (a settings card), Shortcut.cs (accelerators as one attribute), Sizer.cs, RenameFlyout.xaml(.cs),
-      PdfView.xaml(.cs), SourceView.xaml(.cs) (typing through the core, completion, maths preview, Go to definition),
-      SourceView.Find.cs (find and replace), PagePreview.cs (a template's first page in outline, for Home)
+      PdfView.xaml(.cs), SourceView.xaml(.cs) (typing through the core, completion, maths preview, Go to definition,
+      Rename symbol), SourceView.Find.cs (find and replace), PagePreview.cs (a template's first page in outline, for Home)
     Themes/Generic.xaml        Card's default style, section and group headers, the layer, the sizer's grip, status bar
                                styles, the template previews' bars
   TeXLocal.Tests/              xUnit, against TeXLocal.Core only: the bridge and smoke behaviour
@@ -98,7 +98,7 @@ apps/windows/
 | Window | `Window`, `MicaBackdrop` (Base), WinUI's `TitleBar` holding back, icon, title, the `MenuBar` and Settings | A hand-made title bar needs its own drag regions, insets and inactive state |
 | Pages | `Frame`: Home, Workspace, Settings; the workspace stays cached under Settings | `NavigationView` switches sections, which this app hasn't |
 | Commands | The page's `MenuBar` lent to the title bar (`MainWindow.SetMenu`); a `CommandBar`, Compile in an `AppBarElementContainer` | A menu row of its own pushes the commands down a row |
-| Navigation pane | `SplitView` (inline from 1008, overlay on acrylic below) with Word's search box, a `SelectorBar` and three `TreeView`s | NavigationView is not a file tree |
+| Navigation pane | `SplitView` (inline from 1008, overlay on acrylic below) with Word's search box, VS Code's replace toggle and Replace all under it, a `SelectorBar` and three `TreeView`s | NavigationView is not a file tree |
 | Splitters | `Sizer`, ~90 lines: the gap between layers, a grip under the pointer, a thumb to UI Automation | Toolkit 8.2 pulls the 1.6 metapackage; move when 8.3 is stable |
 | Settings cards | `Card`, a `ContentControl` styled in Generic.xaml | No Community Toolkit |
 | Home | Templates an `ItemsControl` of subtle buttons with `PagePreview`; Recent a `ListView` | A `GridView` of templates would select |
@@ -110,7 +110,7 @@ apps/windows/
 | Completion | A `ListView` in a `Popup`, never focused | A `Flyout` takes the keyboard |
 | Find | Notepad's find bar over `RichEditTextRange.FindText` | No find in `RichEditBox` |
 | Layer corners | A rounded clip on each layer's composition visual | `CornerRadius` rounds only the border |
-| Issues | `ListView`; line ends an `InfoBadge` and Caption; one `InfoBar` for a failed build | A list of InfoBars is too heavy |
+| Issues | `ListView`; line ends an `InfoBadge` and Caption, as Visual Studio 2022's inline diagnostics; a `Polyline` squiggle under an undefined command; one `InfoBar` for a failed build | A list of InfoBars is too heavy; RichEdit's own wavy underline would be an edit in the undo history |
 | Pickers | `Microsoft.Windows.Storage.Pickers` with `AppWindow.Id` | No HWND interop |
 | Packages | `Microsoft.WindowsAppSDK.WinUI` 2.3.9, `.Foundation` 2.3.12, `.InteractiveExperiences` 2.1.9 | The metapackage adds ~60 MB |
 | PDF | `Windows.Data.Pdf` pages as `Image`s in a zooming `ScrollViewer`; PDFium in the core to come | No text API; `ScrollView` and `ItemsRepeater` misplace scroll positions |
@@ -176,6 +176,13 @@ templates) is `core-api.md`'s. The numbers are the ones the app's comments cite,
     in whitespace.
 31. **Default library**: `tl_open(NULL)` resolves the default library folder (`TEXLOCAL_DATA`, else
     home/TeXLocal).
+32. **Rename at a definition**: `definition` answers null on `\label{a}` itself, a `\bibitem` or a
+    .bib key, so Rename symbol (F2) works from a `\ref` or `\cite` kin only; VS Code's renames from
+    the definition too. Its answer could also carry the name's own range, which the editor now
+    finds by searching back from the caret.
+33. **The source's version**: `session_replace` and `session_rename_symbol` answer edits against a
+    document `version` that `Source` can't read, so the editor applies them unchecked; typing in the
+    moment between the call and its answer would shift them.
 
 ### What Windows lacks against the Mac
 

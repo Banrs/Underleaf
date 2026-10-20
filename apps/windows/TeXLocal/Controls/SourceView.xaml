@@ -7,18 +7,6 @@
 
     <UserControl.Resources>
         <ResourceDictionary>
-            <!-- High contrast's subtle fills are the window's colour, so an issue's band is outlined there. -->
-            <ResourceDictionary.ThemeDictionaries>
-                <ResourceDictionary x:Key="Default">
-                    <StaticResource x:Key="IssueBandStroke" ResourceKey="ControlFillColorTransparentBrush" />
-                </ResourceDictionary>
-                <ResourceDictionary x:Key="Light">
-                    <StaticResource x:Key="IssueBandStroke" ResourceKey="ControlFillColorTransparentBrush" />
-                </ResourceDictionary>
-                <ResourceDictionary x:Key="HighContrast">
-                    <SolidColorBrush x:Key="IssueBandStroke" Color="{ThemeResource SystemColorWindowTextColor}" />
-                </ResourceDictionary>
-            </ResourceDictionary.ThemeDictionaries>
             <!-- A flyout's surface, for the popups that leave the keyboard in the editor. -->
             <Style x:Key="SurfaceStyle" TargetType="Border">
                 <Setter Property="Background" Value="{ThemeResource AcrylicInAppFillColorDefaultBrush}" />
@@ -52,13 +40,16 @@
                         TextWrapping="NoWrap" />
                 </Grid>
             </DataTemplate>
-            <!-- The Mac's band over an issue's paragraph, and its undefined command underlined. -->
-            <DataTemplate x:Key="IssueBandTemplate">
-                <Rectangle Fill="{ThemeResource SubtleFillColorTertiaryBrush}" Stroke="{ThemeResource IssueBandStroke}" />
-            </DataTemplate>
-            <DataTemplate x:Key="IssueTokenTemplate">
-                <Rectangle Height="2" Fill="{ThemeResource SystemFillColorCriticalBrush}" IsHitTestVisible="False" />
-            </DataTemplate>
+            <!-- Visual Studio's and Word's squiggle under an undefined command, in the status colours: high contrast
+                 draws both in the window's text colour. -->
+            <Style x:Key="ErrorSquiggleStyle" TargetType="Polyline">
+                <Setter Property="Stroke" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+                <Setter Property="StrokeThickness" Value="1" />
+                <Setter Property="IsHitTestVisible" Value="False" />
+            </Style>
+            <Style x:Key="WarningSquiggleStyle" TargetType="Polyline" BasedOn="{StaticResource ErrorSquiggleStyle}">
+                <Setter Property="Stroke" Value="{ThemeResource SystemFillColorCautionBrush}" />
+            </Style>
         </ResourceDictionary>
     </UserControl.Resources>
 
@@ -96,6 +87,10 @@
             IsSpellCheckEnabled="False"
             IsTextPredictionEnabled="False"
             SelectionHighlightColorWhenNotFocused="{ThemeResource TextControlSelectionHighlightColor}">
+            <!-- The editor's own copy of the menu every text control shares, so the commands added to it stay its own. -->
+            <RichEditBox.ContextFlyout>
+                <TextCommandBarFlyout Opening="OnContextOpening" Placement="BottomEdgeAlignedLeft" />
+            </RichEditBox.ContextFlyout>
             <!-- No border in any state, so its brushes are never drawn. -->
             <RichEditBox.Resources>
                 <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
@@ -278,14 +273,15 @@
                     </ListView.Resources>
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="local:CompletionRow">
-                            <Grid AutomationProperties.Name="{x:Bind Item.Label}" ColumnSpacing="12">
+                            <!-- Margins rather than column spacing, so a row without a detail has no gap after its label. -->
+                            <Grid AutomationProperties.Name="{x:Bind Item.Label}">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="16" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <FontIcon FontSize="16" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="{x:Bind Glyph}" />
-                                <TextBlock Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                <TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                                     <Run FontWeight="SemiBold" Text="{x:Bind Typed}" /><Run Text="{x:Bind Rest}" />
                                 </TextBlock>
                                 <!-- A citation's entry after its key, as VS Code shows a detail: one line, so the row keeps its
@@ -293,12 +289,14 @@
                                 <TextBlock
                                     Grid.Column="2"
                                     MaxWidth="240"
+                                    Margin="12,0,0,0"
                                     VerticalAlignment="Center"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Style="{StaticResource CaptionTextBlockStyle}"
                                     Text="{x:Bind Item.Detail}"
                                     TextTrimming="CharacterEllipsis"
-                                    TextWrapping="NoWrap" />
+                                    TextWrapping="NoWrap"
+                                    Visibility="{x:Bind HasDetail}" />
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>

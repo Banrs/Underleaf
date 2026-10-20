@@ -36,14 +36,16 @@ public sealed class NavItem
 }
 
 /// The sidebar, as Word's navigation pane: Files, the Outline of the shown file's document, and project search's Results
-/// as VS Code's search view. Outline, words and hits are the core's (session_analyze, session_outline_current, search_project).
+/// as VS Code's search view. Outline, words and hits are the core's (session_analyze, session_outline_current, session_search,
+/// which finds the open document's unsaved edits).
 public sealed partial class WorkspacePage
 {
     readonly RenameFlyout rename = new();
     HashSet<string> expanded = [], folded = [];
     TreeNode[] tree = [];
     string treeJson = "", searched = "";
-    string? searchError;
+    /// The search's error, or what the replace before it did.
+    string? searchNote;
     int searches;
     bool fileUnshown;
     Analysis? analysis;
@@ -123,7 +125,7 @@ public sealed partial class WorkspacePage
         SelectCurrentHeading();
         SideNote.Text = tab == OutlineTab && !outlined ? Editor.Path is null ? "Open a file to see its outline." : "No sections in this document."
             : tab != ResultsTab || hits ? ""
-            : searchError ?? (searched.Length == 0 ? "Search the project with the box above (Ctrl+Shift+F)." : $"No results for “{searched}”.");
+            : searchNote ?? (searched.Length == 0 ? "Search the project with the box above (Ctrl+Shift+F)." : $"No results for “{searched}”.");
         SideNote.Visibility = Vis(SideNote.Text.Length > 0);
     }
 
@@ -260,27 +262,48 @@ public sealed partial class WorkspacePage
         Search.Focus(FocusState.Keyboard);
     }
 
-    /// The hits by file; a later search's answer wins over an earlier one's.
-    async Task RunSearch()
+    /// The hits by file; a later search's answer wins over an earlier one's. After a replace, what it did is said in place
+    /// of the count, and shown in place of no results.
+    async Task RunSearch(string? replaced = null)
     {
         var query = Search.Text.Trim();
         var generation = ++searches;
         SearchFile[] files = [];
         string? error = null;
         if (query.Length > 0)
-            try { files = await Core.CallAsync<SearchFile[]>("search_project", new { id, query }); }
+            try { files = await Core.CallAsync<SearchFile[]>("session_search", new { session, query }); }
             catch (CoreException ex) { error = ex.Message; }
         if (generation != searches) return;
-        (searched, searchError) = (query, error);
+        (searched, searchNote) = (query, error ?? replaced);
         ResultsTree.ItemsSource = Results(files);
+        ReplaceAll.IsEnabled = files.Length > 0;
         if (query.Length > 0)
         {
             Split.IsPaneOpen = true;
             SideTabs.SelectedItem = ResultsTab;
-            Announce(Search, files.Sum(f => f.Hits.Length) switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" }, "search");
+            Announce(Search, replaced ?? files.Sum(f => f.Hits.Length) switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" }, "search");
         }
         ShowSide();
     }
+
+    void OnReplaceToggle(object sender, RoutedEventArgs e)
+    {
+        var show = ReplaceRow.Visibility != Visibility.Visible;
+        ReplaceRow.Visibility = Vis(show);
+        ReplaceChevron.Glyph = show ? "\uE70D" : "\uE76C";
+        if (show) ReplaceBox.Focus(FocusState.Keyboard);
+    }
+
+    /// VS Code's Replace All, of the matches the results show; the core writes the files not open, and the search runs again.
+    void OnReplaceAll(object sender, RoutedEventArgs e) => Run("Can't replace", async () =>
+    {
+        var replacement = ReplaceBox.Text;
+        var replaced = await Core.CallAsync<Replaced>("session_replace", new { session, query = searched, replacement });
+        Apply(replaced);
+        var count = replaced.Written.Sum(w => w.Count) + (replaced.Edits?.Edits.Length ?? 0);
+        var files = replaced.Written.Length + (replaced.Edits is null ? 0 : 1);
+        await RunSearch($"Replaced {count} {(count == 1 ? "occurrence" : "occurrences")} across {files} {(files == 1 ? "file" : "files")} with “{replacement}”.");
+    });
 
     // MARK: files
 

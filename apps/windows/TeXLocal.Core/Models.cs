@@ -90,7 +90,8 @@ public sealed record MathPreview(int Start, string Tex, bool Display);
 public sealed record Place(string File, int Line, int Column, int Length);
 
 /// Every place the project defines the name at an offset, in the order of their files' paths.
-public sealed record Definition(Place[] Places);
+/// <param name="Kind">label, citation, environment, command or file; a label or a citation can be renamed.</param>
+public sealed record Definition(string Kind, string Name, Place[] Places);
 
 /// Each style the whole selection has, as the edits that would take it off.
 public sealed record TextStyles(TextEdit[]? Bold, TextEdit[]? Italic, TextEdit[]? Underline);
@@ -116,6 +117,15 @@ public sealed record Analysis(OutlineNode[] Tree, int Words, HeadingStyle[] Head
 public sealed record SearchHit(string File, int Line, int Column, int Length, string Before, string Match, string After);
 
 public sealed record SearchFile(string File, SearchHit[] Hits);
+
+/// The open document's edits, against the text the editor has, to apply at once as one undoable edit.
+public sealed record DocumentEdits(string Path, TextEdit[] Edits);
+
+public sealed record FileCount(string File, int Count);
+
+/// session_replace's and session_rename_symbol's answer: the open document's edits, if it has a match, and the other
+/// files, which the core has written.
+public sealed record Replaced(DocumentEdits? Edits, FileCount[] Written);
 
 /// <param name="Shape">upright, italic or smallCaps.</param>
 public sealed record HeadingFont(double Scale, bool Bold, string Shape);
