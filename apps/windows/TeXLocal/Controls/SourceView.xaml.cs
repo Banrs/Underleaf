@@ -73,8 +73,8 @@ public sealed class IssueMark(IssueLine issue) : INotifyPropertyChanged
 
 public sealed partial class SourceView : UserControl
 {
-    // LabelInset: the list's border, padding, glyph and spacing before a label.
-    // Badge: an icon InfoBadge's width.
+    // RowHeight: ListViewItemMinHeight, for a row not yet laid out. LabelInset: the list's border, padding, glyph and spacing
+    // before a label. Badge: an icon InfoBadge's width.
     const int RowHeight = 32, ShownRows = 8, LabelInset = 1 + 12 + 16 + 12, Badge = 16;
     // Asynchronous, so the first text goes in after the layout pass that completes it.
     readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -617,12 +617,16 @@ public sealed partial class SourceView : UserControl
         };
         CompletionList.ItemsSource = found.Items.Select(i => new CompletionRow(i, s.Start - found.Start, glyph)).ToList();
         CompletionList.SelectedIndex = 0;
-        // The surface's padding and border are the 10 past the rows; above the line when there's no room below. Near the
-        // text's left edge the list reaches over the gutter, so its labels still line up with the typed text.
-        var height = Math.Min(found.Items.Length, ShownRows) * RowHeight + 10;
+        // Near the text's left edge the list reaches over the gutter, so its labels still line up with the typed text.
         CompletionPopup.HorizontalOffset = Math.Max(-Gutter.ActualWidth, at.X - LabelInset);
-        CompletionPopup.VerticalOffset = at.Bottom + 4 + height <= ActualHeight || at.Y - height - 4 < 0 ? at.Bottom + 4 : at.Y - height - 4;
+        // Laid out open, before it is drawn, so a row is measured: text scaling makes rows taller.
         CompletionPopup.IsOpen = true;
+        CompletionList.UpdateLayout();
+        var row = CompletionList.ContainerFromIndex(0) is FrameworkElement { ActualHeight: > 0 } shown ? shown.ActualHeight : RowHeight;
+        CompletionList.MaxHeight = ShownRows * row;
+        // The surface's padding and border are the 10 past the rows; above the line when there's no room below.
+        var height = Math.Min(found.Items.Length, ShownRows) * row + 10;
+        CompletionPopup.VerticalOffset = at.Bottom + 4 + height <= ActualHeight || at.Y - height - 4 < 0 ? at.Bottom + 4 : at.Y - height - 4;
         Announce(found.Items[0].Label);
     }
 
