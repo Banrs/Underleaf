@@ -56,12 +56,13 @@ public sealed partial class WorkspacePage : Page
         SetSplit(ratio);
         ShowEdge();
         ShowPage();
-        // A layer's content scrolls under its rounded corners.
+        // A layer's content scrolls under its rounded corners, inside its 1 px border.
+        var radius = (float)((CornerRadius)Application.Current.Resources["OverlayCornerRadius"]).TopLeft - 1;
         foreach (var layer in (FrameworkElement[])[EditorClip, PdfClip, IssuesClip])
         {
             var visual = ElementCompositionPreview.GetElementVisual(layer);
             var shape = visual.Compositor.CreateRoundedRectangleGeometry();
-            shape.CornerRadius = new(7, 7);
+            shape.CornerRadius = new(radius, radius);
             visual.Clip = visual.Compositor.CreateGeometricClip(shape);
             layer.SizeChanged += (_, e) => shape.Size = new((float)e.NewSize.Width, (float)e.NewSize.Height);
         }
