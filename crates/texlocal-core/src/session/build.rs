@@ -9,7 +9,7 @@ use super::actor::{Actor, Later, Timer};
 use super::{Msg, Reply};
 use crate::CoreError;
 use crate::compile::CompileResult;
-use crate::logparse::LogItem;
+use crate::logparse::{LogItem, SHELL_ESCAPE};
 use crate::syntax::TextRange;
 
 #[derive(Default)]
@@ -239,7 +239,7 @@ impl Actor {
 }
 
 /// An undefined command's issue has where the line has the command (`tokens`), and a
-/// `compact` message that names it in fewer words.
+/// `compact` message that names it in fewer words; so does one that needs shell escape.
 fn issue_lines(
     issues: &[LogItem],
     path: &str,
@@ -269,7 +269,9 @@ fn issue_lines(
                 "error": item.kind == crate::logparse::Severity::Error,
                 "message": item.message,
                 "short": item.short,
-                "compact": command.map(|command| format!("Undefined: {command}")),
+                "compact": command.map(|command| format!("Undefined: {command}")).or_else(|| {
+                    (item.message == SHELL_ESCAPE).then(|| "Needs Shell Escape".to_owned())
+                }),
                 "tokens": command.map_or_else(Vec::new, |command| tokens(line, command)),
                 "others": others,
             })

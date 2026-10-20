@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::error::CoreError;
-use crate::logparse::{LogItem, Severity, latexmk_errors, parse_blg, parse_log};
+use crate::logparse::{
+    LogItem, Severity, latexmk_errors, parse_blg, parse_log, point_to_shell_escape,
+};
 use crate::paths::safe_rel_file;
 use crate::process::{self, Tree, drive};
 use crate::settings::read_settings;
@@ -258,13 +260,17 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
     // A no-op build keeps the PDF and its log; an old log after a new PDF is the last build's.
     let unchanged = ok && !run.wrote("pdf") && !run.wrote("log");
     let engine_log = run.read("log", unchanged);
-    let (mut items, bad_boxes) = parse_log(engine_log.as_deref().unwrap_or(&output), &run.main_rel);
+    let tex_log = engine_log.as_deref().unwrap_or(&output);
+    let (mut items, bad_boxes) = parse_log(tex_log, &run.main_rel);
     if let Some(blg) = run.read("blg", unchanged) {
         items.extend(parse_blg(&blg));
     }
     let (mut errors, warnings): (Vec<_>, Vec<_>) = items
         .into_iter()
         .partition(|item| item.kind == Severity::Error);
+    if !ok {
+        point_to_shell_escape(&mut errors, tex_log);
+    }
 
     let wrote_pdf = matches!(end, End::Exited(_)) && run.wrote("pdf");
     match end {

@@ -80,6 +80,10 @@ static BIBTEX_WARNING_PLACE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^--line (\d+) of file (.+)$").unwrap());
 static BIBER_MESSAGE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[\d+\] .*> (ERROR|WARN) - (.*)$").unwrap());
+static SHELL_ESCAPE_ASKED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)shell[- ]escape|\\write18").unwrap());
+static RUNSYSTEM_REFUSED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"runsystem\(.*\)\.\.\.disabled").unwrap());
 
 fn error_start(line: &str) -> Option<Captures<'_>> {
     ERROR
@@ -344,6 +348,27 @@ pub fn parse_blg(blg: &str) -> Vec<LogItem> {
         above = line;
     }
     items
+}
+
+pub(crate) const SHELL_ESCAPE: &str = "A package here runs programs as it builds, which needs Shell Escape. Turn on Shell Escape in the project's settings if you trust the project.";
+
+/// A failed build's error that asks for shell escape (minted's "invoke LaTeX with the
+/// -shell-escape flag") says where to allow it; without one, a program TeX refused
+/// ("runsystem(…)...disabled") adds that error with no place.
+pub(crate) fn point_to_shell_escape(errors: &mut Vec<LogItem>, log: &str) {
+    if let Some(error) = errors
+        .iter_mut()
+        .find(|e| SHELL_ESCAPE_ASKED.is_match(&e.short))
+    {
+        *error = LogItem::new(
+            Severity::Error,
+            error.file.take(),
+            error.line,
+            SHELL_ESCAPE.into(),
+        );
+    } else if RUNSYSTEM_REFUSED.is_match(log) {
+        errors.insert(0, LogItem::error(SHELL_ESCAPE));
+    }
 }
 
 pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
