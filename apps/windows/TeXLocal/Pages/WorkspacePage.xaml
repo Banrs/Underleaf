@@ -64,7 +64,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="32" />
+            <RowDefinition Height="Auto" MinHeight="32" />
         </Grid.RowDefinitions>
 
         <!-- Narrow, the navigation pane overlays the layers on acrylic; wide (1008 and up, the Fluent breakpoint), it sits
@@ -302,7 +302,7 @@
                 <AppBarElementContainer VerticalAlignment="Center">
                     <Button
                         x:Name="CompileButton"
-                        Width="112"
+                        MinWidth="112"
                         Margin="4,0,0,0"
                         AutomationProperties.Name="Compile"
                         Click="OnCompileButton"
@@ -646,7 +646,7 @@
                 TextTrimming="CharacterEllipsis"
                 ToolTipService.ToolTip="{x:Bind BuildState.Text, Mode=OneWay}" />
             <StackPanel Grid.Column="2" Orientation="Horizontal">
-                <Grid Width="96">
+                <Grid MinWidth="96">
                     <Button x:Name="NotSaved" AutomationProperties.Name="Not saved" Click="OnSave" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Save (Ctrl+S)" Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon FontSize="12" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" />
