@@ -21,7 +21,7 @@ public static partial class Program
             Application.Start(_ =>
             {
                 SynchronizationContext.SetSynchronizationContext(new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
-                _ = new App();
+                new App();
             });
             return;
         }
