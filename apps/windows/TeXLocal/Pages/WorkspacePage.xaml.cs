@@ -189,6 +189,12 @@ public sealed partial class WorkspacePage : Page
     {
         session = ++sessions;
         var opened = await Core.CallAsync<SessionOpened>("session_open", new { id, session, autoCompile = Prefs.AutoCompile });
+        // A smoke run ends here, not after the editor's first layout below, which a headless runner may never do.
+        if (App.Smoke)
+        {
+            if (IsLoaded) App.ExitSmoke(null);
+            else Loaded += (_, _) => App.ExitSmoke(null);
+        }
         root = opened.Root;
         mainFile = MainFile(opened.Settings);
         ShellEscapeItem.IsChecked = opened.Settings.GetProperty("shellEscape").GetBoolean();

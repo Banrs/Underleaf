@@ -62,13 +62,22 @@ public partial class App : Application
         return dialog.ShowAsync().AsTask();
     }
 
-    public static Task Alert(string title, string message) =>
-        Show(new ContentDialog { Title = title, Content = message, CloseButtonText = "OK", DefaultButton = ContentDialogButton.Close });
+    /// In a smoke run, which no one reads, an alert is its failure.
+    public static Task Alert(string title, string message)
+    {
+        if (Smoke) ExitSmoke($"{title}: {message}");
+        return Show(new ContentDialog { Title = title, Content = message, CloseButtonText = "OK", DefaultButton = ContentDialogButton.Close });
+    }
 
-    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
         OpenCore();
         Window = new MainWindow();
         Window.Activate();
+        if (!Smoke) return;
+        // A new blank project, opened: the workspace ends the run once its session is open.
+        if (Core is null) ExitSmoke(CoreError);
+        try { Window.OpenProject((await Core!.CallAsync<ProjectInfo>("create_project", new { name = "Smoke", template = "blank" })).Id); }
+        catch (CoreException ex) { ExitSmoke(ex.Message); }
     }
 }
