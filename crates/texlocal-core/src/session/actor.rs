@@ -1,6 +1,7 @@
 //! One project session's task: documents, saves, builds and the file watcher's news,
 //! handled one message at a time, so no two of them race.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -21,7 +22,7 @@ use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Named, Place};
 use crate::events::Emitter;
 use crate::paths::{self, within};
-use crate::projects::{self, Newline, Query, Symbols, file_kind};
+use crate::projects::{self, Query, Symbols, file_kind};
 use crate::service::{SEARCH_LIMIT, Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
@@ -1213,3 +1214,34 @@ fn read_disk(path: &Path) -> Result<(Option<DiskText>, Option<Stamp>), CoreError
 }
 
 type DiskText = (String, Newline);
+
+/// A document holds `\n` alone, as an editor needs; a save writes the file's own ending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Newline {
+    Lf,
+    CrLf,
+    Cr,
+}
+
+impl Newline {
+    pub fn of(text: &str) -> Self {
+        let Some(at) = text.find(['\r', '\n']) else {
+            return Self::Lf;
+        };
+        match &text.as_bytes()[at..] {
+            [b'\r', b'\n', ..] => Self::CrLf,
+            [b'\r', ..] => Self::Cr,
+            _ => Self::Lf,
+        }
+    }
+
+    pub fn written(self, text: &str) -> Cow<'_, str> {
+        let ending = match self {
+            Self::Lf if !text.contains('\r') => return Cow::Borrowed(text),
+            Self::Lf => return Cow::Owned(lf(text.to_owned())),
+            Self::CrLf => "\r\n",
+            Self::Cr => "\r",
+        };
+        Cow::Owned(lf(text.to_owned()).replace('\n', ending))
+    }
+}

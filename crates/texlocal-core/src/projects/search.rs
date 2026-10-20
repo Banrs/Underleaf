@@ -10,13 +10,13 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::files::{Newline, write_creating};
+use super::files::write_creating;
 use super::skip_unreadable;
 use super::tree::{is_text, visit_files};
 use crate::analyze::Place;
 use crate::error::CoreError;
 use crate::syntax::{Text, TextEdit};
-use crate::{lf, lossy_string, utf16_lossy};
+use crate::{lf, lossy_string};
 
 /// The largest file a search reads; a data set or log that size isn't where anyone looks.
 const SEARCH_FILE_MAX: u64 = 8 << 20;
@@ -226,9 +226,10 @@ pub(crate) fn edits(text: &Text, places: &[Place], to: &str) -> Vec<TextEdit> {
 }
 
 /// `to` in place of what `found` finds in each file `chosen` takes of those a search walks,
-/// given its text with line feeds alone, each read again and written keeping its line ends:
-/// `{file, count}` for each, in the order of their paths. One too large to search is left out;
-/// one that isn't UTF-8, which writing would change, refuses them all before any is written.
+/// given its text with line feeds alone, each read again and written with its lines ending as
+/// they did: `{file, count}` for each, in the order of their paths. One too large to search is
+/// left out; one that isn't UTF-8, which writing would change, refuses them all before any is
+/// written.
 pub(crate) fn replace_in_files(
     root: &Path,
     chosen: &dyn Fn(&str) -> bool,
@@ -247,9 +248,7 @@ pub(crate) fn replace_in_files(
             Ok(file) => (file, true),
             Err(err) => (String::from_utf8_lossy(err.as_bytes()).into_owned(), false),
         };
-        let newline = Newline::of(&file);
-        let text = lf(file);
-        let places = found(rel, &text);
+        let places = found(rel, &lf(file.clone()));
         if places.is_empty() {
             return Ok(true);
         }
@@ -258,15 +257,7 @@ pub(crate) fn replace_in_files(
                 "“{rel}” isn't UTF-8 text, and writing it would change it, so nothing was changed. Convert it to UTF-8 to edit it."
             )));
         }
-        let text = Text::new(&text);
-        let (mut units, mut at) = (Vec::with_capacity(text.units.len()), 0);
-        for edit in edits(&text, &places, to) {
-            units.extend_from_slice(&text.units[at..edit.start as usize]);
-            units.extend(edit.text.encode_utf16());
-            at = (edit.start + edit.length) as usize;
-        }
-        units.extend_from_slice(&text.units[at..]);
-        let file = newline.written(&utf16_lossy(&units)).into_owned();
+        let file = replaced(&file, &places, to);
         edited.insert(rel.to_owned(), (abs.to_owned(), file, places.len()));
         Ok(true)
     })?;
@@ -275,6 +266,37 @@ pub(crate) fn replace_in_files(
         Ok(json!({ "file": file, "count": count }))
     };
     edited.into_iter().map(write).collect()
+}
+
+/// `to` in place of each of `places`, which are in order, in `file` as written: a place's line
+/// and column count as they do with line feeds alone, so each line keeps its own ending, which
+/// in a file edited on more than one system needn't be the first's.
+fn replaced(file: &str, places: &[Place], to: &str) -> String {
+    // The byte the first `units` UTF-16 units of `s` end at.
+    let byte = |s: &str, units: u32| {
+        let mut seen = 0;
+        let mut chars = s.char_indices();
+        let past = chars.find(|&(_, c)| {
+            let past = seen >= units;
+            seen += c.len_utf16() as u32;
+            past
+        });
+        past.map_or(s.len(), |(i, _)| i)
+    };
+    let (mut out, mut line, mut start, mut copied) = (String::new(), 1, 0, 0);
+    for place in places {
+        while line < place.line {
+            let end = start + file[start..].find(['\r', '\n']).expect("the place's line");
+            start = end + 1 + usize::from(file[end..].starts_with("\r\n"));
+            line += 1;
+        }
+        let at = start + byte(&file[start..], place.column);
+        out.push_str(&file[copied..at]);
+        out.push_str(to);
+        copied = at + byte(&file[at..], place.length);
+    }
+    out.push_str(&file[copied..]);
+    out
 }
 
 #[cfg(test)]

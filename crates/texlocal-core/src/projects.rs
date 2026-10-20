@@ -14,7 +14,7 @@ use std::io::ErrorKind::{NotFound, PermissionDenied};
 
 use crate::error::CoreError;
 
-pub(crate) use files::{Newline, Trash, copy_paths, discard, discard_replaced, write_creating};
+pub(crate) use files::{Trash, copy_paths, discard, discard_replaced, write_creating};
 pub use files::{create_free, rename_entry};
 pub use library::{
     ProjectInfo, create_project, free_project_name, list_projects, locate, rename_project,

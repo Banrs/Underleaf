@@ -10,6 +10,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
+use super::actor::Newline;
 use super::engine::Fut;
 use super::watch::Change;
 use super::{Document, Engine, Msg, Preview, Sessions};
@@ -721,6 +722,21 @@ async fn the_tree_marks_the_main_file_and_comes_again_when_another_is_chosen() {
     );
 }
 
+#[test]
+fn a_file_ends_its_lines_as_its_first_line_break_does() {
+    assert_eq!(Newline::of("a\r\nb\nc"), Newline::CrLf);
+    assert_eq!(Newline::of("a\rb"), Newline::Cr);
+    assert_eq!(Newline::of("a\nb\r\n"), Newline::Lf);
+    assert_eq!(Newline::of("a"), Newline::Lf);
+    assert_eq!(Newline::CrLf.written("a\nb\r\nc\rd"), "a\r\nb\r\nc\r\nd");
+    assert_eq!(Newline::Cr.written("a\nb"), "a\rb");
+    assert_eq!(Newline::Lf.written("a\r\nb"), "a\nb");
+    assert!(matches!(
+        Newline::Lf.written("a\nb"),
+        std::borrow::Cow::Borrowed(_)
+    ));
+}
+
 /// By hand, by git or by a sync client: the host's mark follows the tree's.
 #[tokio::test(start_paused = true)]
 async fn another_apps_change_to_the_settings_sends_the_tree_with_their_main_file() {
@@ -1344,7 +1360,8 @@ async fn a_search_reads_the_open_document_as_the_editor_has_it() {
 #[tokio::test(start_paused = true)]
 async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_their_line_ends() {
     let rig = Rig::new(false).await;
-    fs::write(rig.root.join("ch.tex"), "a cat\r\nand a cat\r\n").unwrap();
+    // Each line as it ended, though the first's ending isn't the second's.
+    fs::write(rig.root.join("ch.tex"), "a cat\nand a cat\r\n").unwrap();
     fs::write(rig.root.join("notes.txt"), "cat").unwrap();
     fs::write(rig.root.join("latin.tex"), b"cat caf\xe9").unwrap();
     let doc = rig.open("main.tex").await;
@@ -1355,7 +1372,7 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
     };
     let refused = replace(Value::Null).await.unwrap_err();
     assert!(refused.status == 400 && refused.message.contains("latin.tex"));
-    assert_eq!(rig.disk("ch.tex"), "a cat\r\nand a cat\r\n");
+    assert_eq!(rig.disk("ch.tex"), "a cat\nand a cat\r\n");
     let replaced = replace(json!(["ch.tex", "main.tex"])).await.unwrap();
     let edit = json!({ "start": 6, "length": 3, "text": "dog" });
     assert_eq!(
@@ -1365,7 +1382,7 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
             "written": [{ "file": "ch.tex", "count": 2 }],
         })
     );
-    assert_eq!(rig.disk("ch.tex"), "a dog\r\nand a dog\r\n");
+    assert_eq!(rig.disk("ch.tex"), "a dog\nand a dog\r\n");
     assert_eq!(rig.disk("notes.txt"), "cat");
 }
 
