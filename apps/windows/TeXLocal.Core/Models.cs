@@ -90,7 +90,8 @@ public sealed record MathPreview(int Start, string Tex, bool Display);
 public sealed record Place(string File, int Line, int Column, int Length);
 
 /// Every place the project defines the name at an offset, in the order of their files' paths.
-public sealed record Definition(Place[] Places);
+/// <param name="Kind">label, citation, environment, command or file; a label or a citation can be renamed.</param>
+public sealed record Definition(string Kind, string Name, Place[] Places);
 
 /// Each style the whole selection has, as the edits that would take it off.
 public sealed record TextStyles(TextEdit[]? Bold, TextEdit[]? Italic, TextEdit[]? Underline);

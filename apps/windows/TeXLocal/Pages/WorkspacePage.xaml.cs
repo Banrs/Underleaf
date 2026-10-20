@@ -127,13 +127,16 @@ public sealed partial class WorkspacePage : Page
         };
         Editor.FilesDropped += OnFilesDropped;
         Editor.DefinitionFound += place => _ = Reveal(place.File, place.Line, place.Column, place.Length);
+        // The core's refusal shows in the flyout.
+        Editor.RenameAsked += (symbol, at) => rename.Show(Editor, symbol.Name, async to => Apply(await Core.CallAsync<Replaced>("session_rename_symbol",
+            new { session, kind = symbol.Kind, from = symbol.Name, to })), at);
         Pdf.ViewMoved += ShowPage;
         Pdf.Inverse += (page, x, y) => Run(null, async () =>
         {
             var at = await Core.CallAsync<InverseSync>("synctex_inverse", new { id, page, x, y });
             await Reveal(at.File, at.Line, at.Column ?? 0);
         });
-        foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem, DefinitionItem]) Shortcut.SetScope(item, Editor);
+        foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem, DefinitionItem, RenameSymbolItem]) Shortcut.SetScope(item, Editor);
         foreach (var item in (UIElement[])[RenameItem, DeleteItem]) Shortcut.SetScope(item, FilesTree);
         DeleteItem.KeyboardAcceleratorTextOverride = "Del";
         SetUpInsert();

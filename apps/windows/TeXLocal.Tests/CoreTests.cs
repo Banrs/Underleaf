@@ -173,8 +173,10 @@ public sealed class CoreTests : IDisposable
     {
         const string text = "\\label{a}\n\\ref{a}";
         using var source = Source.New(text);
-        var places = source.Call<Definition>("definition", new { at = text.LastIndexOf('a') })?.Places;
-        Assert.Equal(new Place("", 1, 7, 1), Assert.Single(places ?? []));
+        var defined = source.Call<Definition>("definition", new { at = text.LastIndexOf('a') });
+        Assert.NotNull(defined);
+        Assert.Equal(("label", "a"), (defined.Kind, defined.Name));
+        Assert.Equal(new Place("", 1, 7, 1), Assert.Single(defined.Places));
     }
 
     [Fact]

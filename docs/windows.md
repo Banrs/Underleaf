@@ -49,11 +49,11 @@ apps/windows/
     Prefs.cs                   the host's preferences, typed: window, panes, Compile automatically, Settings › Editor
                                (EditorChanged) and › PDF; the core's themes; monospace families by GDI
     Pages/HomePage, WorkspacePage, SettingsPage (.xaml/.cs); WorkspacePage.xaml.cs (the session: editor, builds, issues,
-      PDF, SyncTeX, status bar), WorkspacePage.Sidebar.cs (files, outline, project search, words),
+      PDF, SyncTeX, status bar), WorkspacePage.Sidebar.cs (files, outline, project search and replace, words),
       WorkspacePage.Insert.cs (Insert menu, symbol palette)
     Controls/Card.cs (a settings card), Shortcut.cs (accelerators as one attribute), Sizer.cs, RenameFlyout.xaml(.cs),
-      PdfView.xaml(.cs), SourceView.xaml(.cs) (typing through the core, completion, maths preview, Go to definition),
-      SourceView.Find.cs (find and replace), PagePreview.cs (a template's first page in outline, for Home)
+      PdfView.xaml(.cs), SourceView.xaml(.cs) (typing through the core, completion, maths preview, Go to definition,
+      Rename symbol), SourceView.Find.cs (find and replace), PagePreview.cs (a template's first page in outline, for Home)
     Themes/Generic.xaml        Card's default style, section and group headers, the layer, the sizer's grip, status bar
                                styles, the template previews' bars
   TeXLocal.Tests/              xUnit, against TeXLocal.Core only: the bridge and smoke behaviour
@@ -176,6 +176,13 @@ templates) is `core-api.md`'s. The numbers are the ones the app's comments cite,
     in whitespace.
 31. **Default library**: `tl_open(NULL)` resolves the default library folder (`TEXLOCAL_DATA`, else
     home/TeXLocal).
+32. **Rename at a definition**: `definition` answers null on `\label{a}` itself, a `\bibitem` or a
+    .bib key, so Rename symbol (F2) works from a `\ref` or `\cite` kin only; VS Code's renames from
+    the definition too. Its answer could also carry the name's own range, which the editor now
+    finds by searching back from the caret.
+33. **The source's version**: `session_replace` and `session_rename_symbol` answer edits against a
+    document `version` that `Source` can't read, so the editor applies them unchecked; typing in the
+    moment between the call and its answer would shift them.
 
 ### What Windows lacks against the Mac
 

@@ -117,6 +117,8 @@ public sealed partial class SourceView : UserControl
     public event Action<string[], int>? FilesDropped;
     /// The first place the project defines a name the reader asked after.
     public event Action<Place>? DefinitionFound;
+    /// A label or citation to rename, and the name's rectangle in the view.
+    public event Action<Definition, Rect>? RenameAsked;
 
     /// A file dragged from the navigation pane, by its absolute path: as storage items, the pane's own drop would add it
     /// to the project again.
@@ -898,14 +900,33 @@ public sealed partial class SourceView : UserControl
 
     Definition? DefinitionAt(int at) => source?.Call<Definition>("definition", new { at });
 
-    /// Visual Studio's Go to definition after the text commands, which the menu makes again each time it opens.
+    /// F2, VS Code's Rename Symbol: only a label or a citation, the names the core renames, its box under the name.
+    public void RenameSymbol()
+    {
+        var caret = CaretOffset;
+        if (DefinitionAt(caret) is not { Kind: "label" or "citation" } symbol) return;
+        // The name the caret is in or just after: the first that starts no further back than its length.
+        var start = Text.IndexOf(symbol.Name, Math.Max(0, caret - symbol.Name.Length), StringComparison.Ordinal);
+        if (RectOf(start, start + symbol.Name.Length) is { } r)
+            RenameAsked?.Invoke(symbol, new Rect(Gutter.ActualWidth + r.X, r.Y, r.Width, r.Height));
+    }
+
+    /// Visual Studio's Go to definition and VS Code's Rename Symbol after the text commands, which the menu makes again
+    /// each time it opens.
     void OnContextOpening(object sender, object e)
     {
         var commands = ((TextCommandBarFlyout)sender).SecondaryCommands;
-        var go = new AppBarButton { Label = "Go to definition", KeyboardAcceleratorTextOverride = "F12", IsEnabled = DefinitionAt(CaretOffset) is { Places.Length: > 0 } };
-        go.Click += (_, _) => GoToDefinition();
+        var defined = DefinitionAt(CaretOffset);
+        void Add(string label, string key, bool enabled, Action invoked)
+        {
+            var item = new AppBarButton { Label = label, KeyboardAcceleratorTextOverride = key, IsEnabled = enabled };
+            // Once the menu has closed and handed the editor its focus back, so the rename box keeps the keys.
+            item.Click += (_, _) => DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => invoked());
+            commands.Add(item);
+        }
         commands.Add(new AppBarSeparator());
-        commands.Add(go);
+        Add("Go to definition", "F12", defined is { Places.Length: > 0 }, GoToDefinition);
+        Add("Rename symbol", "F2", defined is { Kind: "label" or "citation" }, RenameSymbol);
     }
 
     /// A dropped file's text, put in where it was dropped and selected, as on the Mac. Not Drop, UIElement's event.

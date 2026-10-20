@@ -133,6 +133,8 @@
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+G" AccessKey="G" Click="OnGoToLine" Text="Go to line…" />
                     <!-- Visual Studio's key. No access key: each of its letters is another item's. -->
                     <MenuFlyoutItem x:Name="DefinitionItem" controls:Shortcut.Keys="F12" Click="{x:Bind Editor.GoToDefinition}" Text="Go to definition" />
+                    <!-- VS Code's key, the editor's: in Files, F2 renames the file. -->
+                    <MenuFlyoutItem x:Name="RenameSymbolItem" controls:Shortcut.Keys="F2" AccessKey="Y" Click="{x:Bind Editor.RenameSymbol}" Text="Rename symbol" />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Alt+G" AccessKey="A" Click="OnGoToPage" Text="Go to page…" />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Alt+J" AccessKey="D" Click="OnForwardSync" Text="Go to PDF position" />
                     <MenuFlyoutSeparator />

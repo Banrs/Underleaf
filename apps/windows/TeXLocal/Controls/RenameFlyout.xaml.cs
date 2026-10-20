@@ -1,7 +1,9 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using TeXLocal.Bridge;
+using Windows.Foundation;
 using Windows.System;
 
 namespace TeXLocal.Controls;
@@ -14,16 +16,19 @@ public sealed partial class RenameFlyout : Flyout
 
     public RenameFlyout() => InitializeComponent();
 
-    public void Show(FrameworkElement target, string name, Func<string, Task> rename)
+    /// At a rectangle of the target's, a name in the text, selected whole as VS Code's Rename Symbol has it; otherwise a
+    /// file's or a project's, its stem selected as File Explorer's.
+    public void Show(FrameworkElement target, string name, Func<string, Task> rename, Rect? at = null)
     {
         this.rename = rename;
         original = name;
         Box.Text = name;
         Box.Description = null;
         var stem = name.LastIndexOf('.');
-        Box.Select(0, stem > 0 ? stem : name.Length);
+        Box.Select(0, at is null && stem > 0 ? stem : name.Length);
         Commit.IsEnabled = false;
-        ShowAt(target);
+        if (at is { } r) ShowAt(target, new FlyoutShowOptions { Position = new(r.X, r.Bottom), ExclusionRect = r });
+        else ShowAt(target);
     }
 
     void OnTextChanged(object sender, TextChangedEventArgs e)
