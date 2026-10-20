@@ -139,6 +139,7 @@ pub(crate) struct Actor {
     next_doc: u64,
     symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
+    facts: Arc<analyze::Files>,
     pub edits: u64,
     /// Kept for the session's life: a document closed since isn't marked with a build's
     /// issues on lines that may have moved.
@@ -202,6 +203,7 @@ impl Actor {
             next_doc: 1,
             symbols: Arc::default(),
             symbols_seq: 0,
+            facts: Arc::default(),
             edits: 0,
             last_edits: HashMap::new(),
             auto_compile,
@@ -880,8 +882,9 @@ impl Actor {
     fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
         let (seq, root, tx) = (self.symbols_seq, self.root.clone(), self.tx.clone());
+        let facts = Arc::clone(&self.facts);
         tokio::task::spawn_blocking(move || {
-            let _ = tx.send(Msg::Symbols(seq, projects::scan_symbols(&root)));
+            let _ = tx.send(Msg::Symbols(seq, projects::scan_symbols(&root, &facts)));
         });
     }
 
@@ -904,6 +907,7 @@ impl Actor {
         self.analyses += 1;
         let (seq, root) = (self.analyses, self.root.clone());
         let (docs, outline) = (Arc::clone(&self.shared), Arc::clone(&self.outline));
+        let facts = Arc::clone(&self.facts);
         tokio::task::spawn_blocking(move || {
             let main = settings::read_settings(&root).main_file;
             let open = paths::rel_key(&main)
@@ -917,7 +921,7 @@ impl Actor {
                     .map(crate::lossy_string),
             };
             let class = main_text.as_deref().and_then(headings::document_class);
-            let analysis = analyze::analyze_project(&root, &main, &path, class.as_ref());
+            let analysis = analyze::analyze_project(&root, &facts, &main, &path, class.as_ref());
             let answer = out(&analysis);
             let mut kept = lock(&outline);
             if seq > kept.seq {

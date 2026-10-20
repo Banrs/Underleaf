@@ -1,16 +1,20 @@
-//! A document's outline and word count, read from its main file through the
-//! files it inputs.
+//! A document's outline and word count, read from its main file through the files it
+//! inputs, and what each file defines; each file is read once per change.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io;
 use std::path::Path;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use regex::Regex;
 use serde::Serialize;
 
-use crate::paths;
+use crate::projects::file_kind;
+use crate::stamp::Stamp;
+use crate::syntax::scan::{Scanner, Visit};
 use crate::syntax::{headings, prose, scan};
+use crate::{lock, paths};
 
 // What a title drops whole: \texorpdfstring's TeX argument (its PDF string is
 // the group after), labels and notes.
@@ -21,6 +25,11 @@ static TITLE_STYLE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static TITLE_BRACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([{}&%$#_])|[{}]").unwrap());
 static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+// Matched on the decoded text, not the raw bytes: in Unicode mode a byte that
+// isn't UTF-8 (a Latin-1 umlaut) drops its entry, and `(?-u)` narrows `\s` to
+// ASCII, which swallows a non-breaking space into the key.
+static BIB_KEY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"@([0-9A-Za-z_]+)\s*[{(]\s*([^,\s]+)\s*,").unwrap());
 
 /// A sectioning command's heading: depth (0 for \part to 5 for \paragraph), title as plain text, 1-based line and file. An empty title is `untitled`, shown by its level.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -36,7 +45,7 @@ pub struct Heading {
 }
 
 impl Heading {
-    fn new(depth: usize, title: Option<String>, line: usize, file: Option<String>) -> Self {
+    fn new(depth: usize, title: Option<String>, line: usize) -> Self {
         let (command, level) = headings::LEVELS[depth];
         Self {
             depth,
@@ -45,8 +54,125 @@ impl Heading {
             untitled: title.is_none(),
             title: title.unwrap_or_else(|| format!("Untitled {level}")),
             line,
-            file,
+            file: None,
         }
+    }
+}
+
+/// What one file says, each list in the file's order: the project's symbols are their union
+/// over files, its outline and word count a walk over them from the main file.
+#[derive(Default)]
+pub struct Facts {
+    /// Without their file, which is the name the walk reaches it by.
+    pub headings: Vec<Heading>,
+    pub inputs: Vec<Input>,
+    pub words: usize,
+    pub labels: Vec<String>,
+    /// A .bib file's keys, or a .tex file's \bibitems.
+    pub citations: Vec<String>,
+}
+
+/// A file read in place after the first `before` headings of the file that names it.
+pub struct Input {
+    before: usize,
+    name: String,
+}
+
+impl Facts {
+    fn read(text: &str, kind: &str) -> Self {
+        if kind == "bib" {
+            let entries = BIB_KEY.captures_iter(text).filter(|entry| {
+                let kind = entry[1].to_ascii_lowercase();
+                !matches!(kind.as_str(), "comment" | "string" | "preamble")
+            });
+            let citations = entries.map(|entry| entry[2].to_owned()).collect();
+            return Self {
+                citations,
+                ..Self::default()
+            };
+        }
+        let mut facts = Self::default();
+        // Found as the words are counted, so none is in a comment, maths or literal code.
+        let mut heading_line = None;
+        let words = prose::words(text, |text, name, name_end| {
+            let line = text.line_index(name_end as u32) + 1;
+            let units = &text.units;
+            if let Some(depth) = headings::LEVELS.iter().position(|l| l.0 == name) {
+                if heading_line != Some(line)
+                    && let (Some(title), _) = braced(units, name_end)
+                {
+                    let heading = Heading::new(depth, plain_title(&title), line);
+                    facts.headings.push(heading);
+                }
+                heading_line = Some(line);
+            } else if matches!(name, "input" | "include" | "subfile")
+                && let Some(name) = input_name(units, name_end, name == "input")
+            {
+                let before = facts.headings.len();
+                facts.inputs.push(Input { before, name });
+            }
+        });
+        let units: Vec<u16> = text.encode_utf16().collect();
+        let mut names = Names(&units, &mut facts);
+        Scanner::default().run(&units, units.len(), &[], &mut names);
+        Self { words, ..facts }
+    }
+}
+
+/// What a text names for others to refer to, outside comments and literal code.
+struct Names<'a>(&'a [u16], &'a mut Facts);
+
+impl Visit for Names<'_> {
+    fn command(&mut self, name: &str, start: usize, name_end: usize) {
+        match name {
+            "bibitem" => self.1.citations.extend(braced(self.0, name_end).0),
+            _ => self.math_command(name, start, name_end),
+        }
+    }
+
+    fn math_command(&mut self, name: &str, _: usize, name_end: usize) {
+        // One still being typed (`fig:`) isn't a label yet.
+        if name == "label"
+            && let (Some(label), _) = braced(self.0, name_end)
+            && !label.is_empty()
+            && !label.ends_with(':')
+        {
+            self.1.labels.push(label);
+        }
+    }
+}
+
+/// Each file's facts by its name as the volume compares names, with the stamp read at. An
+/// analysis and a symbol scan may read at once, so it isn't held while a file is read.
+#[derive(Default)]
+pub struct Files(Mutex<HashMap<String, (Stamp, Arc<Facts>)>>);
+
+impl Files {
+    /// Read again once the file's stamp changes, or always on a volume that keeps whole
+    /// seconds, where a write of the same length in the same second keeps the stamp.
+    pub fn facts(&self, abs: &Path, rel: &str) -> io::Result<Arc<Facts>> {
+        let stamp = Stamp::of(&fs::metadata(abs)?);
+        let key = paths::fold_case(rel);
+        if let Some((read, facts)) = lock(&self.0).get(&key)
+            && *read == stamp
+            && stamp.modified % 1_000_000_000 != 0
+        {
+            return Ok(Arc::clone(facts));
+        }
+        let text = crate::lossy_string(fs::read(abs)?);
+        let facts = Arc::new(Facts::read(&text, file_kind(rel)));
+        lock(&self.0).insert(key, (stamp, Arc::clone(&facts)));
+        Ok(facts)
+    }
+
+    fn at(&self, root: &Path, rel: &str) -> Option<Arc<Facts>> {
+        self.facts(&paths::safe_path(root, rel).ok()?, rel).ok()
+    }
+
+    /// Those of other files go, as a scan of the project finds them gone.
+    pub fn keep<'a>(&self, rels: impl Iterator<Item = &'a String>) {
+        let kept: HashSet<String> = rels.map(|rel| paths::fold_case(rel)).collect();
+        lock(&self.0).retain(|key, _| kept.contains(key));
     }
 }
 
@@ -125,6 +251,7 @@ pub struct Analysis {
 /// The document LaTeX reads from the main file through the files it inputs (each once, so a loop ends). `open` is the editor's file, alone when the main file doesn't reach it.
 pub fn analyze_project(
     root: &Path,
+    files: &Files,
     main: &str,
     open: &str,
     class: Option<&headings::DocumentClass>,
@@ -132,10 +259,10 @@ pub fn analyze_project(
     let mut analysis = Analysis::default();
     if let Ok(open) = paths::rel_key(open) {
         let mut seen = HashSet::new();
-        read(root, main, &mut seen, &mut analysis);
+        walk(root, files, main, &mut seen, &mut analysis);
         if !seen.contains(&paths::fold_case(&open)) {
             analysis = Analysis::default();
-            read(root, &open, &mut HashSet::new(), &mut analysis);
+            walk(root, files, &open, &mut HashSet::new(), &mut analysis);
         }
     }
     let chapters = analysis.outline.iter().any(|h| h.command == "chapter");
@@ -144,47 +271,41 @@ pub fn analyze_project(
     analysis
 }
 
-fn read(root: &Path, file: &str, seen: &mut HashSet<String>, into: &mut Analysis) {
+fn walk(root: &Path, files: &Files, file: &str, seen: &mut HashSet<String>, into: &mut Analysis) {
     let Ok(file) = paths::rel_key(file) else {
         return;
     };
     if !seen.insert(paths::fold_case(&file)) {
         return;
     }
-    let Some(text) = paths::safe_path(root, &file)
-        .ok()
-        .and_then(|path| fs::read(path).ok())
-    else {
+    let Some(facts) = files.at(root, &file) else {
         return;
     };
-    let text = crate::lossy_string(text);
-    // Found as the words are counted, so none is in a comment, maths or literal code.
-    let mut heading_line = None;
-    let words = prose::words(&text, |text, name, name_end| {
-        let line = text.line_index(name_end as u32) + 1;
-        let units = &text.units;
-        if let Some(depth) = headings::LEVELS.iter().position(|l| l.0 == name) {
-            if heading_line != Some(line)
-                && let (Some(title), _) = braced(units, name_end)
-            {
-                let heading = Heading::new(depth, plain_title(&title), line, Some(file.clone()));
-                into.outline.push(heading);
-            }
-            heading_line = Some(line);
-        } else if matches!(name, "input" | "include" | "subfile")
-            && let Some(name) = input_name(units, name_end, name == "input")
+    let placed = |headings: &[Heading]| -> Vec<Heading> {
+        let file = Some(file.clone());
+        let place = |h: &Heading| Heading {
+            file: file.clone(),
+            ..h.clone()
+        };
+        headings.iter().map(place).collect()
+    };
+    let mut at = 0;
+    for input in &facts.inputs {
+        into.outline
+            .extend(placed(&facts.headings[at..input.before]));
+        at = input.before;
+        let name = &input.name;
+        let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
+        // TeX tries name.tex before the name as written.
+        if let Some(input) = [tex, name.clone()]
+            .into_iter()
+            .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
         {
-            let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(&name));
-            // TeX tries name.tex before the name as written.
-            if let Some(input) = [tex, name]
-                .into_iter()
-                .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
-            {
-                read(root, &input, seen, into);
-            }
+            walk(root, files, &input, seen, into);
         }
-    });
-    into.words += words;
+    }
+    into.outline.extend(placed(&facts.headings[at..]));
+    into.words += facts.words;
 }
 
 fn braced(units: &[u16], name_end: usize) -> (Option<String>, usize) {
@@ -238,7 +359,11 @@ mod tests {
 
     fn heading(depth: usize, title: &str, file: &str, line: usize) -> Heading {
         let title = (!title.is_empty()).then(|| title.into());
-        Heading::new(depth, title, line, Some(file.into()))
+        let file = Some(file.into());
+        Heading {
+            file,
+            ..Heading::new(depth, title, line)
+        }
     }
 
     /// Words part at Unicode spaces and TeX's special characters; only prose counts.
@@ -342,7 +467,8 @@ mod tests {
                 .iter()
                 .map(|&(depth, title, line)| heading(depth, title, "main.tex", line))
                 .collect();
-            let found = analyze_project(dir.path(), "main.tex", "main.tex", None);
+            let found =
+                analyze_project(dir.path(), &Files::default(), "main.tex", "main.tex", None);
             assert_eq!((found.outline, found.words), (expected, words), "{text}");
         }
     }
@@ -426,7 +552,13 @@ mod tests {
                 .map(|h| (h.title.as_str(), h.file.as_deref(), h.line))
                 .collect()
         }
-        let whole = analyze_project(dir.path(), "main.tex", "chapters/a.tex", None);
+        let whole = analyze_project(
+            dir.path(),
+            &Files::default(),
+            "main.tex",
+            "chapters/a.tex",
+            None,
+        );
         assert_eq!(
             headings(&whole),
             [
@@ -437,7 +569,7 @@ mod tests {
             ]
         );
         assert_eq!(whole.words, 8);
-        let loose = analyze_project(dir.path(), "main.tex", "loose.tex", None);
+        let loose = analyze_project(dir.path(), &Files::default(), "main.tex", "loose.tex", None);
         assert_eq!(headings(&loose), [("Loose", Some("loose.tex"), 1)]);
         assert_eq!(loose.words, 2);
     }
@@ -478,7 +610,8 @@ mod tests {
         ];
         for (files, open, titles) in cases {
             let dir = project(files);
-            let found = analyze_project(dir.path(), "main.tex", open, None).outline;
+            let found =
+                analyze_project(dir.path(), &Files::default(), "main.tex", open, None).outline;
             let found: Vec<_> = found.iter().map(|h| h.title.as_str()).collect();
             assert_eq!(found, titles, "{files:?} with {open} open");
         }

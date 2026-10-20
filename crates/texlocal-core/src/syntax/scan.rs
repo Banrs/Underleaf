@@ -142,6 +142,8 @@ impl Group {
 pub(crate) trait Visit {
     fn range(&mut self, _from: usize, _to: usize) {}
     fn command(&mut self, _name: &str, _start: usize, _name_end: usize) {}
+    /// One in maths, which isn't prose, but may still name something (\label in an equation).
+    fn math_command(&mut self, _name: &str, _start: usize, _name_end: usize) {}
     fn comment(&mut self, _from: usize, _to: usize) {}
     fn at(&mut self, _groups: Vec<Group>) {}
     fn closed(&mut self, _group: &Group, _close: Range<usize>) {}
@@ -328,8 +330,12 @@ impl Scanner {
                 (false, self.i + 1)
             }
         };
-        if !in_math && !code {
-            visit.command(name, start, name_end);
+        if !code {
+            if in_math {
+                visit.math_command(name, start, name_end);
+            } else {
+                visit.command(name, start, name_end);
+            }
         }
         (code, read)
     }
