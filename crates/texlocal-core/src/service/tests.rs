@@ -192,7 +192,7 @@ async fn the_tex_dir_persists_in_the_data_dir_and_clears_to_automatic() {
 
     let saved = fs::read(service.data_dir.join(".texlocal-app.json")).unwrap();
     let saved: Value = serde_json::from_slice(&saved).unwrap();
-    assert_eq!(saved, json!({ "texDir": bin }));
+    assert_eq!(saved["texDir"], bin);
 
     let status = call(&service, "set_tex_dir", json!({ "dir": null })).await;
     assert_eq!(status["texDir"], Value::Null);

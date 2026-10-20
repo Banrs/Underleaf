@@ -111,7 +111,8 @@ An error is `{"error": message, "status": code}`; the message is for the person 
   else 500. The message is the OS's words without its “(os error N)”, and names the file
   (“path”: …) where a person chose it.
 - A settings or ui-state write (`set_ui_state`, `session_set_settings`) over an unreadable
-  or invalid `.texlocal.json` is 409 and leaves the file as it is.
+  or invalid `.texlocal.json` (a key of the wrong type, an unknown engine) is 409 and leaves
+  the file as it is; read, such a file gives the defaults.
 - A zip that can't be read (import) is 400.
 - Import and export leave out version-control folders (`.git`, `.hg`, `.svn`), `.DS_Store`,
   `__MACOSX`, AppleDouble `._*` files and the core's `.texlocal-*` temporary files, at any

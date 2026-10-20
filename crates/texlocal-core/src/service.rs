@@ -105,7 +105,9 @@ impl Service {
         {
             return Err(CoreError::bad_request(NO_TEXPRESSO));
         }
-        AppSettings::choose(&self.data_dir, "texpressoDir", chosen)?;
+        AppSettings::update(&self.data_dir, |app| {
+            app.texpresso_dir = chosen.map(Path::to_path_buf);
+        })?;
         Ok(self.status().await)
     }
 
@@ -117,7 +119,7 @@ impl Service {
                 tex::tex_bin_dir(Path::new(dir)).ok_or_else(|| CoreError::bad_request(NO_LATEXMK))
             })
             .transpose()?;
-        AppSettings::choose(&self.data_dir, "texDir", chosen.as_deref())?;
+        AppSettings::update(&self.data_dir, |app| app.tex_dir = chosen)?;
         Ok(self.status().await)
     }
 

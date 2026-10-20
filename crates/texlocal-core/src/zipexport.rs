@@ -211,7 +211,10 @@ mod tests {
         let latexmkrc = fs::read_to_string(copy.join(".latexmkrc")).unwrap();
         assert_eq!(latexmkrc, "$pdf_mode = 1;");
         // The settings are the project's own and are not carried in the archive.
-        assert_eq!(read_settings(&copy).engine.as_str(), "pdflatex");
+        assert_eq!(
+            read_settings(&copy).engine,
+            crate::settings::Engine::Pdflatex
+        );
     }
 
     #[test]

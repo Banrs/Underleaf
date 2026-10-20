@@ -305,8 +305,8 @@ mod tests {
             ("Thesis", "main.tex")
         );
         assert_eq!(
-            read_settings(&data.join("Thesis")).engine.as_str(),
-            "lualatex"
+            read_settings(&data.join("Thesis")).engine,
+            crate::settings::Engine::Lualatex
         );
 
         // A refusal leaves nothing behind.
