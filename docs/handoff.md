@@ -10,10 +10,9 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
   button, its progress and a failure are checked).
 - A click on a Live Preview issue opening the Live Preview Log (its look and a build's issue over
   one on its line are checked).
-- Install TinyTeX on a Mac with no TeX (a user account without MacTeX, and no `~/Library/TinyTeX`):
-  the PDF pane's and Settings' button, the progress, a build once it is done, Install adding a
-  package to it, and a failure's alert (offline). The core's install itself is tested into a
-  temporary folder.
+- Install TinyTeX from Settings, and its alert when offline. The PDF pane's button, its
+  progress and a build once it is done are checked on the QA copy with TeX hidden by
+  `sandbox-exec` and `HOME` pointed at a scratch folder; tlmgr adds a package there unelevated.
 
 ## 27.2 workarounds
 
