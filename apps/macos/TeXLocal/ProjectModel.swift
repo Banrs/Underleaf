@@ -272,12 +272,21 @@ final class ProjectModel {
             tree.show(listed.tree)
             // A previewed file has no document for the session to close.
             if let openPath, !editsText, tree.node(at: openPath) == nil { clearOpenFile() }
+            // Another app may have chosen the main file in `.texlocal.json`; the session marks it in the tree it sends.
+            if let main = Self.mainMarked(in: listed.tree), let current = settings?.mainFile, main != current {
+                settings?.mainFile = main
+                mainFileChanged()
+            }
         case .filesChanged(let changed):
             if let openPath, !editsText, changed.paths.contains(openPath) { previewVersion += 1 }
             if changed.paths.contains(where: { tree.node(at: $0)?.kind == .tex }) { analyze() }
         case .live(let state): liveChanged(state)
         case .livePDF(let read): showLive(read)
         }
+    }
+
+    private static func mainMarked(in nodes: [TreeNode]) -> String? {
+        nodes.lazy.compactMap { $0.main == true ? $0.path : mainMarked(in: $0.children ?? []) }.first
     }
 
     private func documentChanged(_ state: DocumentState) {
