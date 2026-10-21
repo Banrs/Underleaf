@@ -44,8 +44,8 @@ Decided: change only when asked. Each macOS 27.2 workaround says why in its comm
 - **Build panel** below the columns, resized and dragged shut from the status bar's line; its foot
   bar as Xcode's console: Issues, Build Log, Live Preview Log, then Warnings or Copy Log, then a
   filter.
-- **Splits**: AppKit's thin dividers, dragged freely as Xcode's and Mail's are: no detents, and a
-  double-click does nothing.
+- **Splits**: AppKit's thin dividers, dragged freely as Xcode's and Mail's are, except that the
+  source|PDF divider stops, with the alignment haptic, at the even split. A double-click does nothing.
 - **File Outline** at the sidebar's foot, dim and folded on a file that isn't LaTeX.
 - **PDF**: a rebuild's pages replace those showing in place; fitted pages keep PDFKit's margins,
   as Preview's; paper is white, dark or automatic.
@@ -101,7 +101,7 @@ Agents' code runs long and erodes with each change (`docs/agent-code.md`), so:
   app's defaults). Worktree agents use `zsh tools/qa/typecheck.sh` (20 s) and `tools/qa/xctest.sh`,
   which takes turns, rather than parallel `xcodebuild`s.
 - On screen: only the QA copy through `tools/qa/README.md`, never the installed app or `~/TeXLocal`.
-  Trackpad gestures, interactive IME and materials stay manual checks.
+  Trackpad gestures, the divider's haptic, interactive IME and materials stay manual checks.
 - Windows: `dotnet test apps/windows/TeXLocal.Tests -c Debug`; `TeXLocal.exe --smoke` exits 0 once
   a new blank project's session is open. Dev builds run with a scratch `TEXLOCAL_DATA`.
 - Live Preview end to end needs the patched engine: `docs/texpresso.md`, Verify.

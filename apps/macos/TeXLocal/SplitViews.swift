@@ -42,10 +42,16 @@ extension NSView {
 
 /// AppKit tracks a divider's drag within the press on it, the only place a split view itself is hit.
 class DraggedSplitView: NSSplitView {
+    private(set) var dragging = false
+
     override func mouseDown(with event: NSEvent) {
         let workspace = window?.contentViewController as? WorkspaceController
+        dragging = true
         workspace?.quiet(true)
-        defer { workspace?.quiet(false) }
+        defer {
+            dragging = false
+            workspace?.quiet(false)
+        }
         super.mouseDown(with: event)
     }
 }
@@ -60,6 +66,18 @@ class ThinSplitViewController: NSSplitViewController {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// A drag of the source|PDF divider stops at the even split, with the haptic; a position set in code goes where it is set.
+    /// NSSplitViewController doesn't implement this delegate method, so there is no super to call.
+    override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
+                            ofSubviewAt dividerIndex: Int) -> CGFloat {
+        guard let columns = splitView as? ColumnsSplitView, columns.dragging,
+              abs(proposedPosition - columns.evenPosition) <= 8 else { return proposedPosition }
+        if abs(columns.arrangedSubviews[0].frame.maxX - columns.evenPosition) >= 0.5 {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
+        }
+        return columns.evenPosition
+    }
 }
 
 /// Files over the File Outline. AppKit has no thin divider without a line: the files' scroll edge stands for it.
@@ -86,6 +104,8 @@ final class ColumnsSplitView: DraggedSplitView {
     override func drawDivider(in rect: NSRect) {
         super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
     }
+
+    var evenPosition: CGFloat { ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded() }
 }
 
 extension NSScrollView {
