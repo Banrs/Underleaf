@@ -84,13 +84,19 @@ extension SourceTextView {
         return last
     }
 
+    /// The paragraph's own lines, or with `extra` the document's empty last line laid out with it.
+    func lines(of fragment: NSTextLayoutFragment, extra: Bool) -> ArraySlice<NSTextLineFragment> {
+        let lines = fragment.textLineFragments[...]
+        guard extraLine(of: fragment) != nil else { return lines }
+        return extra ? lines.suffix(1) : lines.dropLast()
+    }
+
     var currentLine: (number: Int, rect: NSRect)? {
         let selection = selectedRange(), length = text.length
         guard let entry = fragments.last(where: { $0.offset <= selection.location }) else { return nil }
         let end = offset(entry.fragment.rangeInElement.endLocation)
         guard selection.location < end || end == length else { return nil }
-        var lines = entry.fragment.textLineFragments[...]
-        if extraLine(of: entry.fragment) != nil { lines = selection.location == length ? lines.suffix(1) : lines.dropLast() }
+        let lines = lines(of: entry.fragment, extra: selection.location == length)
         return (document.line(at: selection.location), band(lines, of: entry.fragment))
     }
 

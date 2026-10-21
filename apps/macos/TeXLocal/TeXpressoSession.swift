@@ -95,10 +95,9 @@ final class TeXpressoSession {
     func logClosed() { if phase == .stopped { acknowledged = true } }
 
     func receive(_ state: LiveState) {
-        if state.phase == .starting, phase == .stopped { acknowledged = false }
+        if state.alert == true || state.phase == .starting && phase == .stopped { acknowledged = false }
         (phase, halted, failed) = (state.phase, state.halted, state.failure != nil || state.error != nil)
         if let log = state.log { self.log = log }
-        if state.alert == true { acknowledged = false }
     }
 }
 

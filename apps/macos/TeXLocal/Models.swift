@@ -23,8 +23,8 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
     var isDirectory: Bool { type == .dir }
 
     var symbol: String {
-        if isDirectory { return "folder" }
-        return switch kind ?? .other {
+        switch kind {
+        case _ where isDirectory: "folder"
         case .tex: "text.document"
         case .bib: "books.vertical"
         case .image: "photo"
@@ -67,27 +67,18 @@ nonisolated struct TexStatus: Decodable {
 nonisolated struct ProjectSettings: Decodable {
     var mainFile, engine: String
     var shellEscape, stopOnFirstError: Bool
-
-    mutating func apply(_ change: SettingsChange) {
-        switch change {
-        case .mainFile(let path): mainFile = path
-        case .engine(let name): engine = name
-        case .shellEscape(let on): shellEscape = on
-        case .stopOnFirstError(let on): stopOnFirstError = on
-        }
-    }
 }
 
-nonisolated enum SettingsChange {
-    case mainFile(String), engine(String), shellEscape(Bool), stopOnFirstError(Bool)
+/// One setting's new value: shown at once, and sent to the session as its patch.
+nonisolated struct SettingsChange {
+    let patch: [String: any Sendable]
+    let apply: (inout ProjectSettings) -> Void
 
-    var patch: [String: any Sendable] {
-        switch self {
-        case .mainFile(let path): ["mainFile": path]
-        case .engine(let name): ["engine": name]
-        case .shellEscape(let on): ["shellEscape": on]
-        case .stopOnFirstError(let on): ["stopOnFirstError": on]
-        }
+    static func mainFile(_ path: String) -> Self { Self(patch: ["mainFile": path]) { $0.mainFile = path } }
+    static func engine(_ name: String) -> Self { Self(patch: ["engine": name]) { $0.engine = name } }
+    static func shellEscape(_ on: Bool) -> Self { Self(patch: ["shellEscape": on]) { $0.shellEscape = on } }
+    static func stopOnFirstError(_ on: Bool) -> Self {
+        Self(patch: ["stopOnFirstError": on]) { $0.stopOnFirstError = on }
     }
 }
 

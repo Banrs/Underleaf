@@ -7,9 +7,14 @@ struct SourceEditorTests {
     private let editor = SourceEditor()
     private var text: SourceTextView { editor.textView }
     private let typed = NSRange(location: NSNotFound, length: 0)
-    /// The window the text lays out in, held to the test's end.
+    private let defaults = TestDefaults()
+    /// What the test holds to its end: the window the text lays out in, and a project's folder, removed then.
     private let held = Held()
-    private final class Held { var window: NSWindow? }
+    private final class Held {
+        var window: NSWindow?
+        var folder: URL?
+        deinit { folder.map { try? FileManager.default.removeItem(at: $0) } }
+    }
 
     private func open(_ string: String, caret: Int? = nil, path: String = "main.tex") {
         editor.open(path: path, text: string, focus: false)
@@ -21,34 +26,37 @@ struct SourceEditorTests {
         for key in keys { text.insertText(key, replacementRange: typed) }
     }
 
-    /// An "x" typed in a.tex's "one", then b.tex's "two" opened: a.tex's undo.
-    private func typedInA() throws -> UndoManager {
+    /// An app with a new project in the test library open, `main` its main file's text and `files` beside it.
+    private func opened(_ main: String, with files: [String: String] = [:]) async throws -> (AppModel, ProjectModel) {
+        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        let info = try await newProject()
+        held.folder = info.folder
+        try info.write(main, to: info.mainFile)
+        for (path, text) in files { try info.write(text, to: path) }
+        let app = AppModel(defaults: defaults.store)
+        app.autoCompile = false
+        await app.open(info.id)
+        return (app, try #require(app.project))
+    }
+
+    /// A file's undo comes back with it while its text is unchanged, and follows a rename onto a name whose own file
+    /// went elsewhere.
+    @Test func eachFileKeepsItsUndo() throws {
         open("one", caret: 0, path: "a.tex")
         type("x")
-        let undo = try #require(text.undoManager)
+        let a = try #require(text.undoManager)
         open("two", path: "b.tex")
-        return undo
-    }
-
-    @Test func eachFileKeepsItsUndo() throws {
-        let a = try typedInA()
         #expect(text.undoManager !== a && text.undoManager?.canUndo == false)
-        open("xone", path: "a.tex")
-        #expect(text.undoManager === a)
-        text.undoManager?.undo()
-        #expect(text.string == "one")
-        open("two, changed", path: "b.tex")
-        open("elsewhere", path: "a.tex")
-        #expect(text.undoManager !== a)
-    }
-
-    @Test func aRenameOntoAFileGoneElsewhereKeepsItsUndo() throws {
-        let a = try typedInA()
         open("main", path: "main.tex")
         // b.tex deleted in the Finder, so its kept state stays; a.tex takes its name.
         editor.rename(from: "a.tex", to: "b.tex")
         open("xone", path: "b.tex")
         #expect(text.undoManager === a)
+        text.undoManager?.undo()
+        #expect(text.string == "one")
+        open("main, changed", path: "main.tex")
+        open("elsewhere", path: "b.tex")
+        #expect(text.undoManager !== a)
     }
 
     /// The mirror keeps a U+0000 the editor keeps, and the offsets after it (#24), and gives it back in its text.
@@ -75,17 +83,10 @@ struct SourceEditorTests {
     /// Jump to Definition at a \ref opens the file its label is in, with the label selected; what defines a name is the
     /// core's (complete.rs).
     @Test func jumpAtARefOpensItsLabelsFileAtTheLabel() async throws {
-        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
-        let defaults = TestDefaults(), info = try await newProject()
-        defer { try? FileManager.default.removeItem(at: info.folder) }
-        let app = AppModel(defaults: defaults.store)
-        app.autoCompile = false
-        try info.write("See \\ref{fig:a}.", to: info.mainFile)
-        try info.write("Figures.\n\\label{fig:a}\n", to: "figures.tex")
-        await app.open(info.id)
-        let project = try #require(app.project), text = project.editor.textView
+        let (app, project) = try await opened("See \\ref{fig:a}.", with: ["figures.tex": "Figures.\n\\label{fig:a}\n"])
+        let text = project.editor.textView
         // Once the session's first scan of the project's files has reached the document.
-        try await waitUntil(timeout: .seconds(5)) { project.editor.path == info.mainFile && text.document.definition(at: 10) != nil }
+        try await waitUntil(timeout: .seconds(5)) { text.document.definition(at: 10) != nil }
         text.setSelectedRange(.caret(10))
         app.perform(.jumpToDefinition, on: project)
         try await waitUntil(timeout: .seconds(5)) { project.editor.path == "figures.tex" }
@@ -96,16 +97,9 @@ struct SourceEditorTests {
     /// The open document's edits, the label's and its reference's, undo as one, in a group of their own: with no grouping
     /// by event, an undo registered outside a group raises.
     @Test func aRenamesEditsAreOneUndoStepInTheSource() async throws {
-        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
-        let defaults = TestDefaults(), info = try await newProject()
-        defer { try? FileManager.default.removeItem(at: info.folder) }
-        let app = AppModel(defaults: defaults.store)
-        app.autoCompile = false
         let original = "\\label{a} see \\ref{a}"
-        try info.write(original, to: info.mainFile)
-        await app.open(info.id)
-        let project = try #require(app.project), text = project.editor.textView
-        let undo = try #require(text.undoManager)
+        let (app, project) = try await opened(original)
+        let text = project.editor.textView, undo = try #require(text.undoManager)
         undo.groupsByEvent = false
         // In the reference: the core's `definition` answers where a name is used.
         text.setSelectedRange(.caret(19))
@@ -186,6 +180,7 @@ struct SourceEditorTests {
         #expect(isIgnored("\\emph") && !isIgnored("Some") && !isIgnored("prose"))
     }
 
+    /// The source's own commands first, and of the text's those that aren't for prose; each is the menu bar's command.
     @Test func theContextMenuIsTheSourcesOwn() throws {
         open("word", caret: 0)
         text.forwardSync = { _ in {} }
@@ -204,6 +199,11 @@ struct SourceEditorTests {
         let shown = try #require(editor.textView(text, menu: menu, for: event, at: 0))
         #expect(shown.items.map { $0.isSeparatorItem ? "-" : $0.title }
             == ["Jump to Definition", "Go to PDF Position", "Comment Selection", "-", "Cut"])
+        var performed: [MenuCommand] = []
+        editor.command = { performed.append($0) }
+        let sync = shown.items[1]
+        NSApp.sendAction(try #require(sync.action), to: sync.target, from: sync)
+        #expect(performed == [.syncForward])
     }
 
     /// TextKit 2 estimates what's above a revealed line, and a new width changes that; lines wrap at once, at the width AppKit's tracking gives as a live resize ends.
@@ -298,15 +298,29 @@ struct SourceEditorTests {
         #expect(editor.currentLine == 2 && editor.currentColumn == 15)
     }
 
+    /// A completion's first field is selected, and what's typed in a mirrored field goes in both its places at every
+    /// step of Undo; one Undo should take it all back.
     @Test(.timeLimit(.minutes(1)))
-    func completionsFillTheirFields() throws {
+    func completionsFillTheirFields() async throws {
         open("  \\beg")
-        text.complete(nil)
-        let offered = try #require(text.completions.offered)
-        #expect(offered.start == 2 && offered.items.first?.label == "\\begin")
-        text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
-        #expect(text.completions.offered == nil && text.undoManager?.undoActionName == "Completion")
+        let undo = try groupingByEvent()
+        await undo.grouping {
+            text.complete(nil)
+            #expect(text.completions.offered?.start == 2 && text.completions.offered?.items.first?.label == "\\begin")
+            text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        }
+        #expect(text.completions.offered == nil && undo.undoActionName == "Completion")
         #expect(text.string == "  \\begin{env}\n    \n  \\end{env}" && text.selectedRange() == NSRange(location: 9, length: 3))
+        for key in "itemize" { await undo.grouping { type(String(key)) } }
+        #expect(text.string == "  \\begin{itemize}\n    \n  \\end{itemize}")
+        undo.undo()
+        let string = text.string as NSString
+        let begun = string.substring(with: NSRange(location: 9, length: string.range(of: "}").location - 9))
+        #expect(string.hasSuffix("\\end{\(begun)}") && text.document.text == text.string)
+        // The mirror edits end the typing's coalescing.
+        withKnownIssue("Typing in a mirrored field takes an Undo per key") {
+            #expect(text.string == "  \\begin{env}\n    \n  \\end{env}")
+        }
     }
 
     @Test func theCompletionListTakesOnlyItsKeys() throws {
@@ -336,17 +350,39 @@ struct SourceEditorTests {
         #expect(text.completions.offered == nil)
     }
 
+    private var completionList: NSView? { editor.scrollView.subviews.first { $0 is NSHostingView<CompletionRowsView> } }
+
     /// The list is a view over the editor's text, and nothing in it takes the keyboard: a click chooses a row, and the
     /// text view goes on typing and moving through the rows.
     @Test func theCompletionListNeverTakesTheKeyboard() throws {
         inWindow()
         open("\\")
         type("b")
-        _ = try #require(text.completions.offered)
-        let list = try #require(editor.scrollView.subviews.first { $0 is NSHostingView<CompletionRowsView> })
+        let list = try #require(completionList)
         list.layoutSubtreeIfNeeded()
         func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
         #expect(all(list).count > 1 && !all(list).contains { $0.acceptsFirstResponder })
+    }
+
+    /// The list is a view of the scroll view's, over the text: a scroll the viewport needs no new layout for moves it too.
+    @Test func theCompletionListFollowsAScroll() throws {
+        inWindow()
+        let lines = (1...200).map { $0 == 6 ? "\\be" : "Line \($0)" }
+        // After "\be".
+        open(lines.joined(separator: "\n"), caret: (lines[..<6].joined(separator: "\n") as NSString).length)
+        try layOut()
+        text.complete(nil)
+        let list = try #require(completionList)
+        let before = list.frame
+        let clip = editor.scrollView.contentView
+        let step = 3 * (text.defaultParagraphStyle?.minimumLineHeight ?? 16)
+        clip.scroll(to: NSPoint(x: 0, y: clip.bounds.minY + step))
+        editor.scrollView.reflectScrolledClipView(clip)
+        #expect(abs(before.minY - list.frame.minY - step) <= 1, "Moved by \(before.minY - list.frame.minY), scrolled by \(step)")
+        // Its line scrolled out of sight: it closes.
+        clip.scroll(to: NSPoint(x: 0, y: clip.bounds.minY + 30 * step))
+        editor.scrollView.reflectScrolledClipView(clip)
+        #expect(text.completions.offered == nil && list.superview == nil)
     }
 
     /// The session's autosave waits while marked (IME) text shows; the text itself is the mirror's at every step.
@@ -364,13 +400,12 @@ struct SourceEditorTests {
         #expect(told == [true, false, true, false] && !text.hasMarkedText() && text.string == "startあい亜" && text.document.text == text.string)
     }
 
+    /// The old undo referred to provisional text that wasn't saved to a.tex.
     @Test func switchingFilesDuringCompositionKeepsUndoWithItsOwnText() {
         open("first", path: "a.tex")
         text.setMarkedText("仮", selectedRange: .caret(1), replacementRange: typed)
-
         open("second", path: "b.tex")
         #expect(!text.hasMarkedText() && text.string == "second" && text.document.text == "second" && text.undoManager?.canUndo == false)
-        // The old undo referred to provisional text that wasn't saved to a.tex.
         open("first", path: "a.tex")
         text.undoManager?.undo()
         #expect(text.string == "first" && text.document.text == "first")
@@ -414,6 +449,7 @@ struct SourceEditorTests {
 
     /// The shown text as drawn, which validates the shown fragments' colours.
     private func drawn() throws -> NSBitmapImageRep {
+        text.layoutSubtreeIfNeeded()
         let bitmap = try #require(text.bitmapImageRepForCachingDisplay(in: text.visibleRect))
         text.cacheDisplay(in: text.visibleRect, to: bitmap)
         return bitmap
@@ -433,23 +469,12 @@ struct SourceEditorTests {
         return colour
     }
 
-    private func renderedText() throws -> Data {
-        text.layoutSubtreeIfNeeded()
-        return try #require(drawn().tiffRepresentation)
-    }
-
     /// Until `word` is drawn in `expected`; a timeout says what it was.
     private func waitUntilColoured(_ word: String, _ expected: NSColor) async throws {
         try await waitUntil { (try? self.colour(of: word)) == expected } state: { "\(word): \(String(describing: try? self.colour(of: word)))" }
     }
 
-    @Test func newLinesAreColoured() async throws {
-        inWindow()
-        open("x")
-        type("\n\\section")
-        try await waitUntilColoured("\\section", SyntaxTheme.overleaf.color(.command))
-    }
-
+    /// An edit recolours the lines below it, as its Undo does, and a line typed anew is coloured.
     @Test func anEditRecoloursTheLinesBelowIt() async throws {
         inWindow()
         open("a\nb\nxyz\n\\]", caret: 0)
@@ -459,6 +484,26 @@ struct SourceEditorTests {
         try await waitUntilColoured("]", theme.color(.mathDelimiter))
         text.undoManager?.undo()
         try await waitUntilColoured("]", theme.color(.invalid))
+        text.setSelectedRange(.caret(text.text.length))
+        type("\n\\section")
+        try await waitUntilColoured("\\section", theme.color(.command))
+    }
+
+    @Test func aThemeRecoloursTheText() async throws {
+        let window = inWindow()
+        window.orderFrontUnseen()
+        defer { window.close() }
+        open("\\section{A} % note")
+        let texstudio = try #require(SyntaxTheme(rawValue: "texstudio")), system = try #require(SyntaxTheme(rawValue: "system"))
+        text.syntaxTheme = texstudio
+        try await waitUntilColoured("\\section", texstudio.color(.command))
+        #expect(try colour(of: "% note") == texstudio.color(.comment))
+        let before = try #require(drawn().tiffRepresentation)
+        text.syntaxTheme = system
+        try await waitUntilColoured("\\section", system.color(.command))
+        #expect(try drawn().tiffRepresentation != before, "A theme change must repaint the already-visible text.")
+        text.syntaxTheme = .overleaf
+        try await waitUntilColoured("\\section", SyntaxTheme.overleaf.color(.command))
     }
 
     /// Another app's text for the file shown keeps the caret and the top line where they were, as Xcode does.
@@ -475,73 +520,6 @@ struct SourceEditorTests {
         #expect(text.shownTop?.offset == top.offset && text.shownTop?.below == top.below)
         editor.reload(text: "short")
         #expect(text.selectedRange() == .caret(5))
-    }
-
-    /// The list is a view of the scroll view's, over the text: a scroll the viewport needs no new layout for moves it too.
-    @Test func theCompletionListFollowsAScroll() throws {
-        inWindow()
-        let lines = (1...200).map { $0 == 6 ? "\\be" : "Line \($0)" }
-        // After "\be".
-        open(lines.joined(separator: "\n"), caret: (lines[..<6].joined(separator: "\n") as NSString).length)
-        try layOut()
-        text.complete(nil)
-        _ = try #require(text.completions.offered)
-        let list = try #require(editor.scrollView.subviews.first { $0 is NSHostingView<CompletionRowsView> })
-        let before = list.frame
-        let clip = editor.scrollView.contentView
-        let step = 3 * (text.defaultParagraphStyle?.minimumLineHeight ?? 16)
-        clip.scroll(to: NSPoint(x: 0, y: clip.bounds.minY + step))
-        editor.scrollView.reflectScrolledClipView(clip)
-        #expect(abs(before.minY - list.frame.minY - step) <= 1, "Moved by \(before.minY - list.frame.minY), scrolled by \(step)")
-        // Its line scrolled out of sight: it closes.
-        clip.scroll(to: NSPoint(x: 0, y: clip.bounds.minY + 30 * step))
-        editor.scrollView.reflectScrolledClipView(clip)
-        #expect(text.completions.offered == nil && list.superview == nil)
-    }
-
-    /// What's typed in a mirrored field goes in both its places at every step of Undo, and one Undo should take it all back.
-    @Test func undoInAMirroredFieldKeepsItsPlacesAlike() throws {
-        open("\\beg")
-        let undo = try #require(text.undoManager)
-        // Each key an event of its own, in its own top-level undo group, as AppKit gives it.
-        undo.groupsByEvent = false
-        func step(_ action: () -> Void) {
-            undo.beginUndoGrouping()
-            action()
-            undo.endUndoGrouping()
-        }
-        step {
-            text.complete(nil)
-            text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
-        }
-        #expect(text.string == "\\begin{env}\n  \n\\end{env}")
-        for key in "itemize" { step { type(String(key)) } }
-        #expect(text.string == "\\begin{itemize}\n  \n\\end{itemize}")
-        undo.undo()
-        let string = text.string as NSString
-        let begun = string.substring(with: NSRange(location: 7, length: string.range(of: "}").location - 7))
-        #expect(string.hasSuffix("\\end{\(begun)}") && text.document.text == text.string)
-        // One Undo should take back the word typed in the field, but the mirror edits end the typing's coalescing.
-        withKnownIssue("Typing in a mirrored field takes an Undo per key") {
-            #expect(text.string == "\\begin{env}\n  \n\\end{env}")
-        }
-    }
-
-    @Test func aThemeRecoloursTheText() async throws {
-        let window = inWindow()
-        window.orderFrontUnseen()
-        defer { window.close() }
-        open("\\section{A} % note")
-        let texstudio = try #require(SyntaxTheme(rawValue: "texstudio")), system = try #require(SyntaxTheme(rawValue: "system"))
-        text.syntaxTheme = texstudio
-        try await waitUntilColoured("\\section", texstudio.color(.command))
-        #expect(try colour(of: "% note") == texstudio.color(.comment))
-        let before = try renderedText()
-        text.syntaxTheme = system
-        try await waitUntilColoured("\\section", system.color(.command))
-        #expect(try renderedText() != before, "A theme change must repaint the already-visible text.")
-        text.syntaxTheme = .overleaf
-        try await waitUntilColoured("\\section", SyntaxTheme.overleaf.color(.command))
     }
 
     @Test func aDoubleClickGoesToThePDF() throws {

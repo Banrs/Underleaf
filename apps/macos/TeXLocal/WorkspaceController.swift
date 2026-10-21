@@ -34,8 +34,7 @@ final class WorkspaceController: DetentSplitViewController {
         toolbar.workspace = self
         // Not "Workspace", whose saved sidebar is the earlier opening width's.
         if app.savesLayout {
-            for (split, name) in [(splitView, "Workspace 2"), (sidebar.splitView, "Sidebar"), (columns.splitView, "Columns"),
-                                  (area.splitView, "Area")] {
+            for (split, name) in zip(splitViews, ["Workspace 2", "Sidebar", "Columns", "Area"]) {
                 split.autosaveName = name
             }
         }
@@ -199,9 +198,7 @@ final class WorkspaceController: DetentSplitViewController {
         sourceItem.minimumThickness = ColumnMetrics.sourceMinimum
         pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project), width: pdfWidth))
         pdfItem.minimumThickness = ColumnMetrics.pdfMinimum
-        let findMount = Mount(false)
-        pdfFind = accessory(hostingView(PDFFindBar(find: pdf.find), mount: findMount))
-        mounts[ObjectIdentifier(pdfFind)] = findMount
+        pdfFind = accessory(hostingView(PDFFindBar(find: pdf.find), mounted: false))
         (pdfFind.isHidden, pdfFind.view.isHidden) = (true, true)
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
         columns.addSplitViewItem(sourceItem)
@@ -251,12 +248,14 @@ final class WorkspaceController: DetentSplitViewController {
         let host = NSHostingController(rootView: Pane(project: project, mount: mount, content: content).environment(app))
         host.sizingOptions = []
         host.view.frame.size = CGSize(width: width, height: height)
-        if let mount { mounts[ObjectIdentifier(host)] = mount }
+        if let mount { mounts[ObjectIdentifier(host.view)] = mount }
         return host
     }
 
-    private func hostingView(_ content: some View, mount: Mount? = nil) -> NSHostingView<some View> {
+    private func hostingView(_ content: some View, mounted: Bool? = nil) -> NSHostingView<some View> {
+        let mount = mounted.map(Mount.init)
         let host = NSHostingView(rootView: Pane(project: project, mount: mount, content: content).environment(app))
+        if let mount { mounts[ObjectIdentifier(host)] = mount }
         host.sizingOptions = [.intrinsicContentSize]
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -277,7 +276,7 @@ final class WorkspaceController: DetentSplitViewController {
     private func outlineBarHeight(folded: Bool) -> CGFloat { folded ? BarMetrics.height : OutlineHeader.openHeight }
 
     private func mount(_ controller: NSViewController, _ shown: Bool) {
-        guard let mount = mounts[ObjectIdentifier(controller)], mount.shown != shown else { return }
+        guard let mount = mounts[ObjectIdentifier(controller.view)], mount.shown != shown else { return }
         mount.shown = shown
         if shown { controller.view.layoutSubtreeIfNeeded() }
     }

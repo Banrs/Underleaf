@@ -129,7 +129,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project), help: "Insert a figure, table, list or reference")
         case .bold, .italic, .underline:
             let command = Self.styles[id]!
-            item = button(id, command.title, command.symbol!, #selector(style(_:)), help: command.style!.help)
+            item = button(id, command.title, command.style!.symbol, #selector(style(_:)), help: command.style!.help)
         case .pdfSeparator:
             guard let split = workspace?.columns.splitView else { return nil }
             return NSTrackingSeparatorToolbarItem(identifier: id, splitView: split, dividerIndex: 0)

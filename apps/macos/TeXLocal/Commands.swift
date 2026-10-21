@@ -75,8 +75,6 @@ enum MenuCommand: CaseIterable {
         }
     }
 
-    var symbol: String? { style?.symbol }
-
     /// The format toggles' symbol, and what they do (HIG, Offering help).
     var style: (symbol: String, help: String)? {
         switch self {
@@ -183,7 +181,7 @@ extension AppModel {
         case .editMoveLineDown: project?.editor.perform(.moveLineDown)
         case .editGotoLine: prompt = .gotoLine
         case .jumpToDefinition: project?.editor.jumpToDefinition()
-        case .editRename: project?.editor.renameSymbol()
+        case .editRename: prompt = project?.editor.renamable.map(Prompt.rename)
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarShown.toggle()
@@ -314,7 +312,7 @@ private struct CommandItem: View {
         Button { app.perform(command, on: project) } label: {
             let title = app.title(command, on: project)
             // macOS 27 shows a menu item's image only with this style.
-            if let symbol = command.symbol { Label(title, systemImage: symbol) } else { Text(title) }
+            if let symbol = command.style?.symbol { Label(title, systemImage: symbol) } else { Text(title) }
         }
         .labelStyle(.titleAndIcon)
         // ⌘N follows whether a project is open, not which window is key.

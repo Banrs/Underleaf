@@ -222,7 +222,7 @@ final class ProjectModel {
         editor.textView.openDefinition = { [weak self] place in
             Task { await self?.open(place.file, line: place.line, column: place.column, length: place.length) }
         }
-        editor.rename = { [weak self] in self?.app?.prompt = .rename($0) }
+        editor.command = { [weak self] in self?.app?.perform($0, on: self) }
     }
 
     func autoCompileChanged() {
@@ -315,11 +315,10 @@ final class ProjectModel {
             guard latest() else { return }
             if path != openPath {
                 guard let session else { return }
-                let text: Bool
+                // A file made a moment ago may not be in the tree yet.
+                if tree.node(at: path) == nil { await tree.reload() }
+                let text = isText(path)
                 do {
-                    // A file made a moment ago may not be in the tree yet.
-                    if tree.node(at: path) == nil { await tree.reload() }
-                    text = isText(path)
                     if text { try await core.call("session_open_document", ["session": session, "path": path]) }
                 } catch {
                     if latest() { app?.report(error, "Couldn’t Open “\(path.fileName)”") }
@@ -518,7 +517,7 @@ final class ProjectModel {
         guard let session, !closed else { return false }
         settingsPatches += 1
         let patch = settingsPatches, before = settings
-        settings?.apply(change)
+        if settings != nil { change.apply(&settings!) }
         // Answers can come back out of order: the latest's has them all.
         let latest = { patch == self.settingsPatches }
         guard let updated = await alerting("Couldn’t Change the Project’s Settings", {

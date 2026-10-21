@@ -124,8 +124,8 @@ struct ScaleMenuItems: View {
             Text("Fit Width").tag(PDFController.Zoom.fitWidth)
             Text("Fit Page").tag(PDFController.Zoom.fitPage)
             Divider()
-            ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
-                Text((Double(percent) / 100).formatted(.percent)).tag(PDFController.Zoom.scale(Double(percent) / 100))
+            ForEach([0.5, 0.75, 1, 1.25, 1.5, 2], id: \.self) { scale in
+                Text(scale.formatted(.percent)).tag(PDFController.Zoom.scale(scale))
             }
         }
         .pickerStyle(.inline)
