@@ -9,6 +9,7 @@ use serde_json::json;
 
 use crate::CoreError;
 use crate::analyze::Files;
+use crate::paths::Project;
 use crate::projects::search::SearchHit;
 use crate::projects::testing::{fails_with, names_in, project};
 use crate::projects::{
@@ -30,37 +31,40 @@ fn scan(root: &Path) -> Result<Symbols, CoreError> {
 #[test]
 fn a_rename_that_cannot_write_the_settings_is_undone_and_leaves_them_as_they_were() {
     let (_dir, root) = project();
+    let project = Project::in_folder(&root);
     let file = root.join(".texlocal.json");
     let broken = "{ \"mainFile\": \"paper.tex\", \"engine\": \"xelatex\", }";
     fs::write(&file, broken).unwrap();
-    let refused = rename_entry(&root, "main.tex", "a.tex").unwrap_err();
+    let refused = rename_entry(&project, "main.tex", "a.tex").unwrap_err();
     assert_eq!(refused.status, 409);
     assert!(root.join("main.tex").is_file() && !root.join("a.tex").exists());
     create_free(&root, "b.tex", false).unwrap();
-    rename_entry(&root, "b.tex", "c.tex").unwrap();
+    rename_entry(&project, "b.tex", "c.tex").unwrap();
     assert_eq!(fs::read_to_string(&file).unwrap(), broken);
 }
 
 #[test]
 fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rules() {
     let (_dir, root) = project();
+    let project = Project::in_folder(&root);
+    let settings = &project.settings;
     create_free(&root, "chapters/main.tex", false).unwrap();
     create_free(&root, "chapters2/other.tex", false).unwrap();
-    write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
-    let result = rename_entry(&root, "chapters", "content").unwrap();
+    write_settings(settings, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
+    let result = rename_entry(&project, "chapters", "content").unwrap();
     assert_eq!(result.main_file, "content/main.tex");
-    assert_eq!(read_settings(&root).main_file, "content/main.tex");
+    assert_eq!(read_settings(settings).main_file, "content/main.tex");
     create_free(&root, "chapters/x.tex", false).unwrap();
-    write_settings(&root, &json!({ "mainFile": "chapters2/other.tex" })).unwrap();
-    rename_entry(&root, "chapters", "moved").unwrap();
-    assert_eq!(read_settings(&root).main_file, "chapters2/other.tex");
-    let err = rename_entry(&root, "moved", "moved/old/moved").unwrap_err();
+    write_settings(settings, &json!({ "mainFile": "chapters2/other.tex" })).unwrap();
+    rename_entry(&project, "chapters", "moved").unwrap();
+    assert_eq!(read_settings(settings).main_file, "chapters2/other.tex");
+    let err = rename_entry(&project, "moved", "moved/old/moved").unwrap_err();
     assert_eq!(err.status, 400, "{}", err.message);
     assert_eq!(names_in(&root.join("moved")), ["x.tex"]);
     // create_entry and uploads accept a leading "-"; only the main file, which reaches
     // latexmk's command line, may not start with one.
     create_free(&root, "-draft.tex", false).unwrap();
-    let result = rename_entry(&root, "-draft.tex", "-notes/-draft.tex").unwrap();
+    let result = rename_entry(&project, "-draft.tex", "-notes/-draft.tex").unwrap();
     assert_eq!(result.to, "-notes/-draft.tex");
     assert!(root.join("-notes/-draft.tex").is_file());
 }
@@ -70,16 +74,17 @@ fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rul
 #[test]
 fn a_case_only_rename_works_and_one_onto_another_entry_or_stopped_does_nothing() {
     let (_dir, root) = project();
+    let project = Project::in_folder(&root);
     let data = root.parent().unwrap();
     create_free(&root, "Figures/plot.tex", false).unwrap();
 
-    let result = rename_entry(&root, "main.tex", "Main.tex").unwrap();
+    let result = rename_entry(&project, "main.tex", "Main.tex").unwrap();
     assert_eq!(result.main_file, "Main.tex");
-    assert_eq!(read_settings(&root).main_file, "Main.tex");
-    rename_entry(&root, "Figures", "figures").unwrap();
+    assert_eq!(read_settings(&project.settings).main_file, "Main.tex");
+    rename_entry(&project, "Figures", "figures").unwrap();
     assert_eq!(names_in(&root), [".texlocal.json", "Main.tex", "figures"]);
     create_free(&root, "other.tex", false).unwrap();
-    let err = rename_entry(&root, "other.tex", "Main.tex").unwrap_err();
+    let err = rename_entry(&project, "other.tex", "Main.tex").unwrap_err();
     assert_eq!(err.status, 409);
 
     rename_project(data, "P", "p", |_| Ok(())).unwrap();
@@ -109,7 +114,7 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
         return;
     }
 
-    let tree = file_tree(&root);
+    let tree = file_tree(&Project::in_folder(&root));
     let hits = search(&root, "needle", 100);
     let symbols = scan(&root);
     lock(&root.join("locked"), 0o755).unwrap();
@@ -188,10 +193,11 @@ fn a_hit_places_its_match_in_utf16_units_of_the_line() {
 #[test]
 fn only_the_top_level_build_folder_is_the_compile_outputs() {
     let (_dir, root) = project();
+    let project = Project::in_folder(&root);
     fails_with(create_free(&root, "build", true), "compiled PDF");
     fails_with(create_free(&root, "BUILD/x.tex", false), "compiled PDF");
     create_free(&root, "figs/a.png", false).unwrap();
-    fails_with(rename_entry(&root, "figs", "Build"), "compiled PDF");
+    fails_with(rename_entry(&project, "figs", "Build"), "compiled PDF");
     fs::create_dir(root.join("Build")).unwrap();
     fs::write(root.join("Build/main.tex"), "needle \\label{gen:one}\n").unwrap();
     fs::write(root.join("Build/main.log"), "needle in the build dir").unwrap();
@@ -199,7 +205,12 @@ fn only_the_top_level_build_folder_is_the_compile_outputs() {
     let notes = "a needle and \\label{deep:one}\n";
     fs::write(root.join("chapters/build/notes.tex"), notes).unwrap();
 
-    assert!(file_tree(&root).unwrap().iter().all(|n| n.name != "Build"));
+    assert!(
+        file_tree(&project)
+            .unwrap()
+            .iter()
+            .all(|n| n.name != "Build")
+    );
     let hits = search(&root, "needle", 10).unwrap();
     let files: Vec<_> = hits.iter().map(|h| h.file.as_str()).collect();
     assert_eq!(files, ["chapters/build/notes.tex"]);
@@ -351,7 +362,7 @@ fn the_tree_scans_and_zip_follow_links_to_files_only() {
     let alias = root.with_file_name("alias");
     symlink(&root, &alias).unwrap();
 
-    let tree = file_tree(&root).unwrap();
+    let tree = file_tree(&Project::in_folder(&root)).unwrap();
     let top: Vec<_> = tree.iter().map(|n| n.path.as_str()).collect();
     let listed = [
         "figures",

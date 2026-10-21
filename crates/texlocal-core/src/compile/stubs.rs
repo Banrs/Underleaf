@@ -14,6 +14,7 @@ use tokio::task::JoinHandle;
 
 use super::CompileResult;
 use crate::logparse::SHELL_ESCAPE;
+use crate::paths::Project;
 use crate::projects::create_project;
 use crate::projects::testing::with_project;
 use crate::service::Service;
@@ -31,7 +32,7 @@ pub(crate) fn stub(dir: &Path, name: &str, script: &str) {
 fn setup(script: &str) -> (TempDir, Arc<Service>, PathBuf) {
     let (dir, service) = with_project();
     stub(dir.path(), "latexmk", script);
-    let root = service.project_root("P").unwrap();
+    let root = service.project("P").unwrap().root;
     (dir, Arc::new(service), root)
 }
 
@@ -42,7 +43,8 @@ fn stubs(service: &Service) -> String {
 
 async fn compile(service: &Service, root: &Path) -> CompileResult {
     let path = stubs(service);
-    service.compile.compile(root, &path).await.unwrap()
+    let project = Project::in_folder(root);
+    service.compile.compile(&project, &path).await.unwrap()
 }
 
 async fn built(script: &str) -> CompileResult {
@@ -188,7 +190,7 @@ async fn latexmk_is_given_the_arguments_the_settings_call_for() {
         ),
     ];
     for (settings, given, not_given) in cases {
-        write_settings(&root, &settings).unwrap();
+        write_settings(&root.join(".texlocal.json"), &settings).unwrap();
         compile(&service, &root).await;
         let args = fs::read_to_string(root.join("build/args")).unwrap();
         let passed: Vec<_> = args.split_whitespace().collect();
@@ -262,7 +264,7 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     for id in ids {
         create_project(&service.data_dir, id, "blank", None).unwrap();
     }
-    let build = |id: &str| in_flight(&service, &service.project_root(id).unwrap());
+    let build = |id: &str| in_flight(&service, &service.project(id).unwrap().root);
     let [one, two, three] = ids.map(&build);
     for id in ids {
         let started = service.data_dir.join(id).join("started");
@@ -270,7 +272,7 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     }
 
     let started = Instant::now();
-    let stop = |id: &str| service.compile.stop(&service.project_root(id).unwrap());
+    let stop = |id: &str| service.compile.stop(&service.project(id).unwrap().root);
     assert!(stop("one"));
     let one = one.await.unwrap();
     assert!(one.stopped && !one.ok);
@@ -350,7 +352,8 @@ async fn inverse_sync_finds_the_source_and_the_clicked_letters_column() {
         (Some(("theword", 4)), 6, Some(1)),
         (Some(("absent", 0)), 7, None),
     ] {
-        let found = synctex_inverse(&root, 1.0, 10.0, 20.0, click, None, &path);
+        let project = Project::in_folder(&root);
+        let found = synctex_inverse(&project, 1.0, 10.0, 20.0, click, None, &path);
         let loc = found.await.unwrap();
         assert_eq!(
             (loc.file.as_str(), loc.line, loc.column),
@@ -382,7 +385,8 @@ async fn tools_report_their_version_and_start_by_posix_spawn_never_a_fork() {
     let none = "/nonexistent-dir-for-test";
     let status = tex_available(none).await;
     assert!(!status.available && status.version.is_none());
-    let result = service.compile.compile(&root, none).await.unwrap();
+    let project = Project::in_folder(&root);
+    let result = service.compile.compile(&project, none).await.unwrap();
     let message = &result.errors[0].message;
     assert!(message.starts_with("Couldn't start latexmk"), "{message}");
     assert_eq!(FORKS.with(Cell::get), before);

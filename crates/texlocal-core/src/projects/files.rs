@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::atomic;
 use crate::error::CoreError;
-use crate::paths::{after_entry, rel_key, safe_path, safe_write_path, same_entry};
+use crate::paths::{Project, after_entry, rel_key, safe_path, safe_write_path, same_entry};
 use crate::settings::{move_ui, read_settings, write_settings};
 use crate::stamp::Stamp;
 
@@ -95,7 +95,8 @@ pub(super) fn occupied(src: &Path, dest: &Path) -> bool {
     fs::symlink_metadata(dest).is_ok() && !same_entry(src, dest)
 }
 
-pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, CoreError> {
+pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameResult, CoreError> {
+    let root = &project.root;
     let (src, dest) = (safe_path(root, from)?, safe_write_path(root, to)?);
     let (from, to) = (rel_key(from)?, rel_key(to)?);
     if fs::symlink_metadata(&src).is_err() {
@@ -112,12 +113,12 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
-    let main_file = read_settings(root).main_file;
+    let main_file = read_settings(&project.settings).main_file;
     let moved = |path: &str| after_entry(path, &from).map(|rest| format!("{to}{rest}"));
     let moved_main = moved(&main_file);
     fs::rename(&src, &dest)?;
     if let Some(main_file) = &moved_main
-        && let Err(err) = write_settings(root, &json!({ "mainFile": main_file }))
+        && let Err(err) = write_settings(&project.settings, &json!({ "mainFile": main_file }))
     {
         return Err(match fs::rename(&dest, &src) {
             Ok(()) => err,
@@ -127,7 +128,7 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
             )),
         });
     }
-    move_ui(root, moved);
+    move_ui(&project.ui, moved);
     Ok(RenameResult {
         from,
         to,
@@ -157,13 +158,17 @@ pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
 /// Discard, by `trash`, an entry an incoming file of its name replaces. The main file may go,
 /// since the file taking its place keeps it valid; a folder holding it may not, however the
 /// upload spells its name.
-pub(crate) fn discard_replaced(root: &Path, rel: &str, trash: Trash) -> Result<(), CoreError> {
-    if is_under(&read_settings(root).main_file, rel) {
+pub(crate) fn discard_replaced(
+    project: &Project,
+    rel: &str,
+    trash: Trash,
+) -> Result<(), CoreError> {
+    if is_under(&read_settings(&project.settings).main_file, rel) {
         return Err(CoreError::conflict(
             "Choose a different main file before replacing this folder",
         ));
     }
-    trash(&safe_path(root, rel)?)
+    trash(&safe_path(&project.root, rel)?)
 }
 
 /// `rel`, then "name 2.ext", "name 3.ext" and so on in its folder, as Finder numbers copies.
@@ -223,21 +228,22 @@ mod tests {
     #[test]
     fn a_renamed_entry_takes_its_saved_interface_state_along() {
         let (_dir, root) = project();
+        let project = Project::in_folder(&root);
         create_free(&root, "chapters/a.tex", false).unwrap();
         let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
         let patch = UiPatch {
             expanded_folders: Some(list(&["other", "chapters/deep", "chapters"])),
             folded_headings: Some(list(&["main.tex\t1:Intro#1", "chapters/a.tex\t1:Intro#1"])),
         };
-        write_ui(&root, patch).unwrap();
-        rename_entry(&root, "chapters", "content").unwrap();
+        write_ui(&project.ui, patch).unwrap();
+        rename_entry(&project, "chapters", "content").unwrap();
         let state = UiState {
             expanded_folders: list(&["content", "content/deep", "other"]),
             folded_headings: list(&["content/a.tex\t1:Intro#1", "main.tex\t1:Intro#1"]),
         };
-        assert_eq!(read_ui(&root), state);
-        rename_entry(&root, "content/a.tex", "content/b.tex").unwrap();
-        let folds = read_ui(&root).folded_headings;
+        assert_eq!(read_ui(&project.ui), state);
+        rename_entry(&project, "content/a.tex", "content/b.tex").unwrap();
+        let folds = read_ui(&project.ui).folded_headings;
         assert_eq!(folds, ["content/b.tex\t1:Intro#1", "main.tex\t1:Intro#1"]);
     }
 }

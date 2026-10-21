@@ -201,7 +201,7 @@ impl Actor {
             let _ = tx.send(Msg::Live(generation, event));
         });
         let path_env = self.service.tool_paths().1;
-        match (self.preview).start(self.id, &self.root, &files, &path_env, &pane, sink) {
+        match (self.preview).start(self.id, &self.project, &files, &path_env, &pane, sink) {
             Ok(status) => {
                 self.live.synced = versions.keys().cloned().collect();
                 self.live.sent = versions;
@@ -388,7 +388,7 @@ impl Actor {
                 continue;
             }
             others = true;
-            let file = self.root.join(&path);
+            let file = self.project.root.join(&path);
             let name = path.rsplit('/').next().unwrap_or(&path);
             if !name.starts_with('.')
                 && is_text(name)

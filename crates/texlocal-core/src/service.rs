@@ -9,12 +9,13 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::compile::CompileManager;
+use crate::paths::Project;
 use crate::projects;
 use crate::settings::{self, AppSettings, Engine};
 use crate::synctex;
 use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
-use crate::{CoreError, import, lock, packages, paths, templates, wordmatch, zipexport};
+use crate::{CoreError, import, lock, packages, templates, wordmatch, zipexport};
 
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
@@ -49,8 +50,8 @@ impl Service {
         self.texpresso.kill_all();
     }
 
-    pub fn project_root(&self, id: &str) -> Result<PathBuf, CoreError> {
-        paths::project_root(&self.data_dir, id)
+    pub fn project(&self, id: &str) -> Result<Project, CoreError> {
+        Project::find(&self.data_dir, id)
     }
 
     /// With `live`, the live preview of the client's project session (`session`) syncs, not
@@ -68,10 +69,10 @@ impl Service {
     pub(crate) fn with_project<T>(
         &self,
         id: &str,
-        use_project: impl FnOnce(&Path) -> Result<T, CoreError>,
+        use_project: impl FnOnce(&Project) -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
         let _guard = lock(&self.edits);
-        use_project(&self.project_root(id)?)
+        use_project(&self.project(id)?)
     }
 
     async fn status(&self) -> TexStatus {
@@ -92,7 +93,7 @@ impl Service {
 
     pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
         let s = |key: &str| string_arg(args, key);
-        let root = || self.project_root(s("id")?);
+        let project = || self.project(s("id")?);
         let folder = || arg::<Option<String>>(args, "dir");
         match command {
             "status" => out(self.status().await),
@@ -149,17 +150,17 @@ impl Service {
                     projects::rename_project(&self.data_dir, id, name, stop)
                 })?)
             }
-            "get_settings" => out(settings::read_settings(&root()?)),
-            "file_tree" => out(projects::file_tree(&root()?)?),
+            "get_settings" => out(settings::read_settings(&project()?.settings)),
+            "file_tree" => out(projects::file_tree(&project()?)?),
             "create_entry" => {
                 let path = s("path")?;
                 let dir = arg::<Option<bool>>(args, "dir")?.unwrap_or(false);
-                out(self.with_project(s("id")?, |root| {
-                    Ok(json!({ "path": projects::create_free(root, path, dir)? }))
+                out(self.with_project(s("id")?, |project| {
+                    Ok(json!({ "path": projects::create_free(&project.root, path, dir)? }))
                 })?)
             }
             "synctex_forward" => out(synctex::synctex_forward_at(
-                &root()?,
+                &project()?,
                 s("file")?,
                 arg(args, "line")?,
                 arg(args, "column")?,
@@ -168,11 +169,11 @@ impl Service {
             )
             .await?),
             "synctex_inverse" => {
-                let root = root()?;
+                let project = project()?;
                 let click =
                     arg::<Option<String>>(args, "text")?.zip(arg::<Option<usize>>(args, "at")?);
                 out(synctex::synctex_inverse(
-                    &root,
+                    &project,
                     arg(args, "page")?,
                     arg(args, "x")?,
                     arg(args, "y")?,
@@ -183,7 +184,7 @@ impl Service {
                 .await?)
             }
             "synctex_match" => out(synctex::match_forward(
-                &root()?,
+                &project()?.root,
                 s("file")?,
                 arg(args, "line")?,
                 arg(args, "column")?,
@@ -191,12 +192,16 @@ impl Service {
             )?),
             "locate" => out(projects::locate(&self.data_dir, Path::new(s("path")?))?),
             "pdf_path" => {
-                let root = root()?;
-                let pdf = settings::read_settings(&root).output(&root, "pdf")?;
+                let project = project()?;
+                let pdf =
+                    settings::read_settings(&project.settings).output(&project.build, "pdf")?;
                 Ok(json!(pdf.to_string_lossy()))
             }
-            "project_root" => Ok(json!(root()?.to_string_lossy())),
-            "export_zip" => out(zipexport::export_zip(&root()?, Path::new(s("dest")?))?),
+            "project_root" => Ok(json!(project()?.root.to_string_lossy())),
+            "export_zip" => out(zipexport::export_zip(
+                &project()?.root,
+                Path::new(s("dest")?),
+            )?),
             // On quit, while a compile may be in flight, stop the latexmk trees that would outlive the app.
             "kill_all" => {
                 self.kill_all();
@@ -214,8 +219,8 @@ impl Service {
                 projects::discard,
             )?),
             "import_project" => out(import::import_project(self, Path::new(s("src")?))?),
-            "set_ui_state" => out(self.with_project(s("id")?, |root| {
-                settings::write_ui(root, arg(args, "patch")?)
+            "set_ui_state" => out(self.with_project(s("id")?, |project| {
+                settings::write_ui(&project.ui, arg(args, "patch")?)
             })?),
             _ => Err(CoreError::not_found(format!("Unknown command: {command}"))),
         }

@@ -19,7 +19,7 @@ use crate::projects::{self, ProjectInfo, Trash};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::zipexport::left_out;
-use crate::{BUILD_DIR, CoreError, atomic, templates};
+use crate::{BUILD_DIR, CoreError, SETTINGS_FILE, atomic, templates};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,7 +115,7 @@ pub fn import_files(
             usize::MAX
         })?;
     }
-    let root = service.project_root(id)?;
+    let root = service.project(id)?.root;
     let (rels, taken) = validate(&root, dir, files.iter().map(|(path, _)| path.as_str()))?;
     let existing = clashes(&root.join(rel_key(dir).unwrap_or_default()), &rels, taken);
     if conflict.is_none() && !existing.is_empty() {
@@ -213,7 +213,7 @@ fn save(
     source: &Path,
     replace: Option<Trash>,
 ) -> Result<(), CoreError> {
-    let root = service.project_root(id)?;
+    let root = service.project(id)?.root;
     // Beside the target, so the rename stays on one volume.
     let abs = paths::safe_write_path(&root, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
@@ -222,13 +222,14 @@ fn save(
     io::copy(&mut origin, &mut file)?;
     file.sync_all()?;
     drop(file);
-    service.with_project(id, |root| {
+    service.with_project(id, |project| {
+        let root = &project.root;
         let abs = paths::safe_write_path(root, rel)?;
         if let Some(taken) = occupant(root, &rel_key(rel)?) {
             let Some(trash) = replace else {
                 return Err(CoreError::conflict(format!("“{taken}” already exists")));
             };
-            projects::discard_replaced(root, &taken, trash)?;
+            projects::discard_replaced(project, &taken, trash)?;
         }
         fs::create_dir_all(abs.parent().unwrap_or(root))?;
         Ok(atomic::persist(temp, &abs)?)
@@ -441,7 +442,7 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
         if let Some(engine) = engine {
             settings["engine"] = engine.into();
         }
-        write_settings(root, &settings)?;
+        write_settings(&root.join(SETTINGS_FILE), &settings)?;
         Ok(())
     })
 }
@@ -449,6 +450,7 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::Project;
     use crate::projects::testing::{library, with_project};
     use crate::projects::{TreeNode, file_tree};
     use crate::settings::{Engine, read_settings};
@@ -463,7 +465,7 @@ mod tests {
             }
         }
         let mut out = Vec::new();
-        walk(file_tree(root).unwrap(), &mut out);
+        walk(file_tree(&Project::in_folder(root)).unwrap(), &mut out);
         out.sort();
         out
     }
@@ -506,7 +508,7 @@ mod tests {
     #[test]
     fn files_are_validated_as_a_batch_before_any_write() {
         let (_dir, service) = with_project();
-        let root = service.project_root("P").unwrap();
+        let root = service.project("P").unwrap().root;
         assert!(validate(&root, "img", ["a.png", "b.png"].into_iter()).is_ok());
         for batch in [
             ["a.png", "a.png"],
@@ -524,7 +526,7 @@ mod tests {
     #[test]
     fn a_file_reports_what_it_would_land_on_and_never_overwrites_unasked() {
         let (_dir, service) = with_project();
-        let root = service.project_root("P").unwrap();
+        let root = service.project("P").unwrap().root;
         let there = [
             ("figs/a.png", "old"),
             ("figs/a 2.png", "older"),
@@ -567,7 +569,11 @@ mod tests {
         // import spells it on a volume that ignores case.
         fs::create_dir(root.join("ch")).unwrap();
         fs::rename(root.join("main.tex"), root.join("ch/main.tex")).unwrap();
-        write_settings(&root, &json!({ "mainFile": "ch/main.tex" })).unwrap();
+        write_settings(
+            &root.join(SETTINGS_FILE),
+            &json!({ "mainFile": "ch/main.tex" }),
+        )
+        .unwrap();
         assert_eq!(put(&service, "ch", b"x", true).unwrap_err().status, 409);
         assert_eq!(put(&service, "CH", b"x", true).unwrap_err().status, 409);
         assert!(root.join("ch/main.tex").is_file());
@@ -583,7 +589,7 @@ mod tests {
     #[test]
     fn replace_discards_what_is_there_and_brings_the_incoming_file() {
         let (dir, service) = with_project();
-        let root = service.project_root("P").unwrap();
+        let root = service.project("P").unwrap().root;
         write_all(&root, &[("figs/a.png", "old")]);
         let drop = dir.path().join("drop");
         write_all(&drop, &[("figs/a.png", "new"), ("figs/b.png", "b")]);
@@ -609,8 +615,9 @@ mod tests {
     fn a_replaced_file_goes_to_the_trash_without_asking_finder() {
         let (_dir, service) = with_project();
         let file = service
-            .project_root("P")
+            .project("P")
             .unwrap()
+            .root
             .join("replaced by import.txt");
         fs::write(&file, "old").unwrap();
         projects::discard(&file).unwrap();
@@ -621,7 +628,7 @@ mod tests {
     #[test]
     fn a_link_to_a_folder_in_the_project_is_a_folder_a_file_goes_into() {
         let (_dir, service) = with_project();
-        let root = service.project_root("P").unwrap();
+        let root = service.project("P").unwrap().root;
         fs::create_dir(root.join("figs")).unwrap();
         std::os::unix::fs::symlink(root.join("figs"), root.join("link")).unwrap();
         let (rels, taken) = validate(&root, "", ["link/a.png"].into_iter()).unwrap();
@@ -765,8 +772,8 @@ mod tests {
             fs::write(src.join("chapter.tex"), chapter).unwrap();
             let info = import_project(&service, &src.join("chapter.tex")).unwrap();
             assert_eq!(info.main_file, main);
-            let root = service.data_dir.join(&info.id);
-            assert_eq!(read_settings(&root).engine, engine);
+            let settings = service.data_dir.join(&info.id).join(SETTINGS_FILE);
+            assert_eq!(read_settings(&settings).engine, engine);
         }
     }
 

@@ -16,6 +16,7 @@ use super::watch::Change;
 use super::{Document, Engine, Msg, Preview, Sessions};
 use crate::compile::CompileResult;
 use crate::logparse::LogItem;
+use crate::paths::Project;
 use crate::projects::Symbols;
 use crate::projects::testing::names_in;
 use crate::service::Service;
@@ -93,7 +94,7 @@ impl Fake {
 }
 
 impl Engine for Fake {
-    fn compile(&self, _root: PathBuf) -> Fut<Result<CompileResult, CoreError>> {
+    fn compile(&self, _project: Project) -> Fut<Result<CompileResult, CoreError>> {
         self.note("compile");
         let (tx, rx) = oneshot::channel();
         lock(&self.builds).push_back(tx);
@@ -114,7 +115,7 @@ impl Engine for Fake {
         }
     }
 
-    fn clean(&self, _root: PathBuf) -> Fut<Result<(), CoreError>> {
+    fn clean(&self, _build: PathBuf) -> Fut<Result<(), CoreError>> {
         self.note("clean");
         Box::pin(async { Ok(()) })
     }
@@ -124,7 +125,7 @@ impl Preview for Fake {
     fn start(
         &self,
         _owner: u64,
-        _root: &Path,
+        _project: &Project,
         files: &[FileBuffer],
         _path_env: &str,
         _pane: &Pane,

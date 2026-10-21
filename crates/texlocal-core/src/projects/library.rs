@@ -13,8 +13,9 @@ use serde_json::json;
 use super::files::occupied;
 use super::skip_unreadable;
 use super::tree::{entries, file_kind};
+use crate::SETTINGS_FILE;
 use crate::error::CoreError;
-use crate::paths::{fold_case, project_root, sanitize_name};
+use crate::paths::{Project, fold_case, sanitize_name};
 use crate::settings::{read_settings, write_settings};
 use crate::syntax::SourceDocument;
 use crate::templates;
@@ -36,7 +37,7 @@ impl ProjectInfo {
             id: id.to_owned(),
             name: id.to_owned(),
             mtime: newest(&root, &meta),
-            main_file: read_settings(&root).main_file,
+            main_file: read_settings(&root.join(SETTINGS_FILE)).main_file,
         })
     }
 }
@@ -101,7 +102,7 @@ pub fn create_project(
             fs::write(root.join(file), content)?;
         }
         let settings = engine.map_or_else(|| json!({}), |engine| json!({ "engine": engine }));
-        write_settings(root, &settings)?;
+        write_settings(&root.join(SETTINGS_FILE), &settings)?;
         Ok(())
     })
 }
@@ -182,7 +183,7 @@ pub fn rename_project(
     new_name: &str,
     before_move: impl FnOnce(&Path) -> Result<(), CoreError>,
 ) -> Result<ProjectInfo, CoreError> {
-    let root = project_root(data_dir, id)?;
+    let root = Project::find(data_dir, id)?.root;
     let clean = sanitize_name(new_name)?;
     let dest = data_dir.join(&clean);
     if occupied(&root, &dest) {
@@ -282,7 +283,10 @@ mod tests {
         assert_eq!(names_in(&root), files);
         let main = fs::read_to_string(root.join("main.tex")).unwrap();
         assert!(main.contains("{report}"));
-        assert_eq!(read_settings(&root).engine, Engine::Lualatex);
+        assert_eq!(
+            read_settings(&root.join(SETTINGS_FILE)).engine,
+            Engine::Lualatex
+        );
 
         let refused = create_project(data, "Other", "blank", Some("word"));
         assert_eq!(refused.unwrap_err().status, 400);

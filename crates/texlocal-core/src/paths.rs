@@ -29,16 +29,40 @@ pub(crate) fn normalize_segments<'a>(
     Ok(segments)
 }
 
-/// A project is one folder directly under `data_dir`, resolved so a build stops by the root it started with.
-pub fn project_root(data_dir: &Path, id: &str) -> Result<PathBuf, CoreError> {
-    let [name] = normalize_segments(id, "Bad project id")?[..] else {
-        return Err(CoreError::bad_request("Bad project id"));
-    };
-    let root = data_dir.join(name);
-    if !root.is_dir() {
-        return Err(CoreError::not_found(format!("No such project: {id}")));
+/// Where a project keeps its files (`root`), its settings and ui state (files) and its build
+/// output (a folder).
+#[derive(Debug, Clone)]
+pub struct Project {
+    pub root: PathBuf,
+    pub settings: PathBuf,
+    pub ui: PathBuf,
+    pub build: PathBuf,
+}
+
+impl Project {
+    /// A project in the library is one folder directly under `data_dir`, resolved so a build
+    /// stops by the root it started with.
+    pub fn find(data_dir: &Path, id: &str) -> Result<Self, CoreError> {
+        let [name] = normalize_segments(id, "Bad project id")?[..] else {
+            return Err(CoreError::bad_request("Bad project id"));
+        };
+        let root = data_dir.join(name);
+        if !root.is_dir() {
+            return Err(CoreError::not_found(format!("No such project: {id}")));
+        }
+        Ok(Self::in_folder(&dunce::canonicalize(root)?))
     }
-    Ok(dunce::canonicalize(root)?)
+
+    /// One that keeps everything in its own folder, as a project in the library does.
+    pub(crate) fn in_folder(root: &Path) -> Self {
+        let settings = root.join(SETTINGS_FILE);
+        Self {
+            ui: settings.clone(),
+            settings,
+            build: root.join(BUILD_DIR),
+            root: root.to_path_buf(),
+        }
+    }
 }
 
 /// `.texlocal.json` at the root is written only through write_settings; its
@@ -203,11 +227,11 @@ mod tests {
     #[test]
     fn escapes_the_settings_file_and_the_build_folder_are_refused() {
         let (_dir, service) = with_project();
-        let (data, root) = (&service.data_dir, service.project_root("P").unwrap());
-        fails_with(project_root(data, "../etc"), "Bad project id");
+        let (data, root) = (&service.data_dir, service.project("P").unwrap().root);
+        fails_with(Project::find(data, "../etc"), "Bad project id");
         create_free(&root, "chapters/intro.tex", false).unwrap();
-        fails_with(project_root(data, "P/chapters"), "Bad project id");
-        assert_eq!(project_root(data, "./P/").unwrap(), root);
+        fails_with(Project::find(data, "P/chapters"), "Bad project id");
+        assert_eq!(Project::find(data, "./P/").unwrap().root, root);
         let rel = safe_rel_file("./chapters/../chapters//intro.tex");
         assert_eq!(rel.unwrap(), "chapters/intro.tex");
         fails_with(safe_rel_file("a/-x.tex"), "cannot start");
@@ -225,7 +249,7 @@ mod tests {
     #[test]
     fn names_win32_would_alias_are_refused() {
         let (_dir, service) = with_project();
-        let root = service.project_root("P").unwrap();
+        let root = service.project("P").unwrap().root;
         for path in [
             ".texlocal.json.",
             "build./x.tex",
@@ -243,7 +267,7 @@ mod tests {
     fn a_tools_input_path_maps_back_to_the_project_file() {
         let (_dir, service) = with_project();
         create_project(&service.data_dir, "PQ", "blank", None).unwrap();
-        let root = service.project_root("P").unwrap();
+        let root = service.project("P").unwrap().root;
         create_free(&root, "ch/intro.tex", false).unwrap();
         fs::create_dir(root.join("build")).unwrap();
         fs::write(root.join("build/generated.tex"), "").unwrap();

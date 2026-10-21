@@ -166,7 +166,7 @@ async fn run(library: &Path) {
         .await
         .unwrap();
     let id = project["id"].as_str().unwrap().to_owned();
-    let root = service.project_root(&id).unwrap();
+    let root = service.project(&id).unwrap().root;
     let sessions = Sessions::new(Arc::clone(&service));
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&events);

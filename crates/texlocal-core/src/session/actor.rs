@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
@@ -20,7 +20,7 @@ use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Named, Place};
-use crate::paths::{self, within};
+use crate::paths::{self, Project, within};
 use crate::projects::{self, Query, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
@@ -126,8 +126,8 @@ enum Wake {
 
 pub(crate) struct Actor {
     pub id: u64,
-    project: String,
-    pub root: PathBuf,
+    project_id: String,
+    pub project: Project,
     pub service: Arc<Service>,
     pub engine: Arc<dyn Engine>,
     pub preview: Arc<dyn Preview>,
@@ -162,26 +162,26 @@ impl Actor {
     pub fn new(
         sessions: &Sessions,
         id: u64,
-        project: String,
-        root: PathBuf,
+        project_id: String,
+        project: Project,
         tx: mpsc::UnboundedSender<Msg>,
         auto_compile: bool,
     ) -> Result<(Self, Value), CoreError> {
-        let tree = projects::file_tree(&root)?;
+        let tree = projects::file_tree(&project)?;
         let watcher = sessions
             .watch
-            .then(|| watch::watch(&root, tx.clone()))
+            .then(|| watch::watch(&project.root, tx.clone()))
             .flatten();
-        let settings = settings::read_settings(&root);
-        let pdf = settings.output(&root, "pdf").ok();
+        let settings = settings::read_settings(&project.settings);
+        let pdf = settings.output(&project.build, "pdf").ok();
         let pdf = pdf.filter(|pdf| pdf.is_file());
         let opened = json!({
             "session": id,
-            "root": root.to_string_lossy(),
+            "root": project.root.to_string_lossy(),
             "pdf": pdf.as_ref().map(|pdf| pdf.to_string_lossy()),
             "tree": out(&tree)?,
             "settings": settings,
-            "ui": settings::read_ui(&root),
+            "ui": settings::read_ui(&project.ui),
         });
         let mut builds = Builds::default();
         builds.pdf = pdf.is_some();
@@ -191,8 +191,8 @@ impl Actor {
         }
         let actor = Self {
             id,
+            project_id,
             project,
-            root,
             service: Arc::clone(&sessions.service),
             engine: Arc::clone(&sessions.engine),
             preview: Arc::clone(&sessions.preview),
@@ -476,11 +476,12 @@ impl Actor {
     // MARK: - Documents
 
     fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
-        let path = &analyze::disk_spelling(&self.root, path).unwrap_or_else(|| path.to_owned());
+        let path =
+            &analyze::disk_spelling(&self.project.root, path).unwrap_or_else(|| path.to_owned());
         if self.docs.contains_key(path) {
             return Ok(());
         }
-        let (disk, stamp) = read_disk(&paths::safe_path(&self.root, path)?)?;
+        let (disk, stamp) = read_disk(&paths::safe_path(&self.project.root, path)?)?;
         let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(NOT_UTF8))?;
         let id = self.next_doc;
         self.next_doc += 1;
@@ -631,8 +632,8 @@ impl Actor {
                 "\n" => Cow::Borrowed(text.as_str()),
                 ending => Cow::Owned(text.replace('\n', ending)),
             };
-            let written = self.service.with_project(&self.project, |root| {
-                let abs = paths::safe_write_path(root, path)?;
+            let written = self.service.with_project(&self.project_id, |project| {
+                let abs = paths::safe_write_path(&project.root, path)?;
                 if !as_left(&abs, doc.disk_stamp, doc.disk_text.as_deref()) {
                     return Ok(None);
                 }
@@ -766,7 +767,7 @@ impl Actor {
     fn files_changed_on_disk(&mut self) {
         let changes = std::mem::take(&mut self.fs_pending);
         let docs: Vec<String> = self.docs.keys().cloned().collect();
-        let meaning = watch::classify(&self.root, &changes, &self.tree, &docs);
+        let meaning = watch::classify(&self.project.root, &changes, &self.tree, &docs);
         for path in &meaning.docs {
             self.check_disk(path);
         }
@@ -790,7 +791,8 @@ impl Actor {
         // the app's own choice. Each fold and folder opened writes the settings too, so the
         // folder is walked again only for another mark.
         if meaning.settings {
-            let chosen = paths::fold_case(&settings::read_settings(&self.root).main_file);
+            let chosen = settings::read_settings(&self.project.settings).main_file;
+            let chosen = paths::fold_case(&chosen);
             let mut files = self.tree.files.iter();
             if files.find(|f| paths::fold_case(f) == chosen) != main.as_ref() {
                 self.main_file_changed();
@@ -802,7 +804,7 @@ impl Actor {
     }
 
     fn check_disk(&mut self, path: &str) {
-        let abs = self.root.join(path);
+        let abs = self.project.root.join(path);
         if !abs.exists() {
             return self.file_gone(path);
         }
@@ -851,7 +853,7 @@ impl Actor {
     }
 
     fn reload_tree(&mut self) {
-        let Ok(tree) = projects::file_tree(&self.root) else {
+        let Ok(tree) = projects::file_tree(&self.project) else {
             return;
         };
         let index = TreeIndex::of(&tree);
@@ -870,7 +872,7 @@ impl Actor {
     /// each file whole, old or new.
     fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
-        let (seq, root, tx) = (self.symbols_seq, self.root.clone(), self.tx.clone());
+        let (seq, root, tx) = (self.symbols_seq, self.project.root.clone(), self.tx.clone());
         let (facts, docs) = (Arc::clone(&self.facts), Arc::clone(&self.shared));
         let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
         files.sort_unstable();
@@ -895,19 +897,20 @@ impl Actor {
     /// asked for earlier keeps no outline over it.
     fn analyze(&mut self, path: String, reply: Reply) {
         self.analyses += 1;
-        let (seq, root) = (self.analyses, self.root.clone());
+        let (seq, project) = (self.analyses, self.project.clone());
         let (docs, outline) = (Arc::clone(&self.shared), Arc::clone(&self.outline));
         let facts = Arc::clone(&self.facts);
         tokio::task::spawn_blocking(move || {
-            let main = settings::read_settings(&root).main_file;
+            let root = &project.root;
+            let main = settings::read_settings(&project.settings).main_file;
             let class = paths::rel_key(&main).ok().and_then(|main| {
                 let open = lock(&docs).get(&main).cloned();
                 match open {
                     Some(doc) => doc.with(|source| source.document_class()),
-                    None => facts.at(&root, &main)?.class.clone(),
+                    None => facts.at(root, &main)?.class.clone(),
                 }
             });
-            let analysis = analyze::analyze_project(&root, &facts, &main, &path, class.as_ref());
+            let analysis = analyze::analyze_project(root, &facts, &main, &path, class.as_ref());
             let answer = out(&analysis);
             let mut kept = lock(&outline);
             if seq > kept.seq {
@@ -922,7 +925,7 @@ impl Actor {
 
     /// Worked out beside the session, as an analysis is: it reads every text file.
     fn search(&self, query: Query, reply: Reply) {
-        let (root, docs) = (self.root.clone(), Arc::clone(&self.shared));
+        let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
         tokio::task::spawn_blocking(move || {
             let hits = projects::search_project(&root, &query, &texts(&docs), 100);
             reply.send(hits.and_then(|hits| out(projects::search_groups(hits))));
@@ -958,7 +961,7 @@ impl Actor {
         let texts = open
             .iter()
             .map(|(path, text, _)| (path.clone(), text.clone()));
-        let symbols = projects::scan_symbols(&self.root, &self.facts, &texts.collect())?;
+        let symbols = projects::scan_symbols(&self.project.root, &self.facts, &texts.collect())?;
         let defines = |name: &str| {
             let mut files = symbols.by_file.values();
             files.any(|facts| definitions(facts, kind).iter().any(|n| n.name == name))
@@ -1038,8 +1041,8 @@ impl Actor {
             ));
         }
         let others = |rel: &str| chosen(rel) && !self.docs.contains_key(rel) && !self.deleting(rel);
-        let written = self.service.with_project(&self.project, |root| {
-            projects::replace_in_files(root, &others, found, to)
+        let written = self.service.with_project(&self.project_id, |project| {
+            projects::replace_in_files(&project.root, &others, found, to)
         })?;
         Ok(json!({ "edits": edits.pop(), "written": written }))
     }
@@ -1050,10 +1053,10 @@ impl Actor {
         if !self.save_edits(true)? {
             return Ok(Value::Null);
         }
-        let (renamed, main) = self.service.with_project(&self.project, |root| {
-            let main = settings::read_settings(root).main_file;
-            let renamed = projects::rename_entry(root, from, to)?;
-            self.preview.stop(root)?;
+        let (renamed, main) = self.service.with_project(&self.project_id, |project| {
+            let main = settings::read_settings(&project.settings).main_file;
+            let renamed = projects::rename_entry(project, from, to)?;
+            self.preview.stop(&project.root)?;
             Ok((renamed, main))
         })?;
         self.live_follow();
@@ -1087,17 +1090,17 @@ impl Actor {
             self.main_file_changed();
         }
         let mut answer = out(renamed)?;
-        answer["ui"] = out(settings::read_ui(&self.root))?;
+        answer["ui"] = out(settings::read_ui(&self.project.ui))?;
         Ok(answer)
     }
 
     fn set_settings(&mut self, patch: &Value) -> Result<Value, CoreError> {
-        let (updated, main_changed) = self.service.with_project(&self.project, |root| {
-            let main = settings::read_settings(root).main_file;
-            let updated = settings::write_settings(root, patch)?;
+        let (updated, main_changed) = self.service.with_project(&self.project_id, |project| {
+            let main = settings::read_settings(&project.settings).main_file;
+            let updated = settings::write_settings(&project.settings, patch)?;
             let main_changed = updated.main_file != main;
             if main_changed {
-                self.preview.stop(root)?;
+                self.preview.stop(&project.root)?;
             }
             Ok((updated, main_changed))
         })?;
@@ -1124,7 +1127,7 @@ impl Actor {
         if !self.flush_all(true)? || !self.dirty_paths().is_empty() {
             return Ok(json!({ "ready": false }));
         }
-        let main = settings::read_settings(&self.root).main_file;
+        let main = settings::read_settings(&self.project.settings).main_file;
         if paths::after_entry(&main, path).is_some() {
             return Err(CoreError::conflict(MAIN_FILE_TRASH));
         }
