@@ -24,12 +24,12 @@ final class SourceDocument {
     /// edit going in, what's typed in a snippet's field for its other places, from the last.
     func edit(_ range: NSRange, with text: String, changing: NSRange?, mirroring: Bool) -> [TextEdit] {
         var text = text
+        let said = TlRange(start: UInt32(changing?.location ?? 0), length: UInt32(changing?.length ?? 0))
         let out = text.withUTF8 { text in
-            let edit = { (changing: UnsafePointer<TlRange>?) in
-                tl_source_edit(self.raw, UInt32(range.location), UInt32(range.length), text.baseAddress, text.count, changing, mirroring)
+            withUnsafePointer(to: said) { said in
+                tl_source_edit(raw, UInt32(range.location), UInt32(range.length), text.baseAddress, text.count,
+                               changing == nil ? nil : said, mirroring)
             }
-            guard let changing else { return edit(nil) }
-            return withUnsafePointer(to: TlRange(start: UInt32(changing.location), length: UInt32(changing.length)), edit)
         }
         guard let out else { return [] }
         return Syntax.decode("edit", out) ?? []

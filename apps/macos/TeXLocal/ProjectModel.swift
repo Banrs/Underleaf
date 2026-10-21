@@ -222,7 +222,7 @@ final class ProjectModel {
         editor.textView.openDefinition = { [weak self] place in
             Task { await self?.open(place.file, line: place.line, column: place.column, length: place.length) }
         }
-        editor.rename = { [weak self] in self?.app?.prompt = .rename($0) }
+        editor.command = { [weak self] in self?.app?.perform($0, on: self) }
     }
 
     func autoCompileChanged() {

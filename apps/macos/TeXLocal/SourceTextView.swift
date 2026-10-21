@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 
 /// The source editor's text view: TextKit 2 only, with the core's document as the text's mirror.
 final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCustomRotorItemSearchDelegate {
@@ -421,8 +420,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var mirroring = false
     private var mirrorEdits: [TextEdit] = []
 
-    func startSnippet(_ fields: [SnippetField], at location: Int) {
-        if let first = document.startSnippet(fields, at: location) { setSelectedRange(first) }
+    /// One undo step with the caret at the insertion's, then its snippet's first field selected. False for none.
+    @discardableResult
+    func insert(_ insertion: Insertion?, named name: String) -> Bool {
+        guard let insertion else { return false }
+        apply([insertion.edit], named: name, selecting: [.caret(insertion.caret)])
+        if let first = document.startSnippet(insertion.fields, at: insertion.edit.start) { setSelectedRange(first) }
+        return true
     }
 
     override func didChangeText() {

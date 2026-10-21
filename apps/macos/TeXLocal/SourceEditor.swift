@@ -165,12 +165,14 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
         let unwanted = [#selector(NSTextView.changeLayoutOrientation(_:)), #selector(NSTextView.startSpeaking(_:)),
                         #selector(NSResponder.uppercaseWord(_:))]
-        let ours = [(true, MenuCommand.jumpToDefinition, #selector(jumpToDefinition)),
-                    (textView.isEditable && renamable != nil, MenuCommand.editRename, #selector(renameSymbol)),
-                    (textView.forwardSync(false) != nil, MenuCommand.syncForward, #selector(goToPDF)),
-                    (textView.isEditable, MenuCommand.editComment, #selector(toggleComment))].filter(\.0).map { _, command, action in
-            let item = NSMenuItem(title: command.title, action: action, keyEquivalent: "")
+        let offered: [(MenuCommand, Bool)] = [
+            (.jumpToDefinition, true), (.editRename, textView.isEditable && renamable != nil),
+            (.syncForward, textView.forwardSync(false) != nil), (.editComment, textView.isEditable),
+        ]
+        let ours = offered.filter(\.1).map { command, _ in
+            let item = NSMenuItem(title: command.title, action: #selector(choose), keyEquivalent: "")
             item.target = self
+            item.representedObject = command
             return item
         }
         let kept = menu.items.filter { item in
@@ -180,11 +182,13 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         return menu
     }
 
-    @objc private func goToPDF() { textView.forwardSync(false)?() }
-    @objc private func toggleComment() { perform(.comment) }
+    /// The context menu's items are the menu bar's commands, which the project performs.
+    var command: (MenuCommand) -> Void = { _ in }
+
+    @objc private func choose(_ item: NSMenuItem) { (item.representedObject as? MenuCommand).map(command) }
 
     /// At the selection's start. The command is enabled wherever the caret is, so a name nothing defines beeps.
-    @objc func jumpToDefinition() {
+    func jumpToDefinition() {
         guard let place = textView.document.definition(at: textView.selectedRange().location)?.places.first else { return NSSound.beep() }
         textView.openDefinition(place)
     }
@@ -198,21 +202,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         return found
     }
 
-    /// The project's sheet for the name.
-    var rename: (Definition) -> Void = { _ in }
-
-    @objc func renameSymbol() { renamable.map(rename) }
-
     @discardableResult
     func perform(_ command: EditorCommand) -> Bool {
         guard path != nil, textView.isEditable else { return false }
         let document = textView.document, selection = textView.selectedRange(), selections = textView.selectedRanges.map(\.rangeValue)
-        let insert = { (insertion: Insertion?, name: String) in
-            guard let insertion else { return false }
-            self.textView.apply([insertion.edit], named: name, selecting: [.caret(insertion.caret)])
-            self.textView.startSnippet(insertion.fields, at: insertion.edit.start)
-            return true
-        }
         switch command {
         case .bold: textView.apply(document.toggle(.bold, selections), named: String(localized: "Bold"))
         case .italic: textView.apply(document.toggle(.italic, selections), named: String(localized: "Italic"))
@@ -227,14 +220,17 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             textView.apply(document.toggleComment(selections), named: String(localized: "Comment"))
         case .moveLineUp, .moveLineDown:
             let up = command == .moveLineUp
-            guard textView.apply(document.moveLines(selections, up: up),
-                                 named: up ? String(localized: "Move Line Up") : String(localized: "Move Line Down")) else { return false }
+            let name = up ? String(localized: "Move Line Up") : String(localized: "Move Line Down")
+            guard textView.apply(document.moveLines(selections, up: up), named: name) else { return false }
         case .heading(let command):
-            guard insert(document.setHeading(caret: selection.location, command: command), String(localized: "Section Level")) else { return false }
+            let level = document.setHeading(caret: selection.location, command: command)
+            guard textView.insert(level, named: String(localized: "Section Level")) else { return false }
         case .symbol(let command):
-            guard insert(document.insertSymbol(command, replacing: selection), String(localized: "Insert Symbol")) else { return false }
+            let symbol = document.insertSymbol(command, replacing: selection)
+            guard textView.insert(symbol, named: String(localized: "Insert Symbol")) else { return false }
         case .block(let id, let title):
-            guard insert(document.insertBlock(id, replacing: selection), Self.insertion(titled: title)) else { return false }
+            let block = document.insertBlock(id, replacing: selection)
+            guard textView.insert(block, named: Self.insertion(titled: title)) else { return false }
         }
         focus()
         return true

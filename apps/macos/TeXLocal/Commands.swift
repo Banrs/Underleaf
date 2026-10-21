@@ -183,7 +183,7 @@ extension AppModel {
         case .editMoveLineDown: project?.editor.perform(.moveLineDown)
         case .editGotoLine: prompt = .gotoLine
         case .jumpToDefinition: project?.editor.jumpToDefinition()
-        case .editRename: project?.editor.renameSymbol()
+        case .editRename: prompt = project?.editor.renamable.map(Prompt.rename)
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarShown.toggle()
