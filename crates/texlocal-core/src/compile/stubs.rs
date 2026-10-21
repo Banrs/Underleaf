@@ -400,12 +400,12 @@ async fn tools_report_their_version_and_start_by_posix_spawn_never_a_fork() {
     let (_dir, service, root) = setup("echo 'Latexmk, John Collins, Version 4.85'\nexit 0\n");
     let status = tex_available(&stubs(&service)).await;
     assert!(status.available);
-    assert!(status.version.unwrap().starts_with("Latexmk"));
+    assert_eq!(status.latexmk_version.as_deref(), Some("4.85"));
     compile(&service, &root).await;
 
     let none = "/nonexistent-dir-for-test";
     let status = tex_available(none).await;
-    assert!(!status.available && status.version.is_none());
+    assert!(!status.available && status.latexmk_version.is_none());
     let project = Project::in_folder(&root);
     let result = service.compile.compile(&project, none).await.unwrap();
     let message = &result.errors[0].message;

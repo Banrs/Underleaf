@@ -28,13 +28,14 @@ public sealed record OpenedPath(ProjectInfo Project, string? File);
 /// <param name="Main">The core's mark, as latexmk finds the main file.</param>
 public sealed record TreeNode(string Type, string Name, string Path, string? Kind, TreeNode[]? Children, bool Main);
 
+/// <param name="LatexmkVersion">The number latexmk's version line names ("4.86").</param>
 /// <param name="Found">The folder the working latexmk runs from.</param>
-public sealed record TexStatus(bool Available, string? Version, string? TexDir, string? Found);
+public sealed record TexStatus(bool Available, string? LatexmkVersion, string? TexDir, string? Found);
 
 /// <param name="Name">For titles: an opened folder's id isn't one.</param>
 /// <param name="Pdf">The last build's, absolute, if it is on disk.</param>
 /// <param name="Ui">The project's UI state, as set_ui_state patches it.</param>
-public sealed record SessionOpened(ulong Session, string Name, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, JsonElement Ui);
+public sealed record SessionOpened(string Name, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, JsonElement Ui);
 
 public sealed record Clash(string Path);
 

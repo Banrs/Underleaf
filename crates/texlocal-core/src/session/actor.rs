@@ -179,7 +179,6 @@ impl Actor {
         let pdf = settings.output(&project.build, "pdf").ok();
         let pdf = pdf.filter(|pdf| pdf.is_file());
         let opened = json!({
-            "session": id,
             "name": project.name(),
             "root": project.root.to_string_lossy(),
             "pdf": pdf.as_ref().map(|pdf| pdf.to_string_lossy()),

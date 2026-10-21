@@ -110,7 +110,6 @@ static LATEXMK_VERSION: LazyLock<Regex> =
 #[serde(rename_all = "camelCase")]
 pub struct TexStatus {
     pub available: bool,
-    pub version: Option<String>,
     pub latexmk_version: Option<String>,
     pub tex_dir: Option<String>,
     pub found: Option<String>,
@@ -122,31 +121,20 @@ pub async fn tex_available(path_env: &str) -> TexStatus {
     let Ok((0, stdout)) = run("latexmk", &["-version"], None, path_env).await else {
         return TexStatus::default();
     };
-    let version = version_line(&stdout);
     TexStatus {
         available: true,
         latexmk_version: LATEXMK_VERSION
-            .captures(&version)
+            .captures(&stdout)
             .map(|found| found[1].to_owned()),
-        version: Some(version),
         found: find_tool("latexmk", path_env)
             .and_then(|latexmk| Some(latexmk.parent()?.to_string_lossy().into_owned())),
         ..TexStatus::default()
     }
 }
 
-fn version_line(stdout: &str) -> String {
-    let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
-    let first = lines.clone().next().unwrap_or("");
-    lines
-        .find(|l| l.starts_with("Latexmk"))
-        .unwrap_or(first)
-        .to_string()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{absolute_dirs, version_line};
+    use super::absolute_dirs;
     use std::path::Path;
 
     #[test]
@@ -156,14 +144,5 @@ mod tests {
         let path = std::env::join_paths([&first, Path::new(""), Path::new("."), &last]).unwrap();
         let dirs: Vec<_> = absolute_dirs(&path).collect();
         assert_eq!(dirs, [first, last]);
-    }
-
-    #[test]
-    fn the_version_names_latexmk() {
-        assert_eq!(
-            version_line("Latexmk, John Collins, 1 Jan 2025. Version 4.86\n"),
-            "Latexmk, John Collins, 1 Jan 2025. Version 4.86"
-        );
-        assert_eq!(version_line("something else\n"), "something else");
     }
 }

@@ -65,7 +65,9 @@ public sealed partial class SettingsPage : Page
     void ShowTex(TexStatus status)
     {
         TexMissing.IsOpen = !status.Available;
-        TexText.Text = status.Available ? string.Join(" · ", new[] { status.Version, status.Found }.Where(s => !string.IsNullOrEmpty(s))) : "Not found";
+        // As on the Mac: latexmk's number and its folder.
+        var folder = status.Available ? status.Found ?? status.TexDir : null;
+        TexText.Text = folder is null ? "Not found" : status.LatexmkVersion is { } number ? $"latexmk {number} in {folder}" : folder;
         AutomaticButton.Visibility = status.TexDir is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
