@@ -232,6 +232,11 @@ mod tests {
         assert_eq!(names("% \\cite{x}\n\\input{a\n\nprose}"), ["a"]);
         // Not even after a backslash at the end of a line, a command with it.
         assert_eq!(names("\\cite{a\\\n\nprose}"), ["a\\\n"]);
+        assert_eq!(
+            names("\\usepackage\n[utf8]\n{inputenc}"),
+            ["utf8", "inputenc"]
+        );
+        assert_eq!(names("😀 \\cite\n{𐐀key}"), ["𐐀key"]);
     }
 
     #[test]
@@ -243,15 +248,6 @@ mod tests {
         assert_eq!(found[0].start, 12);
         assert_eq!(found[0].start + found[0].length, 26);
         assert!(code(&mut doc, 36, 2).is_empty()); // in "Text"
-    }
-
-    #[test]
-    fn arguments_can_start_on_the_next_line() {
-        assert_eq!(
-            names("\\usepackage\n[utf8]\n{inputenc}"),
-            ["utf8", "inputenc"]
-        );
-        assert_eq!(names("😀 \\cite\n{𐐀key}"), ["𐐀key"]);
     }
 
     #[test]

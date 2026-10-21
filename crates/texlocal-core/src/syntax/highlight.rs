@@ -43,28 +43,24 @@ pub struct Highlight {
     pub kind: HighlightKind,
 }
 
-pub struct Cache {
-    states: Vec<State>,
-}
+pub struct Cache(Vec<State>);
 
 impl Default for Cache {
     fn default() -> Self {
-        Self {
-            states: vec![State::default()],
-        }
+        Self(vec![State::default()])
     }
 }
 
 impl Cache {
     pub fn forget_from(&mut self, line: usize) {
-        self.states.truncate(line.max(1));
+        self.0.truncate(line.max(1));
     }
 
     pub fn highlights(&mut self, text: &Text, start: u32, end: u32) -> Vec<Highlight> {
         let (first, last) = (text.line_index(start), text.line_index(end));
-        let from = first.min(self.states.len() - 1);
+        let from = first.min(self.0.len() - 1);
         let mut runs = Vec::new();
-        let mut state = self.states[from].clone();
+        let mut state = self.0[from].clone();
         for index in from..=last {
             let base = text.lines[index];
             tokenize(text.line(index), &mut state, |from, to, kind| {
@@ -76,8 +72,8 @@ impl Cache {
                     });
                 }
             });
-            if self.states.len() == index + 1 {
-                self.states.push(state.clone());
+            if self.0.len() == index + 1 {
+                self.0.push(state.clone());
             }
         }
         runs
@@ -195,16 +191,10 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
             s.pos += 2;
             return Some(Command);
         }
-        for (open, close) in [("\\[", "\\]"), ("\\(", "\\)")] {
-            if s.eat(open) {
-                state.mode = Mode::Math(close);
-                return Some(MathDelimiter);
-            }
-        }
     }
-    for delimiter in ["$$", "$"] {
-        if s.eat(delimiter) {
-            state.mode = Mode::Math(delimiter);
+    for (open, close) in [("\\[", "\\]"), ("\\(", "\\)"), ("$$", "$$"), ("$", "$")] {
+        if s.eat(open) {
+            state.mode = Mode::Math(close);
             return Some(MathDelimiter);
         }
     }

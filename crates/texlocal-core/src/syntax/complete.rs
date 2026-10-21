@@ -97,12 +97,9 @@ impl SourceDocument {
             let listed: Vec<String>;
             let (names, kind): (&[String], _) = match &c[1] {
                 c if catalog.cite_commands.contains(c) => {
-                    let cited = matching(&self.symbols.citations, typed, |c| &c.name);
-                    let mut items = words(cited.iter().map(|c| &c.name).collect(), "");
-                    for (item, cited) in items.iter_mut().zip(cited) {
-                        item.detail.clone_from(&cited.detail);
-                    }
-                    return offer(start, SymbolKind::Citation, items);
+                    let cited = matching(&self.symbols.citations, typed, |c| &c.name).into_iter();
+                    let items = cited.map(|c| word(c.name.clone(), c.detail.clone()));
+                    return offer(start, SymbolKind::Citation, items.collect());
                 }
                 c if catalog.ref_commands.contains(c) => (&self.symbols.labels, SymbolKind::Label),
                 "begin" | "end" => {
@@ -134,15 +131,16 @@ impl SourceDocument {
                     (&listed, SymbolKind::File)
                 }
             };
-            let items = words(matching(names, typed, |n| n), "");
-            return offer(start, kind, items);
+            let items = matching(names, typed, |n| n).into_iter();
+            return offer(start, kind, items.map(|n| word(n.clone(), None)).collect());
         }
         // In a .bib file; `before` starts at the line's start unless the line is long.
         let whole_line = from == text.lines[line];
         if let Some(at) = ENTRY_TYPE.captures(&before).filter(|_| whole_line) {
             let at = at.get(1).unwrap();
-            let names = matching(&catalog.bib_entry_types, &at.as_str()[1..], |t| t);
-            return offer(at.start(), SymbolKind::EntryType, words(names, "@"));
+            let names = matching(&catalog.bib_entry_types, &at.as_str()[1..], |t| t).into_iter();
+            let items = names.map(|name| word(format!("@{name}"), None));
+            return offer(at.start(), SymbolKind::EntryType, items.collect());
         }
         let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
         let complete = |name: &String, snippet: &str| {
@@ -274,19 +272,14 @@ impl SourceDocument {
 /// A graphic named without its extension is looked for with pdfTeX's, in its order.
 const GRAPHICS: [&str; 6] = ["", ".pdf", ".png", ".jpg", ".jpeg", ".eps"];
 
-fn words(names: Vec<&String>, prefix: &str) -> Vec<Completion> {
-    names
-        .into_iter()
-        .map(|name| {
-            let label = format!("{prefix}{name}");
-            Completion {
-                text: label.clone(),
-                label,
-                fields: vec![],
-                detail: None,
-            }
-        })
-        .collect()
+/// An item that is the name it shows, as an argument's names are.
+fn word(label: String, detail: Option<String>) -> Completion {
+    Completion {
+        text: label.clone(),
+        label,
+        fields: vec![],
+        detail,
+    }
 }
 
 fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) -> Vec<&'a T> {

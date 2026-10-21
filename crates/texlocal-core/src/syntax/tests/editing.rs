@@ -189,6 +189,7 @@ fn a_line_becomes_a_heading() {
         ("% note", "section", "\\section{}% note", 9),
         ("\\section{Title} % \\section{x}", "subsection", "\\subsection{Title} % \\section{x}", 17),
         ("50\\% done", "section", "\\section{50\\% done}", 18),
+        ("a \\\\% c", "section", "\\section{a \\\\}% c", 13),
         ("   ", "section", "   \\section{}", 12),
         ("\\sectionmark{x} words", "chapter", "\\chapter{\\sectionmark{x} words}", 30),
     ];

@@ -6,10 +6,10 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use super::scan::{blank_line, closing_brace, strip_comment};
+use super::scan::{blank_line, closing_brace};
 use super::{
-    Insertion, Line, SourceDocument, Text, TextEdit, TextRange, catalog, clamp, complete, edit,
-    indentation, is, span, splice, utf16,
+    Insertion, Line, SourceDocument, Text, TextEdit, TextRange, catalog, clamp, comment_start,
+    complete, edit, indentation, is, span, splice, utf16,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -116,8 +116,9 @@ impl SourceDocument {
         let index = text.line_index(caret);
         let (line, start) = (text.line(index), text.lines[index]);
         let length = line.len() as u32;
-        let line = String::from_utf16_lossy(line);
-        let (code, comment) = line.split_at(strip_comment(&line).len());
+        let split = comment_start(line);
+        let code = &String::from_utf16_lossy(&line[..split]);
+        let comment = String::from_utf16_lossy(&line[split..]);
         let (before, title, rest, marks, closed) = match HEADING.captures(code) {
             Some(c) => {
                 let open = c.get_match();
@@ -157,7 +158,7 @@ impl SourceDocument {
             let plain = format!("{before}{title}{rest}");
             (format!("{plain}{comment}"), utf16(&plain))
         } else {
-            (line.clone(), (caret - start) as usize)
+            (format!("{code}{comment}"), (caret - start) as usize)
         };
         Insertion {
             edit: edit(start, length, new),
