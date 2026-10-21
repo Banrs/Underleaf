@@ -24,3 +24,7 @@ it works around.
   done; each host's Install in the build panel is left, and Windows' elevated install (UAC through
   PowerShell) has not yet run on Windows.
 - Windows: Live Preview and the rest of what it lacks against the Mac (`docs/windows.md`).
+- The hosts don't yet draw `live_issues` (`docs/core-api.md`).
+- TeXpresso's frontend (`texpresso`, not `texpresso-xetex`) is still to be rebuilt with the
+  patch's fix for a worker killed as it starts (`docs/texpresso.md`). It needs MuPDF and SDL2
+  (`brew install mupdf sdl2`). Until then `texpresso_live` fails at "Recovery without a restart".

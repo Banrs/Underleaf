@@ -7,10 +7,10 @@ events (`docs/core-api.md`).
 
 With Underleaf's patch TeXpresso opens no window: it writes each page in view as it changes, the
 Mac app draws it in the PDF pane, and the whole document follows when typing pauses. Errors show
-in the Live Preview Log, which follows TeX's at most five times a second. When Live Preview stops,
-the last build's PDF returns. A restart the session makes itself (after a rename, a new main file,
-a file gone, or TeXpresso ending after 10 s) stays `starting` and keeps the live document until
-the new run's first replaces it. Compile still uses latexmk and the project's engine; automatic
+on their lines once typing pauses, and in the Live Preview Log, which follows TeX's at most five
+times a second. When Live Preview stops, the last build's PDF returns. A restart the session makes
+itself (after a rename, a new main file, a file gone, or TeXpresso ending after 10 s) stays
+`starting` and keeps the live document until the new run's first replaces it. Compile still uses latexmk and the project's engine; automatic
 builds pause meanwhile without changing the setting.
 
 ## Install
@@ -48,11 +48,16 @@ the app quits or crashes.
   `["pdf", path, pages, run, changed, mark]`: the pages that changed, and whether TeX reached the
   end or stopped on an error.
 - A client may number its edits (`["mark", n]`): pages and documents then carry the last number
-  they show, and `["synced", n]` says when the pages in view show it. The core sends none, so
-  `mark` is 0.
+  they show, and `["synced", n]` says when the pages in view show it, or the run's end. The core
+  numbers each change with its count of edits, and puts TeX's log's errors on their lines only
+  from a run that has its last number.
 - Finishing passes, which bring references and contents up to date, run in a second TeX that
   takes the first one's place when done and is dropped by a keystroke. TeXpresso's own idle reruns
   stay off.
+- A change that takes TeX back to the main file's start launches a new worker. A second change
+  before it has answered (10 ms) kills it as stuck, and upstream then kept the dead worker, which
+  left the run stopped, with an empty log, until a restart: the rollback now drops a dead worker
+  too, and the next step launches another.
 - With or without the variable, a run that TeX stops (an emergency stop, a source without
   `\end{document}`, 100 errors) ends `texpresso-xetex` with exit status 1 where upstream's calls
   `abort()`, which left a macOS crash report for each one while typing. TeXpresso sees the run end

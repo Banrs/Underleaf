@@ -178,6 +178,7 @@ Each is `{"type", "session", …}`.
 | `files_changed` | `paths` | Listed files changed in place that aren't open (an image shown, say). |
 | `live` | `phase` (`stopped`/`starting`/`running`/`stopping`), `halted`, `failure`, `error`, `log`, `alert` | Title and toolbar; `alert`: show the Live Preview Log. `phase: stopped` ends the live PDF (show the build's); the session's own planned restart stays `starting` throughout, with no `stopped` between. `log`: the Live Preview Log's whole text (what went wrong, TeXpresso's error, TeX's log and output) with `alert` and while `session_live_log` says it shows, else null: keep the last one. While it shows, the log comes at most every 200 ms. |
 | `live_document` | `path`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
+| `live_issues` | `path`, `lines` (as `issues`') | Live Preview's errors: draw them as issues, dimmed, kept apart from the build's. They come once a run TeXpresso had every edit for has lasted a second (`[]`: none), follow their lines as text is typed above them, and go with an edit over their line's start, the document's reload, and Live Preview's stop or restart. |
 | `live_page` | `page`, `path` | Draw over that page now if a live document shows and has it; otherwise drop it. The session forwards pages and documents one at a time, in the order TeXpresso writes them, and drops nothing: a page can come before its run's `live_document`. |
 
 ## The editor's source
@@ -262,6 +263,9 @@ editor's thread.
   (retried after 750 ms if TeXpresso couldn't be asked). A rename, a new main file or a file
   gone from the tree restarts it 180 ms later; files changed on disk are sent and rescanned.
   A preview that ends by itself reports its error and stays stopped. A stopped run shows
-  `halted` until a run completes.
+  `halted` until a run completes. TeX goes on past most errors, so a run's log has every error up
+  to where it stopped: those with a place are the `live_issues`, and warnings aren't shown. The session numbers
+  each change it sends with its count of edits (`["mark", n]`) and reads the log only once
+  TeXpresso says it has read the last (`["synced", n]`).
 - **Symbols** (labels and citations) are scanned when the session opens and 150 ms after a
   save or another app's change; the session's documents complete from them.

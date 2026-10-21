@@ -280,10 +280,14 @@ impl Actor {
 /// Each line's first issue, with the messages of the others there. An undefined command's
 /// issue has where the line has the command (`tokens`), and a `compact` message that names it
 /// in fewer words; so does one that needs shell escape.
-fn issue_lines(issues: &[LogItem], path: &str, doc: &Document) -> Vec<Value> {
+pub(super) fn issue_lines<'a>(
+    issues: impl IntoIterator<Item = &'a LogItem>,
+    path: &str,
+    doc: &Document,
+) -> Vec<Value> {
     let mut lines: BTreeMap<u32, Vec<&LogItem>> = BTreeMap::new();
     for item in issues
-        .iter()
+        .into_iter()
         .filter(|item| item.file.as_deref() == Some(path))
     {
         if let Some(line) = item.line {

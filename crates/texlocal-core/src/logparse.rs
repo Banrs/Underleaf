@@ -132,7 +132,14 @@ fn opens_file(token: &str) -> bool {
         }
 }
 
-fn track<'a>(open: &mut Vec<Option<&'a str>>, line: &'a str) {
+/// A file's name alone, as TeXpresso's log gives one (`article.cls`), not `e.g.` or `1.5pt`.
+fn named_file(token: &str) -> bool {
+    token.rsplit_once('.').is_some_and(|(stem, ext)| {
+        !stem.is_empty() && !ext.is_empty() && ext.bytes().all(|b| b.is_ascii_alphabetic())
+    })
+}
+
+fn track<'a>(open: &mut Vec<Option<&'a str>>, line: &'a str, opens: &dyn Fn(&str) -> bool) {
     let mut rest = line;
     while let Some(i) = rest.find(['(', ')']) {
         let paren = rest.as_bytes()[i];
@@ -148,7 +155,7 @@ fn track<'a>(open: &mut Vec<Option<&'a str>>, line: &'a str) {
                     .unwrap_or(rest.len()),
             ),
         };
-        open.push(opens_file(token).then_some(token));
+        open.push(opens(token).then_some(token));
         rest = after;
     }
 }
@@ -160,6 +167,7 @@ fn locate(
     open: &[Option<&str>],
     main_file: &str,
     message: &mut String,
+    project: &dyn Fn(&str) -> Option<String>,
 ) -> (Option<String>, Option<u32>) {
     let Some(line) = line else {
         return (None, None);
@@ -168,12 +176,12 @@ fn locate(
     let Some(path) = named.or_else(|| files.clone().next()) else {
         return (Some(main_file.to_string()), Some(line));
     };
-    if let Some(rel) = project_path(path) {
+    if let Some(rel) = project(path) {
         return (Some(rel), Some(line));
     }
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     *message = format!("{name}: {message}");
-    (files.find_map(project_path), None)
+    (files.find_map(project), None)
 }
 
 /// The name a diagnostic's continuation lines carry in parentheses, e.g. "(hyperref)".
@@ -227,6 +235,26 @@ fn echo_of(lines: &[&str], i: usize) -> Option<usize> {
 
 /// The log's errors and warnings, and apart from them its overfull and underfull boxes.
 pub fn parse_log(log: &str, main_file: &str) -> (Vec<LogItem>, Vec<LogItem>) {
+    parse(log, main_file, None)
+}
+
+/// A file's name as the log gives it, as the project's path; None for one not the project's.
+type Ours<'a> = &'a dyn Fn(&str) -> Option<String>;
+
+/// The errors of TeXpresso's log, which names a file as TeX found it from the main file's
+/// folder, a distribution's by its name alone (`(article.cls`): `ours` gives a name's project
+/// path, or None for one not the project's.
+pub fn parse_live_log(log: &str, main_file: &str, ours: Ours) -> Vec<LogItem> {
+    let (items, _) = parse(log, main_file, Some(ours));
+    items
+        .into_iter()
+        .filter(|item| item.kind == Severity::Error)
+        .collect()
+}
+
+fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<LogItem>) {
+    let opens = |token: &str| opens_file(token) || ours.is_some() && named_file(token);
+    let project = |path: &str| ours.map_or_else(|| project_path(path), |ours| ours(path));
     let lines: Vec<&str> = log.lines().collect();
     let mut items: Vec<LogItem> = Vec::new();
     let mut bad_boxes = Vec::new();
@@ -286,7 +314,7 @@ pub fn parse_log(log: &str, main_file: &str) -> (Vec<LogItem>, Vec<LogItem>) {
             } else {
                 ON_LINE.captures(&message).and_then(|lm| lm[1].parse().ok())
             };
-            let (file, line_no) = locate(named, line_no, &open, main_file, &mut message);
+            let (file, line_no) = locate(named, line_no, &open, main_file, &mut message, &project);
             items.push(LogItem::new(
                 if error {
                     Severity::Error
@@ -301,11 +329,11 @@ pub fn parse_log(log: &str, main_file: &str) -> (Vec<LogItem>, Vec<LogItem>) {
             quiet_until = blank_from(&lines, i + 1);
             let line_no = BAD_BOX_LINE.captures(line).and_then(|m| m[1].parse().ok());
             let mut message = line.trim().to_string();
-            let (file, line_no) = locate(None, line_no, &open, main_file, &mut message);
+            let (file, line_no) = locate(None, line_no, &open, main_file, &mut message, &project);
             bad_boxes.push(LogItem::new(Severity::Warning, file, line_no, message));
         }
         if i >= quiet_until {
-            track(&mut open, line);
+            track(&mut open, line, &opens);
         }
     }
 
@@ -745,6 +773,43 @@ mod tests {
                 "warning main.tex:7 Reference `sec:nowhere' on page 1 undefined on input line 7.",
                 "error main.tex:8 Undefined control sequence: \\undefinedinlua",
                 "warning -:- There were undefined references.",
+            ]
+        );
+    }
+
+    #[test]
+    fn texpressos_log_names_files_from_the_main_files_folder_and_a_distributions_alone() {
+        let log = "**\n(main.tex\n\
+                   (article.cls\n\
+                   Document Class: article 2025/01/22 v1.4n Standard LaTeX document class\n\
+                   (size10.clo\n\
+                   File: size10.clo 2025/01/22 v1.4n Standard LaTeX file (size option)\n\
+                   )\n\
+                   ! Bad class.\n\
+                   l.12 \\oops\n\
+                   \n\
+                   ) (ch/sec.tex\n\
+                   ! Undefined control sequence.\n\
+                   l.3 \\foo\n\
+                   \n\
+                   misspelled it (e.g., `\\hobx'), type `I' and the correct\n\
+                   ) (top.tex\n\
+                   LaTeX Warning: Reference `x' on page 1 undefined on input line 1.\n\
+                   \n\
+                   ! Missing $ inserted.\n\
+                   l.1 x^\n\
+                   \n\
+                   )\n";
+        let ours = |name: &str| {
+            let project = ["main.tex", "ch/sec.tex", "top.tex"].contains(&name);
+            project.then(|| format!("nested/{name}"))
+        };
+        assert_eq!(
+            described(&parse_live_log(log, "nested/main.tex", &ours)),
+            [
+                "error nested/main.tex:- article.cls: Bad class.",
+                "error nested/ch/sec.tex:3 Undefined control sequence: \\foo",
+                "error nested/top.tex:1 Missing $ inserted.",
             ]
         );
     }
