@@ -28,26 +28,7 @@ public sealed partial class HomePage : Page
     string? focus;
     int loads;
 
-    public HomePage()
-    {
-        InitializeComponent();
-        Accelerate(VirtualKey.N, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () =>
-        {
-            if (templates.FirstOrDefault(t => t.Id == "article") is { } article) New(article);
-        });
-        Accelerate(VirtualKey.F, VirtualKeyModifiers.Control, () => Search.Focus(FocusState.Keyboard));
-
-        void Accelerate(VirtualKey key, VirtualKeyModifiers modifiers, Action action)
-        {
-            var shortcut = new KeyboardAccelerator { Key = key, Modifiers = modifiers };
-            shortcut.Invoked += (_, e) =>
-            {
-                e.Handled = true;
-                action();
-            };
-            KeyboardAccelerators.Add(shortcut);
-        }
-    }
+    public HomePage() => InitializeComponent();
 
     public static string Modified(long mtime) => $"{DateTimeOffset.FromUnixTimeMilliseconds(mtime).LocalDateTime:g}";
 
@@ -76,7 +57,7 @@ public sealed partial class HomePage : Page
     {
         focus = id ?? focus;
         var generation = ++loads;
-        var error = App.OpenCore() ? null : App.CoreError ?? "";
+        var error = App.OpenCore();
         ProjectInfo[] listed = [];
         if (error is null)
             try
@@ -125,23 +106,29 @@ public sealed partial class HomePage : Page
 
     void OnSearch(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs e) => Show();
 
+    void OnFindKey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        Search.Focus(FocusState.Keyboard);
+    }
+
     void OnDragOver(object sender, DragEventArgs e)
     {
         if (e.DataView.Contains(StandardDataFormats.StorageItems)) e.AcceptedOperation = DataPackageOperation.Copy;
     }
 
     /// Folders, .tex and .zip files from File Explorer, imported as from the Open menu.
-    async void OnDrop(object sender, DragEventArgs e)
-    {
-        var deferral = e.GetDeferral();
-        var dropped = await e.DataView.GetStorageItemsAsync();
-        deferral.Complete();
-        await App.Window.Import(dropped.Select(i => i.Path));
-    }
+    async void OnDrop(object sender, DragEventArgs e) => await App.Window.Import(await App.Dropped(e));
 
     void OnItemClick(object sender, ItemClickEventArgs e) => App.Window.OpenProject(((ProjectInfo)e.ClickedItem).Id);
 
     void OnTemplate(object sender, RoutedEventArgs e) => New((ProjectTemplate)((FrameworkElement)sender).DataContext);
+
+    void OnNewArticle(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        if (templates.FirstOrDefault(t => t.Id == "article") is { } article) New(article);
+    }
 
     /// New project, as File Explorer's New folder: a free name, selected for typing over; a refusal under the box.
     async void New(ProjectTemplate template)

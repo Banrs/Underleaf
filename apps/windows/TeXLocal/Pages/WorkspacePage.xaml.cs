@@ -80,6 +80,7 @@ public sealed partial class WorkspacePage : Page
             ShowEdge();
         });
         Split.PaneOpened += (_, _) => Remeasure(SideTabs);
+        PdfItem.RegisterPropertyChangedCallback(ToggleMenuFlyoutItem.IsCheckedProperty, (_, _) => ShowPdf());
         // An overlaid pane open as the window widens is light-dismissed after it has become inline; it stays.
         Split.PaneClosing += (_, e) => e.Cancel = Inline;
         PaneSizer.Delta += d => Split.OpenPaneLength = Math.Clamp(Split.OpenPaneLength + d, 200, 480);
@@ -180,7 +181,6 @@ public sealed partial class WorkspacePage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
-        App.Window.SetMenu(null);
         if (e.SourcePageType == typeof(SettingsPage)) return;
         Prefs.EditorChanged -= ShowLook;
         Core.Event -= OnEvent;
@@ -606,16 +606,13 @@ public sealed partial class WorkspacePage : Page
         Prefs.SplitRatio = ratio;
     }
 
-    void ShowPdf(bool show)
+    void ShowPdf()
     {
-        (PdfItem.IsChecked, PdfButton.IsChecked) = (show, show);
+        var show = PdfItem.IsChecked;
         PdfLayer.Visibility = SplitSizer.Visibility = Vis(show);
         PdfColumn.MinWidth = show ? 240 : 0;
         PdfColumn.Width = new(show ? 1 - ratio : 0, GridUnitType.Star);
     }
-
-    void OnPdfPane(object sender, RoutedEventArgs e) => ShowPdf(PdfItem.IsChecked);
-    void OnPdfButton(object sender, RoutedEventArgs e) => ShowPdf(PdfButton.IsChecked == true);
 
     /// F6 and Shift+F6: the sidebar, the editor, the PDF and the issues panel in turn, each that is shown.
     void OnNextRegion(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
@@ -686,7 +683,7 @@ public sealed partial class WorkspacePage : Page
     void OnForwardSync(object sender, RoutedEventArgs e)
     {
         if (Editor.Path is null || Pdf.PageCount == 0) return;
-        ShowPdf(true);
+        PdfItem.IsChecked = true;
         Run(null, SyncToCaret);
     }
 

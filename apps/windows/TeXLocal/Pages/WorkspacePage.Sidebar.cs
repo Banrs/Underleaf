@@ -429,10 +429,8 @@ public sealed partial class WorkspacePage
     async void OnDrop(object sender, DragEventArgs e)
     {
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
-        var deferral = e.GetDeferral();
-        var dropped = await e.DataView.GetStorageItemsAsync();
-        deferral.Complete();
-        AddFiles(TargetDir((e.OriginalSource as FrameworkElement)?.DataContext as NavItem), [.. dropped.Select(i => i.Path).Where(p => p.Length > 0)]);
+        var dir = TargetDir((e.OriginalSource as FrameworkElement)?.DataContext as NavItem);
+        AddFiles(dir, await App.Dropped(e));
     }
 
     /// Beside the selection, as New file.
