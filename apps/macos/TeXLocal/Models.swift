@@ -90,6 +90,8 @@ nonisolated struct LogItem: Decodable, Equatable {
     let file: String?
     let line: Int?
     let message: String
+    /// The package or class file LaTeX didn't find, for Install.
+    let missing: String?
 
     var isError: Bool { type == "error" }
 }

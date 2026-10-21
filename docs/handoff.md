@@ -7,6 +7,8 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
 - Aa opens with no level highlighted and the first arrow key highlights the caret's level; Tab's
   path through the popover is unverified.
 - Home's rows for an opened folder and a missing one, and their menu.
+- Install in an issue row with `missing` (a `\usepackage` of one not installed): the button, its
+  progress, and the password dialog with MacTeX.
 
 ## 27.2 workarounds
 
@@ -29,7 +31,6 @@ The core opens a folder where it is (`docs/core-api.md`, Opened folders); `impor
 
 - AppKit's own completion list in place of `CompletionList` once the system's has glass; until
   then the custom one stays (the look is decided).
-- Install for a missing package: the core's `install_package` and the build items' `missing` are
-  done; each host's Install in the build panel is left, and Windows' elevated install (UAC through
-  PowerShell) has not yet run on Windows.
+- Install for a missing package: the core and the Mac's build panel have it; Windows' Install is
+  left, and its elevated install (UAC through PowerShell) has not yet run on Windows.
 - Windows: Live Preview and the rest of what it lacks against the Mac (`docs/windows.md`).

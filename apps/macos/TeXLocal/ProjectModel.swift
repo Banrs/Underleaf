@@ -40,6 +40,8 @@ final class ProjectModel {
 
     var compiling = false
     var outdated = false
+    /// The missing file whose package is installing: one at a time, as tlmgr takes one.
+    var installing: String?
     var result: CompileResult?
     @ObservationIgnored var finishedBuilds = 0
     var chosenIssue: Int?
