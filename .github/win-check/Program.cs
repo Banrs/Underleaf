@@ -54,16 +54,8 @@ static class Program
                     app.Wait("More options for Test Errors and Warnings", ControlType.Button);
                     app.Shot($"home-{theme}");
                 });
-                // Ctrl+F before any project has opened; what's typed filters the list only if the search box has the keys.
-                if (theme == "light") Step("home-find-first-light", () =>
-                {
-                    app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_F);
-                    app.Type("Article");
-                    app.Shot("home-find-first-light");
-                    app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
-                    app.Keys(VirtualKeyShort.BACK);
-                    app.Wait("More options for Test Errors and Warnings", ControlType.Button);
-                });
+                // Ctrl+F before any project has opened.
+                if (theme == "light") FindOnHome(app, "home-find-first-light");
                 Step($"home-menu-{theme}", () =>
                 {
                     app.Press(app.Wait("More options for Test Errors and Warnings", ControlType.Button));
@@ -163,14 +155,7 @@ static class Program
             app.Shot("home-again-light");
         });
         // Ctrl+F again, after a project has come and gone.
-        Step("home-find-light", () =>
-        {
-            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_F);
-            app.Type("Article");
-            app.Shot("home-find-light");
-            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
-            app.Keys(VirtualKeyShort.BACK);
-        });
+        FindOnHome(app, "home-find-light");
         Step("home-new-light", () =>
         {
             app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.SHIFT, VirtualKeyShort.KEY_N);
@@ -187,7 +172,7 @@ static class Program
             app.Shot("reopen-light");
         });
         // Last, so no Home above shows the time of its save. A completion asked for and accepted into its snippet; a
-        // newline and a backspace; then Replace in the find bar.
+        // newline and a backspace; a mirrored field typed in and undone; then Replace in the find bar.
         Step("completions-light", () =>
         {
             app.Wait("Source", ControlType.Edit).Focus();
@@ -209,17 +194,24 @@ static class Program
             app.Keys(VirtualKeyShort.BACK);
             app.Shot("typed-light");
         });
+        // A word typed in a completion's mirrored field goes in both its places, and one Undo takes it back from both.
+        Step("mirrored-light", () =>
+        {
+            app.Keys(VirtualKeyShort.END);
+            app.Keys(VirtualKeyShort.ENTER);
+            app.Type("\\beg");
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.SPACE);
+            app.Wait("Completions", ControlType.List);
+            app.Keys(VirtualKeyShort.ENTER);
+            app.Type("mirrored");
+            app.SourceHas("\\begin{mirrored}", "\\end{mirrored}");
+            app.Shot("mirrored-light");
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_Z);
+            app.SourceHas("\\begin{env}", "\\end{env}");
+        });
         Step("replaced-light", () =>
         {
-            // In a project opened a second time, Ctrl+H has been seen to do nothing: the menu then, and the log says so.
             app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_H);
-            try { app.Wait("Find", ControlType.Edit, null, null, 3_000); }
-            catch (TimeoutException)
-            {
-                Log("Ctrl+H opened no find bar: Edit > Replace… instead");
-                app.Expand(app.Wait("Edit", ControlType.MenuItem));
-                app.Press(app.Wait("Replace…", ControlType.MenuItem));
-            }
             app.Wait("Find", ControlType.Edit).Focus();
             app.Type("Intro");
             app.Wait("Replace", ControlType.Edit).Focus();
@@ -228,6 +220,18 @@ static class Program
             app.Shot("replaced-light");
         });
     }
+
+    /// Ctrl+F, then a name typed, which filters the list only if the search box has the keys.
+    static void FindOnHome(App app, string name) => Step(name, () =>
+    {
+        app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_F);
+        app.Type("Article");
+        app.Wait("Search projects", ControlType.Edit, e => e.Patterns.Value.Pattern.Value.ValueOrDefault == "Article");
+        app.Shot(name);
+        app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
+        app.Keys(VirtualKeyShort.BACK);
+        app.Wait("More options for Test Errors and Warnings", ControlType.Button);
+    });
 
     /// The PDF hidden and shown by its key, its button and its View menu item, each telling the others; then Go to PDF
     /// position with the PDF shown and with it hidden.
@@ -579,6 +583,12 @@ static class Program
             Front();
             Keyboard.Type(text);
             Thread.Sleep(400);
+        }
+
+        public void SourceHas(params string[] parts)
+        {
+            var text = Wait("Source", ControlType.Edit).Patterns.Text.Pattern.DocumentRange.GetText(-1);
+            if (parts.FirstOrDefault(p => !text.Contains(p)) is { } missing) throw new InvalidOperationException($"no {missing} in the source, which ends {text[^80..]}");
         }
 
         public AutomationElement WaitPdfButton(bool on) =>
