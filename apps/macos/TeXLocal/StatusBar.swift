@@ -100,13 +100,15 @@ struct StatusBar: View {
         .hitTarget()
     }
 
+    /// Automatic builds refresh the PDF within moments, so it is called out of date only without them, or while Live Preview,
+    /// which holds them, shows in its own window.
     @ViewBuilder private var freshness: some View {
         if project.showsLastSuccessfulBuild {
             Button { project.panel.show(.issues) } label: {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill").hitTarget()
             }
             .help("The latest build failed, so this is the last PDF that built")
-        } else if project.outdated, !project.livePDF {
+        } else if project.outdated, !project.livePDF, !app.autoCompile || project.texpresso.active {
             Button { app.perform(.compileRun, on: project) } label: {
                 Label("PDF Out of Date", systemImage: "arrow.clockwise").hitTarget()
             }
