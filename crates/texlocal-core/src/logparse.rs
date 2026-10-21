@@ -25,6 +25,9 @@ pub struct LogItem {
     pub short: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// The package or class file LaTeX didn't find, for `install_package`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing: Option<String>,
 }
 
 impl LogItem {
@@ -40,6 +43,7 @@ impl LogItem {
             line,
             message,
             command: undefined_command(&short),
+            missing: MISSING.captures(&short).map(|m| m[1].to_owned()),
             short,
         }
     }
@@ -64,6 +68,9 @@ static ERROR: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
+// Unanchored: a file TeX loaded puts its name before a dependency it can't find.
+static MISSING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"File `([^`'/\\\s]+\.(?:sty|cls))' not found\.").unwrap());
 static L_NO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^l\.(\d+)").unwrap());
 static LAST_CS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(\\(?:[A-Za-z@]+|.))\s*$").unwrap());
@@ -486,6 +493,31 @@ mod tests {
         ] {
             assert_eq!(undefined_command(message), None, "{message}");
         }
+    }
+
+    #[test]
+    fn a_package_or_class_file_tex_cannot_find_is_named_whole() {
+        // As pdfLaTeX, XeLaTeX and LuaLaTeX write it, wrapped at 79 columns without max_print_line.
+        let log = "! LaTeX Error: File `nosuchpackagewithaveryveryverylongnamethatwillwrapthelinea\n\
+                   tseventyninecolumnsx.sty' not found.\n\
+                   \n\
+                   Type X to quit or <RETURN> to proceed,\n\
+                   or enter new name. (Default extension: sty)\n\
+                   \n\
+                   Enter file name: \n\
+                   ./main.tex:3: Emergency stop.\n\
+                   <read *> \n\
+                   \n\
+                   ! LaTeX Error: File `paper.cls' not found.\n\
+                   \n\
+                   ./main.tex:4: LaTeX Error: File `chapter.tex' not found.\n\
+                   \n\
+                   ./main.tex:5: LaTeX Error: File `../my.sty' not found.\n";
+        let (items, _) = parse_log(log, "main.tex");
+        let missing: Vec<_> = items.iter().map(|it| it.missing.as_deref()).collect();
+        let long =
+            "nosuchpackagewithaveryveryverylongnamethatwillwrapthelineatseventyninecolumnsx.sty";
+        assert_eq!(missing, [Some(long), None, Some("paper.cls"), None, None]);
     }
 
     #[test]

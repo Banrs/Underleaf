@@ -23,4 +23,7 @@ it works around.
 
 - AppKit's own completion list in place of `CompletionList` once the system's has glass; until
   then the custom one stays (the look is decided).
+- Install for a missing package: the core's `install_package` and the build items' `missing` are
+  done; each host's Install in the build panel is left, and Windows' elevated install (UAC through
+  PowerShell) has not yet run on Windows.
 - Windows: Live Preview and the rest of what it lacks against the Mac (`docs/windows.md`).

@@ -352,7 +352,7 @@ fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
 }
 
 #[cfg(all(test, unix))]
-mod stubs;
+pub(crate) mod stubs;
 
 #[cfg(test)]
 mod tests {

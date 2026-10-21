@@ -12,6 +12,7 @@ mod error;
 pub mod events;
 mod import;
 mod logparse;
+mod packages;
 mod paths;
 mod process;
 mod projects;

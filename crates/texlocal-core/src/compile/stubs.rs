@@ -21,7 +21,7 @@ use crate::settings::write_settings;
 use crate::synctex::synctex_inverse;
 use crate::tex::tex_available;
 
-fn stub(dir: &Path, name: &str, script: &str) {
+pub(crate) fn stub(dir: &Path, name: &str, script: &str) {
     let path = dir.join("bin").join(name);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, format!("#!/bin/sh\n{script}")).unwrap();
