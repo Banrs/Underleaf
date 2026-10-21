@@ -1,9 +1,9 @@
-//! What a project shows of its folder: the entries the walks agree on, the
-//! file tree the sidebar lists, and what kind of file each is.
+//! What a project shows of its folder: the entries the walks agree on, the file tree the sidebar
+//! lists, and what kind of file each is.
 
-use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::ffi::OsStr;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -36,19 +36,21 @@ pub(super) struct Entry {
 }
 
 impl Entry {
-    /// Its path from the root, in forward slashes on Windows too, where no
-    /// name holds a backslash.
-    fn rel<'a>(&'a self, root: &Path) -> Cow<'a, str> {
+    /// Its path from the root, in forward slashes on Windows too, where no name holds a
+    /// backslash.
+    fn rel(&self, root: &Path) -> String {
         let rel = self.path.strip_prefix(root).unwrap().to_string_lossy();
         if cfg!(windows) {
-            rel.replace('\\', "/").into()
+            rel.replace('\\', "/")
         } else {
-            rel
+            rel.into_owned()
         }
     }
 }
 
-/// Shared tree rules for listing, search and symbols: hide dotfiles and top-level build output, follow links to files only (folder links can cycle), and leave out entries that vanish mid-walk.
+/// Shared tree rules for listing, search and symbols: hide dotfiles and top-level build output,
+/// follow links to files only (folder links can cycle), and leave out entries that vanish
+/// mid-walk.
 pub(super) fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> {
     let read = if dir == root {
         fs::read_dir(dir)?
@@ -85,6 +87,7 @@ pub(super) fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> 
     Ok(out)
 }
 
+/// Each file with its path from the root, until `visit` answers false.
 pub(super) fn visit_files(
     root: &Path,
     visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
@@ -106,9 +109,7 @@ pub(super) fn visit_files(
         }
         Ok(true)
     }
-
-    walk(root, root, visit)?;
-    Ok(())
+    walk(root, root, visit).map(drop)
 }
 
 /// The main file is marked however the settings spell it, as latexmk finds it.
@@ -116,31 +117,30 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
     fn walk(root: &Path, dir: &Path, main: &str) -> Result<Vec<TreeNode>, CoreError> {
         let mut nodes = Vec::new();
         for entry in entries(root, dir)? {
-            let (kind, children) = if entry.dir {
-                ("dir", Some(walk(root, &entry.path, main)?))
+            let children = if entry.dir {
+                Some(walk(root, &entry.path, main)?)
             } else {
-                ("file", None)
+                None
             };
-            let path = entry.rel(root).into_owned();
+            let path = entry.rel(root);
             nodes.push(TreeNode {
-                kind,
-                main: children.is_none() && fold_case(&path) == main,
+                kind: if entry.dir { "dir" } else { "file" },
+                main: !entry.dir && fold_case(&path) == main,
                 path,
-                file_kind: children.is_none().then(|| file_kind(&entry.name)),
+                file_kind: (!entry.dir).then(|| file_kind(&entry.name)),
                 name: entry.name,
                 children,
             });
         }
         nodes.sort_by_cached_key(|n| {
             (
-                n.kind != "dir",
+                n.children.is_none(),
                 n.name.to_lowercase(),
                 Reverse(n.name.clone()),
             )
         });
         Ok(nodes)
     }
-
     walk(root, root, &fold_case(&read_settings(root).main_file))
 }
 
@@ -153,15 +153,12 @@ const TEXT_EXTENSIONS: &[&str] = &[
 
 const TEXT_NAMES: &[&str] = &["latexmkrc", "makefile", "license", "readme"];
 
-/// What a host does with a file, by its extension in any case: "tex", "bib",
-/// "image", "pdf", "text" (any other the editor edits: `TEXT_EXTENSIONS`, and
-/// a few extensionless names) or "other", which it previews.
+/// What a host does with a file, by its extension in any case: "tex", "bib", "image", "pdf",
+/// "text" (any other the editor edits: `TEXT_EXTENSIONS`, and a few extensionless names) or
+/// "other", which it previews.
 pub fn file_kind(name: &str) -> &'static str {
     let path = Path::new(name);
-    let lower = |part: Option<&OsStr>| {
-        part.map(|part| part.to_string_lossy().to_lowercase())
-            .unwrap_or_default()
-    };
+    let lower = |part: Option<&OsStr>| part.unwrap_or_default().to_string_lossy().to_lowercase();
     match lower(path.extension()).as_str() {
         "tex" => "tex",
         "bib" => "bib",
@@ -179,71 +176,56 @@ pub(crate) fn is_text(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::projects::create_free;
     use crate::projects::testing::project;
 
+    /// The TeX ecosystem's own files are text the editor edits and search reads.
     #[test]
-    fn files_have_a_kind_in_any_case_and_folders_none() {
-        let names = [
-            "a.TEX", "r.bib", "p.JPG", "f.pdf", "s.sty", "d.csv", "z.zip", "x",
+    fn files_have_a_kind_by_extension_in_any_case_or_by_a_known_name() {
+        let kinds = [
+            ("a.TEX", "tex"),
+            ("r.bib", "bib"),
+            ("p.JPG", "image"),
+            ("f.pdf", "pdf"),
+            ("s.sty", "text"),
+            ("d.csv", "text"),
+            ("paper.ltx", "text"),
+            ("refs.bbx", "text"),
+            ("pkg.dtx", "text"),
+            ("letter.lco", "text"),
+            ("chapters/a.CLO", "text"),
+            ("latexmkrc", "text"),
+            ("Makefile", "text"),
+            ("LICENSE", "text"),
+            ("z.zip", "other"),
+            ("a.aux", "other"),
+            ("noextension", "other"),
         ];
-        let kinds: Vec<_> = names.map(file_kind).into();
-        assert_eq!(
-            kinds,
-            [
-                "tex", "bib", "image", "pdf", "text", "text", "other", "other"
-            ]
-        );
-        let (_dir, root) = project();
-        create_free(&root, "figs/a.png", false).unwrap();
-        let tree = serde_json::to_value(file_tree(&root).unwrap()).unwrap();
-        let folder = &tree[0];
-        assert_eq!(folder["children"][0]["kind"], "image");
-        assert!(folder["name"] == "figs" && folder.get("kind").is_none());
-    }
-
-    #[test]
-    fn the_tex_ecosystems_own_files_are_text_the_editor_edits_and_search_reads() {
-        for name in [
-            "paper.ltx",
-            "local.cfg",
-            "refs.bbx",
-            "refs.cbx",
-            "pkg.dtx",
-            "pkg.ins",
-            "my.ist",
-            "letter.lco",
-            "chapters/a.CLO",
-            "latexmkrc",
-            "Makefile",
-            "LICENSE",
-        ] {
-            assert!(is_text(name), "{name}");
-        }
-        for name in [
-            "a.zip",
-            "a.aux",
-            "a.log",
-            "noextension",
-            "photo.png",
-            "a.pdf",
-        ] {
-            assert!(!is_text(name), "{name}");
+        for (name, kind) in kinds {
+            assert_eq!(file_kind(name), kind, "{name}");
         }
     }
 
     #[test]
     fn the_file_tree_lists_folders_first_then_names_ignoring_case() {
         let (_dir, root) = project();
-        for file in ["c.tex", "B.tex", "Zeta/z.tex", "beta/y.tex", ".hidden.tex"] {
+        for file in ["c.tex", "B.tex", "Zeta/z.png", "beta/y.tex", ".hidden.tex"] {
             create_free(&root, file, false).unwrap();
         }
         let tree = file_tree(&root).unwrap();
         let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(names, ["beta", "Zeta", "B.tex", "c.tex", "main.tex"]);
-        assert_eq!(tree[1].kind, "dir");
-        assert_eq!(tree[1].children.as_ref().unwrap()[0].path, "Zeta/z.tex");
-        assert!(tree[2].children.is_none());
+        let json = serde_json::to_value(&tree[1]).unwrap();
+        let child =
+            json!({ "type": "file", "name": "z.png", "path": "Zeta/z.png", "kind": "image" });
+        assert_eq!(
+            json,
+            json!({ "type": "dir", "name": "Zeta", "path": "Zeta", "children": [child] })
+        );
+        let main = serde_json::to_value(&tree[4]).unwrap();
+        assert_eq!(main["main"], true);
     }
 }

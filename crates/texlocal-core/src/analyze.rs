@@ -81,7 +81,7 @@ pub struct Facts {
     pub environments: Vec<Named>,
     /// Labels and citations referred to, one for each key a list names, environments begun or
     /// ended, and graphics included.
-    pub uses: Vec<Used>,
+    pub uses: Vec<Named>,
     pub class: Option<headings::DocumentClass>,
 }
 
@@ -104,11 +104,14 @@ impl Place {
     }
 }
 
+/// A name a file defines or refers to.
 #[derive(Clone)]
 pub struct Named {
+    pub kind: SymbolKind,
     pub name: String,
     pub place: Place,
-    /// What completion says of it beside its name: a .bib entry's authors, year and title.
+    /// What completion says of a citation beside its key: its .bib entry's authors, year and
+    /// title.
     pub detail: Option<String>,
 }
 
@@ -117,12 +120,6 @@ pub struct Named {
 pub struct Defined {
     pub name: String,
     pub arguments: usize,
-    pub place: Place,
-}
-
-pub struct Used {
-    pub kind: SymbolKind,
-    pub name: String,
     pub place: Place,
 }
 
@@ -159,12 +156,10 @@ impl Input {
             Folder::Import(folder) => Some(folder.clone()),
             Folder::Sub(folder) => Some(joined(parent, folder)),
         };
-        let folders: Vec<&str> = match &folder {
-            Some(folder) => vec![folder],
-            None => [within]
-                .into_iter()
-                .chain((!within.is_empty()).then_some(""))
-                .collect(),
+        let folders = match (&folder, within) {
+            (Some(folder), _) => vec![folder.as_str()],
+            (None, "") => vec![""],
+            (None, within) => vec![within, ""],
         };
         let name = &self.name;
         let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
@@ -180,21 +175,22 @@ impl Input {
 impl Facts {
     pub(crate) fn read(source: &str, kind: &str) -> Self {
         let text = Text::new(source);
+        let mut facts = Self::default();
         if kind == "bib" {
             let mut entries = BIB_KEY.captures_iter(source).peekable();
-            let (mut citations, mut uses, mut byte, mut unit) = (Vec::new(), Vec::new(), 0, 0);
+            let (mut byte, mut unit) = (0, 0);
             // Each is after the last, so counted on from it.
-            let mut place = |at: Range<usize>| {
+            let mut cited = |at: Range<usize>| {
                 unit += source[byte..at.start].encode_utf16().count();
                 byte = at.start;
-                Place::of(&text, unit..unit + source[at].encode_utf16().count())
+                let units = unit..unit + source[at].encode_utf16().count();
+                named(&text, SymbolKind::Citation, units)
             };
             while let Some(entry) = entries.next() {
                 let kind = entry[1].to_ascii_lowercase();
                 if matches!(kind.as_str(), "comment" | "string" | "preamble") {
                     continue;
                 }
-                let key = entry.get(2).expect("an entry has a key");
                 // Read to the next entry at most, so one left unbalanced takes nothing of those
                 // after it.
                 let next = entries
@@ -202,31 +198,21 @@ impl Facts {
                     .map_or(source.len(), |next| next.get_match().start());
                 let start = entry.get_match().end();
                 let body = &source[start..next];
-                citations.push(Named {
-                    name: key.as_str().to_owned(),
-                    place: place(key.range()),
+                facts.citations.push(Named {
                     detail: detail(&fields(body)),
+                    ..cited(entry.get(2).expect("an entry has a key").range())
                 });
                 // The entry it takes fields from, which a rename of that one must reach.
-                if let Some(parent) = CROSSREF.captures(body) {
-                    let parent = parent.get(1).expect("a crossref names a key");
-                    uses.push(Used {
-                        kind: SymbolKind::Citation,
-                        name: parent.as_str().to_owned(),
-                        place: place(start + parent.start()..start + parent.end()),
-                    });
+                if let Some(parent) = CROSSREF.captures(body).and_then(|parent| parent.get(1)) {
+                    let at = start + parent.start()..start + parent.end();
+                    facts.uses.push(cited(at));
                 }
             }
-            return Self {
-                citations,
-                uses,
-                ..Self::default()
-            };
+            return facts;
         }
-        let mut facts = Self::default();
         // Found as the words are counted, so none is in a comment, maths or literal code.
         let mut heading_line = None;
-        let words = prose::words(&text, |text, name, name_end| {
+        facts.words = prose::words(&text, |text, name, name_end| {
             let line = text.line_index(name_end as u32) + 1;
             let units = &text.units;
             if let Some(depth) = headings::LEVELS.iter().position(|l| l.0 == name) {
@@ -238,9 +224,8 @@ impl Facts {
                 }
                 heading_line = Some(line);
             } else if let Some((name, folder, at)) = input(units, name, name_end) {
-                let before = facts.headings.len();
                 facts.inputs.push(Input {
-                    before,
+                    before: facts.headings.len(),
                     name,
                     folder,
                     place: Place::of(text, at),
@@ -249,7 +234,7 @@ impl Facts {
         });
         let mut names = Names(&text, &mut facts);
         Scanner::default().run(&text.units, text.units.len(), &[], &mut names);
-        Self { words, ..facts }
+        facts
     }
 }
 
@@ -263,27 +248,25 @@ impl Visit for Names<'_> {
         match name {
             "bibitem" => {
                 let keys = listed(&text.units, name_end, false).into_iter();
-                facts.citations.extend(keys.map(|at| named(text, at)));
+                let keys = keys.map(|at| named(text, SymbolKind::Citation, at));
+                facts.citations.extend(keys);
             }
             "documentclass" if facts.class.is_none() => {
                 facts.class = headings::class_at(&text.units, name_end);
             }
-            "newcommand" | "DeclareMathOperator" | "newenvironment" => {
-                let command = name != "newenvironment";
-                if let Some(defined) = defined(text, name_end)
-                    && defined.name.starts_with('\\') == command
-                {
-                    if command {
-                        facts.commands.push(defined);
-                    } else {
-                        let Defined { name, place, .. } = defined;
-                        facts.environments.push(Named {
-                            name,
-                            place,
-                            detail: None,
-                        });
-                    }
-                }
+            "newcommand" | "DeclareMathOperator" => {
+                let command = defined(text, name_end).filter(|d| d.name.starts_with('\\'));
+                facts.commands.extend(command);
+            }
+            "newenvironment" => {
+                let environment = defined(text, name_end).filter(|d| !d.name.starts_with('\\'));
+                let environment = environment.map(|Defined { name, place, .. }| Named {
+                    kind: SymbolKind::Environment,
+                    name,
+                    place,
+                    detail: None,
+                });
+                facts.environments.extend(environment);
             }
             _ => self.math_command(name, start, name_end),
         }
@@ -298,7 +281,7 @@ impl Visit for Names<'_> {
             name if catalog.cite_commands.contains(name) => SymbolKind::Citation,
             "label" => {
                 let labels = listed(&text.units, name_end, false).into_iter();
-                let labels = labels.map(|at| named(text, at));
+                let labels = labels.map(|at| named(text, SymbolKind::Label, at));
                 // One still being typed (`fig:`) isn't a label yet.
                 let labels = labels.filter(|label| !label.name.ends_with(':'));
                 self.1.labels.extend(labels);
@@ -307,15 +290,14 @@ impl Visit for Names<'_> {
             _ => return,
         };
         let list = matches!(kind, SymbolKind::Label | SymbolKind::Citation);
-        for at in listed(&text.units, name_end, list) {
-            let Named { name, place, .. } = named(text, at);
-            self.1.uses.push(Used { kind, name, place });
-        }
+        let names = listed(&text.units, name_end, list).into_iter();
+        self.1.uses.extend(names.map(|at| named(text, kind, at)));
     }
 }
 
-fn named(text: &Text, at: Range<usize>) -> Named {
+fn named(text: &Text, kind: SymbolKind, at: Range<usize>) -> Named {
     Named {
+        kind,
         name: String::from_utf16_lossy(&text.units[at.clone()]),
         place: Place::of(text, at),
         detail: None,
@@ -597,29 +579,25 @@ fn walk(
     let Some(facts) = files.at(root, &file) else {
         return;
     };
-    let placed = |headings: &[Heading]| -> Vec<Heading> {
-        let file = Some(file.clone());
-        let place = |h: &Heading| Heading {
-            file: file.clone(),
-            ..h.clone()
-        };
-        headings.iter().map(place).collect()
+    let placed = |heading: &Heading| Heading {
+        file: Some(file.clone()),
+        ..heading.clone()
+    };
+    let found = |rel: &str| {
+        let path = paths::safe_path(root, rel);
+        path.is_ok_and(|path| path.is_file())
+            .then(|| rel.to_owned())
     };
     let mut at = 0;
     for input in &facts.inputs {
-        into.outline
-            .extend(placed(&facts.headings[at..input.before]));
+        let before = &facts.headings[at..input.before];
+        into.outline.extend(before.iter().map(placed));
         at = input.before;
-        let found = |rel: &str| {
-            let path = paths::safe_path(root, rel);
-            path.is_ok_and(|path| path.is_file())
-                .then(|| rel.to_owned())
-        };
         if let Some((input, within)) = input.resolve(&file, within, found) {
             walk(root, files, &input, &within, seen, into);
         }
     }
-    into.outline.extend(placed(&facts.headings[at..]));
+    into.outline.extend(facts.headings[at..].iter().map(placed));
     into.words += facts.words;
 }
 
@@ -839,7 +817,11 @@ mod tests {
                 ],
                 13,
             ),
-            ("\\section{}\n\\chapter*{}", &[(2, "", 1), (1, "", 2)], 0),
+            (
+                "\\section{}\n\\chapter*{}",
+                &[(2, "Untitled Section", 1), (1, "Untitled Chapter", 2)],
+                0,
+            ),
             ("Text \\section{A} and \\subsection{B}", &[(2, "A", 1)], 4),
             (
                 "% \\section{Hidden}\n  \t% \\section{Indented}\n\\section{Shown} % \\section{After}",
@@ -862,16 +844,12 @@ mod tests {
                 4,
             ),
         ];
-        let dir = tempfile::tempdir().unwrap();
         for &(text, outline, words) in cases {
-            fs::write(dir.path().join("main.tex"), text).unwrap();
-            let expected: Vec<_> = outline
-                .iter()
-                .map(|&(depth, title, line)| heading(depth, title, "main.tex", line))
-                .collect();
-            let found =
-                analyze_project(dir.path(), &Files::default(), "main.tex", "main.tex", None);
-            assert_eq!((found.outline, found.words), (expected, words), "{text}");
+            // A line ends where an editor's does, at a carriage return alone too.
+            let facts = Facts::read(&crate::lf(text.into()), "tex");
+            let headings = facts.headings.iter();
+            let found: Vec<_> = headings.map(|h| (h.depth, &*h.title, h.line)).collect();
+            assert_eq!((&found[..], facts.words), (outline, words), "{text}");
         }
     }
 
@@ -883,24 +861,29 @@ mod tests {
             column,
             length,
         };
-        let named = |list: &[Named]| -> Vec<(String, Place)> {
-            list.iter().map(|n| (n.name.clone(), n.place)).collect()
-        };
+        fn named(list: &[Named]) -> Vec<(SymbolKind, &str, Place)> {
+            list.iter().map(|n| (n.kind, &*n.name, n.place)).collect()
+        }
         let tex = "😀 \\label{fig:a}\n\\cite[p.~3]{knuth, lamport} \\ref{fig:a}\n\
             \\newcommand{\\R}{x} \\newenvironment{thm}{}{}\n\
             \\begin{thm}\\includegraphics{figs/plot}\\end{thm}\n\\bibitem{b} \\input{chapters/a}\n\
             \\nocite{b} \\nameref{fig:a}";
         let facts = Facts::read(tex, "tex");
-        assert_eq!(named(&facts.labels), [("fig:a".into(), at(1, 10, 5))]);
-        assert_eq!(named(&facts.citations), [("b".into(), at(5, 9, 1))]);
-        assert_eq!(named(&facts.environments), [("thm".into(), at(3, 35, 3))]);
+        let defined = [&facts.labels, &facts.citations, &facts.environments].map(|n| named(n));
+        assert_eq!(
+            defined,
+            [
+                [(SymbolKind::Label, "fig:a", at(1, 10, 5))],
+                [(SymbolKind::Citation, "b", at(5, 9, 1))],
+                [(SymbolKind::Environment, "thm", at(3, 35, 3))],
+            ]
+        );
         let commands = facts.commands.iter().map(|c| (&*c.name, c.place));
         assert_eq!(commands.collect::<Vec<_>>(), [("\\R", at(3, 12, 2))]);
         let input = &facts.inputs[0];
         assert_eq!((&*input.name, input.place), ("chapters/a", at(5, 19, 10)));
-        let uses = facts.uses.iter().map(|u| (u.kind, &*u.name, u.place));
         assert_eq!(
-            uses.collect::<Vec<_>>(),
+            named(&facts.uses),
             [
                 (SymbolKind::Citation, "knuth", at(2, 12, 5)),
                 (SymbolKind::Citation, "lamport", at(2, 19, 7)),
@@ -913,9 +896,10 @@ mod tests {
             ]
         );
         let bib = Facts::read("% 😀\n@book{knuth84,\n  title={T}}\n@misc{ é2,}", "bib");
+        let cited = |key, place| (SymbolKind::Citation, key, place);
         assert_eq!(
             named(&bib.citations),
-            [("knuth84".into(), at(2, 6, 7)), ("é2".into(), at(4, 7, 2))]
+            [cited("knuth84", at(2, 6, 7)), cited("é2", at(4, 7, 2))]
         );
     }
 
@@ -929,19 +913,18 @@ mod tests {
             @misc{corp, author = {{Procter and Gamble} AND Jean {de La Fontaine}}}\n\
             @misc{open, title = {Never {closed},\n  year = 1999\n\
             @misc{after, author = {Last, First}, year = {2001}}\n@misc{bare,}";
-        let read = Facts::read(bib, "bib").citations.into_iter();
-        let details: Vec<_> = read.map(|c| (c.name, c.detail)).collect();
-        let detail = |key: &str, detail: Option<&str>| (key.into(), detail.map(String::from));
+        let read = Facts::read(bib, "bib").citations;
+        let details = read.iter().map(|c| (&*c.name, c.detail.as_deref()));
         assert_eq!(
-            details,
+            details.collect::<Vec<_>>(),
             [
-                detail("knuth", Some("Knuth · 1984 · The TeXbook, Vol. A")),
-                detail("two", Some("One and Two · 2020 · On Two")),
-                detail("many", Some("A et al.")),
-                detail("corp", Some("Procter and Gamble and de La Fontaine")),
-                detail("open", Some("Never closed, year = 1999")),
-                detail("after", Some("Last · 2001")),
-                detail("bare", None),
+                ("knuth", Some("Knuth · 1984 · The TeXbook, Vol. A")),
+                ("two", Some("One and Two · 2020 · On Two")),
+                ("many", Some("A et al.")),
+                ("corp", Some("Procter and Gamble and de La Fontaine")),
+                ("open", Some("Never closed, year = 1999")),
+                ("after", Some("Last · 2001")),
+                ("bare", None),
             ]
         );
     }
@@ -1025,13 +1008,9 @@ mod tests {
                 .map(|h| (h.title.as_str(), h.file.as_deref(), h.line))
                 .collect()
         }
-        let whole = analyze_project(
-            dir.path(),
-            &Files::default(),
-            "main.tex",
-            "chapters/a.tex",
-            None,
-        );
+        let analyzed =
+            |open| analyze_project(dir.path(), &Files::default(), "main.tex", open, None);
+        let whole = analyzed("chapters/a.tex");
         assert_eq!(
             headings(&whole),
             [
@@ -1042,7 +1021,8 @@ mod tests {
             ]
         );
         assert_eq!(whole.words, 8);
-        let loose = analyze_project(dir.path(), &Files::default(), "main.tex", "loose.tex", None);
+        let loose = analyzed("loose.tex");
+
         assert_eq!(headings(&loose), [("Loose", Some("loose.tex"), 1)]);
         assert_eq!(loose.words, 2);
     }

@@ -1,5 +1,5 @@
-//! Tests across the projects module's parts: renames under the settings' and
-//! the paths' rules, the library, search, the symbol scan, and links.
+//! Tests across the projects module's parts: renames under the settings' and the paths' rules,
+//! search, the symbol scan, and links.
 
 use std::collections::HashMap;
 use std::fs;
@@ -10,17 +10,26 @@ use serde_json::json;
 use crate::CoreError;
 use crate::analyze::Files;
 use crate::projects::search::SearchHit;
-use crate::projects::testing::{fails_with, library, names_in, project};
+use crate::projects::testing::{fails_with, names_in, project};
 use crate::projects::{
-    Query, Symbols, create_free, create_project, file_tree, list_projects, rename_entry,
-    rename_project, scan_symbols, search_project,
+    Query, Symbols, create_free, create_project, file_tree, rename_entry, rename_project,
+    scan_symbols, search_project,
 };
 use crate::settings::{read_settings, write_settings};
 
 /// In any case and in part of a word, with nothing open, as the service searches.
 fn search(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
-    let query = Query::new(query, false, false);
-    search_project(root, &query, &HashMap::new(), limit)
+    search_project(
+        root,
+        &Query::new(query, false, false),
+        &HashMap::new(),
+        limit,
+    )
+}
+
+/// With nothing open and nothing read before.
+fn scan(root: &Path) -> Result<Symbols, CoreError> {
+    scan_symbols(root, &Files::default(), &HashMap::new())
 }
 
 #[test]
@@ -29,10 +38,8 @@ fn a_rename_that_cannot_write_the_settings_is_undone_and_leaves_them_as_they_wer
     let file = root.join(".texlocal.json");
     let broken = "{ \"mainFile\": \"paper.tex\", \"engine\": \"xelatex\", }";
     fs::write(&file, broken).unwrap();
-    assert_eq!(
-        rename_entry(&root, "main.tex", "a.tex").unwrap_err().status,
-        409
-    );
+    let refused = rename_entry(&root, "main.tex", "a.tex").unwrap_err();
+    assert_eq!(refused.status, 409);
     assert!(root.join("main.tex").is_file() && !root.join("a.tex").exists());
     create_free(&root, "b.tex", false).unwrap();
     rename_entry(&root, "b.tex", "c.tex").unwrap();
@@ -55,16 +62,18 @@ fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rul
     let err = rename_entry(&root, "moved", "moved/old/moved").unwrap_err();
     assert_eq!(err.status, 400, "{}", err.message);
     assert_eq!(names_in(&root.join("moved")), ["x.tex"]);
-    // create_entry and uploads accept a leading "-"; only the main file, which
-    // reaches latexmk's command line, may not start with one.
+    // create_entry and uploads accept a leading "-"; only the main file, which reaches
+    // latexmk's command line, may not start with one.
     create_free(&root, "-draft.tex", false).unwrap();
     let result = rename_entry(&root, "-draft.tex", "-notes/-draft.tex").unwrap();
     assert_eq!(result.to, "-notes/-draft.tex");
     assert!(root.join("-notes/-draft.tex").is_file());
 }
 
+/// On case-insensitive volumes too; and one stopped before the move leaves no folder of the new
+/// name.
 #[test]
-fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
+fn a_case_only_rename_works_and_one_onto_another_entry_or_stopped_does_nothing() {
     let (_dir, root) = project();
     let data = root.parent().unwrap();
     create_free(&root, "Figures/plot.tex", false).unwrap();
@@ -74,7 +83,6 @@ fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
     assert_eq!(read_settings(&root).main_file, "Main.tex");
     rename_entry(&root, "Figures", "figures").unwrap();
     assert_eq!(names_in(&root), [".texlocal.json", "Main.tex", "figures"]);
-
     create_free(&root, "other.tex", false).unwrap();
     let err = rename_entry(&root, "other.tex", "Main.tex").unwrap_err();
     assert_eq!(err.status, 409);
@@ -84,15 +92,9 @@ fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
     create_project(data, "second", "blank", None).unwrap();
     let err = rename_project(data, "second", "p", |_| panic!("moved")).unwrap_err();
     assert_eq!(err.status, 409);
-}
-
-#[test]
-fn a_rename_that_doesnt_go_ahead_leaves_no_folder_of_the_new_name() {
-    let (_dir, root) = project();
-    let data = root.parent().unwrap();
-    let stopped = rename_project(data, "P", "S", |_| Err(CoreError::conflict("no")));
+    let stopped = rename_project(data, "p", "S", |_| Err(CoreError::conflict("no")));
     assert_eq!(stopped.unwrap_err().status, 409);
-    assert_eq!(names_in(data), ["P"]);
+    assert_eq!(names_in(data), ["p", "second"]);
 }
 
 #[cfg(unix)]
@@ -103,8 +105,7 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
     fs::write(root.join("main.tex"), "\\label{sec:open} needle\n").unwrap();
     create_free(&root, "locked/inside.tex", false).unwrap();
     fs::write(root.join("secret.tex"), "needle").unwrap();
-    let lock =
-        |path: &std::path::Path, mode| fs::set_permissions(path, fs::Permissions::from_mode(mode));
+    let lock = |path: &Path, mode| fs::set_permissions(path, fs::Permissions::from_mode(mode));
     lock(&root.join("locked"), 0o000).unwrap();
     lock(&root.join("secret.tex"), 0o000).unwrap();
     if fs::read_dir(root.join("locked")).is_ok() {
@@ -115,15 +116,14 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
 
     let tree = file_tree(&root);
     let hits = search(&root, "needle", 100);
-    let symbols = scan_symbols(&root, &Files::default(), &HashMap::new());
+    let symbols = scan(&root);
     lock(&root.join("locked"), 0o755).unwrap();
 
     let tree = tree.unwrap();
     let locked = tree.iter().find(|n| n.name == "locked").unwrap();
     assert!(locked.children.as_ref().unwrap().is_empty());
-    let hits = hits.unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].file, "main.tex");
+    let hits: Vec<_> = hits.unwrap().into_iter().map(|hit| hit.file).collect();
+    assert_eq!(hits, ["main.tex"]);
     assert_eq!(symbols.unwrap().labels, ["sec:open"]);
 }
 
@@ -141,6 +141,10 @@ fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
     ] {
         fs::write(root.join(file), text).unwrap();
     }
+    let files = |query: &str| -> Vec<String> {
+        let hits = search(&root, query, 50).unwrap();
+        hits.into_iter().map(|hit| hit.file).collect()
+    };
     let hit = |query: &str| {
         let hits = search(&root, query, 50).unwrap();
         assert_eq!(hits.len(), 1, "{query}");
@@ -150,14 +154,10 @@ fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
     };
     assert_eq!(hit("theorem"), "ascii.tex:2 The [THEOREM] holds");
     assert_eq!(hit("école"), "accents.tex:1 L'[ÉCOLE] Normale");
-    assert!(search(&root, "zzz", 50).unwrap().is_empty());
+    assert!(files("zzz").is_empty());
     assert_eq!(hit("lemma"), "mixed.tex:2 see [Lemma] 3");
     assert_eq!(hit("größe"), "wide.tex:1 Çà İstanbul, GRÖSSE und [Größe]");
     assert_eq!(hit("brown"), "quick.tex:1 the quick [brown] fox jumps");
-    let files = |query: &str| -> Vec<String> {
-        let hits = search(&root, query, 50).unwrap();
-        hits.into_iter().map(|hit| hit.file).collect()
-    };
     assert!(files("istanbul").contains(&"wide.tex".to_string()));
     assert!(files("k").contains(&"kelvin.tex".to_string()));
     fs::write(root.join("many.tex"), "needle\n".repeat(20)).unwrap();
@@ -166,8 +166,8 @@ fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
     assert!(hits.iter().all(|h| h.file == "many.tex"));
 }
 
-/// An editor host selects the match itself, so a hit places it in UTF-16
-/// units of the line as written, not of its lowercased copy.
+/// An editor host selects the match itself, so a hit places it in UTF-16 units of the line as
+/// written, not of its lowercased copy.
 #[test]
 fn a_hit_places_its_match_in_utf16_units_of_the_line() {
     let (_dir, root) = project();
@@ -186,10 +186,10 @@ fn a_hit_places_its_match_in_utf16_units_of_the_line() {
     assert_eq!(place, (1, 7, 5, "GRÖẞE".into()));
 }
 
-/// Only the project's own top-level build/ is compile output, in any case: no
-/// file of the author's takes its name, and the tree and the scans leave it
-/// out. A `build` deeper in is the author's: the tree lists it and the export
-/// archives it, so search and the symbol scan see it too.
+/// Only the project's own top-level build/ is compile output, in any case: no file of the
+/// author's takes its name, and the tree and the scans leave it out. A `build` deeper in is the
+/// author's: the tree lists it and the export archives it, so search and the symbol scan see it
+/// too.
 #[test]
 fn only_the_top_level_build_folder_is_the_compile_outputs() {
     let (_dir, root) = project();
@@ -208,49 +208,29 @@ fn only_the_top_level_build_folder_is_the_compile_outputs() {
     let hits = search(&root, "needle", 10).unwrap();
     let files: Vec<_> = hits.iter().map(|h| h.file.as_str()).collect();
     assert_eq!(files, ["chapters/build/notes.tex"]);
-    assert_eq!(
-        scan_symbols(&root, &Files::default(), &HashMap::new())
-            .unwrap()
-            .labels,
-        ["deep:one"]
-    );
+    assert_eq!(scan(&root).unwrap().labels, ["deep:one"]);
 }
 
-#[test]
-fn a_project_is_dated_by_its_newest_file() {
-    let (_dir, root) = project();
-    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
-    let main = fs::File::options().write(true).open(root.join("main.tex"));
-    main.unwrap().set_modified(later).unwrap();
-    let since = later.duration_since(std::time::UNIX_EPOCH).unwrap();
-    let mtime = list_projects(root.parent().unwrap()).unwrap()[0].mtime;
-    assert_eq!(mtime, since.as_millis() as u64);
-}
-
+/// A Latin-1 .bib read as bytes by a Unicode-mode pattern loses the whole entry, so it is
+/// decoded first; and a non-breaking space before the brace isn't swallowed into the key by an
+/// ASCII-only `\s`.
 #[test]
 fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
-    // Latin-1 .bib files: a Unicode-mode pattern over raw bytes drops the whole entry; decoding first keeps it.
     let (_dir, root) = project();
-    let mut bib = b"@article{m".to_vec();
-    bib.push(0xFC); // 'u-umlaut' in ISO-8859-1; invalid on its own as UTF-8
-    bib.extend_from_slice(b"ller2020,\n  title={x}\n}\n@article{ok2021,\n  title={y}\n}\n");
-    fs::write(root.join("refs.bib"), &bib).unwrap();
-
-    let mut tex = b"\\label{fig:m".to_vec();
-    tex.push(0xFC);
-    tex.extend_from_slice(b"ller}\n\\label{fig:ok}\n");
-    fs::write(root.join("ch.tex"), &tex).unwrap();
-
-    // A non-breaking space before the brace mustn't be swallowed into the key by an ASCII-only `\s`.
+    // 0xFC is "ü" in ISO-8859-1, and not UTF-8 alone.
+    let bib = b"@article{m\xFCller2020,\n  title={x}\n}\n@article{ok2021,\n  title={y}\n}\n";
+    fs::write(root.join("refs.bib"), bib).unwrap();
     fs::write(
-        root.join("pasted.bib"),
-        "@article{Smith2020\u{00A0},\n  title={x}\n}\n@article\u{00A0}{Jones2021,\n  title={y}\n}\n",
+        root.join("ch.tex"),
+        b"\\label{fig:m\xFCller}\n\\label{fig:ok}\n",
     )
     .unwrap();
+    let pasted = "@article{Smith2020\u{A0},\n  title={x}\n}\n@article\u{A0}{Jones2021,\n}\n";
+    fs::write(root.join("pasted.bib"), pasted).unwrap();
 
     let Symbols {
         citations, labels, ..
-    } = scan_symbols(&root, &Files::default(), &HashMap::new()).unwrap();
+    } = scan(&root).unwrap();
     let citations: Vec<String> = citations.into_iter().map(|c| c.name).collect();
     assert_eq!(citations.len(), 4, "{citations:?}");
     assert_eq!(citations[..2], ["Smith2020", "Jones2021"]);
@@ -262,33 +242,29 @@ fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
 #[test]
 fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
     let (_dir, root) = project();
-    fs::write(
-        root.join("main.tex"),
-        "\\label{kept} % \\label{old}\n% \\bibitem{gone}\n50\\% \\label{after-percent} \\label{fig:}\n\
-         \\begin{verbatim}\\label{literal}\\end{verbatim} \\label {spaced}\n\
-         \\begin{equation} x \\label{eq:one} \\end{equation}\n\
-         \\begin{thebibliography}{9}\n\\bibitem[K]{knuth} Knuth.\n\\bibitem {lamport} Lamport.\n",
-    )
-    .unwrap();
+    let main = "\\label{kept} % \\label{old}\n% \\bibitem{gone}\n\
+        50\\% \\label{after-percent} \\label{fig:}\n\
+        \\begin{verbatim}\\label{literal}\\end{verbatim} \\label {spaced}\n\
+        \\begin{equation} x \\label{eq:one} \\end{equation}\n\
+        \\begin{thebibliography}{9}\n\\bibitem[K]{knuth} Knuth.\n\\bibitem {lamport} Lamport.\n";
+    fs::write(root.join("main.tex"), main).unwrap();
     let keys = |found: &Symbols| -> Vec<String> {
         found.citations.iter().map(|c| c.name.clone()).collect()
     };
-    let found = scan_symbols(&root, &Files::default(), &HashMap::new()).unwrap();
+    let found = scan(&root).unwrap();
     assert_eq!(found.labels, ["kept", "after-percent", "spaced", "eq:one"]);
     assert_eq!(keys(&found), ["knuth", "lamport"]);
 
     fs::remove_file(root.join("main.tex")).unwrap();
+    let bib = "@article{one,}\n@string{s=\"x\",}\n@Comment{gone,}\n@preamble{p,}\n@misc(three,)";
     for (file, text) in [
         ("z.tex", "\\label{shared}\\label{last}\\bibitem{two}"),
         ("a.tex", "\\label{first}\\label{shared}\\bibitem{one}"),
-        (
-            "refs.bib",
-            "@article{one,}\n@string{s=\"x\",}\n@Comment{gone,}\n@preamble{p,}\n@misc(three,)",
-        ),
+        ("refs.bib", bib),
     ] {
         fs::write(root.join(file), text).unwrap();
     }
-    let found = scan_symbols(&root, &Files::default(), &HashMap::new()).unwrap();
+    let found = scan(&root).unwrap();
     assert_eq!(found.labels, ["first", "shared", "last"]);
     assert_eq!(keys(&found), ["one", "three", "two"]);
 }
@@ -301,14 +277,13 @@ fn the_symbol_scan_reads_the_commands_and_environments_a_project_defines() {
         \\newenvironment{thm}[1]{}{} % \\newcommand{\\gone}{}\n\
         \\newenvironment{\\bad}{}{} \\newcommand{}{} \\newcommand{\\R}[1]{}\n";
     fs::write(root.join("main.tex"), main).unwrap();
-    let found = scan_symbols(&root, &Files::default(), &HashMap::new()).unwrap();
-    let commands: Vec<_> = found
+    let found = scan(&root).unwrap();
+    let commands = found
         .commands
         .iter()
-        .map(|c| (c.name.as_str(), c.arguments))
-        .collect();
+        .map(|c| (c.name.as_str(), c.arguments));
     assert_eq!(
-        commands,
+        commands.collect::<Vec<_>>(),
         [("\\R", 0), ("\\pair", 2), ("\\opt", 1), ("\\argmax", 0)]
     );
     assert_eq!(found.environments, ["thm"]);
@@ -320,58 +295,27 @@ fn the_symbol_scan_reads_a_file_again_only_once_its_stamp_changes() {
     let file = root.join("main.tex");
     fs::write(&file, "\\label{one}").unwrap();
     let facts = Files::default();
-    assert_eq!(
-        scan_symbols(&root, &facts, &HashMap::new()).unwrap().labels,
-        ["one"]
-    );
+    let labels = || scan_symbols(&root, &facts, &HashMap::new()).unwrap().labels;
+    assert_eq!(labels(), ["one"]);
     let modified = fs::metadata(&file).unwrap().modified().unwrap();
     // Written in place at the same length and dated back, it stamps as before.
     fs::write(&file, "\\label{two}").unwrap();
     let written = fs::File::options().write(true).open(&file).unwrap();
     written.set_modified(modified).unwrap();
-    assert_eq!(
-        scan_symbols(&root, &facts, &HashMap::new()).unwrap().labels,
-        ["one"]
-    );
+    assert_eq!(labels(), ["one"]);
     fs::write(&file, "\\label{three}").unwrap();
-    assert_eq!(
-        scan_symbols(&root, &facts, &HashMap::new()).unwrap().labels,
-        ["three"]
-    );
+    assert_eq!(labels(), ["three"]);
 }
 
-#[test]
-fn new_projects_are_named_sanitized_and_stocked_with_a_template() {
-    let (_dir, service) = library();
-    let data = &service.data_dir;
-    fails_with(create_project(data, "   ", "blank", None), "Invalid name");
-    let info = create_project(data, "  Thesis  ", "report", None).unwrap();
-    assert_eq!((info.id.as_str(), info.name.as_str()), ("Thesis", "Thesis"));
-    assert_eq!(info.main_file, "main.tex");
-    let root = data.join("Thesis");
-    assert_eq!(
-        names_in(&root),
-        [".texlocal.json", "main.tex", "references.bib"]
-    );
-    let main = fs::read_to_string(root.join("main.tex")).unwrap();
-    assert!(main.contains("{report}"));
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(data.join("gone"), data.join("linked")).unwrap();
-        assert_eq!(
-            create_project(data, "linked", "blank", None).unwrap().id,
-            "linked 2"
-        );
-        assert!(!data.join("gone").exists());
-    }
-}
-
+/// A link to a file, inside or out (a shared .bib), is content. One to a folder, broken or in a
+/// loop is not, and is no error.
 #[cfg(unix)]
 #[test]
 fn the_tree_scans_and_zip_follow_links_to_files_only() {
-    // A link to a file, inside or out (a shared .bib), is content. One to a
-    // folder, broken or in a loop is not, and is no error.
-    use crate::{projects::testing::zip_names, zipexport::export_zip};
+    use std::os::unix::fs::symlink;
+
+    use crate::projects::testing::zip_names;
+    use crate::zipexport::export_zip;
     let (_dir, root) = project();
     let outside = tempfile::tempdir().unwrap();
     let shared = outside.path().join("shared.tex");
@@ -379,61 +323,59 @@ fn the_tree_scans_and_zip_follow_links_to_files_only() {
     fs::write(root.join("source.txt"), "needle \\label{linked}").unwrap();
     fs::create_dir(root.join("figures")).unwrap();
     fs::write(root.join("figures/a.txt"), "figure").unwrap();
-    let link = |target: &std::path::Path, name: &str| {
-        std::os::unix::fs::symlink(target, root.join(name)).unwrap();
-    };
-    link(&root.join("source.txt"), "linked.tex");
-    link(&shared, "external.tex");
-    link(&root.join("figures"), "linked-dir");
-    link(&root, "loop");
-    link(&root.join("gone.tex"), "broken.tex");
-    link(&root.join("b.tex"), "a.tex");
-    link(&root.join("a.tex"), "b.tex");
+    for (target, name) in [
+        (root.join("source.txt"), "linked.tex"),
+        (shared, "external.tex"),
+        (root.join("figures"), "linked-dir"),
+        (root.clone(), "loop"),
+        (root.join("gone.tex"), "broken.tex"),
+        (root.join("b.tex"), "a.tex"),
+        (root.join("a.tex"), "b.tex"),
+    ] {
+        symlink(target, root.join(name)).unwrap();
+    }
     let alias = root.with_file_name("alias");
-    std::os::unix::fs::symlink(&root, &alias).unwrap();
+    symlink(&root, &alias).unwrap();
 
     let tree = file_tree(&root).unwrap();
     let top: Vec<_> = tree.iter().map(|n| n.path.as_str()).collect();
-    assert_eq!(
-        top,
-        [
-            "figures",
-            "external.tex",
-            "linked.tex",
-            "main.tex",
-            "source.txt"
-        ]
-    );
-    let hits = search(&root, "needle", 10).unwrap();
-    let mut hits: Vec<_> = hits.into_iter().map(|hit| hit.file).collect();
+    let listed = [
+        "figures",
+        "external.tex",
+        "linked.tex",
+        "main.tex",
+        "source.txt",
+    ];
+    assert_eq!(top, listed);
+    let mut hits: Vec<_> = search(&root, "needle", 10)
+        .unwrap()
+        .into_iter()
+        .map(|hit| hit.file)
+        .collect();
     hits.sort();
     assert_eq!(hits, ["linked.tex", "source.txt"]);
-    let mut labels = scan_symbols(&root, &Files::default(), &HashMap::new())
-        .unwrap()
-        .labels;
+    let mut labels = scan(&root).unwrap().labels;
     labels.sort();
     assert_eq!(labels, ["linked", "shared"]);
     let dest = root.with_file_name("out.zip");
     export_zip(&root, &dest).unwrap();
-    assert_eq!(
-        zip_names(&dest),
-        [
-            "external.tex",
-            "figures/",
-            "figures/a.txt",
-            "linked.tex",
-            "main.tex",
-            "source.txt"
-        ]
-    );
+    let zipped = [
+        "external.tex",
+        "figures/",
+        "figures/a.txt",
+        "linked.tex",
+        "main.tex",
+        "source.txt",
+    ];
+    assert_eq!(zip_names(&dest), zipped);
     let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
     let mut body = String::new();
     std::io::Read::read_to_string(&mut archive.by_name("linked.tex").unwrap(), &mut body).unwrap();
     assert_eq!(body, "needle \\label{linked}");
 
-    // The destination spelled through a link into the project, as when a Save
-    // panel hands back /private/var for a data folder under /var: a lexical
-    // comparison would archive the ZIP's own half-written temporary file.
+    // The destination spelled through a link into the project, as when a Save panel hands back
+    // /private/var for a data folder under /var: a lexical comparison would archive the ZIP's
+    // own half-written temporary file.
     export_zip(&root, &alias.join("again.zip")).unwrap();
     assert_eq!(zip_names(&root.join("again.zip")), zip_names(&dest));
 }
