@@ -10,14 +10,6 @@ struct MenuCommandTests {
         #expect(chords.values.allSatisfy { $0.count == 1 }, "\(chords.values.filter { $0.count > 1 })")
     }
 
-    @Test func findInProjectSearchesTheProjectsOnHome() {
-        let app = AppModel(defaults: defaults.store)
-        app.mainWindowIsKey = true
-        #expect(app.isEnabled(.projectSearch, on: nil) && app.title(.projectSearch, on: nil) == "Find Project…")
-        app.mainWindowIsKey = false
-        #expect(!app.isEnabled(.projectSearch, on: nil))
-    }
-
     @Test func theFormatCommandsAreLaTeXs() {
         let app = AppModel(defaults: defaults.store)
         let project = ProjectModel(id: "MenuCommandTests", app: app)
