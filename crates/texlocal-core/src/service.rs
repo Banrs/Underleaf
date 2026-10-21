@@ -211,6 +211,7 @@ impl Service {
                 &folder()?.unwrap_or_default(),
                 &arg::<Option<Vec<PathBuf>>>(args, "paths")?.unwrap_or_default(),
                 arg(args, "conflict")?,
+                projects::discard,
             )?),
             "import_project" => out(import::import_project(self, Path::new(s("src")?))?),
             "set_ui_state" => out(self.with_project(s("id")?, |root| {

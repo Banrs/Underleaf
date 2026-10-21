@@ -1,5 +1,5 @@
-//! The library: the projects under the data dir, made, listed, named, renamed
-//! and found again by their paths.
+//! The library: the projects under the data dir, made, listed, named, renamed and found again by
+//! their paths.
 
 use std::collections::HashSet;
 use std::fs;
@@ -10,14 +10,16 @@ use std::time::UNIX_EPOCH;
 use serde::Serialize;
 use serde_json::json;
 
+use super::files::occupied;
 use super::skip_unreadable;
 use super::tree::{entries, file_kind};
 use crate::error::CoreError;
-use crate::paths::{fold_case, project_root, same_entry, sanitize_name};
+use crate::paths::{fold_case, project_root, sanitize_name};
 use crate::settings::{read_settings, write_settings};
+use crate::syntax::SourceDocument;
 use crate::templates;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectInfo {
     pub id: String,
@@ -52,7 +54,9 @@ fn mtime_ms(meta: &fs::Metadata) -> u64 {
         .map_or(0, |since| since.as_millis() as u64)
 }
 
-/// A project's date: the newest of its folders' and top-level files', without a stat of every file. The app's saves rename into place and so move the folder's date; another app's in-place save moves only the file's.
+/// A project's date: the newest of its folders' and top-level files', without a stat of every
+/// file. The app's saves rename into place and so move the folder's date; another app's in-place
+/// save moves only the file's.
 fn newest(root: &Path, meta: &fs::Metadata) -> u64 {
     fn walk(root: &Path, dir: &Path, newest: &mut u64) {
         for entry in entries(root, dir).into_iter().flatten() {
@@ -78,10 +82,9 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
     for entry in fs::read_dir(data_dir)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') || !entry.file_type()?.is_dir() {
-            continue;
+        if !name.starts_with('.') && entry.file_type()?.is_dir() {
+            projects.extend(skip_unreadable(ProjectInfo::read(data_dir, &name))?);
         }
-        projects.extend(skip_unreadable(ProjectInfo::read(data_dir, &name))?);
     }
     projects.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.id.cmp(&b.id)));
     Ok(projects)
@@ -103,8 +106,8 @@ pub fn create_project(
     })
 }
 
-/// A project in a new folder named `name`, or "name 2" and so on when that is
-/// taken, as Finder numbers copies, filled by `fill`; removed if that fails.
+/// A project in a new folder named `name`, or "name 2" and so on when that is taken, as Finder
+/// numbers copies, filled by `fill`; removed if that fails.
 pub(crate) fn new_project(
     data_dir: &Path,
     name: &str,
@@ -116,25 +119,22 @@ pub(crate) fn new_project(
         let root = data_dir.join(&id);
         // One create, passing over anything there, a dangling link or case alias too.
         match fs::create_dir(&root) {
-            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
-            created => {
-                created?;
-                if let Err(err) = fill(&root) {
-                    let _ = fs::remove_dir_all(&root);
-                    return Err(err);
-                }
-                return Ok(ProjectInfo::read(data_dir, &id)?);
-            }
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+            created => created?,
         }
+        if let Err(err) = fill(&root) {
+            let _ = fs::remove_dir_all(&root);
+            return Err(err);
+        }
+        return Ok(ProjectInfo::read(data_dir, &id)?);
     }
     unreachable!("a free name")
 }
 
-pub const UNTITLED: &str = "Untitled";
-
-/// The first free name in the series "Untitled", "Untitled 2", …, however the volume spells case; creates nothing, so a host can offer it as the name to edit.
+/// The first free name in the series "Untitled", "Untitled 2", …, however the volume spells
+/// case; creates nothing, so a host can offer it as the name to edit.
 pub fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, CoreError> {
-    let clean = sanitize_name(base.unwrap_or(UNTITLED))?;
+    let clean = sanitize_name(base.unwrap_or("Untitled"))?;
     let taken: HashSet<String> = match fs::read_dir(data_dir) {
         Ok(entries) => entries
             .map(|entry| entry.map(|e| fold_case(&e.file_name().to_string_lossy())))
@@ -152,7 +152,7 @@ fn project_names(clean: &str) -> impl Iterator<Item = String> {
 }
 
 pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> {
-    let mut tex: Vec<String> = Vec::new();
+    let mut tex = Vec::new();
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -163,11 +163,10 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     }
     tex.sort();
     let starts_document = |name: &&String| {
-        fs::read(root.join(name.as_str())).is_ok_and(|bytes| {
+        let bytes = fs::read(root.join(name.as_str()));
+        bytes.is_ok_and(|bytes| {
             let text = String::from_utf8_lossy(&bytes);
-            crate::syntax::SourceDocument::new(&text)
-                .document_class()
-                .is_some()
+            SourceDocument::new(&text).document_class().is_some()
         })
     };
     Ok(tex
@@ -187,8 +186,7 @@ pub fn rename_project(
     let root = project_root(data_dir, id)?;
     let clean = sanitize_name(new_name)?;
     let dest = data_dir.join(&clean);
-    // A case-only rename's destination is the project itself.
-    if fs::symlink_metadata(&dest).is_ok() && !same_entry(&root, &dest) {
+    if occupied(&root, &dest) {
         return Err(CoreError::conflict(
             "A project with that name already exists",
         ));
@@ -198,8 +196,8 @@ pub fn rename_project(
     Ok(ProjectInfo::read(data_dir, &clean)?)
 }
 
-/// `path` with its links resolved as far as it exists, so one not yet made
-/// or just trashed still compares with the library.
+/// `path` with its links resolved as far as it exists, so one not yet made or just trashed
+/// still compares with the library.
 fn real_path(path: &Path) -> PathBuf {
     let (mut head, mut tail) = (path, Vec::new());
     loop {
@@ -242,9 +240,12 @@ pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, SystemTime};
+
     use super::*;
     use crate::projects::create_free;
-    use crate::projects::testing::{names_in, project};
+    use crate::projects::testing::{fails_with, names_in, project};
+    use crate::settings::Engine;
 
     #[test]
     fn a_path_in_the_library_is_found_in_its_project() {
@@ -253,10 +254,8 @@ mod tests {
         create_free(&root, "a/b.tex", false).unwrap();
         let at = |path: &Path| locate(data, path).unwrap();
         let found = |path: &str| {
-            Some(Located {
-                id: "P".into(),
-                path: path.into(),
-            })
+            let (id, path) = ("P".into(), path.into());
+            Some(Located { id, path })
         };
         assert_eq!(at(&root.join("a/b.tex")), found("a/b.tex"));
         assert_eq!(at(&root), found(""));
@@ -273,30 +272,44 @@ mod tests {
     }
 
     #[test]
-    fn a_project_is_made_with_its_engine_or_not_at_all() {
+    fn a_project_is_made_named_sanitised_from_its_template_with_its_engine_or_not_at_all() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path();
-        let made = create_project(data, "Thesis", "report", Some("lualatex"));
-        let made = made.unwrap();
-        assert_eq!(
-            (made.id.as_str(), made.main_file.as_str()),
-            ("Thesis", "main.tex")
-        );
-        assert_eq!(
-            read_settings(&data.join("Thesis")).engine,
-            crate::settings::Engine::Lualatex
-        );
+        let made = create_project(data, "  Thesis  ", "report", Some("lualatex")).unwrap();
+        let shown = [&made.id, &made.name, &made.main_file];
+        assert_eq!(shown, ["Thesis", "Thesis", "main.tex"]);
+        let root = data.join("Thesis");
+        let files = [".texlocal.json", "main.tex", "references.bib"];
+        assert_eq!(names_in(&root), files);
+        let main = fs::read_to_string(root.join("main.tex")).unwrap();
+        assert!(main.contains("{report}"));
+        assert_eq!(read_settings(&root).engine, Engine::Lualatex);
 
         let refused = create_project(data, "Other", "blank", Some("word"));
         assert_eq!(refused.unwrap_err().status, 400);
+        for bad in ["   ", ".hidden"] {
+            fails_with(create_project(data, bad, "blank", None), "Invalid name");
+        }
+
         assert_eq!(names_in(data), ["Thesis"]);
-        assert_eq!(
-            create_project(data, ".hidden", "blank", None)
-                .unwrap_err()
-                .status,
-            400
-        );
-        assert_eq!(names_in(data), ["Thesis"]);
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(data.join("gone"), data.join("linked")).unwrap();
+            let made = create_project(data, "linked", "blank", None).unwrap();
+            assert_eq!(made.id, "linked 2");
+            assert!(!data.join("gone").exists());
+        }
+    }
+
+    #[test]
+    fn a_project_is_dated_by_its_newest_file() {
+        let (_dir, root) = project();
+        let later = SystemTime::now() + Duration::from_secs(3600);
+        let main = fs::File::options().write(true).open(root.join("main.tex"));
+        main.unwrap().set_modified(later).unwrap();
+        let since = later.duration_since(UNIX_EPOCH).unwrap();
+        let mtime = list_projects(root.parent().unwrap()).unwrap()[0].mtime;
+        assert_eq!(mtime, since.as_millis() as u64);
     }
 
     // Windows opens a folder only for its backup semantics, so its date is set here alone.
@@ -305,7 +318,7 @@ mod tests {
     fn projects_of_one_date_are_listed_by_name() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path();
-        let date = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        let date = SystemTime::now() - Duration::from_secs(3600);
         for name in ["b", "c", "a"] {
             create_project(data, name, "blank", None).unwrap();
             for entry in [".", "main.tex", ".texlocal.json"] {
@@ -313,11 +326,7 @@ mod tests {
                 file.set_modified(date).unwrap();
             }
         }
-        let names: Vec<_> = list_projects(data)
-            .unwrap()
-            .into_iter()
-            .map(|p| p.id)
-            .collect();
-        assert_eq!(names, ["a", "b", "c"]);
+        let listed = list_projects(data).unwrap().into_iter().map(|p| p.id);
+        assert_eq!(listed.collect::<Vec<_>>(), ["a", "b", "c"]);
     }
 }

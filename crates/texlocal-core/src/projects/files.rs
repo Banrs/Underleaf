@@ -21,32 +21,28 @@ pub struct RenameResult {
     pub main_file: String,
 }
 
-/// One create that fails on anything there, so an entry another app makes meanwhile is kept.
-fn make(root: &Path, rel: &str, dir: bool) -> Result<bool, CoreError> {
-    let abs = safe_write_path(root, rel)?;
-    let error = |err| {
-        if dir {
-            CoreError::from(err)
-        } else {
-            write_error(&abs, err)
-        }
-    };
-    (abs.parent().map_or(Ok(()), fs::create_dir_all)).map_err(error)?;
-    let made = if dir {
-        fs::create_dir(&abs)
-    } else {
-        fs::File::create_new(&abs).map(drop)
-    };
-    match made {
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(false),
-        made => made.map(|()| true).map_err(error),
-    }
-}
-
+/// `rel`, or the first of its copies' names that is free, each tried with one create that fails
+/// on anything there, so an entry another app makes meanwhile is kept.
 pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {
     for path in copy_paths(rel) {
-        if make(root, &path, dir)? {
-            return Ok(path);
+        let abs = safe_write_path(root, &path)?;
+        let error = |err| {
+            if dir {
+                CoreError::from(err)
+            } else {
+                write_error(&abs, err)
+            }
+        };
+        (abs.parent().map_or(Ok(()), fs::create_dir_all)).map_err(error)?;
+
+        let made = if dir {
+            fs::create_dir(&abs)
+        } else {
+            fs::File::create_new(&abs).map(drop)
+        };
+        match made {
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+            made => return made.map(|()| path).map_err(error),
         }
     }
     unreachable!("a free name")
@@ -59,20 +55,16 @@ pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<Stamp, CoreE
         .map_err(|err| write_error(abs, err))
 }
 
-/// A failed write in Foundation's words, as the hosts show it in an alert
-/// whose title already says the file wasn't saved; its status is the file
-/// system's, as any other.
+/// A failed write in Foundation's words, as the hosts show it in an alert whose title already
+/// says the file wasn't saved; its status is the file system's, as any other.
 fn write_error(abs: &Path, err: std::io::Error) -> CoreError {
-    let name = |path: &Path| {
-        path.file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-    };
-    let file = name(abs).unwrap_or_default();
+    let file = abs.file_name().unwrap_or_default().to_string_lossy();
     let kind = err.kind();
     let fallback = CoreError::from(err);
     let message = match kind {
         ErrorKind::PermissionDenied => {
-            let folder = abs.parent().and_then(name).unwrap_or_default();
+            let folder = abs.parent().and_then(Path::file_name).unwrap_or_default();
+            let folder = folder.to_string_lossy();
             format!("You don’t have permission to save the file “{file}” in the folder “{folder}”.")
         }
         ErrorKind::ReadOnlyFilesystem => {
@@ -96,25 +88,23 @@ fn is_under(path: &str, dir: &str) -> bool {
     after_entry(path, dir).is_some_and(|rest| !rest.is_empty())
 }
 
-/// Whether a rename from `src` to `dest` would land on another entry. On a
-/// case-insensitive volume, the default on macOS and Windows, a case-only
-/// rename's destination already "exists" because it is `src` itself.
-fn occupied(src: &Path, dest: &Path) -> bool {
+/// Whether a rename from `src` to `dest` would land on another entry. On a case-insensitive
+/// volume, the default on macOS and Windows, a case-only rename's destination already "exists"
+/// because it is `src` itself.
+pub(super) fn occupied(src: &Path, dest: &Path) -> bool {
     fs::symlink_metadata(dest).is_ok() && !same_entry(src, dest)
 }
 
 pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, CoreError> {
-    let src = safe_path(root, from)?;
-    let dest = safe_write_path(root, to)?;
-    let from_rel = rel_key(from)?;
-    let to_rel = rel_key(to)?;
+    let (src, dest) = (safe_path(root, from)?, safe_write_path(root, to)?);
+    let (from, to) = (rel_key(from)?, rel_key(to)?);
     if fs::symlink_metadata(&src).is_err() {
         return Err(CoreError::not_found("Not found"));
     }
     if occupied(&src, &dest) {
         return Err(CoreError::conflict("Destination already exists"));
     }
-    if is_under(&to_rel, &from_rel) {
+    if is_under(&to, &from) {
         return Err(CoreError::bad_request(
             "A folder can't be moved into itself",
         ));
@@ -122,36 +112,36 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
-
     let main_file = read_settings(root).main_file;
-    let moved = |path: &str| after_entry(path, &from_rel).map(|rest| format!("{to_rel}{rest}"));
+    let moved = |path: &str| after_entry(path, &from).map(|rest| format!("{to}{rest}"));
     let moved_main = moved(&main_file);
     fs::rename(&src, &dest)?;
     if let Some(main_file) = &moved_main
-        && let Err(settings_err) = write_settings(root, &json!({ "mainFile": main_file }))
+        && let Err(err) = write_settings(root, &json!({ "mainFile": main_file }))
     {
-        if let Err(rollback_err) = fs::rename(&dest, &src) {
-            return Err(CoreError::internal(format!(
-                "{}; rename rollback failed: {}",
-                settings_err.message, rollback_err
-            )));
-        }
-        return Err(settings_err);
+        return Err(match fs::rename(&dest, &src) {
+            Ok(()) => err,
+            Err(rollback) => CoreError::internal(format!(
+                "{}; rename rollback failed: {rollback}",
+                err.message
+            )),
+        });
     }
     move_ui(root, moved);
-
     Ok(RenameResult {
-        from: from_rel,
-        to: to_rel,
+        from,
+        to,
         main_file: moved_main.unwrap_or(main_file),
     })
 }
 
 pub(crate) type Trash = fn(&Path) -> Result<(), CoreError>;
 
-/// Delete to the platform's trash, so a mis-click is recoverable; a trash failure is reported and never becomes a permanent delete.
+/// Delete to the platform's trash, so a mis-click is recoverable; a trash failure is reported
+/// and never becomes a permanent delete.
 pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
-    // The system's file manager moves it, as the Mac app does; the crate's Finder-over-Apple-Events default needs the Automation permission.
+    // The system's file manager moves it, as the Mac app does; the crate's Finder-over-Apple-Events
+    // default needs the Automation permission.
     #[cfg(target_os = "macos")]
     let trashed = {
         use trash::macos::{DeleteMethod, TrashContextExtMacos};
@@ -164,9 +154,9 @@ pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
     trashed.map_err(|err| CoreError::internal(format!("Could not move the item to Trash: {err}")))
 }
 
-/// Discard, by `trash`, an entry an incoming file of its name replaces. The
-/// main file may go, since the file taking its place keeps it valid; a folder
-/// holding it may not, however the upload spells its name.
+/// Discard, by `trash`, an entry an incoming file of its name replaces. The main file may go,
+/// since the file taking its place keeps it valid; a folder holding it may not, however the
+/// upload spells its name.
 pub(crate) fn discard_replaced(root: &Path, rel: &str, trash: Trash) -> Result<(), CoreError> {
     if is_under(&read_settings(root).main_file, rel) {
         return Err(CoreError::conflict(
@@ -176,6 +166,7 @@ pub(crate) fn discard_replaced(root: &Path, rel: &str, trash: Trash) -> Result<(
     trash(&safe_path(root, rel)?)
 }
 
+/// `rel`, then "name 2.ext", "name 3.ext" and so on in its folder, as Finder numbers copies.
 pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> {
     let (parent, name) = rel.rsplit_once('/').unwrap_or(("", rel));
     let numbered = move |n: u32| match name.rsplit_once('.') {
@@ -205,32 +196,21 @@ mod tests {
         fs::set_permissions(&folder, fs::Permissions::from_mode(0o555)).unwrap();
         let err = write_creating(&folder.join("main.tex"), b"x").unwrap_err();
         fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
-        assert_eq!(
-            (err.status, err.message.as_str()),
-            (
-                403,
-                "You don’t have permission to save the file “main.tex” in the folder “Thesis”."
-            )
-        );
+        let said = "You don’t have permission to save the file “main.tex” in the folder “Thesis”.";
+        assert_eq!((err.status, err.message.as_str()), (403, said));
     }
 
     #[test]
     fn a_new_entry_takes_the_next_free_name() {
         let (_dir, root) = project();
-        let made: Vec<_> = (0..3)
-            .map(|_| create_free(&root, "notes/untitled.tex", false).unwrap())
-            .collect();
-        assert_eq!(
-            made,
-            [
-                "notes/untitled.tex",
-                "notes/untitled 2.tex",
-                "notes/untitled 3.tex"
-            ]
-        );
-        let folders: Vec<_> = (0..2)
-            .map(|_| create_free(&root, "untitled folder", true).unwrap())
-            .collect();
+        let made = [(); 3].map(|()| create_free(&root, "notes/untitled.tex", false).unwrap());
+        let numbered = [
+            "notes/untitled.tex",
+            "notes/untitled 2.tex",
+            "notes/untitled 3.tex",
+        ];
+        assert_eq!(made, numbered);
+        let folders = [(); 2].map(|()| create_free(&root, "untitled folder", true).unwrap());
         assert_eq!(folders, ["untitled folder", "untitled folder 2"]);
         assert!(root.join("untitled folder 2").is_dir());
         for bad in [".texlocal.json", "../x.tex"] {
@@ -245,27 +225,19 @@ mod tests {
         let (_dir, root) = project();
         create_free(&root, "chapters/a.tex", false).unwrap();
         let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
-        write_ui(
-            &root,
-            UiPatch {
-                expanded_folders: Some(list(&["other", "chapters/deep", "chapters"])),
-                folded_headings: Some(list(&["main.tex\t1:Intro#1", "chapters/a.tex\t1:Intro#1"])),
-            },
-        )
-        .unwrap();
+        let patch = UiPatch {
+            expanded_folders: Some(list(&["other", "chapters/deep", "chapters"])),
+            folded_headings: Some(list(&["main.tex\t1:Intro#1", "chapters/a.tex\t1:Intro#1"])),
+        };
+        write_ui(&root, patch).unwrap();
         rename_entry(&root, "chapters", "content").unwrap();
-        assert_eq!(
-            read_ui(&root),
-            UiState {
-                expanded_folders: list(&["content", "content/deep", "other"]),
-                folded_headings: list(&["content/a.tex\t1:Intro#1", "main.tex\t1:Intro#1"]),
-            }
-        );
+        let state = UiState {
+            expanded_folders: list(&["content", "content/deep", "other"]),
+            folded_headings: list(&["content/a.tex\t1:Intro#1", "main.tex\t1:Intro#1"]),
+        };
+        assert_eq!(read_ui(&root), state);
         rename_entry(&root, "content/a.tex", "content/b.tex").unwrap();
         let folds = read_ui(&root).folded_headings;
-        assert_eq!(
-            folds,
-            list(&["content/b.tex\t1:Intro#1", "main.tex\t1:Intro#1"])
-        );
+        assert_eq!(folds, ["content/b.tex\t1:Intro#1", "main.tex\t1:Intro#1"]);
     }
 }

@@ -77,10 +77,8 @@ pub struct Query {
 
 impl Query {
     pub fn new(text: &str, match_case: bool, whole_word: bool) -> Self {
-        let mut folded = String::new();
-        if match_case {
-            folded.push_str(text);
-        } else {
+        let mut folded = text.to_owned();
+        if !match_case {
             lower_into(text, &mut folded);
         }
         Self {
@@ -201,19 +199,18 @@ pub fn search_project(
                 continue;
             };
             let chars: Vec<char> = line.chars().collect();
+            let text = |range: Range<usize>| chars[range].iter().collect::<String>();
             let start = at.start.saturating_sub(24);
             let ellipsis = if start > 0 { "…" } else { "" };
-            let before: String = chars[start..at.start].iter().collect();
-            let after: String = chars[at.end..(at.end + 60).min(chars.len())]
-                .iter()
-                .collect();
+            let before = format!("{ellipsis}{}", text(start..at.start));
+            let after = text(at.end..(at.end + 60).min(chars.len()));
             hits.push(SearchHit {
                 file: rel.to_owned(),
                 line: i as u32 + 1,
                 column: utf16(&chars[..at.start]),
                 length: utf16(&chars[at.clone()]),
-                before: format!("{ellipsis}{before}").trim_start().to_string(),
-                matched: chars[at].iter().collect(),
+                before: before.trim_start().to_string(),
+                matched: text(at),
                 after: after.trim_end().to_string(),
             });
         }
@@ -327,9 +324,7 @@ mod tests {
         let big = fs::File::create(root.join("big.csv")).unwrap();
         big.set_len(SEARCH_FILE_MAX + 1).unwrap();
         fs::write(root.join("big.bib"), "@misc{needle,}\n").unwrap();
-        let bib = fs::OpenOptions::new()
-            .write(true)
-            .open(root.join("big.bib"));
+        let bib = fs::File::options().write(true).open(root.join("big.bib"));
         bib.unwrap().set_len(SEARCH_FILE_MAX + 1).unwrap();
         let needle = Query::new("needle", false, false);
         let hits = search_project(&root, &needle, &HashMap::new(), 10).unwrap();
@@ -337,11 +332,8 @@ mod tests {
         files.sort_unstable();
         assert_eq!(files, ["big.bib", "notes.tex"]);
         big.set_len(SEARCH_FILE_MAX).unwrap();
-        assert!(
-            read_capped(&root.join("big.csv"), "big.csv")
-                .unwrap()
-                .is_some()
-        );
+        let at_the_cap = read_capped(&root.join("big.csv"), "big.csv").unwrap();
+        assert!(at_the_cap.is_some());
     }
 
     /// Another app's write while the replace reads the project is kept, not written over.
@@ -389,15 +381,11 @@ mod tests {
         let text = "😀 Cat cat catalogue\nCAT_cat cat\naaaa";
         let places = |query: &str, match_case, whole_word| -> Vec<(u32, u32)> {
             let found = Query::new(query, match_case, whole_word).places(text);
-            assert!(
-                found
-                    .iter()
-                    .all(|place| place.length as usize == query.len())
-            );
-            found
-                .iter()
-                .map(|place| (place.line, place.column))
-                .collect()
+            let at = |place: &Place| {
+                assert_eq!(place.length as usize, query.len());
+                (place.line, place.column)
+            };
+            found.iter().map(at).collect()
         };
         let every = [(1, 3), (1, 7), (1, 11), (2, 0), (2, 4), (2, 8)];
         assert_eq!(places("cat", false, false), every);
