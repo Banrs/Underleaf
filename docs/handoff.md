@@ -24,3 +24,7 @@ it works around.
 - AppKit's own completion list in place of `CompletionList` once the system's has glass; until
   then the custom one stays (the look is decided).
 - Windows: Live Preview and the rest of what it lacks against the Mac (`docs/windows.md`).
+- The hosts don't yet draw `live_issues` (`docs/core-api.md`).
+- TeXpresso: a change that rolls TeX back to the start of the main file, then another within
+  milliseconds, kills the restarted worker without a new one ("rewinded trace from 0 to 0
+  entries"): the run stays stopped with an empty log until Live Preview restarts.

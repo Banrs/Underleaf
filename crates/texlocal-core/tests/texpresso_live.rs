@@ -222,8 +222,26 @@ async fn run(library: &Path) {
             .is_some_and(|log| log.contains("! Undefined"))
     };
     client.event(&mut from, a, "live", error).await;
+    // The error on its line once the run has lasted, and on the line it moves to.
+    let on = |line: u32| {
+        move |e: &Value| {
+            let issue = &e["lines"][0];
+            e["path"] == "main.tex"
+                && issue["line"] == line
+                && issue["compact"] == "Undefined: \\UnderleafInvalidCommand"
+        }
+    };
+    client.event(&mut from, a, "live_issues", on(4)).await;
+    let moved = "\\typeout{UL_ERROR_MOVED}\n";
+    main_doc.edit(units_to(&broken, "\\typeout"), 0, moved);
+    client.event(&mut from, a, "live_issues", on(5)).await;
+    client
+        .shows(a, "UL_ERROR_MOVED", "A line above the error")
+        .await;
     let recovered = unicode.replace("UL_MAIN_UNSAVED", "UL_MAIN_RECOVERED");
     retype(&main_doc, &recovered);
+    let cleared = |e: &Value| e["path"] == "main.tex" && e["lines"] == json!([]);
+    client.event(&mut from, a, "live_issues", cleared).await;
     client
         .shows(a, "UL_MAIN_RECOVERED", "Recovery without a restart")
         .await;

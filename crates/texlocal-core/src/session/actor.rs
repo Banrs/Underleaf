@@ -67,6 +67,7 @@ pub(crate) struct Doc {
     reload: Option<Reload>,
     composing: bool,
     pub issues: Vec<Value>,
+    pub live_issues: Vec<Value>,
     shown: Value,
 }
 
@@ -99,6 +100,7 @@ pub(crate) enum Timer {
     Restart,
     Disk,
     Log,
+    Issues,
 }
 
 impl Timer {
@@ -109,7 +111,8 @@ impl Timer {
             // FSEvents' latency: changes this close together are taken together.
             Self::Fs => 250,
             Self::Retry => 750,
-            Self::Halting => 1000,
+            // A brace or a command half typed is an error for a moment at every other key.
+            Self::Halting | Self::Issues => 1000,
             Self::Restart | Self::Disk => 180,
             // The log's whole text is copied, sent and laid out again each time, beside pages that
             // must land within a frame.
@@ -328,6 +331,7 @@ impl Actor {
                 Timer::Restart => self.later.push_back(Later::Restart),
                 Timer::Disk => self.refresh_live_disk(),
                 Timer::Log => self.publish_live(false),
+                Timer::Issues => self.live_issues_settled(),
             }
         }
     }
@@ -501,12 +505,14 @@ impl Actor {
             reload: None,
             composing: false,
             issues: Vec::new(),
+            live_issues: Vec::new(),
             shown: Value::Null,
         };
         self.docs.insert(path.to_owned(), doc);
         lock(&self.shared).insert(path.to_owned(), document);
         self.publish_doc(path);
         self.mark_issues();
+        self.live_issues_opened(path);
         self.live_whole(path);
         Ok(())
     }
@@ -535,6 +541,7 @@ impl Actor {
         self.edits += 1;
         self.last_edits.insert(path.clone(), self.edits);
         self.clear_issues(&path);
+        self.live_issues_edited(&path, edit.as_ref());
         self.mark_outdated();
         match edit {
             Some(edit) => {

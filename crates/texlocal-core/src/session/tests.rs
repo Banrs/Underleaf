@@ -35,6 +35,7 @@ struct Fake {
     refusal: Mutex<Option<CoreError>>,
     sink: Mutex<Option<Sink>>,
     log: Mutex<String>,
+    mark: Mutex<u64>,
 }
 
 fn status(running: bool) -> Status {
@@ -168,6 +169,15 @@ impl Preview for Fake {
     fn rescan(&self, _owner: u64) -> Result<(), CoreError> {
         self.note("live_rescan");
         Ok(())
+    }
+
+    fn mark(&self, _owner: u64, mark: u64) -> Result<(), CoreError> {
+        *lock(&self.mark) = mark;
+        Ok(())
+    }
+
+    fn tex_log(&self, _owner: u64) -> Option<String> {
+        Some(lock(&self.log).clone())
     }
 
     fn status(&self, _owner: u64) -> Result<Status, CoreError> {
@@ -1107,6 +1117,69 @@ async fn the_caret_is_told_once_it_settles() {
     wait(200).await;
     rig.state().await;
     assert_eq!(rig.fake.called("live_caret"), 1, "away and back is no move");
+}
+
+fn issue_lines(events: Vec<Value>) -> Vec<Vec<u64>> {
+    let lines = |event: &Value| {
+        let lines = event["lines"].as_array().unwrap().iter();
+        lines.map(|line| line["line"].as_u64().unwrap()).collect()
+    };
+    events.iter().map(lines).collect()
+}
+
+fn run_done() -> LiveEvent {
+    LiveEvent::Done("complete".into())
+}
+
+/// TeXpresso's log, as TeX writes it, of a run that met `\foo` on main.tex's `lines`.
+fn undefined_on(lines: &[u32]) -> String {
+    let errors = lines
+        .iter()
+        .map(|line| format!("! Undefined control sequence.\nl.{line} \\foo\n\n"));
+    format!("**\n(main.tex\n{})\n", errors.collect::<String>())
+}
+
+#[tokio::test(start_paused = true)]
+async fn live_errors_go_on_their_lines_once_texpresso_has_every_edit_and_follow_edits_above() {
+    let mut rig = Rig::new(false).await;
+    fs::write(rig.root.join("main.tex"), "Hello\n\\foo\n").unwrap();
+    let doc = rig.open("main.tex").await;
+    live(&rig).await;
+    *lock(&rig.fake.log) = undefined_on(&[2]);
+    rig.fake.tell(run_done());
+    wait(900).await;
+    assert!(rig.of_type("live_issues").await.is_empty());
+    wait(200).await;
+    let shown = rig.of_type("live_issues").await;
+    assert_eq!(issue_lines(shown.clone()), [[2]]);
+    assert_eq!(shown[0]["lines"][0]["compact"], "Undefined: \\foo");
+    // Its log is of the text before the edit until TeXpresso says it has read it.
+    doc.edit(0, 0, "\n");
+    rig.fake.tell(run_done());
+    wait(1100).await;
+    assert_eq!(issue_lines(rig.of_type("live_issues").await), [[3]]);
+    rig.fake.tell(LiveEvent::Synced(*lock(&rig.fake.mark)));
+    *lock(&rig.fake.log) = undefined_on(&[]);
+    rig.fake.tell(run_done());
+    wait(1100).await;
+    assert_eq!(issue_lines(rig.of_type("live_issues").await), [[0; 0]]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_live_error_shows_in_a_document_opened_after_and_goes_with_its_line_or_the_preview() {
+    let mut rig = Rig::new(false).await;
+    fs::write(rig.root.join("main.tex"), "Hello\n\\foo\n\\foo\n").unwrap();
+    live(&rig).await;
+    *lock(&rig.fake.log) = undefined_on(&[2, 3]);
+    rig.fake.tell(run_done());
+    wait(1100).await;
+    let doc = rig.open("main.tex").await;
+    assert_eq!(issue_lines(rig.of_type("live_issues").await), [[2, 3]]);
+    // Line 2's break and backslash: its error goes, and line 3's moves up.
+    doc.edit(5, 2, "");
+    assert_eq!(issue_lines(rig.of_type("live_issues").await), [[2]]);
+    rig.ok("live_stop", json!({})).await;
+    assert_eq!(issue_lines(rig.of_type("live_issues").await), [[0; 0]]);
 }
 
 #[tokio::test(start_paused = true)]
