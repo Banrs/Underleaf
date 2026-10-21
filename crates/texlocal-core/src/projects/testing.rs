@@ -30,7 +30,7 @@ pub(crate) fn with_project() -> (TempDir, Service) {
 
 pub(crate) fn project() -> (TempDir, PathBuf) {
     let (dir, service) = with_project();
-    let root = service.project_root("P").unwrap();
+    let root = service.project("P").unwrap().root;
     (dir, root)
 }
 

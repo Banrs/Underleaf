@@ -89,7 +89,6 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
             json!({ "id": "P", "path": "../../etc/passwd" }),
         ),
         ("file_tree", json!({ "id": "../P" })),
-        ("project_root", json!({ "id": "../x" })),
     ] {
         assert_eq!(status_of(&service, command, args).await, 400, "{command}");
     }
@@ -186,7 +185,7 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
 async fn a_rename_answers_the_moved_ui_state_and_the_main_file_it_moved() {
     let (_dir, service) = with_project();
     let service = Arc::new(service);
-    let root = service.project_root("P").unwrap();
+    let root = service.project("P").unwrap().root;
     fs::create_dir(root.join("ch")).unwrap();
     fs::write(root.join("ch/a.tex"), "").unwrap();
     let patch = json!({ "expandedFolders": ["ch"] });
@@ -197,7 +196,8 @@ async fn a_rename_answers_the_moved_ui_state_and_the_main_file_it_moved() {
         let answer = sessions.call(command, &args).await;
         answer.unwrap_or_else(|e| panic!("{command} failed: {} {}", e.status, e.message))
     };
-    ask("session_open", json!({ "id": "P", "session": 1 })).await;
+    let opened = ask("session_open", json!({ "id": "P", "session": 1 })).await;
+    assert_eq!(opened["name"], "P");
 
     let args = json!({ "session": 1, "patch": { "mainFile": "ch/a.tex" } });
     ask("session_set_settings", args).await;
@@ -229,7 +229,7 @@ fn a_panic_during_an_edit_does_not_stop_later_edits() {
 async fn ui_state_patches_and_main_file_renames_preserve_both_changes() {
     let (_dir, service) = with_project();
     let service = Arc::new(service);
-    let root = service.project_root("P").unwrap();
+    let project = service.project("P").unwrap();
     for index in 0..16 {
         let (from, to) = if index % 2 == 0 {
             ("main.tex", "paper.tex")
@@ -248,10 +248,10 @@ async fn ui_state_patches_and_main_file_renames_preserve_both_changes() {
         });
         start.wait().await;
         service
-            .with_project("P", |root| projects::rename_entry(root, from, to))
+            .with_project("P", |project| projects::rename_entry(project, from, to))
             .unwrap();
         patch.await.unwrap();
-        assert_eq!(settings::read_settings(&root).main_file, to);
-        assert_eq!(settings::read_ui(&root).expanded_folders, [folder]);
+        assert_eq!(settings::read_settings(&project.settings).main_file, to);
+        assert_eq!(settings::read_ui(&project.ui).expanded_folders, [folder]);
     }
 }

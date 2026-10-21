@@ -150,7 +150,9 @@ private struct IssueList: View {
     var body: some View {
         let selection = Binding { project.chosenIssue } set: { project.chooseIssue($0, focus: false) }
         ScrollViewReader { proxy in
-            List(items, id: \.offset, selection: selection) { IssueRow(item: $0.element, chosen: $0.offset == project.chosenIssue) }
+            List(items, id: \.offset, selection: selection) {
+                IssueRow(item: $0.element, chosen: $0.offset == project.chosenIssue, project: project)
+            }
                 .listStyle(.inset)
                 .scrollContentBackground(.hidden)
                 .accessibilityLabel("Issues")
@@ -179,9 +181,17 @@ private struct IssueList: View {
 
 private struct IssueRow: View {
     let item: LogItem
-    var chosen = false
+    let chosen: Bool
+    let project: ProjectModel
 
     var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            label
+            if let file = item.missing { install(file) }
+        }
+    }
+
+    private var label: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.message).lineLimit(chosen ? nil : 3)
@@ -199,6 +209,23 @@ private struct IssueRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
         .accessibilityValue(location(line: ", line ") ?? "")
+    }
+
+    /// As Xcode's Fix: a small button at the row's end, its progress in its place.
+    @ViewBuilder private func install(_ file: String) -> some View {
+        Spacer()
+        if project.installing == file {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Installing…").foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+        } else {
+            Button("Install") { Task { await project.install(file) } }
+                .controlSize(.small)
+                .disabled(project.installing != nil)
+                .help("Install the TeX Live package with \(file), then compile again")
+        }
     }
 
     private func location(line: String) -> String? { item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file } }

@@ -11,14 +11,14 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::error::CoreError;
+use crate::lock;
 use crate::logparse::{
     LogItem, Severity, latexmk_errors, parse_blg, parse_log, point_to_shell_escape,
 };
-use crate::paths::safe_rel_file;
+use crate::paths::{Project, safe_rel_file};
 use crate::process::{self, Tree, drive};
 use crate::settings::read_settings;
 use crate::stamp::Stamp;
-use crate::{BUILD_DIR, lock};
 
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 const LOG_TAIL: usize = 200_000;
@@ -162,23 +162,28 @@ impl CompileManager {
         true
     }
 
-    pub fn clean(root: &Path) -> Result<(), CoreError> {
-        match std::fs::remove_dir_all(root.join(BUILD_DIR)) {
+    pub fn clean(build: &Path) -> Result<(), CoreError> {
+        match std::fs::remove_dir_all(build) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
             _ => Ok(()),
         }
     }
 
-    pub async fn compile(&self, root: &Path, path_env: &str) -> Result<CompileResult, CoreError> {
+    pub async fn compile(
+        &self,
+        project: &Project,
+        path_env: &str,
+    ) -> Result<CompileResult, CoreError> {
         let request_started = Instant::now();
-        let settings = read_settings(root);
+        let root = &project.root;
+        let settings = read_settings(&project.settings);
         let main_rel = safe_rel_file(&settings.main_file)?;
         if !root.join(&main_rel).exists() {
             return Err(CoreError::bad_request(format!(
                 "Main file not found: {main_rel}"
             )));
         }
-        let pdf = settings.output(root, "pdf")?;
+        let pdf = settings.output(&project.build, "pdf")?;
         let before = STAMPED.into_iter().filter_map(|ext| {
             let meta = std::fs::metadata(pdf.with_extension(ext)).ok()?;
             Some((ext, Stamp::of(&meta)))
@@ -216,11 +221,13 @@ impl CompileManager {
             ]);
             command.arg("-e").arg(GLOSSARY_RULES);
             // No build folder is made here: one made before the stop check could ghost a
-            // project renamed meanwhile.
-            command
-                .arg(format!("-outdir={BUILD_DIR}"))
-                .arg(format!("-auxdir={BUILD_DIR}"))
-                .arg(format!("./{}", run.main_rel));
+            // project renamed meanwhile. Absolute, as a project's may be outside it.
+            for option in ["-outdir=", "-auxdir="] {
+                let mut arg = OsString::from(option);
+                arg.push(&project.build);
+                command.arg(arg);
+            }
+            command.arg(format!("./{}", run.main_rel));
             command
         });
         let spawned = {
@@ -364,12 +371,12 @@ mod tests {
     #[test]
     fn cleaning_removes_the_build_folder_and_a_missing_one_is_clean() {
         let dir = tempfile::tempdir().unwrap();
-        let clean = super::CompileManager::clean;
-        clean(dir.path()).unwrap();
+        let clean = || super::CompileManager::clean(&dir.path().join("build"));
+        clean().unwrap();
         std::fs::create_dir_all(dir.path().join("build/sub")).unwrap();
         std::fs::write(dir.path().join("build/main.aux"), "x").unwrap();
         std::fs::write(dir.path().join("main.tex"), "x").unwrap();
-        clean(dir.path()).unwrap();
+        clean().unwrap();
         assert!(!dir.path().join("build").exists());
         assert!(dir.path().join("main.tex").exists());
     }
@@ -441,7 +448,8 @@ mod tests {
     async fn a_thesis_builds_its_glossary_acronyms_nomenclature_and_index() {
         let (_dir, service) = crate::projects::testing::library();
         crate::projects::create_project(&service.data_dir, "My Thesis", "blank", None).unwrap();
-        let root = service.project_root("My Thesis").unwrap();
+        let project = service.project("My Thesis").unwrap();
+        let root = &project.root;
         std::fs::write(
             root.join("main.tex"),
             r"\documentclass{report}
@@ -458,7 +466,7 @@ mod tests {
         )
         .unwrap();
         let path = std::env::var("PATH").unwrap();
-        let result = service.compile.compile(&root, &path).await.unwrap();
+        let result = service.compile.compile(&project, &path).await.unwrap();
         assert!(result.ok, "{}", result.log);
         for (ext, entry) in [
             ("gls", r"\glossentry{tex}"),
@@ -466,10 +474,52 @@ mod tests {
             ("nls", "Speed of light"),
             ("ind", "Zebra"),
         ] {
-            let list = std::fs::read_to_string(
-                root.join(crate::BUILD_DIR).join("main").with_extension(ext),
-            );
+            let list = std::fs::read_to_string(project.build.join("main").with_extension(ext));
             assert!(list.unwrap().contains(entry), "{ext}");
         }
+    }
+
+    /// TeX Live's `openout_any = p` lets TeX write to `-outdir`, bibtex finds the folder's .bib
+    /// from it, and SyncTeX maps the folder's files both ways: `cargo test -p texlocal-core
+    /// opened_folder -- --ignored`.
+    #[tokio::test]
+    #[ignore = "needs TeX Live"]
+    async fn an_opened_folder_builds_beside_the_library_and_syncs_with_its_files() {
+        use crate::synctex::{synctex_forward_at, synctex_inverse};
+        let (dir, service) = crate::projects::testing::library();
+        let folder = dir.path().join("My Paper");
+        std::fs::create_dir_all(folder.join("ch")).unwrap();
+        let main = r"\documentclass{article}
+\begin{document}
+See \cite{knuth}.
+
+\input{ch/intro}
+\bibliographystyle{plain}
+\bibliography{refs}
+\end{document}
+";
+        let bib = "@book{knuth, author={Donald Knuth}, title={The TeXbook}, year={1984}}";
+        for (file, text) in [
+            ("main.tex", main),
+            ("ch/intro.tex", "An introduction.\n"),
+            ("refs.bib", bib),
+        ] {
+            std::fs::write(folder.join(file), text).unwrap();
+        }
+        let opened = crate::projects::open_path(&service, &folder).unwrap();
+        let project = service.project(&opened.project.id).unwrap();
+        let path = std::env::var("PATH").unwrap();
+        let result = service.compile.compile(&project, &path).await.unwrap();
+        assert!(result.ok, "{}", result.log);
+        let bbl = std::fs::read_to_string(project.build.join("main.bbl")).unwrap();
+        assert!(bbl.contains("The TeXbook"), "{bbl}");
+        let names = crate::projects::testing::names_in(&folder);
+        assert_eq!(names, ["ch", "main.tex", "refs.bib"]);
+
+        let shown = synctex_forward_at(&project, "ch/intro.tex", 1, None, None, &path).await;
+        let shown = shown.unwrap();
+        let (x, y) = (shown.h.unwrap() + 5.0, shown.v.unwrap() - 2.0);
+        let clicked = synctex_inverse(&project, shown.page, x, y, None, None, &path).await;
+        assert_eq!(clicked.unwrap().file, "ch/intro.tex");
     }
 }

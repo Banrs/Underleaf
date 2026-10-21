@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::analyze::disk_spelling;
 use crate::error::CoreError;
-use crate::paths::{safe_path, safe_rel_file, source_rel};
+use crate::paths::{Project, safe_path, safe_rel_file, source_rel};
 use crate::process::run;
 use crate::settings::read_settings;
 use crate::wordmatch::{PdfHit, PdfPage, find_in_pdf, find_in_source};
@@ -31,11 +31,11 @@ pub struct InverseLoc {
     pub column: Option<u32>,
 }
 
-fn pdf_for(root: &Path, live: Option<&Path>) -> Result<PathBuf, CoreError> {
+fn pdf_for(project: &Project, live: Option<&Path>) -> Result<PathBuf, CoreError> {
     if let Some(live) = live {
         return Ok(live.to_path_buf());
     }
-    Some(read_settings(root).output(root, "pdf")?)
+    Some(read_settings(&project.settings).output(&project.build, "pdf")?)
         .filter(|pdf| pdf.exists())
         .ok_or_else(|| CoreError::not_found("No compiled PDF yet"))
 }
@@ -57,14 +57,14 @@ async fn synctex(root: &Path, args: &[&str], path_env: &str) -> Result<String, C
 /// The optional column is zero-based, as in an inverse result. Some TeX
 /// engines only record lines, so retain every box even when given a column.
 pub async fn synctex_forward_at(
-    root: &Path,
+    project: &Project,
     file: &str,
     line: u32,
     column: Option<u32>,
     live: Option<&Path>,
     path_env: &str,
 ) -> Result<ForwardLoc, CoreError> {
-    let pdf = pdf_for(root, live)?;
+    let pdf = pdf_for(project, live)?;
     // synctex wants the input path as TeX saw it: ./-prefixed, forward slashes.
     let rel = safe_rel_file(file)?;
     if line < 1 {
@@ -73,7 +73,7 @@ pub async fn synctex_forward_at(
     let column = column.unwrap_or(0).saturating_add(1);
     let input = format!("{line}:{column}:./{rel}");
     let args: [&str; 5] = ["view", "-i", &input, "-o", &pdf.to_string_lossy()];
-    parse_forward(&synctex(root, &args, path_env).await?)
+    parse_forward(&synctex(&project.root, &args, path_env).await?)
 }
 
 fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
@@ -117,7 +117,7 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
 }
 
 pub async fn synctex_inverse(
-    root: &Path,
+    project: &Project,
     page: f64,
     x: f64,
     y: f64,
@@ -128,7 +128,8 @@ pub async fn synctex_inverse(
     if !(page.is_finite() && x.is_finite() && y.is_finite()) || page < 1.0 {
         return Err(CoreError::bad_request("Invalid PDF location"));
     }
-    let pdf = pdf_for(root, live)?;
+    let root = &project.root;
+    let pdf = pdf_for(project, live)?;
     let target = format!("{page}:{x}:{y}:{}", pdf.to_string_lossy());
     let stdout = synctex(root, &["edit", "-o", &target], path_env).await?;
     let field = |key: &str| stdout.split('\n').find_map(|ln| ln.strip_prefix(key));
@@ -176,7 +177,8 @@ mod tests {
     #[tokio::test]
     async fn sync_without_a_synctex_program_says_it_is_not_available() {
         let pdf = Some(Path::new("live.pdf"));
-        let err = synctex_inverse(Path::new("P"), 1.0, 1.0, 1.0, None, pdf, "/none").await;
+        let project = Project::in_folder(Path::new("P"));
+        let err = synctex_inverse(&project, 1.0, 1.0, 1.0, None, pdf, "/none").await;
         let err = err.unwrap_err();
         assert_eq!(err.status, 404);
         assert!(err.message.contains("not available"), "{err}");

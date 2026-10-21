@@ -152,7 +152,7 @@ extension AppModel {
         case .projectNew: newProject()
         case .projectOpen: openingProject = true
         case .projectClose: Task { await close() }
-        case .projectExport: if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
+        case .projectExport: if let project { exporting = ExportFile(name: "\(project.name).zip", type: .zip, make: project.exportZip) }
         case .projectSearch:
             sidebarShown = true
             searchFocusToken += 1
@@ -161,9 +161,9 @@ extension AppModel {
             newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.save() }
-        case .pdfSave: if let project, let url = project.buildPDF { exporting = ExportFile(name: "\(project.id).pdf", type: .pdf) { url } }
+        case .pdfSave: if let project, let url = project.buildPDF { exporting = ExportFile(name: "\(project.name).pdf", type: .pdf) { url } }
         // The PDF, not the first responder (usually the source), and whether or not its pane shows.
-        case .filePrint: if let project { project.pdf.print(title: project.id, file: project.livePDF ? project.buildPDF : nil) }
+        case .filePrint: if let project { project.pdf.print(title: project.name, file: project.livePDF ? project.buildPDF : nil) }
         case .editBold: project?.editor.perform(.bold)
         case .editItalic: project?.editor.perform(.italic)
         case .editUnderline: project?.editor.perform(.underline)

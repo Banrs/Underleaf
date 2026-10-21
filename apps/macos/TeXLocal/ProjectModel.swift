@@ -5,6 +5,8 @@ import Observation
 @Observable
 final class ProjectModel {
     let id: String
+    /// The listing's until the session answers with its own; an opened folder's id is no name.
+    private(set) var name: String
     var settings: ProjectSettings?
     let tree: FileTree
     private(set) var initialLoadComplete = false
@@ -38,6 +40,8 @@ final class ProjectModel {
 
     var compiling = false
     var outdated = false
+    /// The missing file whose package is installing: one at a time, as tlmgr takes one.
+    var installing: String?
     var result: CompileResult?
     @ObservationIgnored var finishedBuilds = 0
     var chosenIssue: Int?
@@ -91,6 +95,7 @@ final class ProjectModel {
 
     init(id: String, app: AppModel) {
         self.id = id
+        name = app.projects.first { $0.id == id }?.name ?? id
         self.app = app
         tree = FileTree(id: id)
         // The session sends the log while the panel shows it.
@@ -129,7 +134,7 @@ final class ProjectModel {
     }
 
     /// One spelling for every failed save, as `AppModel.report` drops an alert whose title is the one showing.
-    func notSavedTitle(_ path: String? = nil) -> String { String(localized: "“\((path ?? openPath ?? id).fileName)” Wasn’t Saved") }
+    func notSavedTitle(_ path: String? = nil) -> String { String(localized: "“\((path ?? openPath)?.fileName ?? name)” Wasn’t Saved") }
 
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
@@ -164,6 +169,7 @@ final class ProjectModel {
                                              as: SessionOpened.self)
             guard !closed else { throw CancellationError() }
             self.session = session
+            name = opened.name
             root = URL(filePath: opened.root, directoryHint: .isDirectory)
             settings = opened.settings
             showUIState(opened.ui)
@@ -177,7 +183,7 @@ final class ProjectModel {
             core.send("session_close", ["session": session])
             // Home stays, with the alert over it.
             guard !closed else { return }
-            app?.report(error, "Couldn’t Open “\(id)”")
+            app?.report(error, "Couldn’t Open “\(name)”")
             if app?.project === self { await app?.close() }
             return
         }

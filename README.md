@@ -15,6 +15,10 @@ You start a project from a template (blank, article, report or Beamer presentati
 folder, `.tex` file or `.zip` you already have. The source sits on the left and the PDF on the
 right.
 
+A folder opens where it is, and so does the folder of a `.tex` file. TeXLocal keeps its settings
+and build files elsewhere, so a git repository stays as it is. A `.zip` is copied into your
+projects folder.
+
 The editor completes LaTeX commands and environments, `\cite{}` keys from your `.bib` files and
 `\ref{}` labels from the document. It closes brackets as you type and shows the maths under the
 cursor in a small preview. Its colours can follow Overleaf, TeXstudio or the system.
@@ -24,7 +28,8 @@ needed. It also runs makeglossaries, bib2gls and makeindex for a glossary, list 
 nomenclature, without the project's own latexmkrc. As on Overleaf, a build doesn't stop at the
 first error. You get the PDF along with every error and warning, each marked on its line in the
 source. If you'd rather it stopped, turn on Stop on First Error for that project. TeXLocal saves and
-compiles on its own when you pause typing; Settings can turn that off.
+compiles on its own when you pause typing; Settings can turn that off. When a package is missing,
+the Mac app can install it with TeX Live's tlmgr and compile again.
 
 Clicking in the PDF takes you to that place in the source, and you can go the other way too
 (SyncTeX). The Mac app finds the exact word, Windows the line. The Mac app can also search the PDF.

@@ -1166,6 +1166,7 @@ dependencies = [
  "trash",
  "ttf-parser",
  "which",
+ "winapi-util",
  "windows-sys 0.61.2",
  "zip",
 ]

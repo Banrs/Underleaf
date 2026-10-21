@@ -13,7 +13,7 @@ struct HomeView: View {
 
     var body: some View {
         Group { if let problem = app.libraryProblem { unavailable(problem) } else { list } }
-        .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in Task { await app.importProjects(urls) } }
+        .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in Task { await app.open(urls) } }
         .navigationTitle("Projects")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -63,7 +63,7 @@ struct HomeView: View {
             .accessibilityLabel("New")
             Section {
                 ForEach(copying, id: \.self) { url in
-                    ProjectLabel(detail: Text("Copying…"), progress: "Copying") { Text(url.lastPathComponent).font(.headline) }
+                    ProjectLabel(detail: Text("Opening…"), progress: "Opening") { Text(url.lastPathComponent).font(.headline) }
                 }
                 ForEach(shown) { project in
                     // Its own view, so a row redraws only as its rename starts or ends.
@@ -79,7 +79,14 @@ struct HomeView: View {
             if let project = app.projects.first(where: { ids.contains($0.id) }) {
                 Button("Open") { Task { await app.open(project.id) } }
                 Divider()
-                ItemMenuItems(actions: actions(project))
+                if project.opened {
+                    Button { actions(project).showInFinder() } label: { Label("Show in Finder", systemImage: "folder") }
+                        .disabled(project.missing)
+                    Divider()
+                    Button { Task { await app.forget(project) } } label: { Label("Remove from List", systemImage: "minus.circle") }
+                } else {
+                    ItemMenuItems(actions: actions(project))
+                }
             }
         } primaryAction: { ids in if let id = ids.first { Task { await app.open(id) } } }
         .onKeyPress(.return) {
@@ -92,9 +99,9 @@ struct HomeView: View {
     }
 
     private func actions(_ project: ProjectInfo) -> ItemActions {
-        ItemActions(rename: { rename.begin(project.id, name: project.name) },
-                    showInFinder: { app.revealProject(project) },
-                    moveToTrash: { Task { await app.delete(project) } })
+        ItemActions(rename: project.opened ? nil : { rename.begin(project.id, name: project.name) },
+                    showInFinder: { NSWorkspace.shared.activateFileViewerSelecting([project.folder]) },
+                    moveToTrash: project.opened ? nil : { Task { await app.delete(project) } })
     }
 
     /// Wrapping, so no card is cut off in a narrow window; 4 pt apart, so the hover shapes don't touch (HIG, Buttons).
@@ -146,7 +153,7 @@ private struct ProjectRow: View {
     let ended, commit: () -> Void
 
     var body: some View {
-        ProjectLabel(detail: Text("\(Text(project.mainFile)) · \(Text(.currentDate, format: .reference(to: project.modified)))"),
+        ProjectLabel(detail: detail, symbol: project.opened ? "folder" : "text.document", dimmed: project.missing,
                      progress: working ? "Opening" : nil) {
             if rename.id == project.id {
                 RenameField(text: Bindable(rename).name, ended: ended, commit: commit) { rename.cancel() }
@@ -155,10 +162,21 @@ private struct ProjectRow: View {
             }
         }
     }
+
+    /// An opened folder's path, as Xcode's welcome window lists projects.
+    private var detail: Text {
+        guard project.opened else {
+            return Text("\(Text(project.mainFile)) · \(Text(.currentDate, format: .reference(to: project.modified)))")
+        }
+        let path = (project.path as NSString).abbreviatingWithTildeInPath
+        return project.missing ? Text("\(path) · Not Found") : Text(path)
+    }
 }
 
 private struct ProjectLabel<Name: View>: View {
     let detail: Text
+    var symbol = "text.document"
+    var dimmed = false
     let progress: String?
     @ViewBuilder let name: Name
 
@@ -166,14 +184,15 @@ private struct ProjectLabel<Name: View>: View {
         HStack {
             Label {
                 VStack(alignment: .leading, spacing: 2) {
-                    name
-                    detail.font(.subheadline).foregroundStyle(.secondary)
+                    name.foregroundStyle(dimmed ? HierarchicalShapeStyle.tertiary : .primary)
+                    detail.font(.subheadline).foregroundStyle(dimmed ? HierarchicalShapeStyle.tertiary : .secondary)
+                        .lineLimit(1).truncationMode(.middle)
                 }
             } icon: {
                 // Grey, as the detail: the hierarchical style would tint it the accent.
-                Image(systemName: "text.document")
+                Image(systemName: symbol)
                     .font(.title2)
-                    .foregroundStyle(Color.secondary)
+                    .foregroundStyle(dimmed ? Color(nsColor: .tertiaryLabelColor) : .secondary)
             }
             if let progress {
                 Spacer()

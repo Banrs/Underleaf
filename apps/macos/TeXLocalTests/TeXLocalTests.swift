@@ -42,8 +42,6 @@ func newProject() async throws -> ProjectInfo {
 }
 
 extension ProjectInfo {
-    var folder: URL { Core.libraryFolder.appending(path: id) }
-
     /// Writes `text` to the project's file at `path`, making its folders, as another app would.
     func write(_ text: String, to path: String) throws {
         let file = folder.appending(path: path)
