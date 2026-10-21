@@ -27,6 +27,3 @@ it works around.
 - Windows, on a machine: Home's rows for an opened and a missing folder, and Install's UAC
   elevation (allowed and cancelled), which GitHub's runner can't show.
 - Windows: Live Preview and the rest of what it lacks against the Mac (`docs/windows.md`).
-- TeXpresso's frontend (`texpresso`, not `texpresso-xetex`) is still to be rebuilt with the
-  patch's fix for a worker killed as it starts (`docs/texpresso.md`). It needs MuPDF and SDL2
-  (`brew install mupdf sdl2`). Until then `texpresso_live` fails at "Recovery without a restart".
