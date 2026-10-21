@@ -133,8 +133,7 @@ pub(crate) fn new_project(
 
 /// The first free name in the series "Untitled", "Untitled 2", …, however the volume spells
 /// case; creates nothing, so a host can offer it as the name to edit.
-pub fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, CoreError> {
-    let clean = sanitize_name(base.unwrap_or("Untitled"))?;
+pub fn free_project_name(data_dir: &Path) -> Result<String, CoreError> {
     let taken: HashSet<String> = match fs::read_dir(data_dir) {
         Ok(entries) => entries
             .map(|entry| entry.map(|e| fold_case(&e.file_name().to_string_lossy())))
@@ -142,7 +141,7 @@ pub fn free_project_name(data_dir: &Path, base: Option<&str>) -> Result<String, 
         Err(err) if err.kind() == ErrorKind::NotFound => HashSet::new(),
         Err(err) => return Err(err.into()),
     };
-    Ok(project_names(&clean)
+    Ok(project_names("Untitled")
         .find(|name| !taken.contains(&fold_case(name)))
         .expect("a free name"))
 }
