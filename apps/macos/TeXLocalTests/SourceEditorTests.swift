@@ -481,7 +481,7 @@ struct SourceEditorTests {
         let theme = SyntaxTheme.overleaf
         try await waitUntilColoured("]", theme.color(.invalid))
         text.insertText("\\[\n", replacementRange: .caret(2))
-        try await waitUntilColoured("]", theme.color(.mathDelimiter))
+        try await waitUntilColoured("]", theme.color(.maths))
         text.undoManager?.undo()
         try await waitUntilColoured("]", theme.color(.invalid))
         text.setSelectedRange(.caret(text.text.length))

@@ -19,12 +19,7 @@ use crate::settings::{read_settings, write_settings};
 
 /// In any case and in part of a word, with nothing open, as the service searches.
 fn search(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
-    search_project(
-        root,
-        &Query::new(query, false, false),
-        &HashMap::new(),
-        limit,
-    )
+    search_project(root, &Query::new(query), &HashMap::new(), limit)
 }
 
 /// With nothing open and nothing read before.

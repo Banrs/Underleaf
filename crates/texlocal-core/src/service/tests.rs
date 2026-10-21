@@ -55,13 +55,12 @@ async fn a_free_project_name_is_the_next_untitled() {
     fs::remove_dir_all(service.data_dir.join("Untitled 2")).unwrap();
     let next = call(&service, "free_project_name", json!({})).await;
     assert_eq!(next, json!({ "name": "Untitled 2" }));
-    let from_taken = call(&service, "free_project_name", json!({ "name": "untitled" })).await;
-    assert_eq!(from_taken["name"], "untitled 2");
+    fs::create_dir(service.data_dir.join("untitled 2")).unwrap();
+    let folded = call(&service, "free_project_name", json!({})).await;
+    assert_eq!(folded, json!({ "name": "Untitled 4" }));
     let args = json!({ "name": "Untitled 3", "template": "blank" });
     let numbered = call(&service, "create_project", args).await;
     assert_eq!(numbered["id"], "Untitled 3 2");
-    let bad = json!({ "name": ".hidden" });
-    assert_eq!(status_of(&service, "free_project_name", bad).await, 400);
     assert_eq!(status_of(&service, "create_project", json!({})).await, 400);
 }
 

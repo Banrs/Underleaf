@@ -36,7 +36,6 @@ ratex-types = "=0.1.14"
 # on: debug and test builds would read them from the registry at run time.
 rust-embed = { version = "8.11", features = ["debug-embed"] }
 ttf-parser = "0.25"
-unicode-segmentation = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

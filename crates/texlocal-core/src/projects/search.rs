@@ -65,27 +65,20 @@ fn lower_into(s: &str, out: &mut String) {
     }));
 }
 
-/// What a search or a replace looks for: `text`, in any case unless `match_case`, and with
-/// `whole_word` only where neither end runs on into a letter, digit or underscore.
+/// What a search or a replace looks for, in any case.
 pub struct Query {
-    /// Folded as each line is, unless the case must match.
+    /// Folded as each line is.
     text: String,
     chars: usize,
-    match_case: bool,
-    whole_word: bool,
 }
 
 impl Query {
-    pub fn new(text: &str, match_case: bool, whole_word: bool) -> Self {
-        let mut folded = text.to_owned();
-        if !match_case {
-            lower_into(text, &mut folded);
-        }
+    pub fn new(text: &str) -> Self {
+        let mut folded = String::new();
+        lower_into(text, &mut folded);
         Self {
             chars: folded.chars().count(),
             text: folded,
-            match_case,
-            whole_word,
         }
     }
 
@@ -96,30 +89,12 @@ impl Query {
         if self.text.is_empty() {
             return found;
         }
-        let line = if self.match_case {
-            line
-        } else {
-            lower_into(line, folded);
-            folded.as_str()
-        };
-        let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-        let apart = |outside, inside| !(word(outside) && word(inside));
-        let (first, last) = (self.text.chars().next(), self.text.chars().next_back());
+        lower_into(line, folded);
         let (mut from, mut chars) = (0, 0);
-        while let Some(at) = line[from..].find(&self.text) {
-            let (at, end) = (from + at, from + at + self.text.len());
-            chars += line[from..at].chars().count();
-            if !self.whole_word
-                || apart(line[..at].chars().next_back(), first)
-                    && apart(line[end..].chars().next(), last)
-            {
-                found.push(chars..chars + self.chars);
-                (from, chars) = (end, chars + self.chars);
-            } else {
-                // A match that stands alone may start inside this one.
-                from = at + first.map_or(1, char::len_utf8);
-                chars += 1;
-            }
+        while let Some(at) = folded[from..].find(&self.text) {
+            chars += folded[from..from + at].chars().count();
+            found.push(chars..chars + self.chars);
+            (from, chars) = (from + at + self.text.len(), chars + self.chars);
         }
         found
     }
@@ -326,7 +301,7 @@ mod tests {
         fs::write(root.join("big.bib"), "@misc{needle,}\n").unwrap();
         let bib = fs::File::options().write(true).open(root.join("big.bib"));
         bib.unwrap().set_len(SEARCH_FILE_MAX + 1).unwrap();
-        let needle = Query::new("needle", false, false);
+        let needle = Query::new("needle");
         let hits = search_project(&root, &needle, &HashMap::new(), 10).unwrap();
         let mut files: Vec<&str> = hits.iter().map(|hit| hit.file.as_str()).collect();
         files.sort_unstable();
@@ -346,7 +321,7 @@ mod tests {
             if other_app.replace(false) {
                 fs::write(root.join("a.tex"), "cat, their cat").unwrap();
             }
-            Query::new("cat", false, false).places(text)
+            Query::new("cat").places(text)
         };
         let written = replace_in_files(&root, &|rel| rel == "a.tex", &found, "dog").unwrap();
         assert_eq!(written, [json!({ "file": "a.tex", "count": 2 })]);
@@ -365,7 +340,7 @@ mod tests {
         let mut perms = fs::metadata(&b).unwrap().permissions();
         perms.set_readonly(true);
         fs::set_permissions(&b, perms.clone()).unwrap();
-        let found = |_: &str, text: &str| Query::new("cat", false, false).places(text);
+        let found = |_: &str, text: &str| Query::new("cat").places(text);
         let replaced = replace_in_files(&root, &|rel| rel != "main.tex", &found, "dog");
         assert_eq!(replaced.unwrap_err().status, 403);
         assert_eq!(fs::read_to_string(root.join("a.tex")).unwrap(), "cat");
@@ -374,13 +349,12 @@ mod tests {
         fs::set_permissions(&b, perms).unwrap();
     }
 
-    /// Apart from each other, in any case or in the query's, and as whole words or not; in
-    /// UTF-16 units, where the emoji is two.
+    /// Apart from each other and in any case; in UTF-16 units, where the emoji is two.
     #[test]
     fn the_matcher_finds_every_match_on_a_line() {
         let text = "😀 Cat cat catalogue\nCAT_cat cat\naaaa";
-        let places = |query: &str, match_case, whole_word| -> Vec<(u32, u32)> {
-            let found = Query::new(query, match_case, whole_word).places(text);
+        let places = |query: &str| -> Vec<(u32, u32)> {
+            let found = Query::new(query).places(text);
             let at = |place: &Place| {
                 assert_eq!(place.length as usize, query.len());
                 (place.line, place.column)
@@ -388,12 +362,7 @@ mod tests {
             found.iter().map(at).collect()
         };
         let every = [(1, 3), (1, 7), (1, 11), (2, 0), (2, 4), (2, 8)];
-        assert_eq!(places("cat", false, false), every);
-        assert_eq!(
-            places("cat", true, false),
-            [(1, 7), (1, 11), (2, 4), (2, 8)]
-        );
-        assert_eq!(places("cat", false, true), [(1, 3), (1, 7), (2, 8)]);
-        assert_eq!(places("aa", false, false), [(3, 0), (3, 2)]);
+        assert_eq!(places("cat"), every);
+        assert_eq!(places("aa"), [(3, 0), (3, 2)]);
     }
 }

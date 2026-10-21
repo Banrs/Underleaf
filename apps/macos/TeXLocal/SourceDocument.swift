@@ -168,7 +168,7 @@ nonisolated enum Syntax {
 }
 
 enum HighlightKind: UInt32, CaseIterable {
-    case command, argument, mathDelimiter, mathIdentifier, number, comment, invalid, stringLiteral, builtin
+    case command, argument, maths, comment, invalid
 }
 
 nonisolated struct SourceRange: Decodable, Equatable {
