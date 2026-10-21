@@ -315,11 +315,10 @@ final class ProjectModel {
             guard latest() else { return }
             if path != openPath {
                 guard let session else { return }
-                let text: Bool
+                // A file made a moment ago may not be in the tree yet.
+                if tree.node(at: path) == nil { await tree.reload() }
+                let text = isText(path)
                 do {
-                    // A file made a moment ago may not be in the tree yet.
-                    if tree.node(at: path) == nil { await tree.reload() }
-                    text = isText(path)
                     if text { try await core.call("session_open_document", ["session": session, "path": path]) }
                 } catch {
                     if latest() { app?.report(error, "Couldn’t Open “\(path.fileName)”") }
