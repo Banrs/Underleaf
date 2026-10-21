@@ -1,0 +1,2 @@
+# The QA seed library is fixtures, not the project's source: keep it out of GitHub's language stats.
+tools/qa/library-seed/** linguist-vendored

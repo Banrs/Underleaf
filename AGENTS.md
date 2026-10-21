@@ -1,10 +1,13 @@
 # Underleaf
 
-Rules for agents. `README.md` is the overview, `docs/core-api.md` the hosts' contract with the
-core, `docs/handoff.md` what is open.
+Rules for agents. `docs/core-api.md` is the hosts' contract with the core, `docs/handoff.md` what
+is open, `docs/windows.md` the Windows app and its gaps, `docs/texpresso.md` Live Preview,
+`docs/design-tokens.md` the themes and surfaces.
 
 ## Shape
 
+- **Names**: the repository is Underleaf; the app is TeXLocal, and so are its names on disk
+  (`~/TeXLocal`, `.texlocal.json`, `TEXLOCAL_DATA`), so existing projects keep working.
 - **Rust core** (`crates/texlocal-core`, macOS and Windows only) owns everything but UI and OS
   integration: projects, path safety, latexmk, SyncTeX, logs, ZIP export, the JSON service and
   project sessions (`session/`: documents, autosave, watching, builds, issues, outline, TeXpresso).
@@ -15,6 +18,9 @@ core, `docs/handoff.md` what is open.
 - **`crates/texlocal-ffi`** is the C ABI: a static library, built as a DLL for Windows.
 - **The apps** (`apps/macos`, `apps/windows`) are UI only. They have the same features, each in
   its own system's design: the Mac the HIG, Windows WinUI 3 and Fluent, never the Mac's.
+- **Security**: `-shell-escape` is off unless a project turns it on, and a project's own
+  `latexmkrc` is read only then; `.texlocal.json` can't be written through the generic file
+  commands.
 
 ## The Mac app
 
@@ -77,6 +83,12 @@ Agents' code runs long and erodes with each change (`docs/agent-code.md`), so:
 - A commit's subject is a sentence saying what is now true, with no closing full stop and no AI
   trailer.
 - Follow-on work goes on the open PR's branch; ask the owner before opening another PR.
+- `README.md` is for people reading about TeXLocal on GitHub: what it does and how to install it,
+  in plain paragraphs without
+  [Wikipedia's signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)
+  (lists led by bold labels, threes for rhythm, false ranges, puffery, em dashes). A change people
+  would notice updates it; rules and internals go here or in `docs/`. The Mac app links to its
+  `#requirements` and to `docs/texpresso.md`, so both stay.
 - Subagents, all 5.5: Haiku at medium for mechanical work, Sonnet at medium for ordinary work,
   Opus at medium or high (xhigh rarely) for refactors across files and Swift edited where it can't
   be compiled; Fable only for a special planning agent. A few agents, never a fan-out.
@@ -100,3 +112,5 @@ Agents' code runs long and erodes with each change (`docs/agent-code.md`), so:
 - Mac (Xcode 27, Rust stable): `zsh tools/install-mac.sh` builds this checkout's Release, quits
   TeXLocal, installs it to `/Applications`, verifies it and reopens it.
 - Windows (.NET 10 SDK, Rust stable): quit TeXLocal, then `apps/windows/install.ps1`.
+- The version is the same in the workspace `Cargo.toml`, `apps/macos/project.yml`, the `.xcodeproj`
+  (`MARKETING_VERSION`) and `apps/windows/TeXLocal/TeXLocal.csproj`.
