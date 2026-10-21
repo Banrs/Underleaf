@@ -6,6 +6,7 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
 - The haptic as the source|PDF divider stops at the even split (the stop itself is checked).
 - Aa opens with no level highlighted and the first arrow key highlights the caret's level; Tab's
   path through the popover is unverified.
+- Home's rows for an opened folder and a missing one, and their menu.
 
 ## 27.2 workarounds
 
@@ -19,12 +20,7 @@ it works around.
 ## Opened folders
 
 The core opens a folder where it is (`docs/core-api.md`, Opened folders); `import_project` and
-`project_root` are gone, so until the hosts follow, File › Open and Show in Finder fail.
-- Mac: File › Open, Finder's opens and the Dock call `open_path` and open `project.id` at `file`
-  (no `locate` first); Home shows `path` under an opened folder's name, dims a `missing` one, and
-  offers Show in Finder (`path`) and Remove from List (`forget_folder`), not Rename or Move to
-  Trash; titles use `session_open`'s `name`; a bookmark per opened id, resolved for a `missing`
-  one and given to `open_path`, follows a move.
+`project_root` are gone, so until Windows follows, its Open and Show in Finder fail.
 - Windows: `MainWindow.Import` calls `open_path`; `ProjectInfo` gains `Path`, `Opened`,
   `Missing` and `SessionOpened` `Name` for the title; Home shows the path, dims a missing folder,
   offers Remove from list in place of Rename and Delete, and reveals `Path`.

@@ -3,9 +3,12 @@ import Foundation
 nonisolated struct ProjectInfo: Decodable, Identifiable {
     let id, name: String
     let mtime: Double
-    let mainFile: String
+    let mainFile, path: String
+    /// A folder opened where it is, and one no longer there.
+    let opened, missing: Bool
 
     var modified: Date { Date(timeIntervalSince1970: mtime / 1000) }
+    var folder: URL { URL(filePath: path, directoryHint: .isDirectory) }
 }
 
 nonisolated struct TreeNode: Decodable, Identifiable, Equatable {

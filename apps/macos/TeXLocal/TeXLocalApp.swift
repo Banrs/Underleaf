@@ -41,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        Task { await app.importProjects(urls.filter(AppModel.canOpen)) }
+        Task { await app.open(urls.filter(AppModel.canOpen)) }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

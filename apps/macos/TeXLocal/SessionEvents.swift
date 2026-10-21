@@ -43,7 +43,7 @@ nonisolated enum SessionEvent: Sendable {
 }
 
 nonisolated struct SessionOpened: Decodable, Sendable {
-    let root: String
+    let name, root: String
     let tree: [TreeNode]
     let settings: ProjectSettings
     let ui: UIState

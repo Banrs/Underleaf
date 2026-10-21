@@ -52,6 +52,8 @@ Decided: change only when asked. Each macOS 27.2 workaround says why in its comm
 - **Dim, not hidden**, where hiding would make things jump.
 - **Settings**: General, Editor, Compiling, PDF, Live Preview.
 - **Home**: template cards and every project in the library, as Word's gallery and Overleaf's list.
+  A folder opens where it is; its row shows its path, as Xcode's welcome window, dims when it's not
+  found, and offers Remove from List, never Rename or Move to Trash. A bookmark follows its moves.
 - **Builds** as Overleaf's: they run past errors listing every issue, a project can Stop on First
   Error, and a pause in typing saves and compiles.
 - **Changed on disk** with unsaved edits: an AppKit alert (Save Anyway, Revert, Cancel) with no
