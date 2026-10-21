@@ -931,13 +931,8 @@ impl Actor {
 
     fn replace(&self, args: &Value) -> Result<Value, CoreError> {
         let (query, to) = (query(args)?, string_arg(args, "replacement")?);
-        let files = arg::<Option<Vec<String>>>(args, "files")?;
         let open = self.texts_to_edit("replaced")?;
-        let chosen = |rel: &str| {
-            let listed = files.as_ref();
-            projects::is_text(rel) && listed.is_none_or(|files| files.iter().any(|f| f == rel))
-        };
-        self.edit_project(&open, &chosen, &|_, text| query.places(text), to)
+        self.edit_project(&open, &projects::is_text, &|_, text| query.places(text), to)
     }
 
     /// A label's or citation's definitions and every `\ref` or `\cite` kin's key that names it,
@@ -1148,9 +1143,7 @@ fn definitions(facts: &Facts, kind: SymbolKind) -> &[Named] {
 }
 
 fn query(args: &Value) -> Result<Query, CoreError> {
-    let option = |key| arg::<Option<bool>>(args, key).map(Option::unwrap_or_default);
-    let text = string_arg(args, "query")?;
-    Ok(Query::new(text, option("matchCase")?, option("wholeWord")?))
+    string_arg(args, "query").map(Query::new)
 }
 
 /// The open documents' text as the editor has it, each taken without holding the others.

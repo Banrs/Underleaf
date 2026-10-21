@@ -1283,33 +1283,28 @@ async fn an_open_documents_definitions_are_placed_under_its_name_once_it_moves()
     assert_eq!(answer["places"][0]["file"], "b.tex");
 }
 
-/// Every match in a file goes, and only in the files asked for; one that isn't UTF-8 refuses
-/// them all, as writing it would change its bytes.
+/// Every match in a file goes; one that isn't UTF-8 refuses them all, as writing it would change
+/// its bytes.
 #[tokio::test(start_paused = true)]
 async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_their_line_ends() {
     let rig = Rig::new(false).await;
     // Each line as it ended, though the first's ending isn't the second's.
     fs::write(rig.root.join("ch.tex"), "a cat\nand a cat\r\n").unwrap();
-    fs::write(rig.root.join("notes.txt"), "cat").unwrap();
     fs::write(rig.root.join("latin.tex"), b"cat caf\xe9").unwrap();
     let doc = rig.open("main.tex").await;
     doc.edit(5, 0, " cat");
-    let replace = |files: Value| {
-        let args = json!({ "query": "Cat", "replacement": "dog", "files": files });
-        rig.call("replace", args)
-    };
-    let refused = replace(Value::Null).await.unwrap_err();
+    let replace = || rig.call("replace", json!({ "query": "Cat", "replacement": "dog" }));
+    let refused = replace().await.unwrap_err();
     assert!(refused.status == 400 && refused.message.contains("latin.tex"));
     assert_eq!(rig.disk("ch.tex"), "a cat\nand a cat\r\n");
-    let replaced = replace(json!(["ch.tex", "main.tex"])).await.unwrap();
+    fs::remove_file(rig.root.join("latin.tex")).unwrap();
     let edit = json!({ "start": 6, "length": 3, "text": "dog" });
     let answer = json!({
         "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
         "written": [{ "file": "ch.tex", "count": 2 }],
     });
-    assert_eq!(replaced, answer);
+    assert_eq!(replace().await.unwrap(), answer);
     assert_eq!(rig.disk("ch.tex"), "a dog\nand a dog\r\n");
-    assert_eq!(rig.disk("notes.txt"), "cat");
 }
 
 /// A citation's .bib entry, the key of a list that names it and an entry's crossref; refused
