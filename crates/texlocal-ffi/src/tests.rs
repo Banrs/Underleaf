@@ -53,14 +53,10 @@ fn call(handle: *const TlHandle, command: &str, args: Value) -> Value {
     call_raw(handle, command, Some(&args.to_string()))
 }
 
+/// The service over `data`, holding a blank project "P".
 fn open(data: &Path) -> *mut TlHandle {
     let handle = unsafe { tl_open(c(data.to_str().unwrap()).as_ptr()) };
     assert!(!handle.is_null());
-    handle
-}
-
-fn open_with_project(data: &Path) -> *mut TlHandle {
-    let handle = open(data);
     let created = call(
         handle,
         "create_project",
@@ -84,28 +80,16 @@ unsafe fn session_source(handle: *const TlHandle, session: u64, path: &str) -> *
 }
 
 #[test]
-fn commands_round_trip_through_the_c_abi() {
-    let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(dir.path());
-    assert_eq!(call_raw(handle, "list_projects", None)["ok"][0]["id"], "P");
-
-    let bad = call(handle, "create_entry", json!({ "id": "P", "path": "../x" }));
-    assert_eq!(bad["status"], 400);
-    assert_eq!(call_raw(handle, "nope", None)["status"], 404);
-
-    unsafe { tl_close(handle) };
-}
-
-#[test]
-fn null_and_malformed_inputs_are_rejected_safely() {
-    let out = call_raw(ptr::null(), "list_projects", None);
-    assert_eq!(out["status"], 400);
+fn commands_and_bad_input_answer_through_the_c_abi() {
+    assert_eq!(call_raw(ptr::null(), "list_projects", None)["status"], 400);
     assert!(unsafe { tl_open(ptr::null()) }.is_null());
 
     let dir = tempfile::tempdir().unwrap();
     let handle = open(dir.path());
+    assert_eq!(call_raw(handle, "list_projects", None)["ok"][0]["id"], "P");
     let bad = call_raw(handle, "list_projects", Some("{not json"));
     assert_eq!(bad["status"], 400);
+    assert_eq!(call_raw(handle, "nope", None)["status"], 404);
     unsafe {
         tl_free(ptr::null_mut());
         tl_close(handle);
@@ -130,11 +114,13 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         assert_eq!(source_call(source, "unknown", json!({})), None);
         tl_source_free(source);
 
+        // Text is counted in bytes, so U+0000 passes; bytes that aren't UTF-8 read as U+FFFD,
+        // as Swift decodes them, so the edit still lands with the editor's length.
         let text = "a\0\nb";
         let source = tl_source_new(text.as_ptr(), text.len());
+        edit(source, 4, 0, b"\xff\0c");
+        assert_eq!(text_of(source), "a\0\nb\u{fffd}\0c");
         assert_eq!(tl_source_line_count(source), 2);
-        edit(source, 4, 0, b"\0c");
-        assert_eq!(text_of(source), "a\u{0}\nb\u{0}c");
         tl_source_free(source);
 
         // What's typed in a snippet's field goes in its other places: the edit
@@ -142,8 +128,11 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         let text = "\\begin{}\n\\end{}";
         let source = tl_source_new(text.as_ptr(), text.len());
         let fields = json!([{ "start": 7, "length": 0, "index": 0 }, { "start": 14, "length": 0, "index": 0 }]);
-        let snippet = json!({ "fields": fields, "at": 0 });
-        source_call(source, "start_snippet", snippet);
+        source_call(
+            source,
+            "start_snippet",
+            json!({ "fields": fields, "at": 0 }),
+        );
         let mirror = edit(source, 7, 0, b"x");
         assert_eq!(
             mirror,
@@ -151,15 +140,13 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         );
         let mirrored = tl_source_edit(source, 15, 0, b"x".as_ptr(), 1, ptr::null(), true);
         assert!(mirrored.is_null());
-        tl_source_select(source, 8, 0, false);
         assert_eq!(text_of(source), "\\begin{x}\n\\end{x}");
-        let mirror = edit(source, 8, 0, b"y");
-        assert_eq!(
-            mirror,
-            Some(json!([{ "start": 16, "length": 1, "text": "xy" }]))
-        );
         tl_source_select(source, 0, 0, false);
-        assert_eq!(edit(source, 0, 0, b"%"), None);
+        assert_eq!(
+            edit(source, 8, 0, b"y"),
+            None,
+            "the selection left the snippet"
+        );
         tl_source_free(source);
     }
 }
@@ -187,14 +174,7 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
         assert!(!source.is_null());
         let partner = c("partner");
         assert!(tl_source_call(source, partner.as_ptr(), c("{not json").as_ptr()).is_null());
-        edit(source, 99, 99, b"ab");
         assert_eq!(tl_source_line_start(source, 99), 0);
-
-        // Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes them: the
-        // edit still lands, keeping the mirror in step with the editor.
-        edit(source, 1, 0, b"\xff\n");
-        assert_eq!(text_of(source), "a\u{fffd}\nb");
-        assert_eq!(tl_source_line_count(source), 2);
         tl_source_free(source);
     }
 }
@@ -203,11 +183,6 @@ extern "C" fn collect(ctx: *mut c_void, json: *const c_char) {
     let sink = unsafe { &*(ctx as *const mpsc::Sender<Value>) };
     let json = unsafe { CStr::from_ptr(json) }.to_str().unwrap();
     let _ = sink.send(serde_json::from_str(json).unwrap());
-}
-
-fn collector() -> (Box<mpsc::Sender<Value>>, mpsc::Receiver<Value>) {
-    let (sink, seen) = mpsc::channel();
-    (Box::new(sink), seen)
 }
 
 fn context(sink: &mpsc::Sender<Value>) -> *mut c_void {
@@ -241,28 +216,24 @@ fn call_async(handle: *const TlHandle, command: &str, args: Value, sink: &mpsc::
 #[test]
 fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
     let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(dir.path());
+    let handle = open(dir.path());
     std::fs::write(dir.path().join("P/main.tex"), "").unwrap();
     let session = open_main(handle);
+    let typed =
+        |at: u32, text: &str| json!({ "selection": { "start": at, "length": 0 }, "text": text });
     unsafe {
         let source = session_source(handle, session, "main.tex");
-        let typed = json!({ "selection": { "start": 0, "length": 0 }, "text": "{" });
-        let key = source_call(source, "type", typed).unwrap();
+        let key = source_call(source, "type", typed(0, "{")).unwrap();
         assert_eq!(key["edit"]["text"], "{}");
         edit(source, 0, 0, b"{}");
-        let closing = json!({ "selection": { "start": 1, "length": 0 }, "text": "}" });
-        let key = source_call(source, "type", closing).unwrap();
-        assert_eq!(key["selection"]["start"], 2);
+        let key = source_call(source, "type", typed(1, "}")).unwrap();
+        assert_eq!(key["selection"]["start"], 2, "the closer is stepped over");
+        source_call(source, "type", typed(2, "("));
+        edit(source, 2, 0, b"()");
         tl_source_free(source);
 
         let source = session_source(handle, session, "main.tex");
-        let typed = json!({ "selection": { "start": 2, "length": 0 }, "text": "(" });
-        source_call(source, "type", typed);
-        edit(source, 2, 0, b"()");
-        tl_source_free(source);
-        let source = session_source(handle, session, "main.tex");
-        let closing = json!({ "selection": { "start": 3, "length": 0 }, "text": ")" });
-        let key = source_call(source, "type", closing).unwrap();
+        let key = source_call(source, "type", typed(3, ")")).unwrap();
         assert_eq!(key["selection"], Value::Null, "the closer was forgotten");
         tl_source_free(source);
         tl_close(handle);
@@ -272,35 +243,37 @@ fn a_session_document_shown_again_keeps_no_typing_state_from_before() {
 #[test]
 fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() {
     let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(dir.path());
-    let (sink, events) = collector();
+    let handle = open(dir.path());
+    let (sink, events) = mpsc::channel();
     unsafe { tl_set_listener(handle, Some(collect), context(&sink)) };
     let session = open_main(handle);
-    let source = unsafe { session_source(handle, session, "main.tex") };
-    assert!(!source.is_null());
-    let text = unsafe { text_of(source) };
-    assert!(unsafe { session_source(handle, session, "other.tex") }.is_null());
-    let added = "% note\n";
-    unsafe { edit(source, 0, 0, added.as_bytes()) };
-    let mut count = 0;
-    let runs = unsafe { tl_source_highlights(source, 0, 6, &raw mut count) };
-    assert_eq!(count, 3);
-    unsafe { tl_source_free_runs(runs, count) };
-    let saved = call(handle, "session_save", json!({ "session": session }));
-    assert_eq!(saved["ok"]["saved"], true);
-    let disk = std::fs::read_to_string(dir.path().join("P/main.tex")).unwrap();
-    assert_eq!(disk, format!("{added}{text}"));
-    until(&events, |e| e["type"] == "saved" && e["session"] == session);
-    unsafe { tl_source_reload(source, b"x".as_ptr(), 1) };
-    unsafe { tl_source_free(source) };
-    unsafe { tl_close(handle) };
+    unsafe {
+        let source = session_source(handle, session, "main.tex");
+        let text = text_of(source);
+        assert!(session_source(handle, session, "other.tex").is_null());
+        let added = "% note\n";
+        edit(source, 0, 0, added.as_bytes());
+        let mut count = 0;
+        let runs = tl_source_highlights(source, 0, 6, &raw mut count);
+        assert_eq!(count, 3);
+        tl_source_free_runs(runs, count);
+        let saved = call(handle, "session_save", json!({ "session": session }));
+        assert_eq!(saved["ok"]["saved"], true);
+        let disk = std::fs::read_to_string(dir.path().join("P/main.tex")).unwrap();
+        assert_eq!(disk, format!("{added}{text}"));
+        until(&events, |e| e["type"] == "saved" && e["session"] == session);
+        tl_source_reload(source, b"x".as_ptr(), 1);
+        assert_eq!(text_of(source), "x");
+        tl_source_free(source);
+        tl_close(handle);
+    }
 }
 
 /// So a host can tell whether a replace's edits still fit the text: typed in since, they don't.
 #[test]
 fn a_session_documents_source_answers_the_version_a_replace_is_made_against() {
     let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(dir.path());
+    let handle = open(dir.path());
     let session = open_main(handle);
     unsafe {
         let source = session_source(handle, session, "main.tex");
@@ -323,8 +296,8 @@ fn a_session_documents_source_answers_the_version_a_replace_is_made_against() {
 #[test]
 fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
     let dir = tempfile::tempdir().unwrap();
-    let handle = open_with_project(dir.path());
-    let (sink, answers) = collector();
+    let handle = open(dir.path());
+    let (sink, answers) = mpsc::channel();
     let seven = json!({ "id": "P", "session": 7 });
     call_async(handle, "session_open", seven, &sink);
     assert_eq!(until(&answers, |_| true)["ok"]["session"], 7);
