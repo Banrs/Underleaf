@@ -861,6 +861,7 @@ mod tests {
             column,
             length,
         };
+        use SymbolKind::{Citation, Environment, File, Label};
         fn named(list: &[Named]) -> Vec<(SymbolKind, &str, Place)> {
             list.iter().map(|n| (n.kind, &*n.name, n.place)).collect()
         }
@@ -869,14 +870,11 @@ mod tests {
             \\begin{thm}\\includegraphics{figs/plot}\\end{thm}\n\\bibitem{b} \\input{chapters/a}\n\
             \\nocite{b} \\nameref{fig:a}";
         let facts = Facts::read(tex, "tex");
-        let defined = [&facts.labels, &facts.citations, &facts.environments].map(|n| named(n));
+        assert_eq!(named(&facts.labels), [(Label, "fig:a", at(1, 10, 5))]);
+        assert_eq!(named(&facts.citations), [(Citation, "b", at(5, 9, 1))]);
         assert_eq!(
-            defined,
-            [
-                [(SymbolKind::Label, "fig:a", at(1, 10, 5))],
-                [(SymbolKind::Citation, "b", at(5, 9, 1))],
-                [(SymbolKind::Environment, "thm", at(3, 35, 3))],
-            ]
+            named(&facts.environments),
+            [(Environment, "thm", at(3, 35, 3))]
         );
         let commands = facts.commands.iter().map(|c| (&*c.name, c.place));
         assert_eq!(commands.collect::<Vec<_>>(), [("\\R", at(3, 12, 2))]);
@@ -885,21 +883,23 @@ mod tests {
         assert_eq!(
             named(&facts.uses),
             [
-                (SymbolKind::Citation, "knuth", at(2, 12, 5)),
-                (SymbolKind::Citation, "lamport", at(2, 19, 7)),
-                (SymbolKind::Label, "fig:a", at(2, 33, 5)),
-                (SymbolKind::Environment, "thm", at(4, 7, 3)),
-                (SymbolKind::File, "figs/plot", at(4, 28, 9)),
-                (SymbolKind::Environment, "thm", at(4, 43, 3)),
-                (SymbolKind::Citation, "b", at(6, 8, 1)),
-                (SymbolKind::Label, "fig:a", at(6, 20, 5)),
+                (Citation, "knuth", at(2, 12, 5)),
+                (Citation, "lamport", at(2, 19, 7)),
+                (Label, "fig:a", at(2, 33, 5)),
+                (Environment, "thm", at(4, 7, 3)),
+                (File, "figs/plot", at(4, 28, 9)),
+                (Environment, "thm", at(4, 43, 3)),
+                (Citation, "b", at(6, 8, 1)),
+                (Label, "fig:a", at(6, 20, 5)),
             ]
         );
         let bib = Facts::read("% 😀\n@book{knuth84,\n  title={T}}\n@misc{ é2,}", "bib");
-        let cited = |key, place| (SymbolKind::Citation, key, place);
         assert_eq!(
             named(&bib.citations),
-            [cited("knuth84", at(2, 6, 7)), cited("é2", at(4, 7, 2))]
+            [
+                (Citation, "knuth84", at(2, 6, 7)),
+                (Citation, "é2", at(4, 7, 2))
+            ]
         );
     }
 
@@ -1022,7 +1022,6 @@ mod tests {
         );
         assert_eq!(whole.words, 8);
         let loose = analyzed("loose.tex");
-
         assert_eq!(headings(&loose), [("Loose", Some("loose.tex"), 1)]);
         assert_eq!(loose.words, 2);
     }

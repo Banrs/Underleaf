@@ -33,9 +33,8 @@ pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreErro
                 write_error(&abs, err)
             }
         };
-        abs.parent()
-            .map_or(Ok(()), fs::create_dir_all)
-            .map_err(error)?;
+        (abs.parent().map_or(Ok(()), fs::create_dir_all)).map_err(error)?;
+
         let made = if dir {
             fs::create_dir(&abs)
         } else {

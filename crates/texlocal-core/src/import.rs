@@ -116,8 +116,8 @@ pub fn import_files(
         })?;
     }
     let root = service.project_root(id)?;
-    let rels = validate(&root, dir, files.iter().map(|(path, _)| path.as_str()))?;
-    let existing = clashes(&root.join(rel_key(dir).unwrap_or_default()), &rels);
+    let (rels, taken) = validate(&root, dir, files.iter().map(|(path, _)| path.as_str()))?;
+    let existing = clashes(&root.join(rel_key(dir).unwrap_or_default()), &rels, taken);
     if conflict.is_none() && !existing.is_empty() {
         return Ok(Imported { existing });
     }
@@ -133,12 +133,12 @@ pub fn import_files(
 }
 
 /// The whole batch is checked before anything is written: none twice, and none a file where
-/// another needs a folder.
+/// another needs a folder. With its paths comes every path it creates, folded.
 fn validate<'a>(
     root: &Path,
     dir: &str,
     files: impl Iterator<Item = &'a str>,
-) -> Result<Vec<String>, CoreError> {
+) -> Result<(Vec<String>, HashSet<String>), CoreError> {
     let mut seen = HashSet::new();
     let mut folders = HashSet::new();
     let mut rels = Vec::new();
@@ -158,18 +158,13 @@ fn validate<'a>(
         folders.extend(parents().map(str::to_string));
         rels.push(rel);
     }
-    Ok(rels)
+    seen.extend(folders);
+    Ok((rels, seen))
 }
 
-/// For the host's Replace, Keep Both or Stop choice.
-fn clashes(base: &Path, rels: &[String]) -> Vec<Clash> {
-    // Names a Keep Both may not take: every path the import creates.
-    let mut taken = HashSet::new();
-    for rel in rels {
-        let key = fold_case(rel);
-        taken.extend(key.match_indices('/').map(|(i, _)| key[..i].to_string()));
-        taken.insert(key);
-    }
+/// For the host's Replace, Keep Both or Stop choice. A Keep Both takes no name `taken` holds:
+/// every path the import creates.
+fn clashes(base: &Path, rels: &[String], mut taken: HashSet<String>) -> Vec<Clash> {
     let mut existing = Vec::new();
     for path in rels.iter().filter_map(|rel| occupant(base, rel)) {
         if existing.iter().all(|c: &Clash| c.path != path) {
@@ -546,8 +541,8 @@ mod tests {
             // Keep Both must not pick a name the import itself brings.
             "main 2.tex",
         ];
-        let rels = validate(&root, "", batch.into_iter()).unwrap();
-        let existing = clashes(&root, &rels);
+        let (rels, taken) = validate(&root, "", batch.into_iter()).unwrap();
+        let existing = clashes(&root, &rels, taken);
         assert_eq!(
             serde_json::to_value(&existing).unwrap(),
             json!([
@@ -629,8 +624,9 @@ mod tests {
         let root = service.project_root("P").unwrap();
         fs::create_dir(root.join("figs")).unwrap();
         std::os::unix::fs::symlink(root.join("figs"), root.join("link")).unwrap();
-        let rels = validate(&root, "", ["link/a.png"].into_iter()).unwrap();
-        assert!(clashes(&root, &rels).is_empty());
+        let (rels, taken) = validate(&root, "", ["link/a.png"].into_iter()).unwrap();
+        assert!(clashes(&root, &rels, taken).is_empty());
+
         put(&service, "link/a.png", b"png", false).unwrap();
         assert_eq!(fs::read(root.join("figs/a.png")).unwrap(), b"png");
     }
