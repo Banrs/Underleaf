@@ -3,12 +3,9 @@
 ## Mac, on screen
 
 Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/install-mac.sh`:
-- The source|PDF divider: a drag stops at the even split with the haptic, while a position set
-  from code (`setPosition`, as the toolbar's separator asks) doesn't; the sidebar's divider
-  doesn't stop.
+- The haptic as the source|PDF divider stops at the even split (the stop itself is checked).
 - Aa opens with no level highlighted and the first arrow key highlights the caret's level; Tab's
   path through the popover is unverified.
-- Aa's separators are half a point, as Notes' are, in Light and Dark.
 
 ## 27.2 workarounds
 

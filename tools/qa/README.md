@@ -72,7 +72,6 @@ error. `--window t` and `--all-windows` choose where `tree`, `find`, `press`, `g
   server's windows). Native tests don't need the screen.
 - The first live document takes about 5 s. "Test Long (400 pages)" gives a build long enough to
   capture (`qa caret 17; qa insert " x"`, then Compile Automatically starts it).
-- `post <name>` posts a distributed notification (the Debug build's `com.texlocal.qa.*` hooks).
 
 ## Comparing captures
 
